@@ -4,7 +4,7 @@ import type { ActionExecutorContext, HostReviewedChildrenPlanV1 } from '@happier
 import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupApplyResultV1Schema, MachineSetupPlanResultV1Schema, machineSetupApplyTargetFromPlanV1,
     buildMachineSetupTargetApplyInput, type MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ActionExecuteFailureSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, ActionExecuteFailureSchema, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { BackupReceiverEndpointV1Schema } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
@@ -58,7 +58,7 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
     let setupOperation: DeploymentBackupReceiverSetupOperationV1 | undefined;
     const partial = (failure: string | ActionExecuteFailure): BackupAnotherMachinePreparation => {
         if (typeof failure !== 'string' && !isActionOutcomeUnknownErrorCodeV1(failure.errorCode)) {
-            throw Object.assign(new Error(failure.errorCode, { cause: failure }), { code: failure.errorCode });
+            throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: failure.errorCode, error: failure.errorCode }), { cause: failure });
         }
         return { status: 'partial', errorCode: typeof failure === 'string' ? failure : failure.errorCode,
             ...(senderIdentity ? { senderIdentity } : {}), ...(setupOperation ? { setupOperation } : {}) };
@@ -118,9 +118,8 @@ export async function prepareBackupAnotherMachineForHost(input: Readonly<{
                 const details = isRecord(failure.data.details)
                     ? failure.data.details : {};
                 const retained = details.senderIdentity ?? senderIdentity;
-                throw Object.assign(new Error(failure.data.errorCode, { cause: { ...normalizeActionExecutorThrownError(error), ok: false, details: { ...details,
-                    destinationSetup: { ...input.setup, ...(retained ? { senderIdentity: retained } : {}) } } } }),
-                { code: failure.data.errorCode });
+                throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: failure.data.errorCode, error: failure.data.errorCode }), { cause: { ...normalizeActionExecutorThrownError(error), ok: false, details: { ...details,
+                    destinationSetup: { ...input.setup, ...(retained ? { senderIdentity: retained } : {}) } } } });
             }
         }
         throw error;

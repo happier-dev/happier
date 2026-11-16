@@ -1,4 +1,4 @@
-import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { withActionFailureDiagnostic, type ActionFailureDiagnosticInput } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { logger } from '@/ui/logger';
@@ -30,15 +30,13 @@ export function privateServiceForwardAcquisitionError(error: unknown): Error & {
         : original === 'tcp_connect_failed' || original === 'ECONNREFUSED' || original === 'ENETUNREACH'
             || original === 'EHOSTUNREACH' || original === 'ETIMEDOUT' ? 'private_service_destination_unreachable'
         : error instanceof MachineCarrierError ? 'private_service_forward_refused' : original ?? 'private_service_destination_unreachable';
-    return Object.assign(new Error(code, { cause: projectDeploymentFailure(code, error, 'deployment.reference.acquire') }), { code });
+    return Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { cause: projectDeploymentFailure(code, error, 'deployment.reference.acquire') });
 }
 
 /** Source acquisition translates SCM selection failures once; capability and stale-approval refusals keep their codes. */
 export function rethrowDeploymentSourceAcquisitionFailure(error: unknown): never {
     if (error instanceof Error && 'code' in error && error.code === 'git_selection_unavailable') {
-        throw Object.assign(new Error('Deployment source is unavailable', {
-            cause: projectDeploymentFailure('deployment_source_unavailable', error, 'deployment.source.acquire'),
-        }), { code: 'deployment_source_unavailable' });
+        throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Deployment source is unavailable' }), { cause: projectDeploymentFailure('deployment_source_unavailable', error, 'deployment.source.acquire') });
     }
     throw error;
 }
@@ -64,8 +62,7 @@ export function readProviderTeardownAbsenceFailure(
 ): ActionExecuteFailure | null {
     if ((observation.state !== 'succeeded' && observation.state !== 'running_unverified')
         || observation.providerResourceAbsent === true) return null;
-    return { ...projectDeploymentFailure('outcome_unknown', Object.assign(new Error('provider_absence_unconfirmed'),
-        { code: 'provider_absence_unconfirmed' }), 'deployment.teardown.observe'), effectAttempted: true,
+    return { ...projectDeploymentFailure('outcome_unknown', createActionExecuteFailureError({ ok: false, errorCode: 'provider_absence_unconfirmed', error: 'provider_absence_unconfirmed' }), 'deployment.teardown.observe'), effectAttempted: true,
         details: { reason: 'provider_absence_unconfirmed' as const, requiredFact: 'providerResourceAbsent' } };
 }
 
@@ -147,6 +144,5 @@ export function deploymentUnavailableDiagnostic<T extends object>(value: T, phas
 
 export function deploymentUnavailableError(phase: string,
     causeKind: ActionFailureDiagnosticInput['causeKind'], error?: unknown): Error & { code: 'deployment_unavailable' } {
-    return deploymentUnavailableDiagnostic(Object.assign(new Error('deployment_unavailable'),
-        { code: 'deployment_unavailable' as const }), phase, causeKind, error);
+    return deploymentUnavailableDiagnostic(createActionExecuteFailureError({ ok: false, errorCode: 'deployment_unavailable' as const, error: 'deployment_unavailable' }), phase, causeKind, error);
 }

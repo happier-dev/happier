@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { hostname } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as nativeFs from 'node:fs/promises';
@@ -207,7 +208,7 @@ type EngineReadInput = Readonly<{
 /** One current native read supplies both admission identity and target disclosure. */
 export async function readNativeComposeEngine(input: EngineReadInput): Promise<NativeComposeEngineFacts> {
     const assertNotCancelled = () => {
-        if (input.signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+        if (input.signal?.aborted) throw createActionExecuteFailureError({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
     };
     assertNotCancelled();
     let output: Awaited<ReturnType<ProjectNativeToolchainIo['run']>>;

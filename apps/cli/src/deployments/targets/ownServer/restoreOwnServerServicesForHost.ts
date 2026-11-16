@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { EnvironmentServiceRecoveryRow } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema,
     DeploymentReceiptGetResultV1Schema, type ActionExecutorContext } from '@happier-dev/protocol';
@@ -20,7 +21,7 @@ import { decodeBase64 } from '@/api/encryption';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { configuration } from '@/configuration';
 
-const refuse = (code: string, stage = 'service.restoration'): never => { throw Object.assign(new Error(code), { code, stage }); };
+const refuse = (code: string, stage = 'service.restoration'): never => { throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { stage }); };
 
 /** Finite installed-Account inventory on first service use. The managed-services
  * owner owns dedupe and native observation custody, including failed attempts. */

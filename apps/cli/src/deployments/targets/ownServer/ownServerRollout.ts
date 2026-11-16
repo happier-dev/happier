@@ -13,7 +13,7 @@ import { isOwnServerBuildReceiptComplete, requiresOwnServerBuildReceipt } from '
 import { normalizeNativeComposePlatform } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { admitOwnServerDeploymentSource, selectOwnServerRetainedServingSource } from './ownServerTargetAdmission';
 import { MIGRATION_STEP } from './migration';
-import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readDeploymentUniformTargetLinkRevisionV1 } from '../../deploymentUniformProof';
 
@@ -161,7 +161,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
         if (!link || admitCandidate && (!approved
             || !isDeepStrictEqual(approved.bindings, environment.content.bindings)
             || !isDeepStrictEqual(approved.ownServer, environment.content.ownServer))) {
-            throw Object.assign(new Error('deployment_conflict'), { code: 'deployment_conflict' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' });
         }
         const selected = link.activeDeploymentId ? await host.readReceipt({ environmentId: receipt.deployment.environmentId,
             deploymentId: link.activeDeploymentId, context }) : undefined;
@@ -171,7 +171,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
             admitOwnServerDeploymentSource(environment, receipt.content.sourceIntent);
         if (selected && (!selected.content.images.length || selected.deployment.environmentId !== receipt.deployment.environmentId
             || !['succeeded', 'running_unverified'].includes(selected.deployment.state))) {
-            throw Object.assign(new Error('rollback_image_unavailable'), { code: 'rollback_image_unavailable' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'rollback_image_unavailable', error: 'rollback_image_unavailable' });
         }
         if (selected) {
             const baseline = selected.content.ownServer?.approvedInputBasis;
@@ -185,7 +185,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
                 return selectedProjection.services.some(service => !selected.content.images.some(image => image.service === service
                     && normalizeNativeComposePlatform(image.platform) === normalizeNativeComposePlatform(
                         selectedProjection.servicePlatforms?.find(value => value.service === service)?.platform ?? projection.platform)));
-            })) throw Object.assign(new Error('rollback_image_unavailable'), { code: 'rollback_image_unavailable' });
+            })) throw createActionExecuteFailureError({ ok: false, errorCode: 'rollback_image_unavailable', error: 'rollback_image_unavailable' });
         }
         return { link: { ...link, machines: initial.link.machines, members: initial.link.members }, selected, retainedSourceIntent };
     };
@@ -238,7 +238,7 @@ export async function executeOwnServerRollout(host: OwnServerDeploymentTargetHos
     const settle = async (content = receipt.content) => {
         const settled = await write(content.machineResults.every(row => row.health === 'healthy') ? 'succeeded' : 'running_unverified', content);
         if (settled.ok || settled.errorCode === 'outcome_unknown') return settled;
-        throw Object.assign(new Error(settled.errorCode), { code: settled.errorCode, cause: settled });
+        throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: settled.errorCode, error: settled.errorCode }), { cause: settled });
     };
     try {
         if (admitted.selected) {

@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
@@ -57,7 +58,7 @@ import type { OwnServerDeploymentRequest, OwnServerDeploymentReviewRequest, OwnS
 
 function refuse(reason: string | ActionExecuteFailure): never {
     const code = typeof reason === 'string' ? reason : reason.errorCode;
-    throw Object.assign(new Error(code, typeof reason === 'string' ? undefined : { cause: reason }), { code });
+    throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { ...(typeof reason === 'string' ? undefined : { cause: reason }) });
 }
 const failure = projectDeploymentFailure;
 

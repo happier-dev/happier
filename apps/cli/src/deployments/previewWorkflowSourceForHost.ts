@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -34,9 +35,9 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
     const readEnvironment = (reference: PreviewTemplateRefForHost) => readDeploymentEnvironmentForHost({ environmentId: reference.environmentId, context }, {
         readMetadata: async ({ environmentId }) => {
             const result = await input.executor.execute('deployments.environments.get', { serverId: reference.serverId, environmentId }, context);
-            if (!result.ok) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
+            if (!result.ok) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: result.errorCode, error: result.errorCode }), { cause: result });
             const detail = DeploymentEnvironmentGetResultV1Schema.parse(result.result);
-            if (!detail.ok) throw Object.assign(new Error(detail.error), { code: detail.error });
+            if (!detail.ok) throw createActionExecuteFailureError({ ok: false, errorCode: detail.error, error: detail.error });
             return detail;
         }, open, assertCurrent: async () => { input.signal?.throwIfAborted(); },
     });
@@ -46,9 +47,9 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
         do {
             const result = await input.executor.execute('deployments.environments.list', { ...selection,
                 serverId: input.templateRef.serverId, ...(cursor ? { cursor } : {}) }, context);
-            if (!result.ok) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
+            if (!result.ok) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: result.errorCode, error: result.errorCode }), { cause: result });
             const page = DeploymentEnvironmentListResultV1Schema.parse(result.result);
-            if (!page.ok) throw Object.assign(new Error(page.error), { code: page.error });
+            if (!page.ok) throw createActionExecuteFailureError({ ok: false, errorCode: page.error, error: page.error });
             environments.push(...page.items);
             cursor = page.nextCursor ?? undefined;
         } while (cursor);
@@ -61,7 +62,7 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
     let selectedTemplate: Awaited<ReturnType<typeof readEnvironment>> | undefined;
     const readInvocations = async (request: Readonly<{ runId: string; cursor?: string }>) => {
         const result = await input.executor.execute('workflow.run.invocations.list', { ...request, includeContent: true }, context);
-        if (!result.ok) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
+        if (!result.ok) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: result.errorCode, error: result.errorCode }), { cause: result });
         return WorkflowInvocationListResultV1Schema.parse(result.result);
     };
     return resolvePreviewWorkflowForHost({ templateRef: input.templateRef, event: input.event, occurrenceKey: input.occurrenceKey,
@@ -69,7 +70,7 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
         readTargetLink: async reference => {
             const environment = selectedTemplate?.environment.id === reference.environmentId ? selectedTemplate : await readEnvironment(reference);
             const header = environment.targetLinks.find(link => link.id === reference.targetLinkId);
-            if (!header) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+            if (!header) throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
             const opened = readDeploymentTargetLinkArtifactV1(header, await open(header.contentArtifactId));
             if (!opened.ok) return refuseDeploymentArtifactRead(opened);
             return { header, provider: DeploymentTargetLinkProviderContentV1Schema.parse(opened.content) };
@@ -78,7 +79,7 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
         readPreviewDomain: request => readPreviewDomainForHost(request, {
             readMetadata: async operand => {
                 const result = await input.executor.execute('deployments.domains.get', operand, context);
-                if (!result.ok) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
+                if (!result.ok) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: result.errorCode, error: result.errorCode }), { cause: result });
                 return result.result;
             }, open,
         }),
@@ -96,10 +97,10 @@ export async function resolveDeploymentPreviewWorkflowSourceForHost(input: Reado
                 ? await readDeploymentDomainInventoryForHost({ serverId: input.templateRef.serverId,
                     environmentId: existing.id, signal: input.signal, list: async query => {
                         const result = await input.executor.execute('deployments.domains.list', query, context);
-                        if (!result.ok) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
+                        if (!result.ok) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: result.errorCode, error: result.errorCode }), { cause: result });
                         return DeploymentDomainListResultV1Schema.parse(result.result);
                     } }) : undefined;
-            if (domains && domains.kind !== 'ready') throw Object.assign(new Error(domains.reason), { code: domains.reason });
+            if (domains && domains.kind !== 'ready') throw createActionExecuteFailureError({ ok: false, errorCode: domains.reason, error: domains.reason });
             const domain = domains?.kind === 'ready' ? domains.domains.find(domain => domain.id === existing.id) : undefined;
             return { environment: child.environment,
                 ...(domain ? { domainRevision: domain.revision } : {}),

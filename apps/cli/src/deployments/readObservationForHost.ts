@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentEnvironmentGetResultV1Schema, DeploymentObservationGetInputV1Schema,
@@ -27,7 +28,7 @@ export async function readDeploymentObservationForHost(
     }>,
 ): Promise<z.infer<typeof DeploymentObservationGetResultV1Schema> | ActionExecuteFailure> {
     const detail = await host.readEnvironment(input.environmentId, context);
-    const mismatch = () => { throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' }); };
+    const mismatch = () => { throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' }); };
     if (detail.environment.id !== input.environmentId) return mismatch();
     if (!detail.environment.capabilities.read) return { ok: false, error: 'deployment_access_denied' };
     const targetLink = detail.targetLinks.find(link => link.id === input.targetLinkId);

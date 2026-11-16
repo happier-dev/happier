@@ -1,4 +1,4 @@
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { EnvironmentServiceRecoveryRow } from '@/plugins/runtime/invocation/services/environmentServiceRecovery';
 import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -34,12 +34,12 @@ export type RestoreOwnServerDeploymentServicesInput = Readonly<{
 export async function restoreOwnServerDeploymentServices(input: RestoreOwnServerDeploymentServicesInput): Promise<readonly EnvironmentServiceRecoveryRow[]> {
     const { receipt } = input;
     const basis = receipt.content.ownServer?.approvedInputBasis;
-    if (!basis) throw Object.assign(new Error('Retained runtime definition is unavailable'), { code: 'deployment_source_unavailable' });
+    if (!basis) throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Retained runtime definition is unavailable' });
     const projection = basis.runtimeProjections?.find(value => value.machineId === input.machineId
         && value.installationId === input.installationId) ?? (basis.runtimeProjections ? undefined : basis);
     if (!projection || !basis.members.some(value => value.machineId === input.machineId
         && value.installationId === input.installationId)) {
-        throw Object.assign(new Error('Retained runtime definition is unavailable'), { code: 'deployment_source_unavailable' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Retained runtime definition is unavailable' });
     }
     const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
         serverId: input.serverId, environmentId: receipt.deployment.environmentId });
@@ -50,7 +50,7 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         serviceIdentity(service))?.deploymentId === receipt.deployment.id)) return [];
     const assertCurrent = async () => {
         input.signal.throwIfAborted();
-        if (!input.isCurrent()) throw Object.assign(new Error('Service observation is unavailable'), { code: 'service_unavailable' });
+        if (!input.isCurrent()) throw createActionExecuteFailureError({ ok: false, errorCode: 'service_unavailable', error: 'Service observation is unavailable' });
     };
     await assertCurrent();
     const custody = createOwnServerSourceCustodyReader({ ...identity, machineId: input.machineId,
@@ -102,10 +102,10 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
             // directory; custody below resolves that exact source receipt.
             const targets = await readColdNativeComposeTargetsForHost({ ...identity, projectName,
                 composeServices: projection.services, run });
-            if (!targets) throw Object.assign(new Error('Native service inventory is unavailable'), { code: 'service_unavailable' });
+            if (!targets) throw createActionExecuteFailureError({ ok: false, errorCode: 'service_unavailable', error: 'Native service inventory is unavailable' });
             if (targets.some(Boolean)) generations.push({ projectName, targets });
         }
-        if (generations.length > 1) throw Object.assign(new Error('Native service generation is ambiguous'), { code: 'deployment_conflict' });
+        if (generations.length > 1) throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_conflict', error: 'Native service generation is ambiguous' });
         const generation = generations[0];
         // A removed generation has no native resources to observe. Retained
         // source alone never manufactures an executable service generation.
@@ -129,14 +129,14 @@ export async function restoreOwnServerDeploymentServices(input: RestoreOwnServer
         for (const [sourcePath, services] of servicesBySource) {
             try {
                 const source = await custody(sourcePath);
-                if (!source) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
+                if (!source) throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Retained source is unavailable' });
                 const releaseSource = observeRetainedDeploymentSourceForHost({ environmentId: identity.environmentId,
                     environmentInstanceId: identity.environmentInstanceId, deploymentId: receipt.deployment.id,
                     machineId: input.machineId, installationId: input.installationId, rootPath: source.rootPath,
                     manifestFingerprint: projection.manifestFingerprint, manifest: source.manifest,
                     async assertCurrent() {
                         await assertCurrent();
-                        if (!await custody(sourcePath)) throw Object.assign(new Error('Retained source is unavailable'), { code: 'deployment_source_unavailable' });
+                        if (!await custody(sourcePath)) throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Retained source is unavailable' });
                     } });
                 const composeArgs = ['compose', '--project-name', projectName];
                 const handles = await produceEnvironmentProjectServices({ owner: input.owner, serverId: identity.homeServerIdentityId,

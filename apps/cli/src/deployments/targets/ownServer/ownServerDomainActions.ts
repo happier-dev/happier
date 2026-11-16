@@ -29,7 +29,7 @@ import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/proto
 import type { ArtifactRequestAuthorizationHeaders, createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudflareDomainConnectorForTarget } from './cloudflareDomainPreparation';
-import { isActionExecuteFailure, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, isActionExecuteFailure, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentException, projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -131,9 +131,9 @@ async function* readEnvironmentDomainsForHost(environmentId: string, context: Ac
     for (;;) {
         const result = await host.storage('deployments.domains.list', { serverId: host.serverId,
             environmentId, ...(cursor ? { cursor } : {}) }, context);
-        if (isActionExecuteFailure(result)) throw Object.assign(new Error(result.error), { code: result.errorCode, cause: result });
+        if (isActionExecuteFailure(result)) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: result.errorCode, error: result.error }), { cause: result });
         const page = DeploymentActionOutputSchemasV1['deployments.domains.list'].parse(result);
-        if (!page.ok) throw Object.assign(new Error(page.error), { code: page.error, cause: page });
+        if (!page.ok) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: page.error, error: page.error }), { cause: page });
         for (const domain of page.domains) if (domain.deletedAtMs === undefined) yield domain;
         if (!page.nextCursor) return;
         cursor = page.nextCursor;
@@ -290,7 +290,7 @@ export function createOwnServerDomainContentWriter(host: Readonly<{
         runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => {
             const { domain, capture, content, context } = input;
             const actionId = 'deployments.domains.add';
-            const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+            const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
             const authorizationHeaders: ArtifactRequestAuthorizationHeaders = async request =>
                 ({ ...await host.headers(context, actionId, request) });
             const resource = await host.artifacts.readForUpdate(domain.contentArtifactId, { signal: context.signal,

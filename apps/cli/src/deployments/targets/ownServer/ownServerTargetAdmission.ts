@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentEnvironmentDetailV1, DeploymentOwnServerContentV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol';
@@ -33,7 +34,7 @@ export function requireOwnServerDeploymentBuildMachine(buildMachineId: string | 
     const errorCode = 'required_fact_unavailable';
     const failure: ActionExecuteFailure = { ok: false, errorCode, error: errorCode, effectAttempted: false,
         details: projectDeploymentFailureRecoveryV1({ requiredFact: 'buildMachineId' }, errorCode) };
-    throw Object.assign(new Error(errorCode, { cause: failure }), { code: errorCode });
+    throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: errorCode, error: errorCode }), { cause: failure });
 }
 
 export function admitOwnServerDeploymentTargetSource(
@@ -41,7 +42,7 @@ export function admitOwnServerDeploymentTargetSource(
 ): void {
     const target = readDeploymentTargetV1(link.source);
     if (target !== OWN_SERVER_DEPLOYMENT_TARGET_V1 || link.targetKind !== target.targetKind)
-        throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
 }
 
 /** One placement decision for candidate preparation and admitted member execution.
@@ -52,7 +53,7 @@ export function admitOwnServerDeploymentTargetLink(
     machineId: string,
     admittedCoordinatorMachineId?: string,
 ): void {
-    const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+    const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
     admitOwnServerDeploymentTargetSource(link);
     if (!link.members.some(member => member.machineId === machineId) && admittedCoordinatorMachineId !== machineId) refuse('target_mismatch');
     if (link.members.length !== 1 && admittedCoordinatorMachineId === undefined) refuse('unsupported');

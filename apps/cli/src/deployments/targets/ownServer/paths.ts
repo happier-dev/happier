@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isAbsolute, join, relative, resolve, sep, posix, win32 } from 'node:path';
 import { createHash } from 'node:crypto';
 import { resolveCliHomeStoragePaths } from '@/configuration/homeStoragePaths';
@@ -5,7 +6,7 @@ import { createCanonicalAbsolutePathComparator, resolveCanonicalAbsolutePath } f
 
 function assertDeploymentIdentitySegment(id: string): void {
     if (!id || /[/\\\0]/u.test(id) || id === '.' || id === '..') {
-        throw Object.assign(new Error('Invalid deployment identity'), { code: 'invalid_request' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'invalid_request', error: 'Invalid deployment identity' });
     }
 }
 
@@ -44,7 +45,7 @@ export function readOwnServerDeploymentStorageRootForPathForHost(path: string, p
 /** The caller supplies the exact Home identity, never a saved profile alias. */
 export function resolveOwnServerDeploymentEnvironmentInstanceIdForHost(homeServerIdentityId: string, environmentId: string): string {
     if (!homeServerIdentityId) {
-        throw Object.assign(new Error('Invalid deployment identity'), { code: 'invalid_request' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'invalid_request', error: 'Invalid deployment identity' });
     }
     assertDeploymentIdentitySegment(environmentId);
     return `${createHash('sha256').update(homeServerIdentityId).digest('hex')}--${environmentId}`;
@@ -68,7 +69,7 @@ export async function resolveOwnServerDeploymentIdentityForHost(input: Readonly<
         import('@/workspaces/projectSetup/projectNativeResolution'),
     ]);
     if (!homeServerId) {
-        throw Object.assign(new Error('The deployment Home identity is unavailable'), { code: 'target_unavailable' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'target_unavailable', error: 'The deployment Home identity is unavailable' });
     }
     const environmentInstanceId = resolveOwnServerDeploymentEnvironmentInstanceIdForHost(homeServerId, input.environmentId);
     return { homeServerIdentityId: homeServerId, environmentId: input.environmentId, environmentInstanceId, deploymentRoot,
@@ -88,13 +89,13 @@ export function resolveDeploymentSourcePathForHost(admitted: Readonly<{
     const environmentRoot = join(admitted.deploymentRoot, admitted.environmentInstanceId);
     if (admitted.maintenanceOperationId !== undefined) {
         if (admitted.materializationRole || admitted.restorationForDeploymentId === undefined) {
-            throw Object.assign(new Error('Invalid deployment source role'), { code: 'invalid_request' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'invalid_request', error: 'Invalid deployment source role' });
         }
         // This disposable source never becomes a serving release or a cold runtime routing hint.
         return join(environmentRoot, 'maintenance', admitted.maintenanceOperationId);
     }
     if (admitted.materializationRole === 'build') {
-        if (admitted.restorationForDeploymentId !== undefined) throw Object.assign(new Error('Invalid deployment source role'), { code: 'invalid_request' });
+        if (admitted.restorationForDeploymentId !== undefined) throw createActionExecuteFailureError({ ok: false, errorCode: 'invalid_request', error: 'Invalid deployment source role' });
         return join(environmentRoot, 'builds', admitted.deploymentId);
     }
     return admitted.restorationForDeploymentId === undefined ? join(environmentRoot, 'releases', admitted.deploymentId)

@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
 
@@ -7,6 +8,6 @@ export function admitDeploymentSourceIntent(environment: DeploymentEnvironmentDe
     const definition = environment.content.definition;
     if (intent.kind !== definition.kind || (intent.kind === 'repository' && definition.kind === 'repository'
         ? !isDeepStrictEqual(intent.compose, definition.compose) : !isDeepStrictEqual(intent, definition))) {
-        throw Object.assign(new Error('deployment_conflict'), { code: 'deployment_conflict' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' });
     }
 }

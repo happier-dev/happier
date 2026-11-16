@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
 import type { ActionExecutorContext, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol';
 import { readDeploymentReceiptArtifactV1, type DeploymentArtifactDocumentV1, type DeploymentReceiptDetailV1,
@@ -18,7 +19,7 @@ export async function* readOwnServerDeploymentReceiptHistoryForHost(input: Reado
     let cursor: string | undefined;
     for (;;) {
         const page = DeploymentReceiptListResultV1Schema.parse(await input.readPage(cursor));
-        if (!page.ok) throw Object.assign(new Error(page.error), { code: page.error });
+        if (!page.ok) throw createActionExecuteFailureError({ ok: false, errorCode: page.error, error: page.error });
         for (const deployment of page.items) {
             if (deployment.environmentId !== input.environmentId || input.lineage && !input.lineage.has(deployment.targetLinkId)) continue;
             let receipt: DeploymentReceiptDetailV1;
@@ -62,7 +63,7 @@ export async function readDeploymentReceiptForHost(
 ): Promise<DeploymentReceiptDetailV1> {
     const detail = await host.readMetadata(request);
     if (detail.deployment.id !== request.deploymentId || detail.deployment.environmentId !== request.environmentId) {
-        throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
     }
     return openDeploymentReceiptForHost(detail.deployment, request.context, host);
 }

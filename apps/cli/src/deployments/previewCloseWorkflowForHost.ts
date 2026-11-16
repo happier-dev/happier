@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentHeaderV1, WorkflowDefinitionV1 } from '@happier-dev/protocol';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { WorkflowInvocationListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
@@ -43,7 +44,7 @@ export async function readPreviewCloseWorkflowForHost(host: PreviewCloseWorkflow
                     const execution = invocation.progress.execution;
                     const output = execution?.kind === 'action' ? execution.output : undefined;
                     if (execution?.kind === 'action' && execution.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 && output !== undefined) {
-                        if (invocation.index.runId !== runId) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+                        if (invocation.index.runId !== runId) throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
                         const input = DeploymentDeployActionInputV1Schema.parse(execution.input);
                         if (input.serverId !== header.serverId || input.environmentId !== header.id
                             || input.targetLinkId !== header.runtimeTargetLinkId) continue;
@@ -60,7 +61,7 @@ export async function readPreviewCloseWorkflowForHost(host: PreviewCloseWorkflow
                     if (captured.input.serverId !== header.serverId || captured.input.environmentId !== header.id) continue;
                     const row = child.targetLinks.find(row => row.targetLink.id === captured.input.targetLinkId);
                     if (!row) {
-                        throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+                        throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
                     }
                     captures.push({ runId, invocationId: invocation.index.id, targetLinkId: row.targetLink.id });
                 }

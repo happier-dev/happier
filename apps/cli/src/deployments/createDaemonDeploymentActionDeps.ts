@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createOwnServerDataRoleBindingsForHost } from './targets/ownServer/dataRoleBindings';
 import { createDomainDnsActionsForHost } from './targets/domainDnsActionsForHost';
 import { isDeploymentDomainDnsActionIdV1 } from '@happier-dev/protocol';
@@ -1081,7 +1082,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 }).workspaceRefs,
             }), context.signal));
             if (accepted.status !== 'applied' && accepted.status !== 'unchanged')
-                throw Object.assign(new Error(`project_account_rows_${accepted.status}`), { code: `project_account_rows_${accepted.status}` });
+                throw createActionExecuteFailureError({ ok: false, errorCode: `project_account_rows_${accepted.status}`, error: `project_account_rows_${accepted.status}` });
         },
         async createContent(content, kind, context, owner, environmentId) {
             const binding = context.externalActionExecutionAuthorization?.binding;
@@ -1411,7 +1412,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                         const signal = currentContext.signal ?? new AbortController().signal;
                         const execute = async (actionId: Parameters<typeof executeCanonicalAction>[0], selected: unknown) => {
                             const result = await executeCanonicalAction(actionId, selected);
-                            if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+                            if (!result.ok) throw createActionExecuteFailureError({ ok: false, errorCode: result.errorCode, error: result.errorCode });
                             return result.result;
                         };
                         const sources = await readSavedHealthCheckSourcesForHost({ sourceInstanceIds: environments.map(({ scope }) =>

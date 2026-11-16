@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentReferenceAddressV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import type { NativeDockerEngineFacts } from '@happier-dev/cli-common/machineSetup';
 import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
@@ -30,8 +31,7 @@ export async function restorePrivateServiceReferencesForHost(input: Omit<Private
     const addresses = input.referenceAddresses.filter(address => address.machineId === input.host.machineId
         && address.installationId === input.installationId && address.phase === 'runtime' && (address.route?.kind === 'iroh' || address.route?.kind === 'local'));
     if (!addresses.length) return { close };
-    const unavailable = (): never => { throw Object.assign(new Error('Retained private service reference is unavailable; retry or redeploy'),
-        { code: 'reference_unavailable' }); };
+    const unavailable = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'reference_unavailable', error: 'Retained private service reference is unavailable; retry or redeploy' }); };
     try {
         const environment = await input.readEnvironment({ environmentId: input.environmentId, context: input.context });
         const restored = new Map<string, ActionExecuteFailure | undefined>();

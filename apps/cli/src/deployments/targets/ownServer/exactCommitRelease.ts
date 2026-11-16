@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
 import type { DeploymentSourceMaterializationPortV1, DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
@@ -36,7 +37,7 @@ export async function isDeploymentSourceUnchangedManifestInput(source: Deploymen
 /** Host-only projection of the manifest already admitted by transfer custody. */
 export function readDeploymentSourceManifestForHost(source: DeploymentSourceMaterializationV1): readonly WorkspaceManifestEntry[] {
     const manifest = sourceManifests.get(source);
-    if (!manifest) throw Object.assign(new Error('Deployment source custody is unavailable'), { code: 'deployment_source_unavailable' });
+    if (!manifest) throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Deployment source custody is unavailable' });
     return manifest.entries;
 }
 
@@ -191,7 +192,7 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
     const assertIdentityMatches = (request: DeploymentSourceMaterializationRequestV1,
         identity: Readonly<{ environmentId: string; deploymentId: string }>) => {
         if (request.environmentId !== identity.environmentId || request.deploymentId !== identity.deploymentId) {
-            throw Object.assign(new Error('Deployment source admission changed'), { code: 'target_mismatch' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'Deployment source admission changed' });
         }
     };
     return {
@@ -223,7 +224,7 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
                     const repository = admitted.repository;
                     const cloneUrl = repository?.protocol === 'ssh' ? repository.repository.sshUrl : repository?.repository.cloneUrl;
                     if (!Number.isSafeInteger(number) || number <= 0 || !cloneUrl) {
-                        throw Object.assign(new Error('Base repository source is unavailable'), { code: 'deployment_source_unavailable' });
+                        throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Base repository source is unavailable' });
                     }
                     await fetchWorkspaceCommitRef({ sourcePath: admitted.sourcePath, cloneUrl,
                         ref: `refs/pull/${number}/head`, expectedCommitSha: admitted.commitSha,
@@ -244,7 +245,7 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
                         throw error;
                     }) : undefined;
                     if (restoration && (retained || existingRoot)) {
-                        const unavailable = () => Object.assign(new Error('Retained restoration source changed'), { code: 'deployment_source_unavailable' });
+                        const unavailable = () => createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Retained restoration source changed' });
                         const physicalTarget = resolveDeploymentSourcePathForHost({ ...admitted,
                             deploymentRoot: await realpath(admitted.deploymentRoot) });
                         // Activation retains these immutable bytes before it can
@@ -269,7 +270,7 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
                             assertCurrent: assertRetained });
                     }
                     if (admitted.operationLog && (admitted.materializationRole || admitted.restorationForDeploymentId)) {
-                        throw Object.assign(new Error('Operation log has a different release placement'), { code: 'deployment_log_unavailable' });
+                        throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_log_unavailable', error: 'Operation log has a different release placement' });
                     }
                     const operationLog = admitted.operationLog ? await createDeploymentSourceOperationLogCustody({
                         targetPath, entries: exported.workspaceExportArtifacts.manifest.entries,

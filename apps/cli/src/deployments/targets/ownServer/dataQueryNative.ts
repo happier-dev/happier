@@ -1,8 +1,9 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { OwnServerDataQueryNative } from './dataQuery';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 /** Passwords, SQL and parameters cross Docker only through supervised stdin.

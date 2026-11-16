@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
 import { nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -66,7 +67,10 @@ export type CaddyDomainRouteInput = {
 export type CaddyDomainRouteRemovalInput = Pick<CaddyDomainRouteInput, 'domainId' | 'domain' | 'listener' | 'basicAuth' | 'publicTls'>;
 export class CaddyDomainMaterializationError extends Error {
     readonly code = 'invalid_parameters';
-    constructor() { super('Unsupported canonical redirect destination'); }
+    constructor() {
+        super('Unsupported canonical redirect destination');
+        Object.assign(this, createActionExecuteFailureError({ ok: false, errorCode: this.code, error: this.message }));
+    }
 }
 type CaddyDomainRenderInput = Omit<CaddyDomainRouteInput, 'upstreams'> & {
     upstreams: { kind: 'replicas'; containerNames: readonly string[] } | { kind: 'privateOrigins'; endpoints: readonly string[] };

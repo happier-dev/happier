@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import { randomUUID } from 'node:crypto';
 import { DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol';
-import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildDeploymentTeardownInputV1, DeploymentTeardownNothingDeployedInputV1Schema,
     type DeploymentTeardownInputV1, type DeploymentTeardownRefusalDetailsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1,
@@ -59,7 +59,7 @@ export function createOwnServerTeardownForHost(host: Host) {
         link: DeploymentEnvironmentDetailV1['targetLinks'][number]['targetLink']) =>
         (input.machines ?? link.machines).map(machineId => {
             const member = link.members.find(member => member.machineId === machineId);
-            if (!member) throw Object.assign(new Error('deployment_conflict'), { code: 'deployment_conflict' });
+            if (!member) throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' });
             return member;
         });
     const select = (environment: DeploymentEnvironmentDetailV1, targetLinkId: string, requiresNative = true) => {
@@ -103,7 +103,7 @@ export function createOwnServerTeardownForHost(host: Host) {
         const resources: DeploymentTeardownResourceV1[] = [];
         for (const member of selectMembers(input, link).filter(member => !localOnly || member.machineId === host.machineId)) {
             if (member.machineId !== host.machineId) {
-                if (!host.sendChild) throw Object.assign(new Error('machine_unavailable'), { code: 'machine_unavailable' });
+                if (!host.sendChild) throw createActionExecuteFailureError({ ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable' });
                 const response = await host.sendChild(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare',
                     actionId: 'deployments.teardown', machineId: member.machineId, installationId: member.installationId, input: { serverId: input.serverId,
                         environmentId: input.environmentId, targetLinkId: link.id, reason: input.reason },
@@ -114,7 +114,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                     kind: 'data' as const, machineId: volume.machineId, ownership: 'owned' as const, disposition: 'retain' as const })));
                 continue;
             }
-            if (!host.runtime.acquireTeardownReview) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
+            if (!host.runtime.acquireTeardownReview) throw createActionExecuteFailureError({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
             const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
                 serverId: host.serverId, environmentId: input.environmentId });
             const projects = new Set([identity.projectName,
@@ -142,7 +142,7 @@ export function createOwnServerTeardownForHost(host: Host) {
             projects.add(resolveNativeComposeCandidateProjectName(identity.projectName, receipt.deployment.id));
         }
         const member = link.members.find(member => member.machineId === host.machineId);
-        if (!member) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+        if (!member) throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
         const runtime = await host.runtime.acquireTeardown!({ request, ...member }, async () => {});
         try {
             const run = nativeRunner(runtime, request.context);
@@ -388,7 +388,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                     installationId: operation.installationId, step: operation.step, mode });
                 if (job.actionId !== 'deployments.teardown') throw new Error('Expected teardown child');
                 if (operation.machineId !== host.machineId && !host.sendChild)
-                    throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
+                    throw createActionExecuteFailureError({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
                 const result = operation.machineId === host.machineId ? await executeNative(job, request.context)
                     : await host.sendChild!(job, request.context);
                 const refusal = ActionExecuteFailureSchema.safeParse(result);

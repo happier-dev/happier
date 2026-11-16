@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 import { readDeploymentOutputValidation } from '../../outputValidation';
 import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '../../deploymentFailure';
@@ -20,7 +21,7 @@ import { captureOwnServerDeploymentSource, replaceOwnServerDeploymentSource } fr
 import type { OwnServerDeploymentReceipt, OwnServerDeploymentRequest, OwnServerDeploymentResult, OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 
 type BuildSecretRevision = NonNullable<OwnServerDeploymentDetailsV1['buildSecretRevisions']>[number];
-function refuse(code: string): never { throw Object.assign(new Error(code), { code }); }
+function refuse(code: string): never { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); }
 const imageKey = (service: string, platform: string) => JSON.stringify([service, normalizeNativeComposePlatform(platform)]);
 const orderBindings = (bindings: BuildSecretRevision['bindings']) => [...bindings].sort((a, b) =>
     a.ref.localeCompare(b.ref) || a.resourceRevision - b.resourceRevision);

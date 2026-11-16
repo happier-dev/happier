@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 
@@ -23,12 +24,12 @@ export async function createDeploymentArtifactForHost(input: Readonly<{
     let created: Awaited<ReturnType<ArtifactStore['create']>>;
     if (existing) {
         if (existing.header.kind !== input.content.header.kind || existing.access !== 'owner') {
-            throw Object.assign(new Error('deployment_content_unavailable'), { code: 'deployment_content_unavailable' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_content_unavailable', error: 'deployment_content_unavailable' });
         }
         await input.assertCurrent();
         const updated = await input.artifacts.update({ ...input.content, artifactId: existing.artifactId,
             expectedRevision: existing.revision });
-        if (!updated.ok) throw Object.assign(new Error(updated.errorCode), { code: updated.errorCode });
+        if (!updated.ok) throw createActionExecuteFailureError({ ok: false, errorCode: updated.errorCode, error: updated.errorCode });
         created = { artifactId: existing.artifactId, revision: updated.revision };
     } else created = await input.artifacts.create(input.content);
     // Receipt publication applies the Environment audience at the server owner.
@@ -39,7 +40,7 @@ export async function createDeploymentArtifactForHost(input: Readonly<{
             principal: input.owner, accessLevel: 'admin' }, input.content.signal,
             { authorizationHeaders: input.content.authorizationHeaders });
         if (shared.preparation?.status === 'pending') {
-            throw Object.assign(new Error('deployment_content_unavailable'), { code: 'deployment_content_unavailable' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_content_unavailable', error: 'deployment_content_unavailable' });
         }
         await input.assertCurrent();
     }

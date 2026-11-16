@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import axios from '@/api/client/credentialAxios';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
@@ -60,7 +61,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
             }));
             const readMetadata = async (environmentId: string) => {
                 const transport = getActionSpec('deployments.environments.get').serverTransport;
-                if (!transport) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
+                if (!transport) throw createActionExecuteFailureError({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
                 const wire = bindHomeDomainHttpRequestV1({ transport, inputSchema: DeploymentEnvironmentGetInputV1Schema,
                     input: { serverId: request.context.externalActionExecutionAuthorization?.binding.serverIdentityId
                         ?? request.input.serverId, environmentId } });
@@ -74,7 +75,7 @@ export function createPrepareEnvironmentContentForHost(host: Readonly<{
                 const response = await axios.request<unknown>({ method: wire.method, url: `${host.serverHttpBaseUrl}${wire.path}`,
                     headers, signal: request.context.signal, validateStatus: () => true });
                 const loaded = DeploymentEnvironmentGetResultV1Schema.parse(response.data);
-                if (!loaded.ok) throw Object.assign(new Error(loaded.error), { code: loaded.error });
+                if (!loaded.ok) throw createActionExecuteFailureError({ ok: false, errorCode: loaded.error, error: loaded.error });
                 return loaded;
             };
             const artifact = await open(request.input.contentArtifactId);

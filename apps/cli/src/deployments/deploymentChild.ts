@@ -5,7 +5,7 @@ import { deploymentAuthorizationFailure } from './deploymentAuthorizationFailure
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentChildRpcV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptResultV1Schema,
     type DeploymentChildRpcV1, type ActionExecutorContext, type ActionExecutorDeps, type DeploymentPromoteInputV1 } from '@happier-dev/protocol';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readDeploymentReceiptArtifactV1, readDeploymentEnvironmentArtifactV1,
@@ -64,7 +64,7 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
             || content.buildMachineId !== promotion.buildMachineId
             || !isDeepStrictEqual(content.ingress, promotion.destination.environment.ingress)
             || content.steps.length || content.machineResults.length) {
-            throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+            throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
         }
         return opened.content;
     }
@@ -101,11 +101,11 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
                 if (!semanticRoot.sha && (issued || semanticRoot.targetLinkId !== undefined)) return;
                 const environment = suppliedEnvironment ?? await host.readEnvironment({ environmentId: job.input.environmentId, context });
                 if (!issued && semanticRoot.targetLinkId === undefined
-                    && environment.environment.runtimeTargetLinkId !== job.input.targetLinkId) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+                    && environment.environment.runtimeTargetLinkId !== job.input.targetLinkId) throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
                 const definition = environment.content.definition;
                 if (semanticRoot.sha && (definition.kind !== 'repository' || content.sourceIntent?.kind !== 'repository'
                     || content.sourceIntent.projectSourceId !== environment.environment.projectSourceId
-                    || !isDeepStrictEqual(content.sourceIntent.compose, definition.compose))) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+                    || !isDeepStrictEqual(content.sourceIntent.compose, definition.compose))) throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
             };
             if (job.kind === 'prepare') {
                 const environment = await host.readEnvironment({ environmentId: job.input.environmentId, context });

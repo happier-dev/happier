@@ -1,9 +1,10 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isNativeDefinitionRecord as record } from '@/workspaces/projectSetup/nativePackageScripts';
 
 type NativeVolumeRun = (args: readonly string[]) => Promise<Readonly<{ exitCode: number | null; stdout: string }>>;
 
 function unavailable(): never {
-    throw Object.assign(new Error('volume_observation_unavailable'), { code: 'volume_observation_unavailable' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'volume_observation_unavailable', error: 'volume_observation_unavailable' });
 }
 
 /** Compose labels, rather than supplied names or prefixes, own volume membership. */

@@ -4,7 +4,7 @@ import type { HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/a
 import { DeploymentDataTeardownContentV1Schema, DEPLOYMENT_TEARDOWN_STEPS_V1,
     type DeploymentDataTeardownContentV1, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { DeploymentExecutionFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { projectDeploymentException, projectDeploymentReceiptFailure } from '../deploymentFailure';
@@ -23,7 +23,7 @@ import { createDataProjectTeardownForHost } from './dataProjectTeardown';
 import { DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1 } from '@happier-dev/deployment-protocol';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 type Reference = Pick<DeploymentTeardownInputV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>;
 export type DataTeardownHost = Pick<OwnServerDeploymentTargetHostInput, 'serverId' | 'machineId'> & Readonly<{
     credentials: StoredCredentials; serverHttpBaseUrl: string;

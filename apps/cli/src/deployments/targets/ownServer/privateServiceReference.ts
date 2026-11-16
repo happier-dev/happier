@@ -1,5 +1,5 @@
 import { isIPv6 } from 'node:net';
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ServiceExportMachineForward } from '@/daemon/peer/iroh/serviceExportMachineForward';
 import { MachineServicesListResultV1Schema, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -18,7 +18,7 @@ import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './paths'
 import { privateServiceForwardAcquisitionError } from '../../deploymentFailure';
 
 type ResolveInput = Parameters<NonNullable<OwnServerDeploymentRuntimeAcquisition['secrets']['resolveNonSecret']>>[0];
-const unavailable = (): never => { throw Object.assign(new Error('reference_unavailable'), { code: 'reference_unavailable', failureCause: projectActionFailureCauseV1({ code: 'service_export_unavailable' }, 'deployment.reference.resolve') }); };
+const unavailable = (): never => { throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: 'reference_unavailable', error: 'reference_unavailable' }), { failureCause: projectActionFailureCauseV1({ code: 'service_export_unavailable' }, 'deployment.reference.resolve') }); };
 
 /** Resolves only declared service exports, from the retained service owner and
  * P21's current network observations. A scalar endpoint is never a private fact. */
@@ -89,7 +89,7 @@ export async function resolvePrivateServiceExportAdmissionForHost(input: Private
         admittedReview: { action, role, surface: input.context.surface ?? 'cli' }, environmentId: input.source.environmentId,
         execute: async (_childInput, context) => readPrivateServiceExportAdmissionForHost({ ...input, context }),
     });
-    if ('ok' in result) throw Object.assign(new Error(result.errorCode, { cause: result }), { code: result.errorCode });
+    if ('ok' in result) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: result.errorCode, error: result.errorCode }), { cause: result });
     return result;
 }
 

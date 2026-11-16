@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { refuseDeploymentAuthorization } from '@/deployments/deploymentAuthorizationFailure';
 import { join } from 'node:path';
 import { nativeCaddyProfile, createNativeCaddySetupInput, createNativeCaddyBindings,
@@ -90,7 +91,7 @@ export type OwnServerDeploymentRuntimeHostInput = Readonly<{
 }>;
 
 const refuse = (code: string, details?: unknown): never => {
-    throw Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
+    throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { ...(details === undefined ? {} : { details }) });
 };
 
 /** Installed host composition; the registry lends its one existing service owner. */

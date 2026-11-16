@@ -1,0 +1,51 @@
+import { expect, it } from 'vitest';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { assertReviewedDeploymentSource } from './reviewedSource';
+import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './targets/ownServer/paths';
+import { privateServiceForwardAcquisitionError, rethrowDeploymentSourceAcquisitionFailure } from './deploymentFailure';
+import { CaddyDomainMaterializationError } from './targets/ownServer/caddyRouteMaterialization';
+import { observeOwnServerTeardownVolumes } from './targets/ownServer/teardownVolumes';
+
+it('retains source review refusals in the Action result', () => {
+    const content = createDeploymentReceiptDetailV1().content;
+    let caught: unknown;
+    try { assertReviewedDeploymentSource({ intent: { serverId: 'home', environmentId: 'env', targetLinkId: 'link', services: ['db'] }, content }); }
+    catch (error) { caught = error; }
+    expect(normalizeActionExecutorThrownError(caught)).toMatchObject({ errorCode: 'target_mismatch', error: 'target_mismatch' });
+});
+
+it('retains native deployment identity validation in the Action result', () => {
+    let caught: unknown;
+    try { resolveOwnServerDeploymentEnvironmentInstanceIdForHost('home', '../other'); }
+    catch (error) { caught = error; }
+    expect(normalizeActionExecutorThrownError(caught)).toMatchObject({ errorCode: 'invalid_request', error: 'Invalid deployment identity' });
+});
+
+it('retains service forward acquisition failures and their cause', () => {
+    const native = Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' });
+    const error = privateServiceForwardAcquisitionError(native);
+    expect(error.cause).toBeDefined();
+    expect(normalizeActionExecutorThrownError(error)).toMatchObject({ errorCode: 'private_service_destination_unreachable' });
+});
+
+it('retains source acquisition translation and its cause', () => {
+    let caught: unknown;
+    try { rethrowDeploymentSourceAcquisitionFailure(Object.assign(new Error('selection unavailable'), { code: 'git_selection_unavailable' })); }
+    catch (error) { caught = error; }
+    expect(caught).toHaveProperty('cause');
+    expect(normalizeActionExecutorThrownError(caught)).toMatchObject({ errorCode: 'deployment_source_unavailable', error: 'Deployment source is unavailable' });
+});
+
+it('retains Domain materialization validation in the Action result', () => {
+    expect(normalizeActionExecutorThrownError(new CaddyDomainMaterializationError())).toMatchObject({
+        errorCode: 'invalid_parameters', error: 'Unsupported canonical redirect destination' });
+});
+
+it('retains teardown inventory refusal in the Action result', async () => {
+    // Native Docker execution is the process boundary.
+    let caught: unknown;
+    try { await observeOwnServerTeardownVolumes({ resources: [{ id: 'volume', kind: 'data', ownership: 'owned', disposition: 'remove' }],
+        run: async () => ({ exitCode: 1, stdout: '', stderr: '' }) }); } catch (error) { caught = error; }
+    expect(normalizeActionExecutorThrownError(caught)).toMatchObject({ errorCode: 'volume_observation_unavailable' });
+});

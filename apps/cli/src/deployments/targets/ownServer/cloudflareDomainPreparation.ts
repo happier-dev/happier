@@ -9,10 +9,10 @@ import type { StoredCredentials } from '@/persistence';
 import { readEnvironmentDomainSecretLaunchAdmissionForHost,
     bindMachineConnectorSecretsForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import type { createOwnServerDomainContentWriter } from './ownServerDomainActions';
-import { projectActionFailureCauseV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const refuse = (code: string, details?: Readonly<{ requiredFact: string }>): never => {
-    throw Object.assign(new Error(code), { code, ...(details ? { details } : {}) });
+    throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { ...(details ? { details } : {}) });
 };
 /** Keep the remote result's diagnosis when Domain execution has not reached Caddy. */
 function refuseCloudflare(code: string, phase: 'preparation' | 'retirement', options: Readonly<{
@@ -23,9 +23,9 @@ function refuseCloudflare(code: string, phase: 'preparation' | 'retirement', opt
     const failure: ActionExecuteFailure = { ok: false, errorCode: code, error: code,
         details: { requiredFact: 'cloudflarePreparation', ...(providerOutput ? { providerOutput } : {}),
             ...(tunnelId ? { tunnelId } : {}) },
-        failureCause: child?.failureCause ?? failureCause ?? projectActionFailureCauseV1(Object.assign(new Error(providerCode), { code: providerCode }), `deployment.domain.cloudflare_${phase}`),
+        failureCause: child?.failureCause ?? failureCause ?? projectActionFailureCauseV1(createActionExecuteFailureError({ ok: false, errorCode: providerCode, error: providerCode }), `deployment.domain.cloudflare_${phase}`),
         ...(typeof child?.effectAttempted === 'boolean' ? { effectAttempted: child.effectAttempted } : {}) };
-    throw Object.assign(new Error(code, { cause: failure }), { code });
+    throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { cause: failure });
 }
 type Connector = NonNullable<NonNullable<DeploymentDomainContentV1['cloudflarePreparation']>['connectors']>[number];
 type Grant = Pick<Connector, 'machineId' | 'installationId' | 'grantRef'>;

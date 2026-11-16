@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { lstat, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1,
@@ -19,7 +20,7 @@ import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentRetentionRe
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost, resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { configuration } from '@/configuration';
 
-function refuse(code: string): never { throw Object.assign(new Error(code), { code }); }
+function refuse(code: string): never { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); }
 const absent = (error: unknown) => error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
 const within = (root: string, path: string) => {
     const suffix = relative(resolve(root), resolve(path));

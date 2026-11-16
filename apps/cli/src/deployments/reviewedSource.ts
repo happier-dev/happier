@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 import type { DeploymentDeployIntentInputV1 } from '@happier-dev/protocol';
 import type { DeploymentContentV1 } from '@happier-dev/deployment-protocol';
@@ -12,6 +13,6 @@ export function assertReviewedDeploymentSource(input: Readonly<{
         || intent.sha && (content.sourceIntent.kind !== 'repository' || content.sourceIntent.sha !== intent.sha)
         || intent.onFailure !== undefined && intent.onFailure !== content.onFailure
         || !isDeepStrictEqual(intent.services, content.services)) {
-        throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
     }
 }

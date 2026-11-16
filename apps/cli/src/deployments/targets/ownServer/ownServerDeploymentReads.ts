@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isDeepStrictEqual } from 'node:util';
 import { resolve } from 'node:path';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
@@ -20,7 +21,7 @@ const isRuntimeLogsInput = (input: ReadInput): input is Extract<DeploymentLogsRe
     'kind' in input && input.kind === 'runtime';
 type Field = 'environmentRevision' | 'activeDeployment' | 'targetInstallation' | 'serviceIdentity'
     | 'composeDigest' | 'configDigest' | 'materializationReceipt' | 'ownerLabels';
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
 /** Receipt-authorized reads; runtime logs can use read-only native discovery after memory loss. */
 export function createOwnServerDeploymentReads(host: Pick<OwnServerDeploymentTargetHostInput,

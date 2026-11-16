@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deploymentAuthorizationFailure, refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 import { projectDeploymentException } from './deploymentFailure';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -89,7 +90,7 @@ export function registerDaemonDeploymentChildRpcHandler(registrar: RpcHandlerReg
         if (installed.machineId !== host.machineId) return deploymentAuthorizationFailure('installed_target_machine_mismatch');
         if (!await installed.isCurrent()) return deploymentAuthorizationFailure('installed_target_not_current');
         const assertInstalledCurrent = async () => {
-            if (ingress.signal.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
+            if (ingress.signal.aborted) throw createActionExecuteFailureError({ ok: false, errorCode: 'cancelled', error: 'cancelled' });
             if (!await installed.isCurrent()) {
                 refuseDeploymentAuthorization('installed_target_not_current');
             }

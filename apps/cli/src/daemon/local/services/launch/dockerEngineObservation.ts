@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { request as httpRequest } from 'node:http';
 import { createInterface } from 'node:readline';
 import { Duplex } from 'node:stream';
@@ -38,19 +39,17 @@ export async function readDockerEngineDiskUsage(launch: HostAuthorizedPluginExec
     try {
         const value = await new Promise<unknown>((resolve, reject) => {
             request.once('error', reject);
-            void process.handle.waitForExit().then(() => reject(Object.assign(new Error('Docker inventory disconnected'),
-                { code: 'docker_engine_disconnected' })), reject);
+            void process.handle.waitForExit().then(() => reject(createActionExecuteFailureError({ ok: false, errorCode: 'docker_engine_disconnected', error: 'Docker inventory disconnected' })), reject);
             request.once('response', response => {
                 if (response.statusCode !== 200) {
                     response.resume();
-                    reject(Object.assign(new Error('Docker inventory unavailable'),
-                        { code: 'docker_engine_http_status', statusCode: response.statusCode }));
+                    reject(Object.assign(createActionExecuteFailureError({ ok: false, errorCode: 'docker_engine_http_status', error: 'Docker inventory unavailable' }), { statusCode: response.statusCode }));
                     return;
                 }
                 const chunks: Buffer[] = [];
                 response.on('data', (chunk: Buffer) => chunks.push(chunk));
                 response.once('error', reject);
-                response.once('aborted', () => reject(Object.assign(new Error('Docker inventory incomplete'), { code: 'docker_engine_disconnected' })));
+                response.once('aborted', () => reject(createActionExecuteFailureError({ ok: false, errorCode: 'docker_engine_disconnected', error: 'Docker inventory incomplete' })));
                 response.once('end', () => {
                     try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
                     catch (error) { reject(error); }

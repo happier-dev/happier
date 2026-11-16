@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ActionExecutorContext, WorkspaceManifestEntry } from '@happier-dev/protocol';
@@ -17,7 +18,7 @@ export async function recordDeploymentSourceProgress(output: Pick<OwnServerDeplo
     context.operationProgress?.update({ phase: 'sync', label });
 }
 
-const refuse = (): never => { throw Object.assign(new Error('Deployment stage log custody changed'), { code: 'deployment_log_unavailable' }); };
+const refuse = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_log_unavailable', error: 'Deployment stage log custody changed' }); };
 
 /** Host-only admission for the materializer's one retained file. It grants no
  * authority to replace an existing source tree or write into a reoccupied root. */

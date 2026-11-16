@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTargetRoleInputSchemasV1, DeploymentTargetVariablesReadResultV1Schema,
     DeploymentTargetVariablesSyncResultV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { DeploymentObservationGetResultV1Schema, type DeploymentBindingsSetInputV1,
@@ -42,7 +43,7 @@ export function createPlatformVariablesForHost(host: Host) {
                 await scope.admit(input, 'preparation');
                 const invoked = await request.context.hostReviewedChild.invoke({ action: scope.action, role: 'variables.sync',
                     input: normalizeStrictJsonValue(input) });
-                if (!invoked.ok) throw Object.assign(new Error(invoked.errorCode), { code: invoked.errorCode });
+                if (!invoked.ok) throw createActionExecuteFailureError({ ok: false, errorCode: invoked.errorCode, error: invoked.errorCode });
                 const result = DeploymentTargetVariablesSyncResultV1Schema.parse(invoked.result);
                 return { linkContent: { ...request.linkContent, ownedVariables: result.owned },
                     providerVariables: { v: 1, variables: result.variables, failures: result.failures, persisted: false } };

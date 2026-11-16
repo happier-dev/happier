@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deploymentOutputValidationFailure } from './outputValidation';
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentDeployActionInputV1Schema, DeploymentDeployInputV1Schema, DeploymentEnvironmentGetResultV1Schema,
@@ -38,7 +39,7 @@ export async function readPendingDeploymentRecoveryAdmission(request: PendingRec
     request.context.signal?.throwIfAborted();
     if (!await requester.isCurrent()) return refuse('action_forbidden');
     const metadata = DeploymentEnvironmentGetResultV1Schema.safeParse(raw);
-    if (!metadata.success) throw Object.assign(new Error('invalid_action_output', { cause: deploymentOutputValidationFailure('deployments.pending.recovery', undefined, metadata.error) }), { code: 'invalid_action_output' });
+    if (!metadata.success) throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' }), { cause: deploymentOutputValidationFailure('deployments.pending.recovery', undefined, metadata.error) });
     if (!metadata.data.ok) return refuse(metadata.data.error);
     const { environment, pendingDeploy, pendingAdmission } = metadata.data;
     if (environment.id !== input.data.environmentId) return refuse('deployment_conflict');

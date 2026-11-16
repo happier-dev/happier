@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentDetailV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentHealthAggregateLeaseV1 } from '@happier-dev/deployments';
 import type { StoredCredentials } from '@/persistence';
@@ -35,9 +36,7 @@ export type ConfiguredHealthCheckNoticeHost = Readonly<{
 export function createConfiguredHealthCheckNotices(host: ConfiguredHealthCheckNoticeHost) {
     const store = createCredentialedAccountArtifactStore(host.credentials);
     const deliver = createCommittedServiceHealthDelivery(host);
-    const unavailable = (): never => { throw Object.assign(new Error('health_check_subject_unavailable'), {
-        code: 'health_check_subject_unavailable',
-    }); };
+    const unavailable = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'health_check_subject_unavailable', error: 'health_check_subject_unavailable' }); };
     return async (input: CommittedAutomationEventObservationV1) => {
         const source = HealthCheckSourceConfigV1Schema.safeParse(input.definition.sourceConfig);
         if (!source.success) return { kind: 'notApplicable' as const };
@@ -160,7 +159,7 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
     const services = input.handles.map(handle => {
         const subject = MachineDeploymentServiceIdentityV1Schema.parse(handle.identity);
         if (subject.machineId !== input.machineId || subject.environmentId !== input.environment.environment.id
-            || handle.serverId !== input.homeServerIdentityId) throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+            || handle.serverId !== input.homeServerIdentityId) throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
         return { handle, subject };
     });
     const controller = new AbortController();

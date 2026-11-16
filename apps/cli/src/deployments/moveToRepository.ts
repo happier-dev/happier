@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -175,7 +176,7 @@ export function createDeploymentMoveToRepositoryForHost(host: Host): NonNullable
     const readDocument = async (commit: string, path: string) => {
       const read = ScmFileAtRevisionResponseSchema.parse(await scm.executeScm('scm.file.read', {
         path, selector: { commit } }));
-      if (!read.success) throw Object.assign(new Error(read.errorCode), { code: read.errorCode });
+      if (!read.success) throw createActionExecuteFailureError({ ok: false, errorCode: read.errorCode, error: read.errorCode });
       return Buffer.from(read.contentBase64, 'base64').toString('utf8');
     };
     // Public continuation bytes are proven against the original exported commit.

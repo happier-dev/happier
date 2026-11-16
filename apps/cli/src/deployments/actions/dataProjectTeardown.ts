@@ -8,7 +8,7 @@ import { DeploymentTargetDataInputV1Schema, DeploymentTargetRoleResultV1Schema }
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
@@ -23,7 +23,7 @@ import type { DataTeardownHost } from './dataTeardown';
 type Request = Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentTeardown']>>[0];
 type Link = Pick<DeploymentTargetLinkHeaderV1, 'source' | 'targetKind' | 'role'>;
 const failure = (code: string) => projectDeploymentFailure(code);
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
 function projectInput(input: Pick<import('@happier-dev/protocol').DeploymentTeardownInputV1,
     'serverId' | 'environmentId' | 'expectedRevision' | 'targetLinkId' | 'expectedTargetLinkRevision'>,

@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { OwnServerDeploymentSourceV1, DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentChildExecutionProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -20,7 +21,7 @@ export async function captureOwnServerDeploymentSource(input: Readonly<{
     await input.source.assertCurrent();
     const expected = await realpath(resolveDeploymentSourcePathForHost(input.admission));
     if (expected !== await realpath(input.source.rootPath)) {
-        throw Object.assign(new Error('Deployment source custody changed'), { code: 'deployment_source_unavailable' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Deployment source custody changed' });
     }
     return { machineId: input.source.machineId, installationId: input.source.installationId,
         deploymentId: input.source.deploymentId, role: input.admission.materializationRole === 'build' ? 'build' : 'runtime',
@@ -54,7 +55,7 @@ export function createOwnServerSourceCustodyReader(input: Readonly<{
         const suffix = relative(root, path);
         return suffix !== '' && !isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`);
     };
-    const refuse = (): never => { throw Object.assign(new Error('Native incumbent source custody changed'), { code: 'deployment_source_unavailable' }); };
+    const refuse = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Native incumbent source custody changed' }); };
     const index = (receipt: DeploymentReceiptDetailV1) => {
         for (const source of receipt.content.ownServer?.sources ?? []) {
             if (source.role !== 'runtime' || source.machineId !== input.machineId || source.installationId !== input.installationId) continue;
@@ -76,7 +77,7 @@ export function createOwnServerSourceCustodyReader(input: Readonly<{
                 const source = sources.get(rootPath);
                 if (!source) continue;
                 if (await realpath(rootPath) !== rootPath || await computeWorkspaceSyncRootFingerprint(rootPath) !== source.rootFingerprint) {
-                    throw Object.assign(new Error('Native incumbent source custody changed'), { code: 'deployment_source_unavailable' });
+                    throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Native incumbent source custody changed' });
                 }
                 return { rootPath, manifest: source.manifestEntries };
             }

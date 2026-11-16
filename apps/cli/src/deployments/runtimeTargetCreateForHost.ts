@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentTargetV1 } from '@happier-dev/deployment-protocol';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { DeploymentTargetLinkProviderIntentInputV1Schema,
@@ -15,9 +16,9 @@ export class RuntimeTargetCreationCheckpointError extends Error {
 
 /** The target declaration owns create capability and its qualified Action identity. */
 export function prepareRuntimeTargetCreateForHost(input: DeploymentTargetLinkCreateIntentInputV1, target: DeploymentTargetV1 | null) {
-    if (target?.role !== 'runtime' || target.actions.create?.kind !== 'plugin') throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+    if (target?.role !== 'runtime' || target.actions.create?.kind !== 'plugin') throw createActionExecuteFailureError({ ok: false, errorCode: 'source_unavailable', error: 'source_unavailable' });
     const action = parseQualifiedPluginActionId(target.actions.create.actionId);
-    if (!action) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+    if (!action) throw createActionExecuteFailureError({ ok: false, errorCode: 'source_unavailable', error: 'source_unavailable' });
     const operand = DeploymentTargetCreateInputV1Schema.parse({ ...input.providerCreate, v: 1,
         serverId: input.serverId, environmentId: input.environmentId, expectedRevision: input.expectedRevision, requestKey: input.requestKey });
     return { children: [{ action, role: 'create', input: normalizeStrictJsonValue(operand) }] };

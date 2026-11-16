@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { OwnServerEnvironmentConfigurationV1 } from '@happier-dev/deployment-protocol';
 import { executeAdmittedServiceCommand, type NativeComposeEnvironmentProject, type NativeComposeProjectRender } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import type { MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
@@ -7,7 +8,7 @@ import { runOwnServerNativePreMigrationBackup, type OwnServerNativeRestoreInput 
 type Step = OwnServerDeploymentReceipt['content']['steps'][number];
 export const MIGRATION_STEP = 'own-server-migration';
 export const MIGRATION_PENDING_CHECK_STEP = 'own-server-migration-pending-check';
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
 /** The admitted receipt owns whether this operation may dispatch a command.
  * Unsettled native work is reconciled at the next admission, never replayed.

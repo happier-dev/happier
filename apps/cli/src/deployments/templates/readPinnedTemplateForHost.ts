@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentTemplateRefV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, registryContentRefEqualV1, type RegistryAppMappingV1 } from '@happier-dev/protocol/registries';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
@@ -9,10 +10,10 @@ export async function readPinnedDeploymentTemplateForHost(templateRef: Deploymen
     const selected = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.read'].parse(await registry.execute('registries.items.read', {
         kind: 'app', sourceId: templateRef.sourceId, itemId: templateRef.itemId, version: templateRef.version, ...(appMappingCorrection ? { appMappingCorrection } : {}) })).item;
     if (selected.payload.kind !== 'app' || selected.payload.state !== 'ready') {
-        throw Object.assign(new Error('template_needs_review'), { code: 'template_needs_review' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'template_needs_review', error: 'template_needs_review' });
     }
     if (!registryContentRefEqualV1(selected.payload.ref, templateRef.ref)) {
-        throw Object.assign(new Error('template_changed'), { code: 'template_changed' });
+        throw createActionExecuteFailureError({ ok: false, errorCode: 'template_changed', error: 'template_changed' });
     }
     return selected.payload.app;
 }

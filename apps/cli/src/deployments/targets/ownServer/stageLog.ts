@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createHash } from 'node:crypto';
 import { writeSync } from 'node:fs';
 import { mkdir, realpath } from 'node:fs/promises';
@@ -37,7 +38,7 @@ export function captureOwnServerDeploymentStageLog(content: DeploymentOwnServerC
             || log.installationId !== snapshot.installationId), snapshot,
     ] } };
 }
-const unavailable = (): never => { throw Object.assign(new Error('Deployment stage log custody is unavailable'), { code: 'deployment_log_unavailable' }); };
+const unavailable = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_log_unavailable', error: 'Deployment stage log custody is unavailable' }); };
 
 export function resolveOwnServerStageLogPathForHost(input: Placement): string {
     return join(resolveDeploymentSourcePathForHost(input), '.happier', 'deploy.log');

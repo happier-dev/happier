@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentEnvironmentDetailV1, DeploymentTeardownResourceV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentPreviewCleanupV1Schema, type DeploymentPreviewCleanupV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { NativeComposeActivatedProject, NativeComposeProjectRender } from '@/daemon/local/services/launch/nativeComposeLifecycle';
@@ -38,7 +39,7 @@ export async function readOwnServerPreviewCleanup(input: Readonly<{
             && dataTargets.get(service.name)?.has(mount.target)
             ? [{ service: service.name, target: mount.target }] : []));
     const expected = new Map(input.services.flatMap(service => input.activation.nativeIdsForService(service).map(id => [id, service] as const)));
-    const unavailable = (): never => { throw Object.assign(new Error('volume_observation_unavailable'), { code: 'volume_observation_unavailable' }); };
+    const unavailable = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'volume_observation_unavailable', error: 'volume_observation_unavailable' }); };
     if (!expected.size) return unavailable();
     const inspected = await input.run(['inspect', '--type', 'container', ...expected.keys()]);
     if (inspected.exitCode !== 0) return unavailable();
@@ -57,7 +58,7 @@ export async function observeOwnServerTeardownVolumes(input: Readonly<{
     const removed = input.resources.filter(resource => resource.kind === 'data' && resource.disposition === 'remove');
     if (!removed.length) return 'proved';
     const listed = await input.run(['volume', 'ls', '--format', '{{.Name}}']);
-    if (listed.exitCode !== 0) throw Object.assign(new Error('volume_observation_unavailable'), { code: 'volume_observation_unavailable' });
+    if (listed.exitCode !== 0) throw createActionExecuteFailureError({ ok: false, errorCode: 'volume_observation_unavailable', error: 'volume_observation_unavailable' });
     const present = new Set(listed.stdout.trim().split('\n'));
     return removed.some(resource => present.has(resource.id)) ? 'needed' : 'proved';
 }

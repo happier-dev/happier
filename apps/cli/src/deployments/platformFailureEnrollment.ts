@@ -1,7 +1,7 @@
 import type { z } from 'zod/mini';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import type { ActionExecutorContext, DeploymentTargetLinkResultV1Schema } from '@happier-dev/protocol';
-import { projectActionFailureCauseV1, type ActionExecuteResult, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteResult, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -50,7 +50,7 @@ function childResult(result: ActionExecuteResult, step: 'setup' | 'enroll'): Act
     const reason = result.errorCode === 'credential_scope_denied' || result.errorCode === 'source_unavailable'
         || result.errorCode === 'machine_unavailable' ? result.errorCode : 'dependency_failed';
     return { ...result, failureCause: projectActionFailureCauseV1(
-        Object.assign(new Error('platform_failure_enrollment_refused'), { code: result.errorCode }), `${phase(step)}.${reason}`) };
+        createActionExecuteFailureError({ ok: false, errorCode: result.errorCode, error: 'platform_failure_enrollment_refused' }), `${phase(step)}.${reason}`) };
 }
 type Event = Pick<ResolvedAutomationEligibleEvent['event'], 'identity' | 'automation'>;
 type Invoke = NonNullable<ActionExecutorContext['hostReviewedChild']>['invoke'];

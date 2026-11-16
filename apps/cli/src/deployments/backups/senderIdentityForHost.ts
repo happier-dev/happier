@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentBackupSenderIdentityV1 } from '@happier-dev/protocol/deployments/deploymentBackupAnotherMachineV1';
 import { randomBytes } from 'node:crypto';
 import { createManagedBootstrapSshKeyPair } from '@happier-dev/cli-common/machines/managed';
@@ -45,10 +46,9 @@ export async function createBackupSenderIdentityForHost(input: BackupSenderIdent
         if (error.code === 'outcome_unknown') {
             // Existing Action failure recovery carries P42's nonsecret candidate
             // identity. An unknown creation must never be replayed here.
-            throw Object.assign(new Error('outcome_unknown', { cause: { ok: false, errorCode: 'outcome_unknown',
+            throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }), { cause: { ok: false, errorCode: 'outcome_unknown',
                 error: 'outcome_unknown', effectAttempted: true, details: { ...(error.details && typeof error.details === 'object'
-                    && !Array.isArray(error.details) ? error.details : {}), ...(senderIdentity ? { senderIdentity } : {}) } } }),
-            { code: 'outcome_unknown' });
+                    && !Array.isArray(error.details) ? error.details : {}), ...(senderIdentity ? { senderIdentity } : {}) } } });
         }
         return { status: 'partial', errorCode: error.code, ...(senderIdentity ? { senderIdentity } : {}) };
     }

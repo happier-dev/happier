@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
   PROJECT_READINESS_FACT_OWNERS_V1,
   type ActionExecutorContext, type ActionExecuteFailure, type DeploymentBackupInventoryInputV1,
@@ -40,10 +41,10 @@ export function projectReadinessEnvironmentFactForHost(scope: ProjectReadinessEn
   controllerMachineId: string, detail: DeploymentEnvironmentDetailV1): ProjectReadinessEnvironmentV1 {
   if (detail.environment.serverId !== scope.serverId || detail.environment.projectSourceId !== scope.projectId
     || detail.environment.controllerMachineId !== controllerMachineId) {
-    throw Object.assign(new Error('target_mismatch'), { code: 'target_mismatch' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
   }
   if (detail.environment.revision !== scope.environment.expectedRevision) {
-    throw Object.assign(new Error('stale_input'), { code: 'stale_input' });
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'stale_input', error: 'stale_input' });
   }
   const backupTarget = detail.content.backup && !('notNeeded' in detail.content.backup)
     ? deploymentBackupTargetOperands({ environment: detail.environment,

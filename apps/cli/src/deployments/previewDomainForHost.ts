@@ -5,11 +5,11 @@ import { readDeploymentDomainServingUrlV1, type DeploymentDomainContentV1 } from
 import { DeploymentDomainMutationResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentPreviewTemplateV1, DeploymentPreviewDomainFactV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import type { EnvironmentVariableBindingV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const refuse = (failure: string | ActionExecuteFailure): never => {
     const code = typeof failure === 'string' ? failure : failure.errorCode;
-    throw Object.assign(new Error(code, typeof failure === 'string' ? undefined : { cause: failure }), { code });
+    throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { ...(typeof failure === 'string' ? undefined : { cause: failure }) });
 };
 type Selection = NonNullable<DeploymentPreviewTemplateV1['domain']>;
 

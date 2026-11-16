@@ -6,7 +6,7 @@ import { MACHINE_SERVICE_ADOPT_CREATE_ROLE_V1 as CREATE_ROLE,
     MACHINE_SERVICE_ADOPT_BINDINGS_ROLE_V1 as BINDINGS_ROLE } from '@happier-dev/protocol/local/services/actionIdsV1';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure,
     DeploymentEnvironmentCreateInputV1 } from '@happier-dev/protocol';
-import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailure } from './deploymentFailure';
 import type { HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -48,21 +48,21 @@ export async function prepareServiceAdoptionForHost(request: Parameters<NonNulla
         const capture = async (context: ActionExecutorContext) => {
             const registry = host.acquirePluginRuntimeRegistryLease ? await host.acquirePluginRuntimeRegistryLease()
                 : tryAcquireAuthoritativePluginRuntimeRegistryLease();
-            if (!registry) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+            if (!registry) throw createActionExecuteFailureError({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
             try {
                 const handle = registry.registry.projectManagedServices.listMachineServices().find(handle =>
                     handle.serviceId === input.serviceId && handle.machineId === input.machineId);
                 if (!handle || !await isServerProfileHomeIdentity(input.serverId, handle.serverId)
                     || handle.instanceId !== input.expectedGeneration || !handle.isCurrent() || handle.retirementSignal.aborted) {
-                    throw Object.assign(new Error('approval_stale'), { code: 'approval_stale' });
+                    throw createActionExecuteFailureError({ ok: false, errorCode: 'approval_stale', error: 'approval_stale' });
                 }
                 const selected = await registry.registry.resolveProjectNativeAdapter(handle.watch.adapter, 'nativeServiceLifecycle');
-                if (selected.kind !== 'ready') throw Object.assign(new Error('service_admission_unavailable'), { code: 'service_admission_unavailable' });
+                if (selected.kind !== 'ready') throw createActionExecuteFailureError({ ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' });
                 const native = selected.lease.captureNativeServiceLifecycle(handle.watch, { machine: { serverId: host.serverId,
                     machineId: host.machineId }, ...(context.signal ? { signal: context.signal } : {}) });
-                if (native.kind !== 'ready') throw Object.assign(new Error('service_admission_unavailable'), { code: 'service_admission_unavailable' });
+                if (native.kind !== 'ready') throw createActionExecuteFailureError({ ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' });
                 try {
-                    if (!native.captureComposeDefinition) throw Object.assign(new Error('unsupported_action'), { code: 'unsupported_action' });
+                    if (!native.captureComposeDefinition) throw createActionExecuteFailureError({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
                     const captured = await native.captureComposeDefinition(input.profiles, { signal: context.signal });
                     const installationId = await host.readInstallation(context);
                     const origin = { ...captured.origin, capture: { installationId } };
