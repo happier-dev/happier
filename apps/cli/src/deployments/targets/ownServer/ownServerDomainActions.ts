@@ -269,7 +269,8 @@ export async function prepareOwnServerDomainReviewedChildren(
         scopeInput: { credentialRef: purpose.credentialRef.account, accountId, zoneId,
             owned: prepared?.owned ?? selected.controller.owned,
             dnsOwnership: prepared?.dnsOwnership ?? selected.controller.dnsOwnership,
-            ...(role === 'disable' && prepared ? { tunnelId: prepared.tunnelId }
+            ...(role === 'disable' && prepared ? { tunnelId: prepared.tunnelId,
+                ...(prepared.tunnelOwnership ? { tunnelOwnership: prepared.tunnelOwnership } : {}) }
                 : { tunnel: prepared ? { kind: 'adopt', tunnelId: prepared.tunnelId, name: tunnel.name } : tunnel }) } }] };
 }
 
@@ -419,7 +420,6 @@ export function createOwnServerDomainActions(host: Readonly<{
                         if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
                         privateContent = opened.content;
                     }
-                    if (isDeploymentDomainRemoveActionIdV1(actionId)) await disableCloudflareDomainForHost(privateContent, context);
                 }
                 // Retire a changed route before replacing the same exact native id.
                 // Both effects spend the captured admission, not another Action.
@@ -443,6 +443,12 @@ export function createOwnServerDomainActions(host: Readonly<{
                     if (!observation.success) return failure('invalid_action_transport_output');
                     observations.push(observation.data);
                 }
+                // Native removal retires the final connector before provider
+                // retirement. Home already captured whether it is shared.
+                const tunnel = isDeploymentDomainRemoveActionIdV1(actionId) && privateContent
+                    && observations.every(observation => observation.state === 'removed')
+                    ? await disableCloudflareDomainForHost(privateContent, context,
+                        captures.some(capture => capture.retireSharedTunnel === true)) : undefined;
                 const body = DeploymentDomainTransitionInputV1Schema.parse({ serverId: input.serverId,
                     environmentId: input.environmentId, domainId: input.domainId, expectedDomainRevision: domain.revision, observations });
                 const path = `/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/domains/${encodeURIComponent(input.domainId)}/transitions`;
@@ -452,7 +458,8 @@ export function createOwnServerDomainActions(host: Readonly<{
                 const response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`,
                     headers, data: body, ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
                 const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(response.data);
-                return settled.success ? settled.data : failure('outcome_unknown', nativeScope);
+                return settled.success ? { ...settled.data, ...(settled.data.ok && tunnel ? { tunnel } : {}) }
+                    : failure('outcome_unknown', nativeScope);
             } catch (error) {
                 const diagnostic = issued ? projectDeploymentFailure('outcome_unknown', error, 'deployment.domain.native_execution')
                     : projectDeploymentException(error, { signal: context.signal, phase: 'deployment.domain.native_execution' });

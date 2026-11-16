@@ -72,13 +72,13 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(
 
 /** Home, Cloudflare and native Socket.IO are the system boundaries. The
  * reviewed issuer, Account module, credential purpose, sealing and CAS stay real. */
-it.each(['connector grant authorization refused', 'create connector grant authorization refused', 'prepared', 'connector admitted Domain child proof', 'adopt omitted configuration', 'adopt omitted configuration result', 'create configuration without version', 'create malformed configuration', 'authored ui', 'authored agent', 'Home Domain admission refused', 'authored domain ingress', 'authored domain ingress null configuration', 'authored domain DNS refused', 'rejected authored', 'vendor unknown', 'content conflict', 'two members', 'partial grant', 'remove shared', 'remove final',
+it.each(['connector grant authorization refused', 'create connector grant authorization refused', 'prepared', 'connector admitted Domain child proof', 'adopt omitted configuration', 'adopt omitted configuration result', 'create configuration without version', 'create malformed configuration', 'authored ui', 'authored agent', 'Home Domain admission refused', 'authored domain ingress', 'authored domain ingress null configuration', 'authored domain DNS refused', 'rejected authored', 'vendor unknown', 'content conflict', 'two members', 'partial grant', 'remove shared', 'remove final', 'remove created final', 'remove created shared', 'remove adopted final', 'remove legacy final',
     'recovery Add a3318568 missing selection', 'recovery Add no recorded ingress', 'recovery Add no recorded ingress multiple members', 'remove unprepared absent tunnel', 'remove unprepared partial config', 'remove unprepared foreign route', 'remove unprepared app gone',
     'remove unprepared configuration without version', 'remove unprepared null configuration', 'remove unprepared malformed configuration',
     'remove unprepared DNS optional pagination', 'remove unprepared tunnel optional pagination',
     'route failure after tunnel creation', 'native failure after tunnel preparation', 'malformed native result after tunnel preparation',
     'Home transition refused after tunnel preparation'] as const)(
-    'runs the admitted Domain Action and its selected Account child before native work: %s', async scenario => withSocketTempDir(async directory => {
+    'runs the admitted Domain Action and its selected Account child across native lifecycle: %s', async scenario => withSocketTempDir(async directory => {
     const app = fastify().withTypeProvider<ZodTypeProvider>();
     enableExternalActionHttpBody(app);
     const privateWrites: string[] = [];
@@ -92,6 +92,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
     const dnsOptionalPagination = scenario === 'remove unprepared DNS optional pagination';
     const tunnelOptionalPagination = scenario === 'remove unprepared tunnel optional pagination';
     const nullConfiguration = scenario === 'authored domain ingress null configuration' || scenario === 'remove unprepared null configuration';
+    const settledRemoval = scenario === 'remove created final' || scenario === 'remove created shared' || scenario === 'remove adopted final' || scenario === 'remove legacy final';
     const realNativeRemoval = scenario === 'remove unprepared configuration without version' || scenario === 'remove unprepared null configuration' || dnsOptionalPagination || tunnelOptionalPagination;
     const realNativeDiscovery = scenario === 'remove unprepared app gone' || realNativeRemoval;
     const createWithoutVersion = scenario === 'create configuration without version';
@@ -106,7 +107,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
     const malformedConfigurationValue = 'private-malformed-configuration-value';
     const grantAuthorizationRefused = scenario === 'connector grant authorization refused' || scenario === 'create connector grant authorization refused';
     const creatingTunnel = createWithoutVersion || malformedPreparation || routeFailure || scenario === 'create connector grant authorization refused' || scenario === 'content conflict';
-    const removing = scenario === 'remove shared' || scenario === 'remove final' || unprepared;
+    const removing = scenario === 'remove shared' || scenario === 'remove final' || settledRemoval || unprepared;
     const actionId = removing ? 'deployments.domains.remove' as const : 'deployments.domains.add' as const;
     const origin = 'https://cloudflare-domain-home.test';
     const controllerSeed = new Uint8Array(32).fill(81), targetSeed = new Uint8Array(32).fill(82);
@@ -186,6 +187,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
     const retainedGrant = machineSecretGrantSubjectKey({ v: 1, kind: 'connectorToken', machineId: 'receiver',
         installationId: installation('receiver'), provider: { kind: 'builtin', id: 'cloudflareNamed' }, connectorId: 'reviewed-tunnel' });
     const retainedContent = removing && !unprepared ? { ...content, cloudflarePreparation: { tunnelId: 'reviewed-tunnel',
+        ...(settledRemoval && scenario !== 'remove legacy final' ? { tunnelOwnership: scenario === 'remove adopted final' ? 'adopted' as const : 'created' as const } : {}),
         owned: [{ hostname: content.hostname, expectedService: 'http://172.18.0.2:9381' }],
         dnsOwnership: [{ hostname: content.hostname, recordId: 'acknowledged-dns-record' }],
         connectors: [{ machineId: 'receiver', installationId: installation('receiver'), ...vendorController.connector,
@@ -208,6 +210,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
             dockerEngineId: 'engine-receiver', content: { contentArtifactId: authoredInput.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 } }] });
     const grants = new Map<string, string>();
     let preparedBody: unknown;
+    let tunnelDeleted = false;
     app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
     app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
     app.get('/v1/account/profile', async () => ({ id: 'owner' }));
@@ -246,7 +249,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
         expect(request.method).toBe(removalRequest.method);
         if (!domain) throw new Error('Expected existing Domain');
         domain = { ...domain, revision: 2, state: 'removing', placements: domain.placements?.map(capture => ({ ...capture, desired: false,
-            retireSharedTunnel: scenario === 'remove final', placement: { ...capture.placement,
+            retireSharedTunnel: scenario === 'remove final' || scenario === 'remove created final' || scenario === 'remove adopted final' || scenario === 'remove legacy final', placement: { ...capture.placement,
                 actionOperationId: 'domain-operation', requestId: envelope.requestId } })) };
         trace.push('removal-admitted');
         return { ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1, domain };
@@ -395,6 +398,12 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 return Response.json({ success: true, result: { id: 'reviewed-tunnel' } });
             }
             expect(method).toBe('GET');
+            if (url.searchParams.has('uuid')) {
+                expect(url.searchParams.get('uuid')).toBe('reviewed-tunnel');
+                expect(url.searchParams.get('is_deleted')).toBe('false');
+                return Response.json({ success: true, result: tunnelDeleted ? [] : [{ id: 'reviewed-tunnel' }],
+                    result_info: { page: 1, total_pages: 1 } });
+            }
             expect(url.searchParams.get('name')).toBe('environment-tunnel');
             trace.push('vendor-tunnel-lookup');
             const exhausted = tunnelOptionalPagination && Number(url.searchParams.get('page')) > 1;
@@ -443,8 +452,15 @@ it.each(['connector grant authorization refused', 'create connector grant author
             return Response.json({ success: true, result: records, result_info: dnsOptionalPagination
                 ? { page, per_page: 100, total_count: dnsRemoved ? 0 : 1 } : { page: 1, total_pages: 1 } });
         }
-        if (path.endsWith('/cfd_tunnel/reviewed-tunnel')) return Response.json({ success: true, result: {
-            id: 'reviewed-tunnel', name: 'environment-tunnel', account_tag: 'vendor-account', config_src: 'cloudflare', deleted_at: null } });
+        if (path.endsWith('/cfd_tunnel/reviewed-tunnel')) {
+            if (method === 'DELETE') {
+                expect(trace).toContain('native-dispatch');
+                tunnelDeleted = true; trace.push('vendor-tunnel-removed');
+                return Response.json({ success: true, result: {} });
+            }
+            return tunnelDeleted ? Response.json({ success: false }, { status: 404 }) : Response.json({ success: true, result: {
+                id: 'reviewed-tunnel', name: 'environment-tunnel', account_tag: 'vendor-account', config_src: 'cloudflare', deleted_at: null } });
+        }
         throw new Error(`Unexpected vendor method/path ${method} ${path}`);
     });
     vi.stubGlobal('fetch', fetchBoundary);
@@ -535,7 +551,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
             nativeJobs.push(DeploymentDomainChildRpcV1Schema.parse(job));
             if (realNativeRemoval) {
                 acknowledge({ ok: true, result: await runNativeJob(job) });
-            } else if (unprepared) {
+            } else if (unprepared || settledRemoval) {
                 const routeIds = nativeCaddyDomainRouteIdsV1(input.domainId, job.capture.listener).removalIds;
                 const removal = { kind: 'removed' as const, placement: job.capture.placement, routeIds,
                     proof: { version: 1 as const, algorithm: 'ed25519' as const, signature: encodeBase64(nacl.sign.detached(
@@ -704,7 +720,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
             expect(domain?.deletedAtMs).toBeUndefined();
             expect(trace).not.toContain('domain-removed');
             expect(trace).not.toContain('domain-active');
-            expect(nativeJobs).toEqual([]);
+            expect(nativeJobs).toHaveLength(malformedRemoval ? 1 : 0);
             expect(vendorRequests.filter(request => request.method !== 'GET')).toEqual(malformedRemoval ? [] : [{
                 method: 'POST', path: '/client/v4/accounts/vendor-account/cfd_tunnel' }]);
             return;
@@ -730,7 +746,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 expect(remoteConfig).toEqual({ ingress: [{ hostname: content.hostname, service: 'http://foreign-service:9381' },
                     unrelatedRoute, { service: 'http_status:404' }] });
                 expect(dnsRemoved).toBe(false);
-                expect(nativeJobs).toEqual([]);
+                expect(nativeJobs).toHaveLength(1);
                 expect(vendorRequests.every(request => request.method === 'GET')).toBe(true);
             } else {
                 expect(result, evidence).toMatchObject({ ok: true, result: { ok: true, domain: { deletedAtMs: 2 } } });
@@ -752,11 +768,21 @@ it.each(['connector grant authorization refused', 'create connector grant author
             expect(trace).not.toContain('mint-token');
             return;
         }
+        if (settledRemoval) {
+            expect(result, JSON.stringify({ result, trace, vendorRequests })).toMatchObject({ ok: true, result: { ok: true, domain: { deletedAtMs: 2 },
+                tunnel: { kind: scenario === 'remove created final' ? 'removed' : 'retained',
+                    ...(scenario === 'remove created final' ? {} : { reason: scenario === 'remove created shared' ? 'shared' : scenario === 'remove legacy final' ? 'ownership_unknown' : 'adopted' }) } } });
+            expect(tunnelDeleted).toBe(scenario === 'remove created final');
+            expect(trace.indexOf('vendor-config')).toBeGreaterThan(trace.indexOf('native-dispatch'));
+            expect(nativeJobs[0]?.cloudflareConnector === undefined).toBe(scenario === 'remove created shared');
+            return;
+        }
         if (removing) {
             expect({ result, trace }, JSON.stringify({ result, trace, vendorRequests })).toMatchObject({ result: { ok: false, errorCode: 'native_route_unavailable' },
-                trace: expect.arrayContaining(['removal-admitted', 'vendor-config', 'vendor-dns-removed', 'native-dispatch']) });
+                trace: expect.arrayContaining(['removal-admitted', 'native-dispatch']) });
             expect(trace).not.toContain('mint-token');
-            expect(remoteConfig).toEqual({ ingress: [{ service: 'http_status:404' }] });
+            expect(trace).not.toContain('vendor-config');
+            expect(dnsRemoved).toBe(false);
             expect(nativeJobs).toHaveLength(1);
             if (scenario === 'remove final') expect(nativeJobs[0]?.cloudflareConnector).toMatchObject({ tunnelId: 'reviewed-tunnel', grantRef: retainedGrant });
             else expect(nativeJobs[0]?.cloudflareConnector).toBeUndefined();
@@ -784,6 +810,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
             expect(authored.artifacts.read(authoredInput.contentArtifactId)?.bodyVersion).toBe(1);
         } else {
             expect(preparedBody).toMatchObject({ cloudflarePreparation: { tunnelId: 'reviewed-tunnel',
+                tunnelOwnership: creatingTunnel ? 'created' : 'adopted',
                 owned: [{ hostname: content.hostname, expectedService: 'http://172.18.0.2:9381' }],
                 dnsOwnership: scenario === 'partial grant' || scenario === 'vendor unknown' ? [] : [{ hostname: content.hostname, recordId: dnsRecord.id }], connectors: grantedMembers.map(machineId => ({ machineId,
                     installationId: installation(machineId), ...vendorController.connector, networkName: 'environment_default', grantRef: grants.get(machineId) })) } });

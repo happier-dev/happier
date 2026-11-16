@@ -1,4 +1,6 @@
 import { isPluginError, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
+import { settleDeploymentTargetDomainRemovalV1, type DeploymentDomainTunnelOwnershipV1,
+  type DeploymentDomainTunnelDispositionV1 } from '@happier-dev/plugin-sdk';
 import type { HttpService, PluginFetchCredentialBinding } from '@happier-dev/plugin-sdk/http';
 import type { ProtocolJsonValue } from '@happier-dev/plugin-sdk/protocol';
 import { prepareOwnedCloudflareIngress } from './cloudflareIngress.js';
@@ -20,9 +22,13 @@ export type CloudflareRouteRequest = Readonly<{
   owned: readonly OwnedHostname[];
   desired: readonly DesiredHostname[];
   dnsOwnership: readonly Readonly<{ hostname: string; recordId: string }>[];
+  /** Home supplies its captured last-consumer decision; absent provenance never grants deletion. */
+  retireTunnel?: boolean;
+  tunnelOwnership?: DeploymentDomainTunnelOwnershipV1;
 }>;
 export type CloudflareRouteResult =
-  | Readonly<{ kind: 'verified'; tunnelId: string; dnsOwnership: readonly Readonly<{ hostname: string; recordId: string }>[] }>
+  | Readonly<{ kind: 'verified'; tunnelId: string; dnsOwnership: readonly Readonly<{ hostname: string; recordId: string }>[];
+      tunnel?: DeploymentDomainTunnelDispositionV1 }>
   | Readonly<{ kind: 'refused'; code: string; providerOutput?: string }>
   | Readonly<{ kind: 'unknown'; code: string; providerOutput?: string; dnsOwnership?: readonly Readonly<{ hostname: string; recordId: string }>[] }>;
 type CloudflareRemovalRouteRequest = Omit<CloudflareRouteRequest, 'tunnelId' | 'expectedTunnelName' | 'desired'> & Readonly<{
@@ -30,7 +36,8 @@ type CloudflareRemovalRouteRequest = Omit<CloudflareRouteRequest, 'tunnelId' | '
   desired: readonly [];
 }>;
 type CloudflareRemovalRouteResult = Exclude<CloudflareRouteResult, { kind: 'verified' }>
-  | Readonly<{ kind: 'verified'; tunnelId?: string; dnsOwnership: readonly Readonly<{ hostname: string; recordId: string }>[] }>;
+  | Readonly<{ kind: 'verified'; tunnelId?: string; dnsOwnership: readonly Readonly<{ hostname: string; recordId: string }>[];
+      tunnel?: DeploymentDomainTunnelDispositionV1 }>;
 
 type NativeObject = Readonly<Record<string, ProtocolJsonValue>>;
 function object(value: ProtocolJsonValue | undefined): value is NativeObject {
@@ -114,7 +121,7 @@ export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequ
 }>): Promise<CloudflareRemovalRouteResult & Readonly<{ connector?: unknown; failureCause?: ActionFailureCauseV1 }>> {
   const collectionUrl = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(input.accountId)}/cfd_tunnel`;
   const dnsUrl = `https://api.cloudflare.com/client/v4/zones/${encodeURIComponent(input.zoneId)}/dns_records`;
-  let attempted = false, changed = false;
+  let attempted = false, changed = false, exactTunnelAbsent = false;
   let operation = '';
   let connector: Readonly<{ connector: unknown }> | undefined;
   const ownership = new Map(input.dnsOwnership.map(row => [row.hostname, row.recordId]));
@@ -134,6 +141,11 @@ export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequ
     if (response.status === 401 || response.status === 403) {
       attempted = false;
       throw new CloudflareProviderRefusal(response.status === 403 ? 'denied' : 'credential_unavailable');
+    }
+    if (response.status === 404 && method === 'GET' && input.desired.length === 0
+      && 'tunnelId' in input && url === `${collectionUrl}/${encodeURIComponent(input.tunnelId)}`) {
+      exactTunnelAbsent = true;
+      return {};
     }
     if (response.status < 200 || response.status >= 300) throw new CloudflareProviderRefusal('provider_unavailable');
     const decoded = readCloudflareResponse(response.body, operation);
@@ -193,19 +205,26 @@ export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequ
         }
         if (!cloudflareHasNextPage(response, page, operation)) break;
       }
-      if (!tunnel) return { kind: 'verified', dnsOwnership: [] };
+      if (!tunnel) return { kind: 'verified', dnsOwnership: [],
+        ...(input.retireTunnel === undefined ? {} : { tunnel: { kind: 'removed' as const } }) };
       // The native list boundary validated the selected identifier above.
       tunnelId = tunnel.id as string;
     } else {
       tunnelId = input.tunnelId;
-      tunnel = readRecord((await request('GET', `${collectionUrl}/${encodeURIComponent(tunnelId)}`)).result);
+      const response = await request('GET', `${collectionUrl}/${encodeURIComponent(tunnelId)}`);
+      if (!exactTunnelAbsent) {
+        tunnel = readRecord(response.result);
+        // Cloudflare may retain a deleted tunnel's exact-ID tombstone.
+        exactTunnelAbsent = input.desired.length === 0 && tunnel.id === tunnelId && tunnel.account_tag === input.accountId
+          && typeof tunnel.deleted_at === 'string' && tunnel.deleted_at.length > 0;
+      }
     }
-    if (tunnel.id !== tunnelId || !cloudflareRemoteTunnel(tunnel, input.accountId)
-      || expectedTunnelName !== undefined && tunnel.name !== expectedTunnelName) throw new CloudflareProviderRefusal('route_conflict');
+    if (!exactTunnelAbsent && (tunnel?.id !== tunnelId || !cloudflareRemoteTunnel(tunnel, input.accountId)
+      || expectedTunnelName !== undefined && tunnel.name !== expectedTunnelName)) throw new CloudflareProviderRefusal('route_conflict');
     const root = `${collectionUrl}/${encodeURIComponent(tunnelId)}`;
     const configurationUrl = `${root}/configurations`;
     const cname = `${tunnelId}.cfargotunnel.com`;
-    const previous = await configuration(configurationUrl);
+    const previous = exactTunnelAbsent ? { config: {} } : await configuration(configurationUrl);
     const prepared = prepareOwnedCloudflareIngress({ config: previous.config, owned: input.owned, desired: input.desired });
     if (prepared.kind === 'refused') return prepared;
     if (ownership.size !== input.dnsOwnership.length) throw new CloudflareProviderRefusal('route_conflict');
@@ -225,7 +244,10 @@ export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequ
       if (records.length > 0 && (records.length !== 1 || !recordId || !sameOwnedRecord(records[0]!, hostname, recordId, cname))) {
         throw new CloudflareProviderRefusal('route_conflict');
       }
-      if (recordId && records.length === 0) throw new CloudflareProviderRefusal('plan_changed');
+      if (recordId && records.length === 0) {
+        if (input.desired.length !== 0) throw new CloudflareProviderRefusal('plan_changed');
+        ownership.delete(hostname);
+      }
       observed.set(hostname, records);
     }
     // Seal within this invocation after ownership preflight and before PUT;
@@ -253,7 +275,43 @@ export async function reconcileOwnedCloudflareRoutes(input: (CloudflareRouteRequ
         ownership.delete(hostname);
       }
     }
-    return { kind: 'verified', tunnelId, dnsOwnership: [...ownership].map(([hostname, recordId]) => ({ hostname, recordId })), ...connector };
+    let tunnelDisposition: DeploymentDomainTunnelDispositionV1 | undefined;
+    if (input.retireTunnel !== undefined) {
+      const reason = input.tunnelOwnership === undefined ? 'ownership_unknown'
+        : input.tunnelOwnership === 'adopted' ? 'adopted'
+          : !input.retireTunnel ? 'shared'
+            : Array.isArray(nextRules) && nextRules.some(rule => object(rule)
+              && (rule.hostname !== undefined || rule.path !== undefined || rule.service !== 'http_status:404')) ? 'foreign_routes' : undefined;
+      if (exactTunnelAbsent) tunnelDisposition = { kind: 'removed', tunnelId };
+      else if (reason) tunnelDisposition = { kind: 'retained', tunnelId, reason };
+      else {
+        // Cloudflare v4 list supports exact UUID and active-only selection:
+        // https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/methods/list/
+        // One observation, paginated to completion, settles even a lost DELETE.
+        try {
+          await settleDeploymentTargetDomainRemovalV1({ remove: () => request('DELETE', root),
+            async observeAbsent() {
+              for (let page = 1; ; page += 1) {
+                const query = new URLSearchParams({ uuid: tunnelId, is_deleted: 'false', page: String(page) });
+                const response = await request('GET', `${collectionUrl}?${query}`);
+                if (!Array.isArray(response.result)) throw invalidOutput(operation, 'result', 'array');
+                for (const [index, value] of response.result.entries()) {
+                  const row = readRecord(value, `result[${index}]`);
+                  if (typeof row.id !== 'string' || row.id.length === 0) throw invalidOutput(operation, `result[${index}].id`, 'nonempty string');
+                  if (row.id === tunnelId) return false;
+                }
+                if (!cloudflareHasNextPage(response, page, operation)) return true;
+              }
+            } });
+        } catch (error) {
+          if (isPluginError(error)) throw new CloudflareProviderRefusal(error.code);
+          throw error;
+        }
+        tunnelDisposition = { kind: 'removed', tunnelId };
+      }
+    }
+    return { kind: 'verified', tunnelId, dnsOwnership: [...ownership].map(([hostname, recordId]) => ({ hostname, recordId })),
+      ...(tunnelDisposition ? { tunnel: tunnelDisposition } : {}), ...connector };
   } catch (error) {
     if (isPluginError(error) && !connector) throw error;
     const providerOutput = error instanceof CloudflareProviderRefusal && error.providerOutput ? { providerOutput: error.providerOutput } : {};

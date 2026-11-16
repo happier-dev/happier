@@ -1,6 +1,7 @@
 import type { ActionExecutorContext, DeploymentDomainChildRpcV1 } from '@happier-dev/protocol';
 import type { HostReviewedChildInvocationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { DeploymentDomainHeaderV1, DeploymentDomainTopologyV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentDomainTunnelOwnershipV1, DeploymentDomainTunnelDispositionV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { parseMachineSecretGrantSubjectKey, type DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
 import { readCloudflareNamedControllerSelection } from '@happier-dev/cli-common/relayAccess';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
@@ -29,6 +30,7 @@ function refuseCloudflare(code: string, phase: 'preparation' | 'retirement', opt
 type Connector = NonNullable<NonNullable<DeploymentDomainContentV1['cloudflarePreparation']>['connectors']>[number];
 type Grant = Pick<Connector, 'machineId' | 'installationId' | 'grantRef'>;
 type Prepared = { kind: 'prepared' | 'unknown' | 'refused'; code?: string; providerOutput?: string; tunnelId?: string;
+    tunnelOwnership?: DeploymentDomainTunnelOwnershipV1;
     failureCause?: ActionFailureCauseV1; grants?: readonly Grant[]; dnsOwnership?: readonly Readonly<{ hostname: string; recordId: string }>[] };
 
 /** One Account operation prepares a shared tunnel; each real target receives its own sealed grant. */
@@ -84,6 +86,9 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
         let updated = domain;
         let preparedContent = content;
         if (tunnelId) {
+            // Re-preparation adopts this ID; preserve witnessed creation and
+            // keep older records without provenance unknown.
+            const tunnelOwnership = previous ? previous.tunnelOwnership : prepared?.tunnelOwnership;
             const connectors = acknowledged.map(grant => {
                 const member = origin.members.find(item => item.machineId === grant.machineId && item.installationId === grant.installationId);
                 if (!member) return refuse('target_mismatch');
@@ -94,6 +99,7 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
             try {
                 preparedContent = { ...content,
                     cloudflarePreparation: { tunnelId, owned: desired.map(({ service, ...route }) => ({ ...route, expectedService: service })),
+                        ...(tunnelOwnership ? { tunnelOwnership } : {}),
                         dnsOwnership: [...(prepared?.dnsOwnership ?? previous?.dnsOwnership ?? selected.controller.dnsOwnership)],
                         connectors: [...(previous?.connectors ?? []).filter(old => !connectors.some(current =>
                             old.machineId === current.machineId && old.installationId === current.installationId)), ...connectors] } };
@@ -111,9 +117,9 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
     } finally { await Promise.all(admissions.map(item => item.release?.())); }
 }
 
-/** Remove only this Domain's reviewed remote routes; shared native retirement is captured by Home. */
+/** Retire this Domain's reviewed resources using Home's captured last-consumer decision. */
 export async function disableCloudflareDomainForHost(content: DeploymentDomainContentV1,
-    context: ActionExecutorContext): Promise<void> {
+    context: ActionExecutorContext, retireTunnel = false): Promise<DeploymentDomainTunnelDispositionV1 | undefined> {
     const selected = readCloudflareNamedControllerSelection(content.ingress);
     if (!selected) return;
     const prepared = content.cloudflarePreparation;
@@ -128,15 +134,18 @@ export async function disableCloudflareDomainForHost(content: DeploymentDomainCo
         action: { pluginId, localId: 'cloudflare-named/disable' }, role: 'disable',
         input: { credentialRef: purpose.credentialRef.account, accountId: selected.controller.accountId,
             zoneId: selected.controller.zoneId, tunnelId: prepared.tunnelId,
+            ...(prepared.tunnelOwnership ? { tunnelOwnership: prepared.tunnelOwnership } : {}), retireTunnel,
             owned: prepared.owned, dnsOwnership: prepared.dnsOwnership },
     } : recovered;
     if (!request) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });
     const result = await context.hostReviewedChild.invoke(request);
     if (!result.ok) return refuseCloudflare(result.errorCode, 'retirement', { child: result });
     // The contributed runtime validates the declared closed Action result.
-    const disabled = result.result as { kind: 'verified' | 'unknown' | 'refused'; code?: string; providerOutput?: string };
+    const disabled = result.result as { kind: 'verified' | 'unknown' | 'refused'; code?: string; providerOutput?: string;
+        tunnel?: DeploymentDomainTunnelDispositionV1 };
     if (disabled.kind !== 'verified') return refuseCloudflare(disabled.kind === 'unknown' ? 'outcome_unknown'
         : disabled.code ?? 'provider_unavailable', 'retirement', { providerCode: disabled.code ?? 'provider_unavailable', providerOutput: disabled.providerOutput });
+    return disabled.tunnel;
 }
 
 /** Native children consume only their own saved value-free operand. */

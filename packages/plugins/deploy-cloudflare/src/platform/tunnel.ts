@@ -1,4 +1,7 @@
-import { PluginError, type JsonValue } from '@happier-dev/plugin-sdk';
+import { PluginError, type JsonValue,
+  DeploymentDomainTunnelOwnershipV1ProtocolSchema as tunnelOwnership,
+  DeploymentDomainTunnelDispositionV1ProtocolSchema as tunnelDisposition,
+  type DeploymentDomainTunnelOwnershipV1 } from '@happier-dev/plugin-sdk';
 import { isPluginError, projectActionFailureCauseV1, ActionFailureCauseV1ProtocolSchema, type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext, PluginAccountActionHandler, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/plugin-sdk/connected-accounts';
@@ -14,13 +17,14 @@ const connectorGrants = array(object({ machineId: text, installationId: text, gr
 const ownedRoutes = array(object({ hostname: text, path: text.optional(), expectedService: text }, closed));
 export const tunnelDisableInput = union([
   object({ credentialRef: QualifiedConnectedAccountRefSchema,
-    accountId: text, zoneId: text, tunnelId: text, owned: ownedRoutes, dnsOwnership }, closed),
+    accountId: text, zoneId: text, tunnelId: text, tunnelOwnership: tunnelOwnership.optional(),
+    retireTunnel: union([literal(true), literal(false)]).optional(), owned: ownedRoutes, dnsOwnership }, closed),
   object({ credentialRef: QualifiedConnectedAccountRefSchema,
     accountId: text, zoneId: text, tunnelName: text, owned: ownedRoutes,
     dnsOwnership: array(object({ hostname: text, recordId: text }, closed), { maxItems: 0 }) }, closed),
 ]);
 export const tunnelDisableResult = union([
-  object({ kind: literal('verified'), tunnelId: text.optional(), dnsOwnership }, closed),
+  object({ kind: literal('verified'), tunnelId: text.optional(), dnsOwnership, tunnel: tunnelDisposition.optional() }, closed),
   object({ kind: literal('refused'), code: text, providerOutput: text.optional() }, closed),
   object({ kind: literal('unknown'), code: text, providerOutput: text.optional(), dnsOwnership: dnsOwnership.optional() }, closed),
 ]);
@@ -33,19 +37,19 @@ export const tunnelConfigureInput = object({ credentialRef: QualifiedConnectedAc
   owned: array(object({ hostname: text, path: text.optional(), expectedService: text }, closed)),
   desired: array(object({ hostname: text, path: text.optional(), service: text }, closed)), dnsOwnership }, closed);
 type TunnelConfigureResult =
-  | Readonly<{ kind: 'prepared'; tunnelId: string; grants: ReturnType<typeof connectorGrants.parse>;
+  | Readonly<{ kind: 'prepared'; tunnelId: string; tunnelOwnership: DeploymentDomainTunnelOwnershipV1; grants: ReturnType<typeof connectorGrants.parse>;
       dnsOwnership: ReturnType<typeof dnsOwnership.parse> }>
   | Readonly<{ kind: 'refused' | 'unknown'; code: string; providerOutput?: string;
-      failureCause?: ActionFailureCauseV1; tunnelId?: string;
+      failureCause?: ActionFailureCauseV1; tunnelId?: string; tunnelOwnership?: DeploymentDomainTunnelOwnershipV1;
       grants?: ReturnType<typeof connectorGrants.parse>; dnsOwnership?: ReturnType<typeof dnsOwnership.parse> }>;
 
 export const tunnelConfigureResult: ProtocolComposableSchema<TunnelConfigureResult> = union([
   // Remote configuration and sealed custody are prepared; P20 still owns
   // the token file, actual container reader and connector verification.
-  object({ kind: literal('prepared'), tunnelId: text, grants: connectorGrants, dnsOwnership }, closed),
+  object({ kind: literal('prepared'), tunnelId: text, tunnelOwnership, grants: connectorGrants, dnsOwnership }, closed),
   object({ kind: union([literal('refused'), literal('unknown')]), code: text,
     providerOutput: text.optional(), failureCause: ActionFailureCauseV1ProtocolSchema.optional(),
-    tunnelId: text.optional(), grants: connectorGrants.optional(), dnsOwnership: dnsOwnership.optional() }, closed),
+    tunnelId: text.optional(), tunnelOwnership: tunnelOwnership.optional(), grants: connectorGrants.optional(), dnsOwnership: dnsOwnership.optional() }, closed),
 ]);
 
 /** Cloudflare v4 create/get/token contracts checked 2026-10-31:
@@ -62,6 +66,7 @@ const configureTunnel: PluginAccountActionHandler<ReturnType<typeof tunnelConfig
   const collection = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(input.accountId)}/cfd_tunnel`;
   const binding = { kind: 'connectedAccountPurpose', purpose: 'tunnel.manage', origin: 'https://api.cloudflare.com', headerNames: ['authorization'] } as const;
   let tunnelId = input.tunnel.kind === 'adopt' ? input.tunnel.tunnelId : undefined;
+  const ownership = input.tunnel.kind === 'create' ? 'created' : 'adopted';
   // These distinguish an uncertain create or custody write from a read-only
   // refusal; successful custody is carried by the route owner's typed result.
   let createAttempted = false, grantAttempted = false;
@@ -109,14 +114,14 @@ const configureTunnel: PluginAccountActionHandler<ReturnType<typeof tunnelConfig
       code: grantAttempted && !routes.connector ? 'connector_grant_unavailable' : routes.code,
       ...(routes.providerOutput ? { providerOutput: routes.providerOutput } : {}),
       ...(routes.failureCause ? { failureCause: routes.failureCause } : {}),
-      tunnelId, ...(routes.connector ? { grants: [...routes.connector.grants] } : {}),
+      tunnelId, tunnelOwnership: ownership, ...(routes.connector ? { grants: [...routes.connector.grants] } : {}),
       ...(routes.kind === 'unknown' && routes.dnsOwnership ? { dnsOwnership: [...routes.dnsOwnership] } : {}) };
-    return { kind: 'prepared', tunnelId, grants: [...routes.connector.grants], dnsOwnership: [...routes.dnsOwnership] };
+    return { kind: 'prepared', tunnelId, tunnelOwnership: ownership, grants: [...routes.connector.grants], dnsOwnership: [...routes.dnsOwnership] };
   } catch (error) {
     const code = createAttempted && !tunnelId ? 'outcome_unknown'
       : context.signal.aborted ? 'cancelled'
         : isPluginError(error) || error instanceof CloudflareProviderRefusal ? error.code : grantAttempted ? 'connector_grant_unavailable' : 'provider_unavailable';
-    return { kind: createAttempted || grantAttempted ? 'unknown' : 'refused', code, ...(tunnelId ? { tunnelId } : {}),
+    return { kind: createAttempted || grantAttempted ? 'unknown' : 'refused', code, ...(tunnelId ? { tunnelId, tunnelOwnership: ownership } : {}),
       failureCause: projectActionFailureCauseV1(error, 'deployment.cloudflare.tunnel.configure'),
       ...(error instanceof CloudflareProviderRefusal && error.providerOutput ? { providerOutput: error.providerOutput } : {}) };
   }
@@ -145,8 +150,8 @@ export const tunnelActions: Readonly<{
     run: configureTunnel,
   },
   'cloudflare-named/disable': {
-    title: 'Remove owned Cloudflare tunnel routes',
-    description: 'Remove only the reviewed hostname routes and DNS records, preserving the tunnel and other routes.',
+    title: 'Retire owned Cloudflare tunnel resources',
+    description: 'Remove reviewed routes and DNS; retire the exact created tunnel only for the captured final consumer, retaining adopted and shared resources.',
     execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
     scopes: ['global'], surfaces: ['cli', 'plugin'], placementBindings: [],
     dangerLevel: 'writesRemote', readOnly: false,
@@ -161,6 +166,7 @@ export const tunnelActions: Readonly<{
       const input = value as ReturnType<typeof tunnelDisableInput.parse>;
       const binding = { kind: 'connectedAccountPurpose', purpose: 'tunnel.manage', origin: 'https://api.cloudflare.com', headerNames: ['authorization'] } as const;
       return await reconcileOwnedCloudflareRoutes({ ...input, http: context.services.http, signal: context.signal, desired: [],
+        retireTunnel: 'retireTunnel' in input ? input.retireTunnel ?? false : false,
         credentialBindings: { GET: { ...binding, method: 'GET' }, PUT: { ...binding, method: 'PUT' },
           POST: { ...binding, method: 'POST' }, DELETE: { ...binding, method: 'DELETE' } } });
     },
