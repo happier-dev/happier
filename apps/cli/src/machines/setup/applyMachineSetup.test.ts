@@ -9,7 +9,8 @@ import type { ActionOperationOwnerUpdate } from '@/daemon/actionOperations/actio
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyExitEvent, PtyProcess, PtyProvider, PtySpawnParams } from '@/terminal/pty/provider';
 import { applyMachineSetup } from './applyMachineSetup';
-import { createBoundMachineSetupTarget } from './boundMachineSetup';
+import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
+import { createBoundMachineSetupTarget, prepareBoundMachineSetupRecipePlans } from './boundMachineSetup';
 import { ActionOperationDomainRefV1Schema, ActionOperationSnapshotV1Schema, projectActionOperationSnapshotForV1Reader } from '@happier-dev/protocol/actions/operations/v1';
 import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
 import { getActionSpec } from '@happier-dev/protocol/actions';
@@ -17,7 +18,7 @@ import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/live
 import { listAdvertisedSystemTaskKinds } from '@/capabilities/registry/toolSystemTasks';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import { MachineRecipeStepV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { MachineRecipeV1Schema, MachineRecipeStepV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { observeDockerEngine } from '@/daemon/local/services/launch/dockerEngineObservation';
 import { checkMachineSetupEffectPlan, createMachineSetupNativeBackend, type MachineSetupNativeCommand } from '@happier-dev/cli-common/machineSetup';
@@ -86,7 +87,9 @@ describe('applyMachineSetup', () => {
     let exitCode = 17;
     let admissionReads = 0;
     {
-      const input = { ...f.input, setup: { scripts: [{ body: 'echo bound', affects: 'none' as const }] },
+      const input = { ...f.input, machineId: 'controller', managedId: 'resource',
+        boundBasis: { kind: 'boundSetup' as const, managedId: 'resource', sessionId: 'committed-session', operationId: 'setup-operation' },
+        setup: { scripts: [{ body: 'echo bound', affects: 'none' as const }] },
         isCurrent: async () => { admissionReads++; return true; },
         boundTarget: { administrator: false,
           writeConfiguration: async () => { throw new Error('No configuration in this preset'); },
@@ -109,14 +112,12 @@ describe('applyMachineSetup', () => {
     const f = await fixture(true);
     const files: Array<{ path: string; content: string }> = [];
     const requests: string[] = [];
-    await machineNativeEffectAdmission.run({ operation: { operationId: 'setup-operation', kind: 'machine_setup', signal: f.controller.signal },
-      keys: [{ kind: 'machineSetup' }] }, async nativeEffectContext => {
-      expect(await applyMachineSetup({ ...f.input, nativeEffectContext,
-        boundTarget: { administrator: false,
-          writeConfiguration: async (path: string, content: string) => { files.push({ path, content }); },
-          run: async (request: { command: string }) => { requests.push(request.command); return { exitCode: 0, stdout: 'PATH=/target\0' }; } },
-      })).toMatchObject({ ok: true });
-    });
+    expect(await applyMachineSetup({ ...f.input, machineId: 'controller', managedId: 'resource',
+      boundBasis: { kind: 'boundSetup', managedId: 'resource', sessionId: 'committed-session', operationId: 'setup-operation' },
+      boundTarget: { administrator: false,
+        writeConfiguration: async (path: string, content: string) => { files.push({ path, content }); },
+        run: async (request: { command: string }) => { requests.push(request.command); return { exitCode: 0, stdout: 'PATH=/target\0' }; } },
+    })).toMatchObject({ ok: true });
     expect(files).toEqual([{ path: join(f.home, '.config/mise/config.toml'), content: f.input.setup.toolchain.config }]);
     await expect(readFile(join(f.home, '.config/mise/config.toml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     expect(requests).toContain('/tools/runtime');
@@ -124,52 +125,107 @@ describe('applyMachineSetup', () => {
     expect(f.nativeRequests).toHaveLength(0);
   });
 
-  it('uses the existing recipe interpreter on a bound target with the admitted administrator principal', async () => {
+  it('uses the existing recipe interpreter on a bound target with the admitted Session association and multiple recipes', async () => {
     const f = await fixture(true);
-    const item = { kind: 'setupRecipe' as const, selection: {
-      ref: { pluginId: 'com.example.tools', recipeId: 'bound', revision: '1' }, inputs: {},
-    } };
-    const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'setup', machineId: 'guest', desiredRevision: 0,
-      selection: item.selection }, steps: [{ id: 'bound-command', kind: 'command', executable: 'fixture-apply', args: [],
-        check: { executable: 'fixture-check', args: [], unsatisfiedExitCodes: [1] } }],
-      backend: createMachineSetupNativeBackend({ run: async () => ({ code: 1, stdout: '', stderr: '' }) }) });
-    let applied = false;
+    const basis = { kind: 'boundSetup' as const, managedId: 'retained-resource', sessionId: 'committed-session', operationId: 'setup-operation' };
+    const installed = new Set<string>();
     const commands: string[] = [];
-    await machineNativeEffectAdmission.run({ operation: { operationId: 'setup-operation', kind: 'machine_setup', signal: f.controller.signal },
-      keys: [{ kind: 'machineSetup' }] }, async nativeEffectContext => {
-      const transported = createBoundMachineSetupTarget({ administrator: false,
-        transport: { exec: async () => { throw new Error('No script effects'); }, putFile: async () => {} },
-        effectCli: { binaryPath: '/guest/happier', machineId: 'guest', installationId: 'guest-installation', operationId: 'setup-operation',
-          transport: { putFile: async () => {}, exec: async request => {
-            const stdin = new PassThrough(), stdout = new PassThrough();
-            let output = '';
-            stdout.on('data', (chunk: Buffer) => { const text = chunk.toString(); output += text; request.onStdoutChunk?.(text); });
-            stdin.end(request.input);
-            const status = await runMachineSetupEffectInternal(['--operation-id=setup-operation', '--installation-id=guest-installation'], {
-              stdin, stdout, readUid: () => 0, platform: 'linux', runNative: async command => {
-                commands.push(command.executable);
-                if (command.executable === 'fixture-apply') applied = true;
-                return { code: applied ? 0 : 1, stdout: '', stderr: '' };
-              } });
-            return { status, stdout: output, stderr: '' };
-          } } } });
-      const boundTarget = { ...transported, administrator: false,
-        writeConfiguration: async () => { throw new Error('No configuration'); },
-        run: async (request: { command: string }) => {
-          commands.push(request.command);
-          if (request.command === 'fixture-apply') applied = true;
-          return { exitCode: applied ? 0 : 1, stdout: '', stderr: '' };
-        } };
-      const input = { ...f.input, nativeEffectContext, setup: { items: [item] },
-        recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan }], boundTarget };
-      expect(await applyMachineSetup(input)).toMatchObject({ ok: false, errorCode: 'admin_access_unavailable' });
-      expect(commands).toEqual([]);
-      expect(await applyMachineSetup({ ...input, boundTarget: { ...boundTarget, administrator: true } })).toMatchObject({ ok: true });
+    const effects: string[] = [];
+    let failSecond = true;
+    const runNative = async (command: MachineSetupNativeCommand) => {
+      commands.push(command.executable);
+      const key = command.args[0]!;
+      if (command.executable === 'fixture-check') return { code: installed.has(key) ? 0 : 1, stdout: '', stderr: '' };
+      effects.push(key);
+      if (failSecond && key === 'second') return { code: 17, stdout: '', stderr: '' };
+      installed.add(key);
+      return { code: 0, stdout: '', stderr: '' };
+    };
+    const recipe = MachineRecipeV1Schema.parse({ id: 'bound', revision: '1', title: 'Bound tool',
+      inputSchema: { type: 'object', properties: { tool: { type: 'string' } }, required: ['tool'], additionalProperties: false },
+      steps: [{ id: 'install', kind: 'command', executable: 'fixture-apply', args: [{ kind: 'input', path: 'tool' }],
+        check: { executable: 'fixture-check', args: [{ kind: 'input', path: 'tool' }], unsatisfiedExitCodes: [1] } }],
     });
-    expect(applied).toBe(true);
-    expect(commands).toContain('fixture-check');
+    const recipes = ['first', 'second'].map(id => ({ ...recipe, id }));
+    const items = recipes.map(recipe => ({ kind: 'setupRecipe' as const,
+      selection: { ref: { pluginId: 'com.example.tools', recipeId: recipe.id, revision: recipe.revision }, inputs: { tool: recipe.id } } }));
+    const preparePlans = (targetBasis = basis) => Promise.all(items.map(async (item, itemIndex) => {
+      const plan = await prepareMachineRecipeProgramV1({ basis: targetBasis, selection: item.selection, recipe: recipes[itemIndex]!, program: 'steps',
+        backend: createMachineSetupNativeBackend({ run: runNative }) });
+      if (!plan) throw new Error('Recipe plan must be available');
+      return { sourceIndex: 0, itemIndex, plan };
+    }));
+    const recipePlans = await preparePlans();
+    let invocations = 0;
+    const transported = createBoundMachineSetupTarget({ administrator: true,
+      effectCli: { binaryPath: '/guest/happier', operationId: basis.operationId },
+      transport: { putFile: async () => {}, exec: async request => {
+        invocations++;
+        expect(request.command).not.toContain('--installation-id');
+        expect(request.input).not.toContain('admittedInputDigest');
+        const stdin = new PassThrough(), stdout = new PassThrough();
+        let output = '';
+        stdout.on('data', (chunk: Buffer) => { const text = chunk.toString(); output += text; request.onStdoutChunk?.(text); });
+        stdin.end(request.input);
+        const status = await runMachineSetupEffectInternal(['--operation-id=setup-operation'], {
+          stdin, stdout, readUid: () => 0, platform: 'linux', runNative });
+        return { status, stdout: output, stderr: '' };
+      } } });
+    const input = { ...f.input, machineId: 'controller', managedId: basis.managedId, boundBasis: basis,
+      setup: { items }, recipePlans, boundTarget: transported };
+    expect(await applyMachineSetup({ ...input, boundTarget: { ...transported, administrator: false } }))
+      .toMatchObject({ ok: false, errorCode: 'admin_access_unavailable' });
+    expect(invocations).toBe(0);
+    expect(await applyMachineSetup({ ...input, boundBasis: { ...basis, sessionId: 'other-session' } }))
+      .toMatchObject({ ok: false, errorCode: 'plan_changed' });
+    const otherOperation = { ...basis, operationId: 'another-operation' };
+    expect(await applyMachineSetup({ ...input, boundBasis: otherOperation, recipePlans: await preparePlans(otherOperation) }))
+      .toMatchObject({ ok: false, errorCode: 'plan_changed' });
+    expect(await applyMachineSetup({ ...input, managedId: 'another-resource' }))
+      .toMatchObject({ ok: false, errorCode: 'plan_changed' });
+    expect(invocations).toBe(0);
+    expect(await applyMachineSetup(input)).toMatchObject({ ok: false });
+    expect(installed).toEqual(new Set(['first']));
+    failSecond = false;
+    expect(await applyMachineSetup({ ...input, recipePlans: await preparePlans() })).toMatchObject({ ok: true });
+    expect(installed).toEqual(new Set(['first', 'second']));
+    expect(effects).toEqual(['first', 'second', 'second']);
     expect(f.spawned).toHaveLength(0);
     expect(f.nativeRequests).toHaveLength(0);
+  });
+
+  it('uses the existing recipe interpreter to check bound declarations against target facts before any effects', async () => {
+    const basis = { kind: 'boundSetup' as const, managedId: 'resource', sessionId: 'committed-session', operationId: 'setup-operation' };
+    const recipe = MachineRecipeV1Schema.parse({ id: 'bound-check', revision: '1', title: 'Bound check',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      steps: [{ id: 'install', kind: 'command', executable: 'must-not-apply', args: [{ kind: 'targetFact', fact: 'os.packageManager' }],
+        check: { executable: 'target-check', args: [], unsatisfiedExitCodes: [1] } }],
+    });
+    const commands: string[] = [];
+    const plans = await prepareBoundMachineSetupRecipePlans({ basis, binaryPath: '/guest/happier',
+      sources: [{ items: [{ kind: 'setupRecipe', selection: {
+        ref: { pluginId: 'com.example.tools', recipeId: recipe.id, revision: recipe.revision }, inputs: {},
+      } }] }], recipes: [{ pluginId: 'com.example.tools', definition: recipe }], signal: new AbortController().signal,
+      transport: { putFile: async () => {}, exec: async request => {
+        const stdin = new PassThrough(), stdout = new PassThrough();
+        let output = '';
+        stdout.on('data', (chunk: Buffer) => { const text = chunk.toString(); output += text; request.onStdoutChunk?.(text); });
+        stdin.end(request.input);
+        const status = await runMachineSetupEffectInternal(['--operation-id=setup-operation'], {
+          stdin, stdout, readUid: () => 0, platform: 'linux', runNative: async command => {
+            commands.push(command.executable);
+            if (command.executable === 'apt-get') return { code: 0, stdout: 'apt 2.9.0', stderr: '' };
+            return { code: 1, stdout: '', stderr: '' };
+          },
+        });
+        return { status, stdout: output, stderr: '' };
+      } },
+    });
+    expect(plans).toMatchObject([{ sourceIndex: 0, itemIndex: 0, plan: {
+      basis, steps: [{ executable: 'must-not-apply', args: ['apt'] }],
+    } }]);
+    expect(commands).toContain('target-check');
+    expect(commands).not.toContain('must-not-apply');
   });
 
   it('runs canonical ordered scripts verbatim with each source overlay and each script check, skipping empty bodies', async () => {
@@ -552,7 +608,7 @@ describe('applyMachineSetup', () => {
         })).toMatchObject({ ok: true });
       } finally { unsubscribe(); }
       const stepSnapshots = published.flatMap(snapshot => snapshot.domainRef?.kind === 'machineSetup'
-        && 'steps' in snapshot.domainRef ? [snapshot.domainRef.steps] : []);
+        && snapshot.domainRef.steps ? [snapshot.domainRef.steps] : []);
       // Repeated ids retain their plan coordinates through CHECK and APPLY.
       const distinctSteps = stepSnapshots.filter((steps, index) => index === 0
         || JSON.stringify(steps) !== JSON.stringify(stepSnapshots[index - 1]));

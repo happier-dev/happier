@@ -1,7 +1,14 @@
+import type { MachineSetupPreparationV1 } from '@happier-dev/protocol/machines/setup/machineSetupPreparationV1';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { ManagedMachinePresetPreparationBuildInputV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationBuildInputV1';
 
 export type { ManagedMachinePresetPreparationBuildInputV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationBuildInputV1';
+
+export type ManagedMachinePresetPreparationSetupV1 = Readonly<{
+  preparation?: MachineSetupPreparationV1;
+  bakedSetup?: MachineSetupV1;
+  deferredSetup?: MachineSetupV1;
+}>;
 
 export type ManagedMachinePresetPreparationBuildCompositionV1 = Readonly<{
   input: ManagedMachinePresetPreparationBuildInputV1;

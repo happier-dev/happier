@@ -1,10 +1,12 @@
 import { z } from 'zod';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { MachineSetupNativeSshHostKeyV1Schema } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
 import { MachineAdministratorUsernameV1Schema, MachineElevationFailureV1Schema, MachineFirewallRecoveryV1Schema, MachineFirewallRestorationV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineSetupEffectPlanV1Schema, MachineSetupElevatedEffectV1Schema, MachineSetupBootstrapBasisV1Schema, isMachineSetupBootstrapBasisV1, MachineFirewallTransitionIntentV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type * as machineSetup from './index.js';
 import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineElevatedEffectV1, MachineSetupBootstrapBasisV1, MachineFirewallTransitionIntentV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { MachineSetupPreparationV1Schema, MachineSetupBoundRecipeCheckV1Schema, type MachineSetupBoundRecipeCheckV1, type MachineSetupPreparationV1 } from '@happier-dev/protocol/machines/setup/machineSetupPreparationV1';
 
 // Portable domain types keep declarations independent of the concrete Zod
 // instances composed below (including Protocol's full/mini schema inputs).
@@ -23,6 +25,8 @@ export type MachineAdministratorEstablishFrame = AdministratorInput & {
     type: 'administrator.establish'; operationId: string; planDigest: string; password: string;
 };
 export type MachineEffectInternalRequest =
+    | { v: 1; mode: 'apply'; preparation: MachineSetupPreparationV1 }
+    | { v: 1; mode: 'check'; preparation: MachineSetupBoundRecipeCheckV1 }
     | (OnlineIdentity & { v: 1; mode: 'check'; continueWithApply: true; firewallStages: true;
         basis: Plan['basis']; firewallIntent: MachineFirewallTransitionIntentV1 })
     | (OnlineIdentity & { v: 1; mode: 'check'; continueWithApply: true; firewallStages: true; plans: EffectPlans })
@@ -56,6 +60,7 @@ const OnlineIds = {
     }).strict().optional(),
 };
 const Basis = MachineSetupEffectPlanV1Schema.shape.basis;
+const onlineBasis = (basis: Plan['basis']) => basis.kind !== 'preparation' && basis.kind !== 'boundSetup' && !isMachineSetupBootstrapBasisV1(basis);
 const Check = { v: z.literal(1), mode: z.literal('check'), steps: MachineSetupEffectPlanV1Schema.shape.steps,
     checks: MachineSetupEffectPlanV1Schema.shape.checks };
 const Apply = { v: z.literal(1), mode: z.literal('apply'), firewallStages: z.literal(true).optional() };
@@ -80,17 +85,21 @@ export const MachineAdministratorEstablishFrameSchema: z.ZodType<MachineAdminist
 
 /** Bootstrap names retained admission, never a not-yet-registered target. */
 export const MachineEffectInternalRequestSchema: z.ZodType<MachineEffectInternalRequest> = z.union([
+    z.object({ v: z.literal(1), mode: z.literal('apply'), preparation: MachineSetupPreparationV1Schema }).strict(),
+    z.object({ v: z.literal(1), mode: z.literal('check'), preparation: MachineSetupBoundRecipeCheckV1Schema }).strict(),
     z.object({ v: z.literal(1), mode: z.literal('check'), ...OnlineIds,
         continueWithApply: z.literal(true), firewallStages: z.literal(true),
         basis: Basis.refine(basis => basis.kind === 'setup'), firewallIntent: MachineFirewallTransitionIntentV1Schema }).strict(),
     z.object({ v: z.literal(1), mode: z.literal('check'), ...OnlineIds,
         continueWithApply: z.literal(true), firewallStages: z.literal(true),
-        plans: Plans.refine(plans => plans.every(entry => !isMachineSetupBootstrapBasisV1(entry.plan.basis)
+        plans: Plans.refine(plans => plans.every(entry => onlineBasis(entry.plan.basis)
             && entry.plan.steps.length === 1 && entry.plan.steps[0]?.kind === 'firewall')) }).strict(),
     z.object({ ...Check, basis: MachineSetupBootstrapBasisV1Schema }).strict(),
-    z.object({ ...Check, ...OnlineIds, continueWithApply: z.literal(true).optional(), basis: Basis.refine(basis => !isMachineSetupBootstrapBasisV1(basis)) }).strict(),
+    z.object({ ...Check, ...OnlineIds, continueWithApply: z.literal(true).optional(), basis: Basis.refine(onlineBasis) }).strict(),
     z.object({ ...Apply, plans: Plans.refine(plans => plans.length === 1 && isMachineSetupBootstrapBasisV1(plans[0]!.plan.basis)), administrator: Administrator.optional() }).strict(),
-    z.object({ ...Apply, ...OnlineIds, plans: Plans.refine(plans => plans.every(entry => !isMachineSetupBootstrapBasisV1(entry.plan.basis))) }).strict(),
+    z.object({ ...Apply, plans: Plans.refine(plans => plans.every(entry => entry.plan.basis.kind === 'boundSetup'
+        && sameStrictJsonValue(entry.plan.basis, plans[0]!.plan.basis))) }).strict(),
+    z.object({ ...Apply, ...OnlineIds, plans: Plans.refine(plans => plans.every(entry => onlineBasis(entry.plan.basis))) }).strict(),
     z.object({ v: z.literal(1), mode: z.literal('apply'), ...OnlineIds, intent: NativeIntent }).strict(),
 ]);
 

@@ -231,6 +231,10 @@ const TargetFactValues = z.object({
 });
 export const MachineRecipeTargetFactReferenceV1Schema = z.object({ kind: z.literal('targetFact'), fact: TargetFactValues.keyof() }).strict();
 export type MachineRecipeTargetFactKeyV1 = z.infer<typeof MachineRecipeTargetFactReferenceV1Schema>['fact'];
+/** These facts come from the native target itself, without an enrolled Machine. */
+export function isMachineRecipeImageTargetFactV1(fact: MachineRecipeTargetFactKeyV1): boolean {
+    return fact.startsWith('os.');
+}
 export type MachineRecipeTargetFactsV1 = Readonly<Partial<Record<z.infer<typeof MachineRecipeTargetFactReferenceV1Schema>['fact'], string | null>>>;
 export class MachineRecipeTargetFactUnavailableErrorV1 extends Error {
     readonly code = 'machine_recipe_target_fact_unavailable';
@@ -363,44 +367,51 @@ export type MachineRecipeCheckDeclarationV1 = z.infer<typeof MachineRecipeCheckD
 function isInputReference(value: unknown): value is InputReference {
     return value !== null && typeof value === 'object' && 'kind' in value && value.kind === 'input';
 }
-function boundValue(value: unknown, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): unknown {
+type InspectTargetFact = (fact: MachineRecipeTargetFactKeyV1) => void;
+function boundValue(value: unknown, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1, inspectTargetFact?: InspectTargetFact): unknown {
     if (value !== null && typeof value === 'object' && 'kind' in value && value.kind === 'targetFact') {
         const reference = MachineRecipeTargetFactReferenceV1Schema.parse(value);
+        if (inspectTargetFact) { inspectTargetFact(reference.fact); return value; }
         const resolved = targetFacts?.[reference.fact];
         if (!TargetFactValues.shape[reference.fact].safeParse(resolved).success) throw new MachineRecipeTargetFactUnavailableErrorV1(reference.fact);
         return resolved;
     }
     if (value !== null && typeof value === 'object' && 'kind' in value && value.kind === 'template') {
         const template = TemplateReference.parse(value);
+        if (inspectTargetFact) {
+            for (const variable of Object.values(template.variables)) boundValue(variable, inputs, targetFacts, inspectTargetFact);
+            return value;
+        }
         const vars = Object.fromEntries(Object.entries(template.variables).map(([name, variable]) =>
             [name, { t: 'literal' as const, v: String(z.union([z.string(), z.number()]).parse(boundValue(variable, inputs, targetFacts))) }]));
         const rendered = resolveValueRefPlaintextV1({ t: 'template', template: template.value, vars }, () => null);
         if (rendered === null) throw new TypeError('invalid_machine_recipe_inputs');
         return rendered;
     }
-    if (!isInputReference(value)) return value;
+    if (inspectTargetFact || !isInputReference(value)) return value;
     const resolved = readInputPath(inputs, value.path);
     if (resolved === undefined) throw new TypeError('invalid_machine_recipe_inputs');
     return resolved;
 }
-function boundArgs(value: unknown, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): unknown {
-    return Array.isArray(value) ? value.map(arg => boundValue(arg, inputs, targetFacts)) : boundValue(value, inputs, targetFacts);
+function boundArgs(value: unknown, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1, inspectTargetFact?: InspectTargetFact): unknown {
+    return Array.isArray(value) ? value.map(arg => boundValue(arg, inputs, targetFacts, inspectTargetFact)) : boundValue(value, inputs, targetFacts, inspectTargetFact);
 }
-function boundProbe(probe: z.infer<typeof ProbeDeclaration>, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): unknown {
+function boundProbe(probe: z.infer<typeof ProbeDeclaration>, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1, inspectTargetFact?: InspectTargetFact): unknown {
     if (probe.kind === 'fail2ban') return { ...probe, jails: Object.fromEntries(Object.entries(probe.jails).map(([jail, policy]) =>
-        [jail, Object.fromEntries(Object.entries(policy).map(([key, value]) => [key, boundValue(value, inputs, targetFacts)]))])) };
+        [jail, Object.fromEntries(Object.entries(policy).map(([key, value]) => [key, boundValue(value, inputs, targetFacts, inspectTargetFact)]))])) };
     return probe.kind === 'sshd' ? { ...probe, contexts: probe.contexts.map(context => ({
-        user: boundValue(context.user, inputs, targetFacts), host: boundValue(context.host, inputs, targetFacts), address: boundValue(context.address, inputs, targetFacts),
-        ...(context.expected ? { expected: Object.fromEntries(Object.entries(context.expected).map(([key, value]) => [key, boundValue(value, inputs, targetFacts)])) } : {}),
+        user: boundValue(context.user, inputs, targetFacts, inspectTargetFact), host: boundValue(context.host, inputs, targetFacts, inspectTargetFact), address: boundValue(context.address, inputs, targetFacts, inspectTargetFact),
+        ...(context.expected ? { expected: Object.fromEntries(Object.entries(context.expected).map(([key, value]) => [key, boundValue(value, inputs, targetFacts, inspectTargetFact)])) } : {}),
     })) } : probe;
 }
-function boundContent(content: z.infer<typeof FileContent> | undefined, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): unknown {
-    if (content?.kind === 'literal') return { kind: 'literal', value: boundValue(content.value, inputs, targetFacts) };
-    if (content?.kind === 'jsonMerge') return { kind: 'jsonMerge', value: boundValue(content.value, inputs, targetFacts) };
-    if (content?.kind === 'template') return { kind: 'literal', value: boundValue(content, inputs, targetFacts) };
+function boundContent(content: z.infer<typeof FileContent> | undefined, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1, inspectTargetFact?: InspectTargetFact): unknown {
+    if (content?.kind === 'literal') return { kind: 'literal', value: boundValue(content.value, inputs, targetFacts, inspectTargetFact) };
+    if (content?.kind === 'jsonMerge') return { kind: 'jsonMerge', value: boundValue(content.value, inputs, targetFacts, inspectTargetFact) };
+    if (content?.kind === 'template') return { kind: 'literal', value: boundValue(content, inputs, targetFacts, inspectTargetFact) };
     if (content?.kind === 'secretGrant') {
+        if (inspectTargetFact && !('grantRef' in content)) return content;
         if (!('grantRef' in content)) throw new TypeError('invalid_machine_recipe_inputs');
-        return { kind: 'secretGrant', grantRef: boundValue(content.grantRef, inputs, targetFacts) };
+        return { kind: 'secretGrant', grantRef: boundValue(content.grantRef, inputs, targetFacts, inspectTargetFact) };
     }
     return content;
 }
@@ -413,11 +424,10 @@ export function resolveMachineRecipeCredentialSelectionV1(content: z.infer<typeo
         } : reference.credentialRef,
     })) });
 }
-/** Resolve authored fields only; reviewed JSON values are never recursively interpreted. */
-export function resolveMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarationV1, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): MachineRecipeStepV1;
-export function resolveMachineRecipeStepInputsV1(step: MachineRecipeCheckDeclarationV1, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): MachineRecipeCheckV1;
-export function resolveMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarationV1 | MachineRecipeCheckDeclarationV1, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): MachineRecipeStepV1 | MachineRecipeCheckV1 {
-    const bind = (value: unknown) => boundValue(value, inputs, targetFacts);
+/** One traversal owns authored binding locations for resolution and inspection. */
+function bindMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarationV1 | MachineRecipeCheckDeclarationV1, inputs: unknown,
+    targetFacts?: MachineRecipeTargetFactsV1, inspectTargetFact?: InspectTargetFact): unknown {
+    const bind = (value: unknown) => boundValue(value, inputs, targetFacts, inspectTargetFact);
     const { when: _when, ...concreteStep } = { when: undefined, ...step };
     let resolved: unknown = concreteStep;
     switch (step.kind) {
@@ -440,14 +450,16 @@ export function resolveMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarat
                 resolved = { ...ownership, ...(step.ownershipMarker !== undefined ? { ownershipMarker: bind(step.ownershipMarker) } : {}) };
                 break;
             }
-            const content = boundContent(step.content, inputs, targetFacts);
-            const expectedContentDigest = typeof step.expectedContentDigest === 'object'
+            const content = boundContent(step.content, inputs, targetFacts, inspectTargetFact);
+            const digestContent = typeof step.expectedContentDigest === 'object'
+                ? boundContent(step.expectedContentDigest.content, inputs, targetFacts, inspectTargetFact) : undefined;
+            const expectedContentDigest = typeof step.expectedContentDigest === 'object' && !inspectTargetFact
                 ? bytesToHex(sha256(new TextEncoder().encode(z.object({ kind: z.literal('literal'), value: z.string() })
-                    .parse(boundContent(step.expectedContentDigest.content, inputs, targetFacts)).value))) : step.expectedContentDigest;
+                    .parse(digestContent).value))) : step.expectedContentDigest;
             resolved = { ...ownership, ...(step.content !== undefined ? { content } : {}),
                 ...(expectedContentDigest !== undefined ? { expectedContentDigest } : {}),
-                ...(step.probe ? { probe: boundProbe(step.probe, inputs, targetFacts) } : {}),
-                ...(typeof step.validate === 'object' ? { validate: boundProbe(step.validate, inputs, targetFacts) } : {}) };
+                ...(step.probe ? { probe: boundProbe(step.probe, inputs, targetFacts, inspectTargetFact) } : {}),
+                ...(typeof step.validate === 'object' ? { validate: boundProbe(step.validate, inputs, targetFacts, inspectTargetFact) } : {}) };
             break;
         }
         case 'package':
@@ -462,18 +474,35 @@ export function resolveMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarat
             resolved = { ...concreteStep, rules: bind(step.rules), ...(step.exposures !== undefined ? { exposures: bind(step.exposures) } : {}) };
             break;
         case 'command':
-            resolved = { ...concreteStep, args: boundArgs(step.args, inputs, targetFacts),
+            resolved = { ...concreteStep, args: boundArgs(step.args, inputs, targetFacts, inspectTargetFact),
                 check: 'kind' in step.check ? step.check.kind === 'kernel'
                     ? { ...step.check, architectures: bind(step.check.architectures) } : step.check
-                    : { ...step.check, args: boundArgs(step.check.args, inputs, targetFacts),
+                    : { ...step.check, args: boundArgs(step.check.args, inputs, targetFacts, inspectTargetFact),
                         ...(step.check.stdoutJson ? { stdoutJson: mapInputPredicateValues(step.check.stdoutJson,
-                            value => InputPrimitiveSchema.parse(bind(value))) } : {}) } };
+                            value => inspectTargetFact ? bind(value) : InputPrimitiveSchema.parse(bind(value))) } : {}) } };
             break;
         case 'kernel':
             resolved = { ...concreteStep, ...(step.architectures !== undefined ? { architectures: bind(step.architectures) } : {}) };
-            return MachineRecipeCheckV1Schema.parse(resolved);
+            break;
     }
-    return MachineRecipeStepV1Schema.parse(resolved);
+    return resolved;
+}
+
+/** Resolve authored fields only; reviewed JSON values are never recursively interpreted. */
+export function resolveMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarationV1, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): MachineRecipeStepV1;
+export function resolveMachineRecipeStepInputsV1(step: MachineRecipeCheckDeclarationV1, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): MachineRecipeCheckV1;
+export function resolveMachineRecipeStepInputsV1(step: MachineRecipeStepDeclarationV1 | MachineRecipeCheckDeclarationV1, inputs: unknown, targetFacts?: MachineRecipeTargetFactsV1): MachineRecipeStepV1 | MachineRecipeCheckV1 {
+    const resolved = bindMachineRecipeStepInputsV1(step, inputs, targetFacts);
+    return step.kind === 'kernel' ? MachineRecipeCheckV1Schema.parse(resolved) : MachineRecipeStepV1Schema.parse(resolved);
+}
+
+/** Inspect declarations without resolving inputs, inventing facts or rendering values. */
+export function machineRecipeStepRequiresMachineContextV1(step: MachineRecipeStepDeclarationV1 | MachineRecipeCheckDeclarationV1): boolean {
+    let requiresMachine = false;
+    bindMachineRecipeStepInputsV1(step, undefined, undefined, fact => {
+        if (!isMachineRecipeImageTargetFactV1(fact)) requiresMachine = true;
+    });
+    return requiresMachine;
 }
 
 export const MachineRecipeSelectionV1Schema = z.object({ ref: MachineRecipeReferenceV1Schema, inputs: PluginJsonValueV2Schema }).strict();
@@ -536,6 +565,11 @@ export const MachineSetupStepObservationV1Schema = z.object({
 }).strict();
 export type MachineSetupStepObservationV1 = z.infer<typeof MachineSetupStepObservationV1Schema>;
 
+/** Bound Session Setup consumes the existing admission and association; no guest enrollment or synthetic digest. */
+export const MachineSetupBoundTargetBasisV1Schema = z.object({ kind: z.literal('boundSetup'),
+    managedId: z.string().min(1), sessionId: z.string().min(1), operationId: z.string().min(1) }).strict();
+export type MachineSetupBoundTargetBasisV1 = z.infer<typeof MachineSetupBoundTargetBasisV1Schema>;
+
 /** Creation-time bases never name or write an online desired-setup record. */
 export const MachineSetupBootstrapBasisV1Schema = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('bootstrap'), managedId: z.string().min(1), operationId: z.string().min(1),
@@ -547,8 +581,14 @@ export type MachineSetupBootstrapBasisV1 = z.infer<typeof MachineSetupBootstrapB
 export function isMachineSetupBootstrapBasisV1(basis: MachineSetupEffectPlanV1['basis']): basis is MachineSetupBootstrapBasisV1 {
     return basis.kind === 'bootstrap' || basis.kind === 'sshBootstrap';
 }
+/** An uncredentialed native image build has an operation, but no Machine or installation. */
+export const MachineSetupPreparationBasisV1Schema = z.object({ kind: z.literal('preparation'),
+    operationId: z.string().min(1) }).strict();
+export type MachineSetupPreparationBasisV1 = z.infer<typeof MachineSetupPreparationBasisV1Schema>;
 export const MachineSetupEffectBasisV1Schema = z.discriminatedUnion('kind', [
     ...MachineSetupBootstrapBasisV1Schema.options,
+    MachineSetupBoundTargetBasisV1Schema,
+    MachineSetupPreparationBasisV1Schema,
     z.object({ kind: z.literal('setup'), machineId: z.string().min(1), desiredRevision: z.number().int().nonnegative(),
         selection: MachineRecipeSelectionV1Schema.optional() }).strict(),
     z.object({ kind: z.literal('updates'), machineId: z.string().min(1), scope: z.enum(['security', 'all']) }).strict(),

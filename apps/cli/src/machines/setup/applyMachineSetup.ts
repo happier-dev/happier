@@ -7,7 +7,7 @@ import { createMachineSetupNativeBackend, applyMachineSetupEffectPlans, machineS
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { mergeMachineSetupsV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import type { MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import type { MachineSetupEffectPlanV1, MachineSetupBoundTargetBasisV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { selectMachineSetupRecipeItemsV1,
   machineSetupItemKeyV1, projectMachineSetupSourceChangeExecutionV1,
   type MachineSetupExclusionV1, type MachineSetupSourceV1, type MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
@@ -73,6 +73,8 @@ export type ApplyMachineSetupInput = Readonly<{
   terminalSessions?: Pick<TerminalPtySessionManager, 'ensure' | 'waitForExit' | 'requestStop' | 'observeOutput'>;
   environmentIo: ProjectNativeToolchainIo;
   boundTarget?: BoundMachineSetupTarget;
+  /** Controller-admitted Session/resource association, never an online guest identity. */
+  boundBasis?: MachineSetupBoundTargetBasisV1;
   secretEnvironment?: Omit<SecretReferenceOverlayEnvironmentInput, 'secretReferenceOverlay'>;
   hostEnvironment?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -106,14 +108,16 @@ export type RemoveMachineSetupInput = Omit<ApplyMachineSetupInput, 'setup' | 're
 
 /** The native owner normalizes shared tools/refs once; script bodies remain separate. */
 export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], recipePlans?: NonNullable<MachineSetupPlanResultV1['recipePlans']>,
-  exclusions: readonly MachineSetupExclusionV1[] = [], sourceChange?: ApplyMachineSetupInput['sourceChange']):
+  exclusions: readonly MachineSetupExclusionV1[] = [], sourceChange?: ApplyMachineSetupInput['sourceChange'],
+  boundBasis?: MachineSetupBoundTargetBasisV1):
   Readonly<{ ok: true; setup: MachineSetupV1; sources: readonly MachineSetupV1[] }> | ActionExecuteFailure {
   const merged = mergeMachineSetupsV1(sources);
   if (!merged.ok) return merged;
   if (recipePlans?.some(entry => {
     const item = sources[entry.sourceIndex]?.items?.[entry.itemIndex];
-    return !item || item.kind === 'app' || entry.plan.basis.kind !== 'setup'
-      || !sameStrictJsonValue(entry.plan.basis.selection, item.selection);
+    return !item || item.kind === 'app' || (boundBasis
+      ? !sameStrictJsonValue(entry.plan.basis, boundBasis)
+      : entry.plan.basis.kind !== 'setup' || !sameStrictJsonValue(entry.plan.basis.selection, item.selection));
   })) return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
   if (sourceChange && !sameStrictJsonValue(sourceChange.sources.map(source => source.setup), sources)) return {
     ok: false, errorCode: 'plan_changed', error: 'plan_changed',
@@ -130,8 +134,7 @@ export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], re
   if (recipePlans) {
     if (recipeItems.length !== recipePlans.length || recipeItems.some((item, index) => {
       const entry = recipePlans[index];
-      return !entry || entry.sourceIndex !== item.sourceIndex || entry.itemIndex !== item.itemIndex
-        || entry.plan.basis.kind !== 'setup' || !sameStrictJsonValue(entry.plan.basis.selection, item.item.selection);
+      return !entry || entry.sourceIndex !== item.sourceIndex || entry.itemIndex !== item.itemIndex;
     })) return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
   }
   if (execution.sources.some(setup => setup.scripts?.some(script => script.body && script.check?.requiredFacts?.length))) return {
@@ -144,10 +147,15 @@ export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], re
 }
 
 export async function applyMachineSetup(input: ApplyMachineSetupInput,
-  prepared = prepareMachineSetupStages(Array.isArray(input.setup) ? input.setup : [input.setup], input.recipePlans, input.exclusions, input.sourceChange)): Promise<ActionExecuteResult> {
+  prepared = prepareMachineSetupStages(Array.isArray(input.setup) ? input.setup : [input.setup], input.recipePlans, input.exclusions, input.sourceChange, input.boundBasis)): Promise<ActionExecuteResult> {
   if (!prepared.ok) return prepared;
   const plans = [...(input.removalPlans ?? []).map(entry => entry.plan), ...(input.recipePlans ?? []).map(entry => entry.plan)];
-  if (plans.some(plan => plan.basis.kind !== 'setup' || plan.basis.machineId !== input.machineId)) {
+  const operationId = input.operation.operationAcceptance?.operationId ?? input.operation.actionRequestId;
+  const admitted = input.boundTarget
+    ? input.boundBasis !== undefined && input.boundBasis.managedId === input.managedId
+      && input.boundBasis.operationId === operationId
+    : plans.every(plan => plan.basis.kind === 'setup' && plan.basis.machineId === input.machineId);
+  if (!admitted) {
     return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
   }
   return await startMachineSetup({ ...input, setup: prepared.setup, sources: prepared.sources, plans, taskKind: 'machine.setup.apply.v1' });

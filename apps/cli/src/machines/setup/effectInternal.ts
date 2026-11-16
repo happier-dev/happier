@@ -10,8 +10,9 @@ import {
 } from './effectInternalProtocol';
 import { createMachineSetupDaemonUserRunner } from './effectInternalDaemonUser';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { isMachineSetupBootstrapBasisV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { isMachineSetupBootstrapBasisV1, MachineRecipeTargetFactUnavailableErrorV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
+import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 
 type ProcessIo = Readonly<{
     stdin?: Readable;
@@ -77,6 +78,10 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
     const refused = (status: machineSetup.MachineSetupApplyResultV1['status'], reason: string, requiredFact?: string) =>
         finish({ status, reason, ...(requiredFact ? { requiredFact } : {}), completedStepIds: [], daemonRestartRequired: false });
     let mutationStarted = false;
+    const onProgress: NonNullable<Parameters<typeof machineSetup.applyMachineSetupEffectPlans>[0]['onProgress']> = event => {
+        if (event.phase === 'apply') mutationStarted = true;
+        emit({ type: 'progress', ...event });
+    };
     let administratorEstablishment: machineSetup.MachineSetupAdministratorEstablishmentV1 | undefined;
     let connectorSession: import('./effectInternalSecretGrant').MachineConnectorSecretGrantSession | undefined;
     let connectorMaterializer: ReturnType<typeof import('./effectInternalSecretGrant').bindMachineConnectorSecretGrantMaterializer> | undefined;
@@ -97,6 +102,25 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
         const parsed = MachineEffectInternalRequestSchema.safeParse(parseFrame(first.value));
         if (!parsed.success) return refused('unavailable', 'invalid_request');
         let request = parsed.data;
+        const runNative = io.runNative ?? ((command: machineSetup.MachineSetupNativeCommand) =>
+            machineSetup.runMachineSetupNativeCommand(command, { terminateOnAbort: terminateProcessTree }));
+        if ('preparation' in request) {
+            if (currentInvocation.installationId !== undefined
+                || request.preparation.basis.operationId !== currentInvocation.operationId) return refused('plan_changed', 'plan_stale');
+            for await (const extra of frames) if (extra.trim()) return refused('unavailable', 'invalid_request');
+            const backend = machineSetup.createMachineSetupNativeBackend({ signal: controller.signal, run: runNative,
+                ...(io.platform ? { platform: io.platform } : {}),
+                ...(io.readNativeInit ? { readNativeInit: io.readNativeInit } : {}) });
+            const plans: { plan: machineSetup.MachineSetupEffectPlanV1 }[] = [];
+            for (const { recipe, selection } of request.preparation.recipes) {
+                const plan = await prepareMachineRecipeProgramV1({ basis: request.preparation.basis,
+                    recipe, selection, program: 'steps', backend, signal: controller.signal });
+                if (!plan) return refused('unavailable', 'invalid_request');
+                plans.push({ plan });
+            }
+            if (request.mode === 'check') return finish({ status: 'checked', plans });
+            return finish(await machineSetup.applyMachineSetupEffectPlans({ plans, backend, signal: controller.signal, onProgress }));
+        }
         const continues = request.mode === 'check' && 'continueWithApply' in request && request.continueWithApply === true;
         const firewallDialogue = 'firewallStages' in request && request.firewallStages === true;
         const connectorDialogue = 'connectorSecretGrant' in request && request.connectorSecretGrant === true;
@@ -149,11 +173,12 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
             // second frame even if it arrived in the first native read.
             for await (const extra of frames) if (extra.trim()) return refused('unavailable', 'invalid_request');
         }
-        const matchesInvocation = (value: MachineEffectInternalRequest) => {
+        const matchesInvocation = (value: Exclude<MachineEffectInternalRequest, { preparation: unknown }>) => {
             const bases = 'plans' in value ? value.plans.map(entry => entry.plan.basis) : value.mode === 'check' ? [value.basis] : [value.intent.basis];
-            return bases.every(basis => isMachineSetupBootstrapBasisV1(basis)
+            return bases.every(basis => isMachineSetupBootstrapBasisV1(basis) || basis.kind === 'boundSetup'
                 ? currentInvocation.installationId === undefined
-                : 'installationId' in value && value.installationId === currentInvocation.installationId && basis.machineId === value.machineId);
+                : 'installationId' in value && value.installationId === currentInvocation.installationId
+                    && 'machineId' in basis && basis.machineId === value.machineId);
         };
         // The live caller owns operation admission. Keep installation and
         // Machine binding here; operation ids are correlation only.
@@ -171,8 +196,6 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
             : 'plans' in request ? request.plans.map(entry => entry.plan) : request.mode === 'check' ? [request] : [request.intent];
         const needsDaemonContext = nativePrograms.some(program => [...(('checks' in program ? program.checks : undefined) ?? []), ...program.steps]
             .some(step => machineSetup.readMachineSetupStepExecutionUserV1(step) === 'daemon'));
-        const runNative = io.runNative ?? ((command: machineSetup.MachineSetupNativeCommand) =>
-            machineSetup.runMachineSetupNativeCommand(command, { terminateOnAbort: terminateProcessTree }));
         const runAsDaemonUser = needsDaemonContext ? await createMachineSetupDaemonUserRunner({
             username: 'daemonUsername' in request ? request.daemonUsername : undefined,
             context: 'daemonExecutionContext' in request ? request.daemonExecutionContext : undefined,
@@ -251,10 +274,7 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
                 }
                 return 'undo' as const;
             } } : {}),
-            onProgress: event => {
-                if (event.phase === 'apply') mutationStarted = true;
-                emit({ type: 'progress', ...event });
-            },
+            onProgress,
         });
         return finish(result);
     } catch (error) {
@@ -262,6 +282,7 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
         // of the retained operation channel.
         if (error !== null && typeof error === 'object' && 'code' in error
             && error.code === 'plugin_exec_termination_incomplete') return refused('outcome_unknown', error.code);
+        if (error instanceof MachineRecipeTargetFactUnavailableErrorV1) return refused('unavailable', error.code, error.fact);
         return refused(mutationStarted ? 'outcome_unknown' : controller.signal.aborted ? 'cancelled' : 'unavailable',
             controller.signal.aborted ? 'cancelled' : 'native_effect_failed');
     } finally {

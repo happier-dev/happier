@@ -1,28 +1,27 @@
 import { evaluateInputPredicate } from '@happier-dev/protocol/inputs';
 import {
-  MachineRecipeTargetFactUnavailableErrorV1, resolveMachineRecipeStepInputsV1,
+  MachineRecipeTargetFactUnavailableErrorV1, resolveMachineRecipeStepInputsV1, isMachineRecipeImageTargetFactV1,
   resolveMachineRecipeCredentialSelectionV1,
   type MachineRecipeV1, type MachineRecipeCheckV1, type MachineRecipeStepV1,
   type MachineRecipeTargetFactsV1, type MachineRecipeSelectionV1, type MachineSetupStepObservationV1,
-  type MachineSetupEffectPlanV1,
+  type MachineSetupEffectPlanV1, type MachineSetupPreparationBasisV1, type MachineSetupBoundTargetBasisV1,
 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { createMachineSetupEffectPlan, isMachineSetupPackageUnavailableV1,
   isMachineSetupPackageManagerUnavailableV1, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
-import { machineSecretGrantSubjectKey } from '@happier-dev/deployment-protocol';
 import type { AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
-import { reachabilityConnectorSubject } from '../reachability/prepareReachabilityJoinCredential';
 import { machineConnectorCredentialFilePath as credentialFilePath } from '@happier-dev/cli-common/machineSetup/credentialFile';
 
 /** Setup and declared removal share declaration expansion and native observation. */
 export async function prepareMachineRecipeProgramV1(input: Readonly<{
-  machineId: string; desiredRevision: number;
   installationId?: string;
   onCredentialSelection?: (selection: AccessProviderSelectionV1) => void;
   recipe: MachineRecipeV1; program: 'steps' | 'removeSteps';
   backend: Pick<MachineSetupBackend, 'observe' | 'readTargetFacts'>;
   readTargetFacts?: () => Promise<MachineRecipeTargetFactsV1>;
   signal?: AbortSignal;
-}> & (Readonly<{ selection: MachineRecipeSelectionV1; inputs?: never }>
+}> & (Readonly<{ basis: MachineSetupPreparationBasisV1 | MachineSetupBoundTargetBasisV1; machineId?: never; desiredRevision?: never }>
+  | Readonly<{ basis?: never; machineId: string; desiredRevision: number }>)
+  & (Readonly<{ selection: MachineRecipeSelectionV1; inputs?: never }>
   | Readonly<{ selection?: never; inputs: unknown }>)): Promise<MachineSetupEffectPlanV1 | undefined> {
   const recipeInputs = input.selection === undefined ? input.inputs : input.selection.inputs;
   const declarations = input.recipe[input.program];
@@ -43,10 +42,18 @@ export async function prepareMachineRecipeProgramV1(input: Readonly<{
       try { return resolveMachineRecipeCredentialSelectionV1(declaration.content, recipeInputs); }
       catch { throw invalidInputs(); }
     })();
-    if (credentialSelection && !input.installationId) throw new MachineRecipeTargetFactUnavailableErrorV1('invocation.credentialFile');
+    if (credentialSelection && (!input.installationId || !input.machineId)) throw new MachineRecipeTargetFactUnavailableErrorV1('invocation.credentialFile');
+    // Image preparation loads only the declaration compiler. Account/grant
+    // services remain outside that graph unless an online recipe selects one.
+    const credentialGrant = credentialSelection ? await (async () => {
+      const [{ machineSecretGrantSubjectKey }, { reachabilityConnectorSubject }] = await Promise.all([
+        import('@happier-dev/deployment-protocol'), import('../reachability/prepareReachabilityJoinCredential'),
+      ]);
+      return machineSecretGrantSubjectKey(reachabilityConnectorSubject(credentialSelection,
+        { machineId: input.machineId!, installationId: input.installationId! }));
+    })() : undefined;
     const resolvedDeclaration = credentialSelection && declaration.kind === 'file'
-      ? { ...declaration, content: { kind: 'secretGrant' as const, grantRef: machineSecretGrantSubjectKey(
-        reachabilityConnectorSubject(credentialSelection, { machineId: input.machineId, installationId: input.installationId! })) } }
+      ? { ...declaration, content: { kind: 'secretGrant' as const, grantRef: credentialGrant! } }
       : declaration;
     const resolveCurrent = () => {
       try {
@@ -68,7 +75,7 @@ export async function prepareMachineRecipeProgramV1(input: Readonly<{
         if (!(error instanceof MachineRecipeTargetFactUnavailableErrorV1) || !error.fact
           || targetFacts && error.fact in targetFacts) throw error;
         let acquired: MachineRecipeTargetFactsV1 | undefined;
-        if (error.fact.startsWith('os.')) acquired = await input.backend.readTargetFacts?.([error.fact]);
+        if (isMachineRecipeImageTargetFactV1(error.fact)) acquired = await input.backend.readTargetFacts?.([error.fact]);
         else if (!daemonFactsRead) {
           daemonFactsRead = true;
           acquired = await input.readTargetFacts?.();
@@ -124,7 +131,7 @@ export async function prepareMachineRecipeProgramV1(input: Readonly<{
     nativeFacts.push(await input.backend.observe(step));
   }
   input.signal?.throwIfAborted();
-  return createMachineSetupEffectPlan({ basis: { kind: 'setup', machineId: input.machineId,
+  return createMachineSetupEffectPlan({ basis: input.basis ?? { kind: 'setup', machineId: input.machineId,
     desiredRevision: input.desiredRevision, ...(input.selection === undefined ? {} : { selection: input.selection }) }, steps, nativeFacts,
     ...(checks.length ? { checks, checkFacts: checks.map(check => factsByCheck.get(check.id)!),
       selectedCheckIds: checks.filter(check => selectedCheckIds.has(check.id)).map(check => check.id) } : {}) });

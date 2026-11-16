@@ -54,6 +54,20 @@ export type MachineSetupV1 = Readonly<{
   secretRefs?: z.infer<typeof SecretReferenceOverlayV1Schema>;
 }>;
 
+/** Partition the whole-item prefix already selected by the preparation owner. */
+export function splitMachineSetupForPreparationV1(setup: MachineSetupV1, bakedItemCount: number): Readonly<{
+  bakedSetup?: MachineSetupV1;
+  deferredSetup?: MachineSetupV1;
+}> {
+  const { items, ...remaining } = setup;
+  const deferredItems = items?.slice(bakedItemCount);
+  const deferredSetup = { ...remaining, ...(deferredItems?.length ? { items: deferredItems } : {}) };
+  return {
+    ...(bakedItemCount ? { bakedSetup: { items: items!.slice(0, bakedItemCount) } } : {}),
+    ...(Object.keys(deferredSetup).length ? { deferredSetup } : {}),
+  };
+}
+
 const setupShape = {
   toolchain: z.optional(z.strictObject({ adapterId: z.string().check(z.trim(), z.minLength(1)), config: z.string() })),
   items: z.optional(z.array(MachinePresetItemV1Schema)),

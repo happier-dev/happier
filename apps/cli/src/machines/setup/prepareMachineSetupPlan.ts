@@ -6,15 +6,14 @@ import { mergeMachineSetupsV1, type MachineSetupV1 } from '@happier-dev/protocol
 import type { MachineSetupObservationV1 } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
 import { readMachineSetupAppOriginsV1, selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { PluginProjectedMachineRecipeEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { machineRecipeInputConstraintsSatisfiedV1,
-  MachineRecipeTargetFactUnavailableErrorV1, type MachineRecipeTargetFactsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { MachineRecipeTargetFactUnavailableErrorV1, type MachineRecipeTargetFactsV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineAdminAccessObservationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { createMachineSetupNativeBackend, findMachineSetupBlockingObservationV1, machineSetupPlansRequireAdministratorV1,
   type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { readMachineSetupStepImpact } from './machineSetupImpacts';
+import { resolveMachineSetupRecipeProgramV1 } from './prepareMachineSetupPreparation';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 import { prepareMachineSetupRemovalsV1 } from './prepareMachineSetupRemovals';
 import { readMachineSetupSessionRefreshRequirement, type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
@@ -120,24 +119,16 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     if (!recipes && selected.length) return fail('machine_recipe_unavailable');
     recipes ??= [];
     for (const { item } of selected) {
-      const { ref, inputs } = item.selection;
-      const recipe = recipes.find(entry => entry.pluginId === ref.pluginId && entry.definition.id === ref.recipeId
-        && entry.definition.revision === ref.revision)?.definition;
-      if (!recipe) return fail('machine_recipe_unavailable');
-      if (item.kind === 'softwareRecipe' && recipe.software !== true) return fail('invalid_machine_recipe_kind');
-      if (!isValidPluginJsonSchemaValue(compilePluginJsonSchema(recipe.inputSchema), inputs)
-        || !machineRecipeInputConstraintsSatisfiedV1(recipe, inputs)) return fail('invalid_machine_recipe_inputs');
+      const resolved = resolveMachineSetupRecipeProgramV1(item, recipes);
+      if (!resolved.ok) return resolved;
     }
   }
   if (recipes) {
     for (const { item, sourceIndex, itemIndex, retained, execute } of proposed) {
       if (!execute) continue;
-      const { ref, inputs } = item.selection;
-      const recipe = recipes.find(entry => entry.pluginId === ref.pluginId && entry.definition.id === ref.recipeId
-        && entry.definition.revision === ref.revision)?.definition;
-      if (!recipe || retained && (item.kind === 'softwareRecipe' && recipe.software !== true
-        || !isValidPluginJsonSchemaValue(compilePluginJsonSchema(recipe.inputSchema), inputs)
-        || !machineRecipeInputConstraintsSatisfiedV1(recipe, inputs))) continue;
+      const resolved = resolveMachineSetupRecipeProgramV1(item, recipes);
+      if (!resolved.ok) continue;
+      const { recipe } = resolved.program;
       try {
         const plan = await prepareMachineRecipeProgramV1({ machineId: input.machineId,
           ...(params.installationId ? { installationId: params.installationId } : {}),
