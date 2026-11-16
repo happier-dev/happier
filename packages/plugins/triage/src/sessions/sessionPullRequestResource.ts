@@ -110,7 +110,12 @@ function admitMetadata(previous: WatchResult | undefined, next: WatchResult): Wa
     }) };
 }
 
-function resolveDemand(binding: Binding, relations: TriageReadSourceSessionLinksResultV1 | undefined, id: string) {
+function resolveDemand(binding: Binding, relations: TriageReadSourceSessionLinksResultV1 | undefined, id: string):
+    | null
+    | ({ entry: NonNullable<Ready['pullRequests'][number]['entry']> } & (
+        | { failure?: NativeStatus }
+        | { key: string; input: TriageReobserveEntryActionInputV1 }
+    )) {
     // Only the source-admitted native locator establishes correspondence. Display text is never identity.
     const matches = relations?.links.filter(link => link.sessionId === id && link.locator?.webUrl === binding.link.url);
     if (matches?.length !== 1) return null;
