@@ -1,3 +1,4 @@
+import type { ThemeSurfaceStyleTable } from './css/types';
 import { Platform } from 'react-native';
 import Color from 'color';
 import { PLANET_ATTENTION_HEX } from '@happier-dev/brand/planet';
@@ -817,4 +818,4 @@ const darkThemeBase = {
 
 export const darkTheme = withRaisedEdgeColors(darkThemeBase);
 
-export type Theme = typeof lightTheme;
+export type Theme = typeof lightTheme & Readonly<{ surfaces?: ThemeSurfaceStyleTable }>;

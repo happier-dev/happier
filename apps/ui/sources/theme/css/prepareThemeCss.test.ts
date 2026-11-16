@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import parse from 'css-tree/lib/parser';
 
-import { prepareThemeCss } from './prepareThemeCss';
+import { prepareThemeCss, prepareThemeProfileCss } from './prepareThemeCss';
 
 // The third-party parser boundary delegates to the real parser while counting work.
 vi.mock('css-tree/lib/parser', async (importOriginal) => {
@@ -11,6 +11,16 @@ vi.mock('css-tree/lib/parser', async (importOriginal) => {
 afterEach(() => vi.clearAllMocks());
 
 describe('theme CSS native projection and coverage', () => {
+    it('shares one lazy preparation between facts and application of the retained profile body', () => {
+        const profile = { css: '[data-surface=composer]{padding:8px}' };
+        const facts = prepareThemeProfileCss(profile);
+        const application = prepareThemeProfileCss(profile);
+        expect(parse).not.toHaveBeenCalled();
+        expect(facts.coverage.native).toBe(1);
+        expect(application.light.composer?.root?.base.paddingTop).toBe(8);
+        expect(parse).toHaveBeenCalledTimes(1);
+        expect(application).toBe(facts);
+    });
     it('does no native parsing for source-only web application or empty projections', () => {
         const source = '[data-surface=composer]{padding:8px}';
         expect(prepareThemeCss(source).source).toBe(source);

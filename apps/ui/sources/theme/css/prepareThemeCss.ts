@@ -280,6 +280,17 @@ const emptyCompilation: Compiled = {
     detailedCoverage: () => emptyDetailedCoverage,
 };
 
+const profilePreparations = new WeakMap<Readonly<{ css?: string }>, PreparedThemeCss>();
+
+/** A retained profile body is shared by preview facts and native application. */
+export function prepareThemeProfileCss(profile: Readonly<{ css?: string }>): PreparedThemeCss {
+    const existing = profilePreparations.get(profile);
+    if (existing) return existing;
+    const prepared = prepareThemeCss(profile.css ?? '');
+    profilePreparations.set(profile, prepared);
+    return prepared;
+}
+
 /** Source-only web application does no native parse; projection reads share one compilation. */
 export function prepareThemeCss(source: string): PreparedThemeCss {
     let compilation: Readonly<{ ok: true; value: Compiled } | { ok: false; error: unknown }> | undefined;
