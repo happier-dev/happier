@@ -6,7 +6,8 @@ import type { PluginAccountActionContext, PluginActionDeclaration } from '@happi
 import { isObject } from '../connectedAccounts/probe.js';
 import { targetProductSchema } from './targetOptions.js';
 import { request } from './deploymentHttp.js';
-import { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './cloudflareToolchain.js';
+import { pagesRepositoryAccess } from './pagesSource.js';
+import { cloudflareReviewNotice } from './reviewNotice.js';
 
 const base = preparation.jsonSchema;
 export const pagesLinkSchema: PluginJsonSchema = { type: 'object', additionalProperties: false,
@@ -65,18 +66,14 @@ export const pagesPrepare: PreparationAction = { ...pagesCommon, title: 'Adopt t
     const source = project.source;
     if (source !== undefined && source !== null && (!isObject(source) || typeof source.type !== 'string')) invalid();
     const projectMode = source ? 'gitIntegration' : 'directUpload';
-    const nativeRepository = isObject(source) && isObject(source.config) ? source.config : undefined;
-    const ready = isObject(source) && source.type === input.repository.kind && nativeRepository
-      && `${nativeRepository.owner}/${nativeRepository.repo_name}` === input.repository.repository
-      && input.repository.deployment === (source.type === 'github' ? 'https://github.com' : 'https://gitlab.com');
     return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,
       providerIdentity: { ...input.providerIdentity, providerEnvironment: input.providerEnvironment.kind === 'production' ? 'production'
         : input.providerEnvironment.gitBranch ? `preview:${input.providerEnvironment.gitBranch}` : 'preview' },
       providerEnvironment: input.providerEnvironment,
       ...(input.sourceMethod !== undefined ? { sourceMethod: input.sourceMethod } : {}),
-      ...(input.sourceMethod === 'upload' ? {} : { repositoryAccess: { status: ready ? 'ready' : 'needsGitAccess', repository: input.repository } }),
+      ...(input.sourceMethod === 'upload' ? {} : { repositoryAccess: pagesRepositoryAccess(source, input.repository, input.providerIdentity.providerAccountId) }),
       preparedNative: { projectName: project.name,
-        reviewNotice: `Uploads build on the controller in ${CLOUDFLARE_BUILD_IMAGE} with Wrangler ${CLOUDFLARE_WRANGLER_VERSION}, then send the prepared output to Cloudflare Pages.`,
+        reviewNotice: cloudflareReviewNotice('pages', input.sourceMethod ?? (projectMode === 'gitIntegration' ? 'gitIntegration' : 'upload')),
         pages: { projectMode, productionBranch: project.production_branch,
         ...(isObject(build) && typeof build.build_command === 'string' ? { buildCommand: build.build_command } : {}),
         ...(isObject(build) && typeof build.destination_dir === 'string' ? { buildOutputDirectory: build.destination_dir } : {}),

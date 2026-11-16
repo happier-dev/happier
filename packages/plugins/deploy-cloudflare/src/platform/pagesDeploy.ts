@@ -30,8 +30,12 @@ export async function createPagesDeployment(input: DeploymentTargetDeployInputV1
   const branch = pagesBranch(input);
   if (!branch || input.sourceIntent.kind !== 'repository') return failure('unsupported_action', 'admission');
   form.set('branch', branch);
-  form.set('commit_hash', input.sourceIntent.sha);
-  form.set('commit_dirty', 'false');
+  // Git builds branch HEAD; commit_hash only labels the deployment. Uploads
+  // contain the exact reviewed checkout and can truthfully carry that label.
+  if (input.sourceMethod === 'upload') {
+    form.set('commit_hash', input.sourceIntent.sha);
+    form.set('commit_dirty', 'false');
+  }
   const encoded = new Response(form);
   const reply = await request(context, input.providerIdentity.providerAccountId,
     `/pages/projects/${encodeURIComponent(input.preparedNative!.projectName)}/deployments`, 'send', 'POST',
@@ -43,14 +47,15 @@ export async function createPagesDeployment(input: DeploymentTargetDeployInputV1
 }
 
 export const pagesLifecycleActions = {
-  'pages-deploy': { ...pagesCommon, title: 'Check the Pages deployment source method', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Deploy this reviewed commit to Cloudflare Pages?' }, inputSchema: inputs.deploy.jsonSchema, resultSchema: output.jsonSchema,
+  'pages-deploy': { ...pagesCommon, title: 'Deploy the Cloudflare Pages Git branch', dangerLevel: 'writesRemote', readOnly: false,
+    confirmation: { title: 'Deploy the latest commit on this Cloudflare Pages branch?' }, inputSchema: inputs.deploy.jsonSchema, resultSchema: output.jsonSchema,
     async run(value: JsonValue, context: PluginAccountActionContext) {
       const input = value as unknown as DeploymentTargetDeployInputV1, io = pagesIo(context);
       if (input.providerDeploymentId) return pagesResult(await observePagesDeployment(input, io));
-      // Pages Git POST builds branch HEAD; commit_hash only labels the deployment.
-      // The required deploy role therefore refuses this method before any write.
-      throw new PluginError({ code: 'unsupported_action', details: { phase: 'source' } });
+      if (input.preparedNative?.pages?.projectMode !== 'gitIntegration') {
+        throw new PluginError({ code: 'unsupported_action', details: { phase: 'source' } });
+      }
+      return pagesResult(await createPagesDeployment(input, new FormData(), io));
     } },
   'pages-observe': { ...pagesCommon, title: 'Observe the selected Cloudflare Pages deployment', dangerLevel: 'safe', readOnly: true,
     inputSchema: inputs.observe.jsonSchema, resultSchema: output.jsonSchema,

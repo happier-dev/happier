@@ -7,6 +7,8 @@ import type { PluginAccountActionContext, PluginActionDeclaration } from '@happi
 import { request } from './deploymentHttp.js';
 import { isObject } from '../connectedAccounts/probe.js';
 import { workerEnvironmentKey } from './workers.js';
+import { pagesCreateSource, pagesRepositoryAccess } from './pagesSource.js';
+import { cloudflareReviewNotice } from './reviewNotice.js';
 
 type CreateInput = ReturnType<typeof inputs.create.parse>;
 type AccountAction = Extract<PluginActionDeclaration, { execution: { target: 'account' } }> & {
@@ -21,10 +23,12 @@ function unknownOutcome(): never { throw new PluginError({ code: 'outcome_unknow
  * Neither endpoint documents an idempotency operand; the host retains recovery.
  */
 async function create(input: CreateInput, context: PluginAccountActionContext, product: 'pages' | 'workers') {
-  if (input.sourceMethod !== 'upload') throw new PluginError({ code: 'unsupported_action',
+  const source = product === 'pages' && input.sourceMethod === 'gitIntegration' && input.repository && input.productionBranch
+    ? pagesCreateSource(input.repository, input.productionBranch) : null;
+  if (input.sourceMethod !== 'upload' && !source) throw new PluginError({ code: 'unsupported_action',
     details: { phase: 'source', reason: 'native_create_requires_upload' } });
   if (product === 'pages' && input.providerEnvironment.kind !== 'production') {
-    throw new PluginError({ code: 'unsupported_action', details: { phase: 'link', reason: 'pages_create_requires_production_upload' } });
+    throw new PluginError({ code: 'unsupported_action', details: { phase: 'link', reason: 'pages_create_requires_production' } });
   }
   if (product === 'pages' && !input.productionBranch) throw new PluginError({ code: 'invalid_parameters',
     details: { phase: 'link', requiredDraftPath: 'productionBranch' } });
@@ -34,7 +38,8 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
   if (!http) throw new PluginError({ code: 'client_required' });
   const reply = await request({ http, signal: context.signal, now: Date.now }, input.providerAccountId,
     product === 'pages' ? '/pages/projects' : '/workers/workers', 'link', 'POST',
-    { name: input.resourceName, ...(product === 'pages' ? { production_branch: input.productionBranch } : {}) });
+    { name: input.resourceName, ...(product === 'pages' ? { production_branch: input.productionBranch,
+      ...(source ? { source } : {}) } : {}) });
   if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } }), { phase: `deployment.cloudflare.${reply.phase}`,
       causeKind: 'native_failure', error: reply });
   const native = reply.value;
@@ -45,9 +50,11 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
     providerIdentity: { providerAccountId: input.providerAccountId, providerResourceId: native.id,
       providerEnvironment: product === 'pages' ? 'production' : workerEnvironmentKey(native.name) },
     providerEnvironment: environment, sourceMethod: input.sourceMethod,
+    ...(source && input.repository ? { repositoryAccess: pagesRepositoryAccess(native.source, input.repository, input.providerAccountId) } : {}),
     ...(product === 'pages' ? { providerUrl: `https://dash.cloudflare.com?to=/${encodeURIComponent(input.providerAccountId)}/pages/view/${encodeURIComponent(native.name)}` } : {}),
-    preparedNative: { projectName: native.name,
-      ...(product === 'pages' ? { pages: { projectMode: 'directUpload', productionBranch: native.production_branch } } : {}) } });
+    preparedNative: { projectName: native.name, reviewNotice: cloudflareReviewNotice(product, input.sourceMethod),
+      ...(product === 'pages' ? {
+        pages: { projectMode: native.source ? 'gitIntegration' : 'directUpload', productionBranch: native.production_branch } } : {}) } });
 }
 
 const common = { execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } },
@@ -65,7 +72,7 @@ export const pagesCreate: AccountAction = { ...common, title: 'Create a Cloudfla
     { path: 'resourceName', title: 'Project name', widget: 'text', required: true },
     { path: 'productionBranch', title: 'Production branch', widget: 'text', required: true },
     { path: 'sourceMethod', title: 'Source method', widget: 'select', required: true, defaultValue: 'upload',
-      options: [{ value: 'upload', label: 'Upload' }] },
+      options: [{ value: 'upload', label: 'Upload' }, { value: 'gitIntegration', label: 'Git integration' }] },
     { path: 'providerEnvironment', title: 'Environment', widget: 'json', required: true, defaultValue: { kind: 'production' } },
   ] },
   run: (value, context) => create(value as unknown as CreateInput, context, 'pages'),

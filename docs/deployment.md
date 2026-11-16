@@ -1249,6 +1249,32 @@ the pending choice requires a new connection attempt.
 
 ### Cloudflare token connections (0.3 development)
 
+Workers Builds requires a **user-scoped** API token with **Workers Builds
+Configuration (Edit)**; account-scoped tokens are not supported. Create the token
+at [My Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens).
+The Cloudflare connection reports `cloudflare_builds_user_token_required` when
+Workers is selected with an account-owned token. Pages, Tunnel and DNS can still
+use account-owned tokens. This API token is separate from the build-token UUID
+used by Cloudflare's build system to deploy a Worker. Install and authorize the
+Cloudflare Git app through Workers & Pages → Settings → Builds → Connect before
+configuring repository connections. See the [Builds API reference](https://developers.cloudflare.com/workers/ci-cd/builds/api-reference/).
+
+Pages creation supports hosted GitHub and GitLab repositories. Creation and
+adoption share the same observed-source readiness result; `needsGitAccess`
+includes the Cloudflare dashboard grant link when the selected repository is
+not connected. A Pages project's source mode is final at creation. Git deployment
+builds the latest commit on the selected branch: Review says so, the requested
+SHA remains in the receipt, and the provider-observed `builtSha` is included in
+its investigation source summary when available. Other forges use upload.
+Before Create, the existing Cloudflare inspect Actions accept a source-choice
+draft and return `preparedNative.reviewNotice` without discovering or creating a
+provider resource. Inspect, Create and Prepare use one plugin-owned notice
+builder for the chosen target and source method.
+Workers creation currently declares upload only: its Builds connection/trigger
+API needs native repository identifiers and a separate build-token selection
+that the creation input does not yet supply. Existing linked Workers Builds
+continue through the existing trigger and `observeBuild` owners.
+
 Manual-token Connect and health verify token activity, expiry and `not_before`,
 then use the configured Account ID as the identity and display name. The optional Features selection checks
 only the corresponding Workers scripts, Pages projects, Tunnel list or exact DNS

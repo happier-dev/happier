@@ -46,8 +46,11 @@ export function pagesDeploymentResult(value: unknown, input: PagesObservation, c
   }
   // The canonical role-result parser is also the public URL boundary; provider
   // config/secret fields never enter the projected result.
+  const metadata = isObject(value.deployment_trigger) && isObject(value.deployment_trigger.metadata)
+    ? value.deployment_trigger.metadata : undefined;
   const result = DeploymentTargetRoleResultV1ProtocolSchema.safeParse({ v: 1, state,
     providerDeploymentId: input.providerDeploymentId, observedAtMs: context.now(),
+    ...(typeof metadata?.commit_hash === 'string' && metadata.commit_hash ? { builtSha: metadata.commit_hash } : {}),
     ...(typeof value.url === 'string' ? { urls: [value.url] } : {}) });
   return result.success ? result.data : failure('provider_response_invalid', phase);
 }

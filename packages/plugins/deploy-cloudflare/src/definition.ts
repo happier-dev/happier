@@ -64,14 +64,14 @@ const actions: Readonly<{
 
 // Wrangler Pages starts its deployment status wait at one second. The plugin declares the same cadence for Workers.
 const deploymentTargets = { workers: { statusIntervalMs: 1000, role: 'runtime', title: 'Cloudflare Workers', targetKind: 'cloudflare-workers', icon: 'server-outline',
-    accepts: ['workers'], needs: ['repository', 'stateless'],
+    accepts: ['workers'], needs: ['repository', 'stateless'], sources: { gitIntegration: [], upload: true },
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: workerLinkSchema,
     actions: { inspect: 'workers-inspect', link: 'workers-link', create: 'workers-create', deploy: 'workers-deploy', observe: 'workers-observe', cancel: 'workers-cancel', teardown: 'workers-teardown', promote: 'workers-promote', rollback: 'workers-rollback',
       logs: { build: 'workers-build-logs-read' },
       variables: { read: 'workers-variables-read', sync: 'workers-variables-sync' },
       domains: { read: 'workers-domains-read', add: 'workers-domains-add', verify: 'workers-domains-verify', remove: 'workers-domains-remove' } } },
     pages: { statusIntervalMs: 1000, role: 'runtime', title: 'Cloudflare Pages', targetKind: 'cloudflare-pages', icon: 'server-outline',
-      accepts: ['static'], needs: ['repository', 'stateless'],
+      accepts: ['static'], needs: ['repository', 'stateless'], sources: { gitIntegration: ['github', 'gitlab'], upload: true },
       description: 'Create or link a Pages project.',
       targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: pagesLinkSchema,
       actions: { inspect: 'pages-inspect', link: 'pages-link', create: 'pages-create', deploy: 'pages-deploy', observe: 'pages-observe', rollback: 'pages-rollback', logs: { build: 'pages-build-logs-read' },

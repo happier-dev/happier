@@ -6,7 +6,7 @@ import { DeploymentTargetPreparationBaseV1ProtocolSchema as preparation, Deploym
 import { ScmHostingRepositoryIdentityV1ProtocolSchema, projectNativeJsonValueForTransport, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginAccountActionContext, PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
 import { targetProductSchema } from './targetOptions.js';
-import { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './cloudflareToolchain.js';
+import { cloudflareReviewNotice } from './reviewNotice.js';
 import { workerEnvironmentKey, prepareWorker, deployWorker, observeWorker, cancelWorker, observeUploadedWorker, isUploadedWorkerReference } from './workers.js';
 import { inspectPreviewIdentity, preparePreview } from './preview.js';
 import { teardownWorker } from './workersTeardown.js';
@@ -14,7 +14,6 @@ import { deployPreview, observePreview, cancelPreview, observeUploadedPreview, i
   uploadedPreviewSelection, type PreviewDeployment } from './previewDeploy.js';
 
 const base = preparation.jsonSchema;
-const uploadReviewNotice = `Uploads build on the controller using ${CLOUDFLARE_BUILD_IMAGE} and Wrangler ${CLOUDFLARE_WRANGLER_VERSION}.`;
 const prepareProperties = { ...base.properties, product: targetProductSchema, repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema,
   triggerUuid: { type: 'string', minLength: 1 } } satisfies NonNullable<PluginJsonSchema['properties']>;
 const prepareRequired = [...base.required ?? [], 'providerIdentity', 'repository'];
@@ -89,7 +88,7 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
         sourceMethod: request.sourceMethod,
         providerEnvironment: request.providerEnvironment, preparedNative: { projectName: environment.scriptName,
           ...(preview ? { previewId: preview.previewId, scriptName: environment.scriptName } : {}),
-          reviewNotice: uploadReviewNotice } });
+          reviewNotice: cloudflareReviewNotice('workers', 'upload') } });
     }
     const contextIo = io(context);
     if (request.providerEnvironment.kind === 'preview' && 'scriptName' in request.providerEnvironment) {
@@ -104,7 +103,7 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
         ...(request.sourceMethod !== undefined ? { sourceMethod: request.sourceMethod } : {}),
         providerEnvironment: environment, repositoryAccess: prepared.repositoryAccess,
         preparedNative: { projectName: environment.scriptName, previewId: prepared.previewId, gitBranch: prepared.gitBranch,
-          workerTag: request.providerIdentity.providerResourceId, scriptName: environment.scriptName, reviewNotice: uploadReviewNotice } });
+          workerTag: request.providerIdentity.providerResourceId, scriptName: environment.scriptName, reviewNotice: cloudflareReviewNotice('workers', 'gitIntegration') } });
     }
     if (request.providerEnvironment.kind !== 'script') throw new PluginError({ code: 'unsupported_action' });
     const prepared = await prepareWorker({ accountId: request.providerIdentity.providerAccountId,
@@ -117,7 +116,7 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
       providerEnvironment: prepared.providerEnvironment, repositoryAccess: prepared.repositoryAccess,
       // The required human resource name is the actual script name, not a
       // fabricated Pages/Vercel project. Operational script scope remains above.
-      preparedNative: { projectName: prepared.providerEnvironment.scriptName, triggerUuid: prepared.triggerUuid, reviewNotice: uploadReviewNotice } });
+      preparedNative: { projectName: prepared.providerEnvironment.scriptName, triggerUuid: prepared.triggerUuid, reviewNotice: cloudflareReviewNotice('workers', 'gitIntegration') } });
   },
 };
 

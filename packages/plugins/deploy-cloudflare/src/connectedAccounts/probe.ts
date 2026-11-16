@@ -95,7 +95,7 @@ export async function verifyCloudflareToken(token: string, context: Context, sig
   }
   const features = cloudflareFeatureNames.filter(feature => selected.includes(feature));
   if (features.includes('DNS') && !isCloudflareId(zoneId)) return { status: 'rejected', diagnostic: diagnostic('cloudflare_invalid_configuration', 'Enter the selected DNS zone ID.') };
-  if (tokenOwner === 'account' && features.includes('Workers')) return { status: 'rejected', diagnostic: diagnostic('cloudflare_invalid_configuration', 'Workers Builds requires a user-owned token.') };
+  if (tokenOwner === 'account' && features.includes('Workers')) return { status: 'rejected', diagnostic: diagnostic('cloudflare_builds_user_token_required', 'Workers Builds requires a user-owned token.') };
   try {
     const base = `/accounts/${accountId}`;
     // The Builds API explicitly rejects account-owned API tokens. Workers uses

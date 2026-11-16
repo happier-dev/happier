@@ -163,7 +163,7 @@ describe('Cloudflare Connected Account through plugin activation', () => {
     const h = await harness('pages');
     await expect(h.mode.complete({ fields: { token: 'account-test-token' } }, { ...h.context,
       configuration: { ...h.context.configuration, values: { accountId, tokenOwner: 'account', features: ['Workers'] } },
-    })).resolves.toMatchObject({ status: 'rejected', diagnostic: { code: 'cloudflare_invalid_configuration' } });
+    })).resolves.toMatchObject({ status: 'rejected', diagnostic: { code: 'cloudflare_builds_user_token_required' } });
     expect(h.staged.values.size).toBe(0);
   });
 
