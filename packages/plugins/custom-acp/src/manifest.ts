@@ -13,6 +13,11 @@ export const CUSTOM_ACP_PLUGIN = definePlugin({
     'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
   },
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
+  hostAccess: { required: [{
+    id: 'custom-acp-home', capability: 'environment',
+    reason: 'Give configured ACP agents their admitted native home.',
+    scope: { keys: ['HOME'] },
+  }], optional: [] },
   agents: {
     'custom-acp': {
       declaration: {
@@ -31,6 +36,20 @@ export const CUSTOM_ACP_PLUGIN = definePlugin({
         }),
       },
       factory: createCustomAcpAgentRuntime,
+      connectedAccountLaunch: {
+        // Requester launches need an empty home even without Connected Accounts.
+        // Arbitrary configured executables have no declared native files to import.
+        stateSharingDescriptor: {
+          nativeHome: { environmentKey: 'HOME', defaultRelativePath: '.' },
+          providerSupportStatus: 'supported',
+          config: { supported: false, modes: ['isolated'], entries: [], unavailableReason: 'not_implemented' },
+          state: {
+            supported: false, modes: ['isolated'], entries: [], unavailableReason: 'not_implemented',
+            symlinkUnavailableDegradePolicy: 'block_continuity',
+          },
+          authIsolation: { mode: 'materialized_home', secretEntries: [] },
+        },
+      },
       sessionRunnerFactory: {
         module: './agent/runtime/factory', export: 'createCustomAcpAgentRuntime', runtimeApiVersion: 1,
       },

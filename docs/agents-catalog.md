@@ -581,6 +581,11 @@ own native authentication configuration. It does not inherit the OpenCode
 Agent contribution's Connected Account purposes or Provider-binding adapter.
 Use the OpenCode Agent target when selecting its supported Connected Accounts.
 
+In 0.3 development, requester launches that cannot inherit the custodian's native
+Account state use the shared native-home materializer with an isolated `HOME`.
+The Custom ACP contribution declares no native configuration, state or credential
+files to import into that home.
+
 In 0.3 development, configured definitions carry a typed `launch` (`command`,
 `npm`, `archive`, or `uv`); the stored reader folds predecessor `command`/`args`
 into a command launch. `resolveAcpLaunch` is the single CLI launch owner.
