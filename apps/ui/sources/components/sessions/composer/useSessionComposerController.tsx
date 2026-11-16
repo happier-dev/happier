@@ -1,3 +1,5 @@
+import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import type { SessionSurfacePresenceSignal } from '@/components/sessions/shell/sessionSurfacePresence';
 import { resolveSessionContinuationDaemonGeneration } from '@/components/sessions/agentPicker/resolveSessionAgentContinuationEligibility';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import type { PromptPickerOpenRequest } from '@/components/sessions/agentInput/commandMenu/promptPickerActionPort';
@@ -514,8 +516,8 @@ export type SessionComposerControllerOptions = Readonly<{
     pane: ReturnType<typeof useSessionViewBootstrap>['pane'];
     isMachineReachable: boolean;
     machineReachability: ReturnType<typeof useSessionViewBootstrap>['machineReachability'];
-    surfaceFocused: boolean;
-    surfacePresented: boolean;
+    /** This surface's focus and presentation, read when acting and followed by subscription (never a render input). */
+    presence: SessionSurfacePresenceSignal;
     isEncryptedSessionLocked: boolean;
     executionRunsEnabled: boolean;
     participantTargets: readonly SessionParticipantTarget[];
@@ -550,8 +552,7 @@ export function useSessionComposerController({
     pane,
     isMachineReachable,
     machineReachability,
-    surfaceFocused,
-    surfacePresented,
+    presence,
     isEncryptedSessionLocked,
     executionRunsEnabled,
     participantTargets,
@@ -610,11 +611,21 @@ export function useSessionComposerController({
     const composerFocusRequestRef = React.useRef<(() => void) | null>(null);
     const promptPickerOpenRequestRef = React.useRef<PromptPickerOpenRequest | null>(null);
     const composerPresentationAccountLifetime = sessionAccountLifetime;
-    const boardPresentationUndoCurrentRef = React.useRef(false);
-    boardPresentationUndoCurrentRef.current = composerPresentationMountedRef.current
-        && surfaceFocused
+    // Focus and presentation only gate what this composer does when it acts, and start or stop its work:
+    // they are read at that moment and followed by subscription, so a tab switch renders nothing here.
+    const readSurfaceFocused = React.useCallback(() => {
+        const current = presence.get();
+        return current.visible && current.focused;
+    }, [presence]);
+    const readSurfacePresented = React.useCallback(() => presence.get().presented, [presence]);
+    const surfaceFocusSignal = React.useMemo(() => ({ get: readSurfaceFocused, subscribe: presence.subscribe }),
+        [presence, readSurfaceFocused]);
+    const surfacePresentationSignal = React.useMemo(() => ({ get: readSurfacePresented, subscribe: presence.subscribe }),
+        [presence, readSurfacePresented]);
+    const isBoardPresentationUndoCurrent = React.useCallback(() => composerPresentationMountedRef.current
+        && readSurfaceFocused()
         && composerPresentationAccountLifetime !== null
-        && composerPresentationAccountLifetime.isCurrent();
+        && composerPresentationAccountLifetime.isCurrent(), [composerPresentationAccountLifetime, readSurfaceFocused]);
     const isActiveComposerPresentationCurrent = React.useCallback(() => (
         composerPresentationMountedRef.current
         && composerRefV1Key(activeComposerRefRef.current)
@@ -876,7 +887,9 @@ export function useSessionComposerController({
         ? { v: 1 as const, updatedAt: providerModelSelectionIntent.updatedAt, ref: providerModelSelectionIntent.selection }
         : null;
     const providerBindingStatus = useProviderBindingStatus({
-        enabled: providersFeatureEnabled && surfaceFocused,
+        enabled: providersFeatureEnabled,
+        // A visible pane that is not focused keeps the status it last showed (P03 ORCH 2026-11-16).
+        active: surfaceFocusSignal,
         machineId: typeof machineId === 'string' ? machineId : null,
         serverId: sessionRouteServerId,
         selection: providerModelSelection,
@@ -889,7 +902,8 @@ export function useSessionComposerController({
     const [providerModelPickerDemanded, setProviderModelPickerDemanded] = React.useState(false);
     const providerModelProjection = useProviderModelProjection({
         enabled: providersFeatureEnabled && providerAgentTargetKey !== null,
-        active: surfaceFocused && providerModelPickerDemanded,
+        // Demand is the open picker; a hidden surface's picker closes, so focus adds nothing here.
+        active: providerModelPickerDemanded,
         machineId: typeof machineId === 'string' ? machineId : null,
         serverId: sessionRouteServerId,
         agentTargetKey: providerAgentTargetKey,
@@ -1163,7 +1177,7 @@ export function useSessionComposerController({
             isCurrent: () => composerPresentationMountedRef.current
                 && 'sessionId' in activeComposerRefRef.current
                 && activeComposerRefRef.current.sessionId === sessionId
-                && boardPresentationUndoCurrentRef.current
+                && isBoardPresentationUndoCurrent()
                 && sessionAccountLifetime?.isCurrent() === true
                 && sessionPresentationApplierRef.current !== null,
             apply: async ({ input, signal }) => {
@@ -1171,7 +1185,7 @@ export function useSessionComposerController({
                 const composerRef = activeComposerRefRef.current;
                 if (!composerPresentationMountedRef.current
                     || !('sessionId' in composerRef) || composerRef.sessionId !== sessionId
-                    || !boardPresentationUndoCurrentRef.current
+                    || !isBoardPresentationUndoCurrent()
                     || !sessionAccountLifetime?.isCurrent()) {
                     return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
                 }
@@ -1197,6 +1211,7 @@ export function useSessionComposerController({
         },
     }), [
         currentLifecycleAgentCapabilities,
+        isBoardPresentationUndoCurrent,
         readActiveComposerPresentationRevision,
         router,
         sessionAccountScope,
@@ -1217,8 +1232,7 @@ export function useSessionComposerController({
     const composerReferenceHost = React.useMemo<ComposerReferenceSearchHost | null>(() => {
         const projection = daemonMergedProjection.inputs?.pluginProjectionV2;
         if (
-            !surfaceFocused
-            || daemonMergedProjection.phase !== 'ready'
+            daemonMergedProjection.phase !== 'ready'
             || !projection
             || !machineId
         ) {
@@ -1230,8 +1244,10 @@ export function useSessionComposerController({
             serverId: sessionRouteServerId,
             projection,
             pluginUiProjection: daemonMergedProjection.inputs!.pluginUiProjection,
+            // Focus is checked when a result arrives: an unfocused surface's results are dropped.
             isCurrent: () => (
                 composerReferenceHostRef.current === host
+                && readSurfaceFocused()
                 && composerReferenceAccountLifetime?.isCurrent() !== false
             ),
         };
@@ -1243,8 +1259,8 @@ export function useSessionComposerController({
         daemonMergedProjection.inputs?.pluginUiProjection,
         daemonMergedProjection.phase,
         machineId,
+        readSurfaceFocused,
         sessionId,
-        surfaceFocused,
     ]);
     composerReferenceHostRef.current = composerReferenceHost;
     const composerDropReferenceHostRef = React.useRef<ComposerReferenceSearchHost | null>(null);
@@ -1254,19 +1270,19 @@ export function useSessionComposerController({
         const host: ComposerReferenceSearchHost = {
             machineId, serverId: sessionRouteServerId, projection, pluginUiProjection: daemonMergedProjection.inputs!.pluginUiProjection,
             isCurrent: () => composerDropReferenceHostRef.current === host
-                && isActiveComposerPresentationCurrent() && surfacePresented,
+                && isActiveComposerPresentationCurrent() && readSurfacePresented(),
         };
         return host;
     }, [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.inputs?.pluginUiProjection, daemonMergedProjection.phase,
-        isActiveComposerPresentationCurrent, machineId, sessionRouteServerId, surfacePresented]);
+        isActiveComposerPresentationCurrent, machineId, readSurfacePresented, sessionRouteServerId]);
     composerDropReferenceHostRef.current = composerDropReferenceHost;
     const isSessionComposerPluginScopeCurrent = React.useCallback(() => (
         composerPresentationMountedRef.current
         && composerRefV1Key(activeComposerRefRef.current)
             === composerRefV1Key(activeComposerRef)
-        && surfaceFocused
+        && readSurfaceFocused()
         && (composerPresentationAccountLifetime === null || composerPresentationAccountLifetime.isCurrent())
-    ), [activeComposerRef, composerPresentationAccountLifetime, surfaceFocused]);
+    ), [activeComposerRef, composerPresentationAccountLifetime, readSurfaceFocused]);
     const openSessionComposerControlAction = React.useCallback((input: Readonly<{
         controller: PluginContributedActionController;
         action: PluginContributionIdentityV1;
@@ -1663,20 +1679,33 @@ export function useSessionComposerController({
         nativeGoalOwner: sessionNativeGoalOwner,
         agentLabel: sessionGoalAgentLabel,
     }), [goalControlMachineId, sessionGoalAgentLabel, sessionId, sessionNativeGoalOwner]);
+    // Retained workspace destinations stay mounted while hidden. Their observers retire with presentation,
+    // independently of keyboard focus. The caller keeps its identity across a hide and show: hiding aborts
+    // its current signal and showing starts a fresh one, so a switch renders nothing here. An operation
+    // keeps the signal it started with (`callerSignal`), so a later show never revives it.
     const sessionViewCaller = React.useMemo(() => {
-        const caller = new AbortController();
-        // Retained workspace destinations stay mounted while hidden. Their
-        // observers retire with presentation, independently of keyboard focus.
-        if (!surfacePresented) caller.abort();
-        return caller;
-    }, [sessionAccountLifetime, sessionId, surfacePresented]);
+        let controller = new AbortController();
+        let retired = false;
+        if (!presence.get().presented) controller.abort();
+        return {
+            get signal(): AbortSignal { return controller.signal; },
+            abort: () => { retired = true; controller.abort(); },
+            present: (presented: boolean) => {
+                if (retired) return;
+                if (!presented) controller.abort();
+                else if (controller.signal.aborted) controller = new AbortController();
+            },
+        };
+    }, [presence, sessionAccountLifetime, sessionId]);
     React.useEffect(() => {
         const retirement = sessionAccountLifetime?.onRetire(() => sessionViewCaller.abort());
+        const unfollow = followSignal(surfacePresentationSignal, sessionViewCaller.present);
         return () => {
+            unfollow();
             retirement?.dispose();
             sessionViewCaller.abort();
         };
-    }, [sessionAccountLifetime, sessionViewCaller]);
+    }, [sessionAccountLifetime, sessionViewCaller, surfacePresentationSignal]);
     const setSessionGoalForView = React.useCallback(
         async (request: SessionWorkStateGoalSetRequest, signal?: AbortSignal): Promise<SessionWorkStateOperationResult> => {
             if (!sessionAccountScope || !sessionAccountLifetime?.isCurrent()) {
@@ -2103,7 +2132,9 @@ export function useSessionComposerController({
         openSetup: (href) => router.push(admitInternalRouteHref(href)),
     }));
     const handleStaleSessionRunnerRestart = React.useCallback(async () => {
-        if (sessionViewCaller.signal.aborted) return;
+        // This operation keeps the presentation it started under: a later show must not revive it.
+        const callerSignal = sessionViewCaller.signal;
+        if (callerSignal.aborted) return;
         if (!hasWriteAccess) {
             Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
             return;
@@ -2118,12 +2149,12 @@ export function useSessionComposerController({
             actionResult = await actionExecutor.execute('session.runtime.refresh', {
                 sessionId, machineId: staleSessionRunnerRuntimeState.machineId ?? '',
             }, { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
-                signal: sessionViewCaller.signal });
+                signal: callerSignal });
         } catch (error) {
-            if (sessionViewCaller.signal.aborted) return;
+            if (callerSignal.aborted) return;
             throw error;
         }
-        if (sessionViewCaller.signal.aborted) return;
+        if (callerSignal.aborted) return;
         if (!actionResult.ok) {
             setStaleSessionRunnerOperationStatus(null);
             if (actionResult.errorCode !== 'cancelled') alertComposerActionResultFailure(actionResult);
@@ -2201,6 +2232,8 @@ export function useSessionComposerController({
         providerCreditId?: string | null;
         snapshotFetchedAtMs: number | null;
     }>): Promise<boolean> => {
+        // This operation keeps the presentation it started under: a later show must not revive it.
+        const callerSignal = sessionViewCaller.signal;
         const targetMachineId = controlMachineTarget?.machineId
             ?? (typeof machineId === 'string' ? machineId : null);
         if (!targetMachineId) {
@@ -2223,8 +2256,8 @@ export function useSessionComposerController({
             profileId: params.profileRef.profileId,
             sourceSnapshotFetchedAtMs: params.snapshotFetchedAtMs,
             ...(params.providerCreditId ? { providerCreditId: params.providerCreditId } : {}),
-        }, { defaultSessionId: sessionId, signal: sessionViewCaller.signal });
-        if (sessionViewCaller.signal.aborted) return false;
+        }, { defaultSessionId: sessionId, signal: callerSignal });
+        if (callerSignal.aborted) return false;
         if (!execution.ok) {
             await Modal.alert(t('common.error'), execution.error || execution.errorCode);
             return false;
@@ -2249,12 +2282,14 @@ export function useSessionComposerController({
         t,
     ]);
     const handleUsageLimitRecoveryAction = React.useCallback(async (kind: SessionUsageLimitRecoveryActionKind = usageLimitRecoveryPresentation?.banner.mode ?? 'enable') => {
+        // This operation keeps the presentation it started under: a later show must not revive it.
+        const callerSignal = sessionViewCaller.signal;
         if (!usageLimitRecoveryPresentation) return;
         if (usageLimitRecoveryPendingActionRef.current) return;
         const showUsageLimitRecoveryOperationFailure = async (
             result: SessionUsageLimitRecoveryOperationFailureResult,
         ): Promise<void> => {
-            if (sessionViewCaller.signal.aborted) return;
+            if (callerSignal.aborted) return;
             const profileActionRoute = readUsageLimitRecoveryDiagnosticProfileActionRoute(
                 result,
             );
@@ -2337,7 +2372,7 @@ export function useSessionComposerController({
                 } else {
                     const saved = await executeRecoveryAction('settings.set', {
                         anchor: SESSION_PROVIDER_LIMITS_SETTINGS.settings.autoWait.anchor, value: true,
-                    }, { defaultSessionId: sessionId, signal: sessionViewCaller.signal });
+                    }, { defaultSessionId: sessionId, signal: callerSignal });
                     if (!saved.ok) await showUsageLimitRecoveryOperationFailure(saved);
                     if (!applyUsageLimitRecoveryOperationStatus(result)) setUsageLimitRecoveryOperationStatus(null);
                 }
@@ -2359,7 +2394,7 @@ export function useSessionComposerController({
                 }
                 const saved = await executeRecoveryAction('settings.set', {
                     anchor: SESSION_PROVIDER_LIMITS_SETTINGS.settings.autoWait.anchor, value: false,
-                }, { defaultSessionId: sessionId, signal: sessionViewCaller.signal });
+                }, { defaultSessionId: sessionId, signal: callerSignal });
                 if (!saved.ok) {
                     setUsageLimitRecoveryOperationStatus(null);
                     await showUsageLimitRecoveryOperationFailure(saved);
@@ -2872,7 +2907,8 @@ export function useSessionComposerController({
         retainProjectionOnAccountRetirement: isEmbedWindowContext(),
         session,
         // Custody (adopting, seeding initial prompts) waits for this Session's own draft read.
-        active: surfacePresented && draftsAdmitted,
+        active: draftsAdmitted,
+        presented: surfacePresentationSignal,
     });
     const sessionDraftAddress = React.useMemo(() => ({
         kind: 'session' as const,
@@ -4469,7 +4505,7 @@ export function useSessionComposerController({
     const hasComposerActionChip = (chipKey: string): boolean => chipKey === SESSION_MODEL_PICKER_CHIP_KEY
         ? canSelectModel : composerActionChipKeysRef.current.has(chipKey);
     const requestComposerActionChipOpen = (chipKey: string, anchorRef?: React.RefObject<View | null>): boolean => {
-        if (!surfaceFocused || !surfacePresented || !hasComposerActionChip(chipKey)) return false;
+        if (!readSurfaceFocused() || !readSurfacePresented() || !hasComposerActionChip(chipKey)) return false;
         // The model picker is the status line's own picker; its entry is the one the banner's "Choose another" takes.
         if (chipKey === SESSION_MODEL_PICKER_CHIP_KEY) {
             openSessionModelPicker();
@@ -4508,7 +4544,7 @@ export function useSessionComposerController({
             return {
                 ...snapshot,
                 state: {
-                    focused: surfaceFocused && composerInputFocusedRef.current,
+                    focused: readSurfaceFocused() && composerInputFocusedRef.current,
                     editable: isComposerMutationEditable(inputLock),
                     submittable: !isReadOnly && !externalSessionOperationShell.blocksNewOperation && !isComposerSending && inputLock === null,
                     submitting: isComposerSending,
@@ -4527,10 +4563,10 @@ export function useSessionComposerController({
         acquireComposerInputLock: composerInputEffects.acquireComposerInputLock,
         isCurrent: () => shouldShowInput && isActiveComposerPresentationCurrent(),
         // A retained hidden surface stays registered but yields command targeting to a presented one.
-        isPresented: () => shouldShowInput && surfacePresented,
+        isPresented: () => shouldShowInput && readSurfacePresented(),
         focusComposer: () => {
             if (
-                !surfaceFocused
+                !readSurfaceFocused()
                 || !composerPresentationMountedRef.current
                 || composerRefV1Key(activeComposerRefRef.current)
                     !== composerRefV1Key(activeComposerRef)
@@ -4582,7 +4618,7 @@ export function useSessionComposerController({
             return {
                 ...readSessionComposerSnapshot(),
                 state: {
-                    focused: surfaceFocused
+                    focused: readSurfaceFocused()
                         && activeComposerRefRef.current.kind === 'session'
                         && composerInputFocusedRef.current,
                     editable: isComposerMutationEditable(inputLock),
@@ -4609,9 +4645,9 @@ export function useSessionComposerController({
         ),
         // The ordinary draft remains writable by its background owner, but it
         // is not the presented input while a queued message is being edited.
-        isPresented: () => shouldShowInput && surfacePresented && activeComposerRefRef.current.kind === 'session',
+        isPresented: () => shouldShowInput && readSurfacePresented() && activeComposerRefRef.current.kind === 'session',
         focusComposer: () => {
-            if (!surfaceFocused || activeComposerRefRef.current.kind !== 'session') return false;
+            if (!readSurfaceFocused() || activeComposerRefRef.current.kind !== 'session') return false;
             const focus = composerFocusRequestRef.current;
             if (!focus) return false;
             focus();
@@ -4646,14 +4682,16 @@ export function useSessionComposerController({
     // presentation readers so an external composer transaction cannot observe
     // a stale ready view, and so an observer sees this Composer stop being
     // focused when its mounted surface is no longer the focused one.
-    React.useEffect(() => {
+    // Focus and presentation transitions reach this by subscription, not as render inputs.
+    React.useEffect(() => followSignal(presence, (current) => {
+        const focused = current.visible && current.focused;
         notifyComposerPresentationTargetChanged(activeComposerRef);
         if (activeComposerRef.kind === 'pendingMessage') {
             notifyComposerPresentationTargetChanged(sessionComposerRef);
         }
-        if (shouldShowInput && surfaceFocused) flushPendingRegisteredSessionComposerFocus(sessionComposerAddress);
-        if (shouldShowInput && surfaceFocused && surfacePresented) flushPendingRegisteredSessionComposerActionChip(sessionComposerAddress);
-    }, [activeComposerRef, composerAttachmentAvailabilityEntriesById, sessionComposerAddress, sessionComposerRef, shouldShowInput, surfaceFocused, surfacePresented]);
+        if (shouldShowInput && focused) flushPendingRegisteredSessionComposerFocus(sessionComposerAddress);
+        if (shouldShowInput && focused && current.presented) flushPendingRegisteredSessionComposerActionChip(sessionComposerAddress);
+    }), [activeComposerRef, composerAttachmentAvailabilityEntriesById, presence, sessionComposerAddress, sessionComposerRef, shouldShowInput]);
     const transcriptInteraction = transcriptSource.useInteraction();
 
     const isLocallyAttached = !isHiddenSystemSessionSession && isSessionLocallyAttached(session);
@@ -5278,7 +5316,8 @@ export function useSessionComposerController({
             })(), { tag: 'SessionView.guardKeepRunning' });
         }, [guardMachineId, sessionId, sessionRouteServerId, sessionAccountLifetime]);
         useSessionGuardDraftActivity({ textStore: composerTextStore, keepRunning: keepGuardedSessionRunning,
-            warningKey: surfaceFocused && hasWriteAccess && guardMachineId && guardComposerState?.kind === 'warning'
+            active: surfaceFocusSignal,
+            warningKey: hasWriteAccess && guardMachineId && guardComposerState?.kind === 'warning'
                 ? JSON.stringify([sessionAccountScopeKey, sessionId, guardMachineId, guardComposerState.countdownTo]) : null });
         const connectionStatus = React.useMemo(() => resolveSessionViewConnectionStatus({
             // The composer's status line is the one place a signed-out Account is said in the composer.
@@ -5372,7 +5411,9 @@ export function useSessionComposerController({
         // the binding banner's Restart and the next-Send armed route (D15).
         // True only once the requested selection is ready; failures are presented.
         const restartSessionRunnerOnRequestedRoute = React.useCallback(async (): Promise<boolean> => {
-            if (sessionViewCaller.signal.aborted) return false;
+            // This operation keeps the presentation it started under: a later show must not revive it.
+            const callerSignal = sessionViewCaller.signal;
+            if (callerSignal.aborted) return false;
             setModelTransitionFailure(null);
             try {
                 // Ask the same transition owner to apply at Send. Live model changes
@@ -5382,8 +5423,8 @@ export function useSessionComposerController({
                     const result = await actionExecutor.execute('session.model.set', {
                         sessionId, modelId: requested.modelId, providerConnectionId: requested.providerConnectionId,
                         applyTiming: 'immediate',
-                    }, { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId, signal: sessionViewCaller.signal });
-                    if (sessionViewCaller.signal.aborted) return false;
+                    }, { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId, signal: callerSignal });
+                    if (callerSignal.aborted) return false;
                     if (result.ok) {
                         // An arm is pending application, so empty Continue still needs the restart.
                         if (!(typeof result.result === 'object' && result.result !== null
@@ -5425,8 +5466,8 @@ export function useSessionComposerController({
                         },
                     } : {}),
                 }, { surface: 'ui', defaultSessionId: sessionId, serverId: sessionRouteServerId,
-                    signal: sessionViewCaller.signal });
-                if (sessionViewCaller.signal.aborted) return false;
+                    signal: callerSignal });
+                if (callerSignal.aborted) return false;
                 if (!actionResult.ok) {
                     if (actionResult.errorCode !== 'cancelled') alertComposerActionResultFailure(actionResult);
                     return false;
@@ -5439,7 +5480,7 @@ export function useSessionComposerController({
                 if (!presentMachineAgentRefusal(result.diagnostics?.errorCode, restartMachineId)) alertComposerRunnerRestartFailure(result);
                 return false;
             } catch (error) {
-                if (sessionViewCaller.signal.aborted) return false;
+                if (callerSignal.aborted) return false;
                 throw error;
             }
         }, [
@@ -5760,8 +5801,10 @@ export function useSessionComposerController({
         composerActionChipKeysRef.current = composerActionChipKeys;
         React.useEffect(() => {
             notifySessionComposerPresentationTargetChanged(sessionId);
-            if (surfaceFocused && surfacePresented) flushPendingRegisteredSessionComposerActionChip(sessionComposerAddress);
-        }, [canSelectModel, composerActionChipKeys, sessionComposerAddress, sessionId, surfaceFocused, surfacePresented]);
+            return followSignal(presence, (current) => {
+                if (current.visible && current.focused && current.presented) flushPendingRegisteredSessionComposerActionChip(sessionComposerAddress);
+            });
+        }, [canSelectModel, composerActionChipKeys, presence, sessionComposerAddress, sessionId]);
 
     const { openFiles: openFileViewer } = useSessionFilePaneNavigation({
         scopeId: pane.scopeId,
@@ -5919,7 +5962,7 @@ export function useSessionComposerController({
                             : undefined}
                         accountRecoveryIsPrimary={visibleUsageLimitRecoveryPresentation.banner.mode === 'switch_account_now'}
                         temporaryThrottle={visibleUsageLimitRecoveryPresentation.banner.temporaryThrottle}
-                        surfaceFocused={surfaceFocused}
+                        surfaceFocus={surfaceFocusSignal}
                         testID={visibleUsageLimitRecoveryPresentation.banner.testID}
                         actionTestID={visibleUsageLimitRecoveryPresentation.banner.actionTestID}
                         title={visibleUsageLimitRecoveryPresentation.banner.title}
@@ -6072,7 +6115,7 @@ export function useSessionComposerController({
                 resetStartEnabled={hasWriteAccess && !pendingComposerDocument
                     && !recipientState.recipient && !recipientState.scmDiffSummaryDiscussion
                     && resolveVoiceSessionComposerRouting({ conversationSessionId: sessionId, sessionMetadata: ownerMetadata })?.kind !== 'adapter_text'}
-                surfacePresented={surfacePresented}
+                surfacePresentation={surfacePresentationSignal}
                 sessionTypingPresence={sessionTypingPresence}
                 contentPaddingHorizontal={COMPOSER_CONTENT_HORIZONTAL_INSET}
                 agentType={agentInputAgentType ?? undefined}
@@ -6147,6 +6190,8 @@ export function useSessionComposerController({
                 // the assignment refreshes the latest-send ref with this render's
                 // closure, then the expression evaluates to the stable wrapper (R1).
                 onSend={(agentInputSendRef.current = async (sendOptions) => {
+                    // This operation keeps the presentation it started under: a later show must not revive it.
+                    const callerSignal = sessionViewCaller.signal;
                     let submissionResult: ActionExecuteResult = {
                         ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable',
                     };
@@ -6478,7 +6523,7 @@ export function useSessionComposerController({
                             const baseStructuredInput = rawStructuredInput === undefined ? undefined
                                 : RawIngressStructuredInputV1Schema.parse(rawStructuredInput);
                             const resolvedReviewDrafts = shouldSendReviewComments
-                                ? await resolveReviewCommentDraftAnchorsForPrompt({ drafts: includedReviewCommentDrafts, reviewScope, signal: sessionViewCaller.signal })
+                                ? await resolveReviewCommentDraftAnchorsForPrompt({ drafts: includedReviewCommentDrafts, reviewScope, signal: callerSignal })
                                 : null;
                             const structuredInput = resolvedReviewDrafts || hasAttachments ? {
                                 v: 1 as const,
@@ -7076,8 +7121,8 @@ export function useSessionComposerController({
                                     },
                                 }
                                 : transitionSubmission;
-                            const prepared = await prepareArmedAgentContinuation(submissionForDispatch, readSessionOwnerMetadataView(storage.getState().sessions[sessionId]), { signal: sessionViewCaller.signal });
-                            if (!outboundAccountLifetime.isCurrent() || sessionViewCaller.signal.aborted) return { status: 'rejected' };
+                            const prepared = await prepareArmedAgentContinuation(submissionForDispatch, readSessionOwnerMetadataView(storage.getState().sessions[sessionId]), { signal: callerSignal });
+                            if (!outboundAccountLifetime.isCurrent() || callerSignal.aborted) return { status: 'rejected' };
                             if (prepared.status === 'refused') {
                                 setArmedContinuationOutcome({
                                     kind: 'refusal',
@@ -7092,7 +7137,7 @@ export function useSessionComposerController({
                             // input rather than an edited composer projection.
                             if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
                             const { disposition, result } = await continueSessionWithArmedAgent(prepared, {
-                                signal: sessionViewCaller.signal,
+                                signal: callerSignal,
                                 isCurrent: () => outboundAccountLifetime.isCurrent(),
                                 onBeforeTransitionDispatch: () => inSessionAgentPicker.recordArmedContinuationSubmission({
                                     localId: destination.localId,
@@ -7109,7 +7154,7 @@ export function useSessionComposerController({
                                     },
                                 }),
                             });
-                            if (!outboundAccountLifetime.isCurrent() || sessionViewCaller.signal.aborted) return { status: 'rejected' };
+                            if (!outboundAccountLifetime.isCurrent() || callerSignal.aborted) return { status: 'rejected' };
                             if (result === null) {
                                 if (disposition.notice) setArmedContinuationOutcome({
                                     kind: 'refusal', scopeKey: sessionAccountScopeKey, message: disposition.notice.message,
@@ -7228,7 +7273,7 @@ export function useSessionComposerController({
                                             drafts: await resolveReviewCommentDraftAnchorsForPrompt({
                                                 drafts: includedReviewCommentDrafts,
                                                 reviewScope,
-                                                signal: sessionViewCaller.signal,
+                                                signal: callerSignal,
                                             }),
                                             additionalMessage,
                                             metaOverrides: attachmentsMetaOverrides,
@@ -7420,7 +7465,7 @@ export function useSessionComposerController({
                                         drafts: await resolveReviewCommentDraftAnchorsForPrompt({
                                             drafts: includedReviewCommentDrafts,
                                             reviewScope,
-                                            signal: sessionViewCaller.signal,
+                                            signal: callerSignal,
                                         }),
                                         additionalMessage,
                                     }) }
@@ -7857,7 +7902,7 @@ export function useSessionComposerController({
         bottomNotice,
         followBottomIntentSeq,
         handleEditPendingMessage,
-        boardPresentationUndoCurrentRef,
+        isBoardPresentationUndoCurrent,
         actionExecutor,
         presentSessionActionOutcome,
         setActiveStatusBadgeKey,

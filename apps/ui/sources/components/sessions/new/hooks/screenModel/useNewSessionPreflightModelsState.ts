@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
@@ -69,8 +69,10 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         retainedModelName?: (modelId: string) => string | null;
     }>;
 }> {
-    const presented = useLayoutPresentationActive();
-    const enabled = params.enabled !== false && presented;
+    // Presentation starts and stops probing by subscription: a retained host hidden and shown again does
+    // not render for it.
+    const presentation = useLayoutPresentationSignal();
+    const enabled = params.enabled !== false;
     const [preflightModels, setPreflightModels] = React.useState<PreflightModelList | null>(null);
     const [preflightModelsTargetKey, setPreflightModelsTargetKey] = React.useState<string | null>(null);
     const [probePhase, setProbePhase] = React.useState<'idle' | 'loading' | 'refreshing'>('idle');
@@ -181,13 +183,13 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             return;
         }
 
-        let cancelled = false;
-        const controller = new AbortController();
         let retryTimeout: ReturnType<typeof setTimeout> | null = null;
         const cacheEntry = readDynamicModelProbeCache(preflightModelsKey, modelSuccessCacheMaxAgeMs);
         const scopeStable = lastCacheKeyRef.current === catalogScopeKey;
         lastCacheKeyRef.current = catalogScopeKey;
+        let appliedEntry: DynamicModelProbeCacheEntry | null | undefined;
         const applyEntry = (entry: DynamicModelProbeCacheEntry | null) => {
+            appliedEntry = entry;
             if (entry?.kind === 'success') {
                 setPreflightModels(entry.value);
                 preflightModelsRef.current = entry.value;
@@ -214,7 +216,7 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
         const scheduleRetry = (entry: DynamicModelProbeCacheEntry | null) => {
             if (retryTimeout) clearTimeout(retryTimeout);
             retryTimeout = null;
-            if (!enabled) return;
+            if (!enabled || !presentation.get()) return;
             const retryAt = dynamicModelProbeRetryAt(entry);
             if (retryAt === null) return;
             // The cache owns the fast-retry budget for every consumer of this catalog;
@@ -225,57 +227,65 @@ export function useNewSessionPreflightModelsState(params: Readonly<{
             }, Math.max(0, retryAt - Date.now()));
         };
         if (!enabled) return;
-        let firstObserver = false;
-        const unsubscribe = subscribeDynamicModelProbeCache(preflightModelsKey, () => {
-            const entry = readDynamicModelProbeCache(preflightModelsKey, modelSuccessCacheMaxAgeMs);
-            applyEntry(entry);
-            scheduleRetry(entry);
-        }, () => { firstObserver = true; });
-        const force = refreshNonce !== lastHandledRefreshNonceRef.current;
-        lastHandledRefreshNonceRef.current = refreshNonce;
-        // A successful catalog is retained for immediate display, but a new demand
-        // interval still revalidates. Overlapping observers join the same probe;
-        // unavailable/unknown outcomes keep their existing retry/Action policy.
-        const revalidate = cacheEntry?.kind === 'success' && dynamicModelProbeRetryAt(cacheEntry) === null
-            && cacheEntry.reason !== 'outcomeUnknown' && cacheEntry.retryable !== false
-            && (firstObserver || isDynamicModelProbePending(preflightModelsKey));
-        if (!force && !revalidate && isDynamicModelProbeCacheFresh(cacheEntry)) {
-            scheduleRetry(cacheEntry);
-        } else {
-            setProbePhase(preflightModelsRef.current ? 'refreshing' : 'loading');
-            const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
-            void discoverMachineModels({
-                cacheKey: preflightModelsKey,
-                agentType,
-                machineId: params.selectedMachineId!,
-                serverId: params.capabilityServerId,
-                backendTarget: backendTargetForProbe,
-                successMaxAgeMs: modelSuccessCacheMaxAgeMs,
-                timeoutMs: NEW_SESSION_MODEL_PROBE_TIMEOUT_MS,
-                bypassCache: force,
-                revalidate,
-                signal: controller.signal,
-                capabilityParams: {
-                    timeoutMs: NEW_SESSION_MODEL_PROBE_TIMEOUT_MS,
-                    ...probeContextCapabilityParams,
-                    ...(cwd ? { cwd } : {}),
-                },
-            }).then((entry) => {
-                if (cancelled) return;
+        return followSignal(presentation, (presented) => {
+            if (!presented) return;
+            let cancelled = false;
+            const controller = new AbortController();
+            let firstObserver = false;
+            const unsubscribe = subscribeDynamicModelProbeCache(preflightModelsKey, () => {
+                const entry = readDynamicModelProbeCache(preflightModelsKey, modelSuccessCacheMaxAgeMs);
                 applyEntry(entry);
-                setProbePhase('idle');
                 scheduleRetry(entry);
-            }).catch(() => {
-                if (!cancelled) setProbePhase('idle');
-            });
-        }
-        return () => {
-            cancelled = true;
-            controller.abort();
-            unsubscribe();
-            if (retryTimeout) clearTimeout(retryTimeout);
-        };
-    }, [agentType, backendTargetForProbe, backendTargetKey, preflightModelsKey, modelSuccessCacheMaxAgeMs, enabled, params.capabilityServerId, params.cwd, params.selectedMachineId, refreshNonce, retryNonce, probeContextCapabilityParams]);
+            }, () => { firstObserver = true; });
+            const force = refreshNonce !== lastHandledRefreshNonceRef.current;
+            lastHandledRefreshNonceRef.current = refreshNonce;
+            // A successful catalog is retained for immediate display, but a new demand
+            // interval still revalidates. Overlapping observers join the same probe;
+            // unavailable/unknown outcomes keep their existing retry/Action policy.
+            const cacheEntry = readDynamicModelProbeCache(preflightModelsKey, modelSuccessCacheMaxAgeMs);
+            // A catalog that changed while hidden is shown as soon as the surface is presented again.
+            if (cacheEntry !== appliedEntry) applyEntry(cacheEntry);
+            const revalidate = cacheEntry?.kind === 'success' && dynamicModelProbeRetryAt(cacheEntry) === null
+                && cacheEntry.reason !== 'outcomeUnknown' && cacheEntry.retryable !== false
+                && (firstObserver || isDynamicModelProbePending(preflightModelsKey));
+            if (!force && !revalidate && isDynamicModelProbeCacheFresh(cacheEntry)) {
+                scheduleRetry(cacheEntry);
+            } else {
+                setProbePhase(preflightModelsRef.current ? 'refreshing' : 'loading');
+                const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
+                void discoverMachineModels({
+                    cacheKey: preflightModelsKey,
+                    agentType,
+                    machineId: params.selectedMachineId!,
+                    serverId: params.capabilityServerId,
+                    backendTarget: backendTargetForProbe,
+                    successMaxAgeMs: modelSuccessCacheMaxAgeMs,
+                    timeoutMs: NEW_SESSION_MODEL_PROBE_TIMEOUT_MS,
+                    bypassCache: force,
+                    revalidate,
+                    signal: controller.signal,
+                    capabilityParams: {
+                        timeoutMs: NEW_SESSION_MODEL_PROBE_TIMEOUT_MS,
+                        ...probeContextCapabilityParams,
+                        ...(cwd ? { cwd } : {}),
+                    },
+                }).then((entry) => {
+                    if (cancelled) return;
+                    applyEntry(entry);
+                    setProbePhase('idle');
+                    scheduleRetry(entry);
+                }).catch(() => {
+                    if (!cancelled) setProbePhase('idle');
+                });
+            }
+            return () => {
+                cancelled = true;
+                controller.abort();
+                unsubscribe();
+                if (retryTimeout) clearTimeout(retryTimeout);
+            };
+        });
+    }, [agentType, backendTargetForProbe, backendTargetKey, preflightModelsKey, modelSuccessCacheMaxAgeMs, enabled, presentation, params.capabilityServerId, params.cwd, params.selectedMachineId, refreshNonce, retryNonce, probeContextCapabilityParams]);
 
     const hasCurrentIdentity = lastCacheKeyRef.current === catalogScopeKey;
     // A remounted picker renders before its effect can adopt the retained

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 import type {
@@ -69,9 +69,10 @@ export function useSessionContinuationInspections(
     params: UseSessionContinuationInspectionsParams,
 ): SessionContinuationInspections {
     const { machine, machinePresence, sessionId, targetSelections } = params;
-    const presented = useLayoutPresentationActive();
+    // Presentation suspends reads by subscription: a retained host hidden and shown again does not render.
+    const presentation = useLayoutPresentationSignal();
     const hostViewed = useHostActivelyViewed();
-    const demanded = params.demanded && presented && hostViewed;
+    const demandedWhilePresented = params.demanded && hostViewed;
     const [answers, setAnswers] = React.useState<
         ReadonlyMap<string, SessionAgentContinuationInspectionState>
     >(() => new Map());
@@ -106,8 +107,8 @@ export function useSessionContinuationInspections(
     targetSelectionsRef.current = targetSelections;
     const targetsKey = targetSelections.map(selectionKey).join('\u0000');
 
-    React.useEffect(() => {
-        if (demanded) return;
+    React.useEffect(() => followSignal(presentation, (presented) => {
+        if (demandedWhilePresented && presented) return;
         const retryableKeys = [...answers].filter(([, answer]) => (
             isSessionAgentContinuationInspectionIndeterminate(answer)
         )).map(([key]) => key);
@@ -120,13 +121,13 @@ export function useSessionContinuationInspections(
             for (const key of retryableKeys) next.delete(key);
             return next;
         });
-    }, [answers, demanded]);
+    }), [answers, demandedWhilePresented, presentation]);
 
     const inspect = React.useCallback(async (
         selections: readonly SessionAgentTransitionSelectionV1[], signal?: AbortSignal,
     ): Promise<readonly SessionAgentContinuationInspectionState[]> => {
         if (offline) return selections.map(() => MACHINE_UNREACHABLE);
-        if (!machineId || !presented || !hostViewed) return selections.map(() => INDETERMINATE);
+        if (!machineId || !presentation.get() || !hostViewed) return selections.map(() => INDETERMINATE);
         const scope = scopeRef.current;
         if (scope.key !== scopeKey) return selections.map(() => INDETERMINATE);
         const pending = selections.filter((selection) => !scope.asked.has(selectionKey(selection)));
@@ -156,23 +157,26 @@ export function useSessionContinuationInspections(
                 batch.then(results => results[index] ?? INDETERMINATE)));
         }
         return Promise.all(selections.map(selection => scope.asked.get(selectionKey(selection)) ?? INDETERMINATE));
-    }, [hostViewed, machineId, offline, presented, scopeKey, serverId, sessionId]);
+    }, [hostViewed, machineId, offline, presentation, scopeKey, serverId, sessionId]);
 
     React.useEffect(() => {
-        if (!demanded || offline || !machineId) return;
-        const scope = scopeRef.current;
-        const pending = targetSelectionsRef.current.filter((selection) => !scope.asked.has(selectionKey(selection)));
-        if (pending.length === 0) return;
-        const controller = new AbortController();
-        let completed = false;
-        void inspect(pending, controller.signal).then(() => { completed = !controller.signal.aborted; });
-        return () => {
-            controller.abort();
-            // A cancelled read supplied no answer. Release its claims so opening
-            // the same picker can inspect those targets again.
-            if (!completed) for (const selection of pending) scope.asked.delete(selectionKey(selection));
-        };
-    }, [demanded, inspect, machineId, offline, scopeKey, targetsKey]);
+        if (!demandedWhilePresented || offline || !machineId) return;
+        return followSignal(presentation, (presented) => {
+            if (!presented) return;
+            const scope = scopeRef.current;
+            const pending = targetSelectionsRef.current.filter((selection) => !scope.asked.has(selectionKey(selection)));
+            if (pending.length === 0) return;
+            const controller = new AbortController();
+            let completed = false;
+            void inspect(pending, controller.signal).then(() => { completed = !controller.signal.aborted; });
+            return () => {
+                controller.abort();
+                // A cancelled read supplied no answer. Release its claims so opening
+                // the same picker can inspect those targets again.
+                if (!completed) for (const selection of pending) scope.asked.delete(selectionKey(selection));
+            };
+        });
+    }, [demandedWhilePresented, inspect, machineId, offline, presentation, scopeKey, targetsKey]);
 
     const read = React.useCallback((selection: SessionAgentTransitionSelectionV1): SessionAgentContinuationInspectionState => {
         if (offline) return MACHINE_UNREACHABLE;

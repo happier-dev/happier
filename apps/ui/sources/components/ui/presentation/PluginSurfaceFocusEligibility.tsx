@@ -20,6 +20,26 @@ const PluginSurfaceFocusEligibilityContext = React.createContext<PluginSurfaceFo
 export type LayoutPresentationSignal = Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
 const ALWAYS_PRESENTED: LayoutPresentationSignal = Object.freeze({ get: () => true, subscribe: () => () => {} });
 const LayoutPresentationSignalContext = React.createContext<LayoutPresentationSignal>(ALWAYS_PRESENTED);
+/** The facts as the nearest provider last committed them, read when acting (never a render input). */
+const FocusEligibilityReaderContext = React.createContext<() => PluginSurfaceFocusEligibility | null>(() => null);
+
+function useProvidedEligibilityReader(value: PluginSurfaceFocusEligibility | null): () => PluginSurfaceFocusEligibility | null {
+    const current = React.useRef(value);
+    React.useLayoutEffect(() => { current.current = value; }, [value]);
+    const [read] = React.useState(() => () => current.current);
+    return read;
+}
+
+/** One provider's facts: the value, its presentation signal and its call-time reader (hooks run in the provider). */
+function useEligibilityProviders(value: PluginSurfaceFocusEligibility | null, presented: boolean, children: React.ReactNode): React.ReactElement {
+    const signal = useProvidedPresentationSignal(presented);
+    const read = useProvidedEligibilityReader(value);
+    return <PluginSurfaceFocusEligibilityContext.Provider value={value}>
+        <LayoutPresentationSignalContext.Provider value={signal}>
+            <FocusEligibilityReaderContext.Provider value={read}>{children}</FocusEligibilityReaderContext.Provider>
+        </LayoutPresentationSignalContext.Provider>
+    </PluginSurfaceFocusEligibilityContext.Provider>;
+}
 
 function useProvidedPresentationSignal(presented: boolean): LayoutPresentationSignal {
     const [signal] = React.useState(() => {
@@ -50,10 +70,7 @@ function RetainedFocusEligibility(props: Readonly<{
         presentationEffective: props.captured.presentationEffective && presented,
         currentUiContextEffective: props.captured.currentUiContextEffective && presented,
     }) : slot, [presented, props.captured, slot]);
-    const signal = useProvidedPresentationSignal(value?.presentationEffective ?? true);
-    return <PluginSurfaceFocusEligibilityContext.Provider value={value}>
-        <LayoutPresentationSignalContext.Provider value={signal}>{props.children}</LayoutPresentationSignalContext.Provider>
-    </PluginSurfaceFocusEligibilityContext.Provider>;
+    return useEligibilityProviders(value, value?.presentationEffective ?? true, props.children);
 }
 
 /** A shell's facts as its subtree reads them, for a body rendered away from that shell. */
@@ -78,10 +95,17 @@ export function PluginSurfaceFocusEligibilityTransfer(props: Readonly<{
         currentUiContextEffective: props.captured.currentUiContextEffective && presented,
         presentationEffective: presented,
     }) : page, [page, presented, props.captured]);
-    const signal = useProvidedPresentationSignal(presented);
-    return <PluginSurfaceFocusEligibilityContext.Provider value={value}>
-        <LayoutPresentationSignalContext.Provider value={signal}>{props.children}</LayoutPresentationSignalContext.Provider>
-    </PluginSurfaceFocusEligibilityContext.Provider>;
+    return useEligibilityProviders(value, presented, props.children);
+}
+
+/**
+ * {@link useRetainedPluginSurfaceFocusNode} for a node built when acting (opening a dialog): it reads the
+ * facts at that moment, so a host that only opens such nodes does not render when they change.
+ */
+export function useRetainedPluginSurfaceFocusNodeFactory(): (children: React.ReactNode) => React.ReactElement {
+    const read = React.useContext(FocusEligibilityReaderContext);
+    return React.useCallback((children: React.ReactNode) => <RetainedFocusEligibility captured={read()}>{children}</RetainedFocusEligibility>,
+        [read]);
 }
 
 /** Transfer the existing layout's facts into its portal; parking can only withdraw them. */
@@ -120,12 +144,7 @@ export function PluginSurfaceFocusEligibilityProvider(props: Readonly<{
         return Object.freeze({ effective, currentUiContextEffective, presentationEffective });
     }, [parent, props.active, props.currentUiContextActive, props.presentationActive]);
 
-    const signal = useProvidedPresentationSignal(value.presentationEffective);
-    return (
-        <PluginSurfaceFocusEligibilityContext.Provider value={value}>
-            <LayoutPresentationSignalContext.Provider value={signal}>{props.children}</LayoutPresentationSignalContext.Provider>
-        </PluginSurfaceFocusEligibilityContext.Provider>
-    );
+    return useEligibilityProviders(value, value.presentationEffective, props.children);
 }
 
 /** A plugin surface may receive focus only when an existing owner supplied it. */
@@ -154,6 +173,35 @@ export function useLayoutPresentationActive(): boolean {
 /** {@link useLayoutPresentationActive} as a subscription: a hide or show does not render the reader. */
 export function useLayoutPresentationSignal(): LayoutPresentationSignal {
     return React.useContext(LayoutPresentationSignalContext);
+}
+
+type BooleanSignal = Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
+
+/**
+ * True while every signal is; it notifies on any of their changes (followSignal ignores repeats). Its
+ * listeners share one subscription to each source, held only while someone listens.
+ */
+export function allSignals(...signals: readonly BooleanSignal[]): BooleanSignal {
+    const listeners = new Set<() => void>();
+    let unsubscribeSources: (() => void) | null = null;
+    const notify = () => { for (const listener of [...listeners]) listener(); };
+    return {
+        get: () => signals.every(signal => signal.get()),
+        subscribe: (listener) => {
+            listeners.add(listener);
+            if (!unsubscribeSources) {
+                const unsubscribes = signals.map(signal => signal.subscribe(notify));
+                unsubscribeSources = () => { for (const unsubscribe of unsubscribes) unsubscribe(); };
+            }
+            return () => {
+                listeners.delete(listener);
+                if (listeners.size === 0 && unsubscribeSources) {
+                    unsubscribeSources();
+                    unsubscribeSources = null;
+                }
+            };
+        },
+    };
 }
 
 /**

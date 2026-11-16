@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { scmStatusSync } from '@/scm/scmStatusSync';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
 
 /**
@@ -17,12 +17,16 @@ export function useScmSessionAutoRefresh(params: Readonly<{
     enabled?: boolean;
 }>): void {
     const { sessionId, serverId, intervalMs, stepIntervalMs, maxIntervalMs, enabled = true } = params;
-    const presented = useLayoutPresentationActive();
+    // Presentation only starts and stops the demand: followed by subscription, so a hide or show does
+    // not render the host.
+    const presentation = useLayoutPresentationSignal();
     // Target hydration can settle after the visible Session mounts, without changing its demand.
-    const targetKey = useWorkspaceScopeForSession(enabled && presented ? sessionId : null, serverId)?.workspaceCacheKey;
+    const targetKey = useWorkspaceScopeForSession(enabled ? sessionId : null, serverId)?.workspaceCacheKey;
 
     React.useEffect(() => {
-        if (!sessionId || !enabled || !presented) return undefined;
-        return scmStatusSync.retainAutoRefresh({ sessionId, serverId, intervalMs, stepIntervalMs, maxIntervalMs });
-    }, [enabled, presented, intervalMs, stepIntervalMs, maxIntervalMs, serverId, sessionId, targetKey]);
+        if (!sessionId || !enabled) return undefined;
+        return followSignal(presentation, (presented) => presented
+            ? scmStatusSync.retainAutoRefresh({ sessionId, serverId, intervalMs, stepIntervalMs, maxIntervalMs })
+            : undefined);
+    }, [enabled, presentation, intervalMs, stepIntervalMs, maxIntervalMs, serverId, sessionId, targetKey]);
 }

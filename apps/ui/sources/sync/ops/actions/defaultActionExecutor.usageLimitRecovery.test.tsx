@@ -133,7 +133,7 @@ it.each(controls.flatMap(control => (['approve', 'reject'] as const).map(decisio
             const mounted = useMountedActionExecution({ serverId: account.serverId, accountId: 'recovery-account' });
             const { execute } = mounted;
             ready = mounted.ready;
-            return <SessionUsageLimitRecoveryBanner surfaceFocused testID="recovery" title="Usage limit" body="Waiting"
+            return <SessionUsageLimitRecoveryBanner testID="recovery" title="Usage limit" body="Waiting"
                 actionLabel={label} actionTestID="recovery-action" onActionPress={() => {
                     pending = execute(actionId, { sessionId: session.id, ...args }, { defaultSessionId: session.id }).then(result => { outcome = result; });
                 }} />;

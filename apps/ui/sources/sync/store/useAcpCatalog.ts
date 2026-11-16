@@ -11,7 +11,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 type AcpCatalogDemand = Readonly<{ enabled?: boolean }>;
 
@@ -46,36 +46,50 @@ export function useAcpCatalogDataForServer(requestedServerId?: string | null, re
 }
 
 function useAcpCatalogSource(requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
-    const presented = useLayoutPresentationActive();
-    const enabled = demand?.enabled !== false && presented;
+    // Presentation starts and stops observation by subscription: a retained host hidden and shown again
+    // does not render for it. Writes check it when they run.
+    const presentation = useLayoutPresentationSignal();
+    const demanded = demand?.enabled !== false;
+    const isEnabled = React.useCallback(() => demanded && presentation.get(), [demanded, presentation]);
     const activeScope = useAccountSettingsScope();
     const scope = requestedScope === undefined ? activeScope : requestedScope;
     const serverId = scope?.serverId;
     const accountId = scope?.accountId;
     const captured = React.useMemo(() => serverId && accountId ? { serverId, accountId } : null, [serverId, accountId]);
-    React.useEffect(() => enabled && captured ? observeAcpCatalog(captured) : undefined, [captured, enabled]);
+    React.useEffect(() => demanded && captured
+        ? followSignal(presentation, (presented) => presented ? observeAcpCatalog(captured) : undefined)
+        : undefined, [captured, demanded, presentation]);
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const lifetime = areAccountSettingsScopesEqual(activeLifetime?.scope, captured) ? activeLifetime : null;
     const observation = React.useRef<{ scope: ServerAccountScope; lifetime: typeof lifetime } | null>(null);
     React.useEffect(() => {
-        if (!enabled) return;
-        if (!captured) {
-            observation.current = null;
-            return;
-        }
-        const previous = observation.current;
-        observation.current = { scope: captured, lifetime };
-        // A retired read cannot publish, even when another observer retains the loader.
-        if (lifetime && previous && previous.lifetime !== lifetime
-            && areAccountSettingsScopesEqual(previous.scope, captured)
-            && getAcpCatalogSnapshot(captured)?.stale !== false) {
-            void invalidateAcpCatalogProjection(captured).catch(() => {});
-        }
-    }, [captured, enabled, lifetime]);
+        if (!demanded) return;
+        return followSignal(presentation, (presented) => {
+            if (!presented) return;
+            if (!captured) {
+                observation.current = null;
+                return;
+            }
+            const previous = observation.current;
+            observation.current = { scope: captured, lifetime };
+            // A retired read cannot publish, even when another observer retains the loader.
+            if (lifetime && previous && previous.lifetime !== lifetime
+                && areAccountSettingsScopesEqual(previous.scope, captured)
+                && getAcpCatalogSnapshot(captured)?.stale !== false) {
+                void invalidateAcpCatalogProjection(captured).catch(() => {});
+            }
+        });
+    }, [captured, demanded, lifetime, presentation]);
     const read = React.useCallback(() => getAcpCatalogSnapshot(captured), [captured]);
-    const subscribe = React.useCallback((listener: () => void) => enabled
-        ? subscribeAcpCatalogSnapshots(listener) : () => {}, [enabled]);
-    return { captured, enabled, read, subscribe };
+    const subscribe = React.useCallback((listener: () => void) => demanded
+        ? followSignal(presentation, (presented) => {
+            if (!presented) return;
+            // Catch up with what changed while hidden, then follow the catalog.
+            listener();
+            return subscribeAcpCatalogSnapshots(listener);
+        })
+        : () => {}, [demanded, presentation]);
+    return { captured, isEnabled, read, subscribe };
 }
 
 /** Display-only data retains continuity; it supplies no mutation or execution authority. */
@@ -87,16 +101,16 @@ export function useAcpCatalogData(requestedScope?: ServerAccountScope | null, de
 
 /** The ready catalog and its CAS stay scoped independently of Account preferences. */
 export function useAcpCatalog(requestedScope?: ServerAccountScope | null, demand?: AcpCatalogDemand) {
-    const { captured, enabled, read, subscribe } = useAcpCatalogSource(requestedScope, demand);
+    const { captured, isEnabled, read, subscribe } = useAcpCatalogSource(requestedScope, demand);
     const snapshot = React.useSyncExternalStore(subscribe, read, read);
     const write = React.useCallback(async (record: AcpCatalogRecordV1) => {
-        if (!enabled || !captured || snapshot?.catalog.status !== 'ready' || snapshot.stale) throw new AcpCatalogOperationError('catalog-unavailable');
+        if (!isEnabled() || !captured || snapshot?.catalog.status !== 'ready' || snapshot.stale) throw new AcpCatalogOperationError('catalog-unavailable');
         const catalog = snapshot.catalog;
         const result = await writeAcpCatalogRecord(captured, { record, expectedRevision: catalog.revision,
             ...(catalog.revision === 'absent' ? { sourceSettingsVersion: catalog.sourceSettingsVersion } : {}) });
         requireUpdatedAcpCatalogMutation(result);
         if (!areAccountSettingsScopesEqual(captured, getStorage().getState().settingsScope)) throw new AcpCatalogOperationError('scope-retired');
         return result;
-    }, [captured, enabled, snapshot]);
+    }, [captured, isEnabled, snapshot]);
     return React.useMemo(() => ({ snapshot, write }), [snapshot, write]);
 }

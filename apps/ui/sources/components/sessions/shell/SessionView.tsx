@@ -127,7 +127,7 @@ import { useSessionAddressForSessionId, useSessionPluginRuntime, type SessionPlu
 import { createSessionPaneScopeId } from "@/components/sessions/panes/sessionPaneScopeId";
 import { SessionBoardControllerProvider, useMountedSessionBoardController } from "@/components/sessions/board/SessionBoardControllerProvider";
 import { SessionScreenTestIdsProvider } from "./sessionScreenTestIds";
-import { SessionSurfacePresenceProvider, useSessionSurfacePresence } from "./sessionSurfacePresence";
+import { SessionSurfacePresenceProvider, useSessionSurfacePresence, useSessionSurfacePresenceSignal } from "./sessionSurfacePresence";
 import { useSessionSurfaceActivation } from "./view/useSessionSurfaceActivation";
 import { resolveMultiPaneDeviceType } from "@/components/appShell/panes/layout/resolveMultiPaneDeviceType";
 import { buildScopedSessionRouteHref } from "@/hooks/session/sessionRouteServerScope";
@@ -182,7 +182,7 @@ import { SessionAgentCatalogIdentityIcon } from "@/components/sessions/presentat
 import { BotMarkerFeedback } from "@/components/sessions/bots/botMarkerFeedback";
 import { readExternalAgentObservationPresentationInput, resolveExternalSessionRuntimePresentation } from "../presentation/externalSessionRuntimePresentation";
 import { resolveExternalSessionIdentityPresentation } from "../presentation/externalSessionIdentityPresentation";
-import { useSessionListRuntimeNowMs, useSessionListRuntimeWake } from "@/hooks/session/sessionListRuntimeClock";
+import { useSessionListRuntimeDeadlineNowMs } from "@/hooks/session/sessionListRuntimeClock";
 import { usePluginUiClientExecutableRegistrationRevision } from "@/components/plugins/reactNative/clientExecutableContributions";
 import { useScopedPluginUiProjection } from "@/components/plugins/projection/useScopedPluginUiProjection";
 import { PluginSurfacePaneLaunchScope, stagePluginSurfacePaneLaunch, type PluginSurfaceDestinationOpenResolution, type PluginSurfaceDestinationNavigationBinding, usePluginSurfacePaneLaunchScope } from "@/components/plugins/surfaces/pluginSurfaceDestinationNavigation";
@@ -1083,9 +1083,36 @@ const SessionViewFocusedSurfaceContent = React.memo((props: SessionViewFocusedSu
     </PluginSurfacePaneLaunchScope>
 ));
 
+/** The hosted external agent's runtime presentation at `nowMs`. */
+function resolveExternalSessionRuntimePresentationAt(session: Session, nowMs: number) {
+    const hostedStatus = getSessionStatus(session, nowMs, {});
+    return resolveExternalSessionRuntimePresentation({
+        controlConnectivity: hostedStatus.isConnected ? 'connected' : 'offline',
+        detachedActivity: hostedStatus.state === 'background_active'
+            ? 'active'
+            : hostedStatus.isConnected
+                ? 'idle'
+                : 'unknown',
+        externalAgent: readExternalAgentObservationPresentationInput(readSessionOwnerMetadataView(session)),
+        nowMs,
+    });
+}
+
 const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocusedSurfaceContentProps) => {
     const sessionId = props.sessionId;
-    const surfacePresence = useSessionSurfacePresence();
+    // Presence starts and stops this surface's work by subscription; its drawn readers are leaves. A tab
+    // switch renders none of this body.
+    const surfacePresence = useSessionSurfacePresenceSignal();
+    const surfacePresentedSignal = React.useMemo(() => ({
+        get: () => surfacePresence.get().presented, subscribe: surfacePresence.subscribe,
+    }), [surfacePresence]);
+    const surfaceFocusedSignal = React.useMemo(() => ({
+        get: () => { const current = surfacePresence.get(); return current.visible && current.focused; },
+        subscribe: surfacePresence.subscribe,
+    }), [surfacePresence]);
+    const surfaceVisibleSignal = React.useMemo(() => ({
+        get: () => surfacePresence.get().visible, subscribe: surfacePresence.subscribe,
+    }), [surfacePresence]);
     const router = useNewSessionEntryRouter();
     const pathname = useDestinationPathname();
     const routeParams = useDestinationParams<{ mobileSurface?: string | string[] }>();
@@ -1187,7 +1214,6 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const sessionEncryptionMode: 'e2ee' | 'plain' = (session?.encryptionMode ?? 'e2ee');
     const isEncryptedSessionLocked = Boolean(session && sessionEncryptionMode === 'e2ee' && !hasAuthCredentials);
     const showTopHeader = !embedded && !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web');
-    const shouldRenderSessionSurface = surfacePresence.presented;
     const routeHydrationInFlight =
         routeHydrationState?.kind === 'loading' ||
         routeHydrationState?.kind === 'retrying';
@@ -1212,7 +1238,8 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         ?? headerMachineTarget?.machineId
         ?? null;
     const sessionRunnerRuntimeStatusRetention = useSessionRunnerRuntimeStatusRetention({
-        enabled: Boolean(session && shouldRenderSessionSurface),
+        enabled: Boolean(session),
+        active: surfacePresentedSignal,
         accountLifetime: sessionAccountBinding,
         serverId: currentSessionRouteServerId,
         sessionId,
@@ -1263,10 +1290,10 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         sessionPath: ownerMetadata?.path ?? null,
         sessionAccepted: session != null,
     });
-    const isSurfaceFocused = sessionId.length > 0 && surfacePresence.visible && surfacePresence.focused;
     const { messages: pendingMessages, isLoaded: pendingMessagesLoaded, readState: pendingReadState } = useSessionPendingMessages(sessionId);
     const managedWakePresentation = useSessionManagedWakePresentation({
-        session: shouldRenderSessionSurface && !headerBlockedSurface ? session : null,
+        session: !headerBlockedSurface ? session : null,
+        active: surfacePresentedSignal,
         accountLifetime: sessionAccountBinding,
         machineReachable: machineReachability === 'unknown' ? null : isMachineReachable,
         pendingMessages, pendingLoaded: pendingMessagesLoaded, pendingReadState,
@@ -1281,32 +1308,22 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         serverId: expectedRouteServerId ?? session?.serverId ?? null,
         sessionId: acceptedSessionId,
         metadata: ownerMetadata,
-        enabled: isSurfaceFocused && session != null,
+        enabled: sessionId.length > 0 && session != null,
+        active: surfaceFocusedSignal,
     });
-    const externalAgentPresentationClockEnabled = surfacePresence.visible
-        && externalSessionRuntime.externalSessionLink !== null;
-    const externalAgentPresentationNowMs = useSessionListRuntimeNowMs(externalAgentPresentationClockEnabled);
+    // The external agent's freshness ages on the shared clock only while this surface is visible, and
+    // only at its own next expiry: the gate is a subscription, so a hide or show renders nothing.
+    const externalSessionLinkPresent = externalSessionRuntime.externalSessionLink !== null;
+    const readExternalAgentPresentationExpiry = React.useCallback((nowMs: number) => {
+        if (!stableSessionForHeader || !externalSessionLinkPresent) return null;
+        return resolveExternalSessionRuntimePresentationAt(stableSessionForHeader, nowMs).externalAgent.nextExpiryAtMs ?? null;
+    }, [externalSessionLinkPresent, stableSessionForHeader]);
+    const externalAgentPresentationNowMs = useSessionListRuntimeDeadlineNowMs(readExternalAgentPresentationExpiry,
+        externalSessionLinkPresent ? surfaceVisibleSignal : false);
     const externalSessionRuntimePresentation = React.useMemo(() => {
         if (!stableSessionForHeader || !externalSessionRuntime.externalSessionLink) return null;
-        const hostedStatus = getSessionStatus(stableSessionForHeader, externalAgentPresentationNowMs, {
-        });
-        return resolveExternalSessionRuntimePresentation({
-            controlConnectivity: hostedStatus.isConnected ? 'connected' : 'offline',
-            detachedActivity: hostedStatus.state === 'background_active'
-                ? 'active'
-                : hostedStatus.isConnected
-                    ? 'idle'
-                    : 'unknown',
-            externalAgent: readExternalAgentObservationPresentationInput(
-                readSessionOwnerMetadataView(stableSessionForHeader),
-            ),
-            nowMs: externalAgentPresentationNowMs,
-        });
+        return resolveExternalSessionRuntimePresentationAt(stableSessionForHeader, externalAgentPresentationNowMs);
     }, [externalAgentPresentationNowMs, externalSessionRuntime.externalSessionLink, stableSessionForHeader]);
-    useSessionListRuntimeWake(
-        externalSessionRuntimePresentation?.externalAgent.nextExpiryAtMs ?? null,
-        externalAgentPresentationClockEnabled,
-    );
     const externalSessionIdentityPresentation = React.useMemo(
         () => resolveExternalSessionIdentityPresentation(ownerMetadata, currentSessionMachineId),
         [currentSessionMachineId, ownerMetadata],
@@ -1317,7 +1334,9 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         && resolveEmbeddedComposerControls(embedded)?.attachments !== false;
     const attachmentsUploadsAvailable = attachmentsUploadsEnabled && attachmentsUploadsTransferAvailable;
     const sessionBrowserContextRuntime = useSessionBrowserContextRuntime({
-        enabled: browserContextFeatureEnabled && isSurfaceFocused && session != null,
+        // The runtime only serves this Session's own subtree (its composer and Browser pane); it is not a
+        // focus-elected target, so a visible pane keeps it while another pane has focus.
+        enabled: browserContextFeatureEnabled && session != null,
         scopeKey: acceptedSessionId,
         sessionId: acceptedSessionId,
         accountScope: sessionAccountBinding?.scope,
@@ -2129,10 +2148,10 @@ function SessionComposerSlot({ renderComposer }: Readonly<{ renderComposer?: Ses
 
 /** Composer state updates its own slot, not the transcript/pane layout. */
 function SessionViewLoadedContent(props: Omit<React.ComponentProps<typeof SessionViewLoadedFrame>, keyof SessionComposerView>) {
-    // The composer acts on this surface's focus and presentation: it reads them here, beside its controller.
-    const presence = useSessionSurfacePresence();
-    const surfaceFocused = presence.visible && presence.focused;
-    const { composer, view } = useSessionComposerController({ ...props, surfaceFocused, surfacePresented: presence.presented });
+    // The composer acts on this surface's focus and presentation by subscription: a tab switch renders
+    // neither the controller nor the loaded frame.
+    const presence = useSessionSurfacePresenceSignal();
+    const { composer, view } = useSessionComposerController({ ...props, presence });
     return <SessionComposerModelContext.Provider value={composer}>
         <SessionViewLoadedFrame {...props} {...view} />
     </SessionComposerModelContext.Provider>;
@@ -2218,7 +2237,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     bottomNotice,
     followBottomIntentSeq,
     handleEditPendingMessage,
-    boardPresentationUndoCurrentRef,
+    isBoardPresentationUndoCurrent,
     actionExecutor,
     presentSessionActionOutcome,
     setActiveStatusBadgeKey,
@@ -2716,6 +2735,8 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
         pane.setRightTab('companion');
         return { status: 'applied' };
     }, [pane, routeMobileSurface, sessionId]);
+    const boardPresentationUndoCurrentRef = React.useRef(isBoardPresentationUndoCurrent);
+    boardPresentationUndoCurrentRef.current = isBoardPresentationUndoCurrent;
     const {
         openBoard: openCompanionBoardForPresentation,
         revealBoardItem: revealCompanionBoardItem,
@@ -2723,7 +2744,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
     } = React.useMemo(() => createSessionCompanionPanePresentation({
         readPane: () => presentationPaneRef.current,
         readMainColumn: () => presentationMainColumnRef.current,
-        isUndoCurrent: () => boardPresentationUndoCurrentRef.current,
+        isUndoCurrent: () => boardPresentationUndoCurrentRef.current(),
     }), []);
     const applyCompanionItemPresentation = React.useCallback((intent: Extract<CurrentSessionPresentationAuthorIntentV1,
         { kind: 'board.item.reveal' | 'chat.item.show' }>) => {

@@ -15,12 +15,15 @@ export function useSessionManagedWakePresentation(input: Readonly<{
     pendingMessages: readonly PendingMessage[];
     pendingLoaded: boolean;
     pendingReadState?: 'loading' | 'error';
+    /** The presenting surface's presentation by subscription; a hidden surface keeps its last observed wake. */
+    active?: Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
 }>) {
     const authorization = input.session ? readManagedWakeAuthorization(input.session) : null;
     const reconnectSignal = storage(state => authorization ? state.socketLastConnectedAt : null);
     const observation = useManagedPendingWakeObservation({
         sessionId: input.session?.id ?? '', authorization, accountLifetime: input.accountLifetime,
         reconnectSignal,
+        ...(input.active ? { active: input.active } : {}),
     });
     const inventoryStatus = useMachineListStatusForServer(authorization ? input.accountLifetime?.scope.serverId ?? '' : '');
     const resumingAt = storage(state => authorization && input.session ? state.sessions[input.session.id]?.resumingAt ?? null : null);

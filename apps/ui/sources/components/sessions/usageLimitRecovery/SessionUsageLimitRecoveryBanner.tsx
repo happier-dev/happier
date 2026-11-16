@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+
+const ALWAYS_FOCUSED = Object.freeze({ get: () => true, subscribe: () => () => {} });
 import { HappierDisclosureToggle } from '@happier-dev/plugin-ui/presentation';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { DisclosedCodeText, useCoreDisclosureToggleBinding } from '@/components/ui/lists/DisclosureCaret';
@@ -11,7 +14,8 @@ import { useUsageLimitAccountLabel } from './useUsageLimitAccountLabel';
 
 type Props = React.ComponentProps<typeof WarningActionBanner> & Readonly<{
     temporaryThrottle?: Readonly<{ nextCheckAtMs: number | null; attemptCount: number }>;
-    surfaceFocused: boolean;
+    /** The surface's focus, followed by subscription; the countdown ticks only while focused. Absent means focused. */
+    surfaceFocus?: Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
     runtimeIssue?: SessionRuntimeIssueV1 | null;
     onUseAnotherAccount?: () => void;
     accountRecoveryIsPrimary?: boolean;
@@ -22,7 +26,7 @@ type Props = React.ComponentProps<typeof WarningActionBanner> & Readonly<{
 }>;
 
 // The clock subscription belongs to this leaf; a tick never rerenders SessionView or its transcript.
-export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocused, runtimeIssue, onUseAnotherAccount, accountRecoveryIsPrimary, deliveryRecovery, accountLabel, ...props }: Props) {
+export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocus = ALWAYS_FOCUSED, runtimeIssue, onUseAnotherAccount, accountRecoveryIsPrimary, deliveryRecovery, accountLabel, ...props }: Props) {
     const issue = presentSessionRuntimeIssue(runtimeIssue);
     // The title owns the limit; a cause line only adds a localized cause, never the runtime's generic preview.
     const localizedCause = runtimeIssue ? presentSessionStartupFailureCause(runtimeIssue.code, runtimeIssue) : null;
@@ -32,16 +36,21 @@ export function SessionUsageLimitRecoveryBanner({ temporaryThrottle, surfaceFocu
     const [detailsOpen, setDetailsOpen] = React.useState(false);
     const viewed = useViewed();
     const deadline = temporaryThrottle?.nextCheckAtMs ?? null;
-    const enabled = viewed && surfaceFocused && deadline !== null;
+    const enabled = viewed && deadline !== null;
     const readSeconds = React.useCallback(() => deadline === null ? 0 : Math.max(0, Math.ceil((deadline - nowServerMs()) / 1_000)), [deadline]);
     const subscribe = React.useCallback((notify: () => void) => {
-        if (!enabled || readSeconds() === 0) return () => {};
-        const timer = setInterval(() => {
+        if (!enabled) return () => {};
+        // Focus starts and stops the tick by subscription; regaining focus catches the shown count up.
+        return followSignal(surfaceFocus, (focused) => {
+            if (!focused || readSeconds() === 0) return;
             notify();
-            if (readSeconds() === 0) clearInterval(timer);
-        }, 1_000);
-        return () => clearInterval(timer);
-    }, [enabled, readSeconds]);
+            const timer = setInterval(() => {
+                notify();
+                if (readSeconds() === 0) clearInterval(timer);
+            }, 1_000);
+            return () => clearInterval(timer);
+        });
+    }, [enabled, readSeconds, surfaceFocus]);
     const seconds = React.useSyncExternalStore(subscribe, readSeconds, readSeconds);
     const attempt = (temporaryThrottle?.attemptCount ?? 0) + (deadline !== null ? 1 : 0);
     const accountLine = [accountLabel ? t('session.usageLimitRecovery.banner.accountReached', { account: accountLabel }) : null, issue.reset]

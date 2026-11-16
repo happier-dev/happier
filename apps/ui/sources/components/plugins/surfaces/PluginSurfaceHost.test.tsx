@@ -13,6 +13,7 @@ import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema, type ProjectAccountRowListResponseV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import * as React from 'react';
+import { createConstantSessionSurfacePresenceSignal } from '@/components/sessions/shell/sessionSurfacePresence';
 import { IDBFactory } from 'fake-indexeddb';
 import { t } from '@/text';
 import { preloadTranslations, setPreferredLanguageFromSettings } from '@/text/i18n';
@@ -15923,14 +15924,15 @@ describe('Composer physical surface mount', () => {
             return result;
         }
         const composerViews: Array<{ shouldShowInput: boolean }> = [];
+        const PRESENTED_FOCUSED_SURFACE = createConstantSessionSurfacePresenceSignal({ focused: true, visible: true, routeAnchor: true, paneUrlSyncRouteActive: true, presented: true });
         function SessionComposer({ accountBinding }: Readonly<{ accountBinding: import('@/sync/domains/scope/useServerCredentialAccountScopes').ServerCredentialAccountScopeBinding }>) {
             const pane = useAppPaneScope('session:responsive-composer-session');
             const externalSessionRuntime = useExternalSessionRuntime({ sessionId: session.id, serverId, metadata: session.metadata, enabled: false });
             const managedWakePresentation = useSessionManagedWakePresentation({ session, accountLifetime: accountBinding,
                 machineReachable: true, pendingMessages: [], pendingLoaded: true });
             const controller = useSessionComposerController({ sessionId: session.id, routeServerId: serverId, accountBinding, session, pane,
-                authSurfaceState: null, embedded: null, isMachineReachable: true, machineReachability: 'reachable', surfaceFocused: true,
-                surfacePresented: true, isEncryptedSessionLocked: false, executionRunsEnabled: false, participantTargets: [], approvalRequests: [],
+                authSurfaceState: null, embedded: null, isMachineReachable: true, machineReachability: 'reachable',
+                presence: PRESENTED_FOCUSED_SURFACE, isEncryptedSessionLocked: false, executionRunsEnabled: false, participantTargets: [], approvalRequests: [],
                 initialAttachmentDrafts: null, attachmentsUploadsEnabled: false, attachmentsUploadsAvailable: false,
                 browserContextStateForComposer: null, browserContextComposerContext: null, pendingMessages: [], managedWakePresentation,
                 externalSessionRuntime, sessionRunnerRuntimeStatus: null, sessionRunnerRuntimeStatusMachineId: null,

@@ -27,6 +27,12 @@ export type DestinationInstanceContextValue = Readonly<{
     /** Query the current committed destination owner when delayed work settles. */
     isFocused: () => boolean;
     navigation?: DestinationNavigation;
+    /**
+     * A native stack screen keeps several of these mounted (a phone's presented Sessions). The instance supplies
+     * its params, focus and visibility; the screen keeps its router, Back, chrome and pane state, so identity
+     * readers (`useDestinationInstanceKey`) see no hosted tab.
+     */
+    stackOwned?: true;
 }>;
 
 /**
@@ -63,14 +69,15 @@ export const DestinationInstanceContext = {
         });
         React.useLayoutEffect(route.notify, [route, value]);
         const tabId = value?.tabId;
+        const stackOwned = value?.stackOwned === true;
         const focused = value?.focused;
         const visible = value?.visible;
         const navigation = value?.navigation;
         const facts = React.useMemo<DestinationInstanceFacts | null>(() => tabId === undefined ? null
             : { tabId, focused: focused === true, visible: visible === true, ...(navigation ? { navigation } : {}) },
             [focused, navigation, tabId, visible]);
-        const identity = React.useMemo<DestinationInstanceIdentity | null>(() => tabId === undefined ? null
-            : { tabId, ...(navigation ? { navigation } : {}) }, [navigation, tabId]);
+        const identity = React.useMemo<DestinationInstanceIdentity | null>(() => tabId === undefined || stackOwned ? null
+            : { tabId, ...(navigation ? { navigation } : {}) }, [navigation, stackOwned, tabId]);
         return React.createElement(DestinationInstanceIdentityContext.Provider, { value: identity },
             React.createElement(DestinationInstanceFactsContext.Provider, { value: facts },
                 React.createElement(DestinationRouteContext.Provider, { value: route }, props.children)));
@@ -115,8 +122,13 @@ export function useDestinationInstanceKey(): string | null {
     return useDestinationInstanceIdentity()?.tabId ?? null;
 }
 
+/** Whether a destination instance supplies this body's params (a hosted tab, or a stack-owned retained body). */
+export function useHasDestinationRoute(): boolean {
+    return React.useContext(DestinationRouteContext) !== null;
+}
+
 const selectNavigationFacts = (value: DestinationInstanceContextValue | null) => value
-    ? { navigation: value.navigation, isFocused: value.isFocused } : null;
+    ? { navigation: value.navigation, isFocused: value.isFocused, stackOwned: value.stackOwned === true } : null;
 
 /** The retained host owns its chrome options; Back still belongs to the same tab owner. */
 export function useDestinationNavigation() {
@@ -124,7 +136,10 @@ export function useDestinationNavigation() {
     const instance = useDestinationInstance(selectNavigationFacts);
     const nativeNavigation = React.useContext(NavigationContext);
     const setOptions = React.useContext(DestinationHeaderOptionsContext);
-    return React.useMemo(() => instance ? {
+    return React.useMemo(() => instance?.stackOwned
+        // The screen's own navigator, answering focus for this retained body rather than for the whole screen.
+        ? nativeNavigation && { ...nativeNavigation, isFocused: instance.isFocused }
+        : instance ? {
         canGoBack: () => instance.navigation?.canGoBack?.() ?? false,
         goBack: () => instance.navigation?.back(),
         setOptions: setOptions ?? ((_options: NativeStackNavigationOptions) => {}),
@@ -170,4 +185,15 @@ export function useDestinationFocusSignal(): DestinationFocusSignal {
 /** Visibility belongs to the same retained destination context, without loading shell composition. */
 export function useDestinationVisibility(): boolean {
     return useDestinationInstanceFacts()?.visible ?? true;
+}
+
+const ALWAYS_VISIBLE: DestinationFocusSignal = Object.freeze({ get: () => true, subscribe: () => () => {} });
+
+/** {@link useDestinationVisibility} as a subscription: a tab switch does not render the reader. */
+export function useDestinationVisibilitySignal(): DestinationFocusSignal {
+    const route = React.useContext(DestinationRouteContext);
+    return React.useMemo<DestinationFocusSignal>(() => route ? {
+        get: () => route.getSnapshot()?.visible ?? true,
+        subscribe: route.subscribe,
+    } : ALWAYS_VISIBLE, [route]);
 }

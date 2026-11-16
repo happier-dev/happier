@@ -83,7 +83,7 @@ import {
     useCurrentUiContextMountPublisher,
     useOptionalCurrentUiContextReader,
 } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
-import { useRetainedPluginSurfaceFocusNode } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useRetainedPluginSurfaceFocusNodeFactory } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import {
     usePluginLocalizedTextResolver,
     type PluginLocalizedTextResolver,
@@ -175,9 +175,9 @@ export function useComposerScopePluginPresentation(
     const clientExecutableRegistrationRevision = usePluginUiClientExecutableRegistrationRevision();
     const currentUiContextReader = useOptionalCurrentUiContextReader();
     const currentUiContextPublisher = useCurrentUiContextMountPublisher();
-    const retainedDialogFocus = useRetainedPluginSurfaceFocusNode(null);
-    const retainedDialogFocusRef = React.useRef(retainedDialogFocus);
-    React.useLayoutEffect(() => { retainedDialogFocusRef.current = retainedDialogFocus; }, [retainedDialogFocus]);
+    // The dialog carries the composer's focus facts as they are when it opens; reading them then keeps
+    // a focus change from rendering this presentation owner.
+    const retainedDialogFocus = useRetainedPluginSurfaceFocusNodeFactory();
     const destinationNavigation = usePluginSurfaceDestinationNavigationBinding();
     const openDestinationSurface = destinationNavigation?.openSurface;
     const isScopeCurrentRef = React.useRef(params.isScopeCurrent);
@@ -601,7 +601,7 @@ export function useComposerScopePluginPresentation(
                 // Composer's focus owner. Carry their existing capabilities
                 // into the reparented picker instead of installing a second
                 // current-context owner or leaving its Host API unsupported.
-                children: React.cloneElement(retainedDialogFocusRef.current, undefined,
+                children: retainedDialogFocus(
                     <CurrentUiContextBridge publisher={currentUiContextPublisher} reader={currentUiContextReader}>
                         {content}
                     </CurrentUiContextBridge>,
@@ -617,7 +617,7 @@ export function useComposerScopePluginPresentation(
             return;
         }
         if (retiredBeforeShow) Modal.hide(modalId);
-    }, [currentUiContextPublisher, currentUiContextReader, openDestinationSurface, surfaceLifetime]);
+    }, [currentUiContextPublisher, currentUiContextReader, openDestinationSurface, retainedDialogFocus, surfaceLifetime]);
     const renderAttachmentPreviewSurface = React.useCallback((
         input: ComposerAttachmentPresentationRequest,
         openSurface?: PluginSurfaceOpenHandler,

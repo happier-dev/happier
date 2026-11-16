@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, useLayoutPresentationActive, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { shallow } from 'zustand/shallow';
 import { buildMachineAgentsDetectRequest, buildMachineAgentInventoryKey, projectAcpCatalogForMachineInventory } from '@happier-dev/protocol/capabilities';
 import { findMachineAgentInventoryItemForTargetV1, type MachineAgentInventoryTargetV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
@@ -277,7 +277,9 @@ export async function refreshMachineAgentsAfterLaunchRefusal(input: Readonly<{
 }
 
 function useInventoryDriver(target: MachineAgentsTarget) {
-    const presented = useLayoutPresentationActive();
+    // Presentation only retains demand and starts detection: followed by subscription, so a retained
+    // host hidden and shown again does not render for it.
+    const presentation = useLayoutPresentationSignal();
     const activeServer = useActiveServerSnapshot(!target.serverId);
     const requestedServerId = target.serverId?.trim() || activeServer.serverId;
     const machineId = target.machineId?.trim() || '';
@@ -289,13 +291,14 @@ function useInventoryDriver(target: MachineAgentsTarget) {
     const serverId = lifetime?.scope.serverId ?? requestedServerId;
     const key = enabled && lifetime ? scopeKey(lifetime, machineId) : null;
     React.useEffect(() => {
-        if (!presented || !enabled || !lifetime || target.load === false) return;
+        if (!enabled || !lifetime || target.load === false) return;
         const scope = { ...lifetime.scope, machineId };
         // Job changes already publish through the inventory store. This only
         // retains demand at the same poll owner while the inventory is visible.
-        return agentId ? subscribeAgentInstallJob({ ...scope, agentId, definitionId }, () => {})
-            : subscribeMachineAgentInstallJobs(scope, () => {});
-    }, [agentId, definitionId, enabled, lifetime, machineId, presented, target.load]);
+        return followSignal(presentation, (presented) => !presented ? undefined
+            : agentId ? subscribeAgentInstallJob({ ...scope, agentId, definitionId }, () => {})
+                : subscribeMachineAgentInstallJobs(scope, () => {}));
+    }, [agentId, definitionId, enabled, lifetime, machineId, presentation, target.load]);
     const reachabilityRevision = useMachineReachabilityRevision(enabled, lifetime?.scope, machineId);
     const machineIds = React.useMemo(() => enabled ? [machineId] : [], [enabled, machineId]);
     const machineFact = useInventoryMachineFacts(serverId, machineIds, lifetime)[0];
@@ -319,16 +322,19 @@ function useInventoryDriver(target: MachineAgentsTarget) {
         return unsubscribe;
     }, [acpCatalog, authentication, installedAgentIds, key, lifetime, online, reachabilityRevision, revision, machineId, projection.inputs, projection.phase, projection.failureReason, serverId]);
     React.useEffect(() => {
-        if (!presented || !lifetime || !enabled || !online || target.load === false) return;
-        const abort = new AbortController();
-        // This enabled inventory remains a detection consumer after acquisition;
-        // its existing effect lifetime, unlike a finite Action, owns recovery.
-        // Registry invalidation renews demand; publishing the projection this
-        // acquisition loaded must not cancel and restart that same demand.
-        void refreshMachineAgents({ serverId, machineId, accountLifetime: lifetime, agentId, definitionId,
-            signal: abort.signal, retryWhileObserved: abort.signal });
-        return () => abort.abort();
-    }, [acpCatalog?.data, agentId, definitionId, enabled, lifetime, online, presented, projectionRevisions, machineId, serverId, target.load]);
+        if (!lifetime || !enabled || !online || target.load === false) return;
+        return followSignal(presentation, (presented) => {
+            if (!presented) return;
+            const abort = new AbortController();
+            // This enabled inventory remains a detection consumer after acquisition;
+            // its existing effect lifetime, unlike a finite Action, owns recovery.
+            // Registry invalidation renews demand; publishing the projection this
+            // acquisition loaded must not cancel and restart that same demand.
+            void refreshMachineAgents({ serverId, machineId, accountLifetime: lifetime, agentId, definitionId,
+                signal: abort.signal, retryWhileObserved: abort.signal });
+            return () => abort.abort();
+        });
+    }, [acpCatalog?.data, agentId, definitionId, enabled, lifetime, online, presentation, projectionRevisions, machineId, serverId, target.load]);
     const refreshAbort = React.useRef<AbortController | null>(null);
     React.useEffect(() => () => refreshAbort.current?.abort(), [agentId, definitionId, enabled, lifetime, machineId, serverId, target.load]);
     const refresh = React.useCallback(async () => {

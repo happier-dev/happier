@@ -1939,7 +1939,7 @@ describe('AgentInput human typing presence', () => {
             if (reason === 'access loss') await screen.update(<AgentInput {...initialProps}
                 sessionTypingPresence={{ serverId: 'typing-home', canSubmitAgentInput: false }} />);
             if (reason === 'disabled') await screen.update(<AgentInput {...initialProps} disabled />);
-            if (reason === 'hidden') await screen.update(<AgentInput {...initialProps} surfacePresented={false} />);
+            if (reason === 'hidden') await screen.update(<AgentInput {...initialProps} surfacePresentation={{ get: () => false, subscribe: () => () => {} }} />);
             if (reason === 'session change') await screen.update(<AgentInput {...initialProps} sessionId="another-session" />);
             if (reason === 'unmount') await screen.unmount();
             expect(sent.at(-1)).toEqual({ v: 1, sessionId: 'typing-session', typing: false });

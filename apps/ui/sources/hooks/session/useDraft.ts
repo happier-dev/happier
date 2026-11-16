@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useMemo, useLayoutEffect, useSyncExternalStore } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { sync } from '@/sync/sync';
+import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { clearForkInitialPromptV1, readForkInitialPromptV1 } from '@/sync/domains/sessionFork/forkInitialPromptV1';
 import {
@@ -22,6 +23,8 @@ import {
     writeExistingSessionDraft,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
+const ALWAYS_PRESENTED = Object.freeze({ get: () => true, subscribe: () => () => {} });
+
 interface UseDraftOptions {
     /** Exact route credential authority. A missing or retired lifetime is local-only. */
     accountLifetime: ServerAccountScopeLifetime | null;
@@ -30,8 +33,13 @@ interface UseDraftOptions {
     /** Exact Session projection selected by the route owner. */
     session: Session | null;
     autoSaveInterval?: number; // in milliseconds, default 2000
-    /** Whether this composer may hydrate and take custody of its draft (its surface is presented). */
+    /** Whether this composer may hydrate and take custody of its draft (its own draft read is admitted). */
     active: boolean;
+    /**
+     * Whether its surface is presented, followed by subscription: custody resumes when the surface is shown
+     * again without rendering the composer for the hide or the show. Absent means always presented.
+     */
+    presented?: Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
     /**
      * The existing Session composer may advance its semantic revision as soon
      * as visible text changes. The debounced persistence write receives the
@@ -79,6 +87,7 @@ export function useDraft(
     const latestValue = useRef<string>(textStore.getPrompt());
     const autosaveSkip = useRef<Readonly<{ sessionId: string; value: string }> | null>(null);
     const active = options.active;
+    const presented = options.presented ?? ALWAYS_PRESENTED;
     const accountLifetime = options.accountLifetime;
     const draftScope = accountLifetime?.isCurrent() === true ? accountLifetime.scope : null;
     const isDraftOwnerCurrent = useCallback(() => (
@@ -130,11 +139,14 @@ export function useDraft(
     // callback. That makes a warm session retry as soon as its account scope becomes available,
     // while Sync remains the only owner of transport readiness, decryption, and reconciliation.
     useEffect(() => {
-        if (!active || !draftScope || !accountLifetime || !resolvedSessionId || !isDraftOwnerCurrent()) return;
-        fireAndForget(sync.materializeExistingSessionDraft(resolvedSessionId, accountLifetime), {
-            tag: 'useDraft.materializeExistingSessionDraft',
+        if (!active || !draftScope || !accountLifetime || !resolvedSessionId) return;
+        return followSignal(presented, (isPresented) => {
+            if (!isPresented || !isDraftOwnerCurrent()) return;
+            fireAndForget(sync.materializeExistingSessionDraft(resolvedSessionId, accountLifetime), {
+                tag: 'useDraft.materializeExistingSessionDraft',
+            });
         });
-    }, [accountLifetime, active, draftScope, isDraftOwnerCurrent, resolvedSessionId]);
+    }, [accountLifetime, active, draftScope, isDraftOwnerCurrent, presented, resolvedSessionId]);
 
     // Credential replacement retires repository authority synchronously. Account switches
     // clear their projection; the authenticated frame retains its same-Account document
@@ -367,46 +379,58 @@ export function useDraft(
             return;
         }
 
-        if (!active || hasUnreadableRetainedDraft) return;
+        if (!active) return;
+        // Custody resumes each time the surface is presented, reading the draft and text as they are then.
+        const adoptPresentedDraft = () => {
+            const currentStoredSnapshot = draftScope && isDraftOwnerCurrent()
+                ? readSessionComposerSnapshot(draftScope, resolvedSessionId)
+                : null;
+            const currentStoredDraft = currentStoredSnapshot?.composer.text.value ?? null;
+            const hasUnreadableRetainedDraft = draftScope && isDraftOwnerCurrent() && !currentStoredSnapshot
+                && getSessionDraftSnapshot(draftScope, { kind: 'session', sessionId: resolvedSessionId }) !== null;
+            const currentValue = latestValue.current;
+            if (hasUnreadableRetainedDraft) return;
 
-        const externalDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
-        if (externalDraft != null && externalDraft === currentValue && lastSavedValue.current !== externalDraft && !activeSessionInitialPrompt) {
-            lastSavedValue.current = externalDraft;
-            clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus.syncedDraft');
-        }
-        const canAdoptExternalDraft =
-            externalDraft != null
-                ? currentValue === lastSavedValue.current || (!currentValue.trim() && !lastSavedValue.current.trim())
-                : false;
-        const canAdoptWithoutExternalDraft = currentValue === lastSavedValue.current || !currentValue.trim();
-
-        if (externalDraft != null && canAdoptExternalDraft) {
-            const nextDraft = activeSessionInitialPrompt
-                ? composeSessionInitialPromptText(externalDraft, activeSessionInitialPrompt)
-                : externalDraft;
-            if (activeSessionInitialPrompt) {
-                persistSeededDraftText(nextDraft, activeSessionInitialPrompt);
-            } else {
-                adoptPersistedDraftText(nextDraft);
+            const externalDraft = currentStoredDraft && currentStoredDraft.trim() ? currentStoredDraft : null;
+            if (externalDraft != null && externalDraft === currentValue && lastSavedValue.current !== externalDraft && !activeSessionInitialPrompt) {
+                lastSavedValue.current = externalDraft;
+                clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus.syncedDraft');
             }
-            clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus.storedDraft');
-            clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus.storedDraft');
-        } else if (forkInitialPromptText && !currentValue.trim()) {
-            const nextDraft = activeSessionInitialPrompt
-                ? composeSessionInitialPromptText(forkInitialPromptText, activeSessionInitialPrompt)
-                : forkInitialPromptText;
-            persistSeededDraftText(nextDraft, activeSessionInitialPrompt);
-            clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus');
-            clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus.forkPrompt');
-        } else if (activeSessionInitialPrompt && canAdoptWithoutExternalDraft) {
-            const nextDraft = composeSessionInitialPromptText(currentValue, activeSessionInitialPrompt);
-            persistSeededDraftText(nextDraft, activeSessionInitialPrompt);
-            clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus');
-        } else if (!currentStoredDraft) {
-            // Ensure lastSavedValue is empty if there's no draft
-            lastSavedValue.current = '';
-        }
-    }, [active, activeSessionInitialPrompt, adoptPersistedDraftText, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, draftScope, flushDraftForSession, forkInitialPromptText, isDraftOwnerCurrent, onChange, persistSeededDraftText, resolvedSessionId, saveDraftForSession, storedDraft]);
+            const canAdoptExternalDraft =
+                externalDraft != null
+                    ? currentValue === lastSavedValue.current || (!currentValue.trim() && !lastSavedValue.current.trim())
+                    : false;
+            const canAdoptWithoutExternalDraft = currentValue === lastSavedValue.current || !currentValue.trim();
+
+            if (externalDraft != null && canAdoptExternalDraft) {
+                const nextDraft = activeSessionInitialPrompt
+                    ? composeSessionInitialPromptText(externalDraft, activeSessionInitialPrompt)
+                    : externalDraft;
+                if (activeSessionInitialPrompt) {
+                    persistSeededDraftText(nextDraft, activeSessionInitialPrompt);
+                } else {
+                    adoptPersistedDraftText(nextDraft);
+                }
+                clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus.storedDraft');
+                clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus.storedDraft');
+            } else if (forkInitialPromptText && !currentValue.trim()) {
+                const nextDraft = activeSessionInitialPrompt
+                    ? composeSessionInitialPromptText(forkInitialPromptText, activeSessionInitialPrompt)
+                    : forkInitialPromptText;
+                persistSeededDraftText(nextDraft, activeSessionInitialPrompt);
+                clearForkInitialPrompt('useDraft.consumeForkInitialPrompt.focus');
+                clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus.forkPrompt');
+            } else if (activeSessionInitialPrompt && canAdoptWithoutExternalDraft) {
+                const nextDraft = composeSessionInitialPromptText(currentValue, activeSessionInitialPrompt);
+                persistSeededDraftText(nextDraft, activeSessionInitialPrompt);
+                clearSessionInitialPrompt('useDraft.consumeSessionInitialPrompt.focus');
+            } else if (!currentStoredDraft) {
+                // Ensure lastSavedValue is empty if there's no draft
+                lastSavedValue.current = '';
+            }
+        };
+        return followSignal(presented, (isPresented) => { if (isPresented) adoptPresentedDraft(); });
+    }, [active, activeSessionInitialPrompt, adoptPersistedDraftText, presented, clearForkInitialPrompt, clearSessionInitialPrompt, composeSessionInitialPromptText, draftScope, flushDraftForSession, forkInitialPromptText, isDraftOwnerCurrent, onChange, persistSeededDraftText, resolvedSessionId, saveDraftForSession, storedDraft]);
 
     useEffect(() => {
         if (!draftScope || !resolvedSessionId || !isDraftOwnerCurrent()) return;

@@ -1,6 +1,5 @@
 import * as React from 'react';
 import type { PaneMainColumnState } from '@/components/appShell/panes/mainColumn/usePaneMainColumn';
-import { useDestinationFocus, useDestinationVisibility } from '@/components/appShell/workspace/destinationInstanceContext';
 import type { useMountedScopeActionCommand } from '@/components/approvals/useMountedScopeActionCommand';
 import type { SystemMobileBottomChromeModel } from '@/components/navigation/mobile/chrome/systemMobileBottomChromeTypes';
 import { useDetailPhonePlacement } from '@/components/navigation/mobile/chrome/bars/detailPhoneNavigation';
@@ -170,10 +169,8 @@ export function usePresentedDetailNavigation(input: Readonly<{
         rootHosted: input.rootHosted, registerSide: input.registerSide, ...(input.openedFrom ? { openedFrom: input.openedFrom } : {}) }),
     [customization, identity, input.scope, input.activeId, readColumn, bindMainColumn, phoneChrome, input.chromeRevision, input.sessionId,
         input.rootHosted, input.registerSide, input.openedFrom, desktop, desktopCompanions, phonePlacement.placements, input.companion?.activeId]);
-    const focused = useDestinationFocus();
-    const visible = useDestinationVisibility();
-    const presented = input.presented && focused && visible;
-    chrome.usePublish(model, presented);
+    // Focus and visibility gate the publication inside usePublish, by subscription.
+    chrome.usePublish(model, input.presented);
     return React.useMemo(() => ({ model, pages, companions, placements, desktop, desktopCompanions, phonePlacement,
         desktopAddress, companionAddress, phoneAddress, readColumn, openNavigationCustomizer }),
     [model, pages, companions, placements, desktop, desktopCompanions, phonePlacement,
@@ -182,10 +179,11 @@ export function usePresentedDetailNavigation(input: Readonly<{
 
 export function selectPresentedDetailNavigationItem(execute: Execute,
     model: Readonly<{ items: readonly Pick<DetailPageNavigationItem, 'id' | 'navigation'>[];
-        readColumn: PresentedDetailNavigationModel['readColumn'] }>, id: string, column?: 'main' | 'side', visible = true): void {
+        readColumn: PresentedDetailNavigationModel['readColumn'] }>, id: string, column?: 'main' | 'side', visible = true): Promise<boolean> | undefined {
     const item = model.items.find(item => item.id === id);
-    if (!item) return;
+    if (!item) return undefined;
     const target = column ?? (item.navigation.kind === 'companion' ? 'side' : 'main');
-    void execute('shell.column.set', { column: target, visible, ...(visible ? { tab: id } : {}) },
+    // Returned so a tab bar showing the pressed tab knows when the column has answered (`useHappierTabSelection`).
+    return execute('shell.column.set', { column: target, visible, ...(visible ? { tab: id } : {}) },
         { kind: 'shell.column', column: target, read: () => model.readColumn(target) });
 }

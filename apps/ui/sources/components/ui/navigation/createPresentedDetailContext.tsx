@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { useDestinationFocus } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useDestinationFocusSignal, useDestinationVisibilitySignal } from '@/components/appShell/workspace/destinationInstanceContext';
+import { allSignals, followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { usePaneRegion } from '@/components/appShell/panes/paneRegionContext';
 
 /** A focused detail lends its existing model to shell chrome; no selection or body state is copied. */
@@ -36,24 +37,28 @@ export function createPresentedDetailContext<T>() {
         return <Publication.Provider value={publisher}><Model.Provider value={model}>{props.children}</Model.Provider></Publication.Provider>;
     }
     function usePublish(model: T, presented: boolean) {
-        const focused = useDestinationFocus();
+        // The destination's focus and visibility start and stop the publication by subscription: a tab
+        // switch does not render the publishing page.
+        const focus = useDestinationFocusSignal();
+        const visibility = useDestinationVisibilitySignal();
+        const shown = React.useMemo(() => allSignals(focus, visibility), [focus, visibility]);
         // The page chrome belongs to the page: a detail drawn in the side column (a companion's embedded Session)
         // is beside the page, not nested in it, so it never takes the page's chrome.
         const region = usePaneRegion();
-        const active = presented && focused && region !== 'side';
+        const eligible = presented && region !== 'side';
         const depth = React.useContext(Depth);
         const publisher = React.useContext(Publication);
         const owner = React.useRef({});
+        const latestModel = React.useRef(model);
+        latestModel.current = model;
         React.useEffect(() => {
-            if (!active) return;
-            return () => {
-                publisher.withdraw(owner.current);
-            };
-        }, [active, publisher]);
+            if (!eligible) return;
+            return followSignal(shown, (active) => active ? () => { publisher.withdraw(owner.current); } : undefined);
+        }, [eligible, publisher, shown]);
         React.useEffect(() => {
-            if (!active) return;
-            publisher.publish(owner.current, model, depth);
-        }, [model, active, publisher, depth]);
+            if (!eligible) return;
+            return followSignal(shown, (active) => { if (active) publisher.publish(owner.current, latestModel.current, depth); });
+        }, [model, eligible, publisher, depth, shown]);
     }
     return { Provider, Boundary, usePublish, useValue: () => React.useContext(Model) };
 }

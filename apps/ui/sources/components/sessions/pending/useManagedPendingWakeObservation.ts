@@ -6,6 +6,9 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
+import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+
+const ALWAYS_ACTIVE = Object.freeze({ get: () => true, subscribe: () => () => {} });
 
 type ManagedPendingWakeObservation = Readonly<
     | { kind: 'loading'; machine: null }
@@ -18,7 +21,10 @@ export function useManagedPendingWakeObservation(input: Readonly<{
     authorization: PendingActivationAuthorizationV1 | null | undefined;
     accountLifetime: ServerAccountScopeLifetime | null;
     reconnectSignal: string | number | null;
+    /** Its host's presentation, followed by subscription: a hidden host stops observing and keeps the last read. */
+    active?: Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
 }>): ManagedPendingWakeObservation {
+    const active = input.active ?? ALWAYS_ACTIVE;
     const target = input.authorization?.managedWakeTargetV1;
     const qualified = target?.origin.kind === 'session-input'
         && target.origin.session.sessionId === input.sessionId
@@ -36,39 +42,42 @@ export function useManagedPendingWakeObservation(input: Readonly<{
     React.useEffect(() => {
         const lifetime = input.accountLifetime;
         if (!qualified || !target || !lifetime?.isCurrent()) return;
-        return subscribeHomeAccountChange((event) => {
+        return followSignal(active, (isActive) => isActive ? subscribeHomeAccountChange((event) => {
             if (!lifetime.isCurrent() || !areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) return;
             if (event.entityIds === undefined || event.entityIds.includes(target.managedId)) invalidate();
-        });
-    }, [input.accountLifetime, qualified, target]);
+        }) : undefined);
+    }, [active, input.accountLifetime, qualified, target]);
     // A reread (change edge, reconnect) keeps the incumbent observation until its answer arrives; only
     // another target or lifetime starts from nothing, and a failed read leaves the fact unknown.
     React.useEffect(() => {
         const lifetime = input.accountLifetime;
         if (!qualified || !target || !lifetime?.isCurrent()) return;
-        const controller = new AbortController();
-        const retirement = lifetime.onRetire(() => { controller.abort(); setRead(null); });
-        const settle = (machine: ManagedMachineV1 | null) => setRead({ identityKey, lifetime, machine });
-        void (async () => {
-            try {
-                const result = await actionExecutor.execute('machines.managed.get', {
-                    homeId: target.homeId, managedId: target.managedId,
-                }, {
-                    serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
-                    surface: 'ui', signal: controller.signal,
-                });
-                if (controller.signal.aborted || !lifetime.isCurrent()) return;
-                const parsed = result.ok ? ManagedMachineActionOutputSchemasV1['machines.managed.get'].safeParse(result.result) : null;
-                const row = parsed?.success ? unwrapManagedMachineReadV1(parsed.data) : null;
-                settle(row && row.homeId === target.homeId && row.id === target.managedId
-                    && row.enrolledMachineId === target.enrolledMachineId && row.creationState === 'active' ? row : null);
-            } catch {
-                // A failed protected read is unknown, never native absence or a power request.
-                if (!controller.signal.aborted && lifetime.isCurrent()) settle(null);
-            }
-        })();
-        return () => { controller.abort(); retirement.dispose(); };
-    }, [actionExecutor, identityKey, input.accountLifetime, input.reconnectSignal, invalidated, qualified, target]);
+        return followSignal(active, (isActive) => {
+            if (!isActive) return;
+            const controller = new AbortController();
+            const retirement = lifetime.onRetire(() => { controller.abort(); setRead(null); });
+            const settle = (machine: ManagedMachineV1 | null) => setRead({ identityKey, lifetime, machine });
+            void (async () => {
+                try {
+                    const result = await actionExecutor.execute('machines.managed.get', {
+                        homeId: target.homeId, managedId: target.managedId,
+                    }, {
+                        serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
+                        surface: 'ui', signal: controller.signal,
+                    });
+                    if (controller.signal.aborted || !lifetime.isCurrent()) return;
+                    const parsed = result.ok ? ManagedMachineActionOutputSchemasV1['machines.managed.get'].safeParse(result.result) : null;
+                    const row = parsed?.success ? unwrapManagedMachineReadV1(parsed.data) : null;
+                    settle(row && row.homeId === target.homeId && row.id === target.managedId
+                        && row.enrolledMachineId === target.enrolledMachineId && row.creationState === 'active' ? row : null);
+                } catch {
+                    // A failed protected read is unknown, never native absence or a power request.
+                    if (!controller.signal.aborted && lifetime.isCurrent()) settle(null);
+                }
+            })();
+            return () => { controller.abort(); retirement.dispose(); };
+        });
+    }, [actionExecutor, active, identityKey, input.accountLifetime, input.reconnectSignal, invalidated, qualified, target]);
     if (!qualified || input.accountLifetime && !input.accountLifetime.isCurrent()) return { kind: 'read', machine: null };
     if (!read || read.identityKey !== identityKey || read.lifetime !== input.accountLifetime) return { kind: 'loading', machine: null };
     return { kind: 'read', machine: read.machine };

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -55,8 +55,10 @@ export function useLocalServicePreviewStateController(
     input: UseLocalServicePreviewStateInput,
 ): Readonly<{ state: LocalServicePreviewState; accountLifetime: ServerAccountScopeLifetime | null;
     credentialKey: string | undefined; refresh: (() => void) | undefined }> {
-    const presented = useLayoutPresentationActive();
-    const enabled = (input.enabled ?? true) && (presented || input.presentationPolicy === 'retained');
+    // Presentation starts and stops the feed's demand by subscription; a hidden host keeps what it showed.
+    const presentation = useLayoutPresentationSignal();
+    const followsPresentation = input.presentationPolicy !== 'retained';
+    const enabled = input.enabled ?? true;
     const machineId = normalizeId(input.machineId);
     const requestedServerId = normalizeId(input.serverId);
     const activeServer = useActiveServerSnapshot(!requestedServerId);
@@ -80,7 +82,7 @@ export function useLocalServicePreviewStateController(
         if (!active || !storeKey) {
             return () => {};
         }
-        return subscribeLocalServicePreviewStore(
+        const start = () => subscribeLocalServicePreviewStore(
             storeKey,
             onStoreChange,
             {
@@ -88,7 +90,14 @@ export function useLocalServicePreviewStateController(
                 ...(nowMsRef.current ? { nowMs: nowMsRef.current } : {}),
             },
         );
-    }, [active, storeKey]);
+        if (!followsPresentation) return start();
+        return followSignal(presentation, (presented) => {
+            if (!presented) return;
+            // Catch up with what changed while hidden, then follow the feed.
+            onStoreChange();
+            return start();
+        });
+    }, [active, followsPresentation, presentation, storeKey]);
 
     const getSnapshot = React.useCallback((): LocalServicePreviewState => (
         active && storeKey

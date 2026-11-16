@@ -36,7 +36,7 @@ describe('overload recovery countdown', () => {
                 retryAfterMs: null, connectedService: { serviceId: 'openai-codex', profileId: 'exhausted-profile', groupId: null } },
         });
         const openAccountSwitcher = vi.fn();
-        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner testID="recovery" surfaceFocused
+        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner testID="recovery"
             title="Usage limit" body="Wait and resume" runtimeIssue={runtimeIssue} onUseAnotherAccount={openAccountSwitcher} />);
         expect(screen.getTextContent()).toContain('resets');
         expect(screen.getTextContent()).not.toContain('req-session-quota-fixture');
@@ -47,7 +47,7 @@ describe('overload recovery countdown', () => {
         expect(screen.getTextContent()).toContain('req-session-quota-fixture');
         expect(screen.getTextContent()).toContain('UsageLimitExceeded');
         expect(screen.findByTestId('recovery-details-code')?.props.selectable).toBe(true);
-        await act(async () => { screen.tree.update(<SessionUsageLimitRecoveryBanner testID="recovery" surfaceFocused
+        await act(async () => { screen.tree.update(<SessionUsageLimitRecoveryBanner testID="recovery"
             title="Usage limit" body="Switch accounts" runtimeIssue={runtimeIssue}
             actionTestID="recovery-primary" actionLabel="Switch account now" onActionPress={vi.fn()}
             accountRecoveryIsPrimary onUseAnotherAccount={openAccountSwitcher} />); });
@@ -67,7 +67,7 @@ describe('overload recovery countdown', () => {
             { key: 'check_now', testID: 'recovery-checkNow', label: 'Check limit now', accessibilityLabel: 'Check limit now', onPress: vi.fn() },
             { key: 'remember', testID: 'recovery-remember', label: 'Always wait and resume', accessibilityLabel: 'Always wait and resume', onPress: vi.fn() },
         ];
-        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner testID="recovery" surfaceFocused
+        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner testID="recovery"
             title="Usage limit reached" body="Wait and resume" runtimeIssue={runtimeIssue} accountLabel="Leeroy Brun"
             actionTestID="recovery-primary" actionLabel="Resume when limit resets" onActionPress={vi.fn()}
             secondaryActions={[hide, ...candidates]} onUseAnotherAccount={vi.fn()} />);
@@ -78,7 +78,7 @@ describe('overload recovery countdown', () => {
         expect(screen.findByTestId('recovery-checkNow')).toBeNull();
         expect(screen.findByTestId('recovery-remember')).toBeNull();
         expect(screen.getTextContent()).not.toContain('usage_limit');
-        await act(async () => { screen.tree.update(<SessionUsageLimitRecoveryBanner testID="recovery" surfaceFocused
+        await act(async () => { screen.tree.update(<SessionUsageLimitRecoveryBanner testID="recovery"
             title="Usage limit reached" body="Wait and resume" runtimeIssue={runtimeIssue}
             actionTestID="recovery-primary" actionLabel="Resume when limit resets" onActionPress={vi.fn()}
             secondaryActions={[hide, ...candidates]} />); });
@@ -92,7 +92,7 @@ describe('overload recovery countdown', () => {
             usageLimit: { v: 1, recoverability: 'wait', quotaScope: 'account', resetAtMs: 1_794_056_400_000, retryAfterMs: null },
         });
         const openAccountSwitcher = vi.fn();
-        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner testID="recovery" surfaceFocused
+        const screen = await renderScreen(<SessionUsageLimitRecoveryBanner testID="recovery"
             title="Usage limit reached" body="Wait and resume" runtimeIssue={runtimeIssue}
             deliveryRecovery="choose_account" onUseAnotherAccount={openAccountSwitcher} />);
         expect(screen.getTextContent()).not.toContain('Session runtime failed');
@@ -103,10 +103,11 @@ describe('overload recovery countdown', () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_700_000_000_000);
         let parentRenders = 0;
+        const unfocused = { get: () => false, subscribe: () => () => {} };
         function Parent({ deadline, focused = true }: { deadline: number | null; focused?: boolean }) {
             parentRenders += 1;
             return <SessionUsageLimitRecoveryBanner testID="recovery" title="Model overloaded" body="Waiting"
-                surfaceFocused={focused} temporaryThrottle={{ nextCheckAtMs: deadline, attemptCount: 2 }} />;
+                {...(focused ? {} : { surfaceFocus: unfocused })} temporaryThrottle={{ nextCheckAtMs: deadline, attemptCount: 2 }} />;
         }
         const screen = await renderScreen(<Parent deadline={Date.now() + 12_000} />);
         expect(screen.getTextContent()).toContain('12 seconds');

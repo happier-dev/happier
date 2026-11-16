@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { followSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useShallow } from 'zustand/react/shallow';
 import type { ProviderErrorV1} from '@happier-dev/protocol/providers/errors';
 import type { SessionModelSelectionV1} from '@happier-dev/protocol/providers/selection/v1';
@@ -30,8 +31,15 @@ type ProviderBindingStatusState = Readonly<{
     loading: boolean;
 }>;
 
+const ALWAYS_ACTIVE: ProviderBindingStatusActivity = Object.freeze({ get: () => true, subscribe: () => () => {} });
+
+/** When the binding read may run. While inactive nothing is read and the last status stays as it was shown. */
+export type ProviderBindingStatusActivity = Readonly<{ get: () => boolean; subscribe: (listener: () => void) => () => void }>;
+
 export function useProviderBindingStatus(input: Readonly<{
     enabled: boolean;
+    /** A host's focus, followed by subscription: a hide or show re-reads on show without rendering the host. */
+    active?: ProviderBindingStatusActivity;
     machineId: string | null;
     serverId: string | null;
     selection: SessionModelSelectionV1 | null;
@@ -52,6 +60,7 @@ export function useProviderBindingStatus(input: Readonly<{
     });
     const generation = React.useRef(0);
     const pendingRead = React.useRef<AbortController | null>(null);
+    const activity = input.active ?? ALWAYS_ACTIVE;
     const selectionKey = input.selection
         ? `${input.selection.ref.agentTargetKey}\0${input.selection.ref.providerConnectionId ?? ''}\0${input.selection.ref.modelId}\0${input.selection.updatedAt}`
         : '';
@@ -122,7 +131,7 @@ export function useProviderBindingStatus(input: Readonly<{
             && (accountLifetime?.isCurrent() ?? true)
             && binding?.isCurrent() === true
         );
-        if (!requestStillCurrent()) return;
+        if (!requestStillCurrent() || !activity.get()) return;
         if (!input.enabled || !input.machineId || !input.launchBinding) {
             setState({ scopeKey, accountLifetime, status: null, error: null, loading: false });
             return;
@@ -201,16 +210,18 @@ export function useProviderBindingStatus(input: Readonly<{
                     : current);
             }
         }
-    }, [accountLifetime, binding, describeProviderBindingStatus, ready, bindingKey, input.enabled, input.machineId, input.selectionIntentPresent, input.serverId, scopeKey, selectionKey]);
+    }, [accountLifetime, activity, binding, describeProviderBindingStatus, ready, bindingKey, input.enabled, input.machineId, input.selectionIntentPresent, input.serverId, scopeKey, selectionKey]);
 
-    React.useEffect(() => {
+    // Reads while active; an inactive host keeps the status it last showed and reads again when active.
+    React.useEffect(() => followSignal(activity, (active) => {
+        if (!active) return;
         void refresh();
         return () => {
             generation.current += 1;
             pendingRead.current?.abort();
             pendingRead.current = null;
         };
-    }, [accountLifetime, refresh, scopeKey, bindingFacts, providerDeclaration?.definition, providerDeclaration?.provenance, agentRequirements]);
+    }), [accountLifetime, activity, refresh, scopeKey, bindingFacts, providerDeclaration?.definition, providerDeclaration?.provenance, agentRequirements]);
 
     const previousCompletedTurnObservedAt = React.useRef(input.completedTurnObservedAt);
     const previousBindingRefusalObservedAt = React.useRef(input.bindingRefusalObservedAt);

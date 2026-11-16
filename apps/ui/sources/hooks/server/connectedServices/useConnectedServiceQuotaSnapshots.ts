@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
@@ -160,7 +160,9 @@ export function useConnectedServiceQuotaSnapshots(
     profiles: ReadonlyArray<ConnectedServiceQuotaProfileRefInput>,
     options: Readonly<{ fetchPolicy?: ConnectedServiceQuotaSnapshotsFetchPolicy }> = {},
 ): ConnectedServiceQuotaSnapshotsResult {
-    const presented = useLayoutPresentationActive();
+    // Presentation starts and stops loading by subscription: a retained host hidden and shown again
+    // renders only when an entry changed while it was hidden.
+    const presentation = useLayoutPresentationSignal();
     const auth = useAuth();
     const credentials = auth.credentials;
     const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
@@ -285,49 +287,55 @@ export function useConnectedServiceQuotaSnapshots(
     const [version, bumpVersion] = React.useReducer((value: number) => value + 1, 0);
 
     React.useEffect(() => {
-        if (!presented || loadContexts.length === 0) return;
+        if (loadContexts.length === 0) return;
+        // A hidden host only notes that an entry changed, and presents it when shown again.
+        let changedWhileHidden = false;
+        const onEntryChange = () => {
+            if (presentation.get()) bumpVersion();
+            else changedWhileHidden = true;
+        };
         const unsubs = loadContexts.map((registration) =>
             registration.kind === 'v4'
-                ? subscribeQualifiedQuotaSnapshotEntry(
-                    registration.key,
-                    bumpVersion,
-                )
-                : subscribeQuotaSnapshotEntry(
-                    registration.key,
-                    bumpVersion,
-                ));
+                ? subscribeQualifiedQuotaSnapshotEntry(registration.key, onEntryChange)
+                : subscribeQuotaSnapshotEntry(registration.key, onEntryChange));
+        const unfollow = followSignal(presentation, (presented) => {
+            if (!presented || !changedWhileHidden) return;
+            changedWhileHidden = false;
+            bumpVersion();
+        });
         return () => {
+            unfollow();
             for (const unsub of unsubs) unsub();
         };
-    }, [loadContexts, presented]);
+    }, [loadContexts, presentation]);
 
     React.useEffect(() => {
-        if (!presented || fetchPolicy !== 'once') return;
-        const releases = loadContexts.map((registration) =>
-            registration.kind === 'v4'
-                ? loadQualifiedQuotaSnapshotOnce(registration.key, registration.loadContext)
-                : retainQuotaSnapshotOnce(registration.key, registration.loadContext));
-        return () => {
-            for (const release of releases) release();
-        };
-    }, [fetchPolicy, loadContexts, presented]);
+        if (fetchPolicy !== 'once') return;
+        return followSignal(presentation, (presented) => {
+            if (!presented) return;
+            const releases = loadContexts.map((registration) =>
+                registration.kind === 'v4'
+                    ? loadQualifiedQuotaSnapshotOnce(registration.key, registration.loadContext)
+                    : retainQuotaSnapshotOnce(registration.key, registration.loadContext));
+            return () => {
+                for (const release of releases) release();
+            };
+        });
+    }, [fetchPolicy, loadContexts, presentation]);
 
     React.useEffect(() => {
-        if (!presented || fetchPolicy !== 'poll') return;
-        const releases = loadContexts.map((registration) =>
-            registration.kind === 'v4'
-                ? retainQualifiedQuotaSnapshotPolling(
-                    registration.key,
-                    registration.loadContext,
-                )
-                : retainQuotaSnapshotPolling(
-                    registration.key,
-                    registration.loadContext,
-                ));
-        return () => {
-            for (const release of releases) release();
-        };
-    }, [fetchPolicy, loadContexts, presented]);
+        if (fetchPolicy !== 'poll') return;
+        return followSignal(presentation, (presented) => {
+            if (!presented) return;
+            const releases = loadContexts.map((registration) =>
+                registration.kind === 'v4'
+                    ? retainQualifiedQuotaSnapshotPolling(registration.key, registration.loadContext)
+                    : retainQuotaSnapshotPolling(registration.key, registration.loadContext));
+            return () => {
+                for (const release of releases) release();
+            };
+        });
+    }, [fetchPolicy, loadContexts, presentation]);
 
     const refresh = React.useCallback(async (keys?: readonly string[]) => {
         const selected = keys ? new Set(keys) : null;
@@ -410,5 +418,5 @@ export function useConnectedServiceQuotaSnapshots(
             refreshableKeys,
             refresh,
         } satisfies ConnectedServiceQuotaSnapshotsResult;
-    }, [loadContexts, normalizedProfiles, presented, quotasEnabled, refresh, version]);
+    }, [loadContexts, normalizedProfiles, quotasEnabled, refresh, version]);
 }

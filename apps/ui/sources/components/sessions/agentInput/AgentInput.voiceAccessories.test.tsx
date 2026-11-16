@@ -742,6 +742,10 @@ async function registerLocalConversationAdapter(): Promise<void> {
     registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
 }
 
+// The retaining surface's presented fact, as the Session host supplies it.
+const PRESENTED = Object.freeze({ get: () => true, subscribe: () => () => {} });
+const HIDDEN = Object.freeze({ get: () => false, subscribe: () => () => {} });
+
 async function sessionComposerScene(
     overrides: Record<string, unknown> = {},
     energyActive = false,
@@ -991,7 +995,7 @@ describe('AgentInput mounts the Voice composer', () => {
         const source = voiceRuntimeLevelStore.open({ channel: 'input', sourceId: 'composer-presence-test' });
         setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'session-1', status: 'connected', mode: 'listening', canStop: true });
 
-        const screen = await renderSessionComposer({ surfacePresented: true }, true);
+        const screen = await renderSessionComposer({ surfacePresentation: PRESENTED }, true);
         await act(async () => { source.write(0.4); });
         const activations = () => {
             const callbacks = readReanimatedFrameCallbacks();
@@ -1001,7 +1005,7 @@ describe('AgentInput mounts the Voice composer', () => {
 
         expect(activations()).toEqual([false, true]);
 
-        await screen.update(await sessionComposerScene({ surfacePresented: false }, true));
+        await screen.update(await sessionComposerScene({ surfacePresentation: HIDDEN }, true));
         // Retention preserves the draft and the Session owner, not a second mounted
         // Voice runtime. Hidden composers must leave no Voice subscription/leaf behind.
         expect(screen.findByTestId(PLANET_TEST_ID)).toBeNull();
@@ -1009,7 +1013,7 @@ describe('AgentInput mounts the Voice composer', () => {
         await screen.pressByTestIdAsync(DICTATION_TEST_ID);
         expect(recording.starts).toBe(0);
 
-        await screen.update(await sessionComposerScene({ surfacePresented: true }, true));
+        await screen.update(await sessionComposerScene({ surfacePresentation: PRESENTED }, true));
         expect(screen.findByTestId(PLANET_TEST_ID)).not.toBeNull();
         expect(activations()).toEqual([false, true, false, true]);
         await screen.pressByTestIdAsync(DICTATION_TEST_ID);

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useShallow } from 'zustand/react/shallow';
 
 import { getCurrentAuth, useAuth } from '@/auth/context/AuthContext';
@@ -44,7 +44,6 @@ import { useCredentialScopedAccountModeResolver, type CredentialScopedAccountMod
 
 export type ProviderAccountUsageSnapshotsFetchPolicy = 'poll' | 'cache_only';
 
-const noSubscription = () => () => {};
 
 export type ProviderAccountUsageSnapshotsResult = Readonly<{
     snapshotsByRecordId: Readonly<Record<string, ProviderAccountUsageSnapshotV1 | null>>;
@@ -191,7 +190,9 @@ export function useProviderAccountUsageSnapshots(
         loading?: boolean;
     }> = {},
 ): ProviderAccountUsageSnapshotsResult {
-    const presented = useLayoutPresentationActive();
+    // Presentation starts and stops this reader's cache subscription and its fetch observer by
+    // subscription: a retained host hidden and shown again does not render for it.
+    const presentation = useLayoutPresentationSignal();
     const auth = useAuth();
     const credentials = auth.credentials;
     const quotasEnabled = useFeatureEnabled('connectedServices.quotas');
@@ -229,8 +230,14 @@ export function useProviderAccountUsageSnapshots(
         return selected;
     });
     const readSelectedEntries = () => selectEntries(getProviderAccountUsageCacheState());
+    const subscribeWhilePresented = React.useCallback((listener: () => void) => followSignal(presentation, (presented) => {
+        if (!presented) return;
+        // Catch up with what changed while hidden, then follow the cache.
+        listener();
+        return subscribeProviderAccountUsageCache(listener);
+    }), [presentation]);
     const cacheByRecordId = React.useSyncExternalStore(
-        presented ? subscribeProviderAccountUsageCache : noSubscription,
+        subscribeWhilePresented,
         readSelectedEntries,
         readSelectedEntries,
     );
@@ -241,7 +248,7 @@ export function useProviderAccountUsageSnapshots(
         credentialScope, normalizedRecordIds,
     ), [credentialScope, normalizedRecordIds]);
 
-    React.useEffect(() => retainProviderAccountUsageCacheEntries(
+    React.useEffect(() => followSignal(presentation, (presented) => retainProviderAccountUsageCacheEntries(
         credentialScope,
         normalizedRecordIds,
         presented && fetchPolicy !== 'cache_only' && quotasEnabled && credentials && activeServer.serverId
@@ -257,7 +264,7 @@ export function useProviderAccountUsageSnapshots(
                 },
                 serverBasis: { serverId: activeServer.serverId, generation: activeServer.generation } })
             : undefined,
-    ), [credentialScope, normalizedRecordIds, fetchPolicy, quotasEnabled, credentials, presented,
+    )), [credentialScope, normalizedRecordIds, fetchPolicy, quotasEnabled, credentials, presentation,
         activeServer.serverId, activeServer.generation, resolveAccountMode]);
 
     return React.useMemo(() => {

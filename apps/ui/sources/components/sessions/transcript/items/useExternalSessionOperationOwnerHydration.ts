@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { followSignal, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 
 import type {
@@ -65,7 +65,9 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
     serverId: string | null;
     sessionId: string;
 }>) {
-    const presentationActive = useLayoutPresentationActive();
+    // Presentation starts and stops the status read by subscription: a retained transcript hidden and
+    // shown again does not render for it, and keeps the status it last showed.
+    const layoutPresentation = useLayoutPresentationSignal();
     const {
         isExactOwner,
         machineId,
@@ -81,7 +83,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
         && serverId !== null;
     // Completed presentation survives compaction of private recovery state.
     const completed = presentation?.status === 'completed';
-    const readEligible = authorized && machineOnline && presentationActive && !completed;
+    const readEligible = authorized && machineOnline && !completed;
     const currentKey = authorized && presentation
         ? createOperationKey({
             machineId,
@@ -144,9 +146,11 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             requestControllerRef.current?.abort();
         };
     }, []);
-    React.useEffect(() => () => {
-        requestControllerRef.current?.abort();
-    }, [currentKey, readEligible]);
+    React.useEffect(() => {
+        const abortRead = () => { requestControllerRef.current?.abort(); };
+        const unfollow = followSignal(layoutPresentation, (presented) => presented ? undefined : abortRead());
+        return () => { unfollow(); abortRead(); };
+    }, [currentKey, layoutPresentation, readEligible]);
 
     const loadCurrent = React.useCallback(async (
         snapshot: Readonly<{
@@ -240,25 +244,32 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             };
             return;
         }
-        const readEpisode = readEpisodeRef.current;
-        if (
-            readEpisode.key === currentKey
-            && readEpisode.readEligible
-        ) return;
-        readEpisodeRef.current = {
-            key: currentKey,
-            readEligible: true,
-        };
-        fireAndForget(loadCurrent({
-            key: currentKey,
-            machineId,
-            presentation,
-            serverId,
-        }), { tag: 'externalSessionOperation.ownerHydration' });
+        return followSignal(layoutPresentation, (presented) => {
+            if (!presented) {
+                readEpisodeRef.current = { key: currentKey, readEligible: false };
+                return;
+            }
+            const readEpisode = readEpisodeRef.current;
+            if (
+                readEpisode.key === currentKey
+                && readEpisode.readEligible
+            ) return;
+            readEpisodeRef.current = {
+                key: currentKey,
+                readEligible: true,
+            };
+            fireAndForget(loadCurrent({
+                key: currentKey,
+                machineId,
+                presentation,
+                serverId,
+            }), { tag: 'externalSessionOperation.ownerHydration' });
+        });
     }, [
         authorized,
         commitRead,
         currentKey,
+        layoutPresentation,
         loadCurrent,
         machineId,
         presentation,
@@ -280,7 +291,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             commitRead(null);
             return;
         }
-        if (!current.readEligible) return;
+        if (!current.readEligible || !layoutPresentation.get()) return;
         if (!matchesExternalSessionOperationPresentation(
             progress,
             current.presentation,
@@ -291,7 +302,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             presentation: current.presentation,
             serverId: current.serverId,
         }), { tag: 'externalSessionOperation.ownerActionRevalidation' });
-    }, [commitRead, loadCurrent]);
+    }, [commitRead, layoutPresentation, loadCurrent]);
 
     /**
      * The exact owner's ONE manual recovery for a failed status read. It re-issues the
@@ -307,7 +318,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
     const checkAgain = React.useCallback(async (): Promise<boolean> => {
         const current = currentRef.current;
         if (
-            !presentationActive
+            !layoutPresentation.get()
             || !current.authorized
             || !current.key
             || !current.machineId
@@ -327,7 +338,7 @@ export function useExternalSessionOperationOwnerHydration(params: Readonly<{
             readEpisodeRef.current = { key: current.key, readEligible: true };
         }
         return outcome === 'ready';
-    }, [loadCurrent, presentationActive]);
+    }, [layoutPresentation, loadCurrent]);
 
     const currentRead = currentKey !== null && hydrated?.key === currentKey
         ? hydrated
