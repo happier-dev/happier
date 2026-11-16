@@ -40,7 +40,7 @@ export async function createScpReadyPayloadArchive(payloadRoot: string): Promise
     const cwd = dirname(payloadRoot);
     const entries: string[] = [];
     await listPayloadEntries(payloadRoot, relative(cwd, payloadRoot), entries, new Set());
-    await create({ cwd, file: join(archiveStageRoot, archiveFileName), gzip: true,
+    await create({ cwd, file: join(archiveStageRoot, archiveFileName), gzip: true, portable: true,
       follow: true, noDirRecurse: true, strict: true }, entries);
     return {
       archiveStageRoot,
