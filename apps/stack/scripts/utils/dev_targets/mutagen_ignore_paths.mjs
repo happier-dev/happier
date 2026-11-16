@@ -155,6 +155,11 @@ export const DEV_TARGET_MUTAGEN_IGNORE_PATHS = [
   // repository copies too (one plan held 148k of 306k replica files).
   '/.project/plans/**/eval/source',
   '/.project/plans/**/eval/runs',
+  // PR worktrees nested at a checkout root (0.2: 35 of them, about 480k of each
+  // target session's entries on 2026-11-16) are separate checkouts with their
+  // own synchronization session when a lane runs a command from them.
+  '/*pr[0-9]*-source',
+  '/*pr[0-9]*-merge-validation',
   '/.project/plans/runtime-unification-v2/_validation/source-reality-review/qa/lane-A/repo-importers-map.json',
   '/.project/plans/plugin-sdk-author-surface-convergence/CLAUDE-AUDIT-JOURNAL.md',
   '/.project/plans/**/BOARD.md',

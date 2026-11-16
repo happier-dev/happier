@@ -362,6 +362,11 @@ test('renderMutagenProject preserves default exclusions inside re-included proje
     }
     included.push(`${root}/PROTOCOL.md`, `${root}/judge-input/maple.md`);
   }
+  // PR worktrees nested at the checkout root are their own checkouts.
+  for (const worktree of ['pr923-source', 'proxmox-pr8-source', 'pr718-merge-validation']) {
+    excluded.push(worktree, `${worktree}/apps/ui/sources/app.tsx`);
+  }
+  included.push('packages/fixture/pr923-source/index.ts', 'apps/cli/src/pr-source.ts');
   const ignored = execFileSync('git', ['-C', fixture.root, '-c', `core.excludesFile=${fixture.path('empty-excludes')}`,
     'check-ignore', '--no-index', '--stdin', '-z'], {
     input: `${[...excluded, ...included].join('\0')}\0`, encoding: 'utf8',
