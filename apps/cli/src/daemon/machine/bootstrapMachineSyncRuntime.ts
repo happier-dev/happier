@@ -636,6 +636,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   purgeBrowserStorageForSessionDeleted?: (sessionId: string) => Promise<void>;
   sessionRunnerStatus?: MachineRpcHandlerDeps['sessionRunnerStatus'];
   awaitAgentSessionOpen?: SessionLifecycleMachineDeps['awaitAgentSessionOpen'];
+  prestartSessionHost?: MachineRpcHandlerDeps['prestartSessionHost'];
   isSessionAlreadyRunning: (sessionId: string) => Promise<boolean>;
   /** Orphan settlement leaves a Session the respawn owner holds to it. */
   isSessionRespawnPending?: (sessionId: string) => boolean;
@@ -1394,6 +1395,7 @@ export async function bootstrapMachineSyncRuntime(
         ...(params.awaitAgentSessionOpen
           ? { awaitAgentSessionOpen: params.awaitAgentSessionOpen }
           : {}),
+        ...(params.prestartSessionHost ? { prestartSessionHost: params.prestartSessionHost } : {}),
         ...(params.subscribeConnectedAccountInvalidations
           ? {
               subscribeConnectedAccountInvalidations:

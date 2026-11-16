@@ -240,7 +240,7 @@ function admitLocalPacket(current: Ingress, body: unknown): Readonly<{ registere
 
 async function handleIngressRequest(current: Ingress, request: IncomingMessage, response: ServerResponse): Promise<void> {
   if (request.method === 'POST' && (request.url === HOST_ADD_PATH || request.url === HOST_END_PATH || request.url === HOST_WATCH_PATH
-    || request.url === HOST_HANDOVER_PATH)) {
+    || request.url === HOST_HANDOVER_PATH || request.url === HOST_HOLD_PATH)) {
     await handleSessionHostRequest(current, request, response);
     return;
   }
@@ -578,6 +578,8 @@ const HOST_END_PATH = '/v1/session-host/end';
 const HOST_WATCH_PATH = '/v1/session-host/watch';
 /** A newer daemon moves this host's Sessions to a current host: the host hands over and exits. */
 const HOST_HANDOVER_PATH = '/v1/session-host/handover';
+/** A Session is about to be created: the host stays (and loads the runner code) while this connection is open. */
+const HOST_HOLD_PATH = '/v1/session-host/hold';
 const SESSION_HOST_CLOSING = 'session_host_closing';
 const SESSION_NOT_HOSTED = 'session_not_hosted';
 /**
@@ -668,6 +670,12 @@ export type LocalSessionHostAdmission = Readonly<{
    * `SESSION_HOST_HANDOVER_EXIT_CODE`; false when the host is already ending.
    */
   handOver(): boolean;
+  /**
+   * Keep the host for a Session that is about to be created (its daemon saw a New Session intent):
+   * the host loads the runner code now and does not end while held. Returns the release. Throws
+   * `SessionHostClosingError` when the host no longer admits.
+   */
+  hold(): () => void;
   /** The daemon that launched this host (or adopted it after a restart): the only caller admitted. */
   readTrustedCaller(): Promise<ProcessBirthWitness | null>;
 }>;
@@ -715,6 +723,21 @@ async function handleSessionHostRequest(current: Ingress, request: IncomingMessa
   }
   if (request.url === HOST_HANDOVER_PATH) {
     reply(response, 200, { handingOver: host.handOver() });
+    return;
+  }
+  if (request.url === HOST_HOLD_PATH) {
+    let release: () => void;
+    try {
+      release = host.hold();
+    } catch (error) {
+      if (!(error instanceof SessionHostClosingError)) throw error;
+      reply(response, 503, { error: error.message, errorCode: SESSION_HOST_CLOSING });
+      return;
+    }
+    // Held while the connection lives: its daemon releasing it, or the daemon process ending, closes it.
+    response.once('close', release);
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.flushHeaders();
     return;
   }
   let ended: Promise<SessionHostCommandEnd>;
@@ -867,6 +890,35 @@ function openLocalSessionHostSession(input: Readonly<{ hostPid: number; path: st
   });
   outgoing.end(text);
   return { admitted, ended };
+}
+
+/**
+ * Hold the session host `hostPid` for a Session that is about to be created. `held` is true once the
+ * host admitted the hold; it lasts until `release()` (or this process ends) closes the connection.
+ * `closed` settles when the hold connection is gone (released, refused, or the host ended).
+ */
+export function holdLocalSessionHost(input: Readonly<{ hostPid: number }>): Readonly<{
+  held: Promise<boolean>;
+  closed: Promise<void>;
+  release(): void;
+}> {
+  const descriptor = readHostDescriptor(input.hostPid);
+  if (!descriptor) return { held: Promise.resolve(false), closed: Promise.resolve(), release: () => {} };
+  let resolveHeld!: (held: boolean) => void;
+  const held = new Promise<boolean>(resolve => { resolveHeld = resolve; });
+  const outgoing = httpRequest({
+    socketPath: descriptor.endpoint.path, path: HOST_HOLD_PATH, method: 'POST', agent: false,
+    headers: { 'content-type': 'application/json', 'content-length': 2 },
+  }, incoming => {
+    resolveHeld(incoming.statusCode === 200);
+    incoming.resume();
+  });
+  const closed = new Promise<void>(resolve => {
+    outgoing.once('close', () => { resolveHeld(false); resolve(); });
+  });
+  outgoing.once('error', () => resolveHeld(false));
+  outgoing.end('{}');
+  return { held, closed, release: () => { outgoing.destroy(); } };
 }
 
 /** Ask the session host to end one Session, retaining its refusal or transport outcome. */

@@ -1572,6 +1572,8 @@ export async function startDaemonSessionControlRuntime(
         'getTrackedSessions' | 'readStartupFailure'
       >,
     ) => ReturnType<typeof awaitTrackedRunnerAgentSessionOpen>;
+    /** New Session intent: keep the session host ready until `signal` (or daemon shutdown) aborts. */
+    prestartSessionHost: (signal: AbortSignal) => Promise<void>;
     installExternalSessionHostOperations(
       operations: ExternalSessionHostOperationSet,
     ): ReturnType<
@@ -15796,6 +15798,9 @@ export async function startDaemonSessionControlRuntime(
         ...input,
         readStartupFailure: trackedSession => readStartupFailure({ sessionId: input.sessionId, trackedSession }),
       }),
+    // Daemon shutdown ends every intent hold, so it never waits on an open New Session.
+    prestartSessionHost: async (signal) => await sessionHostPlacement.prestart(
+      AbortSignal.any([signal, shutdownCancellationDomains.daemonWorkSignal])),
     installExternalSessionHostOperations: (operations) =>
       externalSessionHostOperationOwner.install({
         followOperation: operations.followOperation && {

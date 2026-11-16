@@ -199,6 +199,7 @@ export function createDaemonMachineBootstrapRuntime(
     purgeBrowserStorageForSessionDeleted?: BootstrapRuntime['purgeBrowserStorageForSessionDeleted'];
     sessionRunnerStatus?: BootstrapRuntime['sessionRunnerStatus'];
     awaitAgentSessionOpen: BootstrapRuntime['awaitAgentSessionOpen'];
+    prestartSessionHost: BootstrapRuntime['prestartSessionHost'];
     isSessionAlreadyRunning: BootstrapRuntime['isSessionAlreadyRunning'];
     isSessionRespawnPending?: BootstrapRuntime['isSessionRespawnPending'];
     loadLocalSessionMetadataForHandoff: BootstrapRuntime['loadLocalSessionMetadataForHandoff'];
@@ -805,6 +806,7 @@ export function createDaemonMachineBootstrapRuntime(
     purgeBrowserStorageForSessionDeleted: params.purgeBrowserStorageForSessionDeleted,
     ...(params.sessionRunnerStatus ? { sessionRunnerStatus: params.sessionRunnerStatus } : {}),
     awaitAgentSessionOpen: params.awaitAgentSessionOpen,
+    prestartSessionHost: params.prestartSessionHost,
     isSessionAlreadyRunning: params.isSessionAlreadyRunning,
     ...(params.isSessionRespawnPending ? { isSessionRespawnPending: params.isSessionRespawnPending } : {}),
     loadLocalSessionMetadataForHandoff: params.loadLocalSessionMetadataForHandoff,

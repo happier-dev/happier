@@ -12,6 +12,7 @@ import {
   createMachineSessionSpawnRpcHandler,
 } from '@/session/actions/sessionLifecycleActions';
 import { registerSessionCreationTargetPreparationRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createFilesystemEffectRpcRegistrar } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { readStoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
@@ -132,6 +133,13 @@ export function registerMachineSessionRpcHandlers(params: MachineSessionRpcFamil
   });
   registerSessionAgentTransitionRpcHandlers(params.rpcHandlerManager, {
     readCredentials: readStoredCredentials,
+  });
+  // New Session is open on this Machine: the call is held while the intent lasts (its caller cancels
+  // it when New Session closes or disconnects) and the daemon keeps its session host ready meanwhile.
+  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CREATION_INTENT, async (_raw: unknown, context) => {
+    if (!context) throw new Error('A New Session intent requires an RPC cancellation context');
+    await params.deps?.prestartSessionHost?.(context.signal);
+    return { ok: true };
   });
   return sessionSpawnDirectTargetTransport
     ? { sessionSpawnDirectTargetTransport }

@@ -23,6 +23,8 @@ const testHome = vi.hoisted(() => {
 const census = vi.hoisted(() => ({
   hostLaunches: 0,
   runnerLaunches: 0,
+  /** Runner-code preloads the hosts performed (a prestarted host loads the runner before its first Session). */
+  runnerPreloads: 0,
   /** The environment each session host was launched with. */
   hostLaunchEnvironments: [] as Array<Record<string, string | undefined>>,
   startHost: null as null | (() => Promise<EventEmitter>),
@@ -187,6 +189,7 @@ async function createHarness(startupFailure?: Error) {
         termination.dispose();
       },
       readTrustedCaller: () => captureProcessBirthWitness(process.pid),
+      preloadSessionRunner: async () => { census.runnerPreloads += 1; },
       process: hostProcess,
       exit: hostExit,
     });
@@ -263,7 +266,7 @@ async function createHarness(startupFailure?: Error) {
     return { record, result: await pending };
   };
   return {
-    tracked, exits, hosts, hostedEnvironments, hostedLaunches, releaseSessions, spawnSession,
+    tracked, exits, hosts, hostedEnvironments, hostedLaunches, releaseSessions, spawnSession, sessionHost,
     setExitObserver: (observer: (pid: number, exit: ChildExit) => Promise<void>) => { observeExit = observer; },
     releaseAll: () => { for (const release of releaseSessions.splice(0)) release(); },
     /** Daemon restart: hand the reattached Sessions of a live host to this daemon's session host. */
@@ -684,5 +687,69 @@ describe.skipIf(process.platform === 'win32')('daemon session host placement', (
     await Promise.all([rb!.hostedSession!.observed, c.record.hostedSession!.observed]);
     expect(restarted.exits.map(({ exit }) => exit.trackingKey).sort())
       .toEqual([ra!.trackingKey, rb!.trackingKey, c.record.trackingKey].sort());
+  });
+
+  it('prestarts ONE host on New Session intents, preloads the runner once, and the next Session joins that host', { timeout: 120_000 }, async () => {
+    const launchesBefore = census.hostLaunches;
+    const preloadsBefore = census.runnerPreloads;
+    const harness = await createHarness();
+    // No intent, no host: an idle daemon starts nothing.
+    expect(census.hostLaunches - launchesBefore).toBe(0);
+
+    // Two devices open New Session on this Machine at once.
+    const phone = new AbortController();
+    const web = new AbortController();
+    const held = [harness.sessionHost.prestart(phone.signal), harness.sessionHost.prestart(web.signal)];
+    await vi.waitFor(() => expect(census.runnerPreloads - preloadsBefore).toBe(1), { timeout: 60_000 });
+    expect(census.hostLaunches - launchesBefore).toBe(1);
+
+    // The Session created after the intent runs in the prestarted host: no second launch, no second preload.
+    const a = await harness.spawnSession('prestarted-a');
+    expect(a.result).toMatchObject({ type: 'success', sessionId: 'prestarted-a' });
+    expect(census.hostLaunches - launchesBefore).toBe(1);
+    expect(census.runnerPreloads - preloadsBefore).toBe(1);
+
+    // The intents end (New Session closed) while the Session runs: the host stays for it.
+    phone.abort();
+    web.abort();
+    await Promise.all(held);
+    const host = harness.hosts.at(-1)!;
+    expect(host.exit).not.toHaveBeenCalled();
+    // Its last Session ends: the host's ordinary idle end.
+    harness.releaseAll();
+    await host.host.whenEnded;
+    expect(host.exit).toHaveBeenCalledWith(0);
+  });
+
+  it('lets a prestarted host end when the intent ends with no Session, and starts a new host for the next Session', { timeout: 120_000 }, async () => {
+    const launchesBefore = census.hostLaunches;
+    const harness = await createHarness();
+    const intent = new AbortController();
+    const held = harness.sessionHost.prestart(intent.signal);
+    await vi.waitFor(() => expect(harness.hosts).toHaveLength(1), { timeout: 60_000 });
+    const prestarted = harness.hosts[0]!;
+    intent.abort();
+    await held;
+    await prestarted.host.whenEnded;
+    expect(prestarted.exit).toHaveBeenCalledWith(0);
+
+    const b = await harness.spawnSession('after-abandoned-intent');
+    expect(b.result).toMatchObject({ type: 'success', sessionId: 'after-abandoned-intent' });
+    expect(census.hostLaunches - launchesBefore).toBe(2);
+    harness.releaseAll();
+    await b.record.hostedSession!.observed;
+  });
+
+  it('ends an idle prestarted host when its daemon goes away (the hold connection breaks)', { timeout: 120_000 }, async () => {
+    const harness = await createHarness();
+    const intent = new AbortController();
+    void harness.sessionHost.prestart(intent.signal);
+    await vi.waitFor(() => expect(harness.hosts).toHaveLength(1), { timeout: 60_000 });
+    // Wait for the hold to be admitted before the daemon "dies".
+    await vi.waitFor(() => expect(hostSockets.size).toBeGreaterThan(0), { timeout: 60_000 });
+    for (const socket of hostSockets) socket.destroy();
+    await harness.hosts[0]!.host.whenEnded;
+    expect(harness.hosts[0]!.exit).toHaveBeenCalledWith(0);
+    intent.abort();
   });
 });

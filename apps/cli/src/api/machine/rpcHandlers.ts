@@ -375,6 +375,8 @@ export type MachineRpcHandlerDeps = Readonly<{
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
   resolveExecutionSurfaces?: SessionLifecycleMachineDeps['resolveExecutionSurfaces'];
   awaitAgentSessionOpen?: SessionLifecycleMachineDeps['awaitAgentSessionOpen'];
+  /** New Session intent on this Machine: prepare for the Session (session host) until `signal` aborts. */
+  prestartSessionHost?: (signal: AbortSignal) => Promise<void>;
   createRegistryHost?: (signal?:AbortSignal,context?:RpcHandlerContext)=>ReturnType<typeof createCliRegistryHostV1>;
   workingDirectory?: string;
   filesystemAccessPolicy?: FilesystemAccessPolicy;
