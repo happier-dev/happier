@@ -505,7 +505,8 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
             ? <MachineIndexListLine item={item} /> : null }),
         // A phone's list says the work on the name's line, where the table gives it a column. A machine that is not
         // online passes no meta (its byline says its presence), as the table's Work cell gives it to the presence too.
-        ...(phone ? { titleMeta: (item: MachineIndexItem) => item.online ? <MachineWorkCell item={item} /> : null } : {}),
+        // A card says its work once, in its footer, so only the list puts it on the name's line.
+        ...(phone && view !== 'grid' ? { titleMeta: (item: MachineIndexItem) => item.online ? <MachineWorkCell item={item} /> : null } : {}),
         fields: [
             // Offline machines retain one missing-value mark per metric; an online refusal can span the figures.
             ...(anyOnline ? [
