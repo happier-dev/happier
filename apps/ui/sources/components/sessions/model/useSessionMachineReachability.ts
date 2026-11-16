@@ -6,6 +6,7 @@ import {
     type SessionMachineReachability,
 } from '@/components/sessions/model/resolveSessionMachineReachability';
 import { useSessionMachineDisplayIdentity, useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
+import { describeMachinePresenceSummary } from '@/utils/sessions/machinePresenceLine';
 
 export function useSessionReachableMachineTarget(sessionId: string, serverId?: string | null): { machineId: string; basePath: string } | null {
     const resolvedSessionId = normalizeSessionId(sessionId);
@@ -19,6 +20,8 @@ export function useSessionMachineReachability(sessionId: string, serverId?: stri
     machineReachability: SessionMachineReachability;
     /** The machine's last heartbeat, said only while it is unreachable: the honest time of the last known state. */
     machineLastSeenAt: number | null;
+    /** A created machine's native power word ("Asleep", "Starting") with its name; null when there is none to say. */
+    machinePower: Readonly<{ machineName: string | null; word: string }> | null;
 }> {
     const machineTarget = useSessionReachableMachineTarget(sessionId, serverId);
     const displayIdentity = useSessionMachineDisplayIdentity(sessionId, serverId);
@@ -37,6 +40,11 @@ export function useSessionMachineReachability(sessionId: string, serverId?: stri
     const machineRpcTargetAvailable = Boolean(machineTarget?.basePath) && machineReachable;
 
     const machineLastSeenAt = presence.lastSeenAt ?? null;
+    // The same presence owner the Machines rail and picker read: native lifecycle words only, never connectivity.
+    const machinePowerWord = describeMachinePresenceSummary(presence).nativeWord ?? null;
+    const machineName = presence.name;
+    const machinePower = React.useMemo(() => machinePowerWord ? { machineName, word: machinePowerWord } : null,
+        [machineName, machinePowerWord]);
 
     return React.useMemo(() => ({
         machineReachable,
@@ -44,5 +52,6 @@ export function useSessionMachineReachability(sessionId: string, serverId?: stri
         machineRpcTargetAvailable,
         machineReachability,
         machineLastSeenAt,
-    }), [machineReachability, machineReachable, machineRpcTargetAvailable, machineOnline, machineLastSeenAt]);
+        machinePower,
+    }), [machineReachability, machineReachable, machineRpcTargetAvailable, machineOnline, machineLastSeenAt, machinePower]);
 }

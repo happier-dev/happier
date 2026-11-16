@@ -33,6 +33,7 @@ export type UseSessionViewBootstrapResult = Readonly<{
     pane: Omit<AppPaneScopeApi, 'scopeState'> & { scopeState: SessionViewPaneFacts | null };
     machineReachable: boolean;
     machineReachability: 'reachable' | 'unreachable' | 'unknown';
+    machinePower: ReturnType<typeof useSessionMachineReachability>['machinePower'];
 }>;
 
 export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): UseSessionViewBootstrapResult {
@@ -41,6 +42,7 @@ export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): Us
         machineReachable,
         machineOnline,
         machineReachability: observedMachineReachability,
+        machinePower,
     } = useSessionMachineReachability(input.sessionId, input.serverId);
     const machineReachability = observedMachineReachability
         ?? (machineReachable ? 'reachable' : 'unreachable');
@@ -57,5 +59,6 @@ export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): Us
         pane,
         machineReachable,
         machineReachability,
+        machinePower,
     };
 }

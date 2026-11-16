@@ -125,6 +125,11 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     workspaceSubtitleEllipsizeMode?: 'head' | 'tail';
     /** A Voice conversation's place ("Global Voice · OpenAI Realtime"), which replaces its private folder. */
     voiceConversationSubtitle?: string;
+    /**
+     * The Session's created machine and its native power word ("do-bot-1", "Asleep"), from the machine
+     * presence owner; null while the machine has no native lifecycle word to say.
+     */
+    machinePower?: Readonly<{ machineName: string | null; word: string }> | null;
     externalSessionRuntime: ExternalSessionRuntimePresentation | null;
     /**
      * Plugin-UI projection + open handler for the session header-action menu
@@ -229,7 +234,18 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
             ? getSessionSubtitle(session)
             : workspaceSubtitle ?? fallbackSubtitle;
     // Until a session is named it is titled after its folder; a subtitle repeating that says nothing.
-    const subtitle = locationSubtitle === title ? undefined : locationSubtitle;
+    const placeSubtitle = locationSubtitle === title ? undefined : locationSubtitle;
+    // A created machine that is asleep, starting or stopping is named with its word after the folder
+    // (lab b-wake-S / b-wake-A); a no-folder Session's place already is that machine.
+    // The word may already name the machine ("Starting do-bot-1…"); it then stands alone.
+    const machinePower = voiceConversation ? null : input.machinePower ?? null;
+    const machineName = machinePower?.machineName;
+    const subtitleParts = [
+        placeSubtitle,
+        machineName && machineName !== placeSubtitle && !machinePower.word.includes(machineName) ? machineName : undefined,
+        machinePower?.word,
+    ].filter((part): part is string => typeof part === 'string' && part.length > 0);
+    const subtitle = subtitleParts.length > 0 ? subtitleParts.join(' · ') : undefined;
     const subtitleEllipsizeMode = subtitle
         ? voiceConversation ? 'tail' as const : input.workspaceSubtitleEllipsizeMode ?? 'head' as const
         : undefined;

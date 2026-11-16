@@ -1255,6 +1255,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         pane,
         machineReachable: isMachineReachable,
         machineReachability,
+        machinePower: headerMachinePower,
     } = useSessionViewBootstrap({
         sessionId,
         serverId: session?.serverId ?? currentSessionRouteServerId,
@@ -1664,6 +1665,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         workspaceSubtitle: headerWorkspaceDisplay.displayTitle,
         workspaceSubtitleEllipsizeMode: headerWorkspaceDisplay.subtitleEllipsizeMode,
         voiceConversationSubtitle,
+        machinePower: headerMachinePower,
         externalSessionRuntime: externalSessionRuntimePresentation,
         pluginUiProjection: headerPluginProjection.pluginUiProjection,
         localizePluginText: localizeHeaderPluginText,
@@ -1694,6 +1696,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     }), [
         managedWakePresentation.projection,
         voiceConversationSubtitle,
+        headerMachinePower,
         actionRailVisible,
         mobileTerminalTabAvailable,
         headerTerminalAction.available,
