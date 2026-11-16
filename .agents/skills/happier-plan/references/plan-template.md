@@ -11,8 +11,8 @@ The gate is the only mandatory part. It fits on one page and is written before a
 
 Problem and target outcome in two sentences; non-goals in one line. Then what people do, step by step, and every feature that must keep working.
 
-| Flow | Who | Steps (entry → visible outcome) | Features that must keep working | Calls, writes and publications per user action and unchanged refresh, as formulas of real units (e.g. deploy = 1 admit + N services + 1 settle; unchanged input = 0 writes/publications, same identities) |
-|---|---|---|---|---|
+| Flow | Who | Steps (entry → visible outcome) | Features that must keep working | Calls, writes and publications per user action and unchanged refresh, as formulas of real units (e.g. deploy = 1 admit + N services + 1 settle; unchanged input = 0 writes/publications, same identities) | Composed acceptance test and starting fixture (`happier-testing` Test Value Gate) |
+|---|---|---|---|---|---|
 
 ### 2. Mechanism ledger
 
@@ -30,6 +30,11 @@ Races and edge cases deliberately not handled, each with why it is visible and r
 ### 4. Ship journey
 
 One composed end-to-end recipe: entry point, Account and state, actions, visible outcome, recovery path, and the loaded-runtime identity that proves it. Release checks (devices, real tenants, mail, signing, packaging), each with its prerequisite; they are not completion gates.
+
+### 5. Prevention
+
+| Digest pattern (`.project/tmp/QA-PATTERNS-1116/DIGEST.md`) the flows can hit | Composed-test case or existing owner that prevents it |
+|---|---|
 
 ## Design
 
