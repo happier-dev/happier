@@ -25,6 +25,7 @@ import { MachineProvisionerContributionV1Schema, validateMachineProvisionerContr
 export * from './machineProvisioners.js';
 import { AccessProviderContributionV1Schema, validateAccessProviderContributionsV1 } from './accessProviders.js';
 export * from './accessProviders.js';
+import { PluginServiceLaunchEnvironmentContributionV1Schema } from './serviceLaunchEnvironments.js';
 import { PluginProjectNativeAdapterContributionV1Schema } from './projectNativeAdapters.js';
 import { PluginWorkItemsContributionV1Schema } from './workItems.js';
 import { PluginSessionInboxResourceBindingV1Schema } from './ui/sessionInbox.js';
@@ -977,6 +978,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.machineRoles, schema: MachineRoleDeclarationV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.captureSources, schema: PluginCaptureSourceContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.secretSources, schema: PluginSecretSourceContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.serviceLaunchEnvironments, schema: PluginServiceLaunchEnvironmentContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.projectNativeAdapters, schema: PluginProjectNativeAdapterContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.daemonDatabases, schema: PluginDaemonDatabaseContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.composerReferences, schema: PluginComposerReferenceProviderContributionV1Schema }),

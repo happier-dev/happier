@@ -51,6 +51,7 @@ export const PluginContributionFamilyV2Schema = z.enum([
   'captureSources',
   'secretSources',
   'projectNativeAdapters',
+  'serviceLaunchEnvironments',
   'daemonDatabases',
   'composerReferences',
   'searchProviders',
