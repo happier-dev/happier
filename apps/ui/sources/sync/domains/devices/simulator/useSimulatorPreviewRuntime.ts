@@ -14,13 +14,16 @@ import {
 
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useFeatureDetails } from '@/hooks/server/useFeatureDetails';
+import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
 import {
     createSimulatorPreviewApi,
     type SimulatorPreviewApi,
     type SimulatorPreviewApiEvent,
     type SimulatorPreviewApiDispatch,
+    type SimulatorDeviceOperationActionExecute,
 } from './api';
+import type { SimulatorDeviceOperationResultV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
 import type { SimulatorPreviewState } from './store';
 import type {
     SimulatorPreviewStreamState,
@@ -257,18 +260,32 @@ export function useSimulatorPreviewSessionSurfaceRuntime(
         featureEnabled,
     }), [capabilities, daemonState.resources, featureEnabled, input.resources]);
 
+    const executeDeviceOperationAction = React.useMemo<SimulatorDeviceOperationActionExecute>(() => {
+        const execute = createFrontDoorUiActionExecutor(undefined, serverId ? { serverId } : undefined);
+        return async (actionId, operation) => {
+            const result = await execute(actionId, operation, {
+                ...(machineId ? { externalActionTarget: { kind: 'machine', machineId } as const } : {}),
+                signal: actionScope.current?.signal,
+                ...(operation.operation === 'screenshot' ? { defaultSessionId: operation.sessionId } : {}),
+            });
+            // The Action front door validates the declared result before returning it.
+            return result as SimulatorDeviceOperationResultV1;
+        };
+    }, [machineId, serverId]);
+
     const apiFromDispatch = React.useMemo(() => {
         if (!input.dispatch) {
             return null;
         }
-        return createSimulatorPreviewApi({ dispatch: input.dispatch });
-    }, [input.dispatch]);
+        return createSimulatorPreviewApi({ dispatch: input.dispatch, executeDeviceOperationAction });
+    }, [executeDeviceOperationAction, input.dispatch]);
 
     const apiFromDaemon = React.useMemo(() => {
         if (!daemonRuntimeEnabled || !machineId) {
             return null;
         }
         return createSimulatorPreviewApi({
+            executeDeviceOperationAction,
             dispatch: async (event) => {
                 const signal = actionScope.current?.signal;
                 if (!signal || signal.aborted) return;
@@ -287,7 +304,7 @@ export function useSimulatorPreviewSessionSurfaceRuntime(
                 }
             },
         });
-    }, [daemonRuntimeEnabled, machineId, serverId]);
+    }, [daemonRuntimeEnabled, executeDeviceOperationAction, machineId, serverId]);
 
     const selectedSimulatorId = resolveSelectedSimulatorId({
         resources,

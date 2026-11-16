@@ -2,6 +2,8 @@ import type {
     MachineLiveStreamControlSidebandV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 import type {
     SimulatorPreviewActionV1} from '@happier-dev/protocol/devices/simulator/runtimeV1';
+import { SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1, type SimulatorDeviceOperationRuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import type { SimulatorDeviceOperationV1, SimulatorDeviceOperationResultV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
 import type {
     SimulatorSidebandKindV1,
 } from '@happier-dev/protocol/devices/simulator/sidebandV1';
@@ -24,8 +26,13 @@ type SimulatorSetQualityControl = Extract<MachineLiveStreamControlSidebandV1, { 
 type SimulatorRequestKeyframeControl = Extract<MachineLiveStreamControlSidebandV1, { kind: 'request_keyframe' }>;
 
 export type SimulatorPreviewApiDispatch = (event: SimulatorPreviewApiEvent) => void | Promise<void>;
+export type SimulatorDeviceOperationActionExecute = (
+    actionId: SimulatorDeviceOperationRuntimeActionIdV1,
+    operation: SimulatorDeviceOperationV1,
+) => Promise<SimulatorDeviceOperationResultV1>;
 
 export type SimulatorPreviewApi = Readonly<{
+    executeDeviceOperation: (operation: SimulatorDeviceOperationV1) => Promise<SimulatorDeviceOperationResultV1>;
     listDevices: () => Promise<void>;
     openStream: (input: Readonly<{ simulatorId: string; sourceId: string }>) => Promise<void>;
     closeStream: (input: Readonly<{ simulatorId: string; streamId: string }>) => Promise<void>;
@@ -41,6 +48,7 @@ export type SimulatorPreviewApi = Readonly<{
 
 export function createSimulatorPreviewApi(input: Readonly<{
     dispatch: SimulatorPreviewApiDispatch;
+    executeDeviceOperationAction: SimulatorDeviceOperationActionExecute;
     createEventId?: (kind: string) => string;
 }>): SimulatorPreviewApi {
     const dispatch = async (event: SimulatorPreviewApiEvent): Promise<void> => {
@@ -49,6 +57,9 @@ export function createSimulatorPreviewApi(input: Readonly<{
     const createEventId = input.createEventId ?? ((kind: string) => `${kind}:${Date.now()}`);
 
     return {
+        executeDeviceOperation: async (operation) => input.executeDeviceOperationAction(
+            SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1[operation.operation], operation,
+        ),
         listDevices: async () => dispatch(createSimulatorPreviewListDevicesEventV1()),
         openStream: async (event) => dispatch(createSimulatorPreviewOpenStreamEventV1(event)),
         closeStream: async (event) => dispatch(createSimulatorPreviewCloseStreamEventV1(event)),
