@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -13,6 +13,7 @@ import {
     createPluginTypeScriptCandidateScope,
     createPluginTypeScriptGenerationScope,
     loadPluginAuthorSourceModule,
+    loadVerifiedPluginModule,
     resolveNativePluginModuleUrl,
     resolvePluginModuleCandidatePaths,
     resolvePluginModuleLoadMode,
@@ -75,26 +76,34 @@ describe('loadPluginModule', () => {
         }
     });
 
-    it('loads Protocol source modules with JSON imports through the TypeScript generation graph', async () => {
-        // Source-runtime daemons (Stack source trees) load first-party plugin
-        // leaves as source-ts, so their Protocol imports go through this graph.
-        const root = await mkdtemp(join(tmpdir(), 'happier-plugin-protocol-json-'));
-        const entryPath = join(root, 'plugin.ts');
-        const privacyModule = fileURLToPath(new URL(
-            '../../../../../packages/protocol/src/browser/context/privacy.ts', import.meta.url));
-        try {
-            await writeFile(entryPath, [
-                `import { browserContextSensitiveFieldsExpression } from ${JSON.stringify(privacyModule)};`,
-                'export const expressionType = typeof browserContextSensitiveFieldsExpression;',
-            ].join('\n'));
-            const loaded = await loadPluginModule({ source: {
-                kind: 'file_backed', entryPath, devEntryPath: entryPath,
-                useDevelopmentEntry: true, sourceAuthority: { kind: 'development', registeredRootId: 'protocol-json', canonicalRoot: root, observedRevision: 1 },
-                generationScope: createPluginTypeScriptGenerationScope(),
-            } });
-            expect(loaded.expressionType).toBe('string');
-        } finally {
-            await rm(root, { recursive: true, force: true });
+    it('evaluates every workspace source module that imports JSON through the TypeScript generation graph', async () => {
+        // Source-runtime daemons (Stack source trees) evaluate first-party plugin
+        // leaves and their workspace package sources as source-ts. Jiti cannot
+        // import a top-level primitive JSON value, and bundles never see it.
+        const repoRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
+        const jsonImporters: string[] = [];
+        const visit = async (directory: string): Promise<void> => {
+            for (const entry of await readdir(directory, { withFileTypes: true })) {
+                const path = join(directory, entry.name);
+                if (entry.isDirectory()) {
+                    if (entry.name !== 'node_modules') await visit(path);
+                } else if (/\.m?ts$/.test(entry.name) && !/\.(test|spec|test-d|d)\.m?ts$|testkit|test-support/.test(entry.name)
+                    && /from\s+['"][^'"]+\.json['"]/.test(await readFile(path, 'utf8'))) {
+                    jsonImporters.push(path);
+                }
+            }
+        };
+        for (const workspace of ['packages', 'packages/plugins']) {
+            for (const entry of await readdir(join(repoRoot, workspace), { withFileTypes: true })) {
+                const sourceDir = join(repoRoot, workspace, entry.name, 'src');
+                if (entry.isDirectory() && await stat(sourceDir).then(info => info.isDirectory(), () => false)) await visit(sourceDir);
+            }
+        }
+        expect(jsonImporters.some(path => path.endsWith(join('protocol', 'src', 'browser', 'context', 'privacy.ts')))).toBe(true);
+        const generationScope = createPluginTypeScriptGenerationScope();
+        for (const entryPath of jsonImporters) {
+            await expect(loadVerifiedPluginModule({ entryPath, loadMode: 'source-ts', generationScope }),
+                entryPath).resolves.toBeTypeOf('object');
         }
     });
 
