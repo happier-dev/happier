@@ -1163,7 +1163,7 @@ describe('workspace sync broker authentication and attach rules', () => {
 
   it('joins native carrier opens to the pending command root across socket callbacks', async () => {
     vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
-    const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+    const sink = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => undefined);
     const fixture = await useFixture(await startBroker());
     const client = await connectClient(fixture);
     const rootId = '23b2ed82-2ef7-4e4e-af0f-f64d599a08c6';
