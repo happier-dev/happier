@@ -1,7 +1,29 @@
 import { describe, expect, it } from 'vitest';
 import { RpcError } from '../../rpc/errors.js';
 import { createActionExecuteFailureError } from '../actionExecutionResult.js';
-import { normalizeActionExecutorThrownError } from './resultProjection.js';
+import { completeSpawnActionResult, normalizeActionExecutorThrownError, settleActionOutput } from './resultProjection.js';
+
+describe('Session spawn Action settlement', () => {
+  it.each([undefined, false, true])('settles a typed spawn refusal as failure and retains producer effect evidence (%s)', effectAttempted => {
+    const failureCause = { phase: 'dispatch.requester_authentication', errorClass: 'RpcError' as const,
+      errorCode: 'admission_unavailable', httpStatus: null };
+    const refusal = { type: 'error' as const, code: 'spawn_failed' as const, retryable: true,
+      launchError: { kind: 'launch_error' as const, code: 'admission_unavailable', message: 'admission_unavailable' },
+      ...(effectAttempted === undefined ? {} : { failureCause, effectAttempted }) };
+    const settled = settleActionOutput('session.spawn_new', completeSpawnActionResult(refusal));
+    expect(settled).toMatchObject({ ok: false, errorCode: 'spawn_failed',
+      details: refusal });
+    if (settled.ok) throw new Error('Spawn refusal was reported as successful execution');
+    expect(settled.error).toContain('admission_unavailable');
+    expect(settled.effectAttempted).toBe(effectAttempted);
+    expect(settled.failureCause).toEqual(effectAttempted === undefined ? undefined : failureCause);
+  });
+
+  it('keeps an accepted pending spawn successful without declaring effects', () => {
+    expect(completeSpawnActionResult({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }))
+      .toEqual({ ok: true, result: { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' } });
+  });
+});
 
 describe('Action thrown-error classification', () => {
   it.each([true, false, undefined])('retains the complete typed child behind a code wrapper (effect %s)', effectAttempted => {

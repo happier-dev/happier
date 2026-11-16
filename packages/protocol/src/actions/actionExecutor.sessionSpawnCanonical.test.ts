@@ -463,17 +463,17 @@ describe('session.spawn_new canonical execution', () => {
     } satisfies Partial<ActionExecutorDeps>;
     const result = await createActionExecutor(deps as ActionExecutorDeps).execute('session.spawn_new', canonicalInput,
       { surface: 'ui', authority: 'present_user' });
-    expect(result).toMatchObject({ ok: true, result: { type: 'error', code, retryable } });
+    expect(result).toMatchObject({ ok: false, errorCode: code, details: { type: 'error', code, retryable } });
     if (failure instanceof RpcError && failure.failureCause) {
-      expect(result).toMatchObject({ result: { failureCause: failure.failureCause } });
+      expect(result).toMatchObject({ details: { failureCause: failure.failureCause } });
     }
     if (failure instanceof RpcError && failure.rpcErrorCode === 'MACHINE_ENCRYPTION_UNAVAILABLE') {
-      expect(result).toMatchObject({ result: { launchError: {
+      expect(result).toMatchObject({ details: { launchError: {
         kind: 'launch_error', code: failure.rpcErrorCode, message: failure.rpcErrorCode,
       } } });
       expect(JSON.stringify(result)).not.toContain('private Machine content details');
     }
-    if (code === 'incompatible_target') expect(result).toMatchObject({ result: {
+    if (code === 'incompatible_target') expect(result).toMatchObject({ details: {
       incompatibleTarget: { reason: 'target_preparation_rpc_unavailable' },
     } });
     expect(spawned).toBe(false);

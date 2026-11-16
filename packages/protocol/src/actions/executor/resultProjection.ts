@@ -341,6 +341,18 @@ export function completeExecutionRunServiceActionResult(actionId: ActionId, resu
 
 export function completeSpawnActionResult(result: unknown): ActionExecuteResult {
   const spawn = SessionSpawnNewResultV1Schema.safeParse(result);
+  if (spawn.success && spawn.data.type === 'error') {
+    const refusal = spawn.data;
+    return {
+      ok: false,
+      errorCode: refusal.code,
+      error: 'launchError' in refusal && refusal.launchError ? refusal.launchError.message : refusal.code,
+      details: refusal,
+      ...('failureCause' in refusal && refusal.failureCause ? { failureCause: refusal.failureCause } : {}),
+      ...('effectAttempted' in refusal && refusal.effectAttempted !== undefined
+        ? { effectAttempted: refusal.effectAttempted } : {}),
+    };
+  }
   return completeActionResult(spawn.success ? projectSessionSpawnNewActionResultV1(spawn.data) : result,
     { treatReturnedErrorEnvelopeAsFailure: true });
 }

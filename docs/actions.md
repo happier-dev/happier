@@ -2954,6 +2954,11 @@ The optional `sourceKeyPreparation` result records that separate outcome beside
 daemons require no standalone source-key transfer. Ephemeral destinations retain
 their existing key requirement and report missing source material as waiting.
 
+A typed Session creation refusal instead settles the Action as a failure. Its
+Session result remains in `details`, including the launch cause, so approval
+execution and clients report the same refusal. Failure phase and attempted-effect
+facts are carried only when the receiving owner supplied them.
+
 While native startup is still pending, the receiving host's existing tracked
 operation is returned as optional `operation: {serverId, machineId, operationId}`.
 Use that address with `action.operations.get` or an `action_operation` wait target

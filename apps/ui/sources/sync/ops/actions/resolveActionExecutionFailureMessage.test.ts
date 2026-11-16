@@ -3,6 +3,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { PluginUiPresentActionFailureRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { HappyError } from '@/utils/errors/errors';
 
 import { t } from '@/text';
@@ -11,6 +12,12 @@ import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, reso
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
+    it('shows the typed spawn cause from the canonical terminal Action failure', () => {
+        const failure = completeSpawnActionResult({ type: 'error', code: 'spawn_failed', retryable: true,
+            launchError: { kind: 'launch_error', code: 'admission_unavailable', message: 'admission_unavailable' } });
+        expect(failure.ok).toBe(false);
+        expect(resolveActionExecutionFailureMessage(failure, 'Fallback')).toContain('admission_unavailable');
+    });
     it('explains the retired plugin UI generation from the Install refusal and keeps its diagnostic reference', () => {
         // Captured product Install result: TH-QA-POOLS-1116/r2-install-cli.json.
         const failure = { ok: false as const, errorCode: 'plugin_ui_generation_retired', error: 'plugin_ui_generation_retired',
