@@ -3314,6 +3314,107 @@ describe('shared Account workflow run owner', () => {
     expect(readReportPolicy).toHaveBeenCalledTimes(scenario.delivery ? 1 : 0);
   });
 
+  it.each(['restore_action', 'retry_action', 'restore_parallel'] as const)(
+    'recovers non-Agent progress and rejoins an identical response-loss replay (%s)', async scenario => {
+    const snapshot = runSnapshot();
+    const accepted = await materializeWorkflowAcceptedSnapshotV1({
+      definition: validateWorkflowDefinition({ version: 1, inputs: [], defaults: {},
+        blocks: scenario === 'restore_parallel'
+          ? [{ kind: 'parallel', id: 'work', maxConcurrent: 1, failurePolicy: 'collect_outcomes', branches: [{ id: 'branch', blocks: [
+            { kind: 'action', id: 'command', actionId: 'machines.command.run', input: { command: { kind: 'literal', value: 'pwd' } } },
+          ] }] }]
+          : [{ kind: 'action', id: 'work', actionId: 'machines.command.run', input: { command: { kind: 'literal', value: 'pwd' } } }] }).normalizedDefinition!,
+      context: {
+        source: { kind: 'saved', definitionId: 'def-1', revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: null },
+        inputs: {}, machineId: 'machine-a', executionTarget: { kind: 'session' },
+        workspaceTarget: { project: { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' } },
+        origin: { kind: 'direct', originSessionId: 'origin-1' }, authorization: { principal: { kind: 'host' } },
+      }, admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) },
+    });
+    if (!accepted.ok) throw new Error(`snapshot_fixture_failed:${accepted.error.code}`);
+    snapshot.acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId }, acceptedSnapshot: accepted.snapshot,
+    }));
+    snapshot.run = { ...snapshot.run, state: 'interrupted', revision: 2 };
+    const root = storedRootInvocation(snapshot);
+    const recordId = '33333333-3333-4333-8333-333333333333';
+    const index = WorkflowRunInvocationIndexV1Schema.parse({ id: recordId, runId, sequence: '1',
+      parentRecordId: root.index.id, memberOrdinal: '0', attempt: '0', contentRevision: '1', lifecycle: scenario === 'retry_action' ? 'failed' : 'needs_attention',
+      createdAt: snapshot.run.createdAt, updatedAt: snapshot.run.updatedAt });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+      blockKind: scenario === 'restore_parallel' ? 'parallel' : 'action',
+      ...(scenario === 'restore_parallel' ? { container: { kind: 'parallel', nextBranchOrdinal: '1' } } : {}), invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: recordId,
+      ...(scenario === 'retry_action' ? { execution: { kind: 'action', actionId: 'machines.command.run',
+        localInputId: 'failed-command-input', actionRequestId: 'failed-command', input: { command: 'pwd' } } } : {}),
+      ...(scenario === 'retry_action' ? {} : { reason: { code: 'workspace_unavailable' } }), workspace: {
+        creationIntent: { kind: 'git_worktree', sourceDirectory: '/repo', baseRef: 'a'.repeat(40), displayName: 'work', branchMode: 'new' },
+        descriptor: { machineId: 'machine-a', directory: '/repo/work', checkoutRootPath: '/repo/work',
+          checkout: { kind: 'git_worktree', branchName: 'work' } },
+      } });
+    const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId, recordId,
+        sequence: '1', parentRecordId: root.index.id, memberOrdinal: '0', attempt: '0' }, progress,
+    }));
+    let checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'checkpoint', accountId: 'account-1', runId },
+      checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: root.index.id, nextSequence: '2',
+        frontier: { nextBlockOrdinal: 0, paused: false } },
+    }));
+    let replacementProgress: unknown;
+    let restorations = 0;
+    let admissions = 0;
+    const rows = new Map([[root.index.id, { index: root.index, contentEnvelope: root.contentEnvelope, parentRevision: 2 }],
+      [recordId, { index, contentEnvelope, parentRevision: 2 }]]);
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get') return { ...snapshot, checkpointEnvelope };
+      if (operation.operation === 'invocations.get') return { invocation: rows.get(String(operation.invocationId)) };
+      if (operation.operation === 'invocations.list') return { invocations: [...rows.values()].map(row => row.index), nextCursor: null };
+      if (operation.operation !== 'invocations.recover') throw new Error('unexpected_storage_operation');
+      // Substitute only persistent storage; recovery opens and seals the real envelopes.
+      const recoveries = operation.recoveries as { newInvocationId: string; contentEnvelope: string }[];
+      expect(recoveries).toHaveLength(1);
+      const recovery = recoveries[0]!;
+      const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+        envelope: parseWorkflowStoredContentEnvelopeV1(recovery.contentEnvelope)!,
+        binding: { v: 1, purpose: 'invocation_progress', accountId: 'account-1', runId,
+          recordId: recovery.newInvocationId, sequence: '2', parentRecordId: root.index.id, memberOrdinal: '0', attempt: '1' } });
+      expect(opened.kind).toBe('available');
+      if (opened.kind === 'available') replacementProgress = opened.content;
+      const replacement = { ...index, id: recovery.newInvocationId, sequence: '2', attempt: '1', lifecycle: 'pending' as const };
+      rows.set(recordId, { ...rows.get(recordId)!, index: { ...index, lifecycle: 'superseded' } });
+      rows.set(replacement.id, { index: replacement, contentEnvelope: recovery.contentEnvelope, parentRevision: 3 });
+      snapshot.run = { ...snapshot.run, state: 'queued', revision: 3 };
+      checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'checkpoint', accountId: 'account-1', runId },
+        checkpoint: { kind: 'happier.workflow-checkpoint.v1', rootRecordId: root.index.id, nextSequence: '3',
+          frontier: { nextBlockOrdinal: 0, paused: false } },
+      }));
+      admissions++;
+      return { disposition: 'accepted', run: snapshot.run, invocations: [replacement] };
+    } }), observeRecovery: async () => ({ activity: 'not_active', canReattach: false, canContinueConversation: false }),
+      restoreWorkspace: async () => { restorations++; return { ok: true }; } });
+    const context = { authority: 'present_user', callerPermissionMode: 'safe-yolo', actionRequestId: 'recover-non-agent',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-a' } } as const;
+    const args = scenario === 'retry_action'
+      ? { actionId: 'workflow.run.invocations.retry' as const, input: { runId, expectedRevision: 2,
+        invocation: { recordId }, causalInvocationIds: [recordId], conversation: 'fresh_agent' as const, input: { kind: 'original' as const } }, context }
+      : { actionId: 'workflow.run.resume' as const, input: { mode: 'recover' as const, runId, expectedRevision: 2,
+        invocations: [{ kind: 'restore_workspace' as const, invocation: { recordId }, conversation: 'fresh_agent' as const, input: { kind: 'original' as const } }] }, context };
+    const expected = { run: { state: 'queued', revision: 3 },
+      ...(scenario === 'retry_action' ? { disposition: 'accepted' } : { intent: 'resumed' }) };
+    await expect(owner.execute(args)).resolves.toMatchObject(expected);
+    await expect(owner.execute(args)).resolves.toMatchObject(expected);
+    expect(admissions).toBe(1);
+    expect(restorations).toBe(scenario === 'retry_action' ? 0 : 1);
+    expect(replacementProgress).toMatchObject({ blockKind: progress.blockKind, attempt: '1', previousAttemptRecordId: recordId,
+      logicalInvocationRecordId: recordId, workspace: progress.workspace });
+    if (scenario === 'restore_parallel') expect(replacementProgress).toMatchObject({ container: { kind: 'parallel', nextBranchOrdinal: '0' } });
+    expect(replacementProgress).not.toHaveProperty('recovery');
+    expect(replacementProgress).not.toHaveProperty('input');
+    expect(replacementProgress).not.toHaveProperty('reason');
+  });
+
   it.each([
     { activity: 'active', lifecycle: 'failed', same: false, fresh: false, reattach: false, continuation: true },
     { activity: 'not_active', lifecycle: 'failed', same: true, fresh: true, reattach: false, continuation: true },

@@ -19,7 +19,7 @@ import { deriveWorkflowDestinationsV1, WorkflowDiscussionOriginV1Schema, type Wo
 import { listWorkflowAcceptedLeafSelectionsV1 } from '../../workflows/workflowStepSelectionV1.js';
 import { workflowBlockOrdinalV1 } from '../../workflows/workflowStepLabel.js';
 import { walkWorkflowBlocks } from '../../workflows/workflowDefinitionEditV1.js';
-import { WorkflowAuthoredInputV1Schema, WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, type WorkflowAuthoredInputV1, type WorkflowProgressEnvelopeV1, type WorkflowUsageV1, type WorkflowInvocationRecoveryAvailabilityV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, classifyWorkflowHoldV1, isWorkflowDraftPublicationLifecycleV1, applyWorkflowInvocationFactV1 } from '../../workflows/workflowProgressV1.js';
+import { WorkflowCheckpointEnvelopeV1Schema, WorkflowProgressEnvelopeV1Schema, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema, type WorkflowAuthoredInputV1, type WorkflowProgressEnvelopeV1, type WorkflowUsageV1, type WorkflowInvocationRecoveryAvailabilityV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, classifyWorkflowHoldV1, isWorkflowDraftPublicationLifecycleV1, applyWorkflowInvocationFactV1 } from '../../workflows/workflowProgressV1.js';
 import { WorkflowActionOutputSchemasV1, WorkflowRunWaitSnapshotV1Schema, WorkflowRunListRequestV1Schema, WorkflowRunListResultV1Schema, WorkflowRunAcceptedContextV1Schema, type WorkflowRunPrivateMetadataV1, type WorkflowRunAcceptedContextV1 } from '../../workflows/actionsV1.js';
 import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1,
   hasUnresolvedWorkflowValueV1 } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
@@ -49,7 +49,7 @@ import { SessionInputCausalPermissionAuthorityV1Schema } from '../../sessions/me
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '../externalActionLimits.js';
 import { assertNonEscalatingPermissionMode, resolveEffectivePermissionMode } from '../permissionPrivilege.js';
 import { StrictJsonValueSchema, sameStrictJsonValue } from '../../json/strictJsonValue.js';
-import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { createRecoveredWorkflowInvocationProgress, normalizeWorkflowInvocationRecoveryInput } from './workflowInvocationRecoveryProgress.js';
 import type {
   AvailableAutomationAccountEncryptionV1,
 } from '../../automations/automationAccountCurrentnessV1.js';
@@ -244,34 +244,7 @@ function workflowError(code: string, details?: unknown): Error & { code: string;
   return Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
 }
 
-function resolvePreparedOriginalInput(progress: WorkflowProgressEnvelopeV1): WorkflowAuthoredInputV1 {
-  const prepared = createStoredReadSchema(WorkflowAuthoredInputV1Schema).safeParse(progress.input);
-  if (prepared.success) return prepared.data;
-  throw workflowError('content_unavailable');
-}
 
-function normalizeRecoveryInput(
-  progress: WorkflowProgressEnvelopeV1,
-  input: { kind: 'original' } | { kind: 'replacement'; value: WorkflowAuthoredInputV1 },
-): { kind: 'replacement'; value: WorkflowAuthoredInputV1 } {
-  return {
-    kind: 'replacement',
-    value: input.kind === 'original'
-      ? resolvePreparedOriginalInput(progress)
-      : input.value,
-  };
-}
-
-function resetRecoveredContainer(
-  container: WorkflowProgressEnvelopeV1['container'],
-): WorkflowProgressEnvelopeV1['container'] {
-  if (!container) return undefined;
-  if (container.kind === 'body') return { ...container, nextBlockOrdinal: '0' };
-  if (container.kind === 'parallel') return { ...container, nextBranchOrdinal: '0' };
-  if (container.kind === 'if') return { ...container, nextBlockOrdinal: '0' };
-  const { closing: _closing, ...loop } = container;
-  return { ...loop, nextMemberIndex: '0', nextBodyBlockOrdinal: '0' };
-}
 
 function isNotFound(error: unknown): boolean {
   return Boolean(error && typeof error === 'object'
@@ -2089,10 +2062,10 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       });
       const selectedIndex = args.input.causalInvocationIds.indexOf(prior.index.id);
       const selected = replacements[selectedIndex];
-      const expectedSelectedInput = normalizeRecoveryInput(prior.progress, args.input.input);
+      const expectedSelectedInput = normalizeWorkflowInvocationRecoveryInput(prior.progress, args.input.input);
       if (openedAccepted.snapshot.run.revision === args.input.expectedRevision + 1
         && exact && selected
-        && selected.progress.recovery?.conversation === args.input.conversation
+        && selected.progress.recovery?.conversation === (expectedSelectedInput ? args.input.conversation : undefined)
         && sameStrictJsonValue(selected.progress.recovery?.input, expectedSelectedInput)) {
         return WorkflowActionOutputSchemasV1['workflow.run.invocations.retry'].parse({
           run: openedAccepted.snapshot.run,
@@ -2152,34 +2125,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }));
     const replacementIdByPriorId = new Map(replacements.map((item) => [item.prior.index.id, item.newId]));
     const prepared = await Promise.all(replacements.map(async (item) => {
-      const {
-        execution: _execution, result: _result, containerResult: _containerResult,
-        reason: _reason, observationDeadline: _deadline, recovery: _recovery,
-        uncertainPriorEffects: _uncertain, previousAttemptRecordId: _previous,
-        timing: _timing, loopProgress: _loopProgress,
-        ...reusable
-      } = item.prior.progress;
       const isSelected = item.prior.index.id === prior.index.id;
-      const recoveryInput = item.prior.progress.blockKind === 'step'
-        ? normalizeRecoveryInput(item.prior.progress, isSelected ? args.input.input : { kind: 'original' })
-        : undefined;
-      const progress = WorkflowProgressEnvelopeV1Schema.parse({
-        ...reusable,
-        attempt: item.newAttempt,
-        previousAttemptRecordId: item.prior.index.id,
-        ...(item.prior.progress.container
-          ? { container: resetRecoveredContainer(item.prior.progress.container) }
-          : {}),
-        ...(recoveryInput ? {
-          input: StrictJsonValueSchema.parse(recoveryInput.value),
-          recovery: {
-            conversation: args.input.conversation,
-            input: recoveryInput,
-            ...(isSelected && args.input.acknowledgeUncertainPriorEffects !== undefined
-              ? { acknowledgeUncertainPriorEffects: args.input.acknowledgeUncertainPriorEffects }
-              : {}),
-          },
-        } : {}),
+      const progress = createRecoveredWorkflowInvocationProgress({
+        prior: item.prior.progress, priorRecordId: item.prior.index.id, attempt: item.newAttempt,
+        input: isSelected ? args.input.input : { kind: 'original' }, conversation: args.input.conversation,
+        ...(isSelected && args.input.acknowledgeUncertainPriorEffects !== undefined
+          ? { acknowledgeUncertainPriorEffects: args.input.acknowledgeUncertainPriorEffects } : {}),
       });
       const parentRecordId = item.prior.index.parentRecordId === null
         ? null
@@ -2303,39 +2254,16 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       choice: (typeof args.input.invocations)[number],
     ): WorkflowProgressEnvelopeV1 => {
       if (choice.kind === 'reattach') throw workflowError('invalid_input');
-      const {
-        execution: _priorExecution,
-        result: _priorResult,
-        containerResult: _priorContainerResult,
-        reason: _priorReason,
-        observationDeadline: _priorObservationDeadline,
-        recovery: _priorRecovery,
-        uncertainPriorEffects: _priorUncertainPriorEffects,
-        previousAttemptRecordId: _priorPreviousAttemptRecordId,
-        timing: _priorTiming, loopProgress: _priorLoopProgress,
-        ...priorReusableProgress
-      } = prior.progress;
-      const recoveryInput = choice.kind === 'restore_workspace'
-        ? normalizeRecoveryInput(
-            prior.progress,
-            choice.input as { kind: 'original' } | { kind: 'replacement'; value: WorkflowAuthoredInputV1 },
-          )
-        : {
-            kind: 'replacement' as const,
-            value: choice.input as WorkflowAuthoredInputV1,
-          };
-      return {
-        ...priorReusableProgress,
+      return createRecoveredWorkflowInvocationProgress({
+        prior: prior.progress, priorRecordId: prior.index.id,
         attempt: (BigInt(prior.index.attempt) + 1n).toString(),
-        logicalInvocationRecordId: prior.progress.logicalInvocationRecordId,
-        previousAttemptRecordId: prior.index.id,
-        input: StrictJsonValueSchema.parse(recoveryInput.value),
-        recovery: {
-          conversation: choice.conversation as 'same_conversation' | 'fresh_agent',
-          input: recoveryInput,
-          ...(choice.acknowledgeUncertainPriorEffects !== undefined ? { acknowledgeUncertainPriorEffects: true as const } : {}),
-        },
-      };
+        input: choice.kind === 'restore_workspace'
+          ? choice.input as { kind: 'original' } | { kind: 'replacement'; value: WorkflowAuthoredInputV1 }
+          : { kind: 'replacement', value: choice.input as WorkflowAuthoredInputV1 },
+        conversation: choice.conversation as 'same_conversation' | 'fresh_agent',
+        ...(choice.acknowledgeUncertainPriorEffects !== undefined
+          ? { acknowledgeUncertainPriorEffects: choice.acknowledgeUncertainPriorEffects } : {}),
+      });
     };
     const checkpoint = await openSnapshotCheckpoint({
       runId: args.input.runId,
