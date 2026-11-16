@@ -180,6 +180,7 @@ export type ApprovalActionReference =
   | Readonly<{ kind: 'discussion'; id: string }>
   | Readonly<{ kind: 'team'; id: string }>
   | Readonly<{ kind: 'group'; id: string; teamId: string }>
+  | Readonly<{ kind: 'teamMembership'; id: string; teamId: string }>
   | Readonly<{ kind: 'setting'; id: string }>
   | Readonly<{ kind: 'providerConnection'; id: string; displayName?: string; catalogSourceKey?: string; agentTargetKey?: string }>
   | Readonly<{ kind: 'providerModel'; id: string; connectionId: string; agentTargetKey: string; catalogSourceKey?: string }>
@@ -279,10 +280,10 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
   if (savedSecret) return savedSecret;
   // A Home identity reads by the Home's name, like a `serverId` key.
   if (field.path === 'homeId') return { kind: 'home', id: value.trim() };
-  // In a Team Action, `groupId` is that Team's Group; elsewhere it names a widget group, a pane or a paused commit.
-  if (actionId.startsWith('teams.') && field.path === 'groupId' && isRecord(input)
+  // Team-scoped references keep the Team needed by their exact authorized read.
+  if (actionId.startsWith('teams.') && (field.path === 'groupId' || field.path === 'membershipId') && isRecord(input)
       && typeof input.teamId === 'string' && input.teamId.trim()) {
-    return { kind: 'group', id: value.trim(), teamId: input.teamId.trim() };
+    return { kind: field.path === 'groupId' ? 'group' : 'teamMembership', id: value.trim(), teamId: input.teamId.trim() };
   }
   if (actionId.startsWith('artifact.') && field.path === 'artifactId') return { kind: 'artifact', id: value };
   if (actionId === 'skills.rules.set' && field.path === 'items.[].skillId') return { kind: 'skill', id: value };

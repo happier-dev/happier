@@ -60,29 +60,38 @@ export function useSharePrincipalNames(
   resolving: boolean;
 }> {
   const wanted = subjects !== null && subjects.length > 0;
-  const { binding, resolution } = useServerCredentialAccountScopeBinding(
-    wanted ? serverId : null,
-  );
   const key = wanted ? JSON.stringify(subjects.map(sharePrincipalKey)) : null;
-  const currentSubjects = React.useRef(subjects);
-  currentSubjects.current = subjects;
+  const reading = useScopedPrincipalNameRead(key, serverId,
+    (scope, signal, isCurrent) => readSharePrincipalNames(subjects ?? [], scope, signal, isCurrent));
+  return { names: reading.value, resolving: reading.resolving };
+}
+
+/** Exact name projections share one credential-bound read and retirement lifecycle. */
+export function useScopedPrincipalNameRead<T>(
+  key: string | null,
+  serverId: string | null,
+  read: (scope: ServerAccountScope, signal: AbortSignal, isCurrent: () => boolean) => Promise<T>,
+): Readonly<{ value: T | null; resolving: boolean }> {
+  const { binding, resolution } = useServerCredentialAccountScopeBinding(key === null ? null : serverId);
+  // A reader captures the current operands, but only their stable key starts a new read.
+  const currentRead = React.useRef(read);
+  currentRead.current = read;
   const [reading, setReading] = React.useState<Readonly<{
     binding: typeof binding;
     key: string;
-    names: ReadonlyMap<string, string>;
+    value: T;
   }> | null>(null);
   React.useEffect(() => {
     if (!binding || key === null) return;
     const abort = new AbortController();
     const retirement = binding.onRetire(() => abort.abort());
-    void readSharePrincipalNames(
-      currentSubjects.current ?? [],
+    void currentRead.current(
       binding.scope,
       abort.signal,
       binding.isCurrent,
-    ).then((names) => {
+    ).then((value) => {
       if (!abort.signal.aborted && binding.isCurrent())
-        setReading({ binding, key, names });
+        setReading({ binding, key, value });
     });
     return () => {
       abort.abort();
@@ -94,9 +103,9 @@ export function useSharePrincipalNames(
       ? reading
       : null;
   return {
-    names: current?.names ?? null,
+    value: current?.value ?? null,
     resolving:
-      wanted &&
+      key !== null &&
       (resolution.kind === 'resolving' ||
         (binding !== null && current === null)),
   };

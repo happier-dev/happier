@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { describeApprovalActionFields } from './actionApprovalPresentation.js';
 
 describe('approval principal references', () => {
+  it.each(['teams.members.remove', 'teams.members.role.set', 'teams.members.suspend', 'teams.members.reactivate',
+    'teams.members.management.set'])('identifies the exact Team membership operand for %s', actionId => {
+    const rows = describeApprovalActionFields({ actionId,
+      actionArgs: { v: 1, teamId: 'team-1', membershipId: 'membership-1', role: 'member', management: { kind: 'native' } } }).rows;
+    expect(rows.find(row => row.path === 'membershipId')).toHaveProperty('reference',
+      { kind: 'teamMembership', id: 'membership-1', teamId: 'team-1' });
+  });
+
   it.each(['account', 'team', 'group'])('identifies %s access principals without borrowing a Session identity', (kind) => {
     const principal = { kind, ...(kind === 'group' ? { teamId: 'team-1' } : {}), [`${kind}Id`]: 'session-shaped-id' };
     const rows = describeApprovalActionFields({ actionId: 'machines.access.grant.set',
