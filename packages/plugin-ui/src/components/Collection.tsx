@@ -656,6 +656,15 @@ function groupBandFrame(heightPx: number, textInsetPx: number) {
   } as const;
 }
 
+/**
+ * A full-bleed table's group band (a page table on its own sheet edge, whose rows run edge to edge): square and flush,
+ * straight under the column headings and onto its rows, in the same planned height (owner 2026-11-15, A3). Only a
+ * table inset in a card (its rows' fills rounded inside it) takes the rounded band above.
+ */
+function flushGroupBandFrame(heightPx: number, textInsetPx: number) {
+  return { height: heightPx, paddingHorizontal: textInsetPx } as const;
+}
+
 const SLOT_COLUMNS = Object.freeze({
   where: { minWidth: 150, priority: 4, maxWidth: 224 },
   reason: { minWidth: 172, priority: 5 },
@@ -2698,8 +2707,9 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       sectionHeaderTitleRole: 'micro' as const,
       sectionHeaderStyle: {
         justifyContent: 'center' as const,
-        // Its words on the rows' glyph edge (the row's content inset and its 1 pt ring).
-        ...groupBandFrame(metrics.groupHeader, TABLE.insetStart),
+        // Its words on the rows' glyph edge (the row's content inset and its 1 pt ring). A table on its own page sheet
+        // edge (the stage's edge below) is full-bleed: its band is too.
+        ...(pageScroll && rowGeometry === 'table' ? flushGroupBandFrame : groupBandFrame)(metrics.groupHeader, TABLE.insetStart),
         paddingRight: TABLE.insetTrailing,
         // A list beside its detail reserves each row's ⋯ place after its meta; the band's hint ends on that meta's
         // edge rather than past it, so the group's words and its rows' ages share one right edge.
