@@ -430,6 +430,8 @@ describe('Run a workflow trigger inputs', () => {
         // No popover: the Event's own rows sit in the card, with its edit entry.
         expect(screen.findByTestId('event-workflow-trigger-popover')).toBeNull();
         expect(screen.findByTestId('event-workflow-trigger:saved:event-row-configure-event')).toBeTruthy();
+        expect(screen.findByTestId('event-workflow-trigger:saved:event-row-starts.trigger')?.props.accessibilityLabel)
+            .toBe('workflows.triggers.card.when: workflows.triggers.kind.pluginEvent');
         await toggleTrigger(screen, 'event-workflow-trigger:saved:event-row');
         expect(change).toHaveBeenCalledWith({ adds: [], updates: { 'event-row': { enabled: false } }, removes: [] });
         await removeTrigger(screen, 'event-workflow-trigger:saved:event-row');
@@ -495,6 +497,46 @@ describe('Run a workflow trigger inputs', () => {
             sourceSessionId: 'session-a', events: ['userActionRequired'], policy: { kind: 'firstMatch' } } }], updates: {}, removes: [] });
         await screen.pressByTestIdAsync('when-workflow-trigger:new:c1-how-often:everyTime');
         expect(change.mock.lastCall?.[0].adds[0].trigger.policy).toEqual({ kind: 'everyMatch' });
+    });
+    it('rebinds This turn to the next turn of a different Session and retains an unchanged Session turn', async () => {
+        const { WorkflowTriggerBlock } = await import('./WorkflowTriggerBlock');
+        const { buildTriggerDefinition } = await import('./sessionTriggerForm');
+        const sessions = ['turn-source', 'turn-destination'].map(id => createPlainSessionCurrentProjectionRecordFixture({ id, active: true,
+            metadata: { machineId: 'machine-1', path: '/repo', host: 'host', name: id } }));
+        const batch = createSessionReadBatchHttpBoundary(request => {
+            const session = sessions.find(candidate => request.path === `/v2/sessions/${candidate.id}`);
+            return session ? Response.json({ session }) : undefined;
+        });
+        const served = await serveAccountHomes({ homes: [{ key: 'turns', serverUrl: 'https://trigger-turns.test', accountId: 'turn-account' }],
+            route: request => {
+                if (request.path === '/v2/sessions') return Response.json({ sessions, nextCursor: null, hasNext: false });
+                if (request.path === '/v2/sessions/archived' || request.path === '/v2/sessions/active') {
+                    return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+                }
+                return batch.handle(request);
+            } });
+        onTestFinished(() => served.dispose());
+        getStorage().setState({ isDataReady: true, sessions: {}, sessionListRowsByServerId: {} });
+        const change = vi.fn<React.ComponentProps<typeof WorkflowTriggerBlock>['onChangeWhen']>();
+        const screen = await renderScreen(<WorkflowTriggerBlock testID="turn-workflow" title="Turn completion"
+            when={{ kind: 'turnEnds', sourceSessionId: 'turn-source', sourceTurnId: 'turn-a' }} enabled incomplete={false}
+            startOptions={[]} onSelectStart={vi.fn()} onChangeWhen={change} onRemove={vi.fn()}
+            machineId={null} serverId={served.homes.turns!.id} />);
+        const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'turn-workflow-session')!;
+        await act(async () => { menu().props.onOpenChange(true); });
+        await waitForHomeGovernance(() => expect(menu().props.items).toContainEqual(expect.objectContaining({ id: 'turn-destination' })));
+        await act(async () => { menu().props.onSelect('turn-source'); });
+        expect(change.mock.lastCall?.[0]).toEqual({ kind: 'turnEnds', sourceSessionId: 'turn-source', sourceTurnId: 'turn-a' });
+        await act(async () => { menu().props.onOpenChange(true); });
+        await waitForHomeGovernance(() => expect(menu().props.items).toContainEqual(expect.objectContaining({ id: 'turn-destination' })));
+        await act(async () => { menu().props.onSelect('turn-destination'); });
+        const rebound = change.mock.lastCall![0];
+        expect(rebound).toMatchObject({ sourceSessionId: 'turn-destination' });
+        expect(buildTriggerDefinition({ when: rebound, enabled: true, sessionId: null })).toEqual({
+            kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'turn-destination',
+            events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'], policy: { kind: 'firstMatch' },
+        });
+        await screen.unmount();
     });
     it('draws no Loading line while a saved workflow\'s Team grants load, so the card keeps its size (07 §7)', async () => {
         const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');

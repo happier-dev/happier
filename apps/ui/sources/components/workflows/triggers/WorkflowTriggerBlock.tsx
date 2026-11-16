@@ -695,6 +695,10 @@ function SessionEventTrackRows(
     },
   ];
   const withSource = (sessionId: string | undefined): SessionEventWhen => {
+    if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined && sessionId !== sourceSessionId) {
+      const { sourceSessionId: _previous, sourceTurnId: _turn, ...rest } = when;
+      return { ...rest, ...(sessionId === undefined ? {} : { sourceSessionId: sessionId }), nextTimeOnly: true };
+    }
     const { sourceSessionId: _previous, ...rest } = when;
     return (
       sessionId === undefined ? rest : { ...rest, sourceSessionId: sessionId }

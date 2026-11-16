@@ -121,8 +121,8 @@ describe('session trigger form', () => {
         const target = buildTriggerTarget(then, scope);
         if (target?.kind !== 'inline') throw new Error('expected an inline target');
         expect(validateWorkflowDefinition(target.definition).valid).toBe(true);
-        expect(target.definition.defaults.engine).toMatchObject({ agentTarget });
-        expect(readTriggerThen(target)).toMatchObject({ sourceDefinition: { defaults: { engine: { agentTarget } } } });
+        expect(target.definition.defaults).toMatchObject({ agentTarget });
+        expect(readTriggerThen(target)).toMatchObject({ sourceDefinition: { defaults: { agentTarget } } });
     });
     it('keeps a new Account prompt incomplete until its contextual Agent is selected', () => {
         expect(buildTriggerTarget({ kind: 'sendPrompt', prompt: 'Review the changes' }, 'account')).toBeNull();
@@ -314,12 +314,21 @@ describe('session trigger form', () => {
         expect(buildTriggerDefinition({ when: { kind: 'needsYou' }, enabled: true, sessionId: null })).toBeNull();
     });
 
-    it('reads a saved trigger back as the When it was written with', () => {
-        const archived = { kind: 'sessionLifecycle', events: ['sessionArchived'] } as unknown as Parameters<typeof readTriggerWhen>[0];
-        expect(readTriggerWhen(archived)).toEqual({ kind: 'sessionArchived' });
-        const custom = { kind: 'schedule', schedule: { kind: 'cron', scheduleExpr: '*/15 * * * *', everyMs: null, timezone: null } } as unknown as Parameters<typeof readTriggerWhen>[0];
+    it('reads a saved everyMatch lifecycle and custom schedule back as the When they were written with', () => {
+        const triggers = WorkflowTriggerSetV1Schema.parse({ automationId: 'habit', revision: 1, enabled: true,
+            health: 'available', target: { kind: 'workflow', ref: 'builtin:review-and-converge' },
+            triggers: [
+                { id: 'archived', revision: 1, kind: 'sessionLifecycle', enabled: true,
+                    sourceSessionId: 'source', events: ['sessionArchived'], policy: { kind: 'everyMatch' },
+                    createdAt: 1, updatedAt: 1, remainingOccurrences: null,
+                    status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null },
+                { id: 'custom', revision: 1, kind: 'schedule', enabled: true,
+                    schedule: { kind: 'cron', scheduleExpr: '*/15 * * * *', everyMs: null, timezone: null },
+                    createdAt: 1, updatedAt: 1, nextRunAt: null, triggerDefinitionEnvelope: null },
+            ] }).triggers;
+        expect(readTriggerWhen(triggers[0]!)).toEqual({ kind: 'sessionArchived', sourceSessionId: 'source' });
         // A cron that is not a simple schedule keeps its expression.
-        expect(readTriggerWhen(custom)).toEqual({ kind: 'schedule', schedule: null, expression: '*/15 * * * *', timezone: null });
+        expect(readTriggerWhen(triggers[1]!)).toEqual({ kind: 'schedule', schedule: null, expression: '*/15 * * * *', timezone: null });
     });
 
     it.each([null, 'viewed-session'])('keeps a retained lifecycle source independent of the editor context %s', async sessionId => {

@@ -292,7 +292,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     when={when}
                     enabled={row.enabled}
                     incomplete={edited !== undefined}
-                    startOptions={startOptions}
+                    startOptions={when === null ? startOptions : buildWorkflowTriggerStartOptions(catalog.events,
+                        { when, title: formatTriggerSummary(row.trigger) }, props.startContext)}
                     onStartsOpenChange={demandCatalog}
                     onSelectStart={(id) => selectStart(when, id, (next) => editRow(row, next))}
                     {...placement}
