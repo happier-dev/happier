@@ -687,7 +687,7 @@ export const DeploymentDataPageResultV1Schema = lazyZodSchema(() => z.union([
 export type DeploymentDomainPageResultV1 = z.infer<typeof DeploymentDomainPageResultV1Schema>;
 export type DeploymentDataPageResultV1 = z.infer<typeof DeploymentDataPageResultV1Schema>;
 /** Header-only storage demand used by the existing target-link preparation. */
-export const DeploymentTargetScopeV1Schema = ProjectSourceOwnerV1Schema;
+export const DeploymentTargetScopeV1Schema = lazyZodSchema(() => ProjectSourceOwnerV1Schema);
 export type DeploymentTargetScopeV1 = z.infer<typeof DeploymentTargetScopeV1Schema>;
 export const DeploymentTargetLinksListInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...home, scope: DeploymentTargetScopeV1Schema,

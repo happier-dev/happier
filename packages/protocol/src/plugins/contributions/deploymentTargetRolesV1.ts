@@ -242,7 +242,7 @@ export const DeploymentTargetDomainInputV1Schema = lazyZodSchema(() => z.extend(
     return value.domain.zone !== undefined;
 }, { message: 'Workers Domains require an explicitly selected zone.' })));
 export type DeploymentTargetDomainInputV1 = z.infer<typeof DeploymentTargetDomainInputV1Schema>;
-export const DeploymentTargetDomainResultV1Schema = DeploymentDomainProviderResultV1Schema;
+export const DeploymentTargetDomainResultV1Schema = lazyZodSchema(() => DeploymentDomainProviderResultV1Schema);
 export type DeploymentTargetDomainResultV1 = z.infer<typeof DeploymentTargetDomainResultV1Schema>;
 export const DeploymentTargetDomainResultV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetDomainResultV1Schema);
 
