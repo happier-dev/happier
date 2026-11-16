@@ -380,6 +380,8 @@ test('intentional cancellation of a queued admission settles instead of reconnec
     client.child.kill('SIGTERM');
     assert.deepEqual(await client.closed, [130, null], client.stderr());
     assert.equal(client.stdout(), '');
+    // A `timeout` around a queued typecheck lands here; its log must never read as a clean run.
+    assert.match(client.stderr(), /interrupted by SIGTERM while queued for admission; the command was not run/);
   });
 
 test('a genuine broker startup failure remains a typed terminal refusal',

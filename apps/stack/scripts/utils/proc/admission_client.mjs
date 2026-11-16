@@ -135,11 +135,17 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
   const onExternalAbort = () => cancellation.abort(signal.reason);
   if (signal?.aborted) onExternalAbort();
   else signal?.addEventListener('abort', onExternalAbort, { once: true });
-  const interrupt = () => cancellation.abort();
-  for (const name of ['SIGHUP', 'SIGINT', 'SIGTERM']) process.on(name, interrupt);
   let resources, slotServer, control, priorityScope;
   const slotConnections = new Set();
   let payload;
+  const interrupt = name => {
+    // A `timeout` around a queued command lands here; its output must not read as a run.
+    if (!payload && !cancellation.signal.aborted) {
+      process.stderr.write(`[admission] interrupted by ${name} while queued for admission; the command was not run\n`);
+    }
+    cancellation.abort();
+  };
+  for (const name of ['SIGHUP', 'SIGINT', 'SIGTERM']) process.on(name, interrupt);
   const closeSlot = async () => {
     for (const socket of slotConnections) socket.destroy();
     if (slotServer) {
