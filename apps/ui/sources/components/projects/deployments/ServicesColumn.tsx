@@ -355,7 +355,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
           child={child}
           disclosure={expandable ? { expanded: open, onToggle: () => toggleEnvironment(row.environmentId) } : null}
           selected={selection?.kind === 'environment' && selection.environmentId === row.environmentId}
-          rightElement={<DeploymentEnvironmentRowMenu testID={`${testID}:menu`} pinned={pinnedSet.has(row.environmentId)}
+          rowMenu={<DeploymentEnvironmentRowMenu testID={`${testID}:menu`} pinned={pinnedSet.has(row.environmentId)}
             onSelectPin={() => props.onTogglePinned(row.environmentId, !pinnedSet.has(row.environmentId))} />}
           onPress={() => { if (href) onNavigate(href); }}
         />
@@ -428,7 +428,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
               href={href}
               treeItem={treeItemOf(`pinned:${row.environmentId}`)}
               selected={selection?.kind === 'environment' && selection.environmentId === row.environmentId}
-              rightElement={<DeploymentEnvironmentRowMenu testID={`${testID}:menu`} pinned
+              rowMenu={<DeploymentEnvironmentRowMenu testID={`${testID}:menu`} pinned
                 onSelectPin={() => props.onTogglePinned(row.environmentId, false)} />}
               onPress={() => { if (href) onNavigate(href); }}
             />

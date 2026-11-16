@@ -31,7 +31,7 @@ import { useItemDensityInputs } from '@/components/ui/lists/useResolvedItemDensi
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
-import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, resolveHappierFocusRingVisible, useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, resolveHappierFocusRingVisible, resolveHappierRowEndFadeStyle, useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import {
     ITEM_CHEVRON_SIZE,
@@ -311,6 +311,11 @@ export interface ItemProps {
      * stays one named button on React Native Web ("name. subtitle") rather than an unnamed clickable group.
      */
     rightElementPassive?: boolean;
+    /**
+     * With `rightElementOutsidePressable`, on the web: the press target fades out over its last N px, where the
+     * row's engaged actions stand over its title's tail (`resolveHappierRowEndFadeStyle`, the Session rows' fade).
+     */
+    pressTargetEndFadePx?: number;
     /**
      * Render `leftElement` as a sibling of the row Pressable, before it. Use this when the leading
      * slot holds its own controls (a reorder handle, a radio): each keeps its own activation and
@@ -882,6 +887,7 @@ export const Item = React.memo<ItemProps>((props) => {
         keepChevronWithRightElement = false,
         rightElementOutsidePressable = false,
         rightElementPassive = false,
+        pressTargetEndFadePx,
         leftElementOutsidePressable = false,
         rightElementYields = false,
         accessoryLayout = 'inline',
@@ -2221,7 +2227,8 @@ export const Item = React.memo<ItemProps>((props) => {
                         aria-disabled={disabled || loading ? true : undefined}
                         tabIndex={interactiveTabIndex as 0 | -1 | undefined}
                         disabled={disabled || loading}
-                        style={[styles.splitPressable, stackAccessory ? styles.splitPressableStacked : null, HAPPIER_FOCUS_RING_DELEGATED_STYLE]}
+                        style={[styles.splitPressable, stackAccessory ? styles.splitPressableStacked : null, HAPPIER_FOCUS_RING_DELEGATED_STYLE,
+                            isWeb && pressTargetEndFadePx !== undefined ? resolveHappierRowEndFadeStyle(pressTargetEndFadePx) as ViewStyle : null]}
                         android_ripple={(isAndroid || isWeb) ? {
                             color: theme.colors.surface.ripple,
                             borderless: false,

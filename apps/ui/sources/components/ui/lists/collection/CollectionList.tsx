@@ -46,6 +46,8 @@ import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfaceP
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import type { WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { CollectionRowNeedsYouLeading } from './CollectionRowNeedsYouHighlight';
+import { CollectionRowMenuEngagementContext, ROW_MENU_BUTTON_PX } from './CollectionRowMenu';
+import { useCoarsePrimaryPointer } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 
 /**
  * Happier core's binding of the Collection `list` presentation: the app's own text, grouped list
@@ -144,6 +146,35 @@ const styles = StyleSheet.create((theme) => ({
         gap: theme.space.s6,
         flexShrink: 1,
         minWidth: 0,
+    },
+    // A column row's ⋯ stands over the end of its status and count (or of the title, when the row has none).
+    rowMenuEnd: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'stretch',
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    rowMenuBand: {
+        position: 'absolute',
+        right: 0,
+        top: 0,
+        bottom: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    restingEnd: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    restingEndHidden: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexShrink: 1,
+        minWidth: 0,
+        opacity: 0,
     },
     trailingCount: {
         flexShrink: 0,
@@ -557,8 +588,14 @@ export type CollectionNavigationRowProps = Readonly<{
     count?: number | string | null;
     /** The row's name when its title alone does not say it (the service an account belongs to, its state). */
     accessibilityLabel?: string;
-    /** The row's own menu, at its end, outside the row's press (a project's rename, pin, remove). */
+    /** A control at the row's end, outside the row's press, always in its place. */
     rightElement?: React.ReactNode;
+    /**
+     * The row's own ⋯ (`CollectionRowMenu`: a project's rename, pin, remove). On a pointer screen it takes no width at
+     * rest, so the name runs to the row's end; while the row is engaged it stands over the row's end in place of its
+     * status and count, the title's tail fading under it (the Session rows' engaged actions). Touch keeps it in place.
+     */
+    rowMenu?: React.ReactNode;
     /** An independently actionable request stays outside row navigation. */
     rightElementOutsidePressable?: boolean;
     onPress: () => void;
@@ -606,9 +643,32 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
             onPress={onToggle}
         />
     ) : null;
-    const endParts = [trailing, disclosureTarget, props.rightElement].filter(part => part != null && part !== false);
-    const rightElement = endParts.length > 1
-        ? <View style={styles.trailing}>{trailing}{disclosureTarget}{props.rightElement}</View>
+    const coarsePointer = useCoarsePrimaryPointer();
+    const overlaysMenu = props.rowMenu != null && Platform.OS === 'web' && !coarsePointer;
+    const [pressHovered, setPressHovered] = React.useState(false);
+    const [endHovered, setEndHovered] = React.useState(false);
+    const [menuHeld, setMenuHeld] = React.useState(false);
+    const engaged = overlaysMenu && (pressHovered || endHovered || menuHeld);
+    const engagement = React.useMemo(() => ({ engaged, hold: setMenuHeld }), [engaged]);
+    const inFlowMenu = overlaysMenu ? null : props.rowMenu;
+    const endParts = [trailing, disclosureTarget, props.rightElement, inFlowMenu].filter(part => part != null && part !== false);
+    const rightElement = overlaysMenu ? (
+        <View style={styles.trailing} onPointerEnter={() => setEndHovered(true)} onPointerLeave={() => setEndHovered(false)}>
+            {/* The status and count give their place to the ⋯ while the row is engaged; the disclosure keeps its own. */}
+            <View style={styles.rowMenuEnd}>
+                {trailing ? (
+                    <View style={engaged ? styles.restingEndHidden : styles.restingEnd}
+                        {...(engaged ? { 'aria-hidden': true } : {})}>{trailing}</View>
+                ) : null}
+                <View style={styles.rowMenuBand}>
+                    <CollectionRowMenuEngagementContext.Provider value={engagement}>{props.rowMenu}</CollectionRowMenuEngagementContext.Provider>
+                </View>
+            </View>
+            {disclosureTarget}
+            {props.rightElement}
+        </View>
+    ) : endParts.length > 1
+        ? <View style={styles.trailing}>{trailing}{disclosureTarget}{props.rightElement}{inFlowMenu}</View>
         : endParts[0] ?? null;
     // A disclosure tree (owner 10-31): the parent's mark stands at rest; hovering or focusing the row shows its
     // disclosure in the mark's own box, so no caret column is spent. Touch keeps the mark; a tap toggles.
@@ -649,7 +709,12 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
             testID={props.testID}
             underlay={needsYouFacts ? <CollectionRowNeedsYouLeading {...needsYouFacts} testID={`${props.testID}:needs-you`} /> : undefined}
             rightElement={rightElement}
-            rightElementOutsidePressable={Boolean(props.rightElement || disclosureTarget)}
+            rightElementOutsidePressable={Boolean(props.rightElement || props.rowMenu || disclosureTarget)}
+            {...(overlaysMenu ? {
+                onHoverIn: () => setPressHovered(true),
+                onHoverOut: () => setPressHovered(false),
+                ...(engaged ? { pressTargetEndFadePx: ROW_MENU_BUTTON_PX } : {}),
+            } : null)}
             // Inside the press only the status slot and the count remain, and they only draw.
             rightElementPassive
             title={props.title}

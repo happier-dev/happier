@@ -9,7 +9,15 @@ import { useCoarsePrimaryPointer } from '@/components/sessions/transcript/messag
 import { useItemRowHovered } from '@/components/ui/lists/ItemRowHover';
 import { useItemRowAccessibleName } from '@/components/ui/lists/ItemRowAccessibleName';
 
-const ROW_MENU_BUTTON_PX = 24;
+/** The ⋯'s drawn size: the width an engaged column row's menu stands over at its end. */
+export const ROW_MENU_BUTTON_PX = 24;
+
+/**
+ * A column row that overlays its ⋯ (`CollectionNavigationRow` `rowMenu` on a pointer screen): whether the row is
+ * engaged (pointer on it or its end, or the menu held), and how the menu holds it while it is open or focused.
+ */
+export type CollectionRowMenuEngagement = Readonly<{ engaged: boolean; hold: (held: boolean) => void }>;
+export const CollectionRowMenuEngagementContext = React.createContext<CollectionRowMenuEngagement | null>(null);
 /**
  * The free space around the button inside the shortest row (the button is centred in it). Stacked rows
  * touch, so the finger reach stops at the row's own edge and a neighbour's trigger never shares it.
@@ -32,7 +40,8 @@ function stopPressEventPropagation(event: unknown): void {
 
 /**
  * A column row's ⋯ (the Projects and Services trees): quiet until the row is engaged (lab TREE shows no menu at
- * rest), it keeps its place and stays focusable, and touch screens always show it. The menu itself is mounted only
+ * rest) and focusable while hidden; touch screens always show it. As a column row's `rowMenu` on a pointer screen
+ * it takes no width and stands over the row's end while engaged; elsewhere it keeps its place. The menu itself is mounted only
  * while open, so a closed row costs just its trigger: no item list, no icons, no dropdown hooks.
  */
 export const CollectionRowMenu = React.memo(function CollectionRowMenu(
@@ -47,8 +56,17 @@ export const CollectionRowMenu = React.memo(function CollectionRowMenu(
   }>,
 ) {
   const [open, setOpen] = React.useState(false);
+  const [focused, setFocused] = React.useState(false);
   const anchorRef = React.useRef<View>(null);
   const rowHovered = useItemRowHovered();
+  // Over a row's end, the row decides when the ⋯ shows (and fades its title under it); the menu holds it while open.
+  const engagement = React.useContext(CollectionRowMenuEngagementContext);
+  const hold = engagement?.hold;
+  const held = open || focused;
+  React.useEffect(() => {
+    if (!hold) return;
+    hold(held);
+  }, [hold, held]);
   const coarsePrimaryPointer = useCoarsePrimaryPointer();
   const close = React.useCallback(() => setOpen(false), []);
   // Named after the row it sits in ("More actions for Website"), the name its row lends to its accessories.
@@ -57,8 +75,10 @@ export const CollectionRowMenu = React.memo(function CollectionRowMenu(
     <View ref={anchorRef} collapsable={false} style={{ position: 'relative' }}>
       <RowActionRevealSlot
         revealed={
-          Platform.OS !== 'web' || coarsePrimaryPointer || rowHovered || open
+          Platform.OS !== 'web' || coarsePrimaryPointer || (engagement ? engagement.engaged : rowHovered) || open
         }
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
       >
         {/* The shared icon-only button and the row menu's glyph (the Sessions rows' "⋯"). */}
         <IconButton

@@ -358,7 +358,7 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                             selected={row.selected}
                             indentPx={row.level * resolveHappierCollectionTreeChildIndentPx()}
                             treeItem={props.getRowProps(row, props.activeKey)}
-                            rightElement={props.renderRowMenu?.(row) ?? null}
+                            rowMenu={props.renderRowMenu?.(row) ?? null}
                             onPress={() => openProjectsTreeRow(row, props.onOpenRef, props.onToggle, props.onOpenHref)}
                         />
                     );
@@ -388,7 +388,7 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                         indentPx={row.level * resolveHappierCollectionTreeChildIndentPx()}
                         treeItem={props.getRowProps(row, props.activeKey)}
                         accessibilityLabel={row.titleQualifier ? `${row.title}, ${row.titleQualifier}` : row.title}
-                        rightElement={props.renderRowMenu?.(row) ?? null}
+                        rowMenu={props.renderRowMenu?.(row) ?? null}
                         onPress={() => openProjectsTreeRow(row, props.onOpenRef, props.onToggle, props.onOpenHref)}
                     />
                 );

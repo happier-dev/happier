@@ -154,6 +154,7 @@ export const DeploymentTreeRow = React.memo(function DeploymentTreeRow(
       | 'child'
       | 'treeItem'
       | 'rightElement'
+      | 'rowMenu'
       | 'dimmed'
       | 'accessibilityLabel'
       | 'count'

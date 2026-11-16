@@ -308,9 +308,17 @@ function resolveActionBandPx(count: number): number {
  */
 function engagedPressTargetStyle(actionCount: number): typeof pressTarget {
   const covered = Math.max(0, resolveActionBandPx(actionCount) - M.statusSlotPx - M.trailingGap);
-  const mask = `linear-gradient(to left, transparent ${covered}px, #000 ${covered + M.actionFadePx}px)`;
-  const style = { ...pressTarget, maskImage: mask, WebkitMaskImage: mask };
-  return style;
+  return { ...pressTarget, ...resolveHappierRowEndFadeStyle(covered) };
+}
+
+/**
+ * The web fade an engaged row's press target takes under the actions that stand over its end: clear for
+ * `coveredPx`, then fading back in over the actions' fade. Every row whose actions overlay its end on hover
+ * (work rows, column navigation rows) fades through this one mask.
+ */
+export function resolveHappierRowEndFadeStyle(coveredPx: number): Readonly<{ maskImage: string; WebkitMaskImage: string }> {
+  const mask = `linear-gradient(to left, transparent ${coveredPx}px, #000 ${coveredPx + M.actionFadePx}px)`;
+  return { maskImage: mask, WebkitMaskImage: mask };
 }
 const pressTarget = {
   flex: 1,

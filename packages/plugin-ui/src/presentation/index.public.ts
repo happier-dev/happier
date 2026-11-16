@@ -1647,6 +1647,7 @@ export {
   resolveHappierCollectionRowIdentityMetrics,
   resolveHappierCollectionRowLineMetrics,
   resolveHappierCollectionRowTitleMetrics,
+  resolveHappierRowEndFadeStyle,
   type HappierCollectionRowContentProps,
   type HappierCollectionRowDensity,
   type HappierCollectionRowTextMetrics,
