@@ -233,6 +233,25 @@ describe('action operation detail presentation', () => {
         expect(projectMachineSetupStepChecklist({ kind: 'machineSetup', serverId: 'home', machineId: 'web-2' }, String)).toBeNull();
     });
 
+    it('associates a current typed question and private output with their running setup row only', () => {
+        const attachment = { kind: 'machineSetup' as const, serverId: 'home', machineId: 'web-2', steps: [
+            { planIndex: 0, stepId: 'first', label: 'First', state: 'succeeded' as const, terminalId: 'first-output' },
+            { planIndex: 0, stepId: 'second', label: 'Second', state: 'running' as const, terminalId: 'second-output' },
+            { planIndex: 0, stepId: 'third', label: 'Third', state: 'pending' as const },
+        ] };
+        const question = { id: 'current-task', taskKind: 'machine.setup.apply.v1' as const,
+            prompt: { kind: 'sudo.password' as const, adminUsername: 'admin' } };
+        const waiting = projectMachineSetupStepChecklist(attachment, String, question);
+        expect(waiting?.items).toMatchObject([
+            { id: '0:first', needsAttention: false, output: { terminalId: 'first-output' } },
+            { id: '0:second', needsAttention: true, output: { kind: 'open_output', serverId: 'home', machineId: 'web-2', terminalId: 'second-output' } },
+            { id: '0:third', needsAttention: false, output: null },
+        ]);
+        expect(projectMachineSetupStepChecklist(attachment, String)?.items.every(item => !item.needsAttention)).toBe(true);
+        expect(projectMachineSetupStepChecklist({ ...attachment, steps: attachment.steps.map(step => ({ ...step, state: 'pending' as const })) },
+            String, question)?.items.every(item => !item.needsAttention)).toBe(true);
+    });
+
     it('projects fork strategy, created child, and unavailable-status recovery from canonical references', () => {
         const completed = projectActionOperationDetail(operation({
             actionId: 'session.fork',

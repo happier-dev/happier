@@ -13,7 +13,7 @@ import { selectMachineSetupRecipeItemsV1,
   type MachineSetupExclusionV1, type MachineSetupSourceV1, type MachineSetupSourceFactsMapV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
 import { resolveMachineSetupNativeEffects } from './machineSetupNativeEffects';
-import { createSetupOperationSnapshot } from './setupOperationSnapshot';
+import { createSetupOperationSnapshot, machineSetupScriptStepId } from './setupOperationSnapshot';
 import { readMachineSetupSessionRefreshRequirement, describeMachineSetupSessionRefresh,
   type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -193,7 +193,8 @@ async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<Acti
     kind: 'machineSetup', serverId: input.homeId, machineId: input.machineId,
     ...(input.preset ? { preset: input.preset } : {}), ...(input.managedId ? { managedId: input.managedId } : {}),
   };
-  const snapshot = createSetupOperationSnapshot(attachment, input.plans, update => input.operation.operationOwnerUpdate.update(update));
+  const snapshot = createSetupOperationSnapshot(attachment, input.plans, update => input.operation.operationOwnerUpdate.update(update),
+    input.sources.flatMap(source => source.scripts ?? []));
   const operation = { ...input.operation, operationOwnerUpdate: { update: snapshot.update } };
   let outcome: ActionExecuteResult | undefined;
   const task = await owner.startAdmitted({ run: async context => {
@@ -203,6 +204,7 @@ async function startMachineSetup(input: AdmittedMachineSetupInput): Promise<Acti
       ...(input.elevation ? { elevation: { ...input.elevation, prompt: context.prompt, emit } } : {}),
       signal: context.signal ? AbortSignal.any([signal, context.signal]) : signal });
     outcome = result;
+    if (!isMachineSetupResultUnsettled(result)) snapshot.settle(result);
     if (!result.ok) throw new SystemTaskExecutionError(result.errorCode ?? 'machine_setup_apply_failed', result.error);
     return { operationId };
   } }, taskKind);
@@ -424,6 +426,9 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
   for (const source of input.sources) for (const script of source.scripts ?? []) {
     const index = scriptIndex++;
     if (!script.body) continue;
+    const progress = (status: 'started' | 'satisfied') => input.emit?.({ type: 'machine.setup.progress',
+      stepId: machineSetupScriptStepId(index), data: { planIndex: input.plans.length, phase: 'apply', status } });
+    progress('started');
     let secretEnv: Readonly<Record<string, string>> = {};
     if (source.secretRefs) {
       if (!input.secretEnvironment) return fail('saved_secret_unavailable');
@@ -447,7 +452,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
     if (observe) {
       const observed = await observe();
       if (signal.aborted) return fail('cancelled');
-      if (observed.status === 'satisfied') { input.onScriptCompleted?.(index); continue; }
+      if (observed.status === 'satisfied') { input.onScriptCompleted?.(index); progress('satisfied'); continue; }
       if (observed.status !== 'drifted') return fail('machine_setup_script_check_unavailable');
     }
     const shell = resolveFiniteTerminalShell(script.body, hostEnv, platform);
@@ -460,6 +465,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
         ? 'machine_setup_script_check_failed' : 'machine_setup_script_check_unavailable');
     }
     input.onScriptCompleted?.(index);
+    progress('satisfied');
   }
   if (refreshDaemonGroups) {
     input.operation.operationProgress.update({ phase: 'setup', label:

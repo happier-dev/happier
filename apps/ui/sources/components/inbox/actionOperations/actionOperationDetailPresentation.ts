@@ -1,4 +1,4 @@
-import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import type { ActionOperationProjection, ActionOperationSudoPrompt } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
@@ -424,8 +424,13 @@ function projectMachineSetup(snapshot: ActionOperationSnapshot): Omit<ActionOper
 
 type MachineSetupStep = NonNullable<MachineSetupOutputAttachment['steps']>[number];
 
+export type MachineSetupStepChecklistItem = PlanChecklistItem & Readonly<{
+    needsAttention: boolean;
+    output: Extract<NonNullable<ActionOperationDetailProjection['nextAction']>, { kind: 'open_output' }> | null;
+}>;
+
 export type MachineSetupStepChecklist = Readonly<{
-    items: readonly PlanChecklistItem[];
+    items: readonly MachineSetupStepChecklistItem[];
     selectedIds: readonly string[];
     executionById: Readonly<Record<string, PlanChecklistExecutionState>>;
 }>;
@@ -440,16 +445,23 @@ const NO_LOGS: readonly never[] = Object.freeze([]);
 export function projectMachineSetupStepChecklist(
     attachment: MachineSetupOutputAttachment,
     localizeLabel: (label: MachineSetupStep['label']) => string,
+    question: ActionOperationSudoPrompt | null = null,
 ): MachineSetupStepChecklist | null {
     const steps = attachment.steps;
     if (!steps || steps.length === 0) return null;
-    const items: PlanChecklistItem[] = [];
+    const items: MachineSetupStepChecklistItem[] = [];
     const executionById: Record<string, PlanChecklistExecutionState> = {};
     for (const step of steps) {
         const id = `${step.planIndex}:${step.stepId}`;
+        const title = typeof step.label !== 'string' && step.label.key === 'machinePresets.setup.scriptNumbered'
+            && typeof step.label.params?.index === 'number'
+            ? t('machinePresets.setup.scriptNumbered', { index: step.label.params.index }) : localizeLabel(step.label);
         const subtitle = step.state === 'failed' ? describeMachineSetupFailureCause(step.failureCause)
             : step.state === 'cancelled' ? t('inbox.actionOperations.status.cancelled') : undefined;
-        items.push({ id, title: localizeLabel(step.label), satisfied: false, disabled: true, ...(subtitle ? { subtitle } : {}) });
+        items.push({ id, title, satisfied: false, disabled: true, ...(subtitle ? { subtitle } : {}),
+            needsAttention: question !== null && step.state === 'running',
+            output: step.terminalId ? { kind: 'open_output', serverId: attachment.serverId,
+                machineId: attachment.machineId, terminalId: step.terminalId } : null });
         executionById[id] = { status: SETUP_STEP_STATUS[step.state], logs: NO_LOGS };
     }
     return { items, selectedIds: items.map((item) => item.id), executionById };

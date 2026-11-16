@@ -159,7 +159,7 @@ describe('Action operation v1 contract', () => {
   });
   it('retains current setup step facts and omits the setup reference for released V1 readers', () => {
     const steps = [{ planIndex: 0, stepId: 'install', label: { key: 'setup.install', fallback: 'Install tools' },
-      state: 'failed', failureCause: 'native_effect_failed' }];
+      state: 'failed', failureCause: 'native_effect_failed', terminalId: 'native-output' }];
     const snapshot = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'machines.setup.apply',
       domainRef: { kind: 'machineSetup', serverId: 'home', machineId: 'machine-1', steps } });
     expect(ActionOperationGetV1ResponseSchema.parse(JSON.parse(JSON.stringify({ kind: 'found', operation: snapshot }))))

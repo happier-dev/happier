@@ -1,5 +1,6 @@
-import type { ActionOperationSnapshotV1, ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
-import type { MachineSudoPasswordPromptV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { readActionOperationTaskQuestionV1, type ActionOperationSudoQuestionV1,
+    type ActionOperationTaskQuestionV1 } from '@happier-dev/protocol/actions/operations/taskQuestionV1';
 import { isSameInputOptionValue } from '@happier-dev/protocol/inputs';
 import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { areServerProfileIdentifiersEquivalent } from '../server/serverProfiles';
@@ -33,36 +34,19 @@ export type ActionOperationProjection = Readonly<{
 
 export type InboxActionOperationReason = 'failed' | 'status_unavailable' | 'setup_needs_attention' | 'review_required' | 'attendance_required';
 
-export type ActionOperationSudoPrompt = Readonly<{
-    id: string;
-    taskKind: 'machine.setup.plan.v1' | 'machine.setup.apply.v1' | 'machine.setup.remove.v1' | 'machine.reboot.v1';
-    prompt: MachineSudoPasswordPromptV1;
-}>;
+export type ActionOperationSudoPrompt = ActionOperationSudoQuestionV1;
 
 /** Only the current owning operation may expose a transient Machine question. */
 export function readActionOperationSudoPrompt(snapshot: ActionOperationSnapshotV1): ActionOperationSudoPrompt | null {
-    if (isActionOperationTerminal(snapshot.state)) return null;
-    const domain = snapshot.domainRef;
-    if (domain?.kind !== 'machineSetup' && domain?.kind !== 'machineReboot'
-        || domain.machineId !== snapshot.scope.machineId) return null;
-    const task = domain.kind === 'machineSetup' ? domain.setupTask : domain.task;
-    return task?.prompt ? { id: task.id, taskKind: task.taskKind, prompt: task.prompt } : null;
+    const question = readActionOperationTaskQuestionV1(snapshot);
+    return question?.taskKind === 'remote.ssh.bootstrapMachine.v1' ? null : question;
 }
 
-export type ActionOperationTaskQuestion = ActionOperationSudoPrompt | Readonly<{
-    id: string;
-    taskKind: 'remote.ssh.bootstrapMachine.v1';
-    prompt: Extract<ManagedMachineBootstrapPromptV1, { kind: 'ssh.trustHost' | 'ssh.replaceHostKey' }>;
-}>;
+export type ActionOperationTaskQuestion = ActionOperationTaskQuestionV1;
 
 /** Consume the finite task's current question through its operation, without inventing a managed resource. */
 export function readActionOperationTaskQuestion(snapshot: ActionOperationSnapshotV1): ActionOperationTaskQuestion | null {
-    const sudo = readActionOperationSudoPrompt(snapshot);
-    if (sudo) return sudo;
-    if (isActionOperationTerminal(snapshot.state)) return null;
-    const domain = snapshot.domainRef;
-    if (domain?.kind !== 'systemTask' || domain.prompt?.kind !== 'ssh.trustHost' && domain.prompt?.kind !== 'ssh.replaceHostKey') return null;
-    return { id: domain.id, taskKind: domain.taskKind, prompt: domain.prompt };
+    return readActionOperationTaskQuestionV1(snapshot);
 }
 
 export type InboxActionOperationEntry = Readonly<{
@@ -478,7 +462,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             if (!isActionOperationTerminal(operation.snapshot.state) && isActionOperationReviewHeld(operation.snapshot)) {
                 return [{ operation, reason: 'review_required' }];
             }
-            if (readActionOperationSudoPrompt(operation.snapshot)) return [{ operation, reason: 'attendance_required' }];
+            if (readActionOperationTaskQuestion(operation.snapshot)) return [{ operation, reason: 'attendance_required' }];
             if (
                 (operation.snapshot.state === 'accepted' || operation.snapshot.state === 'running')
                 && operation.isUnavailableProjection
@@ -544,6 +528,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
                 (snapshot.state === 'failed' && isUnseen(state, operation))
                 || (snapshot.state === 'succeeded' && readFollowUpAttention(state, operation) !== null)
                 || (!isActionOperationTerminal(snapshot.state) && isActionOperationReviewHeld(snapshot))
+                || readActionOperationTaskQuestion(snapshot) !== null
                 || (!isActionOperationTerminal(snapshot.state) && state.unavailableOperationKeys.has(key))
             ) {
                 count += 1;

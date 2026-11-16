@@ -379,9 +379,25 @@ describe('applyMachineSetup', () => {
       } } };
     expect(await applyMachineSetup(input)).toMatchObject({ ok: false, errorCode: 'machine_setup_setup_failed' });
     expect(f.spawned.map(process => process.launch.args.at(-1))).toEqual(['echo first', 'echo second']);
+    expect(f.updates.at(-1)?.domainRef).toMatchObject({ kind: 'machineSetup', steps: [
+      { planIndex: 0, stepId: 'script:0', state: 'succeeded' },
+      { planIndex: 0, stepId: 'script:1', state: 'failed' },
+      { planIndex: 0, stepId: 'script:2', state: 'pending' },
+    ] });
+    const failedRows = f.updates.at(-1)?.domainRef;
+    if (failedRows?.kind !== 'machineSetup') throw new Error('Missing native script rows');
+    expect(failedRows.steps?.slice(0, 2).map(step => step.terminalId)).toEqual([
+      expect.any(String), expect.any(String),
+    ]);
+    expect(new Set(failedRows.steps?.slice(0, 2).map(step => step.terminalId)).size).toBe(2);
     expect(await applyMachineSetup({ ...input, operation: { ...f.input.operation, actionRequestId: 'setup-retry' } }))
       .toMatchObject({ ok: true });
     expect(f.spawned.map(process => process.launch.args.at(-1))).toEqual(['echo first', 'echo second', 'echo second', 'echo third']);
+    expect(f.updates.at(-1)?.domainRef).toMatchObject({ kind: 'machineSetup', steps: [
+      { planIndex: 0, stepId: 'script:0', state: 'succeeded' },
+      { planIndex: 0, stepId: 'script:1', state: 'succeeded' },
+      { planIndex: 0, stepId: 'script:2', state: 'succeeded' },
+    ] });
   });
   it('finishes admitted canonical scripts after their initial desired basis changes', async () => {
     let current = true;
@@ -614,9 +630,11 @@ describe('applyMachineSetup', () => {
         || JSON.stringify(steps) !== JSON.stringify(stepSnapshots[index - 1]));
       expect(distinctSteps[0]).toEqual(
         [{ planIndex: 0, stepId: 'install', label: recipePlans[0]!.plan.steps[0]!.review!.title, state: 'pending' },
-          { planIndex: 1, stepId: 'install', label: recipePlans[1]!.plan.steps[0]!.review!.title, state: 'pending' }]);
+          { planIndex: 1, stepId: 'install', label: recipePlans[1]!.plan.steps[0]!.review!.title, state: 'pending' },
+          { planIndex: 2, stepId: 'script:0', label: { key: 'machinePresets.setup.scriptNumbered', fallback: 'Script {index}', params: { index: 1 } }, state: 'pending' }]);
       for (const steps of distinctSteps) expect(steps.map(step => [step.planIndex, step.stepId, step.label]))
-        .toEqual(recipePlans.map((recipe, planIndex) => [planIndex, 'install', recipe.plan.steps[0]!.review!.title]));
+        .toEqual([...recipePlans.map((recipe, planIndex) => [planIndex, 'install', recipe.plan.steps[0]!.review!.title]),
+          [2, 'script:0', { key: 'machinePresets.setup.scriptNumbered', fallback: 'Script {index}', params: { index: 1 } }]]);
       const firstRunning = distinctSteps.findIndex(steps => steps[0]?.state === 'running');
       const firstSucceeded = distinctSteps.findIndex(steps => steps[0]?.state === 'succeeded');
       const secondRunning = distinctSteps.findIndex(steps => steps[1]?.state === 'running');
@@ -625,10 +643,15 @@ describe('applyMachineSetup', () => {
       expect(firstSucceeded).toBeGreaterThan(firstRunning);
       expect(secondRunning).toBeGreaterThan(firstSucceeded);
       expect(secondSucceeded).toBeGreaterThan(secondRunning);
+      const scriptRunning = distinctSteps.findIndex(steps => steps[2]?.state === 'running');
+      const scriptSucceeded = distinctSteps.findIndex(steps => steps[2]?.state === 'succeeded');
+      expect(scriptRunning).toBeGreaterThan(secondSucceeded);
+      expect(scriptSucceeded).toBeGreaterThan(scriptRunning);
       const settledRecipePublications = publicationsBeforeScripts;
       const terminal = store.get(scope, 'setup-operation')!;
       expect(terminal).toMatchObject({ state: 'succeeded', domainRef: { steps: [
         { planIndex: 0, stepId: 'install', state: 'succeeded' }, { planIndex: 1, stepId: 'install', state: 'succeeded' },
+        { planIndex: 2, stepId: 'script:0', state: 'succeeded' },
       ], terminalId: expect.any(String), setupTask: { id: expect.any(String) } } });
       expect(projectActionOperationSnapshotForV1Reader(terminal)).not.toHaveProperty('domainRef');
       expect(mutations).toEqual(['first', 'second']);
@@ -657,6 +680,7 @@ describe('applyMachineSetup', () => {
       expect(failedAttachment).toMatchObject({ kind: 'machineSetup', steps: [
         { planIndex: 0, stepId: 'install', state: 'succeeded' },
         { planIndex: 1, stepId: 'install', state: 'failed', failureCause: 'native_effect_failed' },
+        { planIndex: 2, stepId: 'script:0', state: 'pending' },
       ] });
       expect(JSON.stringify(failedAttachment)).not.toContain('PRIVATE_NATIVE_OUTPUT');
       return settledRecipePublications;

@@ -447,6 +447,8 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
       state: z.enum(['pending', 'running', 'succeeded', 'failed', 'cancelled']),
       /** Machine-readable native reason only; no process output or submitted content. */
       failureCause: z.optional(z.string().check(z.minLength(1))),
+      /** Requester-owned native output; never process bytes or submitted input. */
+      terminalId: z.optional(ActionOperationIdentifierV1Schema),
     }))),
     setupTask: z.optional(z.strictObject({
       id: ActionOperationIdentifierV1Schema,

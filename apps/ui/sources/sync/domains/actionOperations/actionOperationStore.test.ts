@@ -274,18 +274,29 @@ describe('action operation store', () => {
             } } });
         merge(store, [held]);
         expect(selectors.selectInbox(store.getSnapshot())).toMatchObject([{ reason: 'attendance_required' }]);
+        const summary = selectors.selectInboxSummary(store.getSnapshot());
+        expect(summary).toEqual({ count: 1, hasAttention: true });
         const stable = selectors.selectInbox(store.getSnapshot());
         expect(selectors.selectInbox(store.getSnapshot())).toBe(stable);
+        merge(store, [held]);
+        expect(selectors.selectInboxSummary(store.getSnapshot())).toBe(summary);
+        merge(store, [operation({ operationId: 'unrelated-running', state: 'running' })]);
+        expect(selectors.selectInboxSummary(store.getSnapshot())).toBe(summary);
         expect(readActionOperationSudoPrompt(held)).toMatchObject({ id: 'actual-task', prompt: { kind: 'sudo.password' } });
         merge(store, [{ ...held, revision: 2, domainRef: { kind: 'machineSetup', serverId: SERVER_ID,
             machineId: 'machine-a', setupTask: { id: 'actual-task', taskKind: 'machine.setup.apply.v1' } } }]);
         expect(selectors.selectInbox(store.getSnapshot())).toEqual([]);
+        expect(selectors.selectInboxSummary(store.getSnapshot())).toEqual({ count: 0, hasAttention: false });
         expect(readActionOperationSudoPrompt({ ...held, state: 'succeeded', settledAt: 200 })).toBeNull();
         const reboot = operation({ actionId: 'machines.reboot', state: 'running', domainRef: {
             kind: 'machineReboot', serverId: SERVER_ID, machineId: 'machine-a', installationId: 'installation',
             task: { id: 'reboot-task', taskKind: 'machine.reboot.v1', prompt: { kind: 'sudo.password', adminUsername: 'ops.admin' } },
         } });
         expect(readActionOperationSudoPrompt(reboot)).toMatchObject({ id: 'reboot-task' });
+        merge(store, [{ ...reboot, operationId: 'reboot-question' }]);
+        expect(selectors.selectInboxSummary(store.getSnapshot())).toEqual({ count: 1, hasAttention: true });
+        merge(store, [{ ...reboot, operationId: 'reboot-question', revision: 2, state: 'succeeded', settledAt: 200 }]);
+        expect(selectors.selectInboxSummary(store.getSnapshot())).toEqual({ count: 0, hasAttention: false });
     });
 
     it('reads one qualified operation without traversing unrelated inventory and preserves its observation identity', () => {

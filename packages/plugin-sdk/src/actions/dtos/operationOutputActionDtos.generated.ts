@@ -1712,6 +1712,7 @@ export type OperationOutputActionResultById = {
                     };
                     state: 'cancelled' | 'failed' | 'pending' | 'running' | 'succeeded';
                     failureCause?: string | undefined;
+                    terminalId?: string | undefined;
                 }[];
                 setupTask?: undefined | {
                     id: string;
@@ -3810,6 +3811,7 @@ export type OperationOutputActionResultById = {
                     };
                     state: 'cancelled' | 'failed' | 'pending' | 'running' | 'succeeded';
                     failureCause?: string | undefined;
+                    terminalId?: string | undefined;
                 }[];
                 setupTask?: undefined | {
                     id: string;
