@@ -25,6 +25,8 @@ packages:
   - packages/triage-protocol
   - packages/deployment-protocol
   - packages/deployments
+  - packages/database-protocol
+  - packages/databases
   - packages/triage-sources
   - packages/forge-ci
   - packages/plugins/[a-z]*
