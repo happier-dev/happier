@@ -1,4 +1,5 @@
 import type { ProviderMessageMetaEnricher, SessionStateFacet } from '@happier-dev/agents';
+import { normalizePluginBackendCapabilitiesV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import { SessionHostBridge } from './SessionHostBridge';
@@ -127,11 +128,11 @@ describe('SessionHostBridge message-meta injection', () => {
 
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backend: {
-        capabilities: {
+        capabilities: normalizePluginBackendCapabilitiesV1({
           session: {
             state: capabilities,
           },
-        },
+        }),
       } as never,
       engineAdapter: {
         runtimeCore: { createSessionRuntime },

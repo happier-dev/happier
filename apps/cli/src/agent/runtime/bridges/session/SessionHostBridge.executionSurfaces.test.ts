@@ -4,7 +4,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol';
+import { normalizePluginBackendCapabilitiesV1, resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 const resolveBackendEngineAdapterResolutionMock = vi.fn();
@@ -68,6 +68,7 @@ function withExpectedHostRuntimeEvent<
     ...plan,
     config: {
       ...plan.config,
+      localWorkflow: false,
       publishHostRuntimeEvent: expect.any(Function),
     },
   };
@@ -430,9 +431,9 @@ describe('SessionHostBridge execution surfaces', () => {
         id: 'acme.sample.backend',
         agentId: 'acme.sample.provider',
         runtimeKind: 'native',
-        capabilities: {
+        capabilities: normalizePluginBackendCapabilitiesV1({
           sessions: { supported: true },
-        },
+        }),
       },
       agent: {
         id: 'acme.sample.provider',
@@ -494,6 +495,18 @@ describe('SessionHostBridge execution surfaces', () => {
         value: {
           backend: {
             sessions: { supported: true },
+            executionRun: { supported: true },
+            session: {
+              media: {
+                emitsSessionMedia: { supported: false },
+                nativeImageGeneration: { supported: false },
+              },
+              contextCompaction: {
+                events: { supported: false },
+                manualTrigger: { supported: false },
+                transcriptInference: { supported: false },
+              },
+            },
           },
         },
       },
