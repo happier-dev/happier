@@ -976,7 +976,8 @@ describe('mounted Voice Brief request', () => {
         const screen = await renderScreen(<PluginUiScrollActivityProvider tracker={tracker}>
             <VoiceBriefList brief={{ items, incomplete: true, caughtUp: false }} onOpen={opened} />
         </PluginUiScrollActivityProvider>, { createNodeMock: node => {
-            const match = /^voice-brief.(?:occurrences.)?window.census-(\d+)$/.exec(node.props.testID ?? '');
+            const match = typeof node.props.testID === 'string'
+                ? /^voice-brief.(?:occurrences.)?window.census-(\d+)$/.exec(node.props.testID) : null;
             return match ? { getBoundingClientRect: () => rect(Number(match[1]) * rowHeight) } : null;
         } });
         if (mode === 'disclosed') await screen.pressByTestIdAsync('voice-brief.occurrences.census-0.header');

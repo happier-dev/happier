@@ -137,7 +137,7 @@ export function buildVoicePresenceSurfaceFixture(state: VoicePresenceFixtureStat
         controlsDisabled: false,
         controlsLoading: false,
         delegatedWork: live && (state === 'speaking' || state === 'listening')
-            ? { sessionId: 'specimen-relay', statusText: 'Relay retry with backoff', thinking: true }
+            ? { sessionId: 'specimen-relay', serverId: null, statusText: 'Relay retry with backoff', thinking: true }
             : null,
         expanded: true,
         isMicCaptureActive: attemptControl.capturing,

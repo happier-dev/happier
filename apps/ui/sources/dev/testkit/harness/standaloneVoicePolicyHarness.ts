@@ -129,7 +129,7 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
             metadata: { path: '/voice', host: 'voice.test', flavor: 'claude', agentRuntimeCapabilitiesV1: { localControl: { supported: true } } },
             ...params.existingSession });
         const machineId = session.metadata?.machineId ?? 'voice-machine';
-        session = { ...session, metadata: { ...session.metadata, machineId } };
+        session = { ...session, metadata: { path: '/voice', host: 'voice.test', ...session.metadata, machineId } };
         let actionBoundaries: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>[] = [];
         const { createSessionMetadataHttpBoundary } = await import('./sessionMetadataHttpBoundary');
         const extraSessions = params.sessions ?? [];

@@ -38,7 +38,6 @@ export function useVoiceConfiguredAgentRecovery(
                 acpCatalogSnapshot: catalog && !catalog.stale ? catalog.catalog : undefined,
                 mergedProviderProjectionById: projection.inputs?.mergedProviderProjectionById,
                 mergedBackendProjectionById: projection.inputs?.mergedBackendProjectionById,
-                discoveredBackendIds: projection.inputs?.discoveredBackendIds,
             }),
             mergedProviderProjectionById: projection.inputs?.mergedProviderProjectionById,
         });
