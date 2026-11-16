@@ -11,6 +11,7 @@ import { buildMachineActivityEphemeral, eventRouter } from '@/app/events/eventRo
 import { submitMachineRemoteAlerts } from '@/app/activity/remoteAlerts/submitMachineRemoteAlerts';
 import type { MachineAliveAdmission } from '@/app/presence/presenceRecorder';
 import { db } from '@/storage/db';
+import { log } from '@/utils/logging/log';
 import * as privacyKit from 'privacy-kit';
 
 export async function acquireMachinePublicationLocksInTx(tx: Tx, machineId: string): Promise<string[]> {
@@ -70,6 +71,36 @@ export function hasCurrentMachineSocketInstallation(socket: Socket, installation
     if (!readAuthenticatedMachineId(socket)) return true;
     if (installationId === null) return false;
     return readVerifiedMachineSocketInstallationIdFromSocketData(socket.data) === installationId;
+}
+
+/**
+ * Handlers trust a machine-scoped socket's handshake admission because revoke, replacement and
+ * installation change disconnect it by push. That push targets the Machine room, so one read
+ * after the room join (and after a possibly lost cluster push) closes the window in which it
+ * could miss this socket. Never called per event.
+ */
+export async function isMachineScopedSocketAdmissionCurrent(socket: Socket, accountId: string): Promise<boolean> {
+    const machineId = readAuthenticatedMachineId(socket);
+    if (!machineId) return true;
+    const machine = await db.machine.findFirst({ where: { accountId, id: machineId },
+        select: { revokedAt: true, replacedByMachineId: true, installationId: true } });
+    if (!machine || machine.revokedAt || machine.replacedByMachineId) return false;
+    const verifiedInstallationId = readVerifiedMachineSocketInstallationIdFromSocketData(socket.data);
+    return verifiedInstallationId === null || machine.installationId === verifiedInstallationId;
+}
+
+/** Cluster backstop: re-check each local machine-scoped socket once and disconnect any that lost admission. */
+export async function reconfirmMachineScopedSocketAdmissions(sockets: Iterable<Socket>): Promise<void> {
+    for (const socket of [...sockets]) {
+        const accountId = (socket.data as { userId?: unknown } | undefined)?.userId;
+        if (typeof accountId !== 'string' || !readAuthenticatedMachineId(socket)) continue;
+        try {
+            if (!await isMachineScopedSocketAdmissionCurrent(socket, accountId)) socket.disconnect(true);
+        } catch (error) {
+            log({ module: 'websocket', level: 'warn', event: 'machine_socket_reconfirm_failed', error },
+                'Machine socket admission re-check after a possibly lost cluster push failed; the socket stays connected');
+        }
+    }
 }
 
 export function encodedMachineEnvelope(dataEncryptionKey: Uint8Array<ArrayBuffer> | null): string | null {

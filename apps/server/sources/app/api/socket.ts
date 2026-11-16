@@ -102,6 +102,7 @@ import { db, isPrismaErrorCode } from "@/storage/db";
 import { readSharedQaSchemaMismatchDiagnostic } from '@/storage/prismaErrors';
 import { isServerFeatureEnabledForHome, isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readMachineLiveStreamFeatureEnv, readMachineTransferFeatureEnv, readMachineTunnelFeatureEnv, readPeerMediationFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
+import { isMachineScopedSocketAdmissionCurrent, reconfirmMachineScopedSocketAdmissions } from './socket/machinePublication';
 import { confirmSessionScopedMachineAccess, readSessionScopedSocketBinding, reconfirmSessionScopedMachineAccess,
     resolveSessionScopedSocketBinding, resolveSocketResourceIdentity, watchSessionScopedMachineAccess } from "./socket/sessionScopedBinding";
 import {
@@ -416,6 +417,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
     const releaseClusterPushReconcile = shouldEnableRedisAdapter
         ? registerClusterPushReconcile({ io, redis: { onSocketClusterAdapterResubscribed, onSocketClusterAdapterPublishLost }, reconcile: () => {
             void reconfirmSessionScopedMachineAccess(io.of('/').sockets.values());
+            void reconfirmMachineScopedSocketAdmissions(io.of('/').sockets.values());
             void evictSignInIneligibleSockets(io.of('/').sockets.values()).catch(error => {
                 log({ module: 'auth-sign-in-policy', error }, 'Sign-in policy socket re-check after a possibly lost cluster push failed');
             });
@@ -1012,7 +1014,8 @@ export function startSocket(app: Fastify): () => Promise<void> {
             }
             await socket.join(protectedRooms);
             await confirmSessionScopedMachineAccess({ socket, accountId: userId });
-            if (!socket.connected) {
+            // Handlers rely on push disconnects to the Machine room just joined; one read closes the join window.
+            if (!socket.connected || !await isMachineScopedSocketAdmissionCurrent(socket, userId)) {
                 await rejectPostConnectAdmission();
                 return;
             }

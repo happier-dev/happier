@@ -26,6 +26,7 @@ import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { createFakeSocket, getSocketHandler } from '../testkit/socketHarness';
 import { VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY } from './machineSocketInstallationProof';
 import { machineUpdateHandler, observeMachineAliveFromSocket } from './machineUpdateHandler';
+import { isMachineScopedSocketAdmissionCurrent, reconfirmMachineScopedSocketAdmissions } from './machinePublication';
 import { machinesRoutes } from '../routes/machines/machinesRoutes';
 import { withAuthenticatedTestApp } from '../testkit/sqliteFastify';
 import { ScmDiffSummaryResultRevisionHintSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
@@ -1277,6 +1278,35 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
         } finally {
             stopObserving();
             eventRouter.removeConnection(owner.id, connection);
+        }
+    });
+
+    it('re-checks a machine-scoped socket once when its revoke push may have missed it, and disconnects it', async () => {
+        const owner = await db.account.create({ data: { publicKey: `reconfirm-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(owner.id);
+        const machineSocket = () => Object.assign(createFakeSocket({ data: { userId: owner.id,
+            clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } }), { disconnect: vi.fn() });
+        const admitted = machineSocket();
+        const userScoped = Object.assign(createFakeSocket({ data: { userId: owner.id, clientType: 'user-scoped' } }),
+            { disconnect: vi.fn() });
+        let machineReads = 0;
+        const stopObserving = observeSqliteRequests({ before: request => {
+            if (request.model === 'Machine') machineReads += 1;
+        } });
+        try {
+            expect(await isMachineScopedSocketAdmissionCurrent(admitted as unknown as Socket, owner.id)).toBe(true);
+            expect(machineReads).toBe(1);
+            // A revoke committed before this socket joined its Machine room: the push could not reach it.
+            await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
+            expect(await isMachineScopedSocketAdmissionCurrent(machineSocket() as unknown as Socket, owner.id)).toBe(false);
+            machineReads = 0;
+            await reconfirmMachineScopedSocketAdmissions([admitted, userScoped] as unknown as Socket[]);
+            expect(admitted.disconnect).toHaveBeenCalledWith(true);
+            expect(userScoped.disconnect).not.toHaveBeenCalled();
+            expect(machineReads).toBe(1);
+        } finally {
+            stopObserving();
         }
     });
 
