@@ -5,6 +5,8 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { build, version as esbuildVersion } from 'esbuild';
+import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+import { tmpdir } from 'node:os';
 
 /**
  * Host-provided Protocol modules for Plugin UI artifacts.
@@ -167,13 +169,29 @@ async function analyze(packageRoot, candidates) {
   const sources = [...new Set(candidates.values())].sort();
   const candidateKey = createHash('sha256').update(analyzerIdentity)
     .update(JSON.stringify([...candidates])).digest('hex');
-  const cached = await readCache(packageRoot);
-  if (cached?.candidateKey === candidateKey && Array.isArray(cached.files)
-    && cached.filesDigest === await digestFiles(packageRoot, cached.files)) {
-    return { provided: cached.provided, refused: new Map(cached.refused) };
-  }
+  const readCurrent = async () => {
+    const cached = await readCache(packageRoot);
+    return cached?.candidateKey === candidateKey && Array.isArray(cached.files)
+      && cached.filesDigest === await digestFiles(packageRoot, cached.files)
+      ? { provided: cached.provided, refused: new Map(cached.refused) } : null;
+  };
+  const current = await readCurrent();
+  if (current) return current;
+  // Concurrent preparations over the same tree run one analysis; the others
+  // wait for it and adopt its record when their inputs still match it.
+  return await withWorkspaceBundleLock(async () => await readCurrent() ?? await analyzeAndRecord(packageRoot, candidates, sources, candidateKey), {
+    // Host-local and always writable: revision trees mount the package read-only.
+    lockPath: join(tmpdir(), `happier-protocol-host-modules-${createHash('sha256').update(packageRoot).digest('hex').slice(0, 16)}.lock`),
+    timeoutMs: null, errorLabel: 'Protocol host-module analysis',
+  });
+}
+
+async function analyzeAndRecord(packageRoot, candidates, sources, candidateKey) {
+  const startedAt = Date.now();
   const graph = await analyzeImportGraph(packageRoot, sources);
   const derived = deriveProvided(candidates, graph);
+  // One full esbuild graph walk; under Protocol churn it dominates test preparation.
+  console.error(`[protocol-host-modules] analyzed ${graph.files.length} files for ${candidates.size} subpaths in ${Date.now() - startedAt}ms`);
   const files = [...graph.files].sort();
   const record = { candidateKey, files, filesDigest: await digestFiles(packageRoot, files),
     provided: derived.provided, refused: [...derived.refused] };
