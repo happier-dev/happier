@@ -159,12 +159,12 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
       const size = SIZES.find(size => size.id === launch.size)!;
       const kind = KINDS.find(kind => kind.id === launch.kind)!;
       try {
-        const response = await http('/v1/instances', 'POST', { template: kind.template, type: launch.kind,
+        const response = await http('/v1/instances', 'POST', { template: launch.template ?? kind.template, type: launch.kind,
           region: launch.region, resources: { cpu: size.cpu, memory: size.memory, disk: DISK_GB }, mount_path: '/root', auto_sleep: false });
         if (response.status === 401 || response.status === 403) return { kind: 'rejected', code: 'credential_unavailable' };
         if (response.status >= 400 && response.status < 500 && response.status !== 408) return { kind: 'rejected', code: 'provider_unavailable' };
         const native = identity.safeParse(await json(response));
-        return native.success ? { kind: 'bound', resource: { ...reference({ instanceId: native.data.id, managedId, ...launch }), origin: 'created' as const },
+        return native.success ? { kind: 'bound', resource: { ...reference({ instanceId: native.data.id, managedId, kind: launch.kind, size: launch.size, region: launch.region }), origin: 'created' as const },
           ...(native.data.status === 'running' ? {} : { startPending: true as const }) } : unknown(operation);
       } catch (error) { return projectMachineProvisionerActionFailure(error, () => safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : unknown(operation)); }
     },

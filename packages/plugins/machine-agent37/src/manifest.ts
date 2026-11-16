@@ -11,6 +11,7 @@ import {
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, connectedAccountPortableRuntime } from './account.js';
 import { nativeFetch } from './machine/credentials.js';
 import { createAgent37NativeClient } from './machine/nativeClient.js';
+import { Agent37PreparationInputSchema, Agent37PreparedArtifactSchema, Agent37PreparationOperationSchema, PREPARATION_SCHEMAS, createAgent37PreparationClient } from './machine/preparation.js';
 import { BILLING, RETENTION, CONTRIBUTION, ROLE_SCHEMAS, RECONCILIATION, Agent37LaunchSchema, Agent37OptionsSchema, Agent37ResourceSchema, Agent37OperationSchema } from './machine/schemas.js';
 import { options as projectOptions } from './machine/options.js';
 
@@ -20,6 +21,7 @@ const defaults = { scopes: ['global'], surfaces: ['cli', 'plugin', 'ui'], hostAc
 } as const;
 const confirmation = { title: 'Manage this Agent37 machine?', body: 'Agent37 bills running compute and retained disk. Stop is a cold shutdown; retained disk is still billed. Delete permanently removes the instance.' };
 const runtime = (context: PluginAccountActionContext | PluginInvocationContext) => createAgent37NativeClient(nativeFetch(context), context.signal, context.invokedAtMs);
+const preparationRuntime = (context: PluginAccountActionContext | PluginInvocationContext) => createAgent37PreparationClient(nativeFetch(context), context.signal);
 const errorCode = (error: unknown) => error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'agent37_unavailable';
 
 export const MACHINE_PROVISIONER = {
@@ -31,6 +33,9 @@ export const MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file' },
   reconciliation: { nativeOperationSchema: Agent37OperationSchema.jsonSchema, action: 'reconcile' },
+  preparation: { inputSchema: Agent37PreparationInputSchema.jsonSchema, artifactSchema: Agent37PreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: Agent37PreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const PLUGIN = definePlugin({
@@ -82,6 +87,20 @@ export const PLUGIN = definePlugin({
     destroy: { ...defaults, title: 'Delete Agent37 machine', dangerLevel: 'destructive', confirmation, inputSchema: RECONCILIATION.destroyInput, resultSchema: RECONCILIATION.destroyResult,
       async run(input, context) { try { return await runtime(context).destroy(input); }
         catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown' as const, code: errorCode(error) })); } } },
+    'prepare-build': { ...defaults, title: 'Build Agent37 prepared template', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this Agent37 template?', body: 'Agent37 cloud builds are free. Provider charges apply to instances and retained storage; see https://www.agent37.com/docs/agents-api/billing. An active build continues after cancellation until Agent37 finishes it.' },
+      inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
+      async run(input, context) { return preparationRuntime(context).build(input); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect Agent37 prepared template', dangerLevel: 'safe',
+      inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
+      async run(input, context) { return preparationRuntime(context).inspect('nativeOperation' in input ? { nativeOperation: input.nativeOperation.value } : input); } },
+    'prepare-destroy': { ...defaults, title: 'Delete Agent37 prepared template', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this Agent37 template?', body: 'This removes the workspace template. Existing instances keep their image. Contact Agent37 support for physical image purge after those instances are deleted.' },
+      inputSchema: PREPARATION_SCHEMAS.destroyInput, resultSchema: PREPARATION_SCHEMAS.destroyResult,
+      async run(input, context) { return preparationRuntime(context).destroy({
+        ...(input.artifact === undefined ? {} : { artifact: input.artifact.value }),
+        ...(input.nativeOperation === undefined ? {} : { nativeOperation: input.nativeOperation.value }),
+      }); } },
     exec: { ...defaults, title: 'Execute Agent37 guest command', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.execInput, resultSchema: MachineProvisionerNativeExecResultV1Schema,
       async run(input, context) { return runtime(context).exec(input); } },
     'put-file': { ...defaults, title: 'Write Agent37 guest file', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.putFileInput, resultSchema: MachineProvisionerPutFileResultV1Schema,

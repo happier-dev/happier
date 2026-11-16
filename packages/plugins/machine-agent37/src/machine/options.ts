@@ -7,7 +7,7 @@ export function options(): MachineProvisionerOptionsResultV1 {
   // Agent37 has no init system; the existing sandbox role selects guest-process enrollment.
   return { base: { launch: {}, guestPlatform: 'linux', enrollmentRole: 'sandbox', retention: RETENTION }, dimensions: {
     image: KINDS.map(({ id, title, description }) => ({ id, title, assignments: [{ path: 'kind', value: id }], guestPlatform: 'linux',
-      nativeFacts: { image: { id, title, description } } })),
+      nativeFacts: { image: { id, title, description }, preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' } } })),
     size: SIZES.map(size => ({ id: size.id, title: `${size.cpu} vCPU · ${size.memory} GB RAM · ${DISK_GB} GB disk`,
       assignments: [{ path: 'size', value: size.id }], nativeFacts: { size: { id: size.id, title: size.id,
         cpuCores: size.cpu, memoryBytes: size.memory * 1000 ** 3, diskBytes: DISK_GB * 1000 ** 3 } },

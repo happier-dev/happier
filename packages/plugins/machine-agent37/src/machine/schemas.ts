@@ -22,7 +22,13 @@ function choices<T extends string>(values: readonly [T, ...T[]]) {
 const size = choices([SIZES[0].id, ...SIZES.slice(1).map(size => size.id)]);
 const regions = [...new Set(KINDS.flatMap(kind => [...kind.regions]))];
 const region = choices([regions[0]!, ...regions.slice(1)]);
-const launchKind = (kind: typeof KINDS[number]) => defineProtocolObject({ kind: defineProtocolLiteral(kind.id), size, region: choices(kind.regions) }, closed);
+export const PREPARED_NAME_PREFIX = 'happier-prepared-';
+// Native names are at most 63 characters. Operation-derived names fill the
+// remaining space with SHA-256 hex, preserving recovery without a build id.
+export const PREPARED_NAME_HASH_LENGTH = 63 - PREPARED_NAME_PREFIX.length;
+export const Agent37PreparedNameSchema = defineProtocolString({ pattern: '^' + PREPARED_NAME_PREFIX + '[a-f0-9]{' + PREPARED_NAME_HASH_LENGTH + '}$' });
+const preparedTemplate = defineProtocolString({ pattern: '^' + PREPARED_NAME_PREFIX + '[a-f0-9]{' + PREPARED_NAME_HASH_LENGTH + '}@[1-9][0-9]*$' });
+const launchKind = (kind: typeof KINDS[number]) => defineProtocolObject({ kind: defineProtocolLiteral(kind.id), size, region: choices(kind.regions), template: preparedTemplate.optional() }, closed);
 export const Agent37LaunchSchema = defineProtocolUnion([launchKind(KINDS[0]), launchKind(KINDS[1]), ...KINDS.slice(2).map(launchKind)]);
 export const Agent37OptionsSchema = defineProtocolObject({}, closed);
 export const Agent37ResourceSchema = defineProtocolObject({
