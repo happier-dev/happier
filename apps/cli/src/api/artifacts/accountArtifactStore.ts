@@ -1,5 +1,4 @@
 import axios from '@/api/client/credentialAxios';
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { artifactAccessUrl as accessUrl, requireArtifactAccessResponse as requireAccessResponse,
   reportArtifactTemplateAcceptedVersion } from './artifactAccessHttp';
@@ -68,7 +67,8 @@ import { requesterAccountEncryptionMode, type RequesterAccountAuthorizationHeade
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { createHttpStatusError, HttpStatusError, readHttpStatus } from '@/api/client/httpStatusError';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
-import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createBackoff } from '@/utils/time';
 import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocEditAcceptHostInputV1Schema, DocEditAcceptTransportInputV1Schema,
   DocEditDeclineTransportInputV1Schema, DocEditDecisionResultV1Schema,
@@ -80,9 +80,10 @@ function artifactReadHttpError(status: number, payload?: unknown, authorizationH
   const refusal: ActionExecuteFailure = authorizationHeaders && (status === 401 || status === 403)
     ? projectHomeAuthorizationHttpFailure(status, authorizationHeaders, payload)
     : { ok: false, errorCode: 'artifact_read_unavailable', error: 'artifact_read_unavailable' };
-  const cause: ActionExecuteFailure = { ...refusal,
+  const failure = { ...refusal,
     failureCause: refusal.failureCause ?? projectActionFailureCauseV1(error, 'artifacts.read') };
-  return Object.assign(error, { code: cause.errorCode, message: cause.error, status, cause });
+  const cause = status === 503 ? projectConfirmedActionHttpRefusal(failure, status, payload) : failure;
+  return Object.assign(createActionExecuteFailureError(cause), { name: error.name, response: error.response, status, cause });
 }
 
 export type AccountArtifactRevision = Readonly<{ headerVersion: number; bodyVersion: number }>;

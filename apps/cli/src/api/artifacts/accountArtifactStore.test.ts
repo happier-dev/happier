@@ -1357,6 +1357,25 @@ describe('createAccountArtifactStore', () => {
     expect(await store.read('required-doc')).toBeNull();
   });
 
+  it('retains the captured Artifact read database cause without certifying the enclosing Action effect', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'synthetic-token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    mockGet.mockResolvedValue({ status: 503, data: {
+      error: 'database_connection_unavailable', statusCode: 503, private: 'private-storage-message',
+    } });
+    const error: unknown = await store.read('required-doc').catch((failure: unknown) => failure);
+    expect(error).toMatchObject({ code: 'artifact_read_unavailable', status: 503, cause: {
+      ok: false, errorCode: 'artifact_read_unavailable', failureCause: {
+        phase: 'home.database.transaction', errorClass: 'HttpStatusError',
+        errorCode: 'database_connection_unavailable', httpStatus: 503,
+      },
+    } });
+    expect(JSON.stringify(error)).not.toContain('private-storage-message');
+    expect(JSON.stringify(error)).not.toContain('synthetic-token');
+    expect(error).not.toHaveProperty('effectAttempted');
+    expect(error).not.toHaveProperty('cause.effectAttempted');
+  });
+
   it.each(['plain', 'e2ee'] as const)('keeps malformed decoded %s headers distinct from definitive Artifact absence', async mode => {
     const machineKey = new Uint8Array(randomBytes(32));
     const credentials = mode === 'plain' ? { token: 'token', encryption: null }
