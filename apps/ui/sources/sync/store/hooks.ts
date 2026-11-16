@@ -2302,9 +2302,13 @@ export function useSessionUsage(sessionId: string, exactScope?: ExactSessionUsag
       const sessionMessages = activeHomeMatches || !exactScope
         ? state.sessionMessages?.[normalizedSessionId]
         : undefined;
+      // A mounted surface's supplied Session can be held across usage-only writes (the Session shell
+      // does not follow latestUsage), so the exact Home's live carrier wins over it when present.
       return sessionMessages?.reducerState?.latestUsage
         ?? (exactScope
-          ? suppliedSession?.latestUsage
+          ? (exactSessionMatches
+            ? selectHomeQualifiedSession(state, normalizedSessionId, targetServerId, activeServerId)?.latestUsage
+            : undefined) ?? suppliedSession?.latestUsage
           : state.sessions?.[normalizedSessionId]?.latestUsage)
         ?? null;
     })

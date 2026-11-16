@@ -27,15 +27,6 @@ type ShellVisibleAgentStateRequestSignature = ReadonlyArray<readonly [
     },
 ]>;
 
-type ShellVisibleLatestUsageSignature = Readonly<{
-    inputTokens: number | null;
-    outputTokens: number | null;
-    cacheCreation: number | null;
-    cacheRead: number | null;
-    contextSize: number | null;
-    contextWindowTokens: number | null;
-}>;
-
 function buildShellVisibleMetadataSignatureValue(metadata: Session['metadata']): unknown {
     return buildSessionMetadataStabilitySignatureValue(metadata);
 }
@@ -49,24 +40,6 @@ function normalizeServerId(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
-}
-
-function buildShellVisibleLatestUsageSignatureValue(
-    latestUsage: Session['latestUsage'],
-): ShellVisibleLatestUsageSignature | null {
-    if (!latestUsage || typeof latestUsage !== 'object') return null;
-    const usageWithContextWindowTokens = latestUsage as (typeof latestUsage & { contextWindowTokens?: number });
-
-    return {
-        inputTokens: typeof latestUsage.inputTokens === 'number' ? latestUsage.inputTokens : null,
-        outputTokens: typeof latestUsage.outputTokens === 'number' ? latestUsage.outputTokens : null,
-        cacheCreation: typeof latestUsage.cacheCreation === 'number' ? latestUsage.cacheCreation : null,
-        cacheRead: typeof latestUsage.cacheRead === 'number' ? latestUsage.cacheRead : null,
-        contextSize: typeof latestUsage.contextSize === 'number' ? latestUsage.contextSize : null,
-        contextWindowTokens: typeof usageWithContextWindowTokens.contextWindowTokens === 'number'
-            ? usageWithContextWindowTokens.contextWindowTokens
-            : null,
-    };
 }
 
 function buildShellVisibleAgentStateRequestSignatureValue(
@@ -154,7 +127,8 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
         pendingActivationAuthorization: session.pendingActivationAuthorization ?? null,
         pendingActivationFailureDetails: session.pendingActivationFailureDetails ?? null,
-        latestUsage: buildShellVisibleLatestUsageSignatureValue(session.latestUsage),
+        // latestUsage moves with each usage report of a turn; its readers subscribe to the usage owner
+        // (useSessionUsage), so it is not a shell fact either.
     }),
     serializeShellSequenceSetPart(session.rollbackEligibleTurnStarts),
     serializeShellAgentStateRequestsPart(session.agentState),

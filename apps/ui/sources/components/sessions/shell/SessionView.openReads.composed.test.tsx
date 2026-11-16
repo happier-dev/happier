@@ -231,3 +231,44 @@ it('renders only its focus readers when its retained Session tab is hidden and s
         await screen.unmount();
     }
 });
+
+it('renders nothing of the Session view when a turn reports its usage', async () => {
+    installShippedNativeFrameScheduler();
+    const id = 'usage-write';
+    storage.getState().applySessions([createSessionFixture({ id, serverId: runtime.serverId, seq: 4, encryptionMode: 'plain' })]);
+    await sync.ensureSessionVisibleForMessageRoute(id, { serverId: runtime.serverId, hydrateMessages: false });
+    const counts = createCommittedFiberRenderCounter();
+    let readRoot: (() => ReturnType<ReturnType<typeof readTestRendererRoot>>) | null = null;
+    const screen = await renderScreen(<React.Profiler id="session-tab" onRender={() => { if (readRoot) counts.onCommitRoot(readRoot()); }}>
+        <DestinationInstanceHost tabId={id} ref={{ kind: 'session', params: { id, serverId: runtime.serverId } }} pathname={`/session/${id}`}
+            focused visible navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+            <SessionDestinationBody />
+        </DestinationInstanceHost>
+    </React.Profiler>, { wrapper: runtime.Wrapper });
+    try {
+        await act(async () => {
+            await waitForHomeGovernance(() => expect(storage.getState().sessionMessages[id]?.isLoaded).toBe(true));
+            await waitForHomeGovernance(() => expect(hasCurrentSessionTurnsProjection(storage.getState().sessions[id] ?? {})).toBe(true));
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        readRoot = readTestRendererRoot(screen.tree.root);
+        counts.start();
+        // Each usage report of a streamed turn rewrites the Session row's latestUsage. Its readers follow the
+        // usage owner (useSessionUsage); the Session view body and everything under it draw nothing from it.
+        for (const contextSize of [15, 30, 45]) {
+            await act(async () => {
+                const current = storage.getState().sessions[id]!;
+                storage.getState().applySessions([{ ...current, latestUsage: { inputTokens: contextSize, outputTokens: 5,
+                    cacheCreation: 0, cacheRead: 0, contextSize } }]);
+            });
+            await flushHookEffects({ cycles: 2, turns: 2 });
+        }
+        counts.stop();
+        const renders = counts.read().renders;
+        const summary = JSON.stringify(Object.fromEntries([...renders].sort((a, b) => b[1] - a[1]).slice(0, 15)));
+        // HEAD before: ~185 renders per write (the Session body and its whole subtree).
+        expect([...renders.values()].reduce((sum, count) => sum + count, 0), summary).toBe(0);
+    } finally {
+        await screen.unmount();
+    }
+});
