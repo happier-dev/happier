@@ -165,7 +165,10 @@ type SelectedSource = Readonly<{
   qualifiedConnectedAccountService: PluginContributionIdentityV1 | null;
   expectedConnectedAccount: QualifiedConnectedAccountRef | null;
   savedSecretCustody: Readonly<{
+    /** The snapshot the selected reference was inspected in (Home-admitted for materialization). */
     snapshot: ActiveAccountSettingsSnapshot;
+    /** Account lifetime the selection was read in; acquisition stays inside it. */
+    lifetimeToken: number;
     secretRef: string;
     fingerprint: string;
     ownedByRequester: boolean;
@@ -235,6 +238,56 @@ function unavailableFrom(error: unknown): PluginError {
   return error instanceof SavedSecretMaterializationUnavailable
     ? unavailable(error.status, error.admissionReason, error.sourceFailure)
     : unavailable();
+}
+
+/**
+ * Reads one selected Saved Secret reference into the snapshot it is inspected
+ * in. A daemon's catalog may not hold a shared row yet (cold) or may hold a
+ * stale one, so the local row alone never refuses a selection.
+ */
+type SavedSecretSelectionAdmission = (
+  snapshot: ActiveAccountSettingsSnapshot,
+  secretRef: string,
+  signal: AbortSignal,
+) => Promise<ActiveAccountSettingsSnapshot>;
+
+/**
+ * Materialization: Home admission of the selected reference through the
+ * canonical operation refresh. A hydrated row is not authorization for a new
+ * operation (`AccountChange` is only a wake-up hint); the refresh returns a
+ * personal reference's snapshot untouched, so personal secrets stay offline.
+ */
+function admitSelectedSavedSecret(
+  refresh: typeof refreshSavedSecretCatalogForOperation,
+): SavedSecretSelectionAdmission {
+  return async (snapshot, secretRef, signal) => {
+    if (!snapshot.scopeKey) return snapshot;
+    try {
+      return await refresh({ expectedScopeKey: snapshot.scopeKey, references: [{ ref: secretRef }], signal });
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof SavedSecretOperationAdmissionError) {
+        savedSecretUnavailable(savedSecretOperationAdmissionStatus(error.reason), error.reason);
+      }
+      throw unavailableFrom(error);
+    }
+  };
+}
+
+/**
+ * Review-only inspection: a ready local row (including a snapshot an
+ * operation already admitted) answers without another Home read; any other
+ * local state is asked of the Home once.
+ */
+function admitUnreadySavedSecret(
+  refresh: typeof refreshSavedSecretCatalogForOperation,
+): SavedSecretSelectionAdmission {
+  const admit = admitSelectedSavedSecret(refresh);
+  return async (snapshot, secretRef, signal) => (
+    createSavedSecretMaterializerFromSnapshotV1(snapshot).inspect(secretRef).status === 'ready'
+      ? snapshot
+      : await admit(snapshot, secretRef, signal)
+  );
 }
 
 function invalidRequest(): PluginError {
@@ -508,6 +561,7 @@ async function selectedSourceFromSnapshot(
   snapshot: ActiveAccountSettingsSnapshot | null,
   accountSettingsLifetimeToken: number,
   signal: AbortSignal,
+  admitSavedSecret?: SavedSecretSelectionAdmission,
 ): Promise<SelectedSource> {
   if (!snapshot) throw unavailable();
   const purposes = snapshot.connectedPurposeCatalog;
@@ -538,7 +592,14 @@ async function selectedSourceFromSnapshot(
       candidate.kind === 'savedSecret'
     ));
     if (!source || source.kind !== 'savedSecret') throw unavailable();
-    const savedSecret = createSavedSecretMaterializerFromSnapshotV1(snapshot)
+    // Selection is value-free. Admission owns acquiring the selected row,
+    // including a cold daemon's first read; inspect only the snapshot it
+    // returns, which acquisition then reuses rather than admitting again.
+    const materialSnapshot = admitSavedSecret
+      ? await admitSavedSecret(snapshot, resolved.savedSecret.secretId, signal)
+      : snapshot;
+    signal.throwIfAborted();
+    const savedSecret = createSavedSecretMaterializerFromSnapshotV1(materialSnapshot)
       .inspect(resolved.savedSecret.secretId);
     if (
       savedSecret.status !== 'ready'
@@ -559,7 +620,8 @@ async function selectedSourceFromSnapshot(
       qualifiedConnectedAccountService: null,
       expectedConnectedAccount: null,
       savedSecretCustody: Object.freeze({
-        snapshot,
+        snapshot: materialSnapshot,
+        lifetimeToken: accountSettingsLifetimeToken,
         secretRef: resolved.savedSecret.secretId,
         fingerprint: savedSecret.fingerprint,
         ownedByRequester: savedSecret.relationship === 'owner',
@@ -789,12 +851,14 @@ type RawCredentialAuthorizationDependencies = Readonly<{
   getAccountSettingsSnapshot: () => ActiveAccountSettingsSnapshot | null;
   getAccountSettingsSnapshotLifetimeToken: () => number;
   ensureAccountSettingsSnapshot?: () => Promise<void>;
+  refreshSavedSecretCatalogForOperation: typeof refreshSavedSecretCatalogForOperation;
 }>;
 
 async function readSelectedSource(
   input: RawCredentialAuthorizationDependencies,
   authority: DeclarationAuthority,
   signal: AbortSignal,
+  admitSavedSecret: SavedSecretSelectionAdmission,
 ): Promise<SelectedSource> {
   let snapshot = input.getAccountSettingsSnapshot();
   if ((!snapshot || snapshot.connectedPurposeCatalog?.status !== 'ready') && input.ensureAccountSettingsSnapshot) {
@@ -810,6 +874,7 @@ async function readSelectedSource(
     snapshot,
     accountSettingsLifetimeToken,
     signal,
+    admitSavedSecret,
   );
 }
 
@@ -854,6 +919,7 @@ async function inspectCurrentAuthorization(
   authority: DeclarationAuthority,
   signal: AbortSignal,
   request: VoiceRawCredentialMaterializationRequest,
+  admitSavedSecret: SavedSecretSelectionAdmission,
   allowMediated = false,
 ): Promise<CurrentAuthorizationInspection> {
   signal.throwIfAborted();
@@ -861,7 +927,7 @@ async function inspectCurrentAuthorization(
   // the acquisition. Code custody, install review and the process-local
   // occurrence are deliberately not part of the durable credential permission
   // identity; the admitted occurrence is checked once, after the reads.
-  const firstSelected = await readSelectedSource(input, authority, signal);
+  const firstSelected = await readSelectedSource(input, authority, signal, admitSavedSecret);
   if (allowMediated && request.kind === 'httpHeaders' && firstSelected.source.kind === 'savedSecret') {
     const mediated = resolveVoiceCredentialMediatedGrantDeclarationsV1({
       pluginId: input.binding.manifest.id, contribution: authority.contribution,
@@ -915,6 +981,7 @@ function createAuthorizationInspector(
   input: RawCredentialAuthorizationDependencies,
   authority: DeclarationAuthority,
 ): PluginRawCredentialAuthorizationInspector {
+  const admitSavedSecret = admitUnreadySavedSecret(input.refreshSavedSecretCatalogForOperation);
   return Object.freeze({
     async inspectAuthorization(request, options = {}) {
       const signal = options.signal ?? new AbortController().signal;
@@ -924,6 +991,7 @@ function createAuthorizationInspector(
           authority,
           signal,
           canonicalRequest(request),
+          admitSavedSecret,
           true,
         )).inspection;
       } catch (error) {
@@ -943,6 +1011,8 @@ export function createPluginRawCredentialAuthorizationInspector(input: Readonly<
   getAccountSettingsSnapshotLifetimeToken?: () => number;
   /** Joins the canonical daemon snapshot warm only before initial source admission. */
   ensureAccountSettingsSnapshot?: () => Promise<void>;
+  /** The canonical operation-admission refresh; injectable for tests only. */
+  refreshSavedSecretCatalogForOperation?: typeof refreshSavedSecretCatalogForOperation;
 }>): PluginRawCredentialAuthorizationInspector {
   return createAuthorizationInspector({
     ...input,
@@ -950,6 +1020,8 @@ export function createPluginRawCredentialAuthorizationInspector(input: Readonly<
     getAccountSettingsSnapshotLifetimeToken:
       input.getAccountSettingsSnapshotLifetimeToken
       ?? getActiveAccountSettingsSnapshotLifetimeToken,
+    refreshSavedSecretCatalogForOperation:
+      input.refreshSavedSecretCatalogForOperation ?? refreshSavedSecretCatalogForOperation,
   }, deriveDeclarationAuthority(input.binding));
 }
 
@@ -981,52 +1053,13 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
     ...(input.connectedAccounts ? { connectedAccounts: input.connectedAccounts } : {}),
     getAccountSettingsSnapshot: getSnapshot,
     getAccountSettingsSnapshotLifetimeToken: getSnapshotLifetimeToken,
+    refreshSavedSecretCatalogForOperation: refreshForOperation,
     ...(input.ensureAccountSettingsSnapshot
       ? { ensureAccountSettingsSnapshot: input.ensureAccountSettingsSnapshot }
       : {}),
   });
   const authorizationInspector = createAuthorizationInspector(authorizationDependencies, authority);
-
-  /**
-   * Admits this materialization against Home-current shared material.
-   *
-   * A hydrated catalog row is not authorization for a *new* operation:
-   * `AccountChange` is only a wake-up hint, so a shared Saved Secret revoked
-   * since hydration would otherwise be handed to the plugin in plaintext. The
-   * batch refresh in `hydrateSavedSecretCatalog` is the single owner of that
-   * decision and returns the cached snapshot untouched for a personal
-   * reference, so a personal-secret materialization still never touches the
-   * network. The refreshed snapshot is read back through the existing
-   * selected-source bracket below, which already refuses a selection that
-   * moved.
-   */
-  const admitSavedSecretOperation = async (
-    custody: NonNullable<SelectedSource['savedSecretCustody']>,
-    signal: AbortSignal,
-  ): Promise<SavedSecretMaterializerV1> => {
-    const expectedScopeKey = custody.snapshot.scopeKey;
-    try {
-      const snapshot = expectedScopeKey ? await refreshForOperation({
-        expectedScopeKey,
-        references: [{ ref: custody.secretRef }],
-        signal,
-      }) : custody.snapshot;
-      const lifetime = getSnapshotLifetimeToken();
-      return await acquireSavedSecretMaterializerForOperation({ snapshot, references: [{ ref: custody.secretRef }],
-        isCurrent: () => !signal.aborted && getSnapshotLifetimeToken() === lifetime,
-        ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
-        ...(input.secretSources ? { secretSources: input.secretSources } : {}), signal });
-    } catch (error) {
-      signal.throwIfAborted();
-      if (error instanceof SavedSecretOperationAdmissionError) {
-        savedSecretUnavailable(
-          savedSecretOperationAdmissionStatus(error.reason),
-          error.reason,
-        );
-      }
-      throw unavailableFrom(error);
-    }
-  };
+  const admitSavedSecretOperation = admitSelectedSavedSecret(refreshForOperation);
 
   const authorize = async (
     request: VoiceRawCredentialMaterializationRequest,
@@ -1051,6 +1084,7 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
       authority,
       signal,
       request,
+      admitSavedSecretOperation,
     );
     // Owner ruling 2026-10-31: selecting one's own Saved Secret is the approval,
     // decided by the link read above. Someone else's secret keeps their approval.
@@ -1080,7 +1114,14 @@ export function createPluginRawCredentialMaterializer(input: Readonly<{
         try {
           const custody = before.selected.savedSecretCustody;
           if (!custody) throw unavailable();
-          const materializer = await admitSavedSecretOperation(custody, signal);
+          // The selection already admitted this reference against the Home;
+          // acquisition reuses that snapshot inside the same Account lifetime.
+          const materializer = await acquireSavedSecretMaterializerForOperation({
+            snapshot: custody.snapshot, references: [{ ref: custody.secretRef }],
+            isCurrent: () => !signal.aborted && getSnapshotLifetimeToken() === custody.lifetimeToken,
+            ...(input.machineAdmission ? { machineAdmission: input.machineAdmission } : {}),
+            ...(input.secretSources ? { secretSources: input.secretSources } : {}), signal,
+          });
           callbackCredentialRevision = custody.callbackCredentialRevision;
           if (
             options.credentialRevisionBasis?.expectedCredentialRevision !== null

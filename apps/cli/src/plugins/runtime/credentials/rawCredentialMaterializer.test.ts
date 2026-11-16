@@ -375,6 +375,7 @@ function createHarness(input: Readonly<{
   const materializer = createPluginRawCredentialMaterializer(materializerInput);
   return {
     materializer,
+    authorizationInspector: createPluginRawCredentialAuthorizationInspector(materializerInput),
     connectedAccounts,
     listInputs,
     setSnapshot(next: ActiveAccountSettingsSnapshot | null) { currentSnapshot = next; },
@@ -1196,6 +1197,62 @@ describe('plugin raw credential materializer', () => {
     expect(String(failure)).not.toContain(leaked);
   });
 
+  it.each(['inspection', 'standalone inspection', 'materialization'] as const)(
+    'admits a cold selected shared Saved Secret before %s', async (operation) => {
+      const admitted = snapshot({ source: 'savedSecret', sharedSecret: true });
+      const refresh = vi.fn<typeof refreshSavedSecretCatalogForOperation>(async () => {
+        saved.setSnapshot(admitted);
+        return admitted;
+      });
+      const saved = createHarness({
+        initialSnapshot: { ...admitted, savedSecretResources: [], savedSecretCatalogState: undefined },
+        refreshSavedSecretCatalogForOperation: refresh,
+      });
+      if (operation === 'materialization') {
+        await expect(saved.materializer.materialize(connectedHeaderRequest)).resolves.toEqual({
+          kind: 'httpHeaders', headers: { authorization: 'shared-plugin-raw' },
+        });
+      } else {
+        const inspector = operation === 'inspection' ? saved.materializer : saved.authorizationInspector;
+        await expect(inspector.inspectAuthorization(connectedHeaderRequest)).resolves.toMatchObject({
+          subject: { kind: 'credential_access_disclosure' },
+          grantRequirement: 'approval_required',
+        });
+        expect(saved.listInputs).toHaveLength(0);
+      }
+      // One Home admission for this operation, including materialization.
+      expect(refresh).toHaveBeenCalledTimes(1);
+      expect(refresh.mock.calls[0]?.[0].references).toEqual([
+        { ref: 'happier:shared-secret:v1:resource_plugin_voice' },
+      ]);
+    },
+  );
+
+  it('asks the Home only when the local selected shared row is not ready for inspection', async () => {
+    const ready = snapshot({ source: 'savedSecret', sharedSecret: true });
+    // Warm (or an operation's already-admitted snapshot): no second Home read.
+    const warmRefresh = vi.fn<typeof refreshSavedSecretCatalogForOperation>(async () => ready);
+    const warm = createHarness({ initialSnapshot: ready, refreshSavedSecretCatalogForOperation: warmRefresh });
+    await expect(warm.authorizationInspector.inspectAuthorization(connectedHeaderRequest)).resolves.toMatchObject({
+      grantRequirement: 'approval_required',
+    });
+    expect(warmRefresh).not.toHaveBeenCalled();
+
+    // Shared after hydration: a ready catalog without the row is stale, not a refusal.
+    const staleRefresh = vi.fn<typeof refreshSavedSecretCatalogForOperation>(async () => {
+      stale.setSnapshot(ready);
+      return ready;
+    });
+    const stale = createHarness({
+      initialSnapshot: { ...ready, savedSecretResources: [], savedSecretCatalogState: 'ready' },
+      refreshSavedSecretCatalogForOperation: staleRefresh,
+    });
+    await expect(stale.authorizationInspector.inspectAuthorization(connectedHeaderRequest)).resolves.toMatchObject({
+      grantRequirement: 'approval_required',
+    });
+    expect(staleRefresh).toHaveBeenCalledTimes(1);
+  });
+
   it('materializes a selected shared Saved Secret through the same plugin capability', async () => {
     const saved = createHarness({
       initialSnapshot: snapshot({ source: 'savedSecret', sharedSecret: true }),
@@ -1241,10 +1298,13 @@ describe('plugin raw credential materializer', () => {
     });
   });
 
-  it('admits a new raw-credential materialization against Home-current shared material, not the hydrated row', async () => {
+  it.each(['inspection', 'materialization'] as const)('admits raw-credential %s against Home-current shared material, not the hydrated row', async (operation) => {
     const references: string[] = [];
+    const hydrated = snapshot({ source: 'savedSecret', sharedSecret: true });
     const saved = createHarness({
-      initialSnapshot: snapshot({ source: 'savedSecret', sharedSecret: true }),
+      initialSnapshot: operation === 'inspection'
+        ? { ...hydrated, savedSecretResources: [], savedSecretCatalogState: undefined }
+        : hydrated,
       refreshSavedSecretCatalogForOperation: async (refreshInput) => {
         for (const reference of refreshInput.references ?? []) references.push(reference.ref);
         // The Home has revoked this shared resource since hydration and the
@@ -1257,9 +1317,10 @@ describe('plugin raw credential materializer', () => {
       },
     });
 
-    await expect(saved.materializer.materialize({
-      kind: 'environment', keys: ['VOICE_TOKEN'],
-    })).rejects.toMatchObject({
+    const request = { kind: 'environment', keys: ['VOICE_TOKEN'] } as const;
+    await expect(operation === 'inspection'
+      ? saved.authorizationInspector.inspectAuthorization(request)
+      : saved.materializer.materialize(request)).rejects.toMatchObject({
       code: 'plugin_voice_credential_access_unavailable',
       details: {
         materialStatus: 'temporarily_unavailable',
@@ -1303,10 +1364,11 @@ describe('plugin raw credential materializer', () => {
     for (const replacement of replacementCases) {
       const harness = createHarness({
         initialSnapshot: snapshot({ source: 'savedSecret' }),
-        // The admission read is the only Account Settings read; the selected
-        // source then changes underneath the rest of the acquisition.
-        afterSnapshotRead(readNumber, replace) {
-          if (readNumber === 1) replace(replacement.next);
+        // The selected source has been admitted when installation identity is
+        // read; vary Account state at that real asynchronous boundary.
+        async readCurrentAuthoritySource() {
+          harness.setSnapshot(replacement.next);
+          return machineA;
         },
       });
       const operation = harness.materializer.materialize(connectedHeaderRequest);
