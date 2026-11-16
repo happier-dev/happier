@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, useState, type ReactNode } from 'react';
+import { cloneElement, createContext, isValidElement, useContext, useState, type ReactNode } from 'react';
 import { View, type TextStyle } from 'react-native';
 
 import type { HappierUiAccessibility, HappierUiTheme } from '../../environment/types.js';
@@ -59,6 +59,13 @@ function textStyle(role: HappierPortableStyle, color: string): HappierPortableSt
 }
 
 /**
+ * A row's end asks for the compact status (UI refinements 2026-11-16): a column row's name is what tells rows apart, so
+ * an inline status in its trailing slot draws only its tone dot and keeps its words as its accessible name. The slot's
+ * owner provides it (core `CollectionNavigationRow`); a status standing on its own keeps its words.
+ */
+export const HappierStatusCompactContext = createContext(false);
+
+/**
  * The shared semantic status row for executable Plugin UI and declarative
  * rendering. It owns the status role, announcement policy, tone-to-dot mapping
  * and row layout. A core adapter may pass its existing scaled `Text` elements
@@ -67,6 +74,7 @@ function textStyle(role: HappierPortableStyle, color: string): HappierPortableSt
 export function HappierStatus(props: HappierStatusProps) {
   const environmentAccessibility = useOptionalHappierUiAccessibility();
   const inline = props.presentation === 'inline';
+  const compact = useContext(HappierStatusCompactContext) && inline;
   const accessibilityLiveRegion = props.accessibilityLiveRegion ?? 'polite';
   const ariaLive = accessibilityLiveRegion === 'none' ? 'off' : accessibilityLiveRegion;
   const highContrast = (props.contrast ?? environmentAccessibility?.contrast) === 'high';
@@ -105,6 +113,20 @@ export function HappierStatus(props: HappierStatusProps) {
       true,
       highContrast ? { color: props.theme.colors.text } : undefined,
     );
+
+  if (compact) {
+    const name = props.accessibilityLabel ?? (typeof props.label === 'string' ? props.label : undefined);
+    return (
+      <View
+        testID={props.testID}
+        {...(name === undefined ? {} : { accessibilityLabel: name, 'aria-label': name })}
+        style={{ flexShrink: 0, flexDirection: 'row', alignItems: 'center' }}
+      >
+        <HappierStatusDot color={toneColor} isPulsing={props.isPulsing} animationEnabled={props.animationEnabled}
+          {...(highContrast ? { size: 8, style: { borderWidth: 1, borderColor: props.theme.colors.text } } : {})} />
+      </View>
+    );
+  }
 
   const region = (
     <View

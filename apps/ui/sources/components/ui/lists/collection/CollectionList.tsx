@@ -26,6 +26,7 @@ import {
     useHappierMaterialColorResolver,
     HappierListRowFollowedContext,
     HappierListRowPrecedesSelectedContext,
+    HappierStatusCompactContext,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
@@ -624,12 +625,15 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
     const hasCount = props.count !== undefined && props.count !== null && props.count !== ''
         && !(props.disclosure && props.disclosure.expanded);
     const count = hasCount ? <Text style={styles.trailingCount}>{String(props.count)}</Text> : null;
-    const trailing = props.status && hasCount ? (
+    // The name tells rows apart (UI refinements 2026-11-16): a state in the row's end is its compact status, the tone
+    // dot alone with its words as its accessible name, so the title keeps the row's width.
+    const status = props.status ? <HappierStatusCompactContext.Provider value>{props.status}</HappierStatusCompactContext.Provider> : null;
+    const trailing = status && hasCount ? (
         <View style={styles.trailing}>
-            {props.status}
+            {status}
             <Text style={styles.trailingCount}>{String(props.count)}</Text>
         </View>
-    ) : props.status ?? count;
+    ) : status ?? count;
     const onToggle = props.disclosure?.onToggle;
     const disclosureTarget = props.disclosure && onToggle ? (
         <HappierTreeDisclosure
