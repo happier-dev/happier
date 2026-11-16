@@ -114,7 +114,8 @@ import {
   hasExplicitMobileReachableHost,
   resolveMobileReachableServerUrl,
 } from './utils/server/mobile_api_url.mjs';
-import { hasExplicitStackRuntimeModeArg, resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
+import { hasExplicitStackRuntimeModeArg, isCommittedSourceMode, resolveStackRuntimeMode } from './runtime/shared/runtime_mode.mjs';
+import { startCommittedStackFollower } from './runtime/launch/committed_head_follower.mjs';
 import { isBorrowedExpoConsumer, projectBorrowedExpoWebappEnv } from './runtime/shared/borrowed_expo.mjs';
 
  /**
@@ -1023,6 +1024,13 @@ async function main() {
     logger: console,
   });
   if (reloadWatcher) watchers.push(reloadWatcher);
+  // Committed mode: these same live watchers run on a committed worktree, which the
+  // follower fast-forwards to the newest HEAD of its primary checkout.
+  if (stackMode && isCommittedSourceMode(baseEnv)) {
+    if (!watchEnabled) console.warn('[local] committed mode without --watch: the worktree advances, but nothing reloads');
+    watchers.push(await startCommittedStackFollower({ worktreeDir: repoDir, stackName, runtimeStatePath, env: baseEnv,
+      isShuttingDown: () => shuttingDown }));
+  }
   const initialRefreshes = requestInitialDevRefreshes({
     reloadWatcher,
     dependencyReloadEnabled: true,

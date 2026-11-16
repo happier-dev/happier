@@ -17,7 +17,21 @@ export function hasExplicitStackRuntimeModeArg(args = []) {
   return modeArgs.some(arg => arg === '--runtime' || arg.startsWith('--runtime=') || arg === '--source');
 }
 
+/** Committed mode (`HAPPIER_STACK_RUNTIME_MODE=committed`, owner 2026-11-16): live
+ * mode (`stack dev`: Metro HMR, server and daemon watchers) rooted at a stable
+ * committed worktree (`HAPPIER_STACK_REPO_DIR`) that committed_head_follower.mjs
+ * fast-forwards to the newest HEAD of its primary checkout. `live` (the default)
+ * runs the shared checkout itself, uncommitted edits included. */
+export function isCommittedSourceMode(env = process.env) {
+  return String(env?.HAPPIER_STACK_RUNTIME_MODE ?? '').trim().toLowerCase() === 'committed';
+}
+
 export function resolveStackRuntimeMode({ argv = [], env = process.env, activeRuntimeState = null } = {}) {
+  const resolved = resolveStackRuntimeModeOnly({ argv, env, activeRuntimeState });
+  return resolved.mode === 'source' && isCommittedSourceMode(env) ? { ...resolved, committed: true } : resolved;
+}
+
+function resolveStackRuntimeModeOnly({ argv, env, activeRuntimeState }) {
   const args = stackRuntimeModeArgs(argv);
   const runtimeValue = args.find(arg => arg.startsWith('--runtime='))?.slice('--runtime='.length);
   if (runtimeValue !== undefined && !['source', 'built'].includes(runtimeValue)) {

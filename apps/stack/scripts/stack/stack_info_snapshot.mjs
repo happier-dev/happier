@@ -14,7 +14,7 @@ import {
 } from '../utils/stack/runtime_state.mjs';
 import { readTextOrEmpty } from '../utils/fs/ops.mjs';
 import { resolveDefaultRepoEnv } from './stack_environment.mjs';
-import { resolveStackRuntimeMode } from '../runtime/shared/runtime_mode.mjs';
+import { isCommittedSourceMode, resolveStackRuntimeMode } from '../runtime/shared/runtime_mode.mjs';
 import { inspectStackRuntimeSelection } from '../runtime/launch/inspectActiveRuntimeSnapshot.mjs';
 import { resolveStackCanonicalServerUrl, resolveStackServerEndpoint } from '../utils/server/urls.mjs';
 import { getObservedStackDaemonAsync, readStackRuntimeDaemonDesiredState, readStackRuntimeStateWithDaemonSync } from '../utils/stack/runtime_daemon_state.mjs';
@@ -638,6 +638,9 @@ export async function readStackInfoSnapshot({
       startedAt: runtimeState?.startedAt ?? null,
       updatedAt: runtimeState?.updatedAt ?? null,
       mode: runtimeMode,
+      // live = hot-reloads the shared checkout; committed = revision tree following HEAD.
+      sourceMode: isCommittedSourceMode(stackEnv) ? 'committed' : runtimeMode === 'source' ? 'live' : null,
+      committedHead: runtimeState?.committedHead ?? null,
       activeSnapshotId: runtimeInspection.activeSnapshotId,
       selectedSnapshotId,
       selectedProducerStackName: runtimeInspection.producerStackName,

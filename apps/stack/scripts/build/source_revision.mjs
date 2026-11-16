@@ -44,6 +44,12 @@ async function git(repoDir, args) {
   return stdout;
 }
 
+/** HEAD's reflog changes on every commit, checkout or reset of the checkout: the one
+ * trigger for the rolling producer and for committed Stacks (committed_head_follower.mjs). */
+export async function resolveHeadReflogPath(repoDir) {
+  return (await git(repoDir, ['rev-parse', '--path-format=absolute', '--git-path', 'logs/HEAD'])).toString('utf8').trim();
+}
+
 function nulList(buffer) {
   return buffer.toString('utf8').split('\0').filter(Boolean);
 }

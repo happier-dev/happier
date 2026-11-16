@@ -109,3 +109,11 @@ test('hasExplicitStackRuntimeModeArg detects source/runtime flags', () => {
   assert.equal(hasExplicitStackRuntimeModeArg(['status', '--runtime', '--json']), true);
   assert.equal(hasExplicitStackRuntimeModeArg(['status', '--source', '--json']), true);
 });
+
+test('committed mode is live mode on a committed worktree; an explicit runtime flag leaves it', () => {
+  const env = { HAPPIER_STACK_RUNTIME_MODE: 'committed' };
+  assert.deepEqual(resolveStackRuntimeMode({ env }), { mode: 'source', source: 'env', committed: true });
+  assert.deepEqual(resolveStackRuntimeMode({ argv: ['--source'], env }), { mode: 'source', source: 'flag', committed: true });
+  assert.deepEqual(resolveStackRuntimeMode({ argv: ['--runtime=source'], env }), { mode: 'source-snapshot', source: 'flag' });
+  assert.deepEqual(resolveStackRuntimeMode({ argv: ['--runtime=built'], env }), { mode: 'require', source: 'flag' });
+});

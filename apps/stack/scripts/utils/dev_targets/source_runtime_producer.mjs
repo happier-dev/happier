@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,7 +7,7 @@ import { resolveRuntimeBuildAuthority } from '../../runtime/shared/runtime_build
 import { emitSourceReloadRefusal, formatSourceReloadRefusal, parseSourceReloadRefusalLine } from '../../runtime/shared/source_reload_refusal.mjs';
 import { emitSourceRuntimeSourceTimes } from '../../runtime/shared/source_bundle_record.mjs';
 import { resolveDependencyRefreshMarkerPath } from '../proc/dependency_refresh.mjs';
-import { resolveSourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
+import { resolveHeadReflogPath, resolveSourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
 import { transferRuntimeFile } from './runtime_artifact_transfer.mjs';
 import { getRootDir } from '../paths/paths.mjs';
 import { redactFailureDiagnostic } from '../proc/proc.mjs';
@@ -81,8 +80,7 @@ export async function createSourceRuntimeProducerReload({ repoDir, stackBaseDir,
   // QA runs committed revisions (owner 2026-11-14): the producer follows HEAD and
   // installed dependencies, never other lanes' uncommitted edits. The existing
   // reload coordinator coalesces bursts, so it builds only the newest HEAD.
-  const headLog = execFileSync('git', ['-C', repoDir, 'rev-parse', '--path-format=absolute', '--git-path', 'logs/HEAD'],
-    { encoding: 'utf8' }).trim();
+  const headLog = await resolveHeadReflogPath(repoDir);
   const descriptors = [{ id: 'source-producer:revision', target: 'source-runtime',
     paths: [headLog, resolveDependencyRefreshMarkerPath(repoDir)] }];
   return {

@@ -30,7 +30,7 @@ function namesPath(text, path) {
   return new RegExp(`(^|[^\\w./-])${escape(name)}(?![\\w-])`).test(text);
 }
 
-function namesCommit(text, sha) {
+export function namesCommit(text, sha) {
   for (const [token] of text.matchAll(/\b[0-9a-f]{7,40}\b/g)) if (sha.startsWith(token)) return true;
   return false;
 }

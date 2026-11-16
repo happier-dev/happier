@@ -225,6 +225,26 @@ becomes the latest built revision. The reload log names the selected revision,
 and PREPARED prints `rev <component>=<sha>[+overlay:<digest>]` next to the
 capture time and input identity.
 
+Source modes (owner 2026-11-16). `live` (the default `stack dev` source mode)
+runs the shared checkout, other lanes' uncommitted edits included. `committed` runs
+exactly the same `stack dev` (Metro with HMR, server and daemon watchers, dependency
+refresh) rooted at a stable committed worktree of that checkout, so only committed
+code loads. Set it up once per host:
+`git worktree add --detach <path> HEAD`, then
+`hstack stack env <stack> set HAPPIER_STACK_REPO_DIR=<path> HAPPIER_STACK_RUNTIME_MODE=committed`
+and restart the Stack's `stack dev`. The follower watches the primary checkout's HEAD
+reflog (no timer) and runs `git -C <path> checkout --detach <newest HEAD>`; Git
+rewrites only the changed files and the live watchers react as to an edit. The
+reload coordinator coalesces: one advance at a time, and commits landing meanwhile
+end in one advance to the newest HEAD. Never edit the committed worktree: a local
+edit that a commit would overwrite refuses the advance, keeps the loaded revision,
+records `runtime.committedHead.phase = refused` (stack info), and, with
+`HAPPIER_STACK_BOARD=<board path relative to the primary checkout>`, posts one
+URGENT to Systemic and the committing lanes. Stack info shows `runtime.sourceMode`
+(`live`/`committed`) and `runtime.committedHead`. A checkout that is not a linked
+worktree is refused, so committed mode never runs the shared checkout. Web exports
+stay on demand, built from the same stable path.
+
 Source-tree reloads (owner 2026-11-14; default for QA Stacks since 2026-11-16):
 a reload of any Stack other than the repository producer's own builds no bundle.
 `hstack stack env <stack> set HAPPIER_STACK_SOURCE_TREES=0` rolls one Stack back to
