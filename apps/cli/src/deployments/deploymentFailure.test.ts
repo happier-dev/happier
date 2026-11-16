@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createMachineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { logger } from '@/ui/logger';
@@ -12,8 +12,30 @@ import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deploymen
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import { DeploymentOwnServerContentV1Schema } from '@happier-dev/deployment-protocol';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 
 describe('deployment failure diagnostics', () => {
+    it.each([true, false] as const)('preserves the Action producer effect bit %s in deployment receipts', effectAttempted => {
+        const error = createActionExecuteFailureError({ ok: false, errorCode: 'database_transaction_timeout',
+            error: 'database_transaction_timeout', effectAttempted,
+            failureCause: { phase: 'home.database.transaction', errorClass: 'HttpStatusError',
+                errorCode: 'database_transaction_timeout', httpStatus: 503 } });
+        expect(projectDeploymentException(error)).toMatchObject({ effectAttempted });
+        expect(projectDeploymentReceiptFailure(projectDeploymentException(error), 'activate')).toMatchObject({ effectAttempted });
+    });
+    it.each([
+        ['database_transaction_timeout', undefined],
+        ['database_transaction_conflict_exhausted', false],
+    ] as const)(
+        'keeps the captured HTTP503 %s cause without inventing rollback provenance', (code, effectAttempted) => {
+            const failure = projectDeploymentException(createHttpStatusError(503, code, code));
+            expect(failure).toMatchObject({ ok: false, errorCode: code,
+                failureCause: { phase: 'home.database.transaction', errorClass: 'HttpStatusError', errorCode: code, httpStatus: 503 } });
+            expect(failure.effectAttempted).toBe(effectAttempted);
+            const receipt = projectDeploymentReceiptFailure(failure, 'activate');
+            expect(receipt).toMatchObject({ failureCause: failure.failureCause });
+            expect(receipt.effectAttempted).toBe(effectAttempted);
+        });
     it('surfaces value-free schema issue paths when preparation rejects receipt content', () => {
         const parsed = DeploymentOwnServerContentV1Schema.safeParse({ machines: [],
             platform: { providerDeploymentId: 'private-provider-deployment' } });

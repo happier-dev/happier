@@ -1,7 +1,8 @@
-import { createActionExecuteFailureError, ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { withActionFailureDiagnostic, type ActionFailureDiagnosticInput } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
+import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { logger } from '@/ui/logger';
 import { readDeploymentAuthorizationFailure } from './deploymentAuthorizationFailure';
 import { readDeploymentSystemToolFailure } from './deploymentSystemToolFailure';
@@ -85,9 +86,10 @@ export function projectDeploymentFailure(errorCode: string, error?: unknown, pha
 export function projectDeploymentException(error: unknown,
     options: Readonly<{ signal?: AbortSignal; phase?: string }> = {}): ActionExecuteFailure {
     if (options.signal?.aborted) return projectDeploymentFailure('cancelled', error, options.phase);
-    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
-    if (code) return projectDeploymentFailure(code, error, options.phase);
     const phase = options.phase ?? 'deployment.failure';
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code
+        : normalizeActionExecutorThrownError(error, phase).errorCode;
+    if (code !== 'action_failed') return projectDeploymentFailure(code, error, phase);
     return deploymentUnavailableDiagnostic(projectDeploymentFailure('action_failed', error, phase), phase, 'native_failure', error);
 }
 
@@ -114,9 +116,9 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
         return { ok: false, errorCode, error: pluginError.message ?? errorCode, details,
             ...(author?.failureCause ? { failureCause: author.failureCause } : {}) };
     }
-    const carried = ActionExecuteFailureSchema.safeParse(error instanceof Error ? error.cause : error);
-    if (carried.success && carried.data.errorCode === errorCode) return carried.data;
-    const thrownCause = error === undefined ? undefined : normalizeActionExecutorThrownError(error, phase).failureCause;
+    const normalized = error === undefined ? undefined : normalizeActionExecutorThrownError(error, phase);
+    const { details: normalizedDetails, ...normalizedMetadata } = normalized ?? {};
+    const thrownCause = normalized?.failureCause;
     // Native owners throw their family code with a closed `reason` (Start First eligibility, origin
     // changes). That reason is the typed cause: it reaches the receipt and recovery, never prose.
     const reason = pluginError?.code === errorCode ? author?.details : undefined;
@@ -130,10 +132,13 @@ function readAuthoredDeploymentFailure(errorCode: string, error: unknown, phase:
             ? error.details : undefined)
         ?? (pluginError?.code === errorCode ? readManagedNativeFailureDetails({
             ok: false, errorCode, error: errorCode, details: pluginError.data,
-        }) : undefined);
-    return { ok: false, errorCode, error: errorCode,
+        }) : undefined)
+        ?? (!pluginError && normalized?.errorCode === errorCode ? normalizedDetails : undefined);
+    const failure: ActionExecuteFailure = { ...(normalized?.errorCode === errorCode ? normalizedMetadata : {}),
+        ok: false, errorCode, error: errorCode,
         ...(retainedDetails === undefined ? {} : { details: retainedDetails }),
         ...(cause === undefined ? {} : { failureCause: cause }) };
+    return cause?.httpStatus === 503 ? projectConfirmedActionHttpRefusal(failure, cause.httpStatus) : failure;
 }
 
 /** Deployment owners supply facts; the shared Action projector alone sanitizes them. */
