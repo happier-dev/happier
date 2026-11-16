@@ -31,6 +31,7 @@ import {
     Text,
     Text as RNText,
 } from '@/components/ui/text/Text';
+import { SessionRowActivityTime } from './row/SessionRowActivityTime';
 import {
     WEB_START_ELLIPSIS_CONTAINER_TEXT_STYLE,
     WEB_START_ELLIPSIS_CONTENT_TEXT_STYLE,
@@ -287,7 +288,10 @@ type SessionItemContentProps = Omit<SessionItemBaseProps, 'subtitleOverride'> & 
     sessionNameResolved: string;
     sessionSubtitle: string;
     isSessionIdentityLoading: boolean;
-    activityTimeLabel: string;
+    /** Last meaningful activity, rendered by the age leaf on the shared clock. */
+    activityAt: number | null;
+    /** Whether that leaf follows the clock (false while the surface is frozen). */
+    activityClockLive: boolean;
     /** The guard's word replaces the activity time: "Stops in 4:52" (amber, a decision is open) or a quiet "Stopped". */
     guardState?: SessionListGuardState | null;
     hasUnreadMessages: boolean;
@@ -726,7 +730,8 @@ const SessionItemContent = React.memo(
         sessionNameResolved: savedSessionName,
         sessionSubtitle,
         isSessionIdentityLoading,
-        activityTimeLabel,
+        activityAt,
+        activityClockLive,
         guardState,
         hasUnreadMessages,
         attentionStanding,
@@ -1512,7 +1517,7 @@ const SessionItemContent = React.memo(
         // one slot mounted across that swap, so its hover rest, open peek and mark animation survive it.
         const trailingStatusKeyedSlot = <React.Fragment key="trailing-status">{trailingStatusSlot}</React.Fragment>;
         const showTrailingGuardWord = Boolean(guardState) && !trailingAttentionReplacesTime;
-        const showTrailingActivityTime = Boolean(activityTimeLabel) && !trailingAttentionReplacesTime && !showTrailingGuardWord;
+        const showTrailingActivityTime = activityAt !== null && !trailingAttentionReplacesTime && !showTrailingGuardWord;
         const hasTrailingMeta = showTrailingAttentionIndicator || showTrailingActivityTime || showTrailingGuardWord;
         // Auto and every Agent- or Project-led choice lead with the Agent's mark (lab `clctx:marks`) until the
         // row's Project favicon reaches it; an explicit Avatar or None stays as chosen.
@@ -1985,10 +1990,12 @@ const SessionItemContent = React.memo(
                 }}
                 trailing={<>
                     {showInlineTagChips ? renderTagChipRow('inline') : null}
-                    <CopiedPill
-                        visible={copyFeedback.isCopied(resolvedSession.id)}
-                        testID={`session-item-copy-debug-feedback:${occurrenceTestId}`}
-                    />
+                    {copyFeedback.isCopied(resolvedSession.id) ? (
+                        <CopiedPill
+                            visible
+                            testID={`session-item-copy-debug-feedback:${occurrenceTestId}`}
+                        />
+                    ) : null}
                     {touchRosterActions && showRowActions ? (
                         <View style={styles.rowActionsRow}>
                             {rowActionButtons}
@@ -2001,14 +2008,9 @@ const SessionItemContent = React.memo(
                                 <WordCrossFade wordKey={showTrailingGuardWord && guardState ? guardState.kind : 'time'}>
                                     {showTrailingGuardWord && guardState ? (
                                         <SessionRowGuardWord guardState={guardState} />
-                                    ) : (
-                                        <Text
-                                            style={styles.activityTime}
-                                            numberOfLines={1}
-                                        >
-                                            {activityTimeLabel}
-                                        </Text>
-                                    )}
+                                    ) : activityAt !== null ? (
+                                        <SessionRowActivityTime activityAt={activityAt} live={activityClockLive} style={styles.activityTime} />
+                                    ) : null}
                                 </WordCrossFade>
                             ) : null}
                         </View>
@@ -2032,9 +2034,11 @@ const SessionItemContent = React.memo(
             embedded ? styles.sessionItemContainerEmbedded : styles.sessionItemContainer,
         ];
 
+        // Closed menus mount nothing per row: ContextMenu draws only while open (it has no closing
+        // animation), so a list of rows pays for a menu only when someone opens it.
         const menuNodes = touchPrimaryPointer ? (
             <>
-                {contextMenuItems.length > 0 ? (
+                {contextMenuOpen && contextMenuItems.length > 0 ? (
                     <ContextMenu
                         open={contextMenuOpen}
                         onOpenChange={setContextMenuOpen}
@@ -2047,7 +2051,7 @@ const SessionItemContent = React.memo(
                         maxWidthCap={260}
                     />
                 ) : null}
-                {supportsTag ? (
+                {supportsTag && tagMenuOpen ? (
                     <ContextMenu
                         open={tagMenuOpen}
                         onOpenChange={(next) => {
@@ -2232,7 +2236,8 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             tagsEnabled={itemProps.tagsEnabled}
             selected={rowViewModel.selected}
             secondaryLineMode={itemProps.secondaryLineMode ?? rowViewModel.secondaryLineMode}
-            activityTimeLabel={rowViewModel.activityTimeLabel}
+            activityAt={rowViewModel.activityAt}
+            activityClockLive={rowViewModel.clockLive}
             guardState={rowViewModel.guardState}
             sessionStatus={sessionStatus}
             botActivity={managedWakeFacts ? readBotActivity(session, Date.now(), sessionStatus) : itemProps.botActivity}

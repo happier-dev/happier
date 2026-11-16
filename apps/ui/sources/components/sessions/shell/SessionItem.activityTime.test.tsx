@@ -76,6 +76,10 @@ const { AgentIcon } = await import('@/agents/registry/AgentIcon');
 const { SessionAgentCatalogIdentityIcon } = await import('@/components/sessions/presentation/SessionAgentCatalogIdentityIcon');
 const { StatusDot } = await import('@/components/ui/status/StatusDot');
 const { SessionItem: ArchiveProgressSessionItem } = await import('./SessionItem');
+const { t } = await import('@/text');
+// The age leaf renders the real formatter through this suite's text boundary.
+const minutesLabel = (count: number) => t('time.compactAge.minutes', { count });
+const hoursLabel = (count: number) => t('time.compactAge.hours', { count });
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 function renderScreen(...args: Parameters<typeof renderCanonicalScreen>) {
     return renderCanonicalScreen(<InjectedAuthProvider credentials={null}>{args[0]}</InjectedAuthProvider>, args[1]);
@@ -185,7 +189,7 @@ async function importSessionItem() {
                 ? projectStatus(props.session, Date.now())
                 : mockSessionStatus,
             hasUnreadMessages: hasUnreadMessagesValue,
-            activityTimeLabel: '1m',
+            activityAt: Date.now() - 60_000,
             identityDisplay: sessionListIdentityDisplay,
             activeColorMode: sessionListActiveColorMode,
         }),
@@ -256,7 +260,7 @@ describe('SessionItem activity time', () => {
         );
 
         expect(screen.findByTestId('session-list-item-sess_1')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('1m');
+        expect(screen.getTextContent()).toContain(minutesLabel(1));
     });
 
     it('sets the activity time in the shared right-aligned tabular meta column', async () => {
@@ -274,7 +278,7 @@ describe('SessionItem activity time', () => {
             />,
         );
 
-        const time = screen.root.findAll((node) => String(node.type) === 'Text' && node.props.children === '1m')[0];
+        const time = screen.root.findAll((node) => String(node.type) === 'Text' && node.props.children === minutesLabel(1))[0];
         expect(time).toBeTruthy();
         const style = flattenStyle(time!.props.style);
         expect(style.fontVariant).toEqual(expect.arrayContaining(['tabular-nums']));
@@ -296,7 +300,7 @@ describe('SessionItem activity time', () => {
                     meaningfulActivityAt,
                 } as SessionListRenderableSession}
                 rowViewModelOverrides={{
-                    activityTimeLabel: '5h',
+                    activityAt: Date.now() - 5 * 60 * 60 * 1000,
                 }}
                 serverId="server_a"
                 pinned={false}
@@ -306,8 +310,8 @@ describe('SessionItem activity time', () => {
             />,
         );
 
-        expect(screen.getTextContent()).toContain('5h');
-        expect(screen.getTextContent()).not.toContain('1m');
+        expect(screen.getTextContent()).toContain(hoursLabel(5));
+        expect(screen.getTextContent()).not.toContain(minutesLabel(1));
     });
 
     it('keeps unread state out of the avatar because row attention owns the indicator', async () => {
@@ -914,7 +918,7 @@ describe('SessionItem activity time', () => {
         expect(spinnerStyle.animationName).toBeUndefined();
         expect(screen.findAllByType(StatusDot)).toHaveLength(0);
         expect(screen.getTextContent()).not.toContain('Working on it');
-        expect(screen.getTextContent()).not.toContain('1m');
+        expect(screen.getTextContent()).not.toContain(minutesLabel(1));
     });
 
     it('renders session status with the configured spinner and text', async () => {
@@ -1077,7 +1081,7 @@ describe('SessionItem activity time', () => {
 
         expect(screen.getTextContent()).not.toContain('online');
         expect(screen.findAllByType(StatusDot)).toHaveLength(0);
-        expect(screen.getTextContent()).toContain('1m');
+        expect(screen.getTextContent()).toContain(minutesLabel(1));
     });
 
     it('keeps the selected row background when a session is selected', async () => {
@@ -1161,7 +1165,8 @@ describe('SessionItem activity time', () => {
                     isIdentityLoading: false,
                     nextRuntimeFreshnessAtMs: null,
                     hasUnreadMessages: true,
-                    activityTimeLabel: '7m',
+                    activityAt: Date.now() - 7 * 60_000,
+                    clockLive: true,
                     identityDisplay: 'avatar',
                     activeColorMode: 'attentionOnly',
                     hideInactiveSessions: true,
@@ -1193,7 +1198,7 @@ describe('SessionItem activity time', () => {
         });
         expect(screen.findByType(Avatar)?.props.hasUnreadMessages).toBe(false);
         expect(screen.findByType(Avatar)?.props.unreadBadgeTestID).toBeUndefined();
-        expect(screen.getTextContent()).toContain('7m');
+        expect(screen.getTextContent()).toContain(minutesLabel(7));
     });
 
     it('uses list-row pending approval flags when the scoped store renderable is stale', async () => {

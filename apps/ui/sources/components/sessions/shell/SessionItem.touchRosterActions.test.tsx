@@ -107,6 +107,21 @@ describe('SessionItem row actions on a touch screen', () => {
         await ordinary.unmount();
     });
 
+    it('mounts no closed menu or copy-feedback component per row until one opens', async () => {
+        const { ContextMenu } = await import('@/components/ui/forms/dropdown/ContextMenu');
+        const { CopiedPill } = await import('@/components/ui/copy/CopiedPill');
+        const screen = await renderScreen(<ModelBackedSessionItem session={createSession('sess_closed')} serverId={serverId}
+            selected={false} variant="default" compact onTogglePinned={vi.fn()} />);
+        // Every list row pays for what it mounts: closed menus and hidden feedback cost nothing.
+        expect(screen.findAll(node => node.type === ContextMenu)).toHaveLength(0);
+        expect(screen.findAll(node => node.type === CopiedPill)).toHaveLength(0);
+        const row = screen.findHostByTestId('session-list-item-sess_closed');
+        if (!row) throw new Error('Expected the ordinary touch-browser row');
+        await act(async () => { row.props.onLongPress(); });
+        expect(screen.findAll(node => node.type === ContextMenu && node.props.open === true)).toHaveLength(1);
+        await screen.unmount();
+    });
+
     it('opens the ordinary row pin menu on touch-browser long-press and suppresses the release navigation', async () => {
         const screen = await renderScreen(<ModelBackedSessionItem session={createSession('sess_touch_menu')} serverId={serverId}
             selected={false} variant="default" compact onTogglePinned={vi.fn()} />);

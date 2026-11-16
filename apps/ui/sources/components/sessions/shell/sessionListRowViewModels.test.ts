@@ -152,10 +152,11 @@ describe('buildSessionListRowViewModels', () => {
         expect(second[1]).toBe(first[1]);
     });
 
-    it('selects row-local age, runtime, reminder and stale Home deadlines', () => {
+    it('selects row-local runtime, reminder and stale Home deadlines, never the age label', () => {
         const now = 1_800_000_000_000;
         const old = { ...createRenderableSession('deadline'), presence: 0, createdAt: now - 2 * 86_400_000 };
-        expect(readSessionListRowRefreshAtMs({ session: old, reminderAtMs: null }, now)).toBe(now + 86_400_000);
+        // The age label is its own leaf on the shared clock; the row never wakes for it.
+        expect(readSessionListRowRefreshAtMs({ session: old, reminderAtMs: null }, now)).toBeNull();
         expect(readSessionListRowRefreshAtMs({ session: old, reminderAtMs: now + 500 }, now)).toBe(now + 500);
         expect(readSessionListRowRefreshAtMs({ session: old, reminderAtMs: null,
             homeObservation: { phase: 'offline', lastSuccessAt: now - 59_000 } }, now)).toBe(now + 1_000);

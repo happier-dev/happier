@@ -183,6 +183,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         rowRenderableByKey,
         relativeNowMs,
         runtimeNowMs,
+        clockLive: props.dataActive,
         identityDisplay: props.identityDisplay === 'agentLogo' || props.identityDisplay === 'none' ? props.identityDisplay : 'avatar',
         activeColorMode: props.activeColorMode === 'attentionOnly' || props.activeColorMode === 'allActive'
             ? props.activeColorMode
@@ -212,6 +213,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         },
     }), [
         appearanceColor,
+        props.dataActive,
         props.rowContextEnabled,
         props.rowContextIdentityDisplay,
         props.rowContextGroupServerId,

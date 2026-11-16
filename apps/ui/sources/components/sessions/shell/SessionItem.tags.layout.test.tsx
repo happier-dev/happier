@@ -125,6 +125,8 @@ vi.mock('@/sync/ops', () => ({
 
 vi.mock('@/utils/time/formatShortRelativeTime', () => ({
     formatShortRelativeTime: () => '1m',
+    formatShortRelativeTimeAt: () => '1m',
+    readShortRelativeTimeRefreshAtMs: () => null,
 }));
 
 vi.mock('./sessionPinIcons', () => ({
@@ -161,7 +163,7 @@ async function importSessionItem() {
     const SessionItem = SessionItemModule;
     return createModelBackedSessionItemTestComponent(SessionItem, {
         defaultRowViewModelOverrides: {
-            activityTimeLabel: '1m',
+            activityAt: Date.now() - 60_000,
         },
     });
 }

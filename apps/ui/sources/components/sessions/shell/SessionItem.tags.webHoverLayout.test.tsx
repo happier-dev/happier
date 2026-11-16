@@ -107,7 +107,7 @@ async function importSessionItem() {
     const SessionItem = SessionItemModule;
     return createModelBackedSessionItemTestComponent(SessionItem, {
         defaultRowViewModelOverrides: {
-            activityTimeLabel: '1m',
+            activityAt: Date.now() - 60_000,
         },
     });
 }

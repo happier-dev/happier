@@ -713,9 +713,11 @@ describe('SessionsList (native virtualization)', () => {
                 ...sessionA, createdAt: Date.now() - 59_000,
             }], { source: 'ordinary', mode: 'append' }); });
             derive.mockClear();
+            expect(screen.getTextContent()).not.toContain('1m');
             await flushHookEffects({ advanceTimersMs: 1_000, cycles: 1, turns: 2 });
-            expect(derive.mock.calls.map(([input]) => input.item.sessionId)).toEqual(['sess_a']);
-            expect(derive.mock.results[0]?.value.activityTimeLabel).toBe('1m');
+            // The minute boundary turns only the age leaf on the shared clock; the row keeps its view model.
+            expect(derive.mock.calls.filter(([input]) => input.item.sessionId === 'sess_a')).toHaveLength(0);
+            expect(screen.getTextContent()).toContain('1m');
         } finally {
             sessionListRuntimeClock.clearWake(token);
             derive.mockRestore();
