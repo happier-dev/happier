@@ -63,7 +63,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
+import { createActionSettingsProvider, createSnapshotActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
@@ -717,7 +717,6 @@ describe('own-server target at the Action host boundary', () => {
         let definitionEditedAfterAdmission = false;
         let transitionWrites = 0;
         let migrationBackupActivationCount: number | undefined;
-        const previewForwardBindings: Array<{ environmentId: string; port: number }> = [];
         const routeWrites: number[] = [];
         let unhealthyCandidateConfig: string | undefined;
         let incumbentNativeIds: readonly string[] = [];
@@ -922,17 +921,6 @@ describe('own-server target at the Action host boundary', () => {
                 deploymentRevision: receipt.deployment.revision, state: input.state }; },
             runtime: createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home', serverHttpBaseUrl, machineId: 'machine-a',
                 resolveRequesterIdentity,
-                ...(previewCompanion ? { async acquireServiceExportForward(
-                    input: Parameters<NonNullable<OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward']>>[0],
-                ) {
-                    // Iroh transport is the boundary; native managed-service admission and address materialization remain real.
-                    expect(input.targetMachineId).toBe('machine-a');
-                    expect(input.serviceExport.destination.host).toBe('127.0.0.1');
-                    previewForwardBindings.push({ environmentId: input.serviceExport.service.environmentId,
-                        port: input.serviceExport.destination.port });
-                    return { host: '127.0.0.1' as const, port: input.serviceExport.destination.port,
-                        observedPath: 'relay' as const, async close() {} };
-                } } : {}),
                 async acquirePluginRuntimeRegistryLease() { return mounted.controller.tryAcquireRuntimeRegistry()!; },
                 async readEnvironmentSecretLaunchAdmission(input) {
                     if (publicCopy && input.materialization.kind === 'copySourceRead') {
@@ -2230,23 +2218,35 @@ describe('own-server target at the Action host boundary', () => {
                                 body: encodePlainArtifactStoredContent({ body: JSON.stringify(template.content) }),
                                 headerVersion: template.environment.contentHeaderVersion, bodyVersion: template.environment.contentBodyVersion,
                                 seq: 1, createdAt: 1, updatedAt: 1 });
+                            // Match the workflow daemon's invocation-owned Account policy.
+                            const accountSettings = accountSettingsParse({ actionsSettingsV1: {
+                                v: 1, approvalWaivedSurfaces: {
+                                    'deployments.environments.create': ['ui'], 'deployments.bindings.set': ['ui'],
+                                    'deployments.environments.update': ['ui'], 'deployments.deploy': ['ui'], 'deployments.backups.restore': ['ui'],
+                                    [DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1]: ['ui'],
+                                },
+                            } });
                             const savedSecretOperationContext = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl,
-                                snapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1,
+                                snapshot: { source: 'network', settings: accountSettings, settingsVersion: 1, loadedAtMs: 1,
                                     scopeKey: resolveAccountSettingsScopeKey(credentials), settingsSecretsReadKeys: [] }, isCurrent: async () => true });
                             const deps = createDaemonDeploymentActionDeps({ ...host, resolveRequesterIdentity, savedSecretOperationContext,
                                 async acquirePluginRuntimeRegistryLease() { return mounted.controller.tryAcquireRuntimeRegistry()!; },
                                 readBackupOperations: (input, context) => operations.readDeploymentBackupOperations({ target: input, context }),
                                 runActionOperation: runCopyOperation });
-                            const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
-                                runActionOperation: runCopyOperation });
+                            const previewExecutorHost = { credentials, serverId: 'home',
+                                serverIdentityId: host.serverId, serverApiUrl: serverHttpBaseUrl, machineId: 'machine-a',
+                                ...deps, savedSecretOperationContext, runActionOperation: runCopyOperation,
+                                actionsSettingsProvider: createSnapshotActionSettingsProvider(() => {
+                                    const snapshot = savedSecretOperationContext.readSnapshot();
+                                    if (!snapshot) throw new Error('Expected active preview Account snapshot');
+                                    return snapshot;
+                                }, savedSecretOperationContext) };
+                            const executor = createCliActionExecutorFromCredentials(previewExecutorHost);
                             const actionContext = { ...sourceContext, surface: 'ui' as const, actionCaller: { kind: 'host' as const },
                                 machineAdmission: { ...sourceContext.machineAdmission, role: 'manage' as const },
+                                externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a' },
                                 serverId: 'home', runtimeAccountId: accountId, signal: caller.signal, executionRunWorkflowRunId: 'preview-copy-run',
-                                actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
-                                    'deployments.environments.create': ['ui'], 'deployments.bindings.set': ['ui'],
-                                    'deployments.environments.update': ['ui'], 'deployments.deploy': ['ui'], 'deployments.backups.restore': ['ui'],
-                                    [DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1]: ['ui'],
-                                } }) };
+                                actionsSettings: accountSettings.actionsSettingsV1 };
                             const composed = await resolveDeploymentPreviewWorkflowSourceForHost({
                                 templateRef: { serverId: 'home', environmentId: template.environment.id },
                                 occurrenceKey: 'preview-copy-open', executor, credentials, serverHttpBaseUrl,
@@ -2294,7 +2294,7 @@ describe('own-server target at the Action host boundary', () => {
                                     definitions: { get: async () => { throw new Error('Preview readiness reads immutable Run captures only'); } },
                                     resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
                                 });
-                                const sourceExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                                const sourceExecutor = createCliActionExecutorFromCredentials({ ...previewExecutorHost,
                                     workflowAction: async request => {
                                         if (request.actionId !== 'workflow.run.invocations.list') throw new Error('Unexpected preview Run write');
                                         return workflowReads.execute({ actionId: request.actionId,
@@ -2385,7 +2385,7 @@ describe('own-server target at the Action host boundary', () => {
                                 { ...actionContext, actionRequestId: 'native-preview-create' });
                             // The exact PR repository owns both services. Catalog selection
                             // supplies fresh bindings and metadata without another Compose source.
-                            if (!previewCompanion || created.ok) expect(environment.content.definition).toEqual({
+                            if (!previewCompanion || created.ok) expect(environment.content.definition, JSON.stringify(created)).toEqual({
                                 ...template.content.definition, ref: git('rev-parse', 'HEAD') });
                             const mainEnvironmentId = environment.environment.id;
                             if (scenario === 'public_preview_configure_failure') {
@@ -2602,9 +2602,12 @@ describe('own-server target at the Action host boundary', () => {
                             }
                             if (mayDeployApp) await executeNative(full, 'preview-app-release');
                             if (previewCompanion && mayDeployApp) {
-                                expect(previewForwardBindings.length).toBeGreaterThan(0);
-                                expect(previewForwardBindings.every(binding => binding.environmentId === 'preview-companion-environment'
-                                    && binding.port > 0)).toBe(true);
+                                // Same-Machine references use the real local bridge, without Iroh.
+                                const runtimeEnvironment = await docker.readRuntimeEnvironment('app');
+                                const databaseUrl = new URL(runtimeEnvironment.DATABASE_URL!);
+                                expect(databaseUrl).toMatchObject({ protocol: 'postgres:', pathname: '/app' });
+                                expect(databaseUrl.hostname).not.toBe('');
+                                expect(Number(databaseUrl.port)).toBeGreaterThan(0);
                             }
                             const copiedDatabase = JSON.parse(await readFile(boundary.stateFile, 'utf8')) as {
                                 names: string[]; importedBytes?: number;
