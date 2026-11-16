@@ -193,7 +193,8 @@ it('reads custodian Muse models for a Team member without impersonating requeste
       .resolves.toMatchObject({ errorCode: 'agent_isolation_unavailable', effectAttempted: false });
     expect(nativeReads).toBe(2);
     nativeAvailable = false;
-    await expect(services.readSourceModelCatalogs(request)).resolves.toMatchObject({ status: 'success', catalogs: [] });
+    await expect(services.readSourceModelCatalogs(request)).resolves.toMatchObject({ status: 'error',
+      error: { code: 'provider_catalog_unavailable' } });
     nativeAvailable = true;
     await expect(services.readSourceModelCatalogs(request)).resolves.toMatchObject({ status: 'success', catalogs: result.catalogs });
     expect(nativeReads).toBe(4);
