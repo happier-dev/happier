@@ -991,7 +991,12 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         socket: object;
         deadlineAtMs?: number;
         prepare?: InTxOptions['prepare'];
-        operation: (authority: CurrentSessionPublisherAuthority, tx: Tx) => Promise<T>;
+        /**
+         * `verified` (snapshot mode only): this transaction already proved the registration's exact
+         * current authority and generation; consumers need not read the publisher Session again.
+         */
+        operation: (authority: CurrentSessionPublisherAuthority, tx: Tx,
+            verified: Readonly<{ publisherGeneration: bigint }> | null) => Promise<T>;
     }> & (
         | Readonly<{ authorityMode?: "serialized"; isolationLevel?: InTxOptions["isolationLevel"] }>
         /** Progress writes recheck publisher authority in this Serializable snapshot,
@@ -1017,7 +1022,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                 return await params.operation(currentAuthority ?? {
                     ...registration.binding,
                     committedFence: new Date(registration.committedFence.getTime()),
-                }, tx);
+                }, tx, currentAuthority ? { publisherGeneration: registration.publisherGeneration } : null);
             }, {
                 deadlineAtMs: params.deadlineAtMs,
                 ...(params.prepare ? { prepare: params.prepare } : {}),

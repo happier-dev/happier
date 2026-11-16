@@ -684,8 +684,9 @@ export function sessionUpdateHandler(
                 socket,
                 authorityMode: "snapshot",
                 isolationLevel: "Serializable", // Follow sources, access and frontiers must describe one observation.
-                operation: async (authority, tx) => {
-                    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, request.data.sessionId, undefined, { admittedWork: true })) return null;
+                operation: async (authority, tx, verified) => {
+                    // The snapshot already proved this exact publisher and generation; re-read only without that proof.
+                    if (!verified && !await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, request.data.sessionId, undefined, { admittedWork: true })) return null;
                     const machine = await tx.machine.findUnique({
                         where: { id: authority.machineId },
                         select: { operationProtocolCapabilities: true },
@@ -693,7 +694,7 @@ export function sessionUpdateHandler(
                     if (!supportsMachineSessionFollowContextV1(machine?.operationProtocolCapabilities)) {
                         return { unsupported: true as const };
                     }
-                    const session = await tx.session.findUnique({ where: { id: request.data.sessionId }, select: { publisherGeneration: true } });
+                    const session = verified ?? await tx.session.findUnique({ where: { id: request.data.sessionId }, select: { publisherGeneration: true } });
                     if (!session) return null;
                     const observation = await observePendingSessionFollowForDestinationInTx(tx, {
                         includeManager: request.data.includeManager,
@@ -774,9 +775,10 @@ export function sessionUpdateHandler(
                 // publication admission and revalidates inside the edge owner.
                 authorityMode: "snapshot",
                 isolationLevel: "Serializable", // Frontier acceptance composes current edge, source and destination authority.
-                operation: async (authority, tx) => {
+                operation: async (authority, tx, verified) => {
                     phase = 'publisher_authority';
-                    if (!await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, destinationSessionId, undefined, { admittedWork: true })) return { ok: false as const, rejection: "stale_publisher_generation" as const };
+                    // The snapshot already proved this exact publisher and generation; re-read only without that proof.
+                    if (!verified && !await hasExactCurrentPublisherAuthorityInTx(tx, authority, userId, destinationSessionId, undefined, { admittedWork: true })) return { ok: false as const, rejection: "stale_publisher_generation" as const };
                     phase = 'machine_capability';
                     const machine = await tx.machine.findUnique({
                         where: { id: authority.machineId },

@@ -11,6 +11,7 @@ import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherP
 import { db } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { canCallSessionScopedRpcMethod, canReadAccessKeyFromSessionScopedSocket, canRegisterSessionScopedRpcMethod,
     confirmSessionScopedMachineAccess, resolveSessionScopedSocketBinding, watchSessionScopedMachineAccess } from './sessionScopedBinding';
@@ -161,6 +162,58 @@ describe('Admitted Session publisher after Machine grant withdrawal', () => {
             releaseAccessWatch();
             eventRouter.removeConnection(guest.id, connection);
             eventRouter.removeConnection(guest.id, uiConnection);
+        }
+    });
+
+    // OWNER-RULINGS 2026-11-16 "Remove overbuilt re-reads": a Follow observation's publisher authority is
+    // read once in its own Serializable snapshot; the same row already carries the publisher generation.
+    it('reads the publisher Session once per Follow observation (no authority or generation re-read)', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            metadata: encodePlainMachineStoredContent({ host: 'follow-observe', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier' }),
+            daemonState: encodePlainMachineStoredContent({ status: 'running' }), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            installationId: randomUUID(), operationProtocolCapabilities: {
+                requesterExecutionIsolation: { protocolVersions: [1] },
+                sessionInputAdmission: { protocolVersions: [1, 2, 3] },
+                sessionFollow: { contextV1: true },
+            }, operationProtocolCapabilitiesRevision: 1 } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(),
+            encryptionMode: 'plain', metadata: '{}', active: false } });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: session.id, data: 'owner-binding' } });
+        const binding = { accountId: owner.id, machineId: machine.id, sessionId: session.id };
+        const admitted = await resolveSessionScopedSocketBinding({ userId: owner.id, ...binding });
+        if (!admitted.ok) throw new Error('Publisher admission failed');
+        const socket = createAuthenticatedFakeSocket({ data: { clientType: 'session-scoped', userId: owner.id,
+            sessionScopedBinding: admitted.binding } });
+        const connection: ClientConnection = { connectionType: 'session-scoped', userId: owner.id,
+            machineId: machine.id, sessionId: session.id, socket: socket as unknown as Socket };
+        sessionUpdateHandler(owner.id, connection.socket, connection, { presence: createSessionPublisherPresence(), binding });
+        eventRouter.clearIo();
+        eventRouter.addConnection(owner.id, connection);
+        const emit = async (event: string, payload: unknown) => {
+            const acks: unknown[] = [];
+            await getSocketHandler(socket, event)(payload, (ack: unknown) => acks.push(ack));
+            return acks;
+        };
+        try {
+            expect(await emit('session-runtime-activity-snapshot', { sessionId: session.id, mutationId: randomUUID(),
+                snapshot: { state: 'active', activeCount: 1 } })).toEqual([expect.objectContaining({ status: 'applied' })]);
+            let sessionReads = 0;
+            const stopObserving = observeSqliteRequests({ before: request => {
+                if (request.model === 'Session' && request.action === 'findUnique') sessionReads += 1;
+            } });
+            try {
+                for (let index = 0; index < 3; index += 1) {
+                    // The publisher transaction admits the observation (the later Run relay needs a live io server).
+                    expect(await emit(SESSION_FOLLOW_OBSERVE_PENDING_EVENT_V1, { v: 1, sessionId: session.id }))
+                        .toEqual([expect.not.objectContaining({ error: 'forbidden' })]);
+                }
+            } finally { stopObserving(); }
+            // 3 per observation: 1 publisher authority + the observation owner's own reads (was 5: 2 re-reads removed).
+            expect(sessionReads).toBe(9);
+        } finally {
+            eventRouter.removeConnection(owner.id, connection);
         }
     });
 
