@@ -423,6 +423,9 @@ describe('cockpit tab bars', () => {
         />);
         const tablists = screen.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'tablist');
         expect(tablists).toHaveLength(1);
+        // The tablist owns only tabs (C77): More, a menu button, stands beside it.
+        expect(screen.findHostByTestId('project-cockpit-tab-more')).not.toBeNull();
+        expect(tablists[0]!.findAll((node) => node.props.testID === 'project-cockpit-tab-more')).toHaveLength(0);
         const pages = ['overview', 'code', 'changes', 'scripts', 'services', 'context'];
         const onBar = pages.filter((page) => screen.findHostByTestId(`project-cockpit-tab-${page}`) !== null);
         // The bar holds a prefix of the pages; whatever does not fit is reachable from More.

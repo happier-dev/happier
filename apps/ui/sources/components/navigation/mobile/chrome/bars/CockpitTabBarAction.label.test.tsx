@@ -55,3 +55,29 @@ describe('CockpitTabBarAction label', () => {
     expect(visibleText(screen)).not.toContain('Overview');
   });
 });
+
+describe('CockpitTabBarAction semantics', () => {
+  // C77 (DESIGN-ACCEPT-B F3): More opens a menu, so it is a menu button beside the bar's tablist, never a tab or a
+  // toggle. Standing for the open item, it is announced as the current page rather than as a selected tab.
+  it('is a menu button, not a toggle', async () => {
+    const screen = await renderScreen(
+      <CockpitTabBarActionView testID="more" label="More" icon="dots-three" expanded={false}
+        metrics={resolveTabBarMetrics('regular', true)} onPress={() => {}} />,
+    );
+    const host = screen.findHostByTestId('more');
+    expect(host?.props.role ?? host?.props.accessibilityRole).toBe('button');
+    expect(host?.props['aria-haspopup']).toBe('menu');
+    expect(host?.props['aria-pressed']).toBeUndefined();
+    expect(host?.props['aria-current']).toBeUndefined();
+  });
+
+  it('stands for the open item as the current page', async () => {
+    const screen = await renderScreen(
+      <CockpitTabBarActionView testID="more" label="Overview" icon="info" selected expanded={false}
+        metrics={resolveTabBarMetrics('regular', true)} onPress={() => {}} />,
+    );
+    const host = screen.findHostByTestId('more');
+    expect(host?.props.role ?? host?.props.accessibilityRole).toBe('button');
+    expect(host?.props['aria-current']).toBe('page');
+  });
+});

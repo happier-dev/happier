@@ -194,7 +194,9 @@ describe('MainAppTabBar', () => {
         );
 
         const tablist = screen.tree.root.find((node) => node.props.accessibilityRole === 'tablist');
-        expect(tablist.findAllByType('MoreAction' as never)).toHaveLength(1);
+        // The tablist owns only tabs (C77); More is the row's next control, right after it.
+        expect(tablist.findAllByType('MoreAction' as never)).toHaveLength(0);
+        expect(tablist.parent?.findAllByType('MoreAction' as never)).toHaveLength(1);
         expect(tablist.findAll((node) => node.props.accessibilityRole === 'tab' && typeof node.props.testID === 'string'
             && node.props.testID.includes('more'))).toHaveLength(0);
     });
@@ -216,10 +218,11 @@ describe('MainAppTabBar', () => {
         const narrow = await renderTabBar(bar());
         for (const id of ['sessions', ...pinned]) expect(narrow.findHostByTestId(`tabbar-tab-${id}`), id).not.toBeNull();
         expect(tracks(narrow)).toHaveLength(1);
-        // Sessions stays put; the destinations and More scroll with the other tabs.
+        // Sessions stays put and the destinations scroll; More stands outside the track (owner 11-10), so no scroll hides it.
         expect(tracks(narrow)[0]!.findAll((node) => node.props.testID === 'tabbar-tab-sessions')).toHaveLength(0);
         expect(tracks(narrow)[0]!.findAll((node) => node.props.testID === 'tabbar-tab-bots').length).toBeGreaterThan(0);
-        expect(tracks(narrow)[0]!.findAllByType('MoreAction' as never)).toHaveLength(1);
+        expect(tracks(narrow)[0]!.findAllByType('MoreAction' as never)).toHaveLength(0);
+        expect(narrow.tree.root.findAllByType('MoreAction' as never)).toHaveLength(1);
         await act(async () => { narrow.findHostByTestId('tabbar-tab-bots')?.props.onPress(); });
         expect(pressed).toEqual(['bots']);
         await narrow.unmount();

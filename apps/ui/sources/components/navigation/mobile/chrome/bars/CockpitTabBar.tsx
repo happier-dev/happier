@@ -28,6 +28,11 @@ const styles = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
     },
+    // The tabs' own row inside the bar: it yields width as the tabs did when they sat in the bar directly.
+    tablist: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
     tab: {
         alignItems: 'center',
         justifyContent: 'center',
@@ -241,26 +246,26 @@ export function CockpitTabBarView<TSurface extends string>(controlled: CockpitTa
     return (
         <FloatingTabBarSurface testID={props.barTestId} bottomInset={props.bottomInset} opaqueBand={props.opaqueBand ?? true}
             trailingAccessory={props.trailingAccessory}>
-            <Animated.View accessibilityRole="tablist" style={[styles.innerContainer, { gap: metrics.rowGap }]}>
-                {scrolls ? (
-                    <>
-                        {props.tabs[0] ? renderTab(props.tabs[0], true) : null}
-                        <View style={styles.trackDivider} />
-                        <CockpitTabBarTrack activeId={resolveCockpitTrackRevealTarget(props.tabs.map(tab => tab.id), props.activeSurface) ?? undefined}
-                            lastId={props.tabs.at(-1)?.id} tabMinWidth={metrics.tabMinWidth}>
-                            {props.tabs.slice(1).map(tab => (
-                                <CockpitTabBarTrackItem key={tab.id} id={tab.id}>{renderTab(tab)}</CockpitTabBarTrackItem>
-                            ))}
-                        </CockpitTabBarTrack>
-                        {/* More stands outside the track (owner 11-10): no scroll position hides it. */}
-                        {props.trailing ? <View style={styles.trackTrailing}>{props.trailing}</View> : null}
-                    </>
-                ) : (
-                    <>
-                        {props.tabs.map(tab => renderTab(tab))}
-                        {props.trailing}
-                    </>
-                )}
+            <Animated.View style={[styles.innerContainer, { gap: metrics.rowGap }]}>
+                {/* The tablist owns only the tabs; More and other trailing controls are buttons beside it (C77). */}
+                <View accessibilityRole="tablist" style={[styles.innerContainer, styles.tablist, { gap: metrics.rowGap }]}>
+                    {scrolls ? (
+                        <>
+                            {props.tabs[0] ? renderTab(props.tabs[0], true) : null}
+                            <View style={styles.trackDivider} />
+                            <CockpitTabBarTrack activeId={resolveCockpitTrackRevealTarget(props.tabs.map(tab => tab.id), props.activeSurface) ?? undefined}
+                                lastId={props.tabs.at(-1)?.id} tabMinWidth={metrics.tabMinWidth}>
+                                {props.tabs.slice(1).map(tab => (
+                                    <CockpitTabBarTrackItem key={tab.id} id={tab.id}>{renderTab(tab)}</CockpitTabBarTrackItem>
+                                ))}
+                            </CockpitTabBarTrack>
+                        </>
+                    ) : props.tabs.map(tab => renderTab(tab))}
+                </View>
+                {/* More stands outside the track (owner 11-10): no scroll position hides it. */}
+                {scrolls
+                    ? props.trailing ? <View style={styles.trackTrailing}>{props.trailing}</View> : null
+                    : props.trailing}
             </Animated.View>
         </FloatingTabBarSurface>
     );
@@ -370,7 +375,7 @@ type CockpitTabBarActionProps = Readonly<{
     label: string;
     icon: IconName;
     expanded?: boolean;
-    /** The open surface lives behind this action (a tool opened from More): it reads as the active tab. */
+    /** The open surface lives behind this action (a tool opened from More): it looks like the active tab and is announced as the current page. */
     selected?: boolean;
     /** The visible name when the accessible `label` carries more (a count read after the name). */
     visibleLabel?: string;
@@ -403,10 +408,13 @@ export const CockpitTabBarActionView = React.forwardRef<View, CockpitTabBarActio
                 borderRadius: metrics.activePillRadius,
             }, HAPPIER_FOCUS_RING_DELEGATED_STYLE,
             focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
-            accessibilityRole={props.selected ? 'tab' : 'button'}
+            // More opens a menu beside the tablist: a menu button, never a tab or a toggle. Standing for the open
+            // item, it is that page's current control (C77).
+            accessibilityRole="button"
+            hasPopup="menu"
             accessibilityLabel={props.label}
             expanded={props.expanded}
-            selected={props.selected === true}
+            {...(props.selected ? { current: 'page' as const } : {})}
         >
             {props.selected ? <View pointerEvents="none" style={[styles.activePill, { borderRadius: metrics.activePillRadius }]} /> : null}
             <View style={styles.iconContainer}>
