@@ -35,6 +35,7 @@ import {
   HappierPageSectionText,
   HappierPageSheet,
   HappierPageSheetGroup,
+  HappierPageSheetGroupSeparator,
   useHappierPageSection,
   withHappierPageSectionDividers,
 } from '../presentation/layout/PageSection.js';
@@ -1939,23 +1940,80 @@ function VirtualizedList<Item>(
     emptyContent !== undefined &&
     emptyContent !== false;
 
+  // A part's heading (groups naming one page section share it and one sheet), and each group's sub-heading on that
+  // sheet: the sheet bar above the first group's, which an untitled group leads without a label. One drawing for the
+  // full and the windowed page list.
+  const renderPartHeading = (head: VirtualizedListSectionData<Item>, part: NonNullable<ListSectionData<unknown>['section']>) =>
+    renderSectionHeader({ section: { key: `section:${part.key}`, authorKey: head.authorKey, title: part.title, data: [],
+      ...(part.detail === undefined ? {} : { count: part.detail }) }, groupAction: false });
+  const renderSheetGroupHeading = (section: VirtualizedListSectionData<Item>, indexInPart: number, sheetHeader: ReactNode) => (
+    <>
+      {/* The sheet bar stands above the first group's sub-heading, inside its group (no pause above it). */}
+      {indexInPart === 0 ? sheetHeader : null}
+      {/* A sub-heading names one part of its section, so it keeps its end (the part) and shrinks its shared start
+          first ("customer-portal · Production"). An untitled group groups its rows without a label, so it draws none. */}
+      {section.title === '' || pageSheet === undefined ? null : (
+        <HappierListSection title={section.title} titleRole="group" titleEllipsizeMode="middle"
+          {...(pageSheet.stackedHeadings === true ? { stacked: true } : {})}
+          style={indexInPart === 0 ? sheetGroupFirstHeadingStyle : sheetGroupHeadingStyle}
+          {...(section.description === undefined ? {} : { description: section.description })}
+          {...(sectionHeaderAction === undefined ? {} : { action: sectionHeaderAction(section.authorKey) })} />
+      )}
+    </>
+  );
+  // A windowed page list's sheets: each section's own, a part's shared one, or the ungrouped list's one.
+  const pageSheets = pageGeometry !== undefined && pageSheet !== undefined && catalogDirectory === undefined ? pageSheet : undefined;
+  const indexInPart = (sectionIndex: number) => {
+    const key = virtualizedSections[sectionIndex]?.section?.key;
+    let at = sectionIndex;
+    while (at > 0 && key !== undefined && virtualizedSections[at - 1]?.section?.key === key) at -= 1;
+    return sectionIndex - at;
+  };
   const virtualizerRequest: CollectionVirtualizerRequest<Item> = {
     ...(visibleSections === undefined
-      ? ({ kind: 'flat', items: visibleItems ?? [] } as const)
+      ? ({
+          kind: 'flat',
+          items: visibleItems ?? [],
+          ...(pageSheets === undefined || !flatPageSheet ? {} : { renderRows: (rows: ReactNode) => (
+            <HappierPageSheet colors={pageSheets.colors} rowDividers={false} {...pageSheetSurface(pageSheets, flatPageSheetStyle)}>
+              <View>
+                {pageSheets.header}
+                {rows}
+                {props.footer}
+              </View>
+            </HappierPageSheet>
+          ) }),
+        } as const)
       : ({
           kind: 'sections',
           sections: virtualizedSections,
-          renderSectionHeader: renderVirtualizedSectionHeader,
-          ...(pageGeometry !== undefined && pageSheet !== undefined && catalogDirectory === undefined
-            ? { renderSectionRows: (sectionIndex: number, rows: ReactNode) => (
-                <HappierPageSheet colors={pageSheet.colors} rowDividers={false}>
-                  <View>
-                    {sectionIndex === 0 ? pageSheet.header ?? null : null}
-                    {rows}
-                  </View>
-                </HappierPageSheet>
-              ) }
-            : {}),
+          renderSectionHeader: pageSheets === undefined ? renderVirtualizedSectionHeader : (sectionIndex: number) => {
+            const section = virtualizedSections[sectionIndex];
+            if (section === undefined) return null;
+            if (section.section === undefined) return renderSectionHeader({ section });
+            const at = indexInPart(sectionIndex);
+            return (
+              <>
+                {at === 0 ? null : <HappierPageSheetGroupSeparator color={pageSheets.colors.groupDivider} insetPx={HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx} />}
+                {renderSheetGroupHeading(section, at, sectionIndex === 0 ? pageSheets.header ?? null : null)}
+              </>
+            );
+          },
+          ...(pageSheets === undefined ? {} : {
+            renderPartHeading: (sectionIndex: number) => {
+              const head = virtualizedSections[sectionIndex];
+              return head?.section === undefined ? null : renderPartHeading(head, head.section);
+            },
+            renderSectionRows: (sectionIndex: number, rows: ReactNode) => (
+              <HappierPageSheet colors={pageSheets.colors} rowDividers={false} {...pageSheetSurface(pageSheets)}>
+                <View>
+                  {/* A part's sheet bar stands in its first group's heading; a section's own sheet carries it here. */}
+                  {sectionIndex === 0 && virtualizedSections[0]?.section === undefined ? pageSheets.header ?? null : null}
+                  {rows}
+                </View>
+              </HappierPageSheet>
+            ),
+          }),
         } as const)),
     keyForItem:
       visibleSections === undefined
@@ -2061,30 +2119,12 @@ function VirtualizedList<Item>(
                 // Groups that are parts of one page section: its one heading, then one sheet holding each group
                 // under its own sub-heading, a light pause between them (`HappierPageSheetGroup`). Each group's
                 // action stands on its own sub-heading; the section heading names them all and has none of its own.
-                const head = part.sections[0]!;
                 return (
                   <Fragment key={`section:${part.section.key}`}>
-                    {renderSectionHeader({ section: { key: `section:${part.section.key}`, authorKey: head.authorKey,
-                      title: part.section.title, data: [],
-                      ...(part.section.detail === undefined ? {} : { count: part.section.detail }) }, groupAction: false })}
-                    <HappierPageSheet colors={pageSheet.colors} rowDividers={false}>
+                    {renderPartHeading(part.sections[0]!, part.section)}
+                    <HappierPageSheet colors={pageSheet.colors} rowDividers={false} {...pageSheetSurface(pageSheet)}>
                       {part.sections.map((section, index) => (
-                        <HappierPageSheetGroup key={section.key} header={(
-                          <>
-                            {/* The sheet bar stands above the first group's sub-heading, inside its group (no pause above it). */}
-                            {index === 0 ? sheetHeader : null}
-                            {/* A sub-heading names one part of its section, so it keeps its end (the part) and shrinks
-                                its shared start first ("customer-portal · Production"). An untitled group groups its
-                                rows without a label, so it draws none. */}
-                            {section.title === '' ? null : (
-                              <HappierListSection title={section.title} titleRole="group" titleEllipsizeMode="middle"
-                                {...(pageSheet.stackedHeadings === true ? { stacked: true } : {})}
-                                style={index === 0 ? sheetGroupFirstHeadingStyle : sheetGroupHeadingStyle}
-                                {...(section.description === undefined ? {} : { description: section.description })}
-                                {...(sectionHeaderAction === undefined ? {} : { action: sectionHeaderAction(section.authorKey) })} />
-                            )}
-                          </>
-                        )}>
+                        <HappierPageSheetGroup key={section.key} header={renderSheetGroupHeading(section, index, sheetHeader)}>
                           <View>{rowsOf(section)}</View>
                         </HappierPageSheetGroup>
                       ))}

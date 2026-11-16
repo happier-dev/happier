@@ -2172,6 +2172,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // Totals sum every group, so a page list that has them is one table: its groups are bands on one sheet under the
   // sheet's bar, closed by the totals (lab `rp` Hp), never separate page sections with the totals left off a sheet.
   const pageTable = pageSections && grouped && (props.summaryRows?.length ?? 0) > 0;
+  // A page-scrolled table or list windows its rows in the page's scroller too, whenever List finds that scroller
+  // tracked; a totals table's one sheet and a widget body's rows stay whole.
+  const pageWindows = pageVirtualized
+    || (props.scroll === 'page' && (presentation === 'table' || presentation === 'list') && !onBodyEdge && !pageTable);
 
   // ---- measured geometry: the split owner's pure rule, never a device label ----
   const [size, setSize] = useState<Readonly<{ width: number; height: number }> | null>(null);
@@ -2771,7 +2775,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       ),
     }),
     ...(pageScroll ? { pageScroll: true } : {}),
-    ...(pageVirtualized ? { pageVirtualization: pageGeometry, ...(props.retainedRowKeys === undefined ? {} : { retainedRowKeys: props.retainedRowKeys }) } : {}),
+    ...(pageWindows ? { pageVirtualization: pageGeometry, ...(props.retainedRowKeys === undefined ? {} : { retainedRowKeys: props.retainedRowKeys }) } : {}),
     ...(nestedTable ? { collectionRole: 'treegrid' as const } : {}),
     wrapSectionHeader: (sectionKey, header) => (
       <driver.AnimatedView
@@ -2783,7 +2787,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         {header}
       </driver.AnimatedView>
     ),
-  }), [canPeek, catalogDirectory, catalogSideList, directoryColumns, directoryHeadingInsetPx, driver, expandable, metrics, model, multipleStore, navigationKeys, nestedTable, setBranchOpen, treeNodes, props.retainedRowKeys, pageScroll, wrapTitles, ruledInsetPx, pageVirtualized, pageGeometry, pageSections, pageTable, pageSheetHeader, enclosingPageSheet, flatBrowseColors, flatBrowseSheet, containingMaterial, paintColor, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, transition, view.scrollRequest, viewportScrollRequest, rowGeometry, props.useRowActions]);
+  }), [canPeek, catalogDirectory, catalogSideList, directoryColumns, directoryHeadingInsetPx, driver, expandable, metrics, model, multipleStore, navigationKeys, nestedTable, setBranchOpen, treeNodes, props.retainedRowKeys, pageScroll, wrapTitles, ruledInsetPx, pageWindows, pageGeometry, pageSections, pageTable, pageSheetHeader, enclosingPageSheet, flatBrowseColors, flatBrowseSheet, containingMaterial, paintColor, palette, presentation, progress, props.groupAction, props.testID, scrollOffsetRef, singleChoice === undefined, tabStopKey, theme.colors.divider, theme.colors.elevatedSurface, theme.colors.surface, transition, view.scrollRequest, viewportScrollRequest, rowGeometry, props.useRowActions]);
 
   // ---- Escape returns to the table from anywhere inside the Collection (web keyboard) ----
   const rootRef = useRef<View | null>(null);

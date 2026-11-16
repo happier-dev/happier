@@ -4971,21 +4971,122 @@ describe('first layout (web)', () => {
   });
 });
 
+// The physical page scroller is the platform boundary: its window and the collection's place in it.
+function pageTracker(viewportHeight = 900) {
+  const listeners = new Set<() => void>();
+  let window = { top: 0, bottom: viewportHeight };
+  const tracker: PluginUiScrollActivityTracker = {
+    onScroll() {}, onLayout() {}, onContentSizeChange() {}, invalidateLayout() {},
+    getLayoutRevision: () => 0,
+    getWindow: () => window,
+    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    measureSpan: async () => ({ top: 0 }),
+    scrollToOffset: (offset) => { window = { top: offset, bottom: offset + viewportHeight }; listeners.forEach((listener) => listener()); },
+  };
+  return tracker as PluginUiScrollActivityTracker & { scrollToOffset(offset: number): void };
+}
+
+describe('page list windowing', () => {
+  // Five rows per group, so 50 and 500 rows lay out the same first page; a shared sheet bands every group (All Deployments).
+  const rowsOf = (count: number): readonly Entry[] => Array.from({ length: count }, (_, index) => ({
+    id: `r${index}`, title: `Service ${index + 1}`, group: `g${Math.floor(index / 5)}`, repo: 'api', reason: '', age: '1d',
+  }));
+  const bandsOf = (count: number, section?: Readonly<{ key: string; title: string }>) => ({
+    axis: Array.from({ length: Math.ceil(count / 5) }, (_, index) => ({
+      key: `g${index}`, title: `Project ${index + 1}`, ...(section === undefined ? {} : { section }),
+    })),
+    groupOf: (entry: Entry) => entry.group,
+  });
+  type Shape = 'phone list' | 'desktop table' | 'grouped page sections' | 'one sheet of bands';
+  const options = (shape: Shape, count: number): HarnessOptions => ({
+    detail: 'none', scroll: 'page', items: rowsOf(count),
+    ...(shape === 'desktop table' ? { presentation: 'table', grouped: false }
+      : shape === 'phone list' ? { presentation: 'list', grouped: false }
+      : shape === 'grouped page sections' ? { presentation: 'list', grouping: bandsOf(count) }
+      : { presentation: 'list', grouping: bandsOf(count, { key: 'services', title: '' }) }),
+  });
+  const widthOf = (shape: Shape) => (shape === 'phone list' ? 390 : 1440);
+  const mountedRows = (view: ReturnType<typeof mount>) => [...view.container.querySelectorAll('[data-testid^="row:"]')]
+    .filter((node) => node.getAttribute('data-testid')!.split(':').length === 2).length;
+
+  it.each<Shape>(['phone list', 'desktop table', 'grouped page sections', 'one sheet of bands'])(
+    'mounts only the rows near the page window, however long the %s (page scroll)',
+    async (shape) => {
+      const atTopOf = async (count: number) => {
+        const tracker = pageTracker();
+        const view = mount({ ...options(shape, count), scrollTracker: tracker });
+        try {
+          view.measure(widthOf(shape));
+          await act(async () => {});
+          const atTop = mountedRows(view);
+          expect(view.query('row:r0')).not.toBeNull();
+          expect(view.query(`row:r${count - 1}`)).toBeNull();
+          if (count < 500) return atTop;
+          // Page by page to the end: the count stays bounded, the last row arrives and the first rows leave.
+          for (let page = 1; page < 400 && view.query(`row:r${count - 1}`) === null; page += 1) {
+            await act(async () => { tracker.scrollToOffset(page * 900); });
+            expect(mountedRows(view)).toBeLessThanOrEqual(atTop + 20);
+          }
+          expect(view.query(`row:r${count - 1}`)).not.toBeNull();
+          expect(view.query('row:r100')).toBeNull();
+          return atTop;
+        } finally {
+          view.unmount();
+        }
+      };
+      const fifty = await atTopOf(50);
+      const fiveHundred = await atTopOf(500);
+      expect(fiveHundred).toBe(fifty);
+      expect(fiveHundred).toBeLessThan(50);
+    },
+    // Paging through 500 rows commits a window per page.
+    30_000,
+  );
+
+  it('draws a windowed shared sheet as one sheet: the bands near the window under their own sub-headings', async () => {
+    const view = mount({ ...options('one sheet of bands', 500), scrollTracker: pageTracker() });
+    try {
+      view.measure(1440);
+      await act(async () => {});
+      // The sheet both bands share: the nearest ancestor of a row of each, holding the second band's sub-heading.
+      let sheet = view.query('row:r0')!.parentElement!;
+      while (!sheet.contains(view.query('row:r5'))) sheet = sheet.parentElement!;
+      const subHeadings = [...sheet.querySelectorAll('[role="group"][aria-label]')].map((group) => group.getAttribute('aria-label'));
+      expect(subHeadings).toContain('Project 2');
+      expect(subHeadings).not.toContain('Project 100');
+    } finally {
+      view.unmount();
+    }
+  });
+
+  it('reveals and focuses a row outside the window on End, then the first again on Home (phone list)', async () => {
+    const tracker = pageTracker();
+    const offsets: number[] = [];
+    const scrollToOffset = tracker.scrollToOffset;
+    const view = mount({ ...options('phone list', 500), scrollTracker: { ...tracker, scrollToOffset: (offset: number) => {
+      offsets.push(offset); scrollToOffset(offset);
+    } } });
+    try {
+      view.measure(390);
+      await act(async () => {});
+      await act(async () => {
+        view.query('row:r0')!.focus();
+        view.query('row:r0')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
+      });
+      expect(offsets.at(-1)).toBeGreaterThan(900);
+      expect(document.activeElement).toBe(view.query('row:r499'));
+      expect(mountedRows(view)).toBeLessThan(100);
+      await act(async () => {
+        view.query('row:r499')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }));
+      });
+      expect(document.activeElement).toBe(view.query('row:r0'));
+    } finally {
+      view.unmount();
+    }
+  });
+});
+
 describe('grid', () => {
-  // The physical page scroller is the platform boundary: its window and the grid's place in it.
-  function pageTracker(viewportHeight = 900) {
-    const listeners = new Set<() => void>();
-    let window = { top: 0, bottom: viewportHeight };
-    const tracker: PluginUiScrollActivityTracker = {
-      onScroll() {}, onLayout() {}, onContentSizeChange() {}, invalidateLayout() {},
-      getLayoutRevision: () => 0,
-      getWindow: () => window,
-      subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-      measureSpan: async () => ({ top: 0 }),
-      scrollToOffset: (offset) => { window = { top: offset, bottom: offset + viewportHeight }; listeners.forEach((listener) => listener()); },
-    };
-    return tracker as PluginUiScrollActivityTracker & { scrollToOffset(offset: number): void };
-  }
   const library = (count: number): readonly Entry[] => Array.from({ length: count }, (_, index) => ({
     id: `art-${index}`, title: `Artifact ${index + 1}`, group: 'rest', repo: 'notes', reason: '', age: '1d',
   }));
