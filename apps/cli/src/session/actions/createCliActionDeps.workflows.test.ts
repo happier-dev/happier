@@ -510,14 +510,15 @@ describe('createCliActionDeps workflow boundary', () => {
         return;
       }
       if (actor === 'agent_process') {
-        expect(JSON.parse(output.join(''))).toMatchObject({ ok: false, error: { code: 'target_unavailable',
-          details: { reason: 'agent_start_context_unavailable' } } });
+        // Session MCP owns transport selection; an explicit Home override is invalid.
+        expect(JSON.parse(output.join(''))).toMatchObject({ ok: false, error: { code: 'invalid_arguments' } });
         expect(http.post.mock.calls.filter(([, body]) => body.operation === 'admit')).toEqual([]);
         return;
       }
       if (actor === 'compiled_cli_no_target' || actor === 'compiled_cli_missing_machine' || actor === 'compiled_cli_missing_runtime') {
         expect(JSON.parse(output.join(''))).toMatchObject({ ok: false, error: {
-          code: actor === 'compiled_cli_missing_machine' ? 'invalid_arguments' : 'target_unavailable',
+          code: actor === 'compiled_cli_missing_machine' ? 'invalid_arguments'
+            : actor === 'compiled_cli_no_target' ? 'daemon_unavailable' : 'target_unavailable',
         } });
         expect(http.post.mock.calls.filter(([, body]) => body.operation === 'admit')).toEqual([]);
         return;
@@ -623,31 +624,38 @@ describe('createCliActionDeps workflow boundary', () => {
       }) } };
       return baseGet(url);
     });
+    // Roster discovery uses the direct read; credentialed capability detection
+    // crosses authenticated Machine RPC. Both boundaries observe the same Machine.
+    const observeMachine = async (method: string) => {
+      if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
+        protocolVersion: 1, projection: { v: 2, generation: 1, agentsById: { codex: {
+          id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        }, opencode: {
+          id: 'opencode', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
+        } } },
+      };
+      if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
+        'cli.codex': { ok: true, data: { installed: true, version: '1', latestVersion: null,
+          update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'unsupported' },
+          platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] } },
+        'cli.opencode': { ok: true, data: { installed: true, version: '1', latestVersion: null,
+          update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'unsupported' },
+          platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] } },
+        'tool.executionRuns': { ok: true, data: { available: true, features: { detachedScope: true },
+          backends: { codex: { available: true }, opencode: { available: true } } } },
+      } };
+      throw new Error(`Unexpected Panel Machine RPC ${method}`);
+    };
+    machineRpc.mockImplementation(async ({ method, machineId }: { method: string; machineId: string }) => {
+      expect(machineId).toBe('machine-1');
+      return observeMachine(method);
+    });
     const deps = createCliActionDeps({ token, credentials, serverId: 'profile', serverHttpBaseUrl: 'https://panel-origin.test',
       serverIdentityId: 'srv_panel_home', resolveServerFeaturesSnapshot: () => enabledFeatures as never,
       sessionId: 'cli-global', mode: 'plain', ctx: null,
-      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async method => {
-        if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return {
-          protocolVersion: 1, projection: { v: 2, generation: 1, agentsById: { codex: {
-            id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
-            capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
-          }, opencode: {
-            id: 'opencode', identity: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
-            capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
-          } } },
-        };
-        if (method === RPC_METHODS.CAPABILITIES_DETECT) return { protocolVersion: 1, results: {
-          'cli.codex': { ok: true, data: { installed: true, version: '1', latestVersion: null,
-            update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'unsupported' },
-            platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] } },
-          'cli.opencode': { ok: true, data: { installed: true, version: '1', latestVersion: null,
-            update: { supported: false, command: null }, signIn: { status: 'signedOut', loginSupport: 'unsupported' },
-            platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [] } },
-          'tool.executionRuns': { ok: true, data: { available: true, features: { detachedScope: true },
-            backends: { codex: { available: true }, opencode: { available: true } } } },
-        } };
-        throw new Error(`Unexpected Panel Machine RPC ${method}`);
-      } },
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: observeMachine },
     });
     const executor = createActionExecutor(deps);
     signedRootAction.mockImplementation(async request => executor.execute(request.actionId, request.input, { surface: 'cli' }));
@@ -841,7 +849,9 @@ describe('createCliActionDeps workflow boundary', () => {
       externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: tmpdir() } },
       ...(caller === 'invalid_agent_causal' ? { surface: 'agent', authority: 'account_automation',
         actionCaller: { kind: 'session', sessionId: 'c123456789012345678901234', starterDepth: 0, turnDepth: 0 },
-        defaultSessionId: 'c123456789012345678901234', causalPermissionAuthority: null } : {}),
+        // Null denotes an absent ceiling; malformed present authority must refuse before reads.
+        defaultSessionId: 'c123456789012345678901234', causalPermissionAuthority: {
+          kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'not-a-permission-mode' } } : {}),
     };
     let admissionCompleted = false;
     const admission = deps.workflowAction!({ actionId: 'workflow.run.start', input: {
@@ -1857,7 +1867,7 @@ describe('createCliActionDeps workflow boundary', () => {
         };
         if (url.endsWith('/reply')) return { status: 200, data: { v: 1, status: replyCustodyUnavailable ? 'unavailable' : 'none' } };
         if (url.includes('/messages/by-local-id/')) return { status: 200, data: { message: input } };
-        if (url.includes('/messages?')) return { status: 200, data: { messages: [input,
+        if (url.includes('/messages?')) return { status: 200, data: { hasMore: false, messages: [input,
           { id: 'started', seq: 8, localId: null, createdAt: 2, content: { t: 'plain', v: { role: 'agent',
             content: { type: 'acp', data: { type: 'task_started', id: 'turn-1' } } } } },
           { id: 'settled', seq: 9, localId: null, createdAt: 2, content: { t: 'plain', v: { role: 'agent',
@@ -1885,7 +1895,7 @@ describe('createCliActionDeps workflow boundary', () => {
     const deps = createCliActionDeps({ token: 'token', credentials: { token: 'token', encryption: null },
       sessionId: 'cli-global', mode: 'plain', ctx: null, resolveServerFeaturesSnapshot: () => enabledFeatures as never });
     const inspected = await deps.workflowAction!({ actionId: 'workflow.run.invocations.get', input: { runId, invocationId: recordId }, context: {} });
-    expect(inspected, JSON.stringify(inspected))
+    expect(inspected, JSON.stringify({ inspected, reads: http.get.mock.calls.map(([url]) => url) }))
       .toMatchObject({ invocation: { recoveryAvailability: { retry: { kind: 'available' }, continueSameConversation: { kind: 'available' } } } });
     if (targetKind === 'session') {
       // An unreadable original obligation cannot borrow the later transcript's completion.
@@ -2212,6 +2222,7 @@ describe('createCliActionDeps workflow boundary', () => {
     const deps = createCliActionDeps({
       token: 'token', credentials: { token: 'token', encryption: null }, sessionId: 'session-1',
       rawSession: { path: process.cwd(), machineId: 'machine-1' },
+      getCurrentSessionMetadata: () => ({ path: process.cwd(), machineId: 'machine-1' }),
       getCurrentSessionBackendTarget: () => ({ kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }),
       resolveServerFeaturesSnapshot: () => snapshot as never,
       mode: 'plain', ctx: null,

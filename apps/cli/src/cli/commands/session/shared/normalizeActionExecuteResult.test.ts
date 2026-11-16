@@ -1,7 +1,46 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeActionExecuteResult, projectCliActionFailure } from './normalizeActionExecuteResult';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure } from './normalizeActionExecuteResult';
 
 describe('CLI Action failure presentation', () => {
+  it('retains the CLI target parser refusal and its cause at the command boundary', () => {
+    const failure = normalizeCliActionThrownError(Object.assign(new Error('--machine-id is required for a Workflow project target.'), {
+      code: 'invalid_arguments',
+    }));
+    expect(failure).toMatchObject({ unexpected: false, failure: { errorCode: 'invalid_arguments',
+      failureCause: { errorCode: 'invalid_arguments' } } });
+  });
+
+  it('keeps an unclassified vendor code diagnostic instead of promoting it to a CLI refusal', () => {
+    expect(normalizeCliActionThrownError(Object.assign(new Error('Invalid vendor payload'), {
+      code: 'vendor_payload_invalid',
+    }))).toMatchObject({ failure: { errorCode: 'action_failed',
+      failureCause: { errorCode: 'vendor_payload_invalid' } } });
+  });
+
+  it.each(['direct', 'cause'] as const)('keeps the typed public failure authoritative over CLI-like diagnostics (%s)', kind => {
+    const failure = createActionExecuteFailureError({ ok: false, errorCode: 'action_failed', error: 'Invalid vendor payload',
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'invalid_arguments', httpStatus: null } });
+    const error = kind === 'direct' ? failure
+      : Object.assign(new Error('Invalid vendor payload', { cause: failure }), { code: 'invalid_arguments' });
+    expect(normalizeCliActionThrownError(error)).toMatchObject({ failure: { errorCode: 'action_failed',
+      failureCause: { errorCode: 'invalid_arguments' } } });
+  });
+
+  it('retains a typed public failure even when its diagnostic has no code', () => {
+    const failure = createActionExecuteFailureError({ ok: false, errorCode: 'action_failed', error: 'Invalid vendor payload',
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: null, httpStatus: null } });
+    expect(normalizeCliActionThrownError(failure)).toMatchObject({ failure: { errorCode: 'action_failed',
+      failureCause: { errorCode: null } } });
+  });
+
+  it('keeps an original vendor failure when a private cause accessor throws', () => {
+    const error = Object.assign(new Error('Invalid vendor payload'), { code: 'vendor_payload_invalid' });
+    Object.defineProperty(error, 'cause', { get() { throw new Error('Private cause'); } });
+    expect(normalizeCliActionThrownError(error)).toMatchObject({ failure: { errorCode: 'action_failed',
+      failureCause: { errorCode: 'vendor_payload_invalid' } } });
+  });
+
   it.each(['outer', 'nested'] as const)('explains the Machine owner Manage refusal in an %s result', kind => {
     const failureCause = { phase: 'execution_authorization', errorClass: 'Error',
       errorCode: 'machine_manage_required', httpStatus: null } as const;
