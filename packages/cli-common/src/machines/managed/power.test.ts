@@ -123,7 +123,7 @@ describe('shared admitted native power', () => {
         const projected = normalizeActionExecutorThrownError(value.guestStartupError);
         expect(projected).toMatchObject({ errorCode: 'native_boot_unconfirmed',
             failureCause: { phase: 'machines.managed.power.set', errorCode: source === 'native' ? 'EACCES' : 'provider_unavailable',
-                httpStatus: source === 'native' ? 403 : null },
+                httpStatus: 403 },
             ...(source === 'systemTask' ? { details } : {}) });
         expect(JSON.stringify(projected)).not.toContain(privateText);
     });
