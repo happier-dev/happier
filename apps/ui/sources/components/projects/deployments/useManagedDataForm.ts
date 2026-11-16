@@ -7,7 +7,7 @@ import type { ManagedDataOperation } from './managedData';
 
 const organizationProfileKeys = { profile: ['connectedAccountsV4'], profileScope: true } as const;
 
-/** Shared operands for Create and Duplicate; the connected profile supplies an editable organization default. */
+/** Shared operands for managed data forms; declared organization fields receive an editable profile default. */
 export function useManagedDataForm(operation: ManagedDataOperation | null | undefined, lifetime: ServerAccountScopeLifetime) {
   const [account, selectAccount] = React.useState<QualifiedConnectedAccountRef | null>(null);
   const [values, setValues] = React.useState<Record<string, unknown>>({});
@@ -16,8 +16,8 @@ export function useManagedDataForm(operation: ManagedDataOperation | null | unde
     : undefined, organizationProfileKeys);
   const seeded = React.useMemo(() => {
     if (!operation) return values;
-    const creating = operation.role === 'projects.provision' || operation.role === 'projects.provisionOptions';
-    const defaults = creating && organizationId && values.providerAccountId === undefined
+    const organizationField = operation.inputHints.fields.some(field => field.path === 'providerAccountId');
+    const defaults = organizationField && organizationId && values.providerAccountId === undefined
       ? { ...values, providerAccountId: organizationId } : values;
     return seedInputByFieldHints(operation, defaults);
   }, [operation, values, organizationId]);

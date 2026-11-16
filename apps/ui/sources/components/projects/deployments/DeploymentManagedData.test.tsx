@@ -147,6 +147,8 @@ it('reviews native creation options, retains an ambiguous create and continues t
     hostAccess: { required: [{ id: 'manage', capability: 'connectedAccounts', reason: 'Manage a database',
       scope: { serviceRefs: [service], operations: ['use'], materializationKinds: ['httpHeaders'] } }], optional: [] },
     actions: {
+      list: { ...common, title: 'List projects', dangerLevel: 'safe', readOnly: true,
+        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.list'].jsonSchema, run: async () => ({}) },
       options: { ...common, title: 'Options', dangerLevel: 'safe', readOnly: true,
         inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.provisionOptions'].jsonSchema, run: async () => ({}) },
       create: { ...common, title: 'Create', dangerLevel: 'writesRemote', readOnly: false, confirmation: { title: 'Create database?' },
@@ -154,7 +156,7 @@ it('reviews native creation options, retains an ambiguous create and continues t
       link: { ...common, title: 'Inspect project', dangerLevel: 'safe', readOnly: true,
         inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.link'].jsonSchema, run: async () => ({}) },
     }, deploymentTargets: { database: { role: 'data', title: 'Database', targetKind: 'database', icon: 'server-outline',
-      targetSchema: closed, linkSchema: closed, dataV1: { projects: { provisionOptionsAction: 'options', provision: 'create', link: 'link' } } } } });
+      targetSchema: closed, linkSchema: closed, dataV1: { projects: { listAction: 'list', provisionOptionsAction: 'options', provision: 'create', link: 'link' } } } } });
   const serverId = await homes.addHome({ name: 'Create managed', serverUrl: 'https://managed-create.test',
     serverIdentityId: 'srv_managed_create', accountId: 'owner', currentAccount: true });
   const account = await captureLazyActionAccountContext(serverId);
@@ -189,8 +191,18 @@ it('reviews native creation options, retains an ambiguous create and continues t
       node.props.fields.some((field: { path: string }) => field.path === 'providerAccountId'))!;
     expect(organizationField().props.input.providerAccountId).toBe('configured-organization');
     expect(run()!.props.disabled).toBe(false);
+    await act(async () => operation()!.props.onChange('projects.list'));
+    expect(organizationField().props.input.providerAccountId).toBe('configured-organization');
+    expect(run()!.props.disabled).toBe(false);
+    await act(async () => organizationField().props.onPatch({ providerAccountId: '' }));
+    await act(async () => operation()!.props.onChange('projects.provision'));
+    expect(organizationField().props.input.providerAccountId).toBe('');
+    expect(run()!.props.disabled).toBe(true);
     await act(async () => screen.findAllByType(ActionInputFields).find(node =>
       node.props.fields.some((field: { path: string }) => field.path === 'providerAccountId'))!.props.onPatch({ providerAccountId: 'organization' }));
+    await act(async () => operation()!.props.onChange('projects.list'));
+    expect(organizationField().props.input.providerAccountId).toBe('organization');
+    await act(async () => operation()!.props.onChange('projects.provision'));
     expect(calls).toEqual([]);
     await act(async () => run()!.props.onPress());
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(calls).toEqual(['options']); expect(run()!.props.loading).toBe(false); });
