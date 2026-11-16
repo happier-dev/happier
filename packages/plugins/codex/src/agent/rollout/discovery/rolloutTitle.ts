@@ -29,7 +29,11 @@ const CODEX_TITLE_BOILERPLATE_PATTERNS = [
  * whitespace and reject harness boilerplate rather than
  * presenting it as a session title.
  */
-export function readCodexExternalSessionTitleCandidate(value: unknown): string | null {
+export function readCodexExternalSessionTitleCandidate(
+  value: unknown,
+  /** `prompt`: the value is a user prompt, titled by its visible words (Happier's delivery frame left out). */
+  options?: Readonly<{ source: 'prompt' }>,
+): string | null {
   if (typeof value !== 'string') return null;
   const normalized = readSessionInputPromptUserTextV1(value).replace(/\s+/g, ' ').trim();
   if (!normalized) return null;
@@ -37,7 +41,7 @@ export function readCodexExternalSessionTitleCandidate(value: unknown): string |
   if (CODEX_TITLE_BOILERPLATE_PATTERNS.some((pattern) => lowerTitle.includes(pattern))) {
     return null;
   }
-  return projectExternalSessionCandidateTitle(normalized);
+  return projectExternalSessionCandidateTitle(normalized, options) || null;
 }
 
 function readTitleFromCodexTitleToolInput(input: unknown): string | null {
@@ -125,7 +129,7 @@ export async function readCodexRolloutHead(
           if (title) return { title, thread, ...(cwd ? { cwd } : {}) };
         }
         if (action.type === 'user-text' && fallbackUserText === null) {
-          fallbackUserText = readCodexExternalSessionTitleCandidate(action.text);
+          fallbackUserText = readCodexExternalSessionTitleCandidate(action.text, { source: 'prompt' });
         }
       }
     }

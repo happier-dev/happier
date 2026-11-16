@@ -17,8 +17,10 @@ export function readCodexNativeCandidateTitle(thread: unknown): string | undefin
   if (!isRecord(thread)) return undefined;
   if (typeof thread.name === 'string' && thread.name.trim()) return projectExternalSessionCandidateTitle(thread.name.trim());
   if (typeof thread.preview !== 'string' || !thread.preview.trim()) return undefined;
-  const title = readSessionInputPromptUserTextV1(thread.preview).replace(/\s+/g, ' ').trim();
-  return title ? projectExternalSessionCandidateTitle(title) : undefined;
+  // A preview is the first prompt: its title is the person's words, without Happier's delivery frame.
+  const title = projectExternalSessionCandidateTitle(
+    readSessionInputPromptUserTextV1(thread.preview).replace(/\s+/g, ' ').trim(), { source: 'prompt' });
+  return title || undefined;
 }
 
 function reportNativeMetadataFailure(error: unknown, stage: 'connect' | 'read' | 'dispose'): void {
