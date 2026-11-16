@@ -312,6 +312,30 @@ describe('accepted Project Service declaration starter', () => {
         expect(h.owner.listProjectServices()).toEqual([]);
     });
 
+    it.skipIf(process.platform === 'win32')('starts a literal worker Service whose interpreter link differs per Machine', async () => {
+        const h = await fixture(false, { kind: 'command', command: '.venv/bin/python -e "setInterval(() => {}, 1000)"' }, false, 'portable');
+        await mkdir(join(h.root, '.venv/bin'), { recursive: true });
+        await filesystem.symlink(process.execPath, join(h.root, '.venv/bin/python'));
+        // The worker's venv links to its own interpreter, as `uv sync` there would.
+        const workerInterpreter = await mkdtemp(join(tmpdir(), 'happier-worker-python-'));
+        await writeFile(join(workerInterpreter, 'python'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} "$@"\n`);
+        await chmod(join(workerInterpreter, 'python'), 0o755);
+        h.afterCopy(async () => {
+            await rm(join(h.targetRoot, '.venv/bin/python'), { force: true });
+            await mkdir(join(h.targetRoot, '.venv/bin'), { recursive: true });
+            await filesystem.symlink(join(workerInterpreter, 'python'), join(h.targetRoot, '.venv/bin/python'));
+        });
+        const review = await h.selectStart();
+        if (!review.reviewedEffectDigest) throw new Error('Expected SOURCE effect review');
+        const result = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
+        try {
+            expect(result).toMatchObject({ status: 'succeeded', machineId: 'worker-machine' });
+        } finally {
+            for (const handle of h.owner.listProjectServices()) await handle.stop();
+            await rm(workerInterpreter, { recursive: true, force: true });
+        }
+    });
+
     it('starts an exact Project declaration without waiting for unrelated listener discovery', async () => {
         const h = await fixture();
         await writeFile(join(h.root, '.happier/project.json'), JSON.stringify({ ...h.manifest,

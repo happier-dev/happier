@@ -269,7 +269,10 @@ under its folder that your repository does not ignore, plus `flake.lock` (and
 `devenv.lock` and `devenv.yaml` for devenv). Editing any of those asks again.
 For devbox, the review includes what `init_hook` runs (a devbox `include` is not
 supported for review yet, so setup refuses it).
-For mise, it includes the files `_.source` loads.
+For mise, it includes the files `_.source` loads, including `{{config_root}}` paths;
+`_.file` and `_.path` are not covered, so list those in `workspace.setupInputs`.
+Files a Nix expression names as a path literal outside its folder, and scripts started
+through runners such as `run-s` or `concurrently`, are not followed either.
 
 List other files a command reads in `workspace.setupInputs`:
 

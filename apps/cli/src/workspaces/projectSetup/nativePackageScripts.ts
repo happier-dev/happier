@@ -96,6 +96,15 @@ async function readIgnoredPathSet(root: string, scmRegistry?: ScmBackendRegistry
     return new Set((paths ?? []).map(path => path.replaceAll('\\', '/').replace(/\/+$/u, '')));
 }
 
+/** Whether the repository's SCM ignores a checkout-relative path or one of its folders. */
+export async function readNativeIgnoredPathFilter(root: string, scmRegistry?: ScmBackendRegistry): Promise<(path: string) => boolean> {
+    const ignored = await readIgnoredPathSet(root, scmRegistry);
+    return path => {
+        const parts = path.replaceAll('\\', '/').split('/');
+        return parts.some((_, index) => ignored.has(parts.slice(0, index + 1).join('/')));
+    };
+}
+
 type DiscoveryEntries = Awaited<ReturnType<ReturnType<typeof currentWorkspaceSource>['readdir']>> | null;
 
 /**

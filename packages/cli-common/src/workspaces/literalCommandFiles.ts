@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import type { ProjectCommandFileFactV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
@@ -79,8 +79,9 @@ function scanLiteralCommand(root: string, cwd: string, command: LiteralCommandLi
     // Home (`~`) is outside the checkout.
     const add = (token: string) => {
         const local = token.startsWith('~') ? undefined : within(resolve(segmentCwd, token));
-        if (!local) return undefined;
-        const file = local.replaceAll('\\', '/');
+        if (local === undefined) return undefined;
+        // The checkout root itself (`node .`) is the folder `.`.
+        const file = local === '' ? '.' : local.replaceAll('\\', '/');
         files.add(file);
         return file;
     };
@@ -180,13 +181,13 @@ export async function readLiteralCommandExecutedFiles(root: string, cwd: string,
         if (refused) return { kind: 'refused', code: refused };
         // Node loads a folder through its package.json `main`; deeper imports are setupInputs.
         if (!scan.packageOperands.has(file) || !('directory' in facts.get(file)!)) continue;
-        const manifest = `${file}/package.json`;
+        const manifest = file === '.' ? 'package.json' : `${file}/package.json`;
         let main = 'index.js';
         const manifestBytes = await io.readBytes(root, manifest);
         if (manifestBytes.kind === 'read') {
             facts.set(manifest, { file: manifest, digest: createHash('sha256').update(manifestBytes.bytes).digest('hex') });
             try {
-                const parsed: unknown = JSON.parse(manifestBytes.bytes.toString('utf8'));
+                const parsed: unknown = JSON.parse(new TextDecoder().decode(manifestBytes.bytes));
                 if (parsed && typeof parsed === 'object' && 'main' in parsed && typeof parsed.main === 'string' && parsed.main.trim()) main = parsed.main;
             } catch { /* An invalid manifest's bytes are already the reviewed fact; Node falls back to index.js. */ }
         } else {
@@ -195,8 +196,19 @@ export async function readLiteralCommandExecutedFiles(root: string, cwd: string,
         }
         const entry = relative(root, resolve(root, file, main));
         if (entry === '' || entry === '..' || entry.startsWith(`..${sep}`) || isAbsolute(entry)) continue;
-        const entryRefused = await record(entry.replaceAll('\\', '/'));
-        if (entryRefused) return { kind: 'refused', code: entryRefused };
+        // Node's order: the exact file, its .js/.mjs/.cjs forms, then a folder's index.js. The
+        // first present one is the entry; when none is, all are recorded absent so adding one asks again.
+        const candidates = [entry, `${entry}.js`, `${entry}.mjs`, `${entry}.cjs`, join(entry, 'index.js')].map(path => path.replaceAll('\\', '/'));
+        const missing: LiteralCommandFileFactV1[] = [];
+        let found = false;
+        for (const candidate of candidates) {
+            if (facts.has(candidate)) { found = true; break; }
+            const fact = await read(candidate);
+            if ('refused' in fact) return { kind: 'refused', code: fact.refused };
+            if ('digest' in fact || 'linkTarget' in fact) { facts.set(candidate, fact); found = true; break; }
+            if ('absent' in fact) missing.push(fact);
+        }
+        if (!found) for (const fact of missing) facts.set(fact.file, fact);
     }
     return { kind: 'read', files: [...facts.values()].sort((a, b) => a.file < b.file ? -1 : a.file > b.file ? 1 : 0) };
 }

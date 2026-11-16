@@ -64,6 +64,8 @@ function recipeCommandLines(content: string, tool: 'make' | 'just', target: stri
     const recipes = new Map<string, { deps: string[]; lines: string[] }>();
     let current: { deps: string[]; lines: string[] }[] = [];
     for (const raw of content.split(/\r?\n/u)) {
+        // A blank line or a column-0 comment does not end a recipe.
+        if (!raw.trim() || raw.startsWith('#')) continue;
         if (/^\s/u.test(raw)) {
             const line = raw.trim().replace(/^[@+-]+/u, '');
             if (line && !line.startsWith('#')) for (const recipe of current) recipe.lines.push(line);
@@ -279,7 +281,9 @@ async function toolchainExecutedInputs(tool: Extract<ProjectToolchainSelectionV1
         const sources = recordOf(recordOf(recordOf((await import('smol-toml')).parse(content)).env)._).source;
         const paths = (Array.isArray(sources) ? sources : [sources]).flatMap(item => typeof item === 'string' ? [item]
             : isNativeDefinitionRecord(item) && typeof item.path === 'string' ? [item.path] : []);
-        return { lines: [], files: paths.filter(path => !path.startsWith('~')).map(path => resolve(miseConfigRoot(file), path)) };
+        const configRoot = miseConfigRoot(file);
+        return { lines: [], files: paths.map(path => path.replace(/\{\{\s*config_root\s*\}\}/gu, configRoot))
+            .filter(path => !path.startsWith('~')).map(path => resolve(configRoot, path)) };
     }
     return { lines: [] };
 }

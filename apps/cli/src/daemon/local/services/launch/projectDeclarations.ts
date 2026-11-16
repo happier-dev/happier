@@ -311,17 +311,20 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 if (!snapshot.toolchainExecutionInputs?.length) throw new ServiceStartRefusal('project_source_declaration_unavailable');
                 for (const fact of snapshot.toolchainExecutionInputs) executionFiles.set(fact.file, fact.hash);
             }
+            if (literalHost) {
+                // SOURCE read the non-ignored scripts the command runs; the copy must carry these bytes.
+                if (!snapshot.commandExecutedFiles) throw new ServiceStartRefusal('project_source_declaration_unavailable');
+                for (const fact of snapshot.commandExecutedFiles) executionFiles.set(fact.file, fact.hash);
+            }
             const executionInputs = [...executionFiles].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([file, hash]) => ({ file, hash }));
             const serviceEffect = literalHost && service.source.kind === 'command'
                 ? { command: literalServiceCommand(service.source, basis.target.rootPath, platformFor(runtime).os),
-                    toolchain: { kind: 'host' }, configEnvironment: runtime.configEnvironment ?? {}, platform: platformFor(runtime),
-                    // Read by SOURCE's inspection; the copy must carry these exact script bytes.
-                    ...(snapshot.commandExecutedFiles?.length ? { files: snapshot.commandExecutedFiles } : {}) }
+                    toolchain: { kind: 'host' }, configEnvironment: runtime.configEnvironment ?? {}, platform: platformFor(runtime) }
                 : undefined;
             const reviewedEffect = projectNativeJsonValueForTransport({ v: 1, purpose: 'service', declaration: request.declaration,
                 source: { ...workspaceAddressFromRefV1(association.workspace), projectKey: association.workspace.projectKey },
                 target: { ...workspaceAddressFromRefV1(basis.target), projectKey: basis.target.projectKey }, manifest, fileBasis: snapshot.basis, serviceEffect,
-                ...(!literalHost ? { executionInputs } : {}),
+                ...(!literalHost || executionInputs.length ? { executionInputs } : {}),
                 route: basis.relationships.map(({ relationshipId, controllerMachineId, alphaWorkspaceRefId, betaWorkspaceRefId }) => ({ relationshipId, controllerMachineId, alphaWorkspaceRefId, betaWorkspaceRefId })),
                 placement: placement.placement, choice, configEnvironment: runtime.configEnvironment ?? {}, platform: platformFor(runtime) });
             worker = { kind: 'source', runtime, basis, snapshot, manifest, choice, signal, reviewedEffect, reviewedEffectDigest: digest(reviewedEffect),
@@ -527,6 +530,8 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
                 }
             } else throw new ServiceStartRefusal('native_adapter_result_invalid');
         }
+        if (worker?.serviceEffectDigest && digest({ command, toolchain: plan.toolchain, configEnvironment: preparation.configEnvironment ?? {},
+            platform: preparation.platform }) !== worker.serviceEffectDigest) throw new ServiceStartRefusal('project_service_effect_changed');
         let executedFiles: LiteralCommandFileFactV1[] = [];
         if (command.kind === 'literal') {
             const literal = command;
@@ -535,8 +540,6 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
             if (executed.kind === 'refused') throw new ServiceStartRefusal(executed.code);
             executedFiles = executed.files;
         }
-        if (worker?.serviceEffectDigest && digest({ command, toolchain: plan.toolchain, configEnvironment: preparation.configEnvironment ?? {},
-            platform: preparation.platform, ...(executedFiles.length ? { files: executedFiles } : {}) }) !== worker.serviceEffectDigest) throw new ServiceStartRefusal('project_service_effect_changed');
         const files: Array<{ file: string; digest: string }> = [];
         if (command.kind !== 'literal') {
             const nativeFiles = new Set([command.source.file, ...command.resolution.reviewInputs.map(fact => fact.file)]);

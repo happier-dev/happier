@@ -3,7 +3,7 @@ import { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1
 export { PROJECT_DEFINITION_ACTION_IDS, PROJECT_DEFINITION_INSPECT_ACTION_ID } from './projectDefinitionActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
-import { ProjectCommandFileFactV1Schema, ProjectDefinitionDetectionV1Schema, ProjectDefinitionImportCandidateV1Schema, ProjectExecutionInputV1Schema, ProjectNativeInvocationPreviewV1Schema, ProjectNativeRefV1Schema, ProjectToolInspectionV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
+import { ProjectDefinitionDetectionV1Schema, ProjectDefinitionImportCandidateV1Schema, ProjectExecutionInputV1Schema, ProjectNativeInvocationPreviewV1Schema, ProjectNativeRefV1Schema, ProjectToolInspectionV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
 import { ProjectManifestDiagnosticSchema, ProjectManifestFileBasisV1Schema, ProjectManifestUpdateResultSchema } from '../workspaces/projectSetup/projectManifestDocument.js';
 import { ProjectManifestV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -77,8 +77,8 @@ export const ProjectDefinitionInspectOutputSchema = lazyZodSchema(() => z.strict
     executionInputs: z.optional(z.array(ProjectExecutionInputV1Schema)),
   }))),
   toolchainExecutionInputs: z.optional(z.array(ProjectExecutionInputV1Schema)),
-  /** Files the selected literal `execution` command runs, read on the SOURCE Machine. */
-  commandExecutedFiles: z.optional(z.array(ProjectCommandFileFactV1Schema)),
+  /** Non-ignored checkout files the selected literal `execution` command runs, hashed on the SOURCE Machine. */
+  commandExecutedFiles: z.optional(z.array(ProjectExecutionInputV1Schema)),
   tools: z.optional(z.array(ProjectToolInspectionV1Schema)),
   setupReadiness: z.optional(ProjectSetupReadinessV1Schema),
   setupReview: z.optional(ProjectSetupReviewV1Schema),
