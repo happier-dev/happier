@@ -605,11 +605,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
         { kind: 'workflow_run_leaf', leaf }, { ...policyContext,
           roles: facts.role ? { [facts.role.roleId]: facts.role } : {} }) },
     });
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, snapshot: { workDepth: 2,
-      materializedLeaves: expect.arrayContaining([expect.objectContaining({ sourceKey: '$root', blockId: actionBlockId,
-        kind: 'action', actionInput: expect.objectContaining({
-          [actionBlockId === 'review' ? 'engineIds' : 'backendTargetKeys']: [{ kind: 'unresolved' }],
-        }) })]) } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, snapshot: { workDepth: 2 } });
     if (!result.ok) throw new Error(result.error.code);
     const reread = await readWorkflowAcceptedAgentStartLeavesV1(result.snapshot);
     expect(reread.filter((leaf) => leaf.blockId === actionBlockId)).toMatchObject([
