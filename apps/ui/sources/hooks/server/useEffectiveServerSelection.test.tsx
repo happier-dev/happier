@@ -135,4 +135,15 @@ describe('useEffectiveServerSelection', () => {
             enabled: false, serverIds: [home], presentation: 'grouped',
         }));
     });
+    it('derives one selection for every mounted reader (a Session screen mounts hundreds of feature decisions)', async () => {
+        await harness.addHome({ name: 'A', serverUrl: 'https://shared.a.example', accountId: 'account-a' });
+        const { useEffectiveServerSelection, useResolvedActiveServerSelection } = await import('./useEffectiveServerSelection');
+        const readers = 20;
+        const hook = await renderHook(() => Array.from({ length: readers }, (_, index) => index % 2 === 0
+            ? useEffectiveServerSelection() : useResolvedActiveServerSelection()));
+        await waitForHomeGovernance(() => expect((hook.getCurrent()[0] as { serverIds: string[] }).serverIds).toHaveLength(1));
+        const current = hook.getCurrent();
+        expect(new Set(current.filter((_, index) => index % 2 === 0)).size).toBe(1);
+        expect(new Set(current.filter((_, index) => index % 2 === 1)).size).toBe(1);
+    });
 });

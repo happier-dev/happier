@@ -1,13 +1,13 @@
 import * as React from 'react';
 
-import type { Settings } from '@/sync/domains/settings/settings';
+import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
 import {
     loadEffectiveHomeViewState,
     subscribeEffectiveHomeViewState,
     updateEffectiveHomeViewState,
 } from '@/sync/domains/server/selection/homeViewSelectionState';
 import { normalizeServerSelectionGroupsForSettings } from '@/sync/domains/server/selection/serverSelectionSettingsAdapter';
-import { useSetting } from '@/sync/store/settingsReadHooks';
+import { settingsPreviewScopeMatches, useSettingsPreviewStore } from '@/sync/store/settingsPreview';
 import { getStorage } from '@/sync/domains/state/storageStore';
 
 export type HomeViewSelectionSettings = Pick<
@@ -15,39 +15,61 @@ export type HomeViewSelectionSettings = Pick<
     'serverSelectionGroups' | 'serverSelectionActiveTargetKind' | 'serverSelectionActiveTargetId'
 >;
 
-/**
- * Until the one-time migration writes the device-global Home-view state, the
- * three legacy Account-scoped keys remain the fallback. They are subscribed key
- * by key rather than through the whole `Settings` object: persistent surfaces
- * (header/sidebar connection control, session lists, new-session targeting)
- * hold this hook for the life of the session and must not rerender for every
- * unrelated Account setting.
- */
-function useLegacyHomeViewSelectionSettings(): HomeViewSelectionSettings {
-    const serverSelectionGroups = useSetting('serverSelectionGroups');
-    const serverSelectionActiveTargetKind = useSetting('serverSelectionActiveTargetKind');
-    const serverSelectionActiveTargetId = useSetting('serverSelectionActiveTargetId');
-    return React.useMemo(() => ({
-        serverSelectionGroups,
-        serverSelectionActiveTargetKind,
-        serverSelectionActiveTargetId,
-    }), [serverSelectionActiveTargetId, serverSelectionActiveTargetKind, serverSelectionGroups]);
+const LEGACY_HOME_VIEW_SELECTION_KEYS = ['serverSelectionGroups', 'serverSelectionActiveTargetKind', 'serverSelectionActiveTargetId'] as const;
+
+function readLegacyHomeViewSelectionSetting<K extends typeof LEGACY_HOME_VIEW_SELECTION_KEYS[number]>(
+    state: ReturnType<ReturnType<typeof getStorage>['getState']>,
+    preview: ReturnType<typeof useSettingsPreviewStore.getState>,
+    name: K,
+): Settings[K] {
+    const held = settingsPreviewScopeMatches(state.settingsScope, preview.scope) ? preview.account[name] : undefined;
+    return held ? held.value as Settings[K] : state.settings?.[name] ?? settingsDefaults[name];
 }
 
-export function useHomeViewSelectionSettings(): HomeViewSelectionSettings {
-    const state = React.useSyncExternalStore(
-        subscribeEffectiveHomeViewState,
-        loadEffectiveHomeViewState,
-        loadEffectiveHomeViewState,
-    );
-    const legacySettings = useLegacyHomeViewSelectionSettings();
-    return React.useMemo(() => state
+let lastHomeViewSelection: Readonly<{ inputs: readonly unknown[]; value: HomeViewSelectionSettings }> | null = null;
+
+/**
+ * The one projection of the Home-view selection every reader shares. Until the one-time migration
+ * writes the device-global Home-view state, the three legacy Account-scoped keys (with any held
+ * Settings preview) remain the fallback. The value keeps its identity until one of those inputs moves,
+ * so the many mounted readers (feature decisions, header/sidebar connection control, session lists,
+ * new-session targeting) share one object instead of each deriving and subscribing on its own.
+ */
+export function readHomeViewSelectionSettings(): HomeViewSelectionSettings {
+    const state = loadEffectiveHomeViewState();
+    const storageState = getStorage().getState();
+    const preview = useSettingsPreviewStore.getState();
+    const inputs = state ? [state] : LEGACY_HOME_VIEW_SELECTION_KEYS.map(name => readLegacyHomeViewSelectionSetting(storageState, preview, name));
+    const last = lastHomeViewSelection;
+    if (last && last.inputs.length === inputs.length && last.inputs.every((input, index) => input === inputs[index])) return last.value;
+    const value: HomeViewSelectionSettings = state
         ? {
             serverSelectionGroups: normalizeServerSelectionGroupsForSettings(state.groups),
             serverSelectionActiveTargetKind: state.activeTargetKind,
             serverSelectionActiveTargetId: state.activeTargetId,
         }
-        : legacySettings, [legacySettings, state]);
+        : {
+            serverSelectionGroups: inputs[0] as Settings['serverSelectionGroups'],
+            serverSelectionActiveTargetKind: inputs[1] as Settings['serverSelectionActiveTargetKind'],
+            serverSelectionActiveTargetId: inputs[2] as Settings['serverSelectionActiveTargetId'],
+        };
+    lastHomeViewSelection = { inputs, value };
+    return value;
+}
+
+/** Wakes on every input of `readHomeViewSelectionSettings`: the device view, the legacy keys and their preview. */
+export function subscribeHomeViewSelectionSettings(listener: () => void): () => void {
+    const storage = getStorage();
+    const stopView = subscribeEffectiveHomeViewState(listener);
+    const stopStorage = storage.subscribe(listener, { settings: [...LEGACY_HOME_VIEW_SELECTION_KEYS], settingsScope: true });
+    const stopPreview = useSettingsPreviewStore.subscribe((next, previous) => {
+        if (next.scope !== previous.scope || LEGACY_HOME_VIEW_SELECTION_KEYS.some(name => next.account[name] !== previous.account[name])) listener();
+    });
+    return () => { stopView(); stopStorage(); stopPreview(); };
+}
+
+export function useHomeViewSelectionSettings(): HomeViewSelectionSettings {
+    return React.useSyncExternalStore(subscribeHomeViewSelectionSettings, readHomeViewSelectionSettings, readHomeViewSelectionSettings);
 }
 
 export function useHomeViewSelectionSettingsMutable(): HomeViewSelectionSettings & Readonly<{
