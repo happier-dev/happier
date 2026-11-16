@@ -44,12 +44,14 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
             }]
             : [];
     });
-    const actions = actionEntries.map((entry) => entry.identity);
-    const actionPresentations = Object.freeze(actionEntries.map(({ identity, title, icon }) => Object.freeze({
-        identity,
-        title,
-        ...(icon ? { icon } : {}),
-    })));
+    // A declarative document can invoke only its own plugin's Actions. Group
+    // once so every renderer does not clone and validate the global catalog.
+    const actionEntriesByPluginId = new Map<string, typeof actionEntries>();
+    for (const entry of actionEntries) {
+        const entries = actionEntriesByPluginId.get(entry.identity.pluginId);
+        if (entries) entries.push(entry);
+        else actionEntriesByPluginId.set(entry.identity.pluginId, [entry]);
+    }
     // Surface contribution identity is admitted by the registry and remains
     // the sole navigation inventory. The declarative model never infers a
     // destination from a renderer, route, or display label.
@@ -79,6 +81,7 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
         const pluginId = renderer.pluginId.trim();
         if (!pluginId) continue;
         const occurrenceId = params.readPluginOccurrenceId(pluginId);
+        const pluginActionEntries = actionEntriesByPluginId.get(pluginId) ?? [];
         try {
             const settingDefinitions = admitLocalSettingsDeclarations({
                 settings: params.registry.settings ?? [],
@@ -102,17 +105,24 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
                 ...(occurrenceId ? { occurrenceId } : {}),
                 renderer: renderer.definition,
                 settings,
-                actions,
+                actions: pluginActionEntries.map((entry) => entry.identity),
                 dragSources: (params.registry.dragSources ?? []).filter((source) => source.pluginId === pluginId)
                     .map((source) => ({ identity: source.identity, referenceSchema: source.definition.referenceSchema })),
                 dropTargets: (params.registry.dropTargets ?? []).filter((target) => target.pluginId === pluginId)
                     .map((target) => target.identity),
-                actionPresentations,
+                actionPresentations: pluginActionEntries.map(({ identity, title, icon }) => ({
+                    identity,
+                    title,
+                    ...(icon ? { icon } : {}),
+                })),
                 destinations,
                 uiQueries,
                 availability: {
                     visible: true,
-                    enabledActions,
+                    enabledActions: Object.fromEntries(pluginActionEntries.map(({ identity }) => {
+                        const qualifiedId = buildQualifiedPluginContributionKey(identity);
+                        return [qualifiedId, enabledActions[qualifiedId] === true];
+                    })),
                 },
             });
             modelsByRendererKey[`${pluginId}\0${renderer.definition.id}`] = model;
@@ -134,9 +144,8 @@ export function resolveDeclarativeProjectionModels(params: Readonly<{
         if (!occurrenceId) continue;
         const rendererId = createPluginSessionInfoSectionRendererIdV1(section.definition.id);
         try {
-            const permittedActions = actionEntries
-                .filter((entry) => entry.identity.pluginId === pluginId
-                    && section.definition.actions.includes(entry.identity.localId));
+            const permittedActions = (actionEntriesByPluginId.get(pluginId) ?? [])
+                .filter((entry) => section.definition.actions.includes(entry.identity.localId));
             const permittedEnabledActions = Object.freeze(Object.fromEntries(
                 permittedActions.map(({ identity }) => {
                     const qualifiedId = buildQualifiedPluginContributionKey(identity);
