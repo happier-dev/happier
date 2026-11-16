@@ -989,7 +989,8 @@ describe('authenticated finite Project Action owner', () => {
     it('reads Home once per distinct decision through registered Script preparation', async () => {
         const environment = createEnvKeyScope(['HAPPIER_WEB_LATENCY_TRACE']);
         environment.patch({ HAPPIER_WEB_LATENCY_TRACE: '1' });
-        const diagnostics = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        // Stage tracing is a routine local debug write (4bf6b3f98ea).
+        const diagnostics = vi.spyOn(logger, 'debugLocalFile').mockImplementation(() => {});
         const h = await harness(undefined, null, 'machine', ownerToken);
         const credentials = h.runtime.credentials!;
         h.get.mockImplementation(async url => {
@@ -1051,8 +1052,8 @@ describe('authenticated finite Project Action owner', () => {
             const projectReads = h.post.mock.calls.filter(([url]) => String(url).endsWith('/v1/account/project-rows/read'));
             expect.soft(projectReads).toHaveLength(2);
             expect.soft(h.post.mock.calls).toHaveLength(2);
-            expect.soft(h.get.mock.calls.slice(getCallsAtStart).map(([url]) => new URL(String(url)).pathname))
-                .toEqual(['/v1/account/encryption', '/v1/account/encryption']);
+            // Project row snapshot reads borrow the held Account observation (085cab5b331).
+            expect.soft(h.get.mock.calls.slice(getCallsAtStart)).toEqual([]);
             expect.soft(phaseReads['project.placement.review']).toEqual([{ config: 1, project: 0 }, { config: 1, project: 0 }]);
             expect.soft(phaseReads['project.command.review']).toEqual([{ config: 0, project: 0 }, { config: 1, project: 0 }]);
             expect.soft(phaseReads['project.sync.prepare']).toEqual([{ config: 0, project: 0 }]);
