@@ -48,11 +48,21 @@ function isToolMessage(m: Message): m is ToolCallMessage {
 
 const GROUPABLE_TOOL_KEY = 'tool:groupable';
 
+// The key is a pure function of the message, and the store keeps unchanged rows' identity,
+// so each tool call is classified once rather than on every rebuild (every arrival) of a
+// long transcript; classifying parses the tool's envelope metadata.
+const toolGroupingKeys = new WeakMap<ToolCallMessage, string>();
+
 function getMessageGroupingKey(message: Message | undefined): string {
     if (!message) return 'missing';
     if (isUserMessage(message)) return 'user';
     if (isToolMessage(message)) {
-        return isToolCallMessageGroupableInTranscript(message) ? GROUPABLE_TOOL_KEY : 'tool:standalone';
+        let key = toolGroupingKeys.get(message);
+        if (key === undefined) {
+            key = isToolCallMessageGroupableInTranscript(message) ? GROUPABLE_TOOL_KEY : 'tool:standalone';
+            toolGroupingKeys.set(message, key);
+        }
+        return key;
     }
     return `message:${message.kind}`;
 }

@@ -102,6 +102,31 @@ function pendingMessage(opts: {
 }
 
 describe('buildTranscriptTurns', () => {
+    it('classifies each tool call once across rebuilds while a long transcript grows', () => {
+        let toolReads = 0;
+        const counted = (message: ToolCallMessage): ToolCallMessage => {
+            const tool = message.tool;
+            return Object.defineProperty({ ...message }, 'tool', { enumerable: true, get() { toolReads += 1; return tool; } }) as ToolCallMessage;
+        };
+        const messagesById: Record<string, Message> = {};
+        const ids: string[] = [];
+        for (let turn = 0; turn < 500; turn += 1) {
+            ids.push(`u${turn}`, `t${turn}a`, `t${turn}b`);
+            messagesById[`u${turn}`] = userMessage(`u${turn}`, turn * 10);
+            messagesById[`t${turn}a`] = counted(toolMessage({ id: `t${turn}a`, createdAt: turn * 10 + 1, state: 'completed' }));
+            messagesById[`t${turn}b`] = counted(toolMessage({ id: `t${turn}b`, createdAt: turn * 10 + 2, state: 'completed' }));
+        }
+        const options = { groupToolCalls: true, toolCallsGroupStrategy: 'consecutive_tools' as const };
+        const first = buildTranscriptTurnsCached({ cache: null, messageIdsOldestFirst: [...ids], messagesById: { ...messagesById }, ...options });
+        // An arrival: one more message; every earlier row keeps its identity, as the store's shared snapshot does.
+        ids.push('a-new');
+        messagesById['a-new'] = agentMessage('a-new', 99_999);
+        toolReads = 0;
+        const next = buildTranscriptTurnsCached({ cache: first, messageIdsOldestFirst: [...ids], messagesById: { ...messagesById }, ...options });
+        expect(next.turns).toHaveLength(500);
+        expect(toolReads).toBe(0);
+    });
+
     it('retains a pending-owned user anchor until final presentation replaces it', () => {
         const committedUser = {
             ...userMessage('m-user', 20),
