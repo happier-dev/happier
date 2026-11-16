@@ -3970,8 +3970,10 @@ describe('installed deployment storage and target composition', () => {
         const storedPreparation = selection.startsWith('stored preparation');
         const teamReceiptHistory = selection === 'machine Use Team receipt history';
         const mode = selection === 'retained rollback intent e2ee' ? 'e2ee' : 'plain';
+        const homeServerIdentityId = mode === 'e2ee' ? 'srv_preparation_home' : 'home';
+        const nativeReviewContext: RpcActionExecutorContext = { ...ownerContext, serverId: 'home', serverIdentityId: homeServerIdentityId };
         const nativeReviewIdentity = createFilesystemEffectAdmission({
-            resolveHomeServerIdentityId: async () => mode === 'e2ee' ? 'srv_preparation_home' : 'home',
+            resolveHomeServerIdentityId: async () => homeServerIdentityId,
             resolveHostIdentity: async () => ({ machineId: 'machine-a', installationId: 'installation-a', custodianAccountId: 'owner' }),
         });
         const resolveNativeReviewRequesterIdentity = async (context: ActionExecutorContext) => {
@@ -4041,6 +4043,7 @@ describe('installed deployment storage and target composition', () => {
             await writeFile(join(repository, 'compose.yaml'), JSON.stringify({ services: { app: { image: image.registryReference } } }));
             git('add', '.'); git('commit', '--quiet', '-m', 'A');
             const environment = createDeploymentEnvironmentDetailV1();
+            environment.environment.serverId = homeServerIdentityId;
             if (selection === 'stored preparation stale held') environment.environment.revision = 3;
             const configuredRef = selection === 'configured ref' || selection === 'stale Team grant';
             environment.environment.owner = configuredRef ? { kind: 'team', teamId: 'deployment-team' }
@@ -4100,7 +4103,7 @@ describe('installed deployment storage and target composition', () => {
             vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1,
                 installationId: 'installation-a', createdAt: 1, publicKey: Buffer.from(keys.publicKey).toString('base64url'),
                 privateKey: Buffer.from(keys.secretKey).toString('base64url') });
-            const workspaceRow = createPlainProjectAccountRefRow({ id: 'checkout', serverId: 'home', machineId: 'machine-a',
+            const workspaceRow = createPlainProjectAccountRefRow({ id: 'checkout', serverId: homeServerIdentityId, machineId: 'machine-a',
                 rootPath: repository, source: { sourceId: 'source-app', revision: 1 }, createdAtMs: 1 });
             if (mode === 'e2ee' && workspaceRow.content?.t === 'plain') workspaceRow.content = createProjectAccountRowCipherV1({
                 mode, material: { type: 'dataKey', machineKey }, randomBytes: length => new Uint8Array(randomBytes(length)),
@@ -4311,14 +4314,14 @@ describe('installed deployment storage and target composition', () => {
                 content: { prepareRecipients: true, artifactId: historical.deployment.contentArtifactId, header: { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Historical deployment' },
                     body: JSON.stringify(historical.content) },
             }));
-            const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: requesterCredentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+            const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: requesterCredentials, serverId: homeServerIdentityId, serverHttpBaseUrl: 'https://home.test',
                 resolveRequesterIdentity: resolveNativeReviewRequesterIdentity,
                 machineId: 'machine-a', async acquirePluginRuntimeRegistryLease() { return mounted.lease; },
                 readEnvironmentSecretLaunchAdmission: readEnvironmentSecretLaunchAdmissionForHost });
             let resumed = 0;
             const deps = createDaemonDeploymentActionDeps({
                 resolveRequesterIdentity: resolveNativeReviewRequesterIdentity,
-                credentials: requesterCredentials, installedCredentials: credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+                credentials: requesterCredentials, installedCredentials: credentials, serverId: homeServerIdentityId, serverHttpBaseUrl: 'https://home.test',
                 machineId: 'machine-a', runtime,
                 async executePreparedPendingDeploy(input, context) {
                     pendingPhase = 'ordinary-policy-reentry';
@@ -4336,7 +4339,9 @@ describe('installed deployment storage and target composition', () => {
                 } });
             const sourceDeps = createCliProjectSourceActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: () => null,
                 resolveRequestHeaders: () => ({ Authorization: `Bearer ${token}` }) });
-            const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...sourceDeps, ...deps });
+            const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...sourceDeps, ...deps,
+                // The mounted human confirmation is a host UI boundary.
+                presentUserActionConfirmation: async () => true });
             if (templateSelection) {
                 const source: RegistrySourceDescriptorV1 = { id: 'apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'],
                     url: 'https://apps.test/catalog.json', enabled: true, addedAt: 1, origin: { kind: 'user' }, removable: true };
@@ -4416,7 +4421,7 @@ describe('installed deployment storage and target composition', () => {
                     const requested = { ...input, ...(deploy ? { deploy: { requestKey: 'template-install' } } : {}) };
                     const before = (await docker.readInvocations()).length;
                     pendingPhase = deploy ? 'template-deploy' : 'template-legacy-control';
-                    const context = { ...ownerContext, runtimeAccountId: 'owner', actionRequestId: 'template-request',
+                    const context = { ...nativeReviewContext, runtimeAccountId: 'owner', actionRequestId: 'template-request',
                         operationAcceptance: { actionId: 'deployments.templates.instantiate', operationId: 'template-operation', accept() {} } };
                     let rawResult: unknown;
                     // DEPLOY-APPLY-SETTINGS routes every template deploy through
@@ -4426,7 +4431,7 @@ describe('installed deployment storage and target composition', () => {
                             for (const explicitDeployRequire of [false, true]) {
                                 expect(await executor.execute('deployments.templates.instantiate', requested, { ...context,
                                     surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
-                                    serverId: 'home', serverIdentityId: 'srv_preparation_home', interactivePresentation: 'unavailable',
+                                    serverId: 'home', serverIdentityId: 'home', interactivePresentation: 'unavailable',
                                     actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
                                         ...(explicitDeployRequire ? { approvalWaivedSurfaces: { 'deployments.templates.instantiate': ['agent'] },
                                             actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent'] } } } : { actions: {} }) }),
@@ -4438,7 +4443,8 @@ describe('installed deployment storage and target composition', () => {
                             expect(effects).toEqual([]);
                         }
                         const prepared = await executor.prepare('deployments.templates.instantiate', requested, { ...context,
-                            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'srv_preparation_home',
+                            surface: 'ui', authority: 'present_user',
+                            actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home',
                             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) });
                         expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'ready' });
                         if (prepared.kind !== 'ready') throw new Error('Expected one reviewed template invocation');
@@ -4447,7 +4453,7 @@ describe('installed deployment storage and target composition', () => {
                         if (selection === 'template install artifact failure' || selection === 'template install native failure' || selection === 'template install docker access denied') {
                             const artifactFailure = selection === 'template install artifact failure';
                             const expectedCode = artifactFailure ? 'create_failed' : 'native_failed';
-                            const expectedCause = { phase: artifactFailure ? 'deployment.failure' : selection === 'template install native failure'
+                            const expectedCause = { phase: artifactFailure ? 'deployment.template.instantiate' : selection === 'template install native failure'
                                 ? 'deployment.native.compose.config.native_compose_command_failed'
                                 : 'deployment.native.docker.version.native_compose_command_failed',
                                 errorClass: artifactFailure ? 'HttpStatusError' : 'Error', errorCode: artifactFailure ? 'create_failed'
@@ -4479,7 +4485,7 @@ describe('installed deployment storage and target composition', () => {
                             const reader = createActionExecutor({ ...createUnavailableActionTransportDeps(),
                                 ...createCliApprovalsArtifactStore({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test' }) });
                             const observed = await runWithServerHttpBaseUrl('https://home.test', () => reader.execute('approval.request.get',
-                                { artifactId }, { ...ownerContext, surface: 'cli', authority: 'present_user', serverId: 'home' }));
+                                { artifactId }, { ...nativeReviewContext, surface: 'cli', authority: 'present_user', serverId: 'home' }));
                             expect(observed).toMatchObject({ ok: true, result: { request: { status: 'failed', execution: {
                                 ok: false, effectAttempted: true, errorCode: expectedCode, failureCause: expectedCause } } } });
                             expect(JSON.stringify(observed)).not.toContain('private-artifact-response-sentinel');
@@ -4496,9 +4502,10 @@ describe('installed deployment storage and target composition', () => {
                         rawResult = outcome.ok ? outcome.result : outcome.details;
                     } else {
                         const prepared = await executor.prepare('deployments.templates.instantiate', requested, { ...context,
-                            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'srv_preparation_home',
+                            surface: 'ui', authority: 'present_user',
+                            actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home',
                             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) });
-                        expect(prepared.kind).toBe('ready');
+                        expect(prepared.kind, JSON.stringify(prepared)).toBe('ready');
                         if (prepared.kind !== 'ready') throw new Error('Expected reviewed template binding writes');
                         const outcome = await prepared.invocation.run();
                         expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true });
@@ -4536,7 +4543,7 @@ describe('installed deployment storage and target composition', () => {
                         const inventory = await executor.execute('deployments.teardown', {
                             serverId: 'home', environmentId: environment.environment.id,
                             targetLinkId: currentTargetLinkId, reason: 'manual', mode: 'preview',
-                        }, { ...ownerContext, surface: 'ui', actionCaller: { kind: 'host' } });
+                        }, { ...nativeReviewContext, surface: 'ui', actionCaller: { kind: 'host' } });
                         expect(inventory, JSON.stringify(inventory)).toMatchObject({ ok: true,
                             result: { ok: true, kind: 'preview', volumes: [] } });
                     }
@@ -4577,7 +4584,7 @@ describe('installed deployment storage and target composition', () => {
                     sourceIntent: environment.content.definition, requestKey: 'use-pending', targetLinkId: currentTargetLinkId,
                     actionOperationId: 'use-pending-operation',
                 } });
-                let context: Parameters<typeof deps.prepareDeploymentAction>[0]['context'] = ownerContext;
+                let context: Parameters<typeof deps.prepareDeploymentAction>[0]['context'] = nativeReviewContext;
                 if (selection.startsWith('machine Use')) {
                     const target = { kind: 'machine' as const, machineId: 'machine-a' };
                     const envelope = { v: 1 as const, requestId: 'machine-use-stored', target, input };
@@ -4687,7 +4694,7 @@ describe('installed deployment storage and target composition', () => {
                     const reader = createActionExecutor({ ...createUnavailableActionTransportDeps(),
                         ...createCliApprovalsArtifactStore({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://home.test' }) });
                     const observed = await runWithServerHttpBaseUrl('https://home.test', () => reader.execute('approval.request.get',
-                        { artifactId }, { ...ownerContext, surface: 'cli', authority: 'present_user', serverId: 'home' }));
+                        { artifactId }, { ...nativeReviewContext, surface: 'cli', authority: 'present_user', serverId: 'home' }));
                     expect(observed).toMatchObject({ ok: true, result: { request: { status: 'failed', execution: {
                         ok: false, errorCode: 'deployment_conflict', effectAttempted: false, failureCause: expectedCause,
                         details: expectedDetails } } } });
@@ -4715,7 +4722,7 @@ describe('installed deployment storage and target composition', () => {
                     return result;
                 });
                 expect(await deps.prepareDeployCandidate({ environmentId: environment.environment.id,
-                    targetLinkId: currentTargetLinkId, context: ownerContext })).toMatchObject({ ok: true });
+                    targetLinkId: currentTargetLinkId, context: nativeReviewContext })).toMatchObject({ ok: true });
                 expect(environmentReads() - beforeCandidate,
                     'candidate preparation opens one Environment body; Team sharing reads only current owner metadata').toBe(1);
                 posts.mockImplementation(createBeforeEdit);
@@ -4726,10 +4733,10 @@ describe('installed deployment storage and target composition', () => {
                 const triggerId = 'deployment-trigger';
                 const runId = '00000000-0000-4000-8000-000000000001';
                 environment.content = DeploymentEnvironmentContentV1Schema.parse({ ...environment.content,
-                    bindings: [{ purpose: 'variable', name: 'LOG_LEVEL', phase: 'runtime', source: { kind: 'value', value: 'info' } }] });
+                    bindings: [createDeploymentVariableBindingV1({ name: 'LOG_LEVEL', phase: 'runtime', source: { kind: 'value', value: 'info' } })] });
                 put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
                 const starterResult = await executor.execute('workflow.starters.resolve', { key: 'deploy-on-push' },
-                    { ...ownerContext, surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
+                    { ...nativeReviewContext, surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } });
                 expect(starterResult).toMatchObject({ ok: true, result: { status: 'ready', example: { key: 'deploy-on-push' } } });
                 if (!starterResult.ok) throw new Error('missing_deployment_starter');
                 const starter = z.object({ status: z.literal('ready'), example: z.object({ definition: WorkflowDefinitionV1Schema }) })
@@ -4796,7 +4803,7 @@ describe('installed deployment storage and target composition', () => {
                 // subsequent unrelated Environment edit must not hold a push.
                 environment.content.name = 'Renamed after Automatic was saved';
                 environment.content = DeploymentEnvironmentContentV1Schema.parse({ ...environment.content,
-                    bindings: [{ purpose: 'variable', name: 'LOG_LEVEL', phase: 'runtime', source: { kind: 'value', value: 'debug' } }] });
+                    bindings: [createDeploymentVariableBindingV1({ name: 'LOG_LEVEL', phase: 'runtime', source: { kind: 'value', value: 'debug' } })] });
                 environment.environment.revision += 1;
                 environment.environment.protection = 'production';
                 environment.environment.contentBodyVersion += 1;
@@ -4850,7 +4857,7 @@ describe('installed deployment storage and target composition', () => {
                 let accepted: ReturnType<typeof openWorkflowAcceptedSnapshotStoredEnvelopeV1> | undefined;
                 let acceptedEnvelope = '';
                 const coordinatorDeps = { token, accountId: 'owner', machineId: 'machine-a',
-                    resolveControllerContext: async () => ({ ...ownerContext, surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
+                    resolveControllerContext: async () => ({ ...nativeReviewContext, surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
                     resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
                     isAcceptedAuthorizationCurrent: async () => true,
                     prepareAcceptedWorkspaceTarget: async () => ({ ok: true, workspaceTarget: { project: { machineId: 'machine-a', directory: repository, checkoutRootPath: repository } } }),
@@ -4863,7 +4870,7 @@ describe('installed deployment storage and target composition', () => {
                     execution: { credentials, serverId: 'home', serverIdentityId: 'home',
                         machineAdmissionTransport: async () => { throw new Error('deployment_starter_must_not_create_agent'); },
                         resolveExistingSessionConversation: async () => null,
-                        detachedRun: { actionExecutor: executor, buildActionContext: () => ({ ...ownerContext, surface: 'cli', authority: 'account_automation' }) } },
+                        detachedRun: { actionExecutor: executor, buildActionContext: () => ({ ...nativeReviewContext, surface: 'cli', authority: 'account_automation' }) } },
                     onCommittedTransition: async () => {}, onReviewEntered: async () => {},
                 } satisfies Parameters<typeof createProductionWorkflowRunCoordinator>[0];
                 const coordinate = createProductionWorkflowRunCoordinator({ ...coordinatorDeps,
@@ -4934,7 +4941,7 @@ describe('installed deployment storage and target composition', () => {
                         externalActionExecutionAuthorization: prepared.authorization, originalActionEnvelope: envelope };
                 };
                 const workflowContext = await admitWorkflowContext(originalInput,
-                    { ...ownerContext, ...buildWorkflowActionContext({ runId, authorization: accepted.content.authorization,
+                    { ...nativeReviewContext, ...buildWorkflowActionContext({ runId, authorization: accepted.content.authorization,
                         workspace: accepted.content.workspaceTarget.project }), actionRequestId });
                 const runStorage = createWorkflowRunStorageTestkit({ runId, machineId: 'machine-a', accountId: 'owner', state: 'running',
                     origin: { kind: 'automation', automationId, cause }, acceptedEnvelope });
@@ -5057,7 +5064,7 @@ describe('installed deployment storage and target composition', () => {
                                 nativeContext = await admitWorkflowContext(input, context ?? {});
                                 return journeyExecutor.prepare(id, input, nativeContext);
                             } },
-                            buildContext: async execution => ({ ...ownerContext, ...buildWorkflowActionContext(execution) }),
+                            buildContext: async execution => ({ ...nativeReviewContext, ...buildWorkflowActionContext(execution) }),
                             observeRun: async () => { throw new Error('deployment_starter_must_not_create_agent'); } } } });
                     const result = await run({ runId: journeyRunId, automationId, attempt: 0, expectedRevision: 0, causeWorkDepth: 0,
                         automationCause: journeyCause, accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
@@ -5091,38 +5098,38 @@ describe('installed deployment storage and target composition', () => {
             if (selection === 'missing native builder') {
                 delete environment.environment.buildMachineId;
                 expect(await deps.prepareDeployCandidate({ environmentId: environment.environment.id,
-                    targetLinkId: currentTargetLinkId, context: ownerContext })).toMatchObject({
+                    targetLinkId: currentTargetLinkId, context: nativeReviewContext })).toMatchObject({
                     ok: false, errorCode: 'required_fact_unavailable', details: { requiredFact: 'buildMachineId' } });
                 return;
             }
-            const input = { serverId: 'home', environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
+            const input = { serverId: homeServerIdentityId, environmentId: environment.environment.id, expectedRevision: environment.environment.revision,
                 targetLinkId: currentTargetLinkId, expectedTargetLinkRevision: 1, requestKey: 'prepare',
                 contentArtifactId: receipt.deployment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 };
             expect(git('rev-parse', 'HEAD')).not.toBe(receipt.content.sourceIntent.sha);
             expect(await readFile(join(repository, 'compose.yaml'), 'utf8')).toBe('uncommitted bytes must not enter the candidate');
             await expect(deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input,
-                context: { ...ownerContext, approvedActionReplay: { artifactId: 'approved-action' } } }))
+                context: { ...nativeReviewContext, approvedActionReplay: { artifactId: 'approved-action' } } }))
                 .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-            const minimal = { serverId: 'home', environmentId: environment.environment.id,
+            const minimal = { serverId: homeServerIdentityId, environmentId: environment.environment.id,
                 targetLinkId: currentTargetLinkId, ...(selection === 'configured ref' ? { onFailure: 'keepPartial' as const } : {}) };
             await expect(deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: minimal,
-                context: { ...ownerContext, approvedActionReplay: { artifactId: 'approved-action' } } }))
+                context: { ...nativeReviewContext, approvedActionReplay: { artifactId: 'approved-action' } } }))
                 .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
             const candidateRequest = { environmentId: environment.environment.id, targetLinkId: currentTargetLinkId,
                 ...(selection === 'compact exact SHA' ? { sha: receipt.content.sourceIntent.sha } : { sourceIntent: receipt.content.sourceIntent }),
-                requestKey: 'approved-event', whenBusy: 'supersede' as const, context: ownerContext };
-            const compactInput = { serverId: 'home', environmentId: environment.environment.id,
+                requestKey: 'approved-event', whenBusy: 'supersede' as const, context: nativeReviewContext };
+            const compactInput = { serverId: homeServerIdentityId, environmentId: environment.environment.id,
                 sha: receipt.content.sourceIntent.sha, requestKey: 'approved-event', whenBusy: 'supersede' as const,
                 onFailure: 'keepPartial' as const };
-            const compactRollbackInput = { serverId: 'home', environmentId: environment.environment.id,
+            const compactRollbackInput = { serverId: homeServerIdentityId, environmentId: environment.environment.id,
                 deploymentId: historical.deployment.id };
-            let preparationContext: Parameters<typeof deps.prepareDeploymentAction>[0]['context'] = ownerContext;
+            let preparationContext: Parameters<typeof deps.prepareDeploymentAction>[0]['context'] = nativeReviewContext;
             if (selection === 'compact exact SHA' || selection === 'pending exact SHA' || selection.startsWith('retained rollback intent')) {
                 // Home admission is the HTTP boundary. The real requester
                 // preparer opens Account custody and produces signed read ports.
                 const target = { kind: 'machine' as const, machineId: 'machine-a' };
                 const actionId = rollbackSelection ? 'deployments.rollback' as const : 'deployments.deploy' as const;
-                const rootBinding = { serverIdentityId: mode === 'e2ee' ? 'srv_preparation_home' : 'home', accountId: 'owner',
+                const rootBinding = { serverIdentityId: homeServerIdentityId, accountId: 'owner',
                     authentication: { kind: 'account' as const, tokenEpoch: 1 }, actionId,
                     requestId: 'compact-native-review', target };
                 const rootInput = rollbackSelection ? compactRollbackInput : compactInput;
@@ -5150,7 +5157,7 @@ describe('installed deployment storage and target composition', () => {
                     isCurrent: async () => requesterCurrent, createExecutor: () => executor });
                 expect(requesterPreparation).not.toBeNull();
                 if (!requesterPreparation) throw new Error('Expected admitted compact review custody');
-                preparationContext = { ...ownerContext, serverIdentityId: rootBinding.serverIdentityId,
+                preparationContext = { ...nativeReviewContext, serverIdentityId: rootBinding.serverIdentityId,
                     externalActionTarget: target,
                     externalActionExecutionAuthorization: requesterPreparation.authorization,
                     originalActionEnvelope: envelope };
@@ -5319,7 +5326,7 @@ describe('installed deployment storage and target composition', () => {
                 // change only the installed tool's reported version.
                 await writeFile(docker.executablePath, executable.replace('2.39.4', '2.40.1'));
             }
-            const replay = await deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: ownerContext });
+            const replay = await deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: nativeReviewContext });
             await nativePhase('replay-ready');
             expect(replay).toMatchObject({ input: prepared.input });
             if (selection === 'native tool version changes') {
@@ -5327,12 +5334,12 @@ describe('installed deployment storage and target composition', () => {
                 expect(reviewedContent.content).toHaveProperty('ownServer.approvedInputBasis.toolVersion', '2.39.4');
                 expect(documents.get(prepared.input.contentArtifactId)).toEqual(candidateDocument);
                 environment.environment.revision++;
-                await expect(deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: ownerContext }))
+                await expect(deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: nativeReviewContext }))
                     .resolves.toMatchObject({ ok: false, errorCode: 'deployment_conflict', effectAttempted: false,
                         details: { requiredFact: 'currentEnvironmentRevision' } });
                 environment.environment.revision--;
                 environment.targetLinks[0].targetLink.revision++;
-                await expect(deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: ownerContext }))
+                await expect(deps.prepareDeploymentAction({ actionId: preparation.actionId, input: prepared.input, context: nativeReviewContext }))
                     .resolves.toMatchObject({ ok: false, errorCode: 'deployment_conflict', effectAttempted: false,
                         details: { requiredFact: 'currentEnvironmentRevision' } });
                 environment.targetLinks[0].targetLink.revision--;
@@ -5343,8 +5350,9 @@ describe('installed deployment storage and target composition', () => {
                 // candidate's key. Keep the real Account Artifact decoder here.
                 documents.set(prepared.input.contentArtifactId, { ...candidateDocument,
                     body: documents.get(environment.environment.contentArtifactId)!.body });
-                await expect(deps.readPreparedDeploymentContent({ input: prepared.input, context: preparationContext }))
-                    .resolves.toMatchObject({ ok: false, errorCode: 'artifact_encryption_material_unavailable' });
+                const substitutedCiphertext = await deps.readPreparedDeploymentContent({ input: prepared.input, context: preparationContext });
+                expect(substitutedCiphertext, JSON.stringify(substitutedCiphertext))
+                    .toMatchObject({ ok: false, errorCode: 'artifact_encryption_material_unavailable' });
                 documents.set(prepared.input.contentArtifactId, candidateDocument);
                 requesterCurrent = false;
                 await expect(deps.readPreparedDeploymentContent({ input: prepared.input, context: preparationContext }))
@@ -5392,7 +5400,7 @@ describe('installed deployment storage and target composition', () => {
                 const grantsBeforeOwnerChange = grantedCandidates.size;
                 await expect(deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: {
                     ...prepared.input, contentArtifactId: staleCandidateId, contentHeaderVersion: 1, contentBodyVersion: 1,
-                }, context: ownerContext })).resolves.not.toHaveProperty('errorCode');
+                }, context: nativeReviewContext })).resolves.not.toHaveProperty('errorCode');
                 await nativePhase('admitted-owner-audience-retained');
                 expect(grantedCandidates.size).toBe(grantsBeforeOwnerChange + 1);
                 environment.environment.owner = { kind: 'team', teamId: 'deployment-team' };
@@ -5400,7 +5408,7 @@ describe('installed deployment storage and target composition', () => {
                 // preparation. Withdrawal during that admitted work does not
                 // trigger another ownership decision before publication.
                 await expect(deps.prepareDeployCandidate({ environmentId: environment.environment.id,
-                    targetLinkId: currentTargetLinkId, context: ownerContext }))
+                    targetLinkId: currentTargetLinkId, context: nativeReviewContext }))
                     .resolves.toMatchObject({ ok: true });
                 expect(grantedCandidates.size).toBe(grantsBeforeOwnerChange + 2);
                 // Home refuses the next admission after Team access is withdrawn.
@@ -5417,7 +5425,7 @@ describe('installed deployment storage and target composition', () => {
                 const nativeCallsBeforeWithdrawal = await docker.readInvocations();
                 const createsBeforeWithdrawal = posts.mock.calls.filter(([url]) => url.endsWith('/v1/artifacts')).length;
                 await expect(deps.prepareDeployCandidate({ environmentId: environment.environment.id,
-                    targetLinkId: currentTargetLinkId, context: ownerContext }))
+                    targetLinkId: currentTargetLinkId, context: nativeReviewContext }))
                     .resolves.toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
                 expect(grantedCandidates.size).toBe(grantsBeforeOwnerChange + 2);
                 expect(posts.mock.calls.filter(([url]) => url.endsWith('/v1/artifacts'))).toHaveLength(createsBeforeWithdrawal);
