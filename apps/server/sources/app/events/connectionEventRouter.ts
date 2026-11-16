@@ -34,7 +34,7 @@ import { cancelRpcTarget } from '@/app/api/socket/rpc/cancelRpcTarget';
 import { classifyLiveSessionDelivery, projectSessionDeliveryForSocket, socketConsumesSessionDelivery } from './sessionDeliveryProjection';
 import { admitLiveSessionDelivery, withdrawSessionConsumption } from '@/app/api/socket/sessionConsumption';
 import { MACHINE_ACCESS_LOSS_EVENT, type MachineAccessLoss } from './machineAccessLoss';
-import { SIGN_IN_POLICY_CHANGED_EVENT } from './signInPolicyChange';
+import { ACCOUNT_SIGN_IN_REVOKED_EVENT, SIGN_IN_POLICY_CHANGED_EVENT } from './signInPolicyChange';
 import { PRESENCE_DEADLINE_EVENT, type PresenceDeadlineNotification } from '@/app/presence/presenceDeadlineNotification';
 import { resolveCurrentMachineRecipientAccountIdsInTx } from '@/app/machines/machineAccess';
 import { db, getDbProviderFromEnv } from '@/storage/db';
@@ -242,6 +242,28 @@ class EventRouter {
     announceSignInPolicyChange(): void {
         this.receiveSignInPolicyChange();
         this.broadcastServerSideEvent?.(SIGN_IN_POLICY_CHANGED_EVENT, { v: 1 });
+    }
+
+    private readonly accountSignInRevokedListeners = new Set<(accountId: string) => void>();
+
+    onAccountSignInRevoked(listener: (accountId: string) => void): () => void {
+        this.accountSignInRevokedListeners.add(listener);
+        return () => { this.accountSignInRevokedListeners.delete(listener); };
+    }
+
+    receiveAccountSignInRevoked(accountId: string): void {
+        for (const listener of [...this.accountSignInRevokedListeners]) listener(accountId);
+    }
+
+    /**
+     * An offboarding verdict revoked this Account's sign-in: every node drops its cached sign-in
+     * result for it (local listeners plus the cluster notice, sent before the disconnect so a
+     * reconnect cannot reuse it), then its live sockets are disconnected cluster-wide.
+     */
+    revokeAccountSignIn(accountId: string): void {
+        this.receiveAccountSignInRevoked(accountId);
+        this.broadcastServerSideEvent?.(ACCOUNT_SIGN_IN_REVOKED_EVENT, { accountId });
+        this.disconnectAccountSockets(accountId);
     }
 
     disconnectAccountSockets(accountId: string): void {

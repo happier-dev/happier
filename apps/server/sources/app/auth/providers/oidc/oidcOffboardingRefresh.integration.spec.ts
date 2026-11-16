@@ -12,6 +12,7 @@ import { auth } from "@/app/auth/auth";
 import { enforceLoginEligibility, invalidateLoginEligibilityPositiveCache } from "@/app/auth/enforceLoginEligibility";
 import { decryptString } from "@/modules/encrypt";
 import { eventRouter } from "@/app/events/eventRouter";
+import { registerAccountSignInRevocation } from "@/app/auth/signInPolicyEviction";
 import type { ClientConnection } from "@/app/events/eventPayloadTypes";
 import { createAppCloseTracker } from "@/app/api/testkit/appLifecycle";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
@@ -732,6 +733,10 @@ describe("OIDC offboarding refresh (integration)", () => {
             allow: { groupsAny: ["eng"] },
         }]);
         const { app, accountId } = await authenticateAccount(15);
+        // A positive cache longer than a socket.io reconnect delay (0.5–1.5 s).
+        process.env.AUTH_LOGIN_ELIGIBILITY_CACHE_TTL_MS = "60000";
+        // This node's api/socket.ts wiring: a revoked Account loses its cached sign-in result.
+        const releaseRevocation = registerAccountSignInRevocation(listener => eventRouter.onAccountSignInRevoked(listener));
         const socket = { connected: true, data: { userId: accountId }, disconnect() { socket.connected = false; } };
         const connection = { connectionType: "user-scoped", socket, userId: accountId } as unknown as ClientConnection;
         eventRouter.clearIo();
@@ -752,8 +757,12 @@ describe("OIDC offboarding refresh (integration)", () => {
             releaseFirst();
             expect(await first).toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
             expect(socket.connected).toBe(false);
+            // The other node's "yes" (cached before the verdict) is gone: a quick reconnect is refused.
+            expect(await enforceLoginEligibility({ accountId, readEnv: async () => process.env, now: new Date() }))
+                .toEqual({ ok: false, statusCode: 403, error: "not-eligible" });
         } finally {
             eventRouter.removeConnection(accountId, connection);
+            releaseRevocation();
             await app.close();
         }
     });

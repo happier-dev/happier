@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { enforceLoginEligibility, readSignInPolicyGeneration } from "@/app/auth/enforceLoginEligibility";
+import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
+import { readSignInPolicyGeneration } from "@/app/auth/signInPolicyGeneration";
 import { eventRouter } from "@/app/events/eventRouter";
 import { readHomeConfigEnv, setHomeSettings } from "@/app/home/settings/homeSettings";
 import { db } from "@/storage/db";

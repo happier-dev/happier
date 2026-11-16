@@ -1,4 +1,5 @@
-import { enforceLoginEligibility, invalidateLoginEligibilityPositiveCache, readSignInPolicyGeneration } from "@/app/auth/enforceLoginEligibility";
+import { dropLoginEligibilityPositiveCacheEntry, enforceLoginEligibility, invalidateLoginEligibilityPositiveCache } from "@/app/auth/enforceLoginEligibility";
+import { advanceSignInPolicyGeneration, readSignInPolicyGeneration } from "@/app/auth/signInPolicyGeneration";
 import { readHomeConfigEnv } from "@/app/home/settings/homeSettings";
 import { warn } from "@/utils/logging/log";
 
@@ -56,5 +57,20 @@ export function registerSignInPolicyEviction(input: Readonly<{
             warn({ module: "auth-sign-in-policy", event: "socket_eviction_failed", error },
                 "Sign-in policy socket re-check failed");
         });
+    });
+}
+
+/**
+ * Connect owner wiring (api/socket.ts): an Account whose sign-in was revoked on any node
+ * (`eventRouter.revokeAccountSignIn`) loses this node's cached sign-in result, so its reconnect
+ * is re-decided.
+ */
+export function registerAccountSignInRevocation(
+    onAccountSignInRevoked: (listener: (accountId: string) => void) => () => void,
+): () => void {
+    return onAccountSignInRevoked(accountId => {
+        dropLoginEligibilityPositiveCacheEntry(accountId);
+        // A check already in flight (decided from the pre-verdict stored result) must not cache.
+        advanceSignInPolicyGeneration();
     });
 }

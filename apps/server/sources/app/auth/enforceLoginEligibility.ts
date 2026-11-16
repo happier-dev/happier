@@ -6,6 +6,7 @@ import { resolveIdentityRuntimeById } from "@/app/auth/providers/identityProvide
 import { observeLoginEligibilityStage, recordLoginEligibilityCache } from "@/app/monitoring/metrics/authMetrics";
 import { inTx } from "@/storage/inTx";
 import { log } from "@/utils/logging/log";
+import { advanceSignInPolicyGeneration, readEnvSignInPolicyGeneration, readSignInPolicyGeneration } from "@/app/auth/signInPolicyGeneration";
 import type { VerifiedAuthToken } from "@/app/auth/auth";
 
 const DEFAULT_LOGIN_ELIGIBILITY_CACHE_TTL_MS = 1_000;
@@ -52,12 +53,9 @@ function getLoginEligibilityPositiveCache(env: NodeJS.ProcessEnv): LRUTtlMap<str
     return loginEligibilityPositiveCache;
 }
 
-// The sign-in policy version this node has applied; a Home sign-in policy change advances it.
-let signInPolicyGeneration = 0;
-
-/** Read before an admission decision, so its owner can tell a decision taken under an older policy. */
-export function readSignInPolicyGeneration(): number {
-    return signInPolicyGeneration;
+/** Drops one Account's cached positive result (an offboarding verdict elsewhere revoked it). */
+export function dropLoginEligibilityPositiveCacheEntry(accountId: string): void {
+    loginEligibilityPositiveCache?.delete(accountId);
 }
 
 /**
@@ -65,7 +63,7 @@ export function readSignInPolicyGeneration(): number {
  * decided under the previous policy, and a decision still in flight cannot cache its result.
  */
 export function invalidateLoginEligibilityPositiveCache(): void {
-    signInPolicyGeneration += 1;
+    advanceSignInPolicyGeneration();
     loginEligibilityPositiveCache?.clear();
     loginEligibilityInflight = new Map();
 }
@@ -85,9 +83,10 @@ export async function enforceLoginEligibility(params: {
     const startedAt = Date.now();
     const accountId = params.accountId.toString().trim();
     // Captured before the policy is read: a result decided under an older policy is never cached.
-    const generation = signInPolicyGeneration;
+    // An env a Home configuration reader built earlier carries the generation it was read under.
+    let generation = readSignInPolicyGeneration();
     const cachePositive = (cache: LRUTtlMap<string, true> | null): void => {
-        if (generation === signInPolicyGeneration) cache?.set(accountId, true);
+        if (generation === readSignInPolicyGeneration()) cache?.set(accountId, true);
     };
     if (!accountId || (params.verifiedCredential && params.verifiedCredential.userId !== accountId)) {
         observeLoginEligibilityStage({
@@ -188,6 +187,7 @@ export async function enforceLoginEligibility(params: {
             });
             return { ok: false, statusCode: 503, error: "upstream_error" };
         }
+        generation = Math.min(generation, readEnvSignInPolicyGeneration(env) ?? generation);
         const policy = resolveAuthPolicyFromEnv(env);
         if (policy.requiredLoginProviders.length === 0) {
             cachePositive(positiveCache);

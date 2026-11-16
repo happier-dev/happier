@@ -12,6 +12,8 @@ import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { resolveEffectiveHomeAuthMethods } from "@/app/auth/methods/effectiveHomeAuthMethods";
 import { enableAuthentication } from "@/app/api/utils/enableAuthentication";
+import { enforceLoginEligibility, invalidateLoginEligibilityPositiveCache } from "@/app/auth/enforceLoginEligibility";
+import { readHomeConfigEnv, setHomeSettings } from "@/app/home/settings/homeSettings";
 
 describe("native password authentication through the registered method", () => {
     let harness: LightSqliteHarness;
@@ -462,5 +464,53 @@ describe("native password authentication through the registered method", () => {
             process.env.HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__ENABLED = "false";
             expect((await prelogin("routing@example.test")).statusCode).toBe(403);
         } finally { harness.resetEnv(); await app.close(); }
+    });
+
+    // The route reads the request's Home policy first and decides eligibility later. A sign-in
+    // policy change that lands in between must not let that old-policy "yes" be cached.
+    it("does not cache a login's eligibility when the sign-in policy changed after the route read it", async () => {
+        const accepted = acceptPasswordTextV1(password);
+        if (!accepted.accepted) throw new Error("invalid test password");
+        const account = await db.account.create({ data: { encryptionMode: "plain", publicKey: null, homeRole: "owner" } });
+        await db.accountIdentity.create({ data: { accountId: account.id, provider: "email",
+            providerUserId: "sign-in-policy-generation@example.test", profile: {} } });
+        await db.accountPasswordCredential.create({ data: { accountId: account.id,
+            credential: { v: 1, kind: "plain_password_hash", hash: await hashPasswordMaterial(accepted.utf8) } } });
+        const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        enableAuthentication(app);
+        emailPasswordAuthMethodModule.registerRoutes(app);
+        await app.ready();
+        // The password-account read sits between the route's policy read and its eligibility
+        // decision; the policy change commits there (the database boundary is the hold point).
+        const identities = db.accountIdentity;
+        const findUnique = Reflect.get(identities, "findUnique") as (...args: unknown[]) => unknown;
+        let changed = false;
+        Object.defineProperty(identities, "findUnique", { configurable: true, writable: true, value: async (...args: unknown[]) => {
+            if (!changed) {
+                changed = true;
+                expect((await setHomeSettings({ actorAccountId: account.id, write: { expectedRevision: 0,
+                    values: { AUTH_REQUIRED_LOGIN_PROVIDERS: ["github"] } } })).status).toBe("applied");
+                // This node applies the change (the announce's eviction listener).
+                invalidateLoginEligibilityPositiveCache();
+            }
+            return Reflect.apply(findUnique, identities, args);
+        } });
+        try {
+            const login = await app.inject({ method: "POST", url: "/v1/auth/email/login",
+                payload: { v: 1, email: "sign-in-policy-generation@example.test", password } });
+            expect(changed).toBe(true);
+            // The login decided under the policy it read answers its own request...
+            expect(login.statusCode, login.body).toBe(200);
+            // ...but the next admission (a socket handshake) applies the new policy, not a cached yes.
+            expect(await enforceLoginEligibility({ accountId: account.id, readEnv: () => readHomeConfigEnv() }))
+                .toMatchObject({ ok: false, error: "provider-required" });
+        } finally {
+            Object.defineProperty(identities, "findUnique", { configurable: true, writable: true, value: findUnique });
+            await db.homeSettings.deleteMany({});
+            await db.account.delete({ where: { id: account.id } });
+            await app.close();
+        }
     });
 });

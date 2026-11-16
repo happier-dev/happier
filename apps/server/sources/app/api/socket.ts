@@ -9,9 +9,10 @@ import { buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnecti
 import { ACCOUNT_CHANGE_ROWS_DELIVERY_EVENT, CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT } from "@/app/events/socketRoomEmitter";
 import { readAccountChangeRowsDemandV1 } from '@happier-dev/protocol/changes';
 import { registerMachineAccessLossHandler } from '@/app/events/machineAccessLoss';
-import { registerSignInPolicyChangeHandler } from '@/app/events/signInPolicyChange';
+import { registerAccountSignInRevokedHandler, registerSignInPolicyChangeHandler } from '@/app/events/signInPolicyChange';
 import { registerClusterPushReconcile } from '@/app/events/clusterPushReconcile';
-import { evictSignInIneligibleSockets, recheckSocketAdmittedUnderOlderSignInPolicy, registerSignInPolicyEviction } from '@/app/auth/signInPolicyEviction';
+import { evictSignInIneligibleSockets, recheckSocketAdmittedUnderOlderSignInPolicy, registerAccountSignInRevocation,
+    registerSignInPolicyEviction } from '@/app/auth/signInPolicyEviction';
 import { LEGACY_MACHINE_HEARTBEAT_EVENT } from '@/app/events/connectionEventRouter';
 import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
 import { Server, Socket } from "socket.io";
@@ -36,7 +37,8 @@ import {
     untrackWebSocketConnection,
     websocketEventsCounter,
 } from "../monitoring/metrics/index";
-import { enforceLoginEligibility, readSignInPolicyGeneration } from "@/app/auth/enforceLoginEligibility";
+import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
+import { readSignInPolicyGeneration } from "@/app/auth/signInPolicyGeneration";
 import { usageHandler } from "./socket/usageHandler";
 import { rpcHandler } from "./socket/rpcHandler";
 import { pingHandler } from "./socket/pingHandler";
@@ -406,6 +408,8 @@ export function startSocket(app: Fastify): () => Promise<void> {
     const releaseSignInPolicyChange = registerSignInPolicyChangeHandler(io, () => eventRouter.receiveSignInPolicyChange());
     const releaseSignInPolicyEviction = registerSignInPolicyEviction({ sockets: () => io.of('/').sockets.values(),
         onSignInPolicyChange: listener => eventRouter.onSignInPolicyChange(listener) });
+    const releaseAccountSignInRevokedNotice = registerAccountSignInRevokedHandler(io, accountId => eventRouter.receiveAccountSignInRevoked(accountId));
+    const releaseAccountSignInRevocation = registerAccountSignInRevocation(listener => eventRouter.onAccountSignInRevoked(listener));
     // Access-loss and sign-in policy pushes between nodes are at-most-once Pub/Sub; re-check this
     // node's live sockets once when its adapter subscriber is ready again, or a peer lost its publish.
     const releaseClusterPushReconcile = shouldEnableRedisAdapter
@@ -1333,6 +1337,8 @@ export function startSocket(app: Fastify): () => Promise<void> {
         releaseMachineAccessLoss();
         releaseSignInPolicyChange();
         releaseSignInPolicyEviction();
+        releaseAccountSignInRevokedNotice();
+        releaseAccountSignInRevocation();
         releaseClusterPushReconcile();
         try {
             emitSocketPlannedRestart(io, plannedRestartRetryAfterMs);

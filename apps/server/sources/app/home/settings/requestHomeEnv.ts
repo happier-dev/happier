@@ -3,6 +3,7 @@ import type { ServerConfigEntry } from '@happier-dev/protocol/serverConfig/serve
 
 import { buildHomeConfigEnvFromRecord, readHomeConfigSnapshot, type HomeConfigSnapshot } from "./homeSettings";
 import { readHomeConfigFlag, composeHomeConfigEnv, readHomeConfigEnvOrigin } from './homeConfigOverlay';
+import { readSignInPolicyGeneration, tagEnvSignInPolicyGeneration } from '@/app/auth/signInPolicyGeneration';
 
 /**
  * The request-scoped configuration overlay (plan `2026-09-26-home-owner-console` §3.1
@@ -19,6 +20,8 @@ import { readHomeConfigFlag, composeHomeConfigEnv, readHomeConfigEnvOrigin } fro
  * Fastify instances reach the same owner without extra composition.
  */
 type RequestHomeConfig = {
+    /** Read before the snapshot: a sign-in policy change after it discards this request's "yes". */
+    signInPolicyGeneration: number;
     snapshot: Promise<HomeConfigSnapshot>;
     overlay?: Promise<ServerConfigEnv>;
 };
@@ -29,7 +32,8 @@ function captureRequestHomeConfig(request: object): RequestHomeConfig {
     const existing = captures.get(request);
     if (existing) return existing;
     // Deployment env is process-start fixed; retain its identity for startup deployment-lock provenance.
-    const capture: RequestHomeConfig = { snapshot: readHomeConfigSnapshot(process.env) };
+    const signInPolicyGeneration = readSignInPolicyGeneration();
+    const capture: RequestHomeConfig = { signInPolicyGeneration, snapshot: readHomeConfigSnapshot(process.env) };
     captures.set(request, capture);
     // A failed capture refuses this read but does not poison a later retry.
     capture.snapshot.catch(() => {
@@ -78,6 +82,8 @@ export function readRequestHomeEnv(
             return composeHomeConfigEnv({ ...origin, inferred: options.inferred }, { snapshot: true });
         });
     }
+    // An eligibility decision taken from this env keeps the generation the snapshot was read under.
+    overlay = overlay.then(env => tagEnvSignInPolicyGeneration(env, capture.signInPolicyGeneration));
     capture.overlay = overlay;
     overlay.catch(() => {
         if (captures.get(request) === capture && capture.overlay === overlay) captures.delete(request);

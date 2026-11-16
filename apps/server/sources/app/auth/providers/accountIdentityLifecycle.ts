@@ -265,9 +265,9 @@ export async function refreshIdentity(input: { accountId: string; provider: stri
         });
         if (count) await publishIdentityChange(tx, input.accountId);
         // An offboarding verdict revokes sign-in like every other credential revocation: other API
-        // nodes may have admitted this Account from the stored result while this check ran.
+        // nodes may have admitted (and cached) this Account from the stored result while this check ran.
         if (count && input.data.eligibilityStatus === "ineligible") {
-            afterTx(tx, () => eventRouter.disconnectAccountSockets(input.accountId));
+            afterTx(tx, () => eventRouter.revokeAccountSignIn(input.accountId));
         }
     });
 }

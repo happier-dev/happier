@@ -18,6 +18,7 @@ import { decryptString, encryptString } from "@/modules/encrypt";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { eventRouter } from "@/app/events/eventRouter";
+import { readSignInPolicyGeneration, tagEnvSignInPolicyGeneration } from "@/app/auth/signInPolicyGeneration";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 
 import { buildHomeConfigEnv, composeHomeConfigEnv, projectHomeSettings } from "./homeConfigOverlay";
@@ -192,8 +193,11 @@ async function readHomeConfigSnapshotInTx(tx: Tx, base: ServerConfigEnv): Promis
  * the values this process started with. No process cache: every replica reads the same row.
  */
 export async function readHomeConfigEnv(base: ServerConfigEnv = process.env): Promise<ServerConfigEnv> {
+    const signInPolicyGeneration = readSignInPolicyGeneration();
     const snapshot = await readHomeConfigSnapshot(base);
-    return buildHomeConfigEnvFromRecord(snapshot.base, snapshot.record, SERVER_CONFIG_REGISTRY, snapshot.policyValues);
+    return tagEnvSignInPolicyGeneration(
+        buildHomeConfigEnvFromRecord(snapshot.base, snapshot.record, SERVER_CONFIG_REGISTRY, snapshot.policyValues),
+        signInPolicyGeneration);
 }
 
 /**
@@ -201,8 +205,11 @@ export async function readHomeConfigEnv(base: ServerConfigEnv = process.env): Pr
  * connection, so code already in a transaction must not read through `db`).
  */
 export async function readHomeConfigEnvInTx(tx: Tx, base: ServerConfigEnv = process.env): Promise<ServerConfigEnv> {
+    const signInPolicyGeneration = readSignInPolicyGeneration();
     const snapshot = await readHomeConfigSnapshotInTx(tx, base);
-    return buildHomeConfigEnvFromRecord(snapshot.base, snapshot.record, SERVER_CONFIG_REGISTRY, snapshot.policyValues);
+    return tagEnvSignInPolicyGeneration(
+        buildHomeConfigEnvFromRecord(snapshot.base, snapshot.record, SERVER_CONFIG_REGISTRY, snapshot.policyValues),
+        signInPolicyGeneration);
 }
 
 type PersistedPolicyValues = Readonly<Record<string, ServerConfigValue>>;
