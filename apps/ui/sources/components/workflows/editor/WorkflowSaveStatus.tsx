@@ -116,7 +116,9 @@ const styles = StyleSheet.create((theme) => ({
         minWidth: 0,
         gap: theme.space.s4,
     },
+    // The reading role gives the documents a size the text-size preference scales; mono keeps them code.
     document: {
+        ...Typography.variant('reading'),
         ...Typography.mono(),
         color: theme.colors.text.primary,
     },
