@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-import { link, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 
@@ -82,14 +81,21 @@ function sanitizeOrigin(origin: SessionMediaOrigin): SessionMediaOrigin {
 
 async function hashFile(path: string): Promise<string> {
   const hash = createHash('sha256');
-  for await (const chunk of createReadStream(path)) {
-    hash.update(chunk);
-  }
+  const file = await currentWorkspaceSource().open(path);
+  try {
+    const chunk = Buffer.allocUnsafe(64 * 1024);
+    for (let position = 0; ;) {
+      const { bytesRead } = await file.read(chunk, 0, chunk.length, position);
+      if (bytesRead === 0) break;
+      hash.update(chunk.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+  } finally { await file.close(); }
   return hash.digest('hex');
 }
 
 async function fileExistsWithHash(path: string, sha256: string): Promise<boolean> {
-  const existingStat = await stat(path).catch(() => null);
+  const existingStat = await currentWorkspaceSource().stat(path).catch(() => null);
   if (!existingStat?.isFile()) return false;
   const existingSha256 = await hashFile(path).catch(() => null);
   return existingSha256 === sha256;
@@ -102,28 +108,16 @@ async function writePreparedSourceAtomically(input: Readonly<{
   destinationPath: string;
   expectedSha256: string;
 }>): Promise<WritePreparedSourceAtomicResult> {
-  await mkdir(dirname(input.destinationPath), { recursive: true });
-  const tempPath = join(dirname(input.destinationPath), `.happier-session-media-${randomUUID()}.tmp`);
-  try {
-    await writeFile(tempPath, input.source.bytes);
-    await link(tempPath, input.destinationPath);
-    await rm(tempPath, { force: true });
-    return 'written';
-  } catch (error) {
-    await rm(tempPath, { force: true }).catch(() => undefined);
-    if (
-      error
-      && typeof error === 'object'
-      && (error as { code?: unknown }).code === 'EEXIST'
-    ) {
-      const existingSha256 = await hashFile(input.destinationPath).catch(() => null);
-      if (existingSha256 === input.expectedSha256) {
-        return 'exists-same-hash';
-      }
-      return 'exists-different-hash';
-    }
-    throw error;
-  }
+  const source = currentWorkspaceSource();
+  await source.mkdir(dirname(input.destinationPath), { recursive: true });
+  // Exclusive create publishes complete bytes or reports the existing file, as the
+  // previous temp-file + hard-link publish did.
+  const written = await source.replaceFile({ destPath: input.destinationPath, expectation: null,
+    source: { kind: 'bytes', bytes: input.source.bytes } });
+  if (written.success) return 'written';
+  if (written.errorCode !== 'expected_file_absent') throw Object.assign(new Error(written.error), { code: written.errorCode });
+  const existingSha256 = await hashFile(input.destinationPath).catch(() => null);
+  return existingSha256 === input.expectedSha256 ? 'exists-same-hash' : 'exists-different-hash';
 }
 
 function addCollisionSuffix(fileName: string, collisionIndex: number): string {
@@ -254,7 +248,7 @@ export async function persistSessionMedia(params: Readonly<{
       break;
     }
 
-    const existingStat = await stat(uploadTarget.target.destPath).catch(() => null);
+    const existingStat = await currentWorkspaceSource().stat(uploadTarget.target.destPath).catch(() => null);
     if (existingStat) continue;
 
     const budgetFailure = await checkSessionMediaBudgets({

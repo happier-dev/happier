@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import type { ScmSuggestionApplyRequest, ScmSuggestionApplyResponse, ScmSuggestionV1 } from '@happier-dev/protocol/scm';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
-import { commitGuardedFileReplace } from '@/rpc/handlers/fileSystem/commitGuardedFileReplace';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { runScmRoute } from '@/scm/rpc/dispatch';
@@ -20,7 +19,7 @@ async function applyFile(path: string, absolutePath: string, suggestions: readon
     return refused(path, 'suggestion_conflict', 'Suggestions overlap in this file.');
   }
   let bytes: Buffer;
-  try { bytes = await readFile(absolutePath); }
+  try { bytes = await currentWorkspaceSource().readFile(absolutePath); }
   catch { return refused(path, 'suggestion_conflict', 'The original file is unavailable.'); }
   const text = bytes.toString('utf8');
   if (!Buffer.from(text, 'utf8').equals(bytes)) return refused(path, 'suggestion_conflict', 'The file is not UTF-8 text.');
@@ -52,7 +51,7 @@ async function applyFile(path: string, absolutePath: string, suggestions: readon
     cursor = end;
   }
   chunks.push(text.slice(cursor));
-  const written = await commitGuardedFileReplace({ destPath: absolutePath,
+  const written = await currentWorkspaceSource().replaceFile({ destPath: absolutePath,
     expectation: createHash('sha256').update(bytes).digest('hex'), source: { kind: 'bytes', bytes: Buffer.from(chunks.join(''), 'utf8') } });
   if (!written.success) return refused(path,
     ['hash_mismatch', 'expected_file_missing', 'expected_file_absent'].includes(written.errorCode) ? 'suggestion_conflict' : 'file_replace_failed', written.error);

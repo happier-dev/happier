@@ -1,4 +1,4 @@
-import { readdir, realpath } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { resolve } from 'node:path';
 
 import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
@@ -71,8 +71,8 @@ export async function resolveWorkspaceTransferRootWithScmWorkspace(input: Readon
         });
         if (inspection?.scmProvider !== 'git') return null;
         const [repositoryRoot, sessionCwd] = await Promise.all([
-            realpath(inspection.rootPath).catch(() => null),
-            realpath(input.sessionCwd).catch(() => null),
+            currentWorkspaceSource().realpath(inspection.rootPath).catch(() => null),
+            currentWorkspaceSource().realpath(input.sessionCwd).catch(() => null),
         ]);
         if (!repositoryRoot || !sessionCwd) {
             throw Object.assign(new Error('Git worktree root or session directory is unavailable'), {
@@ -123,7 +123,7 @@ async function resolveWorkspaceTransferStateWithScmWorkspace(
 
         const canonicalize = async (path: string): Promise<string> => {
             try {
-                return await realpath(path);
+                return await currentWorkspaceSource().realpath(path);
             } catch {
                 return resolve(path);
             }
@@ -288,7 +288,7 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
         }
 
         try {
-            await readdir(input.sourcePath, { withFileTypes: true });
+            await currentWorkspaceSource().readdir(input.sourcePath);
         } catch (error) {
             if (isIgnorableWorkspaceExportAccessError(error)) {
                 throw new WorkspaceTransferSourcePathError({
@@ -301,7 +301,7 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
 
         const entries = await listWorkspaceExportFallbackEntries({
             root: input.sourcePath,
-            readDirectory: async (directory) => await readdir(directory, { withFileTypes: true }),
+            readDirectory: async (directory) => await currentWorkspaceSource().readdir(directory),
         });
         return {
             entries,

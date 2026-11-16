@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { runWithScmCommandOperation } from '../commandOperation';
-import { lstat, mkdir, mkdtemp, rename, rm, unlink } from 'node:fs/promises';
+import { rm, unlink } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { join, resolve } from 'node:path';
 import { ScmComparisonSchema, ScmComparisonSourceSchema, buildScmComparisonIdentity, classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
 import type { ScmComparison, ScmComparisonFile, ScmComparisonSource, ScmDiffSummaryMetadata } from '@happier-dev/protocol';
@@ -147,29 +148,32 @@ export async function prepareCapturedScmComparisonInvestigation(input: Readonly<
     }
   }
   const root = input.directory;
-  await mkdir(root, { recursive: true });
-  if (!(await lstat(root)).isDirectory()) throw Object.assign(new Error('The pinned investigation root is unavailable'), { code: 'DIFF_UNAVAILABLE' });
+  // The pinned investigation tree lives where the Agent reads: the admitted workspace source.
+  const source = currentWorkspaceSource();
+  await source.mkdir(root, { recursive: true });
+  if (!(await source.lstat(root)).isDirectory()) throw Object.assign(new Error('The pinned investigation root is unavailable'), { code: 'DIFF_UNAVAILABLE' });
   const pinned = join(root, 'pinned');
-  const existing = await lstat(pinned).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
+  const existing = await source.lstat(pinned).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
   if (existing) {
-    const before = await lstat(join(pinned, 'before')).catch(() => null);
-    const after = await lstat(join(pinned, 'after')).catch(() => null);
+    const before = await source.lstat(join(pinned, 'before')).catch(() => null);
+    const after = await source.lstat(join(pinned, 'after')).catch(() => null);
     if (!existing.isDirectory() || !before?.isDirectory() || !after?.isDirectory()) {
       throw Object.assign(new Error('The pinned investigation directory is unavailable'), { code: 'DIFF_UNAVAILABLE' });
     }
     return { beforeDirectory: join(pinned, 'before'), afterDirectory: join(pinned, 'after') };
   }
-  const directory = await mkdtemp(join(root, 'preparing-'));
+  const directory = join(root, `preparing-${randomUUID()}`);
+  await source.mkdir(directory);
   const beforeDirectory = join(directory, 'before');
   const afterDirectory = join(directory, 'after');
   try {
     for (const [endpoint, target] of [[endpoints.before, beforeDirectory], [endpoints.after, afterDirectory]] as const) {
       await materializeGitRepositoryCheckpoint({ cwd: captured.comparison.repository.rootPath, endpoint, directory: target });
     }
-    await rename(directory, pinned);
+    await source.rename(directory, pinned);
     return { beforeDirectory: join(pinned, 'before'), afterDirectory: join(pinned, 'after') };
   } catch (error) {
-    await rm(directory, { recursive: true, force: true });
+    await source.rm(directory, { recursive: true, force: true });
     throw Object.assign(new Error('Captured endpoint objects are unavailable for surrounding-file investigation', { cause: error }), { code: 'DIFF_UNAVAILABLE' });
   }
 }

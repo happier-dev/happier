@@ -1,12 +1,11 @@
-import { readFile, readdir, realpath } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { TurnChangeSetSchema } from '@happier-dev/protocol/sessions/changes/schemas';
 import type { RepositoryCheckpointCommitEvidence, TurnChangeSet } from '@happier-dev/protocol';
 import { ScmCommitOidSchema, type ScmBranchWorkEvidence, type ScmPullRequestSummary, type ScmPullRequestWorkEvidence } from '@happier-dev/protocol/scm';
 import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
-import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { configuration } from '@/configuration';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { runGitCheckpointCommand } from './gitCheckpointCommands';
@@ -31,7 +30,7 @@ async function readLocalBranchRepositoryKey(cwd: string, signal?: AbortSignal): 
     const result = await runGitCheckpointCommand({ cwd, signal, args: ['--no-replace-objects', 'rev-parse', '--git-common-dir'] });
     signal?.throwIfAborted();
     if (!result.success) throw new Error(result.stderr || 'Branch graph is unavailable');
-    const directory = await realpath(resolve(cwd, result.stdout.trim()));
+    const directory = await currentWorkspaceSource().realpath(resolve(cwd, result.stdout.trim()));
     const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
     return storage.deriveOpaqueIdentity({ purpose: 'usage_accounting_identity',
         value: JSON.stringify(['local-branch-repository', directory]) });
@@ -166,7 +165,7 @@ export async function readRepositoryCheckpointCommitEvidence(input: Readonly<{
     const scopeId = `${input.sessionId}:${cwd}`;
     const directory = join(await evidenceDirectory(cwd, scopeId, input.signal), 'turns');
     let entries: string[];
-    try { entries = await readdir(directory); }
+    try { entries = (await currentWorkspaceSource().readdir(directory)).map(entry => entry.name); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
     const git = async (args: string[], stdin?: string) => {
         input.signal?.throwIfAborted();
@@ -212,7 +211,7 @@ export async function readRepositoryCheckpointCommitEvidence(input: Readonly<{
     for (const entry of entries.sort()) {
         if (!entry.endsWith('.json')) continue;
         input.signal?.throwIfAborted();
-        const turn = createStoredReadSchema(TurnChangeSetSchema).parse(JSON.parse(await readFile(join(directory, entry), 'utf8')));
+        const turn = createStoredReadSchema(TurnChangeSetSchema).parse(JSON.parse((await currentWorkspaceSource().readFile(join(directory, entry))).toString('utf8')));
         const checkpoint = turn.repositoryCheckpoint;
         if (turn.sessionId !== input.sessionId || checkpoint?.scopeId !== scopeId || checkpoint.contentConfidence !== 'exact') continue;
         const readEndpoint = (ref: string | undefined, phase: 'turn-start' | 'turn-final') => {
@@ -259,11 +258,19 @@ export function buildRepositoryCheckpointInitialRef(scopeId: string): string {
 }
 
 export async function readRepositoryCheckpointInitialEvidence(input: Readonly<{ cwd: string; scopeId: string }>): Promise<RepositoryCheckpointInitialEvidence | null> {
-    try { return createStoredReadSchema(InitialEvidenceSchema).parse(JSON.parse(await readFile(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'), 'utf8'))); }
+    try { return createStoredReadSchema(InitialEvidenceSchema).parse(JSON.parse((await currentWorkspaceSource().readFile(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'))).toString('utf8'))); }
     catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
         throw error;
     }
+}
+
+/** Evidence lives in the repository's Git directory: publish it through the workspace source. */
+async function writeEvidenceJson(path: string, value: unknown): Promise<void> {
+    const source = currentWorkspaceSource();
+    await source.mkdir(dirname(path), { recursive: true });
+    const written = await source.replaceFile({ destPath: path, source: { kind: 'bytes', bytes: Buffer.from(JSON.stringify(value, null, 2)) } });
+    if (!written.success) throw Object.assign(new Error(written.error), { code: written.errorCode });
 }
 
 /** The dispatch owner records the first attempt; a later success cannot rename itself session start. */
@@ -278,7 +285,7 @@ export async function retainRepositoryCheckpointInitialEvidence(input: Readonly<
     // cannot tell whether execution is fresh; Home's first user identity can.
     if (!input.recovered && input.sessionIsNew !== true
         && await input.readEarliestPromptLocalId?.() !== input.checkpointRef.checkpointId) {
-        await writeJsonAtomic(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'), {
+        await writeEvidenceJson(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'), {
             state: 'unavailable', reason: 'Initial checkpoint requires canonical earliest prompt evidence for this resumed or unknown session', recoverable: true,
         });
         return;
@@ -291,7 +298,7 @@ export async function retainRepositoryCheckpointInitialEvidence(input: Readonly<
             args: ['for-each-ref', '--format=%(refname)', buildRepositoryCheckpointScopePrefix(input.scopeId)] });
         if (!input.recovered && (!olderRefs.success || olderRefs.stdout.split('\n').some((ref) => ref !== input.checkpointRef.ref
             && parseRepositoryCheckpointRef({ scopeId: input.scopeId, ref })?.phase === 'message-start'))) {
-            await writeJsonAtomic(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'), {
+            await writeEvidenceJson(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'), {
                 state: 'unavailable', reason: 'Historical initial checkpoint receipt requires recovery from canonical session evidence', recoverable: true,
             });
             return;
@@ -308,17 +315,17 @@ export async function retainRepositoryCheckpointInitialEvidence(input: Readonly<
         } else evidence = { state: 'available', ref, originalRef: input.checkpointRef.ref,
             commitSha: input.captured.commitSha, treeSha: input.captured.treeSha };
     }
-    await writeJsonAtomic(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'), evidence);
+    await writeEvidenceJson(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'), evidence);
 }
 
 export async function retainRepositoryCheckpointTurnEvidence(input: Readonly<{ cwd: string; scopeId: string; turnChangeSet: TurnChangeSet }>): Promise<void> {
     const parsed = TurnChangeSetSchema.parse(input.turnChangeSet);
-    await writeJsonAtomic(join(await evidenceDirectory(input.cwd, input.scopeId), 'turns', `${encodeRepositoryCheckpointScope(parsed.turnId)}.json`), parsed);
+    await writeEvidenceJson(join(await evidenceDirectory(input.cwd, input.scopeId), 'turns', `${encodeRepositoryCheckpointScope(parsed.turnId)}.json`), parsed);
 }
 
 export async function readRepositoryCheckpointTurnEvidence(input: Readonly<{ cwd: string; scopeId: string; turnId: string }>): Promise<TurnChangeSet | null> {
     try {
-        return createStoredReadSchema(TurnChangeSetSchema).parse(JSON.parse(await readFile(join(await evidenceDirectory(input.cwd, input.scopeId), 'turns', `${encodeRepositoryCheckpointScope(input.turnId)}.json`), 'utf8')));
+        return createStoredReadSchema(TurnChangeSetSchema).parse(JSON.parse((await currentWorkspaceSource().readFile(join(await evidenceDirectory(input.cwd, input.scopeId), 'turns', `${encodeRepositoryCheckpointScope(input.turnId)}.json`))).toString('utf8')));
     } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
         throw error;
@@ -330,12 +337,12 @@ export async function findRepositoryCheckpointTurnEvidenceByReceipt(input: Reado
 }>): Promise<TurnChangeSet | null> {
     const directory = join(await evidenceDirectory(input.cwd, input.scopeId), 'turns');
     let entries: string[];
-    try { entries = await readdir(directory); }
+    try { entries = (await currentWorkspaceSource().readdir(directory)).map(entry => entry.name); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
     const matches: TurnChangeSet[] = [];
     for (const entry of entries) {
         if (!entry.endsWith('.json')) continue;
-        const turn = createStoredReadSchema(TurnChangeSetSchema).parse(JSON.parse(await readFile(join(directory, entry), 'utf8')));
+        const turn = createStoredReadSchema(TurnChangeSetSchema).parse(JSON.parse((await currentWorkspaceSource().readFile(join(directory, entry))).toString('utf8')));
         if (turn.repositoryCheckpoint?.scopeId === input.scopeId
             && turn.repositoryCheckpoint.receipts.some((receipt) => receipt.id === input.receiptId || receipt.ref === input.receiptId)) matches.push(turn);
     }

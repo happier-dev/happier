@@ -1,5 +1,4 @@
-import { constants } from 'node:fs';
-import { lstat, open } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -69,7 +68,8 @@ async function readAuthorizedLocalFile(input: Readonly<{
   reauthorize(): boolean;
 }>): Promise<Buffer | PrepareMediaSourceFailure> {
   const { path, maxBytes } = input;
-  const sourceLstat = await lstat(path).catch(() => null);
+  const source = currentWorkspaceSource();
+  const sourceLstat = await source.lstat(path).catch(() => null);
   if (!sourceLstat || !sourceLstat.isFile() || sourceLstat.isSymbolicLink()) {
     return failure('invalid_source_file', 'Media source must be a regular file');
   }
@@ -77,8 +77,7 @@ async function readAuthorizedLocalFile(input: Readonly<{
     return failure('media_too_large', 'Media exceeds the configured size limit');
   }
 
-  const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
-  const handle = await open(path, constants.O_RDONLY | noFollow).catch(() => null);
+  const handle = await source.open(path, { noFollow: true }).catch(() => null);
   if (!handle) {
     return failure('invalid_source_file', 'Media source must be a regular file');
   }
@@ -99,7 +98,7 @@ async function readAuthorizedLocalFile(input: Readonly<{
     if (!input.reauthorize()) {
       return failure('unauthorized_source_path', 'Media source changed outside the allowed directories while it was being authorized');
     }
-    const currentPathStat = await lstat(path).catch(() => null);
+    const currentPathStat = await source.lstat(path).catch(() => null);
     if (
       !currentPathStat
       || currentPathStat.isSymbolicLink()

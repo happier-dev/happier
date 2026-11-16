@@ -241,7 +241,10 @@ it('observes through the admitted workspace source and releases every source wat
     // A target stand-in sharing this disk: kind/id differ, so every reach must go through it.
     const source = { ...localWorkspaceSource, kind: 'target' as const, id: 'target:watch-test',
         realpath: async (path: string) => { used.push('realpath'); return await localWorkspaceSource.realpath(path); },
-        spawn: (request: Parameters<typeof localWorkspaceSource.spawn>[0]) => { used.push('spawn'); return localWorkspaceSource.spawn(request); },
+        // A target keeps its own environment and receives only the operation's overlays.
+        spawn: (request: Parameters<typeof localWorkspaceSource.spawn>[0]) => {
+            used.push('spawn'); return localWorkspaceSource.spawn({ ...request, env: { ...process.env, ...request.env } });
+        },
         watchTree: (...args: Parameters<typeof localWorkspaceSource.watchTree>) => {
             used.push('watchTree'); const stop = localWorkspaceSource.watchTree(...args); return () => { released.push('watchTree'); stop(); };
         },

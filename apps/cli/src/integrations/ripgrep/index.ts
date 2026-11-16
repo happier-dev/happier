@@ -2,13 +2,9 @@
  * Low-level ripgrep wrapper - just arguments in, string out
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { requireJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/requireJavaScriptRuntimeExecutable';
-import { isBun } from '@/utils/runtime';
-import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
-import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { isSpawnWorkingDirectoryMissing } from '@/processes/spawnFailure/classifySpawnFailure';
+import { currentWorkspaceSource, type WorkspaceChildProcess } from '@/workspaces/source/workspaceSource';
 
 export interface RipgrepResult {
     exitCode: number
@@ -50,13 +46,14 @@ function createRipgrepAbortError(): Error {
  * @returns Promise with exit code, stdout and stderr
  */
 export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepResult> {
-    const RUNNER_PATH = resolveCliRuntimeAssetPath('scripts', 'ripgrep_launcher.cjs');
+    // The admitted request's workspace source owns where ripgrep runs and how it is launched.
+    const source = currentWorkspaceSource();
     if (options?.signal?.aborted) {
         return Promise.reject(createRipgrepAbortError());
     }
     return new Promise((resolve, reject) => {
         let settled = false;
-        let child: ReturnType<typeof spawn> | null = null;
+        let child: WorkspaceChildProcess | null = null;
         const stdoutChunks: Buffer[] = [];
         const stderrChunks: Buffer[] = [];
         let stdoutBytes = 0;
@@ -79,7 +76,7 @@ export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepRe
             cleanup();
             reject(error);
         };
-        const rejectSpawnError = (error: unknown) => rejectOnce(isSpawnWorkingDirectoryMissing(options?.cwd)
+        const rejectSpawnError = (error: unknown) => rejectOnce(source.kind === 'local' && isSpawnWorkingDirectoryMissing(options?.cwd)
             ? Object.assign(new Error('The workspace folder no longer exists on this machine', { cause: error }), { code: 'WORKSPACE_ROOT_NOT_FOUND' })
             : error);
         const onAbort = () => {
@@ -88,7 +85,7 @@ export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepRe
                 // The launcher can own a native ripgrep child on some platform
                 // paths. Delegate teardown to the canonical cross-platform tree
                 // owner instead of killing only its immediate runtime process.
-                void terminateProcessTree(child).catch(() => {});
+                void child.terminateTree().catch(() => {});
             }
             rejectOnce(createRipgrepAbortError());
         };
@@ -101,7 +98,7 @@ export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepRe
                 deadlineTimer = setTimeout(armDeadline, Math.min(2_147_483_647, remainingMs));
                 return;
             }
-            if (child) void terminateProcessTree(child).catch(() => {});
+            if (child) void child.terminateTree().catch(() => {});
             // Completion is owned here, not by waiting for process-tree teardown.
             // Only complete records in this bounded snapshot become domain hits.
             resolveOnce({ exitCode: 1,
@@ -112,20 +109,13 @@ export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepRe
         armDeadline();
         void (async () => {
             if (settled) return;
-            const runtimeExecutable = await requireJavaScriptRuntimeExecutable({
-                isBunRuntime: isBun(),
-                targetLabel: 'ripgrep launcher',
-            });
+            const launch = await source.toolLaunch({ tool: 'ripgrep', args, ...(options?.paths ? { paths: options.paths } : {}) });
             if (settled || options?.signal?.aborted) {
                 return;
             }
-            let spawned: ChildProcessWithoutNullStreams;
+            let spawned: WorkspaceChildProcess;
             try {
-                spawned = spawn(runtimeExecutable, [RUNNER_PATH, '--stdin'], {
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                    cwd: options?.cwd,
-                    windowsHide: true,
-                });
+                spawned = source.spawn({ command: launch.command, args: launch.args, ...(options?.cwd !== undefined ? { cwd: options.cwd } : {}) });
             } catch (error) {
                 rejectSpawnError(error);
                 return;
@@ -141,7 +131,7 @@ export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepRe
             const stopProcess = () => {
                 if (outputLimitTerminationStarted) return;
                 outputLimitTerminationStarted = true;
-                void terminateProcessTree(spawned).catch(() => {});
+                void spawned.terminateTree().catch(() => {});
             };
             const deliverLine = (line: string) => {
                 if (stoppedEarly || settled) return;
@@ -221,9 +211,8 @@ export function run(args: string[], options?: RipgrepOptions): Promise<RipgrepRe
             spawned.on('error', (err) => {
                 rejectSpawnError(err);
             });
-            // Payload size is governed by the caller, never an OS argv limit.
             spawned.stdin.on('error', rejectOnce);
-            spawned.stdin.end(JSON.stringify({ args, ...(options?.paths ? { paths: options.paths } : {}) }));
+            spawned.stdin.end(launch.stdin ?? '');
             if (options?.signal?.aborted) {
                 onAbort();
             }

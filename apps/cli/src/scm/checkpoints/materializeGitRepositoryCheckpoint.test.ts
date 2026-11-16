@@ -18,7 +18,7 @@ vi.mock('node:fs/promises', async importOriginal => {
     return { ...actual, readdir: async (...args: Parameters<typeof actual.readdir>) => {
         const entries: unknown = await Reflect.apply(actual.readdir, undefined, args);
         return directoryBoundary.root && args[0] === directoryBoundary.root && Array.isArray(entries)
-            ? entries.filter((entry: unknown) => entry !== 'a') : entries;
+            ? entries.filter((entry: unknown) => entry !== 'a' && (entry as { name?: unknown } | null)?.name !== 'a') : entries;
     } };
 });
 
@@ -136,6 +136,46 @@ describe('raw checkpoint filesystem representation', () => {
             await materializeGitRepositoryCheckpoint({ cwd: directory, endpoint: git('rev-parse', 'HEAD'),
                 directory: join(directory, 'valid') });
             expect(readFileSync(join(directory, 'valid', 'dir', 'link'), 'utf8')).toBe('Captured bytes\n');
+        });
+    });
+});
+
+describe('checkpoint materialization through the workspace source', () => {
+    it('streams every blob through the source write stream and awaits asynchronous target writes', async () => {
+        const { localWorkspaceSource } = await import('@/workspaces/source/localWorkspaceSource');
+        const { runWithWorkspaceSource } = await import('@/workspaces/source/workspaceSource');
+        await withTempDir('happier-checkpoint-source-', async directory => {
+            const git = (...args: string[]) => execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
+            git('init', '-q'); git('config', 'user.name', 'Test'); git('config', 'user.email', 'test@example.com');
+            mkdirSync(join(directory, 'dir'));
+            writeFileSync(join(directory, 'dir', 'file.txt'), 'x'.repeat(200_000));
+            writeFileSync(join(directory, 'top.txt'), 'top\n');
+            git('add', '.'); git('commit', '-qm', 'tree');
+            const endpoint = git('rev-parse', 'HEAD');
+            const opened: string[] = [];
+            let pendingWrites = 0;
+            // A target stand-in on this disk whose writes settle later, like holder frames.
+            const source = { ...localWorkspaceSource, kind: 'target' as const, id: 'target:checkpoint',
+                openWrite: (path: string, options?: Readonly<{ mode?: number }>) => {
+                    opened.push(path);
+                    const local = localWorkspaceSource.openWrite(path, options);
+                    let chain = Promise.resolve();
+                    return {
+                        write: (bytes: Uint8Array) => {
+                            const copy = Buffer.from(bytes);
+                            pendingWrites++;
+                            return chain = chain.then(() => new Promise<void>(resolve => setTimeout(resolve, 1)))
+                                .then(() => { local.write(copy); pendingWrites--; });
+                        },
+                        close: () => chain = chain.then(() => { local.close(); }),
+                    };
+                } };
+            const target = join(directory, 'pinned');
+            await runWithWorkspaceSource(source, () => materializeGitRepositoryCheckpoint({ cwd: directory, endpoint, directory: target }));
+            expect(pendingWrites).toBe(0);
+            expect(opened.sort()).toEqual([join(target, 'dir', 'file.txt'), join(target, 'top.txt')]);
+            expect(readFileSync(join(target, 'dir', 'file.txt'), 'utf8')).toBe('x'.repeat(200_000));
+            expect(readFileSync(join(target, 'top.txt'), 'utf8')).toBe('top\n');
         });
     });
 });

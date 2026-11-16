@@ -1,5 +1,9 @@
 import { lstat, mkdir, readdir, readlink, rename } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { currentWorkspaceSource, runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { installWorkspaceTree } from '@/workspaces/source/copyWorkspaceTree';
 
 import type { WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
 
@@ -48,7 +52,7 @@ export function createPreparedFilesystemEntryCopyDestination(
     getAdditionalAllowedReadDirs: dependencies.getAdditionalAllowedReadDirs ?? (() => []),
     getAdditionalAllowedWriteDirs: dependencies.getAdditionalAllowedWriteDirs ?? (() => []),
   };
-  return async (input) => {
+  const destination = async (input: PreparedFilesystemEntryCopyDestinationInput): Promise<NativeConfinedApplyOutcome> => {
     if (input.requesterAccountId !== undefined && !input.requesterAccountId.trim()) refuse('filesystem_requester_unavailable', 'A verified requester is required');
     if (!/^[A-Za-z0-9_-]+$/u.test(input.operationId) || typeof input.overwrite !== 'boolean'
       || typeof input.recursive !== 'boolean' || typeof input.assertCurrentAuthority !== 'function') {
@@ -148,5 +152,23 @@ export function createPreparedFilesystemEntryCopyDestination(
       }
       throw error;
     }
+  };
+  return async (input) => {
+    const source = currentWorkspaceSource();
+    if (source.kind === 'local') return await destination(input);
+    // A target destination: materialize the admitted entry in host staging with the same
+    // confined owner, then install it into the target through the port (install/restore).
+    const stagingRoot = createHappierTempDir({ purpose: 'filesystem-copy-target-stage' });
+    try {
+      const stagedPath = join(stagingRoot, 'entry');
+      await localWorkspaceSource.mkdir(join(stagingRoot, 'recovery'), { recursive: true });
+      const staged = await runWithWorkspaceSource(localWorkspaceSource, () => createPreparedFilesystemEntryCopyDestination({
+        workingDirectory: stagingRoot, accessPolicy: { kind: 'restrictedRoots', roots: [stagingRoot] },
+      })({ ...input, rootPath: stagingRoot, path: stagedPath, overwrite: false,
+        stagingDirectory: join(stagingRoot, 'stage'), recoveryDirectory: join(stagingRoot, 'recovery') }));
+      if (staged.status !== 'installed') return staged;
+      return await installWorkspaceTree({ from: { source: localWorkspaceSource, path: stagedPath }, to: { source, path: input.path },
+        overwrite: input.overwrite, ...(input.signal ? { signal: input.signal } : {}), assertCurrentAuthority: input.assertCurrentAuthority });
+    } finally { await removeHappierTempDirAsync(stagingRoot); }
   };
 }

@@ -1,5 +1,6 @@
-import { closeSync, createReadStream, openSync, writeSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, readlink, rm, symlink, unlink } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { currentWorkspaceSource, type WorkspaceWriteStream } from '@/workspaces/source/workspaceSource';
 import { platform, tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { runGitCheckpointCommand } from './gitCheckpointCommands';
@@ -21,18 +22,21 @@ export async function materializeGitRepositoryCheckpoint(input: Readonly<{
     cwd: string; endpoint: string; directory: string;
 }>): Promise<void> {
     if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(input.endpoint)) throw new Error('An immutable checkpoint endpoint is required');
+    // The materialized endpoint is written into the workspace source the Agent reads; the
+    // Git listing stays in host temp space (the command owner's stdout file).
+    const source = currentWorkspaceSource();
     const files: CheckpointFile[] = [];
     const paths = new Set<string>();
     const expectedChildren = new Map<string, Set<string>>([[resolve(input.directory), new Set()]]);
     const assertNativeSpelling = async () => {
         for (const [directory, expected] of expectedChildren) {
-            const actual = await readdir(directory);
+            const actual = (await source.readdir(directory)).map(entry => entry.name);
             if (actual.length !== expected.size || actual.some(name => !expected.has(name))) {
                 throw new Error('Checkpoint hierarchy cannot be represented exactly on this filesystem');
             }
         }
     };
-    await mkdir(input.directory, { recursive: true });
+    await source.mkdir(input.directory, { recursive: true });
     const consumeEntry = async (bytes: Buffer) => {
         const row = bytes.toString('utf8');
         if (!Buffer.from(row).equals(bytes)) throw new Error('Checkpoint paths cannot be represented on this filesystem');
@@ -56,13 +60,13 @@ export async function materializeGitRepositoryCheckpoint(input: Readonly<{
         }
         if (kind === 'commit' && mode === '160000') {
             // A Gitlink captures an object identity, not the submodule's working files.
-            await mkdir(path, { recursive: true });
+            await source.mkdir(path, { recursive: true });
             return;
         }
         if (kind !== 'blob' || !['100644', '100755', '120000'].includes(mode!)) throw new Error('Checkpoint entry is not a supported file');
         const byteLength = Number(size);
         if (!Number.isSafeInteger(byteLength) || byteLength < 0) throw new Error('Checkpoint object size is unavailable');
-        await mkdir(dirname(path), { recursive: true });
+        await source.mkdir(dirname(path), { recursive: true });
         files.push({ path, mode: mode!, oid: oid!, size: byteLength });
     };
     // The command owner writes raw stdout directly to an exclusively owned file.
@@ -97,7 +101,10 @@ export async function materializeGitRepositoryCheckpoint(input: Readonly<{
     let pending = Buffer.alloc(0);
     let index = 0;
     let remaining = -1;
-    let descriptor: number | undefined;
+    let descriptor: WorkspaceWriteStream | undefined;
+    // A target's writes settle asynchronously; they are awaited, in order, before the result is trusted.
+    let writes: Promise<void> = Promise.resolve();
+    const settle = (result: void | Promise<void>) => { if (result) writes = Promise.all([writes, result]).then(() => undefined); };
     try {
         const batch = await runGitCheckpointCommand({ cwd: input.cwd, args: ['cat-file', '--batch'],
             stdin: files.map(file => file.oid).join('\n') + '\n', maxOutputBytes: batchBytes,
@@ -111,40 +118,40 @@ export async function materializeGitRepositoryCheckpoint(input: Readonly<{
                         const newline = data.indexOf(10);
                         if (newline < 0) { pending = data; break; }
                         if (data.subarray(0, newline).toString('ascii') !== `${file.oid} blob ${file.size}`) throw new Error('Captured checkpoint blob is unavailable');
-                        descriptor = openSync(file.path, 'wx', file.mode === '100755' ? 0o755 : 0o644);
+                        descriptor = source.openWrite(file.path, { mode: file.mode === '100755' ? 0o755 : 0o644 });
                         remaining = file.size;
                         data = data.subarray(newline + 1);
                     } else if (remaining > 0) {
                         const consumed = Math.min(remaining, data.length);
-                        let offset = 0;
-                        while (offset < consumed) offset += writeSync(descriptor!, data.subarray(offset, consumed));
+                        settle(descriptor!.write(Buffer.from(data.subarray(0, consumed))));
                         remaining -= consumed;
                         data = data.subarray(consumed);
                     } else {
                         if (data[0] !== 10) throw new Error('Git returned malformed checkpoint blob framing');
-                        closeSync(descriptor!); descriptor = undefined;
+                        settle(descriptor!.close()); descriptor = undefined;
                         index++; remaining = -1;
                         data = data.subarray(1);
                     }
                 }
                 return 'continue';
             } });
+        await writes;
         if (!batch.success || index !== files.length || pending.length || descriptor !== undefined) throw new Error(batch.stderr || 'The captured checkpoint contents are incomplete');
-    } finally { if (descriptor !== undefined) closeSync(descriptor); }
+    } finally { if (descriptor !== undefined) await descriptor.close(); await writes.catch(() => undefined); }
     // Install links only after all ordinary files are written, so links never redirect writes.
     for (const file of files.filter(file => file.mode === '120000')) {
-        const targetBytes = await readFile(file.path);
+        const targetBytes = await source.readFile(file.path);
         const target = targetBytes.toString('utf8');
         if (!Buffer.from(target).equals(targetBytes)) throw new Error('Checkpoint symlink cannot be represented exactly');
         assertNativeCheckpointPath(target, true);
         assertWorkspaceMaterializationSymlinkTarget({ workspaceRoot: input.directory, linkPath: file.path, target,
             pathRepresentation: 'native_literal' });
-        await unlink(file.path);
-        await symlink(target, file.path);
+        await source.rm(file.path);
+        await source.symlink(target, file.path);
     }
     for (const file of files.filter(file => file.mode === '120000')) {
         assertWorkspaceMaterializationSymlinkTarget({ workspaceRoot: input.directory, linkPath: file.path,
-            target: await readlink(file.path), pathRepresentation: 'native_literal', installed: true });
+            target: await source.readlink(file.path), pathRepresentation: 'native_literal', installed: true });
     }
     await assertNativeSpelling();
 }

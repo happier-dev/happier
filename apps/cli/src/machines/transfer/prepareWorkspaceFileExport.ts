@@ -6,7 +6,10 @@ import type { WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
 import { writeFileHandleFully } from '@happier-dev/transfers/node';
 import { FileDownloadDestinationV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { readPortablePathSegmentViolation } from '@happier-dev/protocol/filesystem/portablePathSegment';
-import { basename, dirname, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { currentWorkspaceSource, runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { copyWorkspaceTree } from '@/workspaces/source/copyWorkspaceTree';
 import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
 import { MUTAGEN_ENGINE_CONTENT_HASH_ALGORITHM } from '@happier-dev/cli-common/firstPartyRuntime';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
@@ -164,17 +167,38 @@ async function captureAdmittedReadFile(input: Readonly<{
   } finally { await source.handle.close(); }
 }
 
-/** Capture entry bytes at their native owner before the host publishes them. */
-export async function createWorkspaceEntryExportSource(params: Readonly<{
+type WorkspaceEntryExportParams = Readonly<{
   rootPath: string; path: string; operationId: string;
   accessPolicy: FilesystemAccessPolicy;
   additionalAllowedReadDirs?: readonly string[];
   assertCurrentAuthority: () => Promise<void>;
   admittedReadFile?: PreparedFilesystemReadFile;
-}>) {
+}>;
+
+/** Capture entry bytes at their native owner before the host publishes them. */
+export async function createWorkspaceEntryExportSource(params: WorkspaceEntryExportParams) {
   const relativePath = relative(params.rootPath, params.path);
   if (!relativePath) throw new Error('The filesystem root cannot be exported as a copy entry');
   await params.assertCurrentAuthority();
+  const workspace = currentWorkspaceSource();
+  if (workspace.kind !== 'local' && !params.admittedReadFile) {
+    // A target entry is first copied into host staging through the port; the same
+    // confined capture/export owner then exports it from that staged root.
+    const stagingRoot = createHappierTempDir({ purpose: 'filesystem-copy-target-source' });
+    try {
+      await copyWorkspaceTree({ from: { source: workspace, path: params.path }, to: { source: localWorkspaceSource, path: join(stagingRoot, relativePath) } });
+      const exported = await runWithWorkspaceSource(localWorkspaceSource, () => captureLocalWorkspaceEntryExport({ ...params,
+        rootPath: stagingRoot, path: join(stagingRoot, relativePath), accessPolicy: { kind: 'restrictedRoots', roots: [stagingRoot] } }));
+      const release = exported.payloadSource.dispose;
+      return { ...exported, payloadSource: { ...exported.payloadSource,
+        dispose: async () => { try { await release?.(); } finally { await removeHappierTempDirAsync(stagingRoot); } } } };
+    } catch (error) { await removeHappierTempDirAsync(stagingRoot); throw error; }
+  }
+  return await captureLocalWorkspaceEntryExport(params);
+}
+
+async function captureLocalWorkspaceEntryExport(params: WorkspaceEntryExportParams) {
+  const relativePath = relative(params.rootPath, params.path);
   const captureDirectory = createHappierTempDir({ purpose: 'filesystem-copy-source' });
   try {
     const captured = params.admittedReadFile ? await captureAdmittedReadFile({ readFile: params.admittedReadFile,

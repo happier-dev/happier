@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { WorkspaceAnchorsResolveRequestV1Schema, computeLineContentHashV1 } from '@happier-dev/protocol/workspace/anchors/v1';
@@ -153,7 +153,7 @@ async function readAuthorizedWorkspaceFile(params: Readonly<{
   }
 
   try {
-    const content = await readFile(validation.resolvedPath, 'utf8');
+    const content = (await currentWorkspaceSource().readFile(validation.resolvedPath)).toString('utf8');
     const lines = splitTextLines(content);
     const hashes = lines.map(computeLineContentHashV1);
     return { ok: true, lines, hashes };

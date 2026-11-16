@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { lstat, readlink } from 'node:fs/promises';
 import { join } from 'node:path';
+
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 import { runScmCommand } from './runtime';
 import { hashWorkspaceFile } from './workspace/workspaceExportPackaging/hashWorkspaceFile';
@@ -48,14 +49,15 @@ export async function readWorktreeChangeFingerprint(cwd: string): Promise<Worktr
             .filter(Boolean))].sort();
         for (const relativePath of paths) {
             const filePath = join(repoRoot, relativePath);
-            const info = await lstat(filePath).catch((error: unknown) => {
+            // Git ran where the workspace lives (the admitted source); its entries are read there too.
+            const info = await currentWorkspaceSource().lstat(filePath).catch((error: unknown) => {
                 if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
                 throw error;
             });
             if (info === null) {
                 hash.update(JSON.stringify([relativePath, 'absent']));
             } else if (info.isSymbolicLink()) {
-                hash.update(JSON.stringify([relativePath, 'symlink', await readlink(filePath)]));
+                hash.update(JSON.stringify([relativePath, 'symlink', await currentWorkspaceSource().readlink(filePath)]));
             } else if (info.isFile()) {
                 hash.update(JSON.stringify([relativePath, 'file', info.mode & 0o111,
                     await hashWorkspaceFile({ filePath })]));

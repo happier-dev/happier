@@ -1,4 +1,4 @@
-import { lstat, readdir, readlink } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { join, resolve } from 'node:path';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
@@ -64,7 +64,7 @@ export async function scanWorkspaceManifest(params: Readonly<{
         const directoryPath = pendingDirectories[pendingIndex];
         let directoryEntries;
         try {
-            directoryEntries = await readdir(directoryPath, { withFileTypes: true });
+            directoryEntries = await currentWorkspaceSource().readdir(directoryPath);
         } catch (error) {
             if (isIgnorableWorkspaceExportAccessError(error)) {
                 continue;
@@ -90,7 +90,7 @@ export async function scanWorkspaceManifest(params: Readonly<{
 
             let stats;
             try {
-                stats = await lstat(candidatePath);
+                stats = await currentWorkspaceSource().lstat(candidatePath);
             } catch (error) {
                 if (isIgnorableWorkspaceExportAccessError(error)) {
                     continue;
@@ -109,7 +109,7 @@ export async function scanWorkspaceManifest(params: Readonly<{
             if (stats.isSymbolicLink()) {
                 let symlinkTarget: string;
                 try {
-                    symlinkTarget = await readlink(candidatePath);
+                    symlinkTarget = await currentWorkspaceSource().readlink(candidatePath);
                 } catch (error) {
                     if (isIgnorableWorkspaceExportAccessError(error)) {
                         continue;

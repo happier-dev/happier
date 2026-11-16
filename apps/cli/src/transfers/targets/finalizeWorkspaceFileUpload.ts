@@ -1,7 +1,7 @@
 import { constants } from 'fs';
 import { copyFile, mkdir, rm, stat } from 'node:fs/promises';
 import { dirname } from 'path';
-import { commitGuardedFileReplace } from '@/rpc/handlers/fileSystem/commitGuardedFileReplace';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 import {
   CrossDeviceMoveSourceCleanupError,
@@ -45,8 +45,11 @@ export async function finalizeWorkspaceFileUpload(input: Readonly<{
   sizeBytes: number;
   fileOperations?: WorkspaceFileFinalizeOperations | null;
 }>): Promise<UploadTransferFinalizeResult> {
-  if (input.overwrite || input.expectedHash !== undefined) {
-    const result = await commitGuardedFileReplace({ destPath: input.destPath, expectation: input.expectedHash,
+  const source = currentWorkspaceSource();
+  // A target receives host-staged bytes only through its guarded publication (absent = create-new).
+  if (input.overwrite || input.expectedHash !== undefined || source.kind !== 'local') {
+    const result = await source.replaceFile({ destPath: input.destPath,
+      expectation: input.overwrite || input.expectedHash !== undefined ? input.expectedHash : null,
       source: { kind: 'staged', path: input.tempPath, sha256: input.sha256 }, fileOperations: input.fileOperations ?? undefined,
       prepareCommit: input.fileOperations?.prepareCommit });
     if (result.success) return { success: true, path: input.destDisplayPath, sizeBytes: input.sizeBytes };

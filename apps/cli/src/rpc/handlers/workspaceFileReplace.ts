@@ -1,6 +1,5 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { run as runRipgrep } from '@/integrations/ripgrep/index';
 import { computeFileReplacement, decodeReplaceFileText } from '@happier-dev/protocol/machines/workspaceFilesReplace';
 import { applyInverseEdits } from '@happier-dev/protocol/diff/hunks';
@@ -11,7 +10,7 @@ import { DaemonWorkspaceFileReplacePreviewRequestSchema, DaemonWorkspaceFileRepl
 import type { FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
 import { authorizeFilesystemPath, authorizeFilesystemPathWithinRoot } from './fileSystem/accessPolicy/filesystemPathAuthorization';
 import { isSafeRelativeWorkspacePath, workspaceFileExclusionArguments } from './workspaceFilePaths';
-import { checkFileWriteExpectation, commitGuardedFileReplace } from './fileSystem/commitGuardedFileReplace';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { registerActionSpecRpcHandlers } from './registerActionSpecRpcHandlers';
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
 import { applyWorkspaceFileTextEdits } from '@/lsp/documentText';
@@ -24,6 +23,13 @@ type PreviewSuccess = Extract<DaemonWorkspaceFileReplacePreviewResponse, { ok: t
 type FilesystemEffectContext = Readonly<{
   signal?: AbortSignal;
 }>;
+
+/** Destination absence through the admitted source (same outcome code as the guarded writer). */
+async function assertWorkspaceFileAbsent(path: string): Promise<void> {
+  try { await currentWorkspaceSource().stat(path); }
+  catch (error) { if (readErrorCode(error) === 'ENOENT') return; throw error; }
+  throw Object.assign(new Error('File already exists but was expected to be new'), { code: 'expected_file_absent' });
+}
 
 function readErrorCode(error: unknown): string | undefined {
   return error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
@@ -92,7 +98,7 @@ export async function previewWorkspaceFileReplace(
         if (!authorization.valid) { coverage = 'partial'; lastPath = path; continue; }
         let bytes: Buffer;
         context?.signal?.throwIfAborted();
-        try { bytes = await readFile(authorization.resolvedPath); } catch { coverage = 'partial'; lastPath = path; continue; }
+        try { bytes = await currentWorkspaceSource().readFile(authorization.resolvedPath); } catch { coverage = 'partial'; lastPath = path; continue; }
         context?.signal?.throwIfAborted();
         const replacement = computeFileReplacement(bytes, matcher);
         if (replacement.kind === 'skip') { skipped.notText++; coverage = 'partial'; lastPath = path; continue; }
@@ -200,7 +206,7 @@ export async function applyWorkspaceFileReplace(
         let refusal: FileResult | undefined;
         if (!destination.valid) refusal = { path: file.path, status: 'failed', reason: 'path_not_allowed' };
         else {
-          try { checkFileWriteExpectation(destination.resolvedPath, null); }
+          try { await assertWorkspaceFileAbsent(destination.resolvedPath); }
           catch (error) {
             const code = readErrorCode(error);
             refusal = { path: file.path, status: isFilesystemWriteGuardErrorCode(code) ? 'changed' : 'failed', reason: code ?? 'read_failed' };
@@ -223,7 +229,7 @@ export async function applyWorkspaceFileReplace(
       if (!authorization.valid) return { path: file.path, status: 'failed', reason: 'path_not_allowed' };
       try {
         context?.signal?.throwIfAborted();
-        const bytes = await readFile(authorization.resolvedPath);
+        const bytes = await currentWorkspaceSource().readFile(authorization.resolvedPath);
         context?.signal?.throwIfAborted();
         if (hashBytes(bytes) !== file.expectedHash) return { path: file.path, status: 'changed' };
         let newBytes: Uint8Array;
@@ -261,7 +267,7 @@ export async function applyWorkspaceFileReplace(
             ? authorizeFilesystemPathWithinRoot({ targetPath: renameTo, rootPath: root.resolvedPath, defaultDirectory: workingDirectory, accessPolicy })
             : { valid: false as const };
           if (!destination.valid) return { path: file.path, status: 'failed', reason: 'path_not_allowed' };
-          checkFileWriteExpectation(destination.resolvedPath, null);
+          await assertWorkspaceFileAbsent(destination.resolvedPath);
           destinationPath = destination.resolvedPath;
         }
         return { sourcePath: authorization.resolvedPath, destinationPath, expectedHash: file.expectedHash, newBytes, result };
@@ -272,11 +278,11 @@ export async function applyWorkspaceFileReplace(
       try {
         context?.signal?.throwIfAborted();
         if (result.renameTo) {
-          const moved = await commitGuardedFileReplace({ destPath: destinationPath, expectation: null,
+          const moved = await currentWorkspaceSource().replaceFile({ destPath: destinationPath, expectation: null,
             source: { kind: 'move', path: sourcePath, expectedHash } });
           if (!moved.success) return { path: result.path, status: isFilesystemWriteGuardErrorCode(moved.errorCode) ? 'changed' : 'failed', reason: moved.errorCode };
         }
-        const write = await commitGuardedFileReplace({ destPath: destinationPath, expectation: expectedHash,
+        const write = await currentWorkspaceSource().replaceFile({ destPath: destinationPath, expectation: expectedHash,
           source: { kind: 'bytes', bytes: newBytes } });
         if (write.success) return { ...result, hash: write.hash };
         // A rename is already observable even if its subsequent text write

@@ -16,6 +16,7 @@ import { createNativeFilesystemTransferRpcRegistrar, type PrepareNativeFilesyste
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { ExactAllowedReadFile } from '@/rpc/handlers/fileSystem/accessPolicy/exactAllowedReadFile';
 import { createFilesystemEffectRpcRegistrar, type FilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { bindWorkspaceSourceRegistrar } from '@/workspaces/source/workspaceSource';
 
 type SessionFileDownloadInitRequest = Readonly<{
   t: 'session_file_download_v1';
@@ -45,7 +46,9 @@ export function registerTransferDownloadRpcHandlers(
   }>,
 ): void {
   registerDownloadTransferLifecycleHandlers<TransferDownloadInitResponse>({
-    rpcHandlerManager: deps.prepareNativeTransfer ? createNativeFilesystemTransferRpcRegistrar(rpcHandlerManager, {
+    rpcHandlerManager: deps.prepareNativeTransfer ? createNativeFilesystemTransferRpcRegistrar(deps.effectAdmission
+      ? bindWorkspaceSourceRegistrar(rpcHandlerManager, (context, input) => deps.effectAdmission!.selectWorkspaceSource(context, input))
+      : rpcHandlerManager, {
       direction: 'download', store: deps.store, prepareNativeTransfer: deps.prepareNativeTransfer,
       fallbackAdmission: deps.effectAdmission?.rpc,
     }) : deps.effectAdmission ? createFilesystemEffectRpcRegistrar(rpcHandlerManager, deps.effectAdmission) : rpcHandlerManager,

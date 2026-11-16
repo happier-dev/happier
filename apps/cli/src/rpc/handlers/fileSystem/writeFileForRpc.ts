@@ -4,7 +4,8 @@ import { logger } from '@/ui/logger';
 import { validatePath } from '../pathSecurity';
 import { authorizeFilesystemPathWithinRoot } from './accessPolicy/filesystemPathAuthorization';
 import type { FilesystemAccessPolicy } from './accessPolicy/filesystemAccessPolicy';
-import { commitGuardedFileReplace, type GuardedFileReplaceResult } from './commitGuardedFileReplace';
+import type { GuardedFileReplaceResult } from './commitGuardedFileReplace';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 export type WriteFileRequest = Readonly<{ rootPath?: string; path: string; content: string; expectedHash?: string | null }>;
 export type WriteFileResponse = GuardedFileReplaceResult | Readonly<{ success: false; error: string; errorCode?: 'filesystem_identity_custody_unavailable' | 'access_denied' }>;
@@ -32,7 +33,7 @@ export async function writeFileForRpc(data: WriteFileRequest | undefined, deps: 
     const maxInlineWriteBytes = Math.min(configuration.filesReadMaxBytes, configuration.filesTransferChunkBytes);
     if (decodedByteLength > maxInlineWriteBytes) return { success: false, error: 'File content is too large to write' };
     await deps.assertCurrentAuthority?.();
-    return await commitGuardedFileReplace({ destPath: resolvedPath, expectation: data?.expectedHash,
+    return await currentWorkspaceSource().replaceFile({ destPath: resolvedPath, expectation: data?.expectedHash,
       source: { kind: 'bytes', bytes: Buffer.from(contentBase64, 'base64') }, prepareCommit: deps.assertCurrentAuthority });
   } catch (error) {
     logger.debug('Failed to write file:', error);

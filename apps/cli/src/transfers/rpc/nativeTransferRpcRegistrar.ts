@@ -3,6 +3,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { NativeTransferSessionOwner, TransferSessionStore } from '@happier-dev/transfers/node';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { FilesystemEffectFailure } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 export type PrepareNativeFilesystemTransfer = (context?: RpcHandlerContext) => Promise<NativeTransferSessionOwner | null>;
 
@@ -12,7 +13,7 @@ export type PrepareNativeFilesystemTransfer = (context?: RpcHandlerContext) => P
 export function createNativeFilesystemTransferRpcRegistrar(registrar: RpcHandlerRegistrar, params: Readonly<{
   store: TransferSessionStore; direction: 'upload' | 'download';
   prepareNativeTransfer: PrepareNativeFilesystemTransfer;
-  fallbackAdmission?: (context?: RpcHandlerContext) => Promise<FilesystemEffectFailure | null>;
+  fallbackAdmission?: (context?: RpcHandlerContext, source?: import('@/workspaces/source/workspaceSource').WorkspaceSource) => Promise<FilesystemEffectFailure | null>;
 }>): RpcHandlerRegistrar {
   const methods = params.direction === 'upload'
     ? { init: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT, chunk: RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK,
@@ -41,7 +42,9 @@ export function createNativeFilesystemTransferRpcRegistrar(registrar: RpcHandler
       try {
         context?.signal.throwIfAborted();
         if (method === methods.init) {
-          const native = await params.prepareNativeTransfer(context);
+          // A requester's native descriptor is this Machine's disk; a target Session's member
+          // transfers through the target source after the fallback admission below.
+          const native = currentWorkspaceSource().kind === 'local' ? await params.prepareNativeTransfer(context) : null;
           if (native) {
             let retained = false;
             try {
@@ -81,7 +84,7 @@ export function createNativeFilesystemTransferRpcRegistrar(registrar: RpcHandler
           // without re-entering requester/Home/native preparation per phase.
           if (!local && !(params.direction === 'upload' && params.store.readCompletedUpload(sessionId))) return await handler(input, context);
         }
-        const refused = await params.fallbackAdmission?.(context);
+        const refused = await params.fallbackAdmission?.(context, currentWorkspaceSource());
         return refused ? { success: false, ...refused } : await handler(input, context);
       } catch (error) { return failure(error); }
     });

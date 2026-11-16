@@ -1,4 +1,4 @@
-import { lstat, unlink } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { join } from 'node:path';
 
 import {
@@ -47,7 +47,7 @@ async function deleteCandidateFile(input: Readonly<{
   workspaceRelativePath: string;
 }>): Promise<GarbageCollectSessionMediaResult> {
   const absolutePath = join(input.workingDirectory, input.workspaceRelativePath);
-  const entryStat = await lstat(absolutePath).catch((error: unknown) => {
+  const entryStat = await currentWorkspaceSource().lstat(absolutePath).catch((error: unknown) => {
     if (error && typeof error === 'object' && (error as { code?: unknown }).code === 'ENOENT') {
       return null;
     }
@@ -57,7 +57,7 @@ async function deleteCandidateFile(input: Readonly<{
     return { deletedFiles: 0, deletedBytes: 0 };
   }
 
-  await unlink(absolutePath).catch((error: unknown) => {
+  await currentWorkspaceSource().rm(absolutePath).catch((error: unknown) => {
     if (error && typeof error === 'object' && (error as { code?: unknown }).code === 'ENOENT') {
       return;
     }

@@ -1,7 +1,7 @@
 import * as z from 'zod/mini';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { realpathSync } from 'node:fs';
-import { copyFile, lstat, mkdir, mkdtemp, open, rename, rm, stat, writeFile } from 'fs/promises';
+import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from 'path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -37,6 +37,8 @@ import { registerActionSpecRpcHandlers } from '../registerActionSpecRpcHandlers'
 import { assertFilesystemEffectCurrent } from './accessPolicy/filesystemEffectAdmission';
 import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { installWorkspaceTree } from '@/workspaces/source/copyWorkspaceTree';
 
 type StatFileRequest = WorkspaceStatFileRequestV1;
 type StatFileResponse =
@@ -110,6 +112,8 @@ type FilesystemMutationExecutionDeps = FilesystemMutationDeps & Readonly<{
 
 function resolveRealPathBestEffort(path: string): string {
   const resolved = resolvePath(path);
+  // This Machine's links say nothing about a target; the target source confines its own paths.
+  if (currentWorkspaceSource().kind !== 'local') return resolved;
   try {
     return realpathSync(resolved);
   } catch {
@@ -194,7 +198,7 @@ function authorizeMutationPath(path: string, rootPath: string | undefined, mode:
 
 async function pathExists(path: string): Promise<boolean> {
   try {
-    await lstat(path);
+    await currentWorkspaceSource().lstat(path);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
@@ -211,6 +215,7 @@ export async function executeFilesystemMutationAction(
   if (!parsed.success) return failure('Invalid filesystem mutation input', 'invalid_input');
   const input = parsed.data;
   const rootPath = 'rootPath' in input ? input.rootPath : undefined;
+  const source = currentWorkspaceSource();
   try {
     params.signal?.throwIfAborted();
     await params.assertCurrentAuthority?.();
@@ -220,17 +225,17 @@ export async function executeFilesystemMutationAction(
       if (!path.valid) return failure(path.error, path.errorCode);
       if (actionId === 'daemon.filesystem.createDirectory') {
         await params.assertCurrentAuthority?.();
-        await mkdir(path.resolvedPath, { recursive: true });
+        await source.mkdir(path.resolvedPath, { recursive: true });
         return { success: true };
       }
       if (isRootPath(path.resolvedPath, rootPath, params)) return failure('Cannot delete the working directory root', 'root_refused');
       if (!await pathExists(path.resolvedPath)) return { success: true };
-      const stats = await lstat(path.resolvedPath);
+      const stats = await source.lstat(path.resolvedPath);
       if (stats.isDirectory() && (!('recursive' in input) || !input.recursive)) {
         return failure('Refusing to delete a directory without recursive=true', 'recursive_required');
       }
       await params.assertCurrentAuthority?.();
-      await rm(path.resolvedPath, { recursive: true, force: true });
+      await source.rm(path.resolvedPath, { recursive: true, force: true });
       return { success: true };
     }
 
@@ -245,11 +250,19 @@ export async function executeFilesystemMutationAction(
       return failure('Source and destination paths overlap', 'paths_overlap');
     }
     // Establish source existence before any destructive overwrite of the destination.
-    const source = await lstat(from.resolvedPath);
+    const sourceEntry = await source.lstat(from.resolvedPath);
     if (await pathExists(to.resolvedPath) && !input.overwrite) return failure('Destination already exists', 'destination_exists');
     if (actionId === 'daemon.filesystem.copy') {
       const recursive = 'recursive' in input && input.recursive;
-      if (source.isDirectory() && !recursive) return failure('Refusing to copy a directory without recursive=true', 'recursive_required');
+      if (sourceEntry.isDirectory() && !recursive) return failure('Refusing to copy a directory without recursive=true', 'recursive_required');
+      // The capture/restore custody below is this Machine's confined disk owner;
+      // a target copies inside itself through the port with the same install/restore outcome.
+      if (source.kind !== 'local') {
+        const installed = await installWorkspaceTree({ from: { source, path: from.resolvedPath }, to: { source, path: to.resolvedPath },
+          overwrite: input.overwrite, signal: params.signal, assertCurrentAuthority: params.assertCurrentAuthority });
+        return installed.status === 'installed' ? { success: true }
+          : failure('Copy failed and the previous destination was restored', 'filesystem_copy_restored');
+      }
       if (!rootPath) return failure('The filesystem root is required', 'invalid_input');
       // Resolve after this owner is initialized: the shared destination port
       // consumes these canonical admission helpers, not a second effect path.
@@ -315,12 +328,12 @@ export async function executeFilesystemMutationAction(
     }
     if (input.overwrite && await pathExists(to.resolvedPath)) {
       await params.assertCurrentAuthority?.();
-      await rm(to.resolvedPath, { recursive: true, force: true });
+      await source.rm(to.resolvedPath, { recursive: true, force: true });
     }
     await params.assertCurrentAuthority?.();
-    await mkdir(dirname(to.resolvedPath), { recursive: true });
+    await source.mkdir(dirname(to.resolvedPath), { recursive: true });
     await params.assertCurrentAuthority?.();
-    await rename(from.resolvedPath, to.resolvedPath);
+    await source.rename(from.resolvedPath, to.resolvedPath);
     return { success: true };
   } catch (error) {
     if (params.signal?.aborted) return failure('Filesystem mutation cancelled before commit', 'cancelled');
@@ -379,7 +392,7 @@ export function registerFilesystemMutationActionHandlers(
 /** Read one exact, bounded candidate buffer for an opt-in content revision. */
 async function readFileWithinContentHashLimit(path: string, assertCurrentAuthority: () => Promise<void>): Promise<Buffer> {
   await assertCurrentAuthority();
-  const handle = await open(path, 'r');
+  const handle = await currentWorkspaceSource().open(path);
   try {
     const bytes = Buffer.alloc(HARD_OPENABLE_CONTENT_MAX_BYTES_V1 + 1);
     let offset = 0;
@@ -410,7 +423,7 @@ export function registerPathMutationHandlers(
 
     try {
       await assertFilesystemEffectCurrent(context);
-      const stats = await stat(validation.resolvedPath);
+      const stats = await currentWorkspaceSource().stat(validation.resolvedPath);
       const kind = stats.isDirectory() ? 'directory' : stats.isFile() ? 'file' : 'other';
       let contentHash: string | undefined;
       let sizeBytes = stats.size;

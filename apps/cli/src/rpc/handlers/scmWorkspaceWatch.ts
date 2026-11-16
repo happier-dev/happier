@@ -6,6 +6,7 @@ import type { ScmBackendRegistry } from '@/scm/registry';
 import { resolveCwd } from '@/scm/runtime';
 import { startScmWorkspaceWatch } from '@/scm/watch/startScmWorkspaceWatch';
 import { filesystemPathComparisonKey, type FilesystemAccessPolicy } from './fileSystem/accessPolicy/filesystemAccessPolicy';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 type WorkspaceObservation = {
     revision: number;
@@ -34,13 +35,15 @@ export function registerScmWorkspaceWatchHandler(
         if (context?.signal.aborted) return { status: 'cancelled' };
         const root = resolveCwd(request.data.directory, workingDirectory, options.accessPolicy);
         if (!root.ok) return { status: 'unavailable', reason: { code: 'path_not_allowed', message: root.error } };
-        const key = filesystemPathComparisonKey(root.cwd);
+        // One subscription per workspace of one source: the same path in two sources is two workspaces.
+        const source = currentWorkspaceSource();
+        const key = `${source.id}\0${filesystemPathComparisonKey(root.cwd)}`;
         let observation = observations.get(key);
         if (!observation) {
             const created: WorkspaceObservation = { revision: ++revision, ready: false, users: 0, listeners: new Set(), dispose() {} };
             const notify = () => { for (const listener of created.listeners) listener(); };
             observations.set(key, created);
-            created.dispose = startScmWorkspaceWatch({ directory: root.cwd, registry: options.registry,
+            created.dispose = startScmWorkspaceWatch({ source, directory: root.cwd, registry: options.registry,
                 onReady: () => { options.invalidateStatusSnapshot(); created.ready = true; notify(); },
                 onChange: () => { options.invalidateStatusSnapshot(); created.revision = ++revision; notify(); },
                 onUnavailable: reason => { created.unavailable = reason; notify(); },

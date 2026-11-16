@@ -140,13 +140,14 @@ describe('registered workspace replace transport', () => {
     for (const path of ['a.txt', 'b.txt']) await writeFile(join(f.directory, path), 'old');
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
     let revoked = false;
-    const read = vi.spyOn(filesystem, 'readFile').mockImplementation(async (...args: Parameters<typeof filesystem.readFile>) => {
+    // The workspace source reads a regular file through an opened handle: retire at b.txt's open.
+    const read = vi.spyOn(filesystem, 'open').mockImplementation(async (...args: Parameters<typeof filesystem.open>) => {
       if (args[0] === join(f.directory, 'b.txt') && !revoked) {
         expect(await actual.readFile(join(f.directory, 'a.txt'), 'utf8')).toBe('new');
         revoked = true;
         f.retire();
       }
-      return actual.readFile(...args);
+      return actual.open(...args);
     });
     try {
       const before = f.admissionChecks();

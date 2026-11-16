@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { resolve } from 'node:path';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { ScmFileAtRevisionRequest, ScmFileAtRevisionResponse } from '@happier-dev/protocol/scm';
@@ -22,7 +22,7 @@ export async function readRepositoryWorkflow(input: Readonly<{
   if (!directory) throw Object.assign(new Error('workspace_unavailable'), { code: 'workspace_unavailable' });
   const relative = resolveWorkspaceRelativePath({ workspaceRoot: directory, candidatePath: input.path });
   if (!relative.ok) throw Object.assign(new Error(relative.errorCode), { code: relative.errorCode });
-  const [root, file] = await Promise.all([realpath(directory), realpath(resolve(directory, relative.relativePath))]);
+  const [root, file] = await Promise.all([currentWorkspaceSource().realpath(directory), currentWorkspaceSource().realpath(resolve(directory, relative.relativePath))]);
   // Resolve symlinks at the filesystem boundary before opening repository content.
   const contained = resolveWorkspaceRelativePath({ workspaceRoot: root, candidatePath: file });
   if (!contained.ok) throw Object.assign(new Error(contained.errorCode), { code: contained.errorCode });

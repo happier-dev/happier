@@ -1,7 +1,5 @@
-import { realpath } from 'node:fs/promises';
 import { basename, relative, sep } from 'node:path';
-import { startDirectoryTopologyWatchers } from '@/integrations/watcher/startDirectoryTopologyWatcher';
-import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
+import { currentWorkspaceSource, runWithWorkspaceSource, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { readRepositoryIgnoredPaths } from '@/scm/readRepositoryIgnoredPaths';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { resolveScmSelectionOutcome } from '@/scm/resolveScmSelection';
@@ -11,6 +9,8 @@ import type { ScmWorkspaceWatchUnavailable } from '@happier-dev/protocol/scm';
 export type { ScmWorkspaceWatchUnavailable } from '@happier-dev/protocol/scm';
 
 export type StartScmWorkspaceWatchOptions = Readonly<{
+    /** The admitted request's source; the watch outlives that request's async context. */
+    source?: WorkspaceSource;
     directory: string;
     registry?: ScmBackendRegistry;
     onChange: () => void;
@@ -24,9 +24,10 @@ function failure(code: string, message: string): Error {
 
 /** One observation lifetime. Demand and sharing belong to the daemon's subscription owner. */
 export function startScmWorkspaceWatch(options: StartScmWorkspaceWatchOptions): () => void {
+    const source = options.source ?? currentWorkspaceSource();
     let active = true;
     let disposeTree: () => void = () => undefined;
-    const metadata = new Map<string, ReturnType<typeof startFileWatcher>>();
+    const metadata = new Map<string, () => void>();
     let finish: () => void = () => undefined;
     const lifetime = new Promise<void>(resolve => { finish = resolve; });
     const dispose = () => {
@@ -47,8 +48,9 @@ export function startScmWorkspaceWatch(options: StartScmWorkspaceWatchOptions): 
         options.onUnavailable({ code, message });
     };
 
-    void runWithScmBackendRegistryLease(options.registry, async registry => {
-        const requestedDirectory = await realpath(options.directory);
+    // Later refreshes run from watcher callbacks; keep them on the watch's source.
+    void runWithWorkspaceSource(source, () => runWithScmBackendRegistryLease(options.registry, async registry => {
+        const requestedDirectory = await source.realpath(options.directory);
         if (!active) return;
         const outcome = await resolveScmSelectionOutcome({ cwd: requestedDirectory, workingDirectory: requestedDirectory, registry });
         if (!active) return;
@@ -94,7 +96,7 @@ export function startScmWorkspaceWatch(options: StartScmWorkspaceWatchOptions): 
             disposeTree();
             watchedIgnored = ignored;
             const ready = new Promise<void>(resolveReady => {
-                disposeTree = startDirectoryTopologyWatchers([{
+                disposeTree = source.watchTree([{
                     directory,
                     ...(process.platform === 'darwin' || process.platform === 'win32' ? {} : {
                         shouldWatchDirectory: path => !isIgnored(path),
@@ -122,7 +124,7 @@ export function startScmWorkspaceWatch(options: StartScmWorkspaceWatchOptions): 
                 if (!active) return;
                 if (metadata.has(path)) continue;
                 const attached = new Promise<void>(resolveAttached => {
-                    const stop = startFileWatcher(path, () => { scheduleRefresh(); }, {
+                    const stop = source.watchFile(path, () => { scheduleRefresh(); }, {
                         emitInitial: false,
                         recovery: 'events',
                         onWatcherAttached: resolveAttached,
@@ -150,6 +152,6 @@ export function startScmWorkspaceWatch(options: StartScmWorkspaceWatchOptions): 
         await replaceTree();
         if (active) options.onReady?.();
         await lifetime;
-    }, { includeHostingProviders: false }).catch(unavailable);
+    }, { includeHostingProviders: false })).catch(unavailable);
     return dispose;
 }

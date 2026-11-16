@@ -21,6 +21,7 @@ import { createNativeFilesystemTransferRpcRegistrar, type PrepareNativeFilesyste
 import type { WorkspaceFinalizeFileOperationsFactory } from '../targets/resolveWorkspaceFileUploadTarget';
 import { sniffSessionMediaMimeTypeFromFile } from '@/session/media/mime';
 import { isDeploymentRestoreUploadKind, resolveDeploymentRestoreUploadTarget } from '../targets/deploymentRestoreUpload';
+import { bindWorkspaceSourceRegistrar } from '@/workspaces/source/workspaceSource';
 
 type TransferUploadInitResponse =
   | Readonly<{ success: true; uploadId: string; chunkSizeBytes: number; recipientPublicKeyBase64: string; expiresAt?: number }>
@@ -53,7 +54,9 @@ export function registerTransferUploadRpcHandlers(
   const tempUploadRoot = join(tmpdir(), 'happier', 'uploads', randomUUID());
 
   return registerUploadTransferLifecycleHandlers<TransferUploadInitResponse, TransferUploadFinalizeResponse, unknown>({
-    rpcHandlerManager: deps.prepareNativeTransfer ? createNativeFilesystemTransferRpcRegistrar(rpcHandlerManager, {
+    rpcHandlerManager: deps.prepareNativeTransfer ? createNativeFilesystemTransferRpcRegistrar(deps.effectAdmission
+      ? bindWorkspaceSourceRegistrar(rpcHandlerManager, (context, input) => deps.effectAdmission!.selectWorkspaceSource(context, input))
+      : rpcHandlerManager, {
       direction: 'upload', store: deps.store, prepareNativeTransfer: deps.prepareNativeTransfer,
       fallbackAdmission: deps.effectAdmission?.rpc,
     }) : deps.effectAdmission ? createFilesystemEffectRpcRegistrar(rpcHandlerManager, deps.effectAdmission) : rpcHandlerManager,

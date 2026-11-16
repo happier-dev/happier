@@ -1,4 +1,4 @@
-import { lstat, readlink } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
@@ -60,7 +60,7 @@ async function buildWorkspaceExportManifestEntryWithSourcePath(params: Readonly<
 }> | null> {
     let stats;
     try {
-        stats = await lstat(params.entry.sourcePath);
+        stats = await currentWorkspaceSource().lstat(params.entry.sourcePath);
     } catch (error) {
         if (params.shouldIgnoreAccessError?.(error) === true) {
             return null;
@@ -71,7 +71,7 @@ async function buildWorkspaceExportManifestEntryWithSourcePath(params: Readonly<
     if (stats.isSymbolicLink()) {
         let target: string;
         try {
-            target = await readlink(params.entry.sourcePath);
+            target = await currentWorkspaceSource().readlink(params.entry.sourcePath);
         } catch (error) {
             if (params.shouldIgnoreAccessError?.(error) === true) {
                 return null;

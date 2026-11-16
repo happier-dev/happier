@@ -32,7 +32,8 @@ import { createCodeIntelligenceController } from '../../../ui/sources/sync/domai
 // Filesystem scheduling is the external boundary in the acquire/close regressions.
 vi.mock('node:fs/promises', async () => {
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
-    return { ...actual, readFile: vi.fn(actual.readFile) };
+    // The workspace source reads a regular file through an opened handle: gate that open.
+    return { ...actual, readFile: vi.fn(actual.readFile), open: vi.fn(actual.open) };
 });
 function fixtureProjectChecker(rootPath: string, scenario: string, count?: number) {
     return createLanguageServerProjectChecker({ async acquireExec(input) {
@@ -824,8 +825,8 @@ describe('language intelligence composed host', () => {
             const readGate = new Promise<void>(resolve => { releaseRead = resolve; });
             let enteredRead!: () => void;
             const reading = new Promise<void>(resolve => { enteredRead = resolve; });
-            const nativeRead = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).readFile;
-            const readSpy = vi.mocked(fsPromises.readFile);
+            const nativeOpen = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).open;
+            const openSpy = vi.mocked(fsPromises.open);
             try {
                 const target = { machineId: 'machine', rootPath, path: 'a.ts' };
                 const hover = f.executor.execute('code.hover.get', { ...target, line: 1, character: 0 }, { surface: 'agent' });
@@ -833,14 +834,14 @@ describe('language intelligence composed host', () => {
                 // Gate only the OS disk read. Session selection, document custody,
                 // Action admission, managed JSON-RPC and the child remain real.
                 let blocked = false;
-                readSpy.mockImplementation((async (...args: Parameters<typeof nativeRead>) => {
+                openSpy.mockImplementation((async (...args: Parameters<typeof nativeOpen>) => {
                     if (args[0] === path && !blocked) {
                         blocked = true;
                         enteredRead();
                         await readGate;
                     }
-                    return await nativeRead(...args);
-                }) as typeof nativeRead);
+                    return await nativeOpen(...args);
+                }) as typeof nativeOpen);
                 const symbols = f.executor.execute('code.symbols.list', target, { surface: 'agent' });
                 await reading;
                 await f.protocolHandles[0].client.notify('fixture/release', { method: 'textDocument/hover' });
@@ -863,7 +864,7 @@ describe('language intelligence composed host', () => {
                 expect(await f.host.watch({ rootPath })).toMatchObject({ status: 'ok', servers: [] });
             } finally {
                 releaseRead();
-                readSpy.mockImplementation(nativeRead);
+                openSpy.mockImplementation(nativeOpen);
                 await f.host.dispose();
             }
         });
@@ -926,18 +927,18 @@ describe('language intelligence composed host', () => {
             const readGate = new Promise<void>(resolve => { releaseRead = resolve; });
             let enteredRead!: () => void;
             const reading = new Promise<void>(resolve => { enteredRead = resolve; });
-            const nativeRead = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).readFile;
-            const readSpy = vi.mocked(fsPromises.readFile);
+            const nativeOpen = (await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')).open;
+            const openSpy = vi.mocked(fsPromises.open);
             try {
                 let blocked = false;
-                readSpy.mockImplementation((async (...args: Parameters<typeof nativeRead>) => {
+                openSpy.mockImplementation((async (...args: Parameters<typeof nativeOpen>) => {
                     if (args[0] === path && !blocked) {
                         blocked = true;
                         enteredRead();
                         await readGate;
                     }
-                    return await nativeRead(...args);
-                }) as typeof nativeRead);
+                    return await nativeOpen(...args);
+                }) as typeof nativeOpen);
                 const hover = f.query('hover', 'a.ts', { position: { line: 0, character: 0 } });
                 await reading;
                 expect(await f.open('a.ts', 'editor', 9, true)).toMatchObject({ status: 'ok' });
@@ -951,7 +952,7 @@ describe('language intelligence composed host', () => {
                     .toMatchObject({ status: 'error', errorCode: 'unsaved_editor_changes' });
             } finally {
                 releaseRead();
-                readSpy.mockImplementation(nativeRead);
+                openSpy.mockImplementation(nativeOpen);
                 await f.host.dispose();
             }
         });

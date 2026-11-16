@@ -1,4 +1,4 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { isAbsolute, relative, resolve, sep, win32 } from 'node:path';
 import { ProjectNativeFilePathV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
@@ -28,9 +28,9 @@ export async function readProjectDefinitionFileBytes(root: string, file: string)
     const path = resolve(root, file.replaceAll('\\', '/'));
     if (!contained(resolve(root), path)) return { kind: 'refused', code: 'outside_root' };
     try {
-        const [actualRoot, actualPath] = await Promise.all([realpath(root), realpath(path)]);
+        const [actualRoot, actualPath] = await Promise.all([currentWorkspaceSource().realpath(root), currentWorkspaceSource().realpath(path)]);
         if (!contained(actualRoot, actualPath)) return { kind: 'refused', code: 'outside_root' };
-        return { kind: 'read', bytes: await readFile(actualPath) };
+        return { kind: 'read', bytes: await currentWorkspaceSource().readFile(actualPath) };
     } catch (error) {
         if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return { kind: 'absent' };
         return { kind: 'refused', code: 'unreadable_definition' };

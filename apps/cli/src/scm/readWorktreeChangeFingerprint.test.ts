@@ -168,4 +168,20 @@ describe('readWorktreeChangeFingerprint', () => {
         await writeFile(tracked, 'original\n');
         expect(await fingerprint()).toBe(original);
     });
+
+    it('reads pending entries through the admitted workspace source, never this Machine\'s disk at the same path', async () => {
+        const { localWorkspaceSource } = await import('@/workspaces/source/localWorkspaceSource');
+        const { runWithWorkspaceSource } = await import('@/workspaces/source/workspaceSource');
+        await writeFile(join(repo, 'tracked.txt'), 'changed\n');
+        await symlink('tracked.txt', join(repo, 'link'));
+        const reached: string[] = [];
+        // A target stand-in on this disk: kind/id differ, so every entry fact must come through it.
+        const source = { ...localWorkspaceSource, kind: 'target' as const, id: 'target:fingerprint',
+            lstat: async (path: string) => { reached.push(`lstat:${path}`); return await localWorkspaceSource.lstat(path); },
+            readlink: async (path: string) => { reached.push(`readlink:${path}`); return await localWorkspaceSource.readlink(path); } };
+        const placed = await runWithWorkspaceSource(source, () => readWorktreeChangeFingerprint(repo));
+        expect(placed).toEqual({ kind: 'available', fingerprint: await fingerprint() });
+        expect(reached).toEqual(expect.arrayContaining([`lstat:${join(repo, 'tracked.txt')}`,
+            `lstat:${join(repo, 'link')}`, `readlink:${join(repo, 'link')}`]));
+    });
 });

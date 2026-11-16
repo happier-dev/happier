@@ -14,6 +14,7 @@ import {
     type WorkspaceFileFinalizeOperations,
 } from './finalizeWorkspaceFileUpload';
 import type { UploadTransferTarget } from '@happier-dev/transfers/node';
+import { currentWorkspaceSource, runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 export type WorkspaceFileUploadTarget = UploadTransferTarget & Readonly<{
     destPath: string;
@@ -78,6 +79,8 @@ export function resolveWorkspaceFileUploadTarget(input: Readonly<{
         return { success: false, error: validation.error ?? 'Access denied' };
     }
     const destPath = validation.resolvedPath;
+    // Finalize is a later phase; it publishes into the source admitted at init.
+    const source = currentWorkspaceSource();
 
     return {
         success: true,
@@ -87,7 +90,7 @@ export function resolveWorkspaceFileUploadTarget(input: Readonly<{
             expectedSizeBytes: sizeBytes,
             overwrite,
             finalizeUpload: async ({ uploadId, tempPath, sizeBytes: finalizedSizeBytes, sha256 }) =>
-                await finalizeWorkspaceFileUpload({
+                await runWithWorkspaceSource(source, () => finalizeWorkspaceFileUpload({
                     tempPath,
                     destPath,
                     destDisplayPath: path,
@@ -101,7 +104,7 @@ export function resolveWorkspaceFileUploadTarget(input: Readonly<{
                         destPath,
                         overwrite,
                     }) ?? null,
-                }),
+                })),
         },
     };
 }

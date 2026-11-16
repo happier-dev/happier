@@ -1,4 +1,4 @@
-import { stat } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { posix, win32 } from 'node:path';
 
 import type { WorkspacePathContext } from './workspaceUris';
@@ -18,7 +18,7 @@ export async function resolveLanguageServerRoot(input: WorkspacePathContext & Re
         for (const marker of input.rootMarkers) {
             const markerPath = resolveWorkspacePath(input, api.join(...segments.slice(0, depth), marker));
             try {
-                await stat(markerPath);
+                await currentWorkspaceSource().stat(markerPath);
                 return directory;
             } catch (error) {
                 if (error !== null && typeof error === 'object' && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) continue;

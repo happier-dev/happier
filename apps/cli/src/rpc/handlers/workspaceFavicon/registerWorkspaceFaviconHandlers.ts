@@ -1,4 +1,4 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { extname, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { WorkspaceFaviconResolveRequestV1Schema } from '@happier-dev/protocol/workspace/favicon/v1';
@@ -277,9 +277,9 @@ async function readWorkspaceDirectoryNames(params: Readonly<{
   const validation = await resolveAuthorizedWorkspacePath(params);
   if (!validation.ok) return [];
   try {
-    const stats = await stat(validation.path);
+    const stats = await currentWorkspaceSource().stat(validation.path);
     if (!stats.isDirectory()) return [];
-    const entries = await readdir(validation.path, { withFileTypes: true });
+    const entries = await currentWorkspaceSource().readdir(validation.path);
     return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
   } catch {
     return [];
@@ -310,9 +310,9 @@ async function readWorkspaceTextFile(params: Readonly<{
   const validation = await resolveAuthorizedWorkspacePath(params);
   if (!validation.ok) return null;
   try {
-    const stats = await stat(validation.path);
+    const stats = await currentWorkspaceSource().stat(validation.path);
     if (!stats.isFile() || stats.size > MAX_FAVICON_BYTES) return null;
-    return await readFile(validation.path, 'utf8');
+    return (await currentWorkspaceSource().readFile(validation.path)).toString('utf8');
   } catch {
     return null;
   }
@@ -328,9 +328,9 @@ async function readWorkspaceFaviconCandidate(params: Readonly<{
   const validation = await resolveAuthorizedWorkspacePath(params);
   if (!validation.ok) return null;
   try {
-    const stats = await stat(validation.path);
+    const stats = await currentWorkspaceSource().stat(validation.path);
     if (!stats.isFile() || stats.size > MAX_FAVICON_BYTES) return null;
-    const buffer = await readFile(validation.path);
+    const buffer = await currentWorkspaceSource().readFile(validation.path);
     return {
       success: true,
       found: true,

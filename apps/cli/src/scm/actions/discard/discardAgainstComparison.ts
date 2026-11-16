@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { resolve } from 'node:path';
 import { getScmComparisonDiscardRestriction, type ScmChangeDiscardResultEntry, type ScmComparisonDiscardEntry, type ScmComparisonFile } from '@happier-dev/protocol/scm';
 import { buildReviewUnits, buildScmChangeKeys, buildScmFileReviewUnits, locateComparisonOccurrences } from '@happier-dev/protocol/scm/comparisonOccurrences';
 import { revertHunks, type Hunk, type InverseEdit } from '@happier-dev/protocol/diff/hunks';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
-import { commitGuardedFileReplace, type GuardedFileReplaceResult, type GuardedFileAbsenceResult } from '@/rpc/handlers/fileSystem/commitGuardedFileReplace';
+import type { GuardedFileReplaceResult, GuardedFileAbsenceResult } from '@/rpc/handlers/fileSystem/commitGuardedFileReplace';
 import { readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import type { ScmBackend, ScmBackendContext } from '@/scm/types';
 
@@ -70,7 +70,7 @@ export async function prepareDiscardAgainstComparison(params: Params): Promise<P
   let file: ScmComparisonFile | undefined;
   let selected: readonly Hunk[] = [];
   let current: Buffer | null;
-  try { current = await readFile(path); }
+  try { current = await currentWorkspaceSource().readFile(path); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     current = null;
@@ -130,7 +130,7 @@ export async function prepareDiscardAgainstComparison(params: Params): Promise<P
     return prepared({ path: entry.path, status: 'deleted', hashBefore, hashAfter: null, ...(previous ? { previous } : {}) }, async () => {
       context.signal?.throwIfAborted();
       await context.beforeFilesystemMutation?.();
-      return await commitGuardedFileReplace({ destPath: path, expectation: hashBefore, source: { kind: 'absent' } });
+      return await currentWorkspaceSource().replaceFile({ destPath: path, expectation: hashBefore, source: { kind: 'absent' } });
     });
   }
   if (file && !file.beforeBlobId) return refused(entry.path, 'COMPARISON_UNAVAILABLE', 'Comparison before bytes are unavailable', hashBefore);
@@ -158,7 +158,7 @@ export async function prepareDiscardAgainstComparison(params: Params): Promise<P
     ...(undo ? { inverseEdits: [...undo] } : {}), ...(previous ? { previous } : {}) }, async () => {
     context.signal?.throwIfAborted();
     await context.beforeFilesystemMutation?.();
-    return await commitGuardedFileReplace({ destPath: path, expectation: hashBefore, source: { kind: 'bytes', bytes: replacement } });
+    return await currentWorkspaceSource().replaceFile({ destPath: path, expectation: hashBefore, source: { kind: 'bytes', bytes: replacement } });
   });
   return undo && current !== null ? { ...operation, undoPreimage: current } : operation;
 }

@@ -1,4 +1,3 @@
-import { readdir, stat } from 'fs/promises';
 import { basename, join } from 'path';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -13,6 +12,7 @@ import { registerRootedFilesystemRpcHandlers } from './registerRootedFilesystemR
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
 import { registerFilesystemMutationActionHandlers, type FilesystemMutationActionIngress } from './pathMutationHandlers';
 import { assertFilesystemEffectCurrent } from './accessPolicy/filesystemEffectAdmission';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 type ListDirectoryRequest = Readonly<{ rootPath?: string; path: string; includeGitIgnore?: boolean }>;
 
@@ -136,6 +136,7 @@ async function getDirectoryTreeForRpc(
   const maxNodes = normalizePositiveInt(deps.limits.treeMaxNodes, 2_000);
   let visitedNodes = 0;
   let truncated = false;
+  const source = currentWorkspaceSource();
 
   async function buildTree(nodePath: string, name: string, currentDepth: number): Promise<TreeNode | null> {
     if (visitedNodes >= maxNodes) {
@@ -145,7 +146,7 @@ async function getDirectoryTreeForRpc(
     visitedNodes += 1;
     try {
       await deps.assertCurrentAuthority?.();
-      const stats = await stat(nodePath);
+      const stats = await source.stat(nodePath);
       const node: TreeNode = {
         name,
         path: nodePath,
@@ -156,7 +157,7 @@ async function getDirectoryTreeForRpc(
 
       if (stats.isDirectory() && currentDepth < maxDepth) {
         await deps.assertCurrentAuthority?.();
-        const entries = (await readdir(nodePath, { withFileTypes: true })).sort((a, b) => {
+        const entries = (await source.readdir(nodePath)).sort((a, b) => {
           if (a.isDirectory() && !b.isDirectory()) return -1;
           if (!a.isDirectory() && b.isDirectory()) return 1;
           return a.name.localeCompare(b.name);

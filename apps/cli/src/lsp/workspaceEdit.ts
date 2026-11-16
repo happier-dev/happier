@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import type { WorkspaceFileEditSetFile } from '@happier-dev/protocol/machines/workspaceFiles';
 import { applyWorkspaceFileTextEdits } from './documentText';
 import { readLspObject, readLspRange } from './languageServerResults';
@@ -86,7 +86,7 @@ export async function normalizeWorkspaceEdit(input: Readonly<{
     for (const [path, value] of files) {
         const held = input.document(path);
         const useHeld = input.text === 'held' && held !== undefined;
-        const bytes = useHeld ? Buffer.from(held.text, 'utf8') : await readFile(resolveWorkspacePath(input, path));
+        const bytes = useHeld ? Buffer.from(held.text, 'utf8') : await currentWorkspaceSource().readFile(resolveWorkspacePath(input, path));
         const expectedHash = createHash('sha256').update(bytes).digest('hex');
         if (held?.unsaved && !useHeld) throw new LspWorkspaceEditError('unsaved_editor_changes', expectedHash);
         const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);

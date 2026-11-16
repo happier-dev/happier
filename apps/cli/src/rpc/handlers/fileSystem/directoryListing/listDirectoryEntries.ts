@@ -1,5 +1,3 @@
-import type { Dirent } from 'node:fs'
-import { readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { mapWithConcurrency } from '@/utils/async/mapWithConcurrency'
@@ -8,6 +6,7 @@ import type { ScmBackendRegistry } from '@/scm/registry'
 
 import type { DirectoryListingEntry, DirectoryListingEntryType, DirectoryListingResult } from './directoryListingTypes'
 import { sortDirectoryEntries } from './sortDirectoryEntries'
+import { currentWorkspaceSource, type WorkspaceDirent } from '@/workspaces/source/workspaceSource'
 
 type ListDirectoryEntriesInput = Readonly<{
   directoryPath: string
@@ -18,14 +17,15 @@ type ListDirectoryEntriesInput = Readonly<{
   scmRegistry?: ScmBackendRegistry
 }>
 
-function resolveEntryType(entry: Pick<Dirent, 'isDirectory' | 'isFile'>): DirectoryListingEntryType {
+function resolveEntryType(entry: Pick<WorkspaceDirent, 'isDirectory' | 'isFile'>): DirectoryListingEntryType {
   if (entry.isDirectory()) return 'directory'
   if (entry.isFile()) return 'file'
   return 'other'
 }
 
 export async function listDirectoryEntries(input: ListDirectoryEntriesInput): Promise<DirectoryListingResult> {
-  const dirents = await readdir(input.directoryPath, { withFileTypes: true })
+  const source = currentWorkspaceSource()
+  const dirents = await source.readdir(input.directoryPath)
 
   const listedEntries = dirents
     .map((dirent) => {
@@ -51,7 +51,7 @@ export async function listDirectoryEntries(input: ListDirectoryEntriesInput): Pr
 
   const entries = await mapWithConcurrency(visibleEntries, input.statConcurrency, async (entry) => {
     try {
-      const stats = await stat(entry.absolutePath)
+      const stats = await source.stat(entry.absolutePath)
       return {
         ...entry,
         size: stats.size,

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { createSourceLanguageServerProtocolOpener } from './sourceProtocol';
 import { relative, resolve } from 'node:path';
 import { LanguageIntelligenceCommandSchema, type DaemonLspApplyRequest, type DaemonLspApplyResponse, type DaemonLspSyncRequest, type DaemonLspSyncResponse, type DaemonLspQueryRequest, type DaemonLspQueryResponse, type DaemonLspWatchRequest, type DaemonLspWatchResponse, type DaemonLspRestartRequest, type DaemonLspRestartResponse, type LanguageIntelligenceCapabilities, type LanguageIntelligenceDiagnostic, type LanguageIntelligenceDiagnosticsEntry, } from '@happier-dev/protocol/machines/languageIntelligence';
 import type { WorkspaceFileEditSetFile, DaemonWorkspaceFileReplaceApplyResponse } from '@happier-dev/protocol/machines/workspaceFiles';
@@ -107,7 +108,7 @@ async function mergeEditSets(rootPath: string, platform: NodeJS.Platform, files:
         // repeated same-position inserts inside a server's array are ordered LSP edits.
         const edits = previous && JSON.stringify(previous.edits) === JSON.stringify(file.edits)
             ? previous.edits : [...(previous?.edits ?? []), ...file.edits];
-        const text = heldText?.(file.path) ?? (await readFile(resolveWorkspacePath({ rootPath, platform }, file.path))).toString('utf8');
+        const text = heldText?.(file.path) ?? (await currentWorkspaceSource().readFile(resolveWorkspacePath({ rootPath, platform }, file.path))).toString('utf8');
         try { applyWorkspaceFileTextEdits(text, edits); } catch { throw new LspWorkspaceEditError('invalid_request'); }
         merged.set(file.path, { ...file, edits, ...(previous?.renameTo ? { renameTo: previous.renameTo } : {}) });
     }
@@ -129,7 +130,9 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
     }
     function rootFor(rootPath: string): RootState {
         resolveWorkspacePath({ rootPath, platform }, '.');
-        const id = key(rootPath);
+        // Documents, diagnostics and watchers of one root in one workspace source.
+        const source = currentWorkspaceSource();
+        const id = source.kind === 'local' ? key(rootPath) : `${source.id}\0${key(rootPath)}`;
         let root = roots.get(id);
         if (!root) {
             root = { path: rootPath, generation: randomUUID(), revision: 0, documents: new Map(), sessions: new Set(), listeners: new Set(), watchers: 0, diagnostics: new Map() };
@@ -261,7 +264,10 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
     }> {
         const nativeRoot = await resolveLanguageServerRoot({ rootPath: root.path, path, rootMarkers: definition.rootMarkers, platform });
         if (disposed || (isCurrent && !isCurrent())) throw new LanguageServerSessionError('cancelled');
-        const id = JSON.stringify([definition.id, key(nativeRoot)]);
+        // A Session target's language server runs inside the target; the same root path in two
+        // workspace sources is two sessions.
+        const source = currentWorkspaceSource();
+        const id = JSON.stringify([definition.id, key(nativeRoot), ...(source.kind === 'local' ? [] : [source.id])]);
         let hosted = sessions.get(id);
         while (hosted?.closing) {
             await hosted.closing;
@@ -269,7 +275,9 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
             hosted = sessions.get(id);
         }
         if (!hosted) {
-            const session = createServerSession({ definition, rootPath: nativeRoot, workspaceRoot: nativeRoot, platform, openProtocol,
+            const session = createServerSession({ definition, rootPath: nativeRoot, workspaceRoot: nativeRoot, platform,
+                // This Machine keeps the managed Exec owner; a target starts the server through its source.
+                openProtocol: source.kind === 'local' ? openProtocol : createSourceLanguageServerProtocolOpener(source),
                 readInitializationOptions: options.readInitializationOptions,
                 requesterWorkAttributionV1: context?.requesterWorkAttributionV1,
                 onRetired: () => { void session.dispose().then(() => retireSession(id, session),
@@ -438,7 +446,7 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                     for (const path of root.documents.keys()) {
                         if (!heldDocument(root, path)?.unsaved) continue;
                         context?.signal?.throwIfAborted();
-                        const bytes = await readFile(resolveWorkspacePath({ rootPath: root.path, platform }, path));
+                        const bytes = await currentWorkspaceSource().readFile(resolveWorkspacePath({ rootPath: root.path, platform }, path));
                         context?.signal?.throwIfAborted();
                         return { status: 'error' as const, errorCode: 'unsaved_editor_changes' as const, diskHash: createHash('sha256').update(bytes).digest('hex') };
                     }
@@ -455,7 +463,7 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                 const existing = heldDocument(root, input.path);
                 if (input.text === 'disk' || !existing) {
                     context?.signal?.throwIfAborted();
-                    const bytes = await readFile(absolute);
+                    const bytes = await currentWorkspaceSource().readFile(absolute);
                     context?.signal?.throwIfAborted();
                     diskText = bytes.toString('utf8');
                     fileHash = createHash('sha256').update(bytes).digest('hex');
@@ -580,7 +588,7 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                     for (const file of files) {
                         if (heldDocument(root, file.path)?.unsaved) {
                             context?.signal?.throwIfAborted();
-                            const bytes = await readFile(resolveWorkspacePath({ rootPath: root.path, platform }, file.path));
+                            const bytes = await currentWorkspaceSource().readFile(resolveWorkspacePath({ rootPath: root.path, platform }, file.path));
                             context?.signal?.throwIfAborted();
                             throw new LspWorkspaceEditError('unsaved_editor_changes', createHash('sha256').update(bytes).digest('hex'));
                         }
@@ -599,7 +607,7 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                                 const held = session.document(path);
                                 if (held && !held.unsaved) {
                                     context?.signal?.throwIfAborted();
-                                    const text = (await readFile(resolveWorkspacePath({ rootPath: root.path, platform }, result.path))).toString('utf8');
+                                    const text = (await currentWorkspaceSource().readFile(resolveWorkspacePath({ rootPath: root.path, platform }, result.path))).toString('utf8');
                                     context?.signal?.throwIfAborted();
                                     await session.snapshot({ ...held, text, version: held.version + 1 });
                                 }
@@ -617,7 +625,7 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                 const operation = input.operation;
                 if (operation.action.disabledReason !== undefined) return { status: 'error', errorCode: 'unsupported' };
                 context?.signal?.throwIfAborted();
-                const bytes = await readFile(resolveWorkspacePath({ rootPath: root.path, platform }, input.path));
+                const bytes = await currentWorkspaceSource().readFile(resolveWorkspacePath({ rootPath: root.path, platform }, input.path));
                 context?.signal?.throwIfAborted();
                 const diskHash = createHash('sha256').update(bytes).digest('hex');
                 if (heldDocument(root, input.path)?.unsaved) return { status: 'error', errorCode: 'unsaved_editor_changes', diskHash };
@@ -868,7 +876,7 @@ export function createLanguageServerHost(options: LanguageServerHostOptions = {}
                 let lineText = '';
                 if (kind === 'references') {
                     const absolute = resolveWorkspacePath({ rootPath: root.path, platform }, target.path), held = session.document(relative(session.workspaceRoot, absolute).replaceAll('\\', '/'));
-                    lineText = readDocumentLine(held?.text ?? (await readFile(absolute)).toString('utf8'), range.start.line);
+                    lineText = readDocumentLine(held?.text ?? (await currentWorkspaceSource().readFile(absolute)).toString('utf8'), range.start.line);
                 }
                 locations.push({ serverId: session.definition.id, ...target, range, lineText });
             }

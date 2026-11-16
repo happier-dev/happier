@@ -8,6 +8,7 @@ import {
   isFilesystemPathAbsolute,
   normalizeFilesystemPathForPolicy,
 } from './filesystemAccessPolicy';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 export type FilesystemPathAuthorizationResult =
   | Readonly<{ valid: true; resolvedPath: string; error?: never }>
@@ -39,7 +40,9 @@ function isMissingPath(error: unknown): boolean {
 
 function resolveRealPathForAuthorization(pathValue: string, platform: NodeJS.Platform, pathRepresentation?: 'native_literal'): string {
   const resolved = pathRepresentation === 'native_literal' ? pathValue : normalizeFilesystemPathForPolicy(pathValue, platform);
-  if (platform !== process.platform) {
+  // This Machine's link facts only describe this Machine's disk. A target
+  // source confines each operation with its own facts (confineWorkspaceTargetPath).
+  if (platform !== process.platform || currentWorkspaceSource().kind !== 'local') {
     return resolved;
   }
 
@@ -86,9 +89,18 @@ function resolveAllowedRootForAuthorization(pathValue: string, platform: NodeJS.
   return resolveRealPathForAuthorization(pathValue, platform);
 }
 
-async function resolveRealPathForAuthorizationAsync(pathValue: string, platform: NodeJS.Platform): Promise<string> {
+/** Link facts of the disk that owns a path: this Machine's, or a workspace target's. */
+export type WorkspacePathFacts = Readonly<{
+  realpath(path: string): Promise<string>;
+  readlink(path: string): Promise<string>;
+}>;
+
+const nativePathFacts: WorkspacePathFacts = { realpath, readlink };
+
+async function resolveRealPathForAuthorizationAsync(pathValue: string, platform: NodeJS.Platform,
+  facts: WorkspacePathFacts = nativePathFacts): Promise<string> {
   const resolved = normalizeFilesystemPathForPolicy(pathValue, platform);
-  if (platform !== process.platform) {
+  if (facts === nativePathFacts && (platform !== process.platform || currentWorkspaceSource().kind !== 'local')) {
     return resolved;
   }
 
@@ -97,7 +109,7 @@ async function resolveRealPathForAuthorizationAsync(pathValue: string, platform:
   let candidate = resolved;
   while (true) {
     try {
-      const realAncestor = await realpath(candidate);
+      const realAncestor = await facts.realpath(candidate);
       return normalizeFilesystemPathForPolicy(
         api.join(realAncestor, ...missingSegments.reverse()),
         platform,
@@ -105,17 +117,44 @@ async function resolveRealPathForAuthorizationAsync(pathValue: string, platform:
     } catch (error) {
       if (!isMissingPath(error)) throw error;
       try {
-        const destination = await readlink(candidate);
-        return await resolveRealPathForAuthorizationAsync(api.resolve(api.dirname(candidate), destination, ...missingSegments.reverse()), platform);
+        const destination = await facts.readlink(candidate);
+        return await resolveRealPathForAuthorizationAsync(api.resolve(api.dirname(candidate), destination, ...missingSegments.reverse()), platform, facts);
       } catch (linkError) {
         if (!isMissingPath(linkError) && pathErrorCode(linkError) !== 'EINVAL') throw linkError;
       }
-      const parent = dirname(candidate);
+      const parent = api.dirname(candidate);
       if (parent === candidate) return resolved;
-      missingSegments.push(basename(candidate));
+      missingSegments.push(api.basename(candidate));
       candidate = parent;
     }
   }
+}
+
+/**
+ * Confine one path of a workspace target to its admitted root using the
+ * target's own link facts: `..`, absolute escapes, symlinks and dangling links
+ * that leave the root are refused. Target sources call this before each effect.
+ */
+export async function confineWorkspaceTargetPath(input: Readonly<{
+  targetPath: string;
+  rootPath: string;
+  facts: WorkspacePathFacts;
+  platform: NodeJS.Platform;
+}>): Promise<FilesystemPathAuthorizationResult> {
+  const resolved = resolveFilesystemTargetPath({ targetPath: input.targetPath, defaultDirectory: input.rootPath, platform: input.platform });
+  if (!resolved.valid) return resolved;
+  try {
+    const [target, root] = await Promise.all([
+      resolveRealPathForAuthorizationAsync(resolved.resolvedPath, input.platform, input.facts),
+      resolveRealPathForAuthorizationAsync(input.rootPath, input.platform, input.facts),
+    ]);
+    if (isWithinResolvedRoot(filesystemPathComparisonKey(target, input.platform),
+      filesystemPathComparisonKey(root, input.platform), input.platform)) return resolved;
+  } catch {
+    return { valid: false, error: 'Access denied: Path could not be resolved', errorCode: 'access_denied' };
+  }
+  return { valid: false, errorCode: 'access_denied',
+    error: `Access denied: Path '${input.targetPath}' is outside the workspace root` };
 }
 
 function isWithinResolvedRoot(targetPath: string, rootPath: string, platform: NodeJS.Platform): boolean {

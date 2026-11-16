@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { rm, stat } from 'fs/promises';
+import { mkdir, open, rm, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { basename, join } from 'path';
 
@@ -16,6 +16,9 @@ import {
 
 import type { DownloadTransferSource } from '@happier-dev/transfers/node';
 import { buildZipArchive } from '../download/buildZipArchive';
+import { currentWorkspaceSource, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { copyWorkspaceTree, WorkspaceTreeCopyLimitError } from '@/workspaces/source/copyWorkspaceTree';
 import {
     isServerRoutedTransferOverSizeLimit,
     SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR,
@@ -29,6 +32,28 @@ type WorkspaceFileDownloadSourceResult =
 
 function createTempDownloadZipPath(): string {
     return join(tmpdir(), 'happier', 'file-zips', `${randomUUID()}.zip`);
+}
+
+async function stageWorkspaceFileForDownload(workspace: WorkspaceSource, path: string): Promise<string> {
+    const stagedPath = join(tmpdir(), 'happier', 'file-downloads', randomUUID());
+    await mkdir(join(tmpdir(), 'happier', 'file-downloads'), { recursive: true });
+    const input = await workspace.open(path);
+    const output = await open(stagedPath, 'wx', 0o600);
+    try {
+        const chunk = Buffer.allocUnsafe(1024 * 1024);
+        for (let position = 0; ;) {
+            const { bytesRead } = await input.read(chunk, 0, chunk.length, position);
+            if (bytesRead === 0) break;
+            await output.write(chunk.subarray(0, bytesRead));
+            position += bytesRead;
+        }
+        return stagedPath;
+    } catch (error) {
+        await rm(stagedPath, { force: true }).catch(() => undefined);
+        throw error;
+    } finally {
+        await Promise.all([input.close(), output.close()]);
+    }
 }
 
 export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
@@ -73,8 +98,9 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
         resolvedPath = exactFileValidation.resolvedPath;
     }
 
+    const workspace = currentWorkspaceSource();
     if (!asZip) {
-        const sourceStats = await stat(resolvedPath);
+        const sourceStats = await workspace.stat(resolvedPath);
         if (!sourceStats.isFile()) {
             return { success: false, error: 'Download is only supported for files' };
         }
@@ -85,6 +111,12 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
             return { success: false, error: 'File exceeds download size limit' };
         }
 
+        if (workspace.kind !== 'local') {
+            // Transfer custody reads a host file: stage the target's bytes in host temp space.
+            const stagedPath = await stageWorkspaceFileForDownload(workspace, resolvedPath);
+            return { success: true, source: { filePath: stagedPath, deleteFileOnClose: true,
+                sizeBytes: (await stat(stagedPath)).size, name: basename(resolvedPath) } };
+        }
         return {
             success: true,
             source: {
@@ -95,11 +127,28 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
             },
         };
     }
+    // A target folder is first copied into host staging through the port (same exclusions and
+    // limits), then archived by the same ZIP owner as a local folder.
+    let archiveSource = resolvedPath;
+    let stagingRoot: string | null = null;
+    if (workspace.kind !== 'local') {
+        stagingRoot = join(tmpdir(), 'happier', 'file-zip-staging', randomUUID());
+        archiveSource = join(stagingRoot, basename(resolvedPath));
+        try {
+            await copyWorkspaceTree({ from: { source: workspace, path: resolvedPath }, to: { source: localWorkspaceSource, path: archiveSource },
+                limits: { excludedTopLevelDirs: configuration.filesZipExcludedTopLevelDirs,
+                    maxEntryCount: configuration.filesZipMaxEntryCount, maxTotalBytes: configuration.filesZipMaxTotalBytes } });
+        } catch (error) {
+            await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
+            if (error instanceof WorkspaceTreeCopyLimitError) return { success: false, error: 'Folder exceeds download size limit' };
+            throw error;
+        }
+    }
 
     const zipPath = createTempDownloadZipPath();
     try {
         await buildZipArchive({
-            sourcePath: resolvedPath,
+            sourcePath: archiveSource,
             zipPath,
             excludedTopLevelDirs: configuration.filesZipExcludedTopLevelDirs,
             maxEntryCount: configuration.filesZipMaxEntryCount,
@@ -129,5 +178,7 @@ export async function resolveWorkspaceFileDownloadSource(input: Readonly<{
     } catch (error) {
         await rm(zipPath, { force: true }).catch(() => undefined);
         throw error;
+    } finally {
+        if (stagingRoot) await rm(stagingRoot, { recursive: true, force: true }).catch(() => undefined);
     }
 }

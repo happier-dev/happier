@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { resolve } from 'node:path';
 
 import {
@@ -21,7 +21,7 @@ function manifestPath(root: string): string {
 export async function readProjectManifest(input: Readonly<{ root: string }>): Promise<ProjectManifestFileSnapshot> {
   const path = manifestPath(input.root);
   try {
-    const buffer = await readFile(path);
+    const buffer = await currentWorkspaceSource().readFile(path);
     return { basis: { kind: 'present', hash: createHash('sha256').update(buffer).digest('hex') }, document: readProjectManifestDocument(buffer.toString('utf8')) };
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return { basis: { kind: 'absent' }, document: null };
