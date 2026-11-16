@@ -2,7 +2,6 @@ import { privateProjectCheckoutRefusal } from './privateProjectCheckout';
 import { isHostRequesterUnrestrictedOwner, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { stat, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { isDeepStrictEqual } from 'node:util';
 import { ScmRepositoryCloneInputSchema, ScmRepositoryContainedSubdirV1Schema } from '@happier-dev/protocol/scm/repositoryClone';
 import { ScmCommitOidSchema } from '@happier-dev/protocol/scm/commitPublication';
 import type { ScmBranchCheckoutResponse } from '@happier-dev/protocol/scm/branches';
@@ -84,21 +83,6 @@ async function explicitSubdirectory(root: string, subdir: string): Promise<strin
   return resolveDirectoryInCheckout({ sourceDirectory: selected, sourceRootPath: root, checkoutRootPath: root });
 }
 
-/**
- * The checkout an earlier Open kept at this destination when its subfolder was missing: this repository, at exactly
- * this folder. Fixing the field and retrying uses it; any other folder there stays the clone route's refusal.
- */
-async function retainedCloneRoot(destination: string, input: MaterializeProjectCheckoutInput): Promise<string | null> {
-  const wanted = input.selector && readScmHostingRepositoryIdentity({
-    ...input.selector.provider, nameWithOwner: input.selector.repository.nameWithOwner });
-  if (!wanted || !await stat(destination).then(entry => entry.isDirectory(), () => false)) return null;
-  const { inspectWorkspaceLocationWithScmWorkspace } = await import('@/scm/workspace/workspaceLocationInspection');
-  const found = await inspectWorkspaceLocationWithScmWorkspace({ candidatePath: destination, registry: input.registry,
-    includeRepositoryIdentity: true, signal: input.signal }).catch(() => null);
-  const root = await realpath(destination);
-  return found && found.inspection.rootPath === root && isDeepStrictEqual(found.repositoryIdentity, wanted) ? root : null;
-}
-
 /** Neutral realization only: SCM owns Git effects and Sync owns copying/links. */
 export async function materializeProjectCheckout(input: MaterializeProjectCheckoutInput): Promise<MaterializedProjectCheckout> {
   input.signal?.throwIfAborted();
@@ -115,15 +99,18 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
     const { runScmRepositoryCloneRoute } = await import('@/scm/rpc/repositoryProvisioningDispatch');
     const parent = await cloneParentDirectory(choice.destinationParentPath);
     input.signal?.throwIfAborted();
-    // A pinned or starter clone must be exactly that commit, so it never adopts what is already there.
-    const retainedRoot = initialCheckout ? null : await retainedCloneRoot(join(parent, choice.destinationDirectoryName), input);
-    const clone = retainedRoot ? null : await runScmRepositoryCloneRoute({
+    // A folder already at the destination is never taken over, not even a checkout of this same repository: another
+    // Open, lane or person may own it (COR4B 11-15: a new deploy adopted another lane's checkout and fetched in it).
+    // The person picks another folder name, or opens that folder as it is (a folder Open with attach).
+    const destination = join(parent, choice.destinationDirectoryName);
+    if (await stat(destination).then(() => true, () => false)) return refused('destination_exists', `${destination} already exists`);
+    const clone = await runScmRepositoryCloneRoute({
       request: ScmRepositoryCloneInputSchema.parse({ ...input.selector, destinationParentPath: parent, destinationDirectoryName: choice.destinationDirectoryName,
         ...(initialCheckout ? { initialCheckout } : {}),
         confirmed: true, authorizationToken: 'clone-repository' }),
       workingDirectory: parent, registry: input.registry, signal: input.signal,
     }).catch(error => { input.onEffectsIssued?.(); throw error; });
-    if (clone && !clone.success) {
+    if (!clone.success) {
       if (clone.destinationPath || !clone.outcome || clone.outcome.kind === 'outcome_unknown' || clone.outcome.kind === 'effect_applied_with_warning') input.onEffectsIssued?.();
       return refused(clone.errorCode ?? 'checkout_failed', clone.error,
         { ...(clone.destinationPath ? { destinationPath: clone.destinationPath } : {}),
@@ -131,8 +118,8 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
           ...(clone.remediation ? { remediation: clone.remediation } : {}),
           ...(clone.errorCode === 'REMOTE_RATE_LIMITED' ? { retryNotBeforeMs: clone.retryNotBeforeMs } : {}) });
     }
-    if (clone) input.onEffectsIssued?.();
-    const rootPath = retainedRoot ?? await existingDirectory(clone?.destinationPath);
+    input.onEffectsIssued?.();
+    const rootPath = await existingDirectory(clone.destinationPath);
     if (input.ref && !initialCheckout) {
       input.onEffectsIssued?.();
       const { runScmRoute, notRepositoryResponse } = await import('@/scm/rpc/dispatch');
@@ -157,10 +144,9 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
       }
     }
     const directory = input.subdir ? await explicitSubdirectory(rootPath, input.subdir) : rootPath;
-    const repositoryIdentity = readScmHostingRepositoryIdentity(clone
-      ? { ...clone.repository.provider, nameWithOwner: clone.repository.nameWithOwner }
-      : { ...input.selector.provider, nameWithOwner: input.selector.repository.nameWithOwner });
-    return { rootPath, directory: await containedDirectory(rootPath, directory), created: clone !== null,
+    const repositoryIdentity = readScmHostingRepositoryIdentity(
+      { ...clone.repository.provider, nameWithOwner: clone.repository.nameWithOwner });
+    return { rootPath, directory: await containedDirectory(rootPath, directory), created: true,
       ...(repositoryIdentity ? { repositoryIdentity } : {}) };
   }
 

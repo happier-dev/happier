@@ -183,18 +183,23 @@ describe('openProject with a subfolder the repository lacks', () => {
     expect(OpenProjectResultV1Schema.parse(result)).toEqual(result);
     await access(join(parent, 'checkout', '.git'));
     expect(rows).toEqual([]);
-    // Fixing the field and retrying uses the clone it kept, without cloning again. Git's origin is the system
-    // fact: the fixture's file:// remote stands in for the hosted URL a real clone records.
+    // A folder already at the clone's destination is never taken over, even a checkout of this same repository
+    // (COR4B 11-15: a new deploy adopted another lane's checkout and fetched in it). The refusal names the folder;
+    // the person picks another name, or opens that folder as it is. Git's origin is the system fact: the fixture's
+    // file:// remote stands in for the hosted URL a real clone records.
     const open = (next: OpenProjectInputV1) => runWithRealGitScmRuntime(() => openProject(next, { serverId: 'srv_test_home',
       serverHttpBaseUrl: 'https://home.example', machineId: 'machine', accountId: 'account', registry,
       readCredentials: async () => ({ token, encryption: null }) }, context));
     const { subdir: _wrong, ...retryInput } = input;
     const checkout = join(parent, 'checkout');
-    runGit(checkout, ['remote', 'set-url', 'origin', 'https://github.com/someone-else/another-repository.git']);
-    expect(await open(retryInput as OpenProjectInputV1)).toMatchObject({ kind: 'refused', effectAttempted: false });
-    expect(rows).toEqual([]);
-    runGit(checkout, ['remote', 'set-url', 'origin', 'https://github.com/happier-dev/happier.git']);
-    expect(await open(retryInput as OpenProjectInputV1)).toMatchObject({ kind: 'opened', directory: checkout });
+    for (const origin of ['https://github.com/someone-else/another-repository.git', 'https://github.com/happier-dev/happier.git']) {
+      runGit(checkout, ['remote', 'set-url', 'origin', origin]);
+      expect(await open(retryInput as OpenProjectInputV1)).toMatchObject({ kind: 'refused', code: 'destination_exists',
+        effectAttempted: false });
+      expect(rows).toEqual([]);
+    }
+    expect(await open({ ...(retryInput as OpenProjectInputV1), source: { kind: 'folder', path: checkout },
+      materialization: { kind: 'attach' } } as OpenProjectInputV1)).toMatchObject({ kind: 'opened', directory: checkout });
     expect(rows.length).toBeGreaterThan(0);
   });
 });

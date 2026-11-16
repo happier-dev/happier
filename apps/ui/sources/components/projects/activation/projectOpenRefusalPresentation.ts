@@ -34,6 +34,8 @@ export function projectOpenRefusalPresentation(code: string, gitRef: string | nu
     if (code.includes('unreachable') || code.includes('offline'))
         return shown(t('workspaceSync.start.blocked.targetMachineOffline'), t('projects.open.machineOfflineHint'));
     if (gitRef && code.includes('ref')) return shown(t('projects.open.refMissing', { ref: gitRef }), t('projects.open.refMissingHint'));
+    // A clone never takes over a folder already at its destination; the hint names the two ways on.
+    if (code === 'destination_exists') return shown(t('projects.open.destinationExists'), t('projects.open.destinationExistsHint'));
     if (code === 'repository_subfolder_missing') return shown(t('projects.open.subfolderMissing'),
         t('projects.open.subfolderMissingHint', { subfolder: subfolder?.trim() || t('projects.open.subfolderInRepository') }));
     if (code === 'invalid_directory' || code === 'INVALID_PATH') return shown(t('projects.open.folderUnusable'), t('projects.open.folderUnusableHint'));
