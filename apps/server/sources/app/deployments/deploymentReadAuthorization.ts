@@ -68,13 +68,15 @@ export async function readAdmittedDeploymentReadScopeInTx(tx: Tx,
             environmentId: admission.environmentId }, select });
         return link ? { artifactContents: [environment, link], managedControllerMachineId: environment.controllerMachineId } : null;
     }
-    const [environment, link, receipt] = await Promise.all([
+    // The exact receipt selects its own link; an omitted id never reaches a lookup (Prisma reads undefined as no filter).
+    const [environment, receipt] = await Promise.all([
         tx.deploymentEnvironment.findUnique({ where: { id: admission.environmentId }, select }),
-        tx.deploymentTargetLink.findFirst({ where: { id: admission.targetLinkId, environmentId: admission.environmentId }, select }),
-        tx.deployment.findFirst({ where: { id: admission.deploymentId, environmentId: admission.environmentId,
-            targetLinkId: admission.targetLinkId }, select }),
+        tx.deployment.findFirst({ where: { id: admission.deploymentId, environmentId: admission.environmentId },
+            select: { ...select, targetLinkId: true } }),
     ]);
-    return environment && link && receipt ? { artifactContents: [environment, link, receipt] } : null;
+    if (!environment || !receipt || admission.targetLinkId !== undefined && receipt.targetLinkId !== admission.targetLinkId) return null;
+    const link = await tx.deploymentTargetLink.findFirst({ where: { id: receipt.targetLinkId, environmentId: admission.environmentId }, select });
+    return link ? { artifactContents: [environment, link, receipt] } : null;
 }
 
 /** Resource reads remain Source-authorized. Native occurrence and private builder custody stay with the installed owner. */
@@ -94,7 +96,9 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
         return scope ? { ok: true, artifactIds: scope.artifactContents.map(reference => reference.contentArtifactId) } : null;
     }
     if (admission.actionId !== binding.actionId || binding.target.kind !== 'machine'
-        || binding.target.machineId !== binding.machineId || admission.machineId !== binding.machineId
+        || binding.target.machineId !== binding.machineId
+        // A compact platform log read names no Machine; an explicit selector must be the executing one.
+        || 'machineId' in admission && admission.machineId !== binding.machineId
         || 'installationId' in admission && admission.installationId !== binding.installationId) return null;
     if ('projectId' in admission) {
         const source = await resolveProjectSourceAccessInTx(tx, binding.accountId, admission.projectId, authentication);
@@ -139,11 +143,11 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
         return { ok: true, artifactIds: [] };
     }
     if (!scope || !('deploymentId' in admission)) return null;
-    const [link, receipt] = await Promise.all([
-        tx.deploymentTargetLink.findFirst({ where: { id: admission.targetLinkId, environmentId: environment.id },
-            include: { machines: true } }),
-        tx.deployment.findUnique({ where: { id: admission.deploymentId } }),
-    ]);
+    // An omitted link resolves from the exact receipt; it never reaches a lookup as undefined (a Prisma wildcard).
+    const receipt = await tx.deployment.findUnique({ where: { id: admission.deploymentId } });
+    const targetLinkId = admission.targetLinkId ?? receipt?.targetLinkId;
+    const link = receipt && targetLinkId ? await tx.deploymentTargetLink.findFirst({ where: { id: targetLinkId, environmentId: environment.id },
+        include: { machines: true } }) : null;
     const copy = scope.target === 'restore_receipt' && 'source' in admission
         && admission.source.kind === 'repository' && admission.source.origin;
     if (!link || !receipt || !copy && (receipt.environmentId !== environment.id || receipt.targetLinkId !== link.id)) return null;
