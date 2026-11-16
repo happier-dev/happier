@@ -424,6 +424,7 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
             return await run(input);
         },
         openedWithoutConnectedServices: () => !runtimeClosed && (currentOperations.openedWithoutConnectedServices?.() ?? false),
+        isProviderNativeCommand: (prompt) => currentOperations.isProviderNativeCommand?.(prompt) ?? false,
         isTurnInFlight: () => currentOperations.isTurnInFlight?.() ?? false,
         canSteerPrompt: () => currentOperations.canSteerPrompt?.() ?? false,
         canInterruptForPendingInput: () => currentOperations.canInterruptForPendingInput?.() ?? true,

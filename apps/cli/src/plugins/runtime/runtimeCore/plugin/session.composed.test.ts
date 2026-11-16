@@ -199,6 +199,40 @@ function createHostFactoryParams() {
 }
 
 describe('plugin session runtime adapters', () => {
+  it('preserves native command classification across Session runtime replacement', async () => {
+    let opens = 0;
+    const plan = await createPublicPluginSessionRuntimePlan({
+      backend: createBackendFixture(), agent: createAgentFixture(),
+      sessionInput: buildPluginSessionBindingInput({ credentials: tokenOnlyCredentials, startedBy: 'daemon', startingMode: 'remote' }),
+      createSessionRuntime: async (host) => {
+        const command = ++opens === 1 ? 'goal' : 'review';
+        const session: AgentSessionRuntime = {
+          async send() { return { status: 'admitted' }; },
+          watch(listener) {
+            listener({ kind: 'available-commands', sequence: 1, sessionId: 'host-session-1', emittedAtMs: 1,
+              commands: [{ name: command }] });
+            return { dispose() {} };
+          },
+          dispose() {},
+        };
+        return createNativeAgentSessionOperations(session, 'host-session-1', undefined, undefined, undefined, undefined, undefined, {
+          context: { signal: new AbortController().signal } as AgentSessionRuntimeContext,
+          cwd: host.directory, connectedAccounts: [], capabilities: { open: ['create'], delivery: ['newTurn'], cancel: false },
+          cancellation: { declared: false }, configuration: { declared: false }, compaction: { capability: null },
+        });
+      },
+    });
+    const runtime = (await plan.config.createSessionRuntime!(createHostFactoryParams())).nativeRuntime!;
+    const unsubscribe = runtime.subscribeRuntimeEvents(() => undefined);
+    try {
+      expect(runtime.isProviderNativeCommand?.('/goal fix the build')).toBe(true);
+      expect(runtime.isProviderNativeCommand?.('/unknown')).toBe(false);
+      await runtime.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' });
+      expect(runtime.isProviderNativeCommand?.('/review changes')).toBe(true);
+      expect(runtime.isProviderNativeCommand?.('/goal fix the build')).toBe(false);
+    } finally { unsubscribe(); await runtime.resetOrDisposeRuntime(); }
+  });
+
   it.each([false, true])('switches an idle Codex account through the native host RPC after a usage-limit failure (runtime replaced: %s)', async (replaceRuntime) => {
       const [{ registerSessionControlHandlers }, { adaptAgentSessionRuntimeAuthControl },
           { buildConnectedServiceCredentialRecord }, { SESSION_RPC_METHODS }] = await Promise.all([

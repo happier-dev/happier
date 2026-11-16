@@ -29,6 +29,18 @@ function createRuntimeTurnOperations(
 }
 
 describe('withHostSessionRuntimeIdentityPublication', () => {
+  it('preserves a negative skill delivery result for the host launch warning', async () => {
+    const plan = {
+      kind: HOST_SESSION_RUNTIME_PLAN_KIND, agentId: 'codex', opts: {},
+      config: { createSessionRuntime: async () => ({ operations: createRuntimeTurnOperations(), skillsDelivered: false }) },
+    } as unknown as HostSessionRuntimePlan;
+    const wrapped = withHostSessionRuntimeIdentityPublication({
+      plan, identity: { runtimeDescriptor: null, runtimeCapabilities: null, runtimeFacets: null },
+    });
+    const created = await wrapped.config.createSessionRuntime!({} as never);
+    expect(created.skillsDelivered).toBe(false);
+  });
+
   it('adds the host runtime descriptor to initial session metadata while preserving provider augmentation', () => {
     const plan = {
       kind: HOST_SESSION_RUNTIME_PLAN_KIND,

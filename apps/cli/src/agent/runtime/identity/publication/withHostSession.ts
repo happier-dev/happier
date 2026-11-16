@@ -194,6 +194,7 @@ export function withHostSessionRuntimeIdentityPublication(params: Readonly<{
           configuration,
           runtimeDescriptorV1,
           runtimeCapabilities,
+          skillsDelivered,
           admittedProviderBindingHandoff,
         } = resolveHostSessionRuntimeFactoryResult(createdRuntime);
         const openedRuntimeDescriptor = resolveOpenedRuntimeDescriptorV1({
@@ -233,6 +234,7 @@ export function withHostSessionRuntimeIdentityPublication(params: Readonly<{
             ? { prepareStartupPresentation: createdRuntime.prepareStartupPresentation }
             : {}),
           ...(configuration ? { configuration } : {}),
+          ...(skillsDelivered !== undefined ? { skillsDelivered } : {}),
           ...(openedRuntimeDescriptor ? { runtimeDescriptorV1: openedRuntimeDescriptor } : {}),
           ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
           ...(admittedProviderBindingHandoff
