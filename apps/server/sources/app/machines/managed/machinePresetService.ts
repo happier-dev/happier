@@ -11,7 +11,6 @@ import { qualifyPluginContributionReferenceV1 } from "@happier-dev/protocol/plug
 import { isMachineProvisionerCredentialPurposeRequiredV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import type { ManagedMachinePresetPrepareInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 
 import { inReadSnapshot, inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -69,7 +68,7 @@ type PresetRefusal = Extract<PresetMutationResultV1, { kind: "refused" }>;
 export type ManagedMachinePresetManageContext = PresetContext;
 type PresetPreparationContext = PresetContext & Readonly<{
     /** The HTTP purpose owner verified this original signed admission against the exact route operands. */
-    presetPreparationAdmission?: ManagedMachinePresetPrepareInputV1;
+    presetPreparationAdmission?: ManagedMachinePresetRevisionInputV1;
 }>;
 
 /** Opaque preset admission can route only to an explicit controller or Pool. */
@@ -163,14 +162,17 @@ async function requireHomeInTx(tx: Tx, homeId: string): Promise<void> {
     if (await readCurrentServerIdentityId(process.env, tx) !== homeId) throw new ManagedMachineError("permission_denied");
 }
 
-/** Prepare admits the original preset once; each later content write uses its current CAS revision. */
-export async function admitMachinePresetPreparationInTx(tx: Tx, params: PresetContext & Readonly<{
-    input: ManagedMachinePresetPrepareInputV1;
+/** Finite preset work admits its original revision once; later content writes retain their CAS. */
+export async function admitMachinePresetFiniteOperationInTx(tx: Tx, params: PresetContext & Readonly<{
+    input: ManagedMachinePresetRevisionInputV1;
+    actionId: 'prepare' | 'archive';
 }>): Promise<void> {
     await requireHomeInTx(tx, params.input.homeId);
     const row = await tx.managedMachinePreset.findFirst({ where: { id: params.input.id, homeId: params.input.homeId } });
-    if (!row || row.archivedAt !== null) throw new ManagedMachineError('preset_not_found');
-    await requireMachinePresetManageInTx(tx, params, ownerOf(row));
+    if (!row || params.actionId === 'prepare' && row.archivedAt !== null) throw new ManagedMachineError('preset_not_found');
+    if (await resolvePresetAccessInTx(tx, params, ownerOf(row), params.actionId === 'archive' ? 'archive' : 'manage') === null) {
+        throw new ManagedMachineError('permission_denied');
+    }
     if (row.revision !== params.input.expectedRevision) throw new ManagedMachineError('request_conflict');
 }
 
@@ -1001,8 +1003,8 @@ export async function updateMachinePreset(params: PresetPreparationContext & Rea
     }); } catch (error) { return refusal(error); }
 }
 
-/** Archive changes launch offers only; acquired rows and capacity are untouched. */
-async function setArchived(params: PresetContext & Readonly<{ input: ManagedMachinePresetRevisionInputV1 }>, archived: boolean): Promise<PresetMutationResultV1> {
+/** Archive follows admitted image cleanup; acquired rows and capacity are untouched. */
+async function setArchived(params: PresetPreparationContext & Readonly<{ input: ManagedMachinePresetRevisionInputV1 }>, archived: boolean): Promise<PresetMutationResultV1> {
     try { return await inTx(async tx => {
         const discovered = await tx.managedMachinePreset.findFirst({ where: { id: params.input.id, homeId: params.input.homeId } });
         if (discovered) await acquirePresetMutationAccountsInTx(tx, { actorAccountId: params.accountId, owner: ownerOf(discovered),
@@ -1011,8 +1013,9 @@ async function setArchived(params: PresetContext & Readonly<{ input: ManagedMach
         if (row && row.controllerMachineId !== discovered?.controllerMachineId) {
             throw new TransactionReplayRequiredError('transaction-account-audience-changed');
         }
-        await requireHomeInTx(tx, params.input.homeId);
-        const access = row ? await resolvePresetAccessInTx(tx, params, ownerOf(row), archived ? 'archive' : 'manage') : null;
+        if (!params.presetPreparationAdmission) await requireHomeInTx(tx, params.input.homeId);
+        const access = row ? params.presetPreparationAdmission && archived ? { teamArchivedAt: null }
+            : await resolvePresetAccessInTx(tx, params, ownerOf(row), archived ? 'archive' : 'manage') : null;
         if (!row || !access) return { kind: "refused", code: "preset_not_found" } as const;
         if (row.revision !== params.input.expectedRevision) return { kind: "conflict", currentRevision: row.revision } as const;
         const effective = inheritPresetOwnerArchive(row, access.teamArchivedAt);
@@ -1025,7 +1028,7 @@ async function setArchived(params: PresetContext & Readonly<{ input: ManagedMach
     }); } catch (error) { return refusal(error); }
 }
 
-export const archiveMachinePreset = (params: PresetContext & Readonly<{ input: ManagedMachinePresetRevisionInputV1 }>) => setArchived(params, true);
+export const archiveMachinePreset = (params: PresetPreparationContext & Readonly<{ input: ManagedMachinePresetRevisionInputV1 }>) => setArchived(params, true);
 export const restoreMachinePreset = (params: PresetContext & Readonly<{ input: ManagedMachinePresetRevisionInputV1 }>) => setArchived(params, false);
 
 /** New delegated work consumes only a current Team member's compute authority. */

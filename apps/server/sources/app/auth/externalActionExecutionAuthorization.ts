@@ -4,6 +4,7 @@ import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpe
 import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { MachinePresetActionInputSchemasV1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { isMachinePresetFiniteOperationActionIdV1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
 import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -500,8 +501,11 @@ export function readAdmittedFiniteOperationPrincipal(binding: ExternalActionExec
     const read = binding.deploymentReadAdmission;
     const finiteRead = read?.actionId === binding.actionId && read.actionId !== DEPLOYMENT_LOGS_READ_ACTION_ID_V1;
     const presetPreparation = binding.presetPreparationAdmission;
-    const finitePresetPreparation = binding.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1 && presetPreparation !== undefined
-        && presetPreparation.homeId === binding.serverIdentityId && presetPreparation.machineId === binding.machineId;
+    const finitePresetPreparation = isMachinePresetFiniteOperationActionIdV1(binding.actionId) && presetPreparation !== undefined
+        && presetPreparation.homeId === binding.serverIdentityId
+        && (binding.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1
+            ? 'machineId' in presetPreparation && presetPreparation.machineId === binding.machineId
+            : !('machineId' in presetPreparation));
     if (binding.handoffAdmission
         || presetPreparation && !finitePresetPreparation
         || !acceptedDeployment && !finitePresetPreparation && (binding.workflowActionOrigin || !native && !finiteRead && !(isDeploymentDomainDnsActionIdV1(binding.actionId) && binding.environmentId)
@@ -2885,16 +2889,20 @@ export function isDeploymentNativeHttpPurpose(verified: Pick<VerifiedExternalAct
 async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): Promise<boolean | null> {
     const root = verified.binding.actionId;
-    if (root === MACHINE_PRESET_PREPARE_ACTION_ID_V1) {
+    if (isMachinePresetFiniteOperationActionIdV1(root)) {
         const admission = verified.binding.presetPreparationAdmission;
         if (!admission || verified.effectActionId !== root) return false;
         if (isAccountActionHttpOperation('machines.presets.get', proof)) {
             const read = MachinePresetActionInputSchemasV1['machines.presets.get'].safeParse(proof.body);
             return read.success && read.data.homeId === admission.homeId && read.data.id === admission.id;
         }
-        if (!isAccountActionHttpOperation('machines.presets.update', proof)) return false;
-        const write = MachinePresetActionInputSchemasV1['machines.presets.update'].safeParse(proof.body);
-        return write.success && write.data.homeId === admission.homeId && write.data.id === admission.id;
+        if (isAccountActionHttpOperation('machines.presets.update', proof)) {
+            const write = MachinePresetActionInputSchemasV1['machines.presets.update'].safeParse(proof.body);
+            return write.success && write.data.homeId === admission.homeId && write.data.id === admission.id;
+        }
+        if (root !== MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 || !isAccountActionHttpOperation(root, proof)) return false;
+        const archive = MachinePresetActionInputSchemasV1[root].safeParse(proof.body);
+        return archive.success && archive.data.homeId === admission.homeId && archive.data.id === admission.id;
     }
     if (root === MACHINE_ISOLATION_SET_ACTION_ID_V1) {
         const preset = MachinePresetActionInputSchemasV1['machines.presets.get'].safeParse(proof.body);

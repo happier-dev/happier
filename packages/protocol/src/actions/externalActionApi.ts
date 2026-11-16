@@ -1,5 +1,5 @@
-import { ManagedMachinePresetPrepareInputV1Schema, type ManagedMachinePresetPrepareInputV1 } from '../machines/managed/managedMachinePresetRevisionV1.js';
-import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
+import { ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema } from '../machines/managed/managedMachinePresetRevisionV1.js';
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
 import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema, ExternalActionTargetRefusalPhaseSchema } from './externalActionHttpError.js';
 import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
@@ -975,7 +975,7 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   deploymentLinkEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
   /** Exact non-content Environment operand for Home-authorized reads and binding preparation. */
   deploymentMetadataEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
-  presetPreparationAdmission: z.optional(ManagedMachinePresetPrepareInputV1Schema),
+  presetPreparationAdmission: z.optional(z.union([ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema])),
   deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
   deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
   registryAppUpdateAdmission: z.optional(RegistryAppUpdateAdmissionV1Schema),
@@ -1050,13 +1050,15 @@ export function projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1(input:
 /** The exact non-content preset scope is authenticated with the original request envelope. */
 export function projectExternalActionPresetPreparationEnvelopeAdmissionV1(input: Readonly<{
   actionId: string; envelope: ExternalActionRequestEnvelope;
-}>): ManagedMachinePresetPrepareInputV1 | undefined {
-  if (input.actionId !== MACHINE_PRESET_PREPARE_ACTION_ID_V1) {
+}>): z.infer<typeof ManagedMachinePresetPrepareInputV1Schema> | z.infer<typeof ManagedMachinePresetRevisionInputV1Schema> | undefined {
+  if (input.actionId !== MACHINE_PRESET_PREPARE_ACTION_ID_V1 && input.actionId !== MACHINE_PRESET_ARCHIVE_ACTION_ID_V1) {
     if (input.envelope.v === 2 && input.envelope.presetPreparationAdmission !== undefined)
       throw new TypeError('Unexpected preset preparation admission');
     return undefined;
   }
-  return ManagedMachinePresetPrepareInputV1Schema.parse(input.envelope.v === 1
+  const schema = input.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1
+    ? ManagedMachinePresetPrepareInputV1Schema : ManagedMachinePresetRevisionInputV1Schema;
+  return schema.parse(input.envelope.v === 1
     ? input.envelope.input : input.envelope.presetPreparationAdmission);
 }
 export function projectExternalActionDeploymentPreparationEnvelopeAdmissionV1(input: Readonly<{
@@ -1335,7 +1337,7 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     pendingResetStartAdmission: z.optional(ExternalActionPendingResetStartAdmissionV1Schema),
     approvalDecisionAdmission: z.optional(ExternalActionApprovalDecisionAdmissionV1Schema),
     deploymentReadAdmission: z.optional(DeploymentReadAdmissionV1Schema),
-    presetPreparationAdmission: z.optional(ManagedMachinePresetPrepareInputV1Schema),
+    presetPreparationAdmission: z.optional(z.union([ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema])),
     deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
     /** Home decides child dispatch once at mint; only the signed binding carries this authority. */
     deploymentChildRoot: z.optional(z.literal(true)),

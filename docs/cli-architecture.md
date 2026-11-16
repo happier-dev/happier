@@ -3323,9 +3323,11 @@ or native image absence takes the ordinary cold launch path. Preset and CLI
 changes do not start a background rebuild; a new explicit Prepare replaces the
 old owned artifact within its new admission.
 
-Home checks Machine and preset Manage at admission. The original signed binding
-retains `presetPreparationAdmission` with Home, preset, Machine and initial
-revision. An encrypted request exposes only this routing scope; the existing
+Home checks Machine and preset authority at admission. The original signed binding
+retains `presetPreparationAdmission` with Home, preset and initial revision;
+Prepare also binds its selected Machine. Archive spends the same finite admission
+through exact-preset reads, cleanup content CAS writes, and the final Archive at
+the last successful cleanup revision. An encrypted request exposes only this routing scope; the existing
 envelope digest and opener bind it to the private operand. Later signed preset
 reads and content writes spend that admission. The initial revision guards the
 building write; subsequent status writes use the current preset CAS revision.

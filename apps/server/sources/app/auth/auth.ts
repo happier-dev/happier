@@ -31,6 +31,7 @@ import { admitExternalActionBrowserSessionInTx } from './externalActionBrowserAd
 import { isActiveHomeAccountStatus } from '@happier-dev/protocol/home/governance';
 import { inTx, type Tx } from "@/storage/inTx";
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { isMachinePresetFiniteOperationActionIdV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { log } from "@/utils/logging/log";
 import { LRUTtlMap } from "@/utils/collections/lru";
 import { createSha256SecretDigest, sha256SecretDigestMatches } from "./secretDigest";
@@ -632,24 +633,28 @@ class AuthModule {
         }
         const inputRecord = typeof context.input === "object" && context.input !== null && !Array.isArray(context.input)
             ? context.input as Readonly<Record<string, unknown>> : null;
-        if (input.presetPreparationAdmission !== undefined && input.actionId !== MACHINE_PRESET_PREPARE_ACTION_ID_V1) {
+        const presetOperation = isMachinePresetFiniteOperationActionIdV1(input.actionId);
+        if (input.presetPreparationAdmission !== undefined && !presetOperation) {
             throw new ApiTokenOperationError('credential_scope_denied');
         }
         const presetPreparationAdmission = input.presetPreparationAdmission;
-        const presetApiPrincipal = input.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1 && !('authentication' in input)
+        const presetApiPrincipal = presetOperation && !('authentication' in input)
             ? await this.verifyCurrentApiTokenPrincipal(input) : null;
-        if (input.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1) {
+        if (presetOperation) {
             // The envelope projector owns the exact public/private input projection.
             // Mint binds its typed result to the installed execution target and preset authority.
             if (!presetPreparationAdmission || presetPreparationAdmission.homeId !== input.serverIdentityId
-                || presetPreparationAdmission.machineId !== input.machineId
+                || (input.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1
+                    ? !('machineId' in presetPreparationAdmission) || presetPreparationAdmission.machineId !== input.machineId
+                    : 'machineId' in presetPreparationAdmission)
                 || input.target.kind !== 'machine' || input.target.machineId !== input.machineId) {
                 throw new ApiTokenOperationError('credential_scope_denied');
             }
-            const { admitMachinePresetPreparationInTx } = await import('@/app/machines/managed/machinePresetService');
+            const { admitMachinePresetFiniteOperationInTx } = await import('@/app/machines/managed/machinePresetService');
             const { ManagedMachineError } = await import('@/app/machines/managed/managedRows');
             try {
-                await inTx(tx => admitMachinePresetPreparationInTx(tx, { accountId: input.accountId, input: presetPreparationAdmission,
+                await inTx(tx => admitMachinePresetFiniteOperationInTx(tx, { accountId: input.accountId, input: presetPreparationAdmission,
+                    actionId: input.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1 ? 'prepare' : 'archive',
                     authentication: { authenticationAuthority: 'authentication' in input && input.authentication.kind === 'account'
                         ? 'present_user' : 'account_automation', authenticationEvidence:
                         'authentication' in input ? input.authentication.evidence : presetApiPrincipal?.authenticationEvidence } }));

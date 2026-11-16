@@ -10,13 +10,13 @@ import {
 } from "@/app/machines/managed/machinePresetService";
 
 import { resolveMachinePresetAcquireRouting } from '@/app/machines/managed/machinePresetAcquireRouting';
-import type { ManagedMachinePresetPrepareInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import type { ManagedMachinePresetRevisionInputV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
 function register<Id extends MachinePresetHttpActionIdV1>(
     app: Fastify, id: Id,
     execute: (params: Readonly<{
         accountId: string; authentication: TeamOperationAuthenticationContext;
-        presetPreparationAdmission?: ManagedMachinePresetPrepareInputV1;
+        presetPreparationAdmission?: ManagedMachinePresetRevisionInputV1;
         input: z.infer<(typeof MachinePresetActionInputSchemasV1)[Id]>;
     }>) => Promise<z.infer<(typeof MachinePresetActionOutputSchemasV1)[Id]>>,
 ): void {

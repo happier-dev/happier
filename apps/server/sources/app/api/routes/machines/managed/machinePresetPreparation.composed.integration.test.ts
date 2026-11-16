@@ -71,10 +71,10 @@ describe('Prepare original admission through preset HTTP and storage', () => {
         signingKey = keys.secretKey, target = authorization.binding.target, signedBody = body) {
         return app.inject({ method: 'POST', url: path, payload: body, headers: {
             [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
-            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: MACHINE_PRESET_PREPARE_ACTION_ID_V1,
+            [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: authorization.binding.actionId,
             [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
             [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
-                authorizationToken: authorization.token, effectActionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1,
+                authorizationToken: authorization.token, effectActionId: authorization.binding.actionId,
                 target, installationId, requestId: authorization.binding.requestId, method: 'POST', path, body: signedBody, privateKey: signingKey,
             }),
         } });
@@ -102,6 +102,33 @@ describe('Prepare original admission through preset HTTP and storage', () => {
         expect(conflict.json()).toEqual({ kind: 'conflict', currentRevision: 2 });
         expect((await mint('prepared', { expectedRevision: 2 })).statusCode).toBe(401);
         token = await auth.createToken(accountId, undefined, { kind: 'terminal', authority: 'account_automation' });
+    });
+
+    it('retains one Archive admission through exact cleanup CAS and the final revision', async () => {
+        await seed('archive-admitted');
+        await seed('archive-sibling');
+        const issue = (id = 'archive-admitted', expectedRevision = 0) => app.inject({ method: 'POST',
+            url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.presets.archive'),
+            headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId,
+                envelope: { v: 1, requestId: `archive-${id}-${expectedRevision}`, target: { kind: 'machine', machineId },
+                    input: { homeId, id, expectedRevision } } } });
+        expect((await issue('archive-admitted', 1)).statusCode).toBeGreaterThanOrEqual(400);
+        const issued = await issue();
+        expect(issued.statusCode, issued.body).toBe(200);
+        const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+        const read = await signed(authorization, '/v1/machines/presets/get', { homeId, id: 'archive-admitted' });
+        expect(read.statusCode, read.body).toBe(200);
+        const sibling = await signed(authorization, '/v1/machines/presets/get', { homeId, id: 'archive-sibling' });
+        expect(sibling.statusCode).toBeGreaterThanOrEqual(400);
+        const update = await signed(authorization, '/v1/machines/presets/update', { homeId, id: 'archive-admitted', expectedRevision: 0,
+            patch: { content: { t: 'plain', v: { v: 1, name: 'Cleaned original image' } }, recipients: [] } });
+        expect(update.statusCode, update.body).toBe(200);
+        expect((await signed(authorization, '/v1/machines/presets/archive', { homeId, id: 'archive-admitted', expectedRevision: 0 })).statusCode).toBe(409);
+        const archived = await signed(authorization, '/v1/machines/presets/archive', { homeId, id: 'archive-admitted', expectedRevision: 1 });
+        expect(archived.statusCode, archived.body).toBe(200);
+        expect(archived.json()).toMatchObject({ kind: 'saved', preset: { revision: 2, archivedAt: expect.any(Number) } });
+        expect((await signed(authorization, '/v1/machines/presets/archive', { homeId, id: 'archive-sibling', expectedRevision: 0 })).statusCode)
+            .toBeGreaterThanOrEqual(400);
     });
 
     it('requires its own preset Manage and exact Home, Machine and initial revision at admission', async () => {

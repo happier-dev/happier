@@ -40,9 +40,10 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
-  it('authenticates the exact Prepare preset scope while keeping its payload encrypted', () => {
-    const prepareBinding = { ...binding, actionId: 'machines.presets.prepare' };
-    const input = { homeId: binding.serverIdentityId, id: 'private-preset', expectedRevision: 7, machineId: 'machine-1' };
+  it.each(['machines.presets.prepare', 'machines.presets.archive'])('authenticates the exact %s scope while keeping its payload encrypted', actionId => {
+    const prepareBinding = { ...binding, actionId };
+    const input = { homeId: binding.serverIdentityId, id: 'private-preset', expectedRevision: 7,
+      ...(actionId === 'machines.presets.prepare' ? { machineId: 'machine-1' } : {}) };
     const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
       binding: prepareBinding, input, material, randomBytes });
     expect(request).toMatchObject({ presetPreparationAdmission: input });
