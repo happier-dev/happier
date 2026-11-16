@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { formatSharedSavedSecretRefV1 } from '../../account/settings/savedSecretReferenceV1';
 
 import {
   createSensitiveDiagnosticTextRedactor,
@@ -557,5 +558,17 @@ describe('identifiers that must never be mistaken for secrets', () => {
     ].join('\n');
 
     expect(redactBugReportSensitiveText(text)).toBe(text);
+  });
+});
+
+describe('Saved Secret references are not secret material', () => {
+  it('keeps a shared Saved Secret reference verbatim while a labelled secret value stays redacted', () => {
+    // W2-PLATFORM-QA-164: a partial connection save returned "happier:shared-secret: [REDACTED]", so the
+    // CLI continuation could not reuse the persisted reference.
+    const ref = formatSharedSavedSecretRefV1('cmwiz3k1x0abcmc06resource');
+    const text = JSON.stringify({ connections: { DIRECT_URL: { ref, resourceRevision: 1 } } });
+    expect(redactBugReportSensitiveText(text)).toBe(text);
+    expect(redactBugReportSensitiveText('secret=hunter2-value')).toBe('secret: [REDACTED]');
+    expect(redactBugReportSensitiveText('x-auth-token: abc123def')).not.toContain('abc123def');
   });
 });

@@ -416,7 +416,9 @@ function redactKnownSensitiveText(input: string): string {
     // must be able to state, so the shape is not evidence and no guard makes it
     // evidence. A labelled `aws_secret_access_key=` value stays redacted by the
     // rule above; a label-free one is now reported verbatim.
-    .replace(/\b(password|passphrase|private[_-]?key|token|secret)\s*[:=]\s*[^\s&]+/gi, (_match, key: string) => `${key}: [REDACTED]`);
+    // A Saved Secret reference (`happier:shared-secret:v1:<resource>`) names stored
+    // material; it is not the material, and rewriting it breaks every reuse.
+    .replace(/(?<!happier:shared-)\b(password|passphrase|private[_-]?key|token|secret)\s*[:=]\s*[^\s&]+/gi, (_match, key: string) => `${key}: [REDACTED]`);
 }
 
 /**
