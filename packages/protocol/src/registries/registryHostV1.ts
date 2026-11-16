@@ -178,7 +178,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
           // Only the selected catalog pointer reaches its target's transport.
           const response = RegistryFetchResponseV1Schema.parse(await viaDaemon({ op: 'read', sourceId: source.id,
             kind: request.kind, itemId: request.itemId, ...(request.version === undefined ? {} : { version: request.version }),
-            ...(request.themeContent ? { themeContent: request.themeContent } : {}),
+            ...(request.op === 'read' && request.themeContent ? { themeContent: request.themeContent } : {}),
             ...('appMappingCorrection' in request && request.appMappingCorrection ? { appMappingCorrection: request.appMappingCorrection } : {}) }));
           if (response.op !== 'read') throw new RegistryFetchErrorV1(response.op === 'error' && response.status.state !== 'ok'
             ? response.status : { state: 'invalid_source' });
