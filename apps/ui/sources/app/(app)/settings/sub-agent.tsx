@@ -1,5 +1,5 @@
 import { SubAgentSettingsView } from '@/components/settings/subAgent/SubAgentSettingsView';
 
-export const WorkspaceRouteBody = SubAgentSettingsView;
+export { SubAgentSettingsView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={SubAgentSettingsView} />; }

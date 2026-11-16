@@ -1,5 +1,5 @@
 import { ProfileSettingsIndex } from '@/components/settings/profiles/ProfileSettingsIndex';
 
-export const WorkspaceRouteBody = ProfileSettingsIndex;
+export { ProfileSettingsIndex as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={ProfileSettingsIndex} />; }

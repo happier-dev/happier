@@ -46,7 +46,8 @@ function tab(tabId: string, title: string, icon: SessionSwitcherRow['icon'], ext
     };
 }
 
-const ROWS: readonly SessionSwitcherRow[] = [
+// Built on first render: native evaluates every route module at app start.
+const buildRows = (): readonly SessionSwitcherRow[] => [
     session('fix', 'openTabs', 'Fix settings modal remount', 'claude', {
         status: { text: 'Working · 2 min', tone: 'working' },
         excerpt: 'Fixed. The modal keeps its scroll position and draft while the window resizes.',
@@ -79,12 +80,12 @@ const ROWS: readonly SessionSwitcherRow[] = [
     }),
 ];
 
-const CURRENT_KEY = buildServerScopedSessionKey('fix', SERVER);
 
 export default function PhoneNavAllTabsDevScreen() {
     const params = useLocalSearchParams<{ frame?: string; inline?: string }>();
     const { theme } = useUnistyles();
-    const sections = React.useMemo(() => buildSessionAllTabsSections({ rows: ROWS, synced: true }), []);
+    const sections = React.useMemo(() => buildSessionAllTabsSections({ rows: buildRows(), synced: true }), []);
+    const currentKey = buildServerScopedSessionKey('fix', SERVER);
     const pulled = resolveSessionHeaderPullFrame({ translationY: SESSION_HEADER_PULL_ARM_PX + SESSION_HEADER_PULL_OPEN_PX + 8 });
     const progress = useSharedValue(pulled.progress);
     const offset = useSharedValue(pulled.offset);
@@ -107,14 +108,14 @@ export default function PhoneNavAllTabsDevScreen() {
     if (inline) {
         return (
             <View style={{ flex: 1, backgroundColor: theme.colors.surface.inset }}>
-                <SessionAllTabsOverviewBody sections={sections} currentKey={CURRENT_KEY} onOpen={() => {}} />
+                <SessionAllTabsOverviewBody sections={sections} currentKey={currentKey} onOpen={() => {}} />
             </View>
         );
     }
     return (
         <>
             <Stack.Screen options={{ headerShown: false }} />
-            <SessionAllTabsPageView sections={sections} currentKey={CURRENT_KEY} onOpen={() => {}} onDone={() => {}} />
+            <SessionAllTabsPageView sections={sections} currentKey={currentKey} onOpen={() => {}} onDone={() => {}} />
         </>
     );
 }

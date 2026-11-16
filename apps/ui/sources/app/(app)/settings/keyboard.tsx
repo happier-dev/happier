@@ -1,5 +1,5 @@
 import { KeyboardShortcutsSettingsView } from '@/components/settings/keyboard/KeyboardShortcutsSettingsView';
 
-export const WorkspaceRouteBody = KeyboardShortcutsSettingsView;
+export { KeyboardShortcutsSettingsView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={KeyboardShortcutsSettingsView} />; }

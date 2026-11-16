@@ -7,11 +7,6 @@ import { testRunner, TestSuite, TestResult } from '@/dev/testRunner';
 import { Typography } from '@/constants/Typography';
 
 // Import all test files here
-import '@/encryption/hmac_sha512.appspec';
-import '@/encryption/deriveKey.appspec';
-import '@/sync/encryption/encryptor.appspec';
-import '@/encryption/aes.appspec';
-import '@/encryption/base64.appspec';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -20,7 +15,18 @@ interface TestRunState {
     results: TestSuite[];
 }
 
+// The suites register themselves when first loaded (the module registry loads each once); load them
+// with this screen, not at app start: native evaluates every route module before the first screen.
+function registerAppSuites(): void {
+    require('@/encryption/hmac_sha512.appspec');
+    require('@/encryption/deriveKey.appspec');
+    require('@/sync/encryption/encryptor.appspec');
+    require('@/encryption/aes.appspec');
+    require('@/encryption/base64.appspec');
+}
+
 export default function TestsScreen() {
+    registerAppSuites();
     const [state, setState] = React.useState<TestRunState>({
         running: false,
         results: []

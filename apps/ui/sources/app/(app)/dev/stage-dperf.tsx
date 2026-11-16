@@ -31,7 +31,8 @@ const DPERF_STAGE_FRAME_ID_SET = new Set<string>(DPERF_STAGE_FRAME_IDS);
 
 // The runtime warm-up only preloads the perf-cadence loop surfaces; a pinned
 // beat's surface materializes lazily through the DemoStage Suspense boundary.
-const DPERF_LOOP_STAGE_FRAMES = stageFrames.filter((frame) => DPERF_STAGE_FRAME_ID_SET.has(frame.id));
+// Read when the stage runs: native evaluates every route module at app start.
+const readLoopStageFrames = () => stageFrames.filter((frame) => DPERF_STAGE_FRAME_ID_SET.has(frame.id));
 
 function readStageRouteOptions(): Readonly<{ pinnedFrameId: string | null; phoneCapture: boolean }> {
     const defaults = { pinnedFrameId: null, phoneCapture: false };
@@ -83,8 +84,8 @@ function PhoneCaptureSurface(props: Readonly<{ frame: StageFrame }>): React.Reac
     );
 }
 
-const DPERF_STAGE_SURFACE_IDS: readonly StageSurfaceId[] = Array.from(
-    new Set(DPERF_LOOP_STAGE_FRAMES.map((frame) => frame.surface)),
+const readStageSurfaceIds = (): readonly StageSurfaceId[] => Array.from(
+    new Set(readLoopStageFrames().map((frame) => frame.surface)),
 );
 
 export type StageDperfRuntimeStatus = 'ready' | 'cancelled';
@@ -101,13 +102,13 @@ export type StageDperfRouteRuntimeDeps = StageDperfRuntimeDeps & Readonly<{
     uninstallDemoFirewall: () => void;
 }>;
 
-const DEFAULT_STAGE_DPERF_ROUTE_RUNTIME_DEPS: StageDperfRouteRuntimeDeps = {
+const readDefaultStageDperfRouteRuntimeDeps = (): StageDperfRouteRuntimeDeps => ({
     seedDemoWorld,
     preloadStageSurfaces,
     installDemoFirewall,
     clearDemoWorld,
     uninstallDemoFirewall,
-};
+});
 
 export function resolveNextDperfStageFrameId(currentFrameId: string): string {
     const currentIndex = DPERF_STAGE_FRAME_IDS.findIndex((frameId) => frameId === currentFrameId);
@@ -123,7 +124,7 @@ export async function prepareStageDperfRuntime(deps: StageDperfRuntimeDeps = {
     await deps.seedDemoWorld();
     if (deps.shouldCancel?.()) return 'cancelled';
 
-    await deps.preloadStageSurfaces(DPERF_STAGE_SURFACE_IDS);
+    await deps.preloadStageSurfaces(readStageSurfaceIds());
     if (deps.shouldCancel?.()) return 'cancelled';
 
     deps.installDemoFirewall();
@@ -135,7 +136,7 @@ export async function prepareStageDperfRuntime(deps: StageDperfRuntimeDeps = {
 export function StageDperfDevRouteContent(props: Readonly<{
     runtimeDeps?: StageDperfRouteRuntimeDeps;
 }>): React.ReactElement {
-    const runtimeDeps = props.runtimeDeps ?? DEFAULT_STAGE_DPERF_ROUTE_RUNTIME_DEPS;
+    const runtimeDeps = React.useMemo(() => props.runtimeDeps ?? readDefaultStageDperfRouteRuntimeDeps(), [props.runtimeDeps]);
     const { width, height } = useWindowDimensions();
     const frames = resolveStageFramesForHostDevice(width <= MOBILE_MAX_WIDTH_PX ? 'phone' : 'desktop');
     const { pinnedFrameId, phoneCapture } = React.useMemo(readStageRouteOptions, []);

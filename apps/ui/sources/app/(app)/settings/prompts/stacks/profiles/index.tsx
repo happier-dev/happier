@@ -1,5 +1,5 @@
 import { PromptProfileStacksScreen } from '@/components/settings/prompts/stacks/PromptProfileStacksScreen';
 
-export const WorkspaceRouteBody = PromptProfileStacksScreen;
+export { PromptProfileStacksScreen as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={PromptProfileStacksScreen} />; }

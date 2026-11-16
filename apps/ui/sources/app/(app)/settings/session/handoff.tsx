@@ -1,5 +1,5 @@
-import SessionHandoffSettingsView from '@/components/settings/session/SessionHandoffSettingsView';
+import { SessionHandoffSettingsView } from '@/components/settings/session/SessionHandoffSettingsView';
 
-export const WorkspaceRouteBody = SessionHandoffSettingsView;
+export { SessionHandoffSettingsView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={SessionHandoffSettingsView} />; }

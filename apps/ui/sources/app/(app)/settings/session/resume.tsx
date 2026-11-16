@@ -1,5 +1,5 @@
-import SessionResumeSettingsView from '@/components/settings/session/SessionResumeSettingsView';
+import { SessionResumeSettingsView } from '@/components/settings/session/SessionResumeSettingsView';
 
-export const WorkspaceRouteBody = SessionResumeSettingsView;
+export { SessionResumeSettingsView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={SessionResumeSettingsView} />; }

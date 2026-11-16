@@ -1,5 +1,5 @@
-import NewSessionWizardSettingsView from '@/components/settings/session/NewSessionWizardSettingsView';
+import { NewSessionWizardSettingsView } from '@/components/settings/session/NewSessionWizardSettingsView';
 
-export const WorkspaceRouteBody = NewSessionWizardSettingsView;
+export { NewSessionWizardSettingsView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={NewSessionWizardSettingsView} />; }

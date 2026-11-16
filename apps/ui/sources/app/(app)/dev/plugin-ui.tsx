@@ -774,10 +774,14 @@ function PluginSurfaceSamples() {
  * The artifact's bundle-contract export, produced exactly as a real plugin
  * produces it. The host calls it with the render context and mounts the result.
  */
-const renderPluginDemoSurface = defineUiSurface(PluginSurfaceSamples);
-const renderPageAnatomySurface = defineUiSurface(PluginPageAnatomySample);
-const renderNavigationColumnSurface = defineUiSurface(PluginNavigationColumnSample);
-const renderCollectionPaneSurface = defineUiSurface(CollectionPreviewSample);
+// Defined when the demo first renders: native evaluates every route module at app start.
+let demoSurfaces: Readonly<Record<'demo' | 'pageAnatomy' | 'navigationColumn' | 'collectionPane', ReturnType<typeof defineUiSurface>>> | undefined;
+const readDemoSurfaces = () => (demoSurfaces ??= {
+    demo: defineUiSurface(PluginSurfaceSamples),
+    pageAnatomy: defineUiSurface(PluginPageAnatomySample),
+    navigationColumn: defineUiSurface(PluginNavigationColumnSample),
+    collectionPane: defineUiSurface(CollectionPreviewSample),
+});
 
 /**
  * The Collection preview mounted as a page that has the app details pane (as a plugin page does): its items
@@ -796,7 +800,7 @@ function CollectionBesideDetailsPaneSample(props: Readonly<{ host: DemoSurfaceHo
         },
     ), [columnMaxWidthPx, detailsPane, theme]);
     return React.useMemo(() => {
-        const entry = renderCollectionPaneSurface(props.host.renderContext) as React.ReactElement | null;
+        const entry = readDemoSurfaces().collectionPane(props.host.renderContext) as React.ReactElement | null;
         return entry
             ? React.cloneElement(entry as React.ReactElement<Record<string, unknown>>, { presentationHost })
             : null;
@@ -819,7 +823,7 @@ export default function PluginUiSharedPresentationScreen() {
     }, [host, context]);
     const surface = React.useMemo(() => {
         if (!host) return null;
-        const entry = renderPluginDemoSurface(host.renderContext) as React.ReactElement | null;
+        const entry = readDemoSurfaces().demo(host.renderContext) as React.ReactElement | null;
         return entry
             ? React.cloneElement(
                 entry as React.ReactElement<Record<string, unknown>>,
@@ -839,7 +843,7 @@ export default function PluginUiSharedPresentationScreen() {
     ), [columnMaxWidthPx, theme]);
     const anatomySurface = React.useMemo(() => {
         if (!host) return null;
-        const entry = renderPageAnatomySurface(host.renderContext) as React.ReactElement | null;
+        const entry = readDemoSurfaces().pageAnatomy(host.renderContext) as React.ReactElement | null;
         return entry
             ? React.cloneElement(
                 entry as React.ReactElement<Record<string, unknown>>,
@@ -849,7 +853,7 @@ export default function PluginUiSharedPresentationScreen() {
     }, [anatomyPresentationHost, host]);
     const navigationColumnSurface = React.useMemo(() => {
         if (!host) return null;
-        const entry = renderNavigationColumnSurface(host.renderContext) as React.ReactElement | null;
+        const entry = readDemoSurfaces().navigationColumn(host.renderContext) as React.ReactElement | null;
         return entry
             ? React.cloneElement(
                 entry as React.ReactElement<Record<string, unknown>>,

@@ -1,5 +1,5 @@
 import { EmbedCreateScreen } from '@/components/settings/embeds/EmbedDetailScreen';
 
-export const WorkspaceRouteBody = EmbedCreateScreen;
+export { EmbedCreateScreen as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={EmbedCreateScreen} />; }

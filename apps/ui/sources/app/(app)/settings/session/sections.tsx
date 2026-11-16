@@ -1,5 +1,5 @@
-import SessionSectionsSettingsView from '@/components/settings/session/SessionSectionsSettingsView';
+import { SessionSectionsSettingsView } from '@/components/settings/session/SessionSectionsSettingsView';
 
-export const WorkspaceRouteBody = SessionSectionsSettingsView;
+export { SessionSectionsSettingsView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={SessionSectionsSettingsView} />; }

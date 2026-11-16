@@ -39,7 +39,7 @@ function resolveActiveHomeTransport(request: AuthenticatedAccountEntryRequest): 
  * this device is signed in to any Home, so an OAuth return stays mounted until it settles. A request
  * that does not parse (unknown or secret-bearing params) goes Home.
  */
-export default function HomesSignInRoute() {
+export function HomesSignInRoute() {
     const auth = useAuth();
     const { width: windowWidth } = useWindowDimensions();
     const params = useLocalSearchParams() as Readonly<Record<string, string | string[] | undefined>>;
@@ -101,3 +101,5 @@ export default function HomesSignInRoute() {
         </BaseModal>
     );
 }
+
+export default HomesSignInRoute;

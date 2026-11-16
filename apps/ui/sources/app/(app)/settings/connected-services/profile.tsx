@@ -1,5 +1,5 @@
 import { ConnectedAccountLegacyRouteRedirect } from '@/components/settings/connectedServices/account/ConnectedAccountLegacyRouteRedirect';
 
-export const WorkspaceRouteBody = ConnectedAccountLegacyRouteRedirect;
+export { ConnectedAccountLegacyRouteRedirect as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={ConnectedAccountLegacyRouteRedirect} />; }

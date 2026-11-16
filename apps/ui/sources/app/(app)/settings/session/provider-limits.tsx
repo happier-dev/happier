@@ -1,5 +1,5 @@
-import SessionProviderLimitsSettingsView from '@/components/settings/session/SessionProviderLimitsSettingsView';
+import { SessionProviderLimitsSettingsView } from '@/components/settings/session/SessionProviderLimitsSettingsView';
 
-export const WorkspaceRouteBody = SessionProviderLimitsSettingsView;
+export { SessionProviderLimitsSettingsView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={SessionProviderLimitsSettingsView} />; }

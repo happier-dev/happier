@@ -1,5 +1,5 @@
 import { SystemStatusView } from '@/components/settings/systemStatus/SystemStatusView';
 
-export const WorkspaceRouteBody = SystemStatusView;
+export { SystemStatusView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={SystemStatusView} />; }

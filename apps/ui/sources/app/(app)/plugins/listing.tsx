@@ -1,5 +1,5 @@
 import { StoreListingRoute } from '@/components/store/StoreListing';
 
-export const WorkspaceRouteBody = StoreListingRoute;
+export { StoreListingRoute as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={StoreListingRoute} />; }

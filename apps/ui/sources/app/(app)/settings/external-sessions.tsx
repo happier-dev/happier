@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 
-import ExternalSessionsSettingsView from '@/components/settings/externalSessions/ExternalSessionsSettingsView';
+import { ExternalSessionsSettingsView } from '@/components/settings/externalSessions/ExternalSessionsSettingsView';
 import { ExternalSessionsBrowseRouteGate } from '@/components/sessions/external/browse/ExternalSessionsBrowseRouteGate';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';

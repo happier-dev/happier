@@ -1,5 +1,5 @@
 import { ConnectedServicesAgentSignInView } from '@/components/settings/connectedServices/collection/ConnectedServicesAgentSignInView';
 
-export const WorkspaceRouteBody = ConnectedServicesAgentSignInView;
+export { ConnectedServicesAgentSignInView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={ConnectedServicesAgentSignInView} />; }

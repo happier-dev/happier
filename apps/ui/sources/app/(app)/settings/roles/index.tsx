@@ -1,5 +1,5 @@
 import { RoleSettingsIndex } from '@/components/settings/roles/RoleSettingsIndex';
 
-export const WorkspaceRouteBody = RoleSettingsIndex;
+export { RoleSettingsIndex as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={RoleSettingsIndex} />; }

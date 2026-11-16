@@ -65,7 +65,6 @@ import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 type AvatarStyle = Settings['avatarStyle'];
 
 type UiFontScalePresetId = keyof typeof UI_FONT_SCALE_PRESETS;
-const UI_FONT_SCALE_PRESET_IDS = Object.keys(UI_FONT_SCALE_PRESETS) as UiFontScalePresetId[];
 type UiItemDensity = LocalSettings['uiItemDensity'];
 type DetailsPaneTabsBehavior = LocalSettings['detailsPaneTabsBehavior'];
 
@@ -77,8 +76,10 @@ const isDetailsPaneTabsBehavior = (value: string): value is DetailsPaneTabsBehav
     value === 'preview' || value === 'persistent'
 );
 
-const AVATAR_STYLES: readonly AvatarStyle[] = AvatarStyleSchema.options;
-const isKnownAvatarStyle = (style: string): style is AvatarStyle => (AVATAR_STYLES as readonly string[]).includes(style);
+// Read inside functions: a route module evaluates at app start on native, before anyone opens it.
+const readAvatarStyles = (): readonly AvatarStyle[] => AvatarStyleSchema.options;
+const readUiFontScalePresetIds = (): UiFontScalePresetId[] => Object.keys(UI_FONT_SCALE_PRESETS) as UiFontScalePresetId[];
+const isKnownAvatarStyle = (style: string): style is AvatarStyle => (readAvatarStyles() as readonly string[]).includes(style);
 
 export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen() {
     const router = useRouter();
@@ -248,7 +249,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
     }, [uiFontScale]);
 
     const selectUiFontSizeIndex = React.useCallback((index: number) => {
-        const presetId = UI_FONT_SCALE_PRESET_IDS[index];
+        const presetId = readUiFontScalePresetIds()[index];
         if (presetId) setUiFontScale(UI_FONT_SCALE_PRESETS[presetId]);
     }, [setUiFontScale]);
     const textSizeLabels = React.useMemo(
@@ -386,16 +387,16 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                         rightElement={
                             <Slider
                                 testID="settings-appearance-textSize-slider"
-                                value={UI_FONT_SCALE_PRESET_IDS.indexOf(selectedTextSizeId)}
+                                value={readUiFontScalePresetIds().indexOf(selectedTextSizeId)}
                                 min={0}
-                                max={UI_FONT_SCALE_PRESET_IDS.length - 1}
+                                max={readUiFontScalePresetIds().length - 1}
                                 step={1}
                                 trackWidth={180}
-                                formatValueText={(index) => textSizeLabels.get(UI_FONT_SCALE_PRESET_IDS[index] ?? 'default') ?? ''}
+                                formatValueText={(index) => textSizeLabels.get(readUiFontScalePresetIds()[index] ?? 'default') ?? ''}
                                 leading={<Text style={[styles.textSizeGlyph, styles.textSizeGlyphSmall]}>{t('settingsAppearance.textSizeGlyph')}</Text>}
                                 trailing={<Text style={[styles.textSizeGlyph, styles.textSizeGlyphLarge]}>{t('settingsAppearance.textSizeGlyph')}</Text>}
                                 onValueChange={selectUiFontSizeIndex}
-                                onValuePreview={index => previewUiFontScale(index === undefined ? undefined : UI_FONT_SCALE_PRESETS[UI_FONT_SCALE_PRESET_IDS[index]])}
+                                onValuePreview={index => previewUiFontScale(index === undefined ? undefined : UI_FONT_SCALE_PRESETS[readUiFontScalePresetIds()[index]])}
                             />
                         }
                     />
@@ -600,7 +601,7 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                                 onChange={(next) => {
                                     if (next && isKnownAvatarStyle(next)) setAvatarStyle(next);
                                 }}
-                                options={AVATAR_STYLES.map((id) => ({
+                                options={readAvatarStyles().map((id) => ({
                                     id, title: t(`settingsAppearance.avatarOptions.${id}`), preview: <AvatarStylePreview style={id} />,
                                 }))}
                             />

@@ -22,8 +22,11 @@ import { presentTaskShareFailure } from '@/components/sharing/tasks/useTaskShare
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 
-/** Dev specimen: every task share state on the real sheet, from fixture rosters (no server). */
-const TASK = readTaskShareDisclosure({
+/**
+ * Dev specimen: every task share state on the real sheet, from fixture rosters (no server).
+ * Fixtures are built when the specimen opens: native evaluates every route module at app start.
+ */
+const readTask = () => readTaskShareDisclosure({
   title: 'Fix the Safari login redirect',
   notes:
     'Safari drops the session cookie after the OAuth bounce.\nRepro steps in the trace.',
@@ -45,7 +48,7 @@ const design: PrincipalRefV1 = {
   teamId: 'core',
   groupId: 'design',
 };
-const viewer = presentSharePrincipal({
+const readViewer = () => presentSharePrincipal({
   ref: { kind: 'account', accountId: 'me' },
   name: 'Leeroy Brun',
   viewerAccountId: 'me',
@@ -125,7 +128,9 @@ type Specimen = Readonly<{
   issue?: ReturnType<typeof presentTaskShareFailure>;
   disclosure?: null;
 }>;
-const SPECIMENS: Readonly<Record<string, Specimen>> = {
+let specimens: Readonly<Record<string, Specimen>> | undefined;
+const readSpecimens = (): Readonly<Record<string, Specimen>> => (specimens ??= buildSpecimens());
+const buildSpecimens = (): Readonly<Record<string, Specimen>> => ({
   owner: {
     encrypted: false,
     readiness: new Map(),
@@ -133,7 +138,7 @@ const SPECIMENS: Readonly<Record<string, Specimen>> = {
       revision: 1,
       editable: true,
       stale: false,
-      owner: { principal: viewer },
+      owner: { principal: readViewer() },
       grants: [grant(maya, 'Maya Chen', 'edit'), grant(core, 'Core', 'view')],
       directory: directory(''),
     },
@@ -145,7 +150,7 @@ const SPECIMENS: Readonly<Record<string, Specimen>> = {
       revision: 1,
       editable: true,
       stale: false,
-      owner: { principal: viewer },
+      owner: { principal: readViewer() },
       grants: [],
       directory: directory(''),
     },
@@ -160,7 +165,7 @@ const SPECIMENS: Readonly<Record<string, Specimen>> = {
       revision: 1,
       editable: true,
       stale: false,
-      owner: { principal: viewer },
+      owner: { principal: readViewer() },
       grants: [
         grant(maya, 'Maya Chen', 'edit'),
         grant(sam, 'Sam Okafor', 'view'),
@@ -176,7 +181,7 @@ const SPECIMENS: Readonly<Record<string, Specimen>> = {
       revision: 1,
       editable: true,
       stale: false,
-      owner: { principal: viewer },
+      owner: { principal: readViewer() },
       grants: [
         grant(maya, 'Maya Chen', 'edit', {
           removal: {
@@ -218,7 +223,7 @@ const SPECIMENS: Readonly<Record<string, Specimen>> = {
       directory: { query: '', sections: [] },
     },
   },
-};
+});
 
 const noop = () => {};
 const ACTIONS: ShareSheetActions = {
@@ -237,10 +242,10 @@ const ACTIONS: ShareSheetActions = {
 function SpecimenSheet(
   props: CustomModalInjectedProps & Readonly<{ id: string }>,
 ): React.ReactElement {
-  const specimen = SPECIMENS[props.id]!;
+  const specimen = readSpecimens()[props.id]!;
   const [query, setQuery] = React.useState(specimen.model.directory.query);
   const adapter = createTaskShareAdapter({
-    disclosure: specimen.disclosure === null ? null : TASK,
+    disclosure: specimen.disclosure === null ? null : readTask(),
     encrypted: specimen.encrypted,
     readiness: specimen.readiness,
     ...(specimen.readiness.size ? { sendKeys: noop } : {}),
@@ -278,12 +283,12 @@ function open(id: string) {
 export default function TaskShareSpecimenScreen(): React.ReactElement {
   const params = useLocalSearchParams<{ state?: string }>();
   React.useEffect(() => {
-    if (params.state && SPECIMENS[params.state]) open(params.state);
+    if (params.state && readSpecimens()[params.state]) open(params.state);
   }, [params.state]);
   return (
     <ItemList>
       <ItemGroup title="Task share states">
-        {Object.keys(SPECIMENS).map((id) => (
+        {Object.keys(readSpecimens()).map((id) => (
           <Item
             key={id}
             testID={`task-share-specimen:${id}`}

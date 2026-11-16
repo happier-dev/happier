@@ -1,5 +1,5 @@
-import PermissionsSettingsView from '@/components/settings/session/PermissionsSettingsView';
+import { PermissionsSettingsView } from '@/components/settings/session/PermissionsSettingsView';
 
-export const WorkspaceRouteBody = PermissionsSettingsView;
+export { PermissionsSettingsView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={PermissionsSettingsView} />; }

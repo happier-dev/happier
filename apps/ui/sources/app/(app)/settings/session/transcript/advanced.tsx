@@ -1,5 +1,5 @@
-import TranscriptRenderingAdvancedSettingsView from '@/components/settings/session/TranscriptRenderingAdvancedSettingsView';
+import { TranscriptRenderingAdvancedSettingsView } from '@/components/settings/session/TranscriptRenderingAdvancedSettingsView';
 
-export const WorkspaceRouteBody = TranscriptRenderingAdvancedSettingsView;
+export { TranscriptRenderingAdvancedSettingsView as WorkspaceRouteBody };
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
+export default function RouteEntry() { return <WorkspaceRouteEntry Body={TranscriptRenderingAdvancedSettingsView} />; }
