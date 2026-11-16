@@ -750,6 +750,9 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
     || ACTION_ID_FAMILIES_V1.machine_storage.some(id => id === actionId)
     || ACTION_ID_FAMILIES_V1.machine_reachability.some(id => id === actionId)
     || actionId === 'machines.agentIsolation.status'
+    // Session preparation can select this Machine's sandbox policy. Retain
+    // its Home-admitted root before local approval or sandbox acquisition.
+    || actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
     || ACTION_ID_FAMILIES_V1.machine_work_summary.some(id => id === actionId)
     || ACTION_ID_FAMILIES_V1.usage_sources.some(id => id === actionId && id !== 'usage.sources.dismiss')
     || ACTION_ID_FAMILIES_V1.machine_agent_install.some(id => id === actionId)

@@ -78,6 +78,8 @@ it.each([
     ['deployments.environments.moveToRepository', 'preview', true, 'plugin', true],
     ['deployments.environments.moveToRepository', 'preview', true, 'plugin', false],
     ['session.spawn_new', 'execute', false], ['session.spawn_new', 'prepare', false],
+    ['session.spawn_new', 'ordinary', false],
+    ['session.spawn_new', 'ordinary-root', false],
 ] as const)('admits %s (%s, explicit=%s, caller=%s, repository=%s, preparedPreview=%s, authoredPreview=%s) at Home even on the own local daemon', async (actionId, mode, explicit, caller: 'host' | 'plugin' = 'host', repositoryWorkspace = false, preparedPreview = false, authoredPreview?: 'retained' | 'cold') => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-deployment-preview-',
         env: { HAPPIER_SERVER_URL: 'https://home.test', HAPPIER_WEBAPP_URL: 'https://home.test' } }, async () => {
@@ -144,10 +146,11 @@ it.each([
                 baseCommit: 'a'.repeat(40), baseBranch: 'main' }
                 : { createRepository: { providerKind: 'github', owner: 'owner', repositoryName: 'app', visibility: 'private', remoteName: 'origin' } }),
         }) : setupSpawn ? SessionSpawnNewActionInputV2Schema.parse({
-            executionTarget: { serverId: 'srv_home', machineId: machine.id }, directory: { kind: 'managed' },
+            executionTarget: { serverId: 'srv_home', machineId: machine.id },
+            directory: mode.startsWith('ordinary') ? { kind: 'path', path: '/tmp/project' } : { kind: 'managed' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-            machineSetupPlanInput: { homeId: 'srv_home', machineId: machine.id,
-                sources: [{ kind: 'direct', setup: {} }] },
+            ...(mode.startsWith('ordinary') ? {} : { machineSetupPlanInput: { homeId: 'srv_home', machineId: machine.id,
+                sources: [{ kind: 'direct', setup: {} }] } }),
         }) : template ? DeploymentTemplateInstantiateInputV1Schema.parse({ mode, serverId: 'srv_home',
             machineId: 'remote-runtime', projectSourceId: 'source',
             templateRef: { sourceId: 'apps', itemId: 'app', version: '1',
@@ -200,6 +203,8 @@ it.each([
                 [machine, workspaceMachine, originMachine].find(row => String(url).endsWith(`/v1/machines/${row.id}`)) } }
                 : { status: 200, data: move || repositoryWorkspace ? [machine, workspaceMachine, originMachine] : [machine] });
         const homeRequests = vi.spyOn(axios, 'request').mockImplementation(async request => {
+            if (new URL(request.url!).pathname === '/v1/home/governance/get')
+                return { status: 200, data: { homeDefaults: null } };
             if (new URL(request.url!).pathname === managedMachineActionEndpointPathV1('machines.managed.list'))
                 return { status: 200, data: { machines: [] } };
             if (authoredPreview && new URL(request.url!).pathname === '/v1/deployments/environments') {
@@ -262,6 +267,16 @@ it.each([
         });
         vi.stubGlobal('fetch', localTransport);
         try {
+            if (mode === 'ordinary-root') {
+                // An installed control listener without its original-Account
+                // admission producer must refuse before local preparation/Ask.
+                const response = await app.inject({ method: 'POST', url: '/actions/root/execute',
+                    headers: { 'x-happier-daemon-token': 'fixture-control' },
+                    payload: { actionId, input, surface: 'cli', actionRequestId: 'create-request' } });
+                expect(response.json()).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+                expect(requests).toEqual([]);
+                return;
+            }
             const executor = createCliActionExecutorFromCredentials({ credentials,
                 ...(!setupSpawn ? { externalActionClient: true } : {}),
                 ...(explicit ? { machineId: template ? 'remote-runtime' : move ? 'origin-host' : machine.id } : {}),
@@ -278,10 +293,11 @@ it.each([
             if (template && !repositoryWorkspace) expect(machineReads.mock.calls.map(([url]) => String(url))).toContain('https://home.test/v1/machines/controller');
             for (const envelope of envelopes) expect(envelope).toMatchObject({ v: 1, input,
                 target: { kind: 'machine', machineId: selectedMachine.id } });
-            expect(result).toMatchObject(expected);
             expect(requests).toEqual([`https://home.test/v1/actions/${actionId}/execution-authorization`,
                 `https://home.test/v1/actions/${actionId}`]);
-            if (setupSpawn || template || move || authoredPreview) expect(localTransport).not.toHaveBeenCalled();
+            expect(result).toMatchObject(expected);
+            if (setupSpawn || template || move || authoredPreview)
+                expect(localTransport.mock.calls.filter(([url]) => String(url).endsWith('/actions/root/execute'))).toEqual([]);
             if (move || template && repositoryWorkspace) expect(homeRequests.mock.calls.filter(([request]) =>
                 request.url?.includes('/v1/deployments/environments/'))).toHaveLength(0);
             if (template && !repositoryWorkspace) expect(homeRequests.mock.calls.filter(([request]) =>

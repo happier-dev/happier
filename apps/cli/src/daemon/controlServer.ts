@@ -27,6 +27,7 @@ import { logger } from '@/ui/logger';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
 import { requiresOriginalAccountMachineActionProof } from '@/api/externalActionExecutionAuthorization';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { requiresManagedMachineDaemonIngress } from './externalActions/reconcileExternalActionTarget';
 import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
@@ -1321,8 +1322,8 @@ export function createDaemonControlApp({
             : resolveInvocationAuthority({ credential: 'terminal', surface });
           const controlControllerTarget = await externalActionApi.resolveManagedControlControllerTarget?.(
             parsed.data.actionId, parsed.data.input, lifetime.signal) ?? null;
-          if (requiresManagedMachineDaemonIngress(parsed.data.actionId,
-            resolveActionExecutionPlacementForInput(getActionSpec(parsed.data.actionId), parsed.data.input, undefined, surface), controlControllerTarget, parsed.data.input)
+          if ((parsed.data.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || requiresManagedMachineDaemonIngress(parsed.data.actionId,
+            resolveActionExecutionPlacementForInput(getActionSpec(parsed.data.actionId), parsed.data.input, undefined, surface), controlControllerTarget, parsed.data.input))
             && requiresOriginalAccountMachineActionProof(parsed.data.actionId, parsed.data.input, { surface })) {
             if (!externalActionApi.executeOriginalAccountAction)
               return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
