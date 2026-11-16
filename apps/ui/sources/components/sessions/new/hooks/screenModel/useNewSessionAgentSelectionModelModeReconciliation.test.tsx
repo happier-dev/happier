@@ -24,7 +24,13 @@ vi.mock('@/agents/catalog/catalog', async (importOriginal) => ({
     }),
 }));
 
-import { useNewSessionAgentSelectionModelModeReconciliation } from './useNewSessionAgentSelectionModelModeReconciliation';
+import { useNewSessionAgentSelectionModelModeReconciliation as useActualNewSessionAgentSelectionModelModeReconciliation } from './useNewSessionAgentSelectionModelModeReconciliation';
+import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
+
+function useNewSessionAgentSelectionModelModeReconciliation(params: Omit<Parameters<typeof useActualNewSessionAgentSelectionModelModeReconciliation >[0], 'engineSelectionState'>) {
+    const engineSelectionState = useNewSessionAgentPickerEngineSelectionState({ modelSelectionIsExplicit: true, ...params });
+    return useActualNewSessionAgentSelectionModelModeReconciliation({ ...params, engineSelectionState });
+}
 
 type ReconciliationParams = Parameters<typeof useNewSessionAgentSelectionModelModeReconciliation>[0];
 

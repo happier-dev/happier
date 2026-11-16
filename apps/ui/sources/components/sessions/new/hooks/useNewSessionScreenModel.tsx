@@ -161,7 +161,7 @@ import { useNewSessionProfileEditPersistence } from '@/components/sessions/new/h
 import { buildNewSessionScreenVariantModel } from '@/components/sessions/new/hooks/screenModel/buildNewSessionScreenVariantModel';
 import { useNewSessionTranscriptStorageState } from '@/components/sessions/new/hooks/screenModel/useNewSessionTranscriptStorageState';
 import { useNewSessionAgentAuthoringOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentAuthoringOptionsState';
-import { useNewSessionTeamCredentialModelState, useRetireNewSessionTeamCredentialModel } from '@/components/sessions/new/hooks/screenModel/useNewSessionTeamCredentialModelState';
+import { canRetainNewSessionModelSelection, useNewSessionTeamCredentialModelState, useRetireNewSessionTeamCredentialModel } from '@/components/sessions/new/hooks/screenModel/useNewSessionTeamCredentialModelState';
 import { useNewSessionPermissionModeState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPermissionModeState';
 import { useNewSessionPromptAutomationState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPromptAutomationState';
 import { useNewSessionSecretSelectionState } from '@/components/sessions/new/hooks/screenModel/useNewSessionSecretSelectionState';
@@ -1608,9 +1608,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     useRetireNewSessionTeamCredentialModel({ selection: storedTeamCredentialModel, agentTargetKey: selectedBackendTargetKey,
         setSelection: setSelectedTeamCredentialModel, setModelSelectionForBackendTarget });
     const canRetainModelSelection = React.useCallback((selection: SessionModelSelectionV1 | null) => {
-        const team = teamCredentialModelRef.current;
-        return !team || !selection || selection.ref.providerConnectionId !== null
-            || selection.ref.agentTargetKey !== team.agentTargetKey || selection.ref.modelId !== team.modelId;
+        return canRetainNewSessionModelSelection(teamCredentialModelRef.current, selection);
     }, [teamCredentialModelRef]);
     const rememberRetainableEngineSelection = useDeferredRememberedEngineSelection({
         enabled: rememberLastEngineSelections,
@@ -2214,6 +2212,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }, [agentTypeParam, backendTargetKeyParam, backendTargetParam, navigation, router]);
     const engineSelectionState = useNewSessionAgentPickerEngineSelectionState({
         selectedBackendEntry, selectedBackendTargetKey, modelMode, modelSelection, canRetainModelSelection,
+        modelSelectionIsExplicit: modelSelectionForPersistence !== undefined,
         acpSessionModeId, sessionConfigOptionOverrides, setBackendTarget, setModelMode,
         setAcpSessionModeId, setSessionConfigOptionOverrides, setEngineSelectionForBackendTarget,
         rememberEngineSelectionsEnabled: rememberLastEngineSelections,
@@ -2243,6 +2242,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         setDirectoryIntent: directoryIntentFixed ? undefined : setDirectoryIntent,
         applyAgentIntent: async intent => applyNewSessionDraftAgentIntent({ intent, entries: resolvedBackendEntries,
             isSelectable: isBackendEntrySelectable, selectEngineSelection: engineSelectionState.selectEngineSelection,
+            selectBackendTarget: engineSelectionState.selectBackendTarget,
             setSessionMode: setAcpSessionModeIdAndRemember, setConfigOption: setAcpConfigOptionOverrideAndRemember }),
         applyModelIntent: async intent => {
             if (intent.kind === 'team') {
@@ -2276,9 +2276,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         const nextAgentId = typeof next === 'function' ? next(currentAgentId ?? 'claude') : next;
         const entry = resolvedBackendEntries.find(candidate => candidate.builtInAgentId === nextAgentId);
         if (!entry) return;
-        void draftActions.setAgent({ kind: 'picker', backendTarget: entry.backendTarget,
-            selection: engineSelectionState.getEngineSelectionForTargetKey(entry.backendTargetKey) });
-    }, [currentEngineSelectionRef, draftActions.setAgent, engineSelectionState.getEngineSelectionForTargetKey, resolvedBackendEntries]);
+        void draftActions.setAgent({ kind: 'target', backendTarget: entry.backendTarget });
+    }, [currentEngineSelectionRef, draftActions.setAgent, resolvedBackendEntries]);
     const selectCreationModel = React.useCallback<React.ComponentProps<typeof SessionModelPicker>['onSelect']>((ref) => {
         void draftActions.setModel({ kind: 'selection', ref });
     }, [draftActions.setModel]);
@@ -2838,6 +2837,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         preflightModels,
         preflightModelsTargetKey,
         engineSelectionState: {
+            selectBackendTarget: entry => { void draftActions.setAgent({ kind: 'target', backendTarget: entry.backendTarget }); },
             getEngineSelectionForTargetKey: engineSelectionState.getEngineSelectionForTargetKey,
             selectEngineSelection: (entry, selection) => { void draftActions.setAgent({ kind: 'picker', backendTarget: entry.backendTarget, selection }); },
         },

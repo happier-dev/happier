@@ -40,6 +40,7 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     isBackendEntrySelectable: (entry: ResolvedBackendCatalogEntry) => boolean;
     getBackendEntryUnavailabilityReason?: (entry: ResolvedBackendCatalogEntry) => NewSessionProfileAvailabilityReason | null;
     getEngineSelectionForTargetKey: (targetKey: string) => SessionAgentPickerSelection;
+    selectBackendTarget: (entry: ResolvedBackendCatalogEntry) => void;
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => void;
     selectedMachineId: string | null;
     capabilityServerId: string;
@@ -277,6 +278,7 @@ export function buildNewSessionAgentPickerOptions(
                 experimentalConfirmation: params.experimentalConfirmation,
                 onRememberAgentPickerView: params.onRememberAgentPickerView,
                 getEngineSelectionForTargetKey: params.getEngineSelectionForTargetKey,
+                selectBackendTarget: params.selectBackendTarget,
                 selectEngineSelection: params.selectEngineSelection,
                 modelSummary: machineAgentsPaneStatus?.modelSummary,
                 ...(machineAgentsPaneStatus?.refreshProbe ? { refreshProbe: machineAgentsPaneStatus.refreshProbe } : {}),

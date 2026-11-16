@@ -75,6 +75,7 @@ function useTargetScopedAuthoringState<Value>(backendTargetKey: string | null, r
 }
 
 type TargetScopedEngineSelection = Readonly<{
+    applyModel?: boolean;
     modelMode: ModelMode;
     modelSelection?: SessionModelSelectionV1 | null;
     acpSessionModeId: string | null;
@@ -487,29 +488,31 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     ) => {
         const targetKey = backendTargetKey.trim();
         if (!targetKey) return;
-        const nextModelSelection = selection.modelSelection === undefined
-            ? selection.modelMode === 'default'
-                ? null
-                : SessionModelSelectionV1Schema.parse({
-                    v: 1,
-                    updatedAt: Date.now(),
-                    ref: {
-                        agentTargetKey: targetKey,
-                        providerConnectionId: null,
-                        modelId: selection.modelMode,
-                    },
-                })
-            : selection.modelSelection;
-        if (nextModelSelection && !backendTargetKeysMatch(nextModelSelection.ref.agentTargetKey, targetKey)) {
-            throw new Error('Session authoring model selection target mismatch');
+        if (selection.applyModel !== false) {
+            const nextModelSelection = selection.modelSelection === undefined
+                ? selection.modelMode === 'default'
+                    ? null
+                    : SessionModelSelectionV1Schema.parse({
+                        v: 1,
+                        updatedAt: Date.now(),
+                        ref: {
+                            agentTargetKey: targetKey,
+                            providerConnectionId: null,
+                            modelId: selection.modelMode,
+                        },
+                    })
+                : selection.modelSelection;
+            if (nextModelSelection && !backendTargetKeysMatch(nextModelSelection.ref.agentTargetKey, targetKey)) {
+                throw new Error('Session authoring model selection target mismatch');
+            }
+            setModelState({
+                backendTargetKey: targetKey,
+                value: {
+                    modelMode: nextModelSelection?.ref.modelId ?? selection.modelMode,
+                    modelSelection: nextModelSelection,
+                },
+            });
         }
-        setModelState({
-            backendTargetKey: targetKey,
-            value: {
-                modelMode: nextModelSelection?.ref.modelId ?? selection.modelMode,
-                modelSelection: nextModelSelection,
-            },
-        });
         setAcpSessionModeIdState({
             backendTargetKey: targetKey,
             value: selection.acpSessionModeId,

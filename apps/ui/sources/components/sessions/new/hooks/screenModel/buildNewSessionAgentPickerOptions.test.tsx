@@ -68,7 +68,7 @@ describe('buildNewSessionAgentPickerOptions', () => {
             resolvedBackendEntries: [entry, createEntry({ backendId: 'claude', kind: 'builtInAgent', title: 'Claude' })],
             getCompatibleProfileBackendEntries: () => [], isBackendEntrySelectable: () => false,
             getEngineSelectionForTargetKey: () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} }),
-            selectEngineSelection: vi.fn(), selectedMachineId: 'machine-1', capabilityServerId: 'server-1',
+            selectBackendTarget: vi.fn(), selectEngineSelection: vi.fn(), selectedMachineId: 'machine-1', capabilityServerId: 'server-1',
             selectedPath: '/repo', selectedBackendTargetKey: entry.backendTargetKey, selectedModelId: 'default',
             getBackendEntryMachineAgent: () => agent, renderMachineAgentSetup: () => null, installMachineAgent, canManageMachine,
         });
@@ -94,7 +94,7 @@ describe('buildNewSessionAgentPickerOptions', () => {
             isBackendEntrySelectable: entry => isBackendEntrySelectableForNewSession({ ...selection, entry }),
             getBackendEntryUnavailabilityReason: entry => resolveBackendEntryUnavailabilityReasonForNewSession({ ...selection, entry }),
             getEngineSelectionForTargetKey: () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} }),
-            selectEngineSelection: vi.fn(), selectedMachineId: 'machine-1', capabilityServerId: 'server-1',
+            selectBackendTarget: vi.fn(), selectEngineSelection: vi.fn(), selectedMachineId: 'machine-1', capabilityServerId: 'server-1',
             selectedPath: '/repo', selectedBackendTargetKey: entries[0]!.backendTargetKey, selectedModelId: 'default',
         });
         expect(new Map(result.agentPickerOptions?.map(({ id, disabled }) => [id, disabled])))
@@ -151,7 +151,7 @@ describe('buildNewSessionAgentPickerOptions', () => {
             getCompatibleProfileBackendEntries: () => [],
             isBackendEntrySelectable: () => true,
             getEngineSelectionForTargetKey: () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} }),
-            selectEngineSelection: vi.fn(),
+            selectBackendTarget: vi.fn(), selectEngineSelection: vi.fn(),
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
@@ -181,7 +181,7 @@ describe('buildNewSessionAgentPickerOptions', () => {
             // Nothing is known about Claude on an unreachable machine; Codex is known to be signed out.
             getBackendEntryUnavailabilityReason: (candidate) => candidate === claude ? 'agent-not-ready:claude' : 'logged-out:codex',
             getEngineSelectionForTargetKey: () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} }),
-            selectEngineSelection: vi.fn(),
+            selectBackendTarget: vi.fn(), selectEngineSelection: vi.fn(),
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
@@ -216,7 +216,7 @@ describe('buildNewSessionAgentPickerOptions', () => {
             selectedMachineName: 'Leeroys-MacBook-Pro',
             machineAgentsStatus,
             getEngineSelectionForTargetKey: () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} }),
-            selectEngineSelection: vi.fn(),
+            selectBackendTarget: vi.fn(), selectEngineSelection: vi.fn(),
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',

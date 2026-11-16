@@ -5,8 +5,15 @@ import { renderHook } from '@/dev/testkit';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
+import { projectSessionModelSelectionV2ToV1, SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
 
-import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
+import { useNewSessionAgentPickerEngineSelectionState as useActualNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
+import { canRetainNewSessionModelSelection } from './useNewSessionTeamCredentialModelState';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
+
+function useNewSessionAgentPickerEngineSelectionState(params: Omit<Parameters<typeof useActualNewSessionAgentPickerEngineSelectionState>[0], 'modelSelectionIsExplicit'>) {
+    return useActualNewSessionAgentPickerEngineSelectionState({ modelSelectionIsExplicit: true, ...params });
+}
 
 function createBuiltInBackendEntry(backendId: 'claude' | 'codex' | 'kimi' | 'gemini', title: string): ResolvedBackendCatalogEntry {
     const backendTarget = { kind: 'backend' as const, backendId };
@@ -29,6 +36,45 @@ function createBuiltInBackendEntry(backendId: 'claude' | 'codex' | 'kimi' | 'gem
 }
 
 describe('useNewSessionAgentPickerEngineSelectionState', () => {
+    it('retires a V2 Team model without reviving an older native cache on Agent switch-back', async () => {
+        const codexEntry = createBuiltInBackendEntry('codex', 'Codex');
+        const claudeEntry = createBuiltInBackendEntry('claude', 'Claude');
+        const nativeSelection = SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: 123,
+            ref: { agentTargetKey: codexEntry.backendTargetKey, providerConnectionId: null, modelId: 'old-native-model' } });
+        let team: TeamCredentialProviderModelSelectionV1 | null = null;
+        type Props = Parameters<typeof useNewSessionAgentPickerEngineSelectionState>[0];
+        const baseProps: Props = {
+            selectedBackendEntry: codexEntry, selectedBackendTargetKey: codexEntry.backendTargetKey,
+            modelMode: nativeSelection.ref.modelId, modelSelection: nativeSelection,
+            acpSessionModeId: null, sessionConfigOptionOverrides: null,
+            setBackendTarget: vi.fn(), setModelMode: vi.fn(), setAcpSessionModeId: vi.fn(),
+            setSessionConfigOptionOverrides: vi.fn(),
+            canRetainModelSelection: selection => canRetainNewSessionModelSelection(team, selection),
+        };
+        const hook = await renderHook((props: Props) => useNewSessionAgentPickerEngineSelectionState(props), { initialProps: baseProps });
+        try {
+            team = { kind: 'team_credential_provider_model', teamId: 'team-a', resourceId: 'resource-a',
+                expectedResourceRevision: 0, deliveryMode: 'brokered', agentTargetKey: codexEntry.backendTargetKey,
+                modelId: 'gpt-6-luna' };
+            // A source-bearing V2 Team choice intentionally has no native V1 carrier.
+            const sourceSelection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 124, ref: {
+                source: 'team_resource', teamId: team.teamId, resourceId: team.resourceId,
+                expectedResourceRevision: team.expectedResourceRevision, deliveryMode: team.deliveryMode,
+                agentTargetKey: team.agentTargetKey, modelId: team.modelId,
+            } });
+            await hook.rerender({ ...baseProps, modelMode: team.modelId,
+                sessionConfigOptionOverrides: { v: 1, updatedAt: 124,
+                    overrides: { reasoning_effort: { value: 'high', updatedAt: 124 } } },
+                modelSelection: projectSessionModelSelectionV2ToV1(sourceSelection) });
+            team = null;
+            await hook.rerender({ ...baseProps, selectedBackendEntry: claudeEntry,
+                selectedBackendTargetKey: claudeEntry.backendTargetKey, modelMode: 'default', modelSelection: null });
+            expect(hook.getCurrent().getEngineSelectionForTargetKey(codexEntry.backendTargetKey).modelId).toBe('default');
+            expect(hook.getCurrent().getEngineSelectionForTargetKey(codexEntry.backendTargetKey).configOverrides)
+                .toEqual({ reasoning_effort: 'high' });
+        } finally { await hook.unmount(); }
+    });
+
     it('does not retain a source-backed model as a native engine selection', async () => {
         const codexEntry = createBuiltInBackendEntry('codex', 'Codex');
         const claudeEntry = createBuiltInBackendEntry('claude', 'Claude');

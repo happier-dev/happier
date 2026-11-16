@@ -9,7 +9,14 @@ import { settingsDefaults, settingsParse } from '@/sync/domains/settings/setting
 import { storage } from '@/sync/domains/state/storageStore';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
-import { useNewSessionAgentPickerControls } from './useNewSessionAgentPickerControls';
+import { useNewSessionAgentPickerControls as useActualNewSessionAgentPickerControls } from './useNewSessionAgentPickerControls';
+import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
+
+function useNewSessionAgentPickerControls(params: Omit<Parameters<typeof useActualNewSessionAgentPickerControls >[0], 'engineSelectionState'>
+    & Partial<Pick<Parameters<typeof useNewSessionAgentPickerEngineSelectionState>[0], 'modelSelectionIsExplicit'>>) {
+    const engineSelectionState = useNewSessionAgentPickerEngineSelectionState({ modelSelectionIsExplicit: true, ...params });
+    return useActualNewSessionAgentPickerControls({ ...params, engineSelectionState });
+}
 import { useNewSessionAgentAuthoringOptionsState } from './useNewSessionAgentAuthoringOptionsState';
 import { formatBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -563,6 +570,7 @@ describe('useNewSessionAgentPickerControls', () => {
                 isBackendEntrySelectable: () => true, selectedBackendEntry: codex,
                 selectedBackendTargetKey: formatBackendTargetKeyV2(backendTarget), setBackendTarget,
                 modelMode: authoring.modelMode, modelSelection: authoring.modelSelection,
+                modelSelectionIsExplicit: authoring.modelSelectionForPersistence !== undefined,
                 setModelMode: authoring.setModelMode, acpSessionModeId: authoring.acpSessionModeId,
                 setAcpSessionModeId: authoring.setAcpSessionModeId,
                 sessionConfigOptionOverrides: authoring.sessionConfigOptionOverrides,
@@ -1074,6 +1082,62 @@ describe('useNewSessionAgentPickerControls', () => {
                 },
             },
         }));
+    });
+
+    it.each([
+        { late: false, rail: false }, { late: true, rail: false },
+        { late: false, rail: true }, { late: true, rail: true },
+    ])('keeps a destination Agent model inherited with late Team context=$late and rail=$rail until a model is chosen', async ({ late, rail }) => {
+        const claude = createBuiltInBackendEntry('claude', 'Claude', null);
+        const codex = createBuiltInBackendEntry('codex', 'Codex', null);
+        const selection = { v: 2 as const, updatedAt: 1, ref: {
+            source: 'team_resource' as const, teamId: 'team-a', resourceId: 'resource-a',
+            expectedResourceRevision: 0, deliveryMode: 'brokered' as const,
+            agentTargetKey: codex.backendTargetKey, modelId: 'gpt-6.1-sol',
+        } };
+        const hook = await renderHook(({ configured }) => {
+            const [target, setBackendTarget] = React.useState<PersistedBackendTargetRefV2>(claude.backendTarget);
+            const entry = formatBackendTargetKeyV2(target) === codex.backendTargetKey ? codex : claude;
+            const authoring = useNewSessionAgentAuthoringOptionsState({
+                agentType: entry.catalogAgentId, backendTargetKey: entry.backendTargetKey,
+                hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
+                managedDefaults: configured ? { teamDefaults: { team: { modelByAgentTargetKey: {
+                    [codex.backendTargetKey]: selection,
+                } }, groups: {} } } : undefined,
+            });
+            const picker = useNewSessionAgentPickerControls({
+                useProfiles: false, projectionCurrent: true, selectedProfileId: null, profileMap: new Map(),
+                resolvedBackendEntries: [claude, codex], getCompatibleProfileBackendEntries: () => [],
+                isBackendEntrySelectable: () => true, selectedBackendEntry: entry,
+                selectedBackendTargetKey: entry.backendTargetKey, setBackendTarget,
+                modelMode: authoring.modelMode, modelSelection: authoring.modelSelection,
+                setModelMode: authoring.setModelMode, acpSessionModeId: authoring.acpSessionModeId,
+                setAcpSessionModeId: authoring.setAcpSessionModeId,
+                sessionConfigOptionOverrides: authoring.sessionConfigOptionOverrides,
+                setSessionConfigOptionOverrides: authoring.setSessionConfigOptionOverrides,
+                setEngineSelectionForBackendTarget: authoring.setEngineSelectionForBackendTarget,
+                selectedMachineId: 'machine-1', capabilityServerId: 'server-1', selectedPath: '/repo',
+            });
+            return { authoring, picker };
+        }, { initialProps: { configured: !late } });
+        try {
+            const select = (key: string) => {
+                if (rail) hook.getCurrent().picker.agentPickerOptions?.find(option => option.id === key)?.onSelectImmediate?.();
+                else hook.getCurrent().picker.handleAgentPickerSelect(key);
+            };
+            await act(async () => select(codex.backendTargetKey));
+            if (late) await hook.rerender({ configured: true });
+            expect(hook.getCurrent().authoring.modelMode).toBe('gpt-6.1-sol');
+            expect(hook.getCurrent().authoring.modelSelectionV2).toEqual(selection);
+            expect(hook.getCurrent().authoring.modelSelectionForPersistence).toBeUndefined();
+            await act(async () => hook.getCurrent().authoring.setModelMode('default'));
+            expect(hook.getCurrent().authoring.modelMode).toBe('default');
+            expect(hook.getCurrent().authoring.modelSelectionForPersistence).toBeNull();
+            await act(async () => select(claude.backendTargetKey));
+            await act(async () => select(codex.backendTargetKey));
+            expect(hook.getCurrent().authoring.modelMode).toBe('default');
+            expect(hook.getCurrent().authoring.modelSelectionForPersistence).toBeNull();
+        } finally { await hook.unmount(); }
     });
 
     it('propagates destination backend detail selections through target-scoped authoring state', async () => {

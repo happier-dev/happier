@@ -34,6 +34,7 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
     experimentalConfirmation?: SessionModelPickerExperimentalConfirmationController;
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
     getEngineSelectionForTargetKey: (targetKey: string) => SessionAgentPickerSelection;
+    selectBackendTarget: (entry: ResolvedBackendCatalogEntry) => void;
     selectEngineSelection: (entry: ResolvedBackendCatalogEntry, selection: SessionAgentPickerSelection) => void;
     /** One machine-wide line under the open Agent's Model label (an offline machine), said once rather than per row. */
     modelSummary?: string;
@@ -74,8 +75,7 @@ export function buildNewSessionAgentPickerOptionInteractions(
                 kind: 'backend',
                 backendTargetKey: params.entry.backendTargetKey,
             });
-            const nextSelection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);
-            params.selectEngineSelection(params.entry, nextSelection);
+            params.selectBackendTarget(params.entry);
         },
         renderDetailContent: () => {
             const selection = params.getEngineSelectionForTargetKey(params.entry.backendTargetKey);

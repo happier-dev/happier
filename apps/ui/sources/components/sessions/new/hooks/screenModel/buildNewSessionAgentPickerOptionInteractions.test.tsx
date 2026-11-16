@@ -63,16 +63,6 @@ vi.mock('@/components/ui/text/Text', () => ({
     TextInput: 'TextInput',
 }));
 
-vi.mock('@/agents/catalog/catalog', () => ({
-    AGENT_IDS: ['claude', 'codex', 'custom-preset'],
-    isBundledAgentId: (value: string) => ['claude', 'codex', 'custom-preset'].includes(value),
-    getAgentCore: () => ({
-        availability: { experimental: false },
-        model: { supportsFreeform: true, dynamicProbe: 'dynamic' },
-        ui: { agentPickerIconName: 'layers-outline' },
-    }),
-}));
-
 vi.mock('@/components/sessions/pickers/OptionPickerOverlay', () => ({
     OptionPickerOverlay: (props: CapturedModelPickerProps & { title?: string }) => {
         if (props.title === 'agentInput.model.title') {
@@ -206,7 +196,7 @@ describe('buildNewSessionAgentPickerOptionInteractions', () => {
         const interactions = buildNewSessionAgentPickerOptionInteractions({
             entry: pluginEntry, disabled: false, selectedMachineId: 'picker-machine', capabilityServerId: 'server-1', selectedPath: '/repo',
             getEngineSelectionForTargetKey: () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} }),
-            selectEngineSelection: vi.fn(),
+            selectBackendTarget: vi.fn(), selectEngineSelection: vi.fn(),
         });
         const renderDetail = interactions.renderDetailContent;
         if (!renderDetail) throw new Error('Missing engine detail');
@@ -246,7 +236,7 @@ describe('buildNewSessionAgentPickerOptionInteractions', () => {
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
             getEngineSelectionForTargetKey: () => selection,
-            selectEngineSelection: vi.fn(),
+            selectBackendTarget: vi.fn(), selectEngineSelection: vi.fn(),
         });
 
         const renderDetailContent = interactions.renderDetailContent;
@@ -284,7 +274,7 @@ describe('buildNewSessionAgentPickerOptionInteractions', () => {
             selectedPath: '/repo',
             providerProjection: screenProjection,
             getEngineSelectionForTargetKey: () => selection,
-            selectEngineSelection: vi.fn(),
+            selectBackendTarget: vi.fn(), selectEngineSelection: vi.fn(),
         });
 
         const renderDetailContent = interactions.renderDetailContent;
@@ -314,6 +304,7 @@ describe('buildNewSessionAgentPickerOptionInteractions', () => {
             selectedPath: '/repo',
             getEngineSelectionForTargetKey: () => selection,
             selectEngineSelection,
+            selectBackendTarget: vi.fn(),
         });
 
         const renderDetailContent = interactions.renderDetailContent;

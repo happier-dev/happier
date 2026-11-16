@@ -8,6 +8,15 @@ type TeamModelDraft = Readonly<{
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
 }>;
 
+/** Source-backed Team choices cannot be remembered as native model tuples. */
+export function canRetainNewSessionModelSelection(
+    team: TeamCredentialProviderModelSelectionV1 | null,
+    selection: SessionModelSelectionV1 | null,
+): boolean {
+    return !team || (selection !== null && (selection.ref.providerConnectionId !== null
+        || selection.ref.agentTargetKey !== team.agentTargetKey || selection.ref.modelId !== team.modelId));
+}
+
 /** Restore authored intent before autosave; a catalog still owns whether it can execute. */
 export function useNewSessionTeamCredentialModelState(input: Readonly<{
     serverId: string | null;

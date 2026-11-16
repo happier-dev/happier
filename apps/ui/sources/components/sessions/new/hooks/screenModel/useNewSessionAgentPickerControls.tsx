@@ -34,7 +34,7 @@ import {
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import { resolveNewSessionAgentPickerSingleSelectFallbackEntry } from './resolveNewSessionAgentPickerDispatch';
 import { useSessionAgentPickerControls } from '@/components/sessions/agentPicker/useSessionAgentPickerControls';
-import { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
+import type { useNewSessionAgentPickerEngineSelectionState } from './useNewSessionAgentPickerEngineSelectionState';
 import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 import type { NewSessionEngineOptionDetailProps } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
 
@@ -42,6 +42,7 @@ import type { NewSessionEngineOptionDetailProps } from '@/components/sessions/ne
 const openNoForm = () => {};
 
 export function useNewSessionAgentPickerControls(params: Readonly<{
+    engineSelectionState: ReturnType<typeof useNewSessionAgentPickerEngineSelectionState>;
     useProfiles: boolean;
     selectedProfileId: string | null;
     profileMap: ReadonlyMap<string, AIBackendProfile>;
@@ -115,25 +116,8 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     const {
         getEngineSelectionForTargetKey,
         selectEngineSelection,
-    } = useNewSessionAgentPickerEngineSelectionState({
-        selectedBackendEntry: params.selectedBackendEntry,
-        selectedBackendTargetKey: params.selectedBackendTargetKey,
-        modelMode: params.modelMode,
-        modelSelection: params.modelSelection ?? null,
-        canRetainModelSelection: params.canRetainModelSelection,
-        acpSessionModeId: params.acpSessionModeId,
-        sessionConfigOptionOverrides: params.sessionConfigOptionOverrides,
-        setBackendTarget: params.setBackendTarget,
-        setModelMode: params.setModelMode,
-        setAcpSessionModeId: params.setAcpSessionModeId,
-        setSessionConfigOptionOverrides: params.setSessionConfigOptionOverrides,
-        setEngineSelectionForBackendTarget: params.setEngineSelectionForBackendTarget,
-        rememberEngineSelectionsEnabled: params.rememberEngineSelectionsEnabled,
-        rememberedEngineSelectionsByScope: params.rememberedEngineSelectionsByScope,
-        rememberedEngineSelectionServerId: params.rememberedEngineSelectionServerId,
-        onRememberEngineSelection: params.onRememberEngineSelection,
-        onExplicitBackendTargetSelection: params.onExplicitBackendTargetSelection,
-    });
+        selectBackendTarget,
+    } = params.engineSelectionState;
 
     const selectedBackendTargetKey = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
 
@@ -242,6 +226,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         getEngineSelectionForTargetKey,
         selectEngineSelection,
         selectedMachineId: params.selectedMachineId,
+        selectBackendTarget,
         capabilityServerId: params.capabilityServerId,
         projectionCurrent: params.projectionCurrent,
         selectedPath: params.selectedPath,
@@ -315,6 +300,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         handleToggleFavoriteBackendTarget,
         handleToggleFavoriteModel,
         selectEngineSelection,
+        selectBackendTarget,
     ]);
 
     const fallbackOptionId = params.selectedBackendEntry?.backendTargetKey ?? params.selectedBackendTargetKey;
@@ -343,7 +329,7 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
                 kind: 'backend',
                 backendTargetKey: nextEntry.backendTargetKey,
             });
-            selectEngineSelection(nextEntry, getEngineSelectionForTargetKey(nextEntry.backendTargetKey));
+            selectBackendTarget(nextEntry);
         },
         onSelectNonEntryOption: (selectedId) => {
             if (selectedId !== FAVORITE_MODELS_AGENT_PICKER_OPTION_ID) return;
@@ -357,10 +343,10 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
             selectedBackendTargetKey,
         });
         if (nextEntry) {
-            params.setBackendTarget(nextEntry.backendTarget);
+            selectBackendTarget(nextEntry);
         }
     }, [
-        params.setBackendTarget,
+        selectBackendTarget,
         selectedBackendTargetKey,
         selectableBackendEntries,
     ]);

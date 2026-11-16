@@ -141,6 +141,7 @@ export const SessionAgentPickerSelectionSchema = lazyZodSchema(() => z.strictObj
     configOverrides: z.record(z.string(), z.string()),
 }));
 export const NewSessionDraftAgentIntentSchema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('target'), backendTarget: PersistedBackendTargetRefV2Schema }),
   z.strictObject({ kind: z.literal('picker'), backendTarget: PersistedBackendTargetRefV2Schema,
     selection: SessionAgentPickerSelectionSchema }),
   z.strictObject({ kind: z.literal('mode'), sessionModeId: z.nullable(z.string()) }),

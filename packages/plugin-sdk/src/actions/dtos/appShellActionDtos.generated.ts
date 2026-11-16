@@ -185,6 +185,21 @@ export type AppShellActionInputById = {
                 };
                 modelLabel?: null | string | undefined;
             };
+        } | {
+            kind: 'target';
+            backendTarget: {
+                kind: 'agent';
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+                definitionId?: string | undefined;
+            } | {
+                kind: 'backend';
+                backendId: string;
+                configuredBackendId?: string | undefined;
+                sourceKind?: 'built_in' | 'configured' | undefined;
+            };
         };
     } & {
         clientId?: string | undefined;

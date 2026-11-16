@@ -77,10 +77,16 @@ describe('saved New Session draft Action', () => {
         const hook = await renderHook(() => {
             const [backendTarget, setBackendTarget] = React.useState<PersistedBackendTargetRefV2>({ kind: 'backend', backendId: 'claude' });
             const authoring = useNewSessionAgentAuthoringOptionsState({ agentType: 'codex', backendTargetKey: entry.backendTargetKey,
-                hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null });
+                hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
+                managedDefaults: { teamDefaults: { team: { modelByAgentTargetKey: {
+                    [entry.backendTargetKey]: { v: 2, updatedAt: 1, ref: { source: 'team_resource', teamId: 'team-a',
+                        resourceId: 'resource-a', expectedResourceRevision: 0, deliveryMode: 'brokered',
+                        agentTargetKey: entry.backendTargetKey, modelId: 'inherited-model' } },
+                } }, groups: {} } } });
             const engine = useNewSessionAgentPickerEngineSelectionState({ selectedBackendEntry: entry,
                 selectedBackendTargetKey: entry.backendTargetKey, setBackendTarget,
                 modelMode: authoring.modelMode, modelSelection: authoring.modelSelection,
+                modelSelectionIsExplicit: authoring.modelSelectionForPersistence !== undefined,
                 setModelMode: authoring.setModelMode, acpSessionModeId: authoring.acpSessionModeId,
                 setAcpSessionModeId: authoring.setAcpSessionModeId,
                 sessionConfigOptionOverrides: authoring.sessionConfigOptionOverrides,
@@ -91,6 +97,7 @@ describe('saved New Session draft Action', () => {
                 canSubmitRef: { current: true }, isSubmitting: false,
                 applyAgentIntent: async intent => applyNewSessionDraftAgentIntent({ intent, entries: [entry],
                     isSelectable: () => true, selectEngineSelection: engine.selectEngineSelection,
+                    selectBackendTarget: engine.selectBackendTarget,
                     setSessionMode: authoring.setAcpSessionModeId,
                     setConfigOption: (configId, value) => authoring.setSessionConfigOptionOverrides(current => buildAcpConfigOptionOverridesV1({
                         updatedAt: 1, overrides: { ...current?.overrides, [configId]: { value, updatedAt: 1 } },
@@ -103,6 +110,14 @@ describe('saved New Session draft Action', () => {
                 configOverrides: { reasoning_effort: 'high' } } };
             const executor = createDefaultActionExecutor();
             const context = { surface: 'agent' as const, authority: 'account_automation' as const, serverId, runtimeAccountId: accountId };
+            await act(async () => {
+                expect(await executor.execute(actionId, { ref: hook.getCurrent().document.ref,
+                    agent: { kind: 'target', backendTarget: target } }, context))
+                    .toMatchObject({ ok: true, result: { status: 'applied' } });
+            });
+            expect(hook.getCurrent().authoring.modelMode).toBe('inherited-model');
+            expect(hook.getCurrent().authoring.modelSelectionV2?.ref).toMatchObject({ source: 'team_resource', resourceId: 'resource-a' });
+            expect(hook.getCurrent().authoring.modelSelectionForPersistence).toBeUndefined();
             await act(async () => {
                 const result = await executor.execute(actionId, { ref: hook.getCurrent().document.ref, agent }, context);
                 expect(result, JSON.stringify(result))
