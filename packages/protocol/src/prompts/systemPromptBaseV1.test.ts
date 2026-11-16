@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { buildHappierBaseSystemPromptV1, buildHappierSessionTitleGuidanceV1, HAPPIER_BASE_SYSTEM_PROMPT_V1, readSessionInputPromptUserTextV1 } from './systemPromptBaseV1.js';
 import { buildPromptPlanV1, renderSessionInputPromptPlanV1 } from './promptPlanV1.js';
+import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult } from '../execution/runs/resultContract.js';
+import { buildCodingSessionPromptPlanBaseV1 } from './buildAppendSystemPromptBaseV1.js';
 
 describe('native prompt echo display text', () => {
   it('keeps a coding plan containing unreproducible plugin content inspectable', () => {
@@ -63,9 +65,57 @@ The tool may be exposed under different names depending on the provider. Prefer 
 Call the title tool again if the task changes significantly.`;
     expect(readSessionInputPromptUserTextV1(`${prefix}\n\nReview the release branch`)).toBe('Review the release branch');
   });
+
+  it('reads the options prefix emitted by the 0.2 predecessor', () => {
+    // Verbatim producer vector: ../0.2 e992e049ff, systemPromptBaseV1.ts.
+    const prefix = `# Options
+
+You have a way to give a user a easy way to answer your questions if you know possible answers. To provide this, you need to output in your final response an XML:
+
+<options>
+    <option>Option 1</option>
+    ...
+    <option>Option N</option>
+</options>
+
+You must output this in the very end of your response, not inside of any other text. Do not wrap it into a codeblock. Always dedicate "<options>" and "</options>" to a dedicated line. Never output anything like "custom", user always have an option to send a custom message. Do not enumerate options in both text and options block.
+Always prefer to use the options mode to the text mode. Try to keep options minimal, better to clarify in a next steps.
+
+# Plan mode with options
+
+When you are in the plan mode, you must use the options mode to give the user a easy way to answer your questions if you know possible answers. Do not assume what is needed, when there is discrepancy between what you need and what you have, you must use the options mode.`;
+    for (const text of [prefix, prefix.replace(/\s+/g, ' ')]) {
+      expect(readSessionInputPromptUserTextV1(`${text}\n\nReview the release branch`)).toBe('Review the release branch');
+      expect(readSessionInputPromptUserTextV1(`Explain this prompt:\n\n${text}`)).toBe(`Explain this prompt:\n\n${text}`);
+    }
+  });
 });
 
 describe('HAPPIER_BASE_SYSTEM_PROMPT_V1', () => {
+  it('makes conversational options yield to strict result contracts, including in plan mode', () => {
+    const contract = { kind: 'json' as const, schema: { type: 'object' as const,
+      properties: { verdict: { enum: ['continue', 'converged'] }, reason: { type: 'string' as const } },
+      required: ['verdict'], additionalProperties: false } };
+    const input = `${renderSessionInputPromptPlanV1(buildCodingSessionPromptPlanBaseV1({
+      settings: {}, executionRunsFeatureEnabled: true,
+    }))}\n\nCheck convergence.\n\n${buildExecutionRunResultContractPrompt(contract)}`;
+
+    // This is the model-facing policy, not a decoder exception for the incident's XML suffix.
+    expect(input).toMatch(/never add[\s\S]*options block[\s\S]*required output format[\s\S]*JSON[\s\S]*schema/i);
+    expect(input).toMatch(/plan mode[\s\S]*required output format takes precedence/i);
+    const result = { verdict: 'continue', reason: 'Requested engine did not complete; coverage incomplete.' };
+    expect(decodeExecutionRunProfileResult(JSON.stringify(result), contract)).toEqual({ ok: true, value: result });
+    for (const invalid of [
+      `${JSON.stringify(result)}\n<options>\n<option>continue</option>\n<option>converged</option>\n</options>`,
+      'Here is the result: {"verdict":"continue"}',
+      '{"verdict":',
+    ]) expect(decodeExecutionRunProfileResult(invalid, contract)).toEqual({ ok: false, reason: 'not_json' });
+    expect(decodeExecutionRunProfileResult('{"verdict":"stop"}', contract))
+      .toMatchObject({ ok: false, reason: 'schema_mismatch' });
+    expect(decodeExecutionRunProfileResult('{"verdict":"continue","extra":true}', contract))
+      .toMatchObject({ ok: false, reason: 'schema_mismatch' });
+  });
+
   it('includes one opt-in compaction nudge only with manual support and an available tool, and strips it from echoes', () => {
     const sessionMetadata = { agentRuntimeCapabilitiesV1: { sessionCapabilities: {
       sessionListing: 'unsupported', sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },

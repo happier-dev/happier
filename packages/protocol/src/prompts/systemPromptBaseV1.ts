@@ -84,7 +84,8 @@ export function buildHappierSessionTitleGuidanceV1(args: HappierSessionTitleGuid
   ].join('\n\n');
 }
 
-export const HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 = trimIdent(`
+// Exact 0.2 prefix retained only for transcript display, never emitted to an Agent.
+const HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_PREDECESSOR_V1 = trimIdent(`
   # Options
 
   You have a way to give a user a easy way to answer your questions if you know possible answers. To provide this, you need to output in your final response an XML:
@@ -101,6 +102,26 @@ export const HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 = trimIdent(`
   # Plan mode with options
 
   When you are in the plan mode, you must use the options mode to give the user a easy way to answer your questions if you know possible answers. Do not assume what is needed, when there is discrepancy between what you need and what you have, you must use the options mode.
+`);
+
+export const HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1 = trimIdent(`
+  # Options
+
+  Use options only when asking the user a conversational question with known possible answers. Never add an options block when the response must follow a required output format, such as JSON, a structured result schema, or an exact-text-only answer. Return only the required output in those turns, even when it contains decision values that could look like options.
+
+  For conversational questions, provide possible answers in this XML at the very end of your response:
+
+  <options>
+      <option>Option 1</option>
+      ...
+      <option>Option N</option>
+  </options>
+
+  Do not wrap the options block in a code block. Put "<options>" and "</options>" on their own lines. Keep options minimal. Do not include a "custom" option; the user can always send a custom message. Do not repeat the options in the response text.
+
+  # Plan mode with options
+
+  In plan mode, the required output format takes precedence over options. When no required output format applies and you need to clarify a question with known possible answers, use options to let the user answer.
 `);
 
 export const HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1 = trimIdent(`
@@ -168,6 +189,7 @@ const HAPPIER_BASE_SYSTEM_PROMPT_DISPLAY_BLOCKS_V1 = (() => {
     `${predecessorInitial}\n\nCall the title tool again if the task changes significantly.`,
     predecessorInitial,
     HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
+    HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_PREDECESSOR_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_LINKED_WORKSPACE_FILES_V1,
   ];
