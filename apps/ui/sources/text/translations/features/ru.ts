@@ -10896,6 +10896,7 @@ const ru: SecretsSettingsCopy = {
     usedByKindRegistrySource: "Источник реестра",
     usedByKindConnectedConfiguration: "Настройки подключённого аккаунта",
     deleteInUseNote: "Его нельзя удалить, пока он используется. Сначала переключите каждое использование на другой секрет.",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `Не удалось проверить записи пресетов: ${count}. Если они используют этот секрет, после удаления появится сообщение «Секрет недоступен». Всё равно удалить?`,
     deleteConfirmTitle: ({ name }: { name: string }) => `Удалить «${name}»?`,
 };
 

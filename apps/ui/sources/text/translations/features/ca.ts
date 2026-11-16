@@ -10871,6 +10871,7 @@ const ca: SecretsSettingsCopy = {
     usedByKindRegistrySource: "Origen de registre",
     usedByKindConnectedConfiguration: "Configuració del compte connectat",
     deleteInUseNote: "No es pot eliminar mentre alguna cosa l'utilitzi. Primer canvia cadascuna a un altre secret.",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `No s’han pogut comprovar ${count} registres de preajustos. Si fan servir aquest secret, mostraran «Secret no disponible» després de suprimir-lo. Vols suprimir-lo igualment?`,
     deleteConfirmTitle: ({ name }: { name: string }) => `Vols eliminar «${name}»?`,
 };
 

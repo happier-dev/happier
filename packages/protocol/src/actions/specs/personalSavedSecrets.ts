@@ -57,7 +57,9 @@ function createPersonalSavedSecretActionSpecsV1() {
   { ...secretSpec('secrets.update', 'Update private Saved Secret'), cli: { acceptsServerId: true, inputSchema: secretCli,
     commands: [{ path: ['secrets', 'update'], positionals: ['secretId'], visibility: 'canonical' as const }] } },
   { ...secretSpec('secrets.delete', 'Delete private Saved Secret'), cli: { acceptsServerId: true,
-    inputSchema: z.omit(secretCli, { rename: true, source: true }),
+    inputSchema: z.extend(z.omit(secretCli, { rename: true, source: true }), {
+      confirmedUnreadableReferences: inputs['secrets.delete'].shape.confirmedUnreadableReferences,
+    }),
     commands: [{ path: ['secrets', 'delete'], positionals: ['secretId'], visibility: 'canonical' as const }] } },
   secretSpec('secrets.link', 'Link vault fields as Saved Secrets'),
   secretSpec('secrets.export', 'Export Saved Secrets to vault'),

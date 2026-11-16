@@ -38,6 +38,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import { prepareSavedSecretsCliInput } from '@/cli/actions/adapters/savedSecretsInput';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { createDaemonSessionAccountActionExecutor } from '@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -54,7 +55,7 @@ afterEach(() => { vi.mocked(axios.get).mockReset(); vi.mocked(axios.post).mockRe
 
 describe('personal Saved Secret key rotation', () => {
     it.each((['plain', 'e2ee'] as const).flatMap(mode =>
-        (['unrelated', 'source', 'snapshot', 'unavailable'] as const).map(target => ({ mode, target }))))(
+        (['unrelated', 'source', 'snapshot', 'unavailable', ...(mode === 'e2ee' ? ['unavailable-with-snapshot' as const] : [])] as const).map(target => ({ mode, target }))))(
         'deletes using the actual opaque Preset census: $mode $target', async ({ mode, target }) => {
         const accountId = 'secret-owner';
         const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
@@ -79,10 +80,10 @@ describe('personal Saved Secret key rotation', () => {
                         contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(keys.publicKey) }, envelopeStatus: 'missing' }],
                 randomBytes: length => new Uint8Array(length).fill(61) });
         const source = seal(target === 'source');
-        const snapshot = seal(target === 'snapshot');
+        const snapshot = seal(target === 'snapshot' || target === 'unavailable-with-snapshot');
         const preset = ManagedMachinePresetV1Schema.parse({ id: 'preset', homeId: 'srv_delete_home', revision: 1,
             owner: { kind: 'account', accountId }, contentEncryptionMode: mode,
-            content: source.content, recipients: target === 'unavailable' ? [] : source.recipients });
+            content: source.content, recipients: target === 'unavailable' || target === 'unavailable-with-snapshot' ? [] : source.recipients });
         const presetList = ManagedMachinePresetListResultV1Schema.parse({ kind: 'listed', presets: [preset] });
         const retained = ManagedOpaquePresetReadV1Schema.parse({ machine: { id: 'retained', homeId: preset.homeId,
             custodianAccountId: accountId, preset: { id: preset.id, revision: 1, contentEncryptionMode: mode },
@@ -100,7 +101,7 @@ describe('personal Saved Secret key rotation', () => {
         vi.mocked(axios.get).mockImplementation(async rawUrl => {
             const path = new URL(String(rawUrl)).pathname;
             if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: accountId }) };
-            if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: [resource] } };
+            if (path === '/v1/account/saved-secrets/resources/materials') return { status: 200, data: { resources: deleted ? [] : [resource] } };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode, updatedAt: 1 } };
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: { mode, version: 1,
                 settingsVersion: 0, signingKeyFingerprint: null, contentKeyFingerprint: fingerprint, updatedAt: 1,
@@ -135,14 +136,31 @@ describe('personal Saved Secret key rotation', () => {
                 return { resourceId: request.resourceId };
             } });
         const result = await execute({ actionId: 'secrets.delete', input: { secretId: 'one', expectedUpdatedAt: 1 }, context: { surface: 'cli' } });
+        const unreadable = mode === 'e2ee' && (target === 'unavailable' || target === 'unavailable-with-snapshot');
         if (target === 'unrelated') expect(result).toEqual({ deleted: true });
-        else expect(result).toMatchObject({ ok: false, errorCode: target === 'unavailable'
-            ? mode === 'e2ee' ? 'recipient_envelope_missing' : 'secret_unavailable' : 'resource_in_use',
-            ...(target === 'unavailable' && mode === 'e2ee' ? { details: { presetId: preset.id } } : {}) });
+        else expect(result).toMatchObject({ ok: false, errorCode: unreadable ? 'unreadable_references'
+            : target === 'unavailable' ? 'secret_unavailable' : 'resource_in_use',
+            ...(unreadable ? { details: { count: 1, consequence: 'secret_unavailable' }, effectAttempted: false } : {}) });
         expect(deleted).toBe(target === 'unrelated');
+        if (unreadable) {
+            const executor = createActionExecutor({ personalSavedSecretActionExecute: execute });
+            const confirmedInput = await prepareSavedSecretsCliInput({ actionId: 'secrets.delete',
+                input: { secretId: 'one', confirmedUnreadableReferences: true },
+                execute: (actionId, input) => executor.execute(actionId, input, { surface: 'cli' }) });
+            const confirmed = await execute({ actionId: 'secrets.delete', input: confirmedInput, context: { surface: 'cli' } });
+            expect(confirmed).toMatchObject(target === 'unavailable' ? { deleted: true }
+                : { ok: false, errorCode: 'resource_in_use' });
+            expect(deleted).toBe(target === 'unavailable');
+            if (deleted) {
+                await expect(execute({ actionId: 'secrets.list', input: {}, context: { surface: 'cli' } }))
+                    .resolves.toMatchObject({ secrets: [] });
+                expect(createSavedSecretMaterializerFromSnapshotV1(operationContext.readSnapshot()!).resolve(ref))
+                    .toEqual({ status: 'forbidden' });
+            }
+        }
         const requests = vi.mocked(axios.post).mock.calls.map(([url]) => new URL(String(url)).pathname);
-        expect(requests.filter(path => path === machinePresetActionEndpointPathV1('machines.presets.list'))).toHaveLength(1);
-        expect(requests.filter(path => path === managedMachineActionEndpointPathV1('machines.managed.list'))).toHaveLength(target === 'unavailable' && mode === 'plain' ? 0 : 2);
+        expect(requests.filter(path => path === machinePresetActionEndpointPathV1('machines.presets.list'))).toHaveLength(unreadable ? 2 : 1);
+        expect(requests.filter(path => path === managedMachineActionEndpointPathV1('machines.managed.list'))).toHaveLength(target === 'unavailable' && mode === 'plain' ? 0 : unreadable ? 4 : 2);
         expect(requests).not.toContain('/v1/machines/presets/recipient-census');
     });
     it.each(['agent', 'mcp'] as const)('stores a person-entered value through %s MCP → private approval RPC → Saved Secret owner without disclosing it', async surface => {

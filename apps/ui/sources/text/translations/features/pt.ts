@@ -10871,6 +10871,7 @@ const pt: SecretsSettingsCopy = {
     usedByKindRegistrySource: "Origem de registo",
     usedByKindConnectedConfiguration: "Definições da conta ligada",
     deleteInUseNote: "Não pode ser eliminado enquanto algo o usar. Muda primeiro cada um para outro segredo.",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `Não foi possível verificar ${count} registros de predefinições. Se usarem este segredo, mostrarão «Segredo indisponível» após a exclusão. Excluir mesmo assim?`,
     deleteConfirmTitle: ({ name }: { name: string }) => `Eliminar «${name}»?`,
 };
 

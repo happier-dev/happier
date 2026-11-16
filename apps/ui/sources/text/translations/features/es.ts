@@ -10875,6 +10875,7 @@ const es: SecretsSettingsCopy = {
     usedByKindRegistrySource: "Origen de registro",
     usedByKindConnectedConfiguration: "Ajustes de la cuenta conectada",
     deleteInUseNote: "No se puede eliminar mientras algo lo use. Cambia primero cada uno a otro secreto.",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `No se pudieron comprobar ${count} registros de preajustes. Si usan este secreto, mostrarán «Secreto no disponible» después de eliminarlo. ¿Eliminar de todos modos?`,
     deleteConfirmTitle: ({ name }: { name: string }) => `¿Eliminar «${name}»?`,
 };
 

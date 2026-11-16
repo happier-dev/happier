@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { SavedSecretUnreadableReferencesWarningV1 } from '@happier-dev/cli-common/machines/managed';
 import { useLocalSearchParams, useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
 import { parseSavedSecretCatalogReferenceV1, type SavedSecretCatalogCorruptEntryV1, type SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -243,6 +244,8 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
     const alertDeleteRefusal = React.useCallback((
         result: Exclude<SavedSecretResourceDeleteResult, Readonly<{ ok: true }>>,
     ) => {
+        // The warning was already presented by the deletion confirmation; cancelling keeps the record.
+        if (result.reason === 'unreadable_references') return;
         if (result.reason === 'in_use') {
             Modal.alert(t('secrets.catalog.inUseTitle'), t('secrets.catalog.inUseBody', {
                 places: result.references.map((reference) => {
@@ -286,10 +289,11 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
             const operation = {
                 scope, resourceId, expectedRevision,
                 expectedSettingsVersion: settingsVersion,
-                // The Action policy decides whether to ask; when it does, the question names the secret.
-                confirmDeletion: () => Modal.confirm(
+                // The deletion owner combines census warnings with the ordinary Action confirmation.
+                confirmDeletion: (warning?: SavedSecretUnreadableReferencesWarningV1) => Modal.confirm(
                     t('secretsSettings.deleteConfirmTitle', { name: confirmation.name ?? t('secrets.catalog.unavailableName') }),
-                    confirmation.shared ? t('secretsSettings.deleteNoteShared') : t('secretsSettings.deleteNote'),
+                    warning ? t('secretsSettings.deleteUnreadableReferencesBody', { count: warning.count })
+                        : confirmation.shared ? t('secretsSettings.deleteNoteShared') : t('secretsSettings.deleteNote'),
                     { cancelText: t('common.cancel'), confirmText: t('common.delete'), destructive: true },
                 ),
                 onApprovalSucceeded: () => {

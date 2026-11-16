@@ -10872,6 +10872,7 @@ const fr: SecretsSettingsCopy = {
     usedByKindRegistrySource: "Source de registre",
     usedByKindConnectedConfiguration: "Réglages du compte connecté",
     deleteInUseNote: "Impossible de le supprimer tant qu'il est utilisé. Passez d'abord chaque usage à un autre secret.",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `Impossible de vérifier ${count} entrées de préréglage. Si elles utilisent ce secret, elles afficheront « Secret indisponible » après sa suppression. Supprimer quand même ?`,
     deleteConfirmTitle: ({ name }: { name: string }) => `Supprimer « ${name} » ?`,
 };
 

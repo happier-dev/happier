@@ -127,6 +127,7 @@ export const en = {
     usedByKindRegistrySource: "Registry source",
     usedByKindConnectedConfiguration: "Connected account settings",
     deleteInUseNote: "It can't be deleted while something uses it. Switch each one to another secret first.",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `Could not check ${count} preset records. If any use this secret, they will show “Secret unavailable” after deletion. Delete anyway?`,
     deleteConfirmTitle: ({ name }: { name: string }) => `Delete “${name}”?`,
 };
 

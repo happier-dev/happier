@@ -10856,6 +10856,7 @@ const de: SecretsSettingsCopy = {
     usedByKindRegistrySource: "Registry-Quelle",
     usedByKindConnectedConfiguration: "Einstellungen des verbundenen Kontos",
     deleteInUseNote: "Es kann nicht gelöscht werden, solange es verwendet wird. Stelle zuerst jede Verwendung auf ein anderes Geheimnis um.",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `${count} Vorlageneinträge konnten nicht geprüft werden. Falls sie dieses Secret verwenden, zeigen sie nach dem Löschen „Secret nicht verfügbar“. Trotzdem löschen?`,
     deleteConfirmTitle: ({ name }: { name: string }) => `„${name}“ löschen?`,
 };
 

@@ -181,7 +181,8 @@ export async function prepareSavedSecretsCliInput(params: Readonly<{
     if (!parsed.success) invalid('Saved Secret metadata is unavailable.');
     const secret = selectUnique(matchPersonalSavedSecretMetadata(parsed.data.secrets, input.secretId), 'Saved Secret');
     const resolved = { secretId: secret.secretId, expectedUpdatedAt: input.expectedUpdatedAt ?? secret.updatedAt };
-    if (actionId === 'secrets.delete') return resolved;
+    if (actionId === 'secrets.delete') return { ...resolved,
+      ...(input.confirmedUnreadableReferences === undefined ? {} : { confirmedUnreadableReferences: input.confirmedUnreadableReferences }) };
     if (input.source !== undefined) return { ...resolved, source: input.source,
       ...(typeof input.rename === 'string' ? { name: input.rename } : {}) };
     return typeof input.rename === 'string'

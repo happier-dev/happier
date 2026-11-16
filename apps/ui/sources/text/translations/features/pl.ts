@@ -10885,6 +10885,7 @@ const pl: SecretsSettingsCopy = {
     usedByKindRegistrySource: "Źródło rejestru",
     usedByKindConnectedConfiguration: "Ustawienia połączonego konta",
     deleteInUseNote: "Nie można go usunąć, dopóki jest używany. Najpierw przełącz każde użycie na inny sekret.",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `Nie udało się sprawdzić ${count} rekordów ustawień wstępnych. Jeśli używają tego sekretu, po usunięciu pokażą „Sekret niedostępny”. Usunąć mimo to?`,
     deleteConfirmTitle: ({ name }: { name: string }) => `Usunąć „${name}”?`,
 };
 

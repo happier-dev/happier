@@ -19,6 +19,10 @@ describe('Saved Secret invoke input', () => {
   ])('parses delete through %s', (...tokens) => {
     expect(resolve('secrets.delete', tokens)).toEqual({ secretId: '831c054a-5477-4fba-a00b-1a624bcb98c8', ...(tokens[0] === '--input-json' ? { expectedUpdatedAt: 37 } : {}) });
   });
+  it('parses an explicit confirmation of unreadable delete references', () => {
+    expect(resolve('secrets.delete', ['--secret-id', 'resource-id', '--confirmed-unreadable-references']))
+      .toEqual({ secretId: 'resource-id', confirmedUnreadableReferences: true });
+  });
   it('retains value-free schema diagnostics at the public invoke boundary', async () => {
     const { captureConsoleJsonOutput } = await import('@/testkit/logger/captureOutput');
     const output = captureConsoleJsonOutput();

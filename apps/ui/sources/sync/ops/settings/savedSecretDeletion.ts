@@ -1,3 +1,4 @@
+import type { SavedSecretUnreadableReferencesWarningV1 } from '@happier-dev/cli-common/machines/managed';
 import { formatSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { listAccountSettingsSavedSecretReferences, type AccountSettingsSavedSecretReference } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { SharedSavedSecretDeleteOutputV1Schema, SavedSecretResourceActionErrorV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -24,6 +25,7 @@ export type SavedSecretResourceDeleteResult =
 type SavedSecretResourceDeleteFailure = (
     | Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>>
     | Readonly<{ ok: false; reason: 'managed_resources_review_required'; resources: readonly ManagedResourceDependencyV1[] }>
+    | Readonly<{ ok: false; reason: 'unreadable_references' }>
     | Readonly<{ ok: false; reason: 'in_use'; references: readonly AccountSettingsSavedSecretReference[] }>
 ) & Pick<Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>>, 'failure'>;
 type SavedSecretDeleteOutput = Readonly<{ resourceId: string }>;
@@ -51,10 +53,11 @@ export async function deleteSavedSecretResource(params: Readonly<{
     /** Owner's current Account Settings version; the reference census reads at it. */
     expectedSettingsVersion: number;
     confirmedByPresentUser?: true;
+    confirmedUnreadableReferences?: boolean;
     executeAdmittedMutation?: SavedSecretAdmittedMutationExecute;
     managedResourceDispositions?: readonly ManagedResourceDispositionV1[];
-    /** The Action policy decides whether to ask this present-user question. */
-    confirmDeletion?: () => Promise<boolean>;
+    /** Presents required census warnings and ordinary Action-policy confirmation. */
+    confirmDeletion?: (warning?: SavedSecretUnreadableReferencesWarningV1) => Promise<boolean>;
     onApprovalSucceeded?: (value: SavedSecretDeleteOutput) => void | Promise<void>;
     /** The same owner-decoded result for immediate and Inbox-executed refusals. */
     onApprovalFailed?: (code: string, result: SavedSecretResourceDeleteFailure) => void;
@@ -82,9 +85,16 @@ export async function deleteSavedSecretResource(params: Readonly<{
                         resourceRef,
                     })
                     : { kind: 'unavailable' as const };
-                if (opaquePresetReferences.kind === 'unavailable') return { ok: false, reason: 'unavailable',
-                    ...('failure' in opaquePresetReferences && opaquePresetReferences.failure
-                        ? { failure: opaquePresetReferences.failure } : {}) };
+                if (opaquePresetReferences.kind === 'unavailable') return { ok: false, reason: 'unavailable' };
+                const warning = opaquePresetReferences.warning;
+                if (warning && !params.confirmedUnreadableReferences) {
+                    // The census owns uncertainty. A present person explicitly accepts its
+                    // consequence, even when their ordinary Action policy does not ask.
+                    if (!confirmDeletion || !await (confirmation ??= confirmDeletion(warning))) {
+                        return { ok: false, reason: 'unreadable_references',
+                            failure: { code: warning.code, context: { count: warning.count, consequence: warning.consequence } } };
+                    }
+                }
                 const outcome = await (params.executeAdmittedMutation ?? runTeamAction)({ scope: params.scope, actionId: 'secrets.shared.delete',
                     input: { resourceId: params.resourceId, expectedRevision,
                         expectedSettingsVersion: baseline.source.version,

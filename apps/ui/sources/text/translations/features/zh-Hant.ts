@@ -10854,6 +10854,7 @@ const zhHant: SecretsSettingsCopy = {
     usedByKindRegistrySource: "登錄來源",
     usedByKindConnectedConfiguration: "已連線帳戶設定",
     deleteInUseNote: "仍在使用時無法刪除。請先將每一處切換到其他密鑰。",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `無法檢查 ${count} 筆預設記錄。如果它們使用此密鑰，刪除後將顯示「密鑰無法使用」。仍要刪除嗎？`,
     deleteConfirmTitle: ({ name }: { name: string }) => `刪除「${name}」？`,
 };
 

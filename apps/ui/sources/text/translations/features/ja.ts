@@ -10860,6 +10860,7 @@ const ja: SecretsSettingsCopy = {
     usedByKindRegistrySource: "レジストリソース",
     usedByKindConnectedConfiguration: "接続済みアカウントの設定",
     deleteInUseNote: "使用中は削除できません。先にそれぞれを別のシークレットに切り替えてください。",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `プリセットのレコード${count}件を確認できませんでした。このシークレットを使用している場合、削除後は「シークレットを利用できません」と表示されます。削除しますか？`,
     deleteConfirmTitle: ({ name }: { name: string }) => `「${name}」を削除しますか？`,
 };
 

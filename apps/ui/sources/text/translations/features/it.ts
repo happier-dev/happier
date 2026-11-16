@@ -10871,6 +10871,7 @@ const it: SecretsSettingsCopy = {
     usedByKindRegistrySource: "Origine registro",
     usedByKindConnectedConfiguration: "Impostazioni dell'account collegato",
     deleteInUseNote: "Non si può eliminare finché qualcosa lo usa. Prima passa ognuno a un altro segreto.",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `Impossibile verificare ${count} voci dei preset. Se usano questo segreto, mostreranno «Segreto non disponibile» dopo la cancellazione. Eliminare comunque?`,
     deleteConfirmTitle: ({ name }: { name: string }) => `Eliminare «${name}»?`,
 };
 

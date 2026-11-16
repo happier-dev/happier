@@ -30,10 +30,12 @@ import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretCatalogRes
 
 type SharedSavedSecretUpdateInputV1 = ReturnType<typeof SharedSavedSecretUpdateInputV1Schema.parse>;
 
-function refusal(code: string, details?: unknown): never {
+function refusal(code: string, details?: unknown, effect?: Readonly<{ effectAttempted: false }>): never {
     throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
-        ...(details === undefined ? {} : { details }) });
+        ...(details === undefined ? {} : { details }), ...effect });
 }
+/** Deletion census refusals settle before any Home mutation. */
+const beforeEffect = { effectAttempted: false } as const;
 type CliOwnedSavedSecretOperationParams = Readonly<{
     credentials: StoredCredentials; operationContext?: SavedSecretOperationContextV1; serverHttpBaseUrl?: string;
     isCredentialCurrent?: () => boolean | Promise<boolean>;
@@ -332,12 +334,15 @@ export function createCliPersonalSavedSecretActionExecute(params: CliOwnedSavedS
             delete: async args => {
                 await findOwned(args.secretId, args.expectedUpdatedAt);
                 const { captured, references } = await captureReferences(args.secretId);
-                if (references.length) refusal('in_use', { references });
+                if (references.length) refusal('in_use', { references }, beforeEffect);
                 const { captureManagedMachinePresetSavedSecretReferencesForOperation } = await import('./managedPresetSavedSecretPromotion');
                 const opaque = await captureManagedMachinePresetSavedSecretReferencesForOperation({ credentials: params.credentials,
                     accountId, serverHttpBaseUrl: resolveServerHttpBaseUrl(), resourceRef: formatSharedSavedSecretRefV1(args.secretId),
                     signal: context.signal });
-                if (opaque.kind !== 'ready') refusal(opaque.failure?.code ?? 'secret_unavailable', opaque.failure?.context);
+                if (opaque.kind !== 'ready') refusal('secret_unavailable', undefined, beforeEffect);
+                if (opaque.warning && args.confirmedUnreadableReferences !== true) refusal(opaque.warning.code, {
+                    count: opaque.warning.count, consequence: opaque.warning.consequence,
+                }, beforeEffect);
                 SharedSavedSecretDeleteOutputV1Schema.parse(await mutate({ resourceId: args.secretId,
                     expectedRevision: args.expectedUpdatedAt, expectedSettingsVersion: captured.expectedSettingsVersion,
                     referenceCensus: { ...captured.referenceCensus, opaquePresetReferences: opaque.opaquePresetReferences } }));

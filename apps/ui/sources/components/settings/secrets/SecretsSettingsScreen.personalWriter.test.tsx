@@ -189,7 +189,85 @@ it.each(['rotate', 'rename'] as const)('reveals a refused %s cause and saves the
     expect(alert).not.toHaveBeenCalled();
 });
 
-it('reveals the preset recipient cause when deletion stops before confirmation', async () => {
+it('keeps the entered replacement when a backup cannot be identified and explains recovery', async () => {
+    home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }), handleRequest: async path => {
+        if (path !== '/v1/account/saved-secrets/resources/update') return null;
+        return Response.json({ error: 'backup_rekey_required', backups: [], hasOtherBackups: true }, { status: 409 });
+    } });
+    const { entry } = await home.addOwnerResource();
+    const screen = await renderSecretPage(entry.ref);
+    await waitForSecretPage(entry.ref, screen);
+    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:rotate`);
+    await act(async () => screen.changeTextByTestId(`saved-secret:${entry.ref}:edit-input`, 'synthetic-replacement'));
+    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:edit-save`);
+    await vi.waitFor(() => expect(alert).toHaveBeenCalled());
+    expect(alert.mock.calls.at(-1)?.[1]).toContain('secretsSettings.backupRekeyUnavailable');
+    expect(screen.findByTestId(`saved-secret:${entry.ref}:edit-input`)?.props.value).toBe('synthetic-replacement');
+    expect(home.creations).toHaveLength(0);
+    expect(home.updates).toHaveLength(0);
+});
+
+it('re-keys the named backup through its controller before retrying the entered replacement', async () => {
+    const { createDeploymentEnvironmentHeaderV1, createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { DeploymentBackupConfigurationV1Schema } = await import('@happier-dev/deployment-protocol');
+    const { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol/v1');
+    const { DeploymentBackupConfigureInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentBackupConfigureV1');
+    const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    let controller: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null = null;
+    let environment: ReturnType<typeof createDeploymentEnvironmentHeaderV1> | null = null;
+    let serverUrl = 'https://unused.example.test';
+    let rekeyed = false;
+    const serverIdentityId = `srv_${'7'.repeat(32)}`;
+    home = await createSecretSettingsTestHarness({ serverIdentityId, settings: settingsParse({ secrets: [] }), handleRequest: async (path, init) => {
+        if (path === '/v1/account/saved-secrets/resources/update' && !rekeyed) {
+            return Response.json({ error: 'backup_rekey_required',
+                backups: [{ environmentId: 'environment-backups', role: 'repositoryPassword' }], hasOtherBackups: false }, { status: 409 });
+        }
+        if (environment && path === `/v1/deployments/environments/${environment.id}`) {
+            return Response.json({ ok: true, environment, targetLinks: [] });
+        }
+        return controller ? await controller.handle(new URL(path, serverUrl), init) ?? null : null;
+    } });
+    serverUrl = new URL(String(home.request.mock.calls[0]![0])).origin;
+    environment = createDeploymentEnvironmentHeaderV1({ id: 'environment-backups', serverId: home.scope.serverId });
+    const detail = createDeploymentEnvironmentDetailV1({ environment });
+    const account = await captureLazyActionAccountContext(home.scope.serverId);
+    try {
+        await account.createArtifactDocument({ artifactId: environment.contentArtifactId,
+            header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Customer backups' },
+            body: JSON.stringify({ ...detail.content, name: 'Customer backups' }) });
+    } finally { account.dispose(); }
+    const configuration = DeploymentBackupConfigurationV1Schema.parse({ configRevision: 1,
+        destinationRef: { pluginId: 'com.acme.backups', localId: 'archive' }, occurrenceId: 'archive', config: { path: '/backups' },
+        credentialBindings: [{ purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' }],
+        ownership: { environmentId: environment.id, prefix: '' }, retention: { kind: 'keep', daily: 14 },
+        sources: [{ kind: 'volume', sourceId: 'content', service: 'web', volume: 'content', consistency: 'stopDuringCopy' }] });
+    controller = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: home.scope.accountId,
+        machineId: environment.controllerMachineId, actionId: 'deployments.backups.configure', tokenEpoch: 0,
+        execute: raw => {
+            const input = DeploymentBackupConfigureInputV1Schema.parse(raw);
+            expect(input).toMatchObject({ environmentId: environment!.id, expectedRevision: environment!.revision, intent: 'rekeyAndSave' });
+            if (input.intent !== 'rekeyAndSave') throw new Error('Expected re-key');
+            expect(home!.updates).toHaveLength(0);
+            expect(home!.creations).toHaveLength(1);
+            expect(input.replacement).toEqual({ ref: `happier:shared-secret:v1:${home!.creations[0]!.resourceId}`, resourceRevision: 1 });
+            rekeyed = true;
+            return { kind: 'configured', environmentId: environment!.id, revision: environment!.revision + 1, configuration };
+        } });
+    const { entry } = await home.addOwnerResource();
+    const screen = await renderSecretPage(entry.ref);
+    await waitForSecretPage(entry.ref, screen);
+    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:rotate`);
+    await act(async () => screen.changeTextByTestId(`saved-secret:${entry.ref}:edit-input`, 'synthetic-replacement'));
+    await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:edit-save`);
+    await vi.waitFor(() => expect(home?.updates).toHaveLength(1));
+    expect(rekeyed).toBe(true);
+    expect(confirm.mock.calls.some(call => String(call[1]).includes('Customer backups'))).toBe(true);
+    expect(screen.findByTestId(`saved-secret:${entry.ref}:edit-input`)).toBeNull();
+});
+
+it.each([false, true])('confirms unreadable-reference consequences before deletion: %s', async accepted => {
     const { ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
     let censusRead = false;
     const seenPaths = new Set<string>();
@@ -214,18 +292,14 @@ it('reveals the preset recipient cause when deletion stops before confirmation',
     const lifetime = captureActiveServerAccountScopeLifetime();
     expect(lifetime?.isCurrent()).toBe(true);
     expect(screen.findByTestId(`saved-secret:${entry.ref}:delete`)?.props.accessibilityState?.disabled).not.toBe(true);
+    confirm.mockResolvedValueOnce(accepted);
     await screen.pressByTestIdAsync(`saved-secret:${entry.ref}:delete`);
     await waitForHomeGovernance(() => expect(censusRead).toBe(true));
-    await waitForHomeGovernance(() => expect(alert.mock.calls.length,
-        JSON.stringify({ current: lifetime?.isCurrent(), paths: [...seenPaths] })).toBe(1));
-    expect(confirm).not.toHaveBeenCalled();
-    expect(home.deletes).toHaveLength(0);
-    const details = alert.mock.calls[0]![2]?.find((button: { onPress?: () => void }) => typeof button.onPress === 'function');
-    expect(details, JSON.stringify(alert.mock.calls[0])).toBeDefined();
-    await act(async () => { details.onPress(); });
-    expect(alert.mock.calls.at(-1)![1], JSON.stringify([...seenPaths])).toContain('recipient_envelope_missing');
-    expect(alert.mock.calls.at(-1)![1]).toContain('unreadable-team-preset');
-    expect(home.resources).toHaveLength(1);
+    await waitForHomeGovernance(() => expect(confirm).toHaveBeenCalled());
+    expect(confirm.mock.calls[0]![1]).toContain('1');
+    await waitForHomeGovernance(() => expect(home.deletes).toHaveLength(accepted ? 1 : 0));
+    expect(alert).not.toHaveBeenCalled();
+    expect(home.resources).toHaveLength(accepted ? 0 : 1);
 });
 
 it.each([

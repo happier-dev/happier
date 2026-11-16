@@ -10855,6 +10855,7 @@ const zhHans: SecretsSettingsCopy = {
     usedByKindRegistrySource: "注册表来源",
     usedByKindConnectedConfiguration: "已连接账户设置",
     deleteInUseNote: "仍在使用时无法删除。请先把每一处切换到其他密钥。",
+    deleteUnreadableReferencesBody: ({ count }: { count: number }) => `无法检查 ${count} 条预设记录。如果它们使用此密钥，删除后将显示“密钥不可用”。仍要删除吗？`,
     deleteConfirmTitle: ({ name }: { name: string }) => `删除“${name}”？`,
 };
 

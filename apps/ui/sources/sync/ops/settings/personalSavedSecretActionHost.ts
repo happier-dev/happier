@@ -103,7 +103,8 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
             delete: async args => {
                 const baseline = await readProfileTransferSourceInContext(account);
                 const result = await deleteSavedSecretResource({ scope, resourceId: args.secretId, expectedRevision: args.expectedUpdatedAt,
-                    expectedSettingsVersion: baseline.source.version, executeAdmittedMutation });
+                    expectedSettingsVersion: baseline.source.version, executeAdmittedMutation,
+                    ...(args.confirmedUnreadableReferences === undefined ? {} : { confirmedUnreadableReferences: args.confirmedUnreadableReferences }) });
                 if (!result.ok) {
                     if (result.failure) refusal(result.failure.code, result.failure.context);
                     refusal(result.reason, 'references' in result ? { references: result.references } : undefined);

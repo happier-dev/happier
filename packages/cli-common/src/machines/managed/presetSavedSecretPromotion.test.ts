@@ -102,7 +102,7 @@ describe('managed preset Saved Secret promotion capture', () => {
     });
   });
 
-  it.each(['source', 'snapshot'] as const)('names the missing recipient envelope that prevents delete capture: %s', async target => {
+  it.each(['source', 'snapshot'] as const)('warns about unreadable delete references without blocking the census: %s', async target => {
     const source = ManagedMachinePresetV1Schema.parse({ ...sourcePreset(),
       contentEncryptionMode: 'e2ee', content: { t: 'encrypted', c: Buffer.alloc(64).toString('base64') }, recipients: [] });
     const retained = snapshot('managed-retained', source.id);
@@ -114,8 +114,24 @@ describe('managed preset Saved Secret promotion capture', () => {
         listManaged: async archived => target === 'snapshot' && !archived ? [retained] : [],
         open: input => openManagedMachinePresetRecipientProjectionV1({ ...input, mode: 'e2ee',
           accountId: 'owner', accountKey: new Uint8Array(32) }) },
-    })).toEqual({ kind: 'unavailable', failure: { code: 'recipient_envelope_missing',
-      context: { presetId: source.id, ...(target === 'snapshot' ? { managedId: retained.machine.id } : {}) } } });
+    })).toEqual({ kind: 'ready', opaquePresetReferences: { presets: [], snapshots: [] },
+      warning: { code: 'unreadable_references', count: 1, consequence: 'secret_unavailable' } });
+  });
+
+  it('counts every unreadable record and retains known references after them', async () => {
+    const secretRef = 'happier:shared-secret:v1:deleted-secret';
+    const unreadable = ManagedMachinePresetV1Schema.parse({ ...sourcePreset(),
+      contentEncryptionMode: 'e2ee', content: { t: 'encrypted', c: Buffer.alloc(64).toString('base64') }, recipients: [] });
+    const readable = { ...sourcePreset(), id: 'readable', content: { t: 'plain' as const, v: presetContent('Known use', secretRef) } };
+    const retained = snapshot('unreadable-snapshot', unreadable.id);
+    retained.machine.preset.contentEncryptionMode = 'e2ee';
+    retained.presetContent = { content: unreadable.content, recipientEnvelope: null };
+    expect(await captureManagedMachinePresetSavedSecretReferencesV1({ homeId: 'home', resourceRef: secretRef,
+      reader: { accountId: 'owner', listPresets: async () => ({ presets: [unreadable, readable] }),
+        listManaged: async archived => archived ? [retained] : [],
+        open: ({ projection }) => projection.content.t === 'plain' ? ManagedMachinePresetContentV1Schema.parse(projection.content.v) : null },
+    })).toEqual({ kind: 'ready', opaquePresetReferences: { presets: [{ presetId: readable.id }], snapshots: [] },
+      warning: { code: 'unreadable_references', count: 2, consequence: 'secret_unavailable' } });
   });
 
   it('fresh-seals changed source presets, same-DEK rewrites retained snapshots, and reads one current-Home inventory', async () => {
