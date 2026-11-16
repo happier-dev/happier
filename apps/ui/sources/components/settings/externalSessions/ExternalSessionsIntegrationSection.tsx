@@ -1,4 +1,5 @@
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolvePluginDiagnosticRemediationMessage } from '@/components/settings/plugins/diagnostics/pluginDiagnosticRemediation';
 import * as React from 'react';
 import { AccessibilityInfo, Platform, Pressable, View } from 'react-native';
 import type { ViewToken } from 'react-native';
@@ -115,36 +116,10 @@ function resolveStatusTitle(state: ExternalSessionsIntegrationDescriptor['state'
     }
 }
 
-function resolveDiagnosticRemediation(diagnostic: PluginDiagnosticDataV1): string | null {
-    const remediation = diagnostic.remediation;
-    if (!remediation) return null;
-
-    switch (remediation.kind) {
-        case 'retry':
-            return t('externalSessions.settingsIntegrationRemediationRetry');
-        case 'openSettings':
-            return t('externalSessions.settingsIntegrationRemediationOpenSettings', {
-                path: remediation.path,
-            });
-        case 'selectAccount':
-            return t('externalSessions.settingsIntegrationRemediationSelectAccount', {
-                service: `${remediation.service.pluginId}/${remediation.service.localId}`,
-            });
-        case 'installDependency':
-            return t('externalSessions.settingsIntegrationRemediationInstallDependency', {
-                dependency: remediation.dependencyId,
-            });
-        case 'openUrl':
-            return t('externalSessions.settingsIntegrationRemediationOpenUrl', {
-                url: remediation.url,
-            });
-    }
-}
-
 function resolveDiagnosticMessage(diagnostic: PluginDiagnosticDataV1): string {
     const message = diagnostic.message
         ?? t('externalSessions.settingsIntegrationDiagnosticMessageUnavailable');
-    const remediation = resolveDiagnosticRemediation(diagnostic);
+    const remediation = resolvePluginDiagnosticRemediationMessage(diagnostic.remediation);
     return remediation ? `${message} ${remediation}` : message;
 }
 

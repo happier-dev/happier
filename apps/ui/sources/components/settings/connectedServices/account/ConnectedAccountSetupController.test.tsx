@@ -1527,6 +1527,32 @@ describe('ConnectedAccountSetupController real ownership', () => {
         } finally { await screen.unmount(); captured.dispose(); }
     });
 
+    it('opens the full settings-and-key form instead of resuming a key-only attempt left after a refused Connect', async () => {
+        const manualMode = { ...authentication.modes[0]!, setup: { url: 'https://provider.example/keys', checklist: ['Create a key'] },
+            configuration: configuredMode.configuration };
+        installDescription({ ...described, descriptor: { ...described.descriptor, authentication: { ...authentication, modes: [manualMode] } } });
+        const previousControl = handleControl;
+        // The attempt owner keeps a refused manual attempt open at awaitingManual; its settings were saved earlier.
+        handleControl = command => command.operation === 'listPendingAttempts'
+            ? { status: 'pendingAttempts', attempts: [{ attemptId: 'left-over', kind: 'manual', modeId: manualMode.id,
+                intent: 'connect', phase: 'awaitingManual', createdAtMs: Date.now(), expiresAtMs: Date.now() + 60_000 }] }
+            : previousControl(command);
+        const nativeAuthentication = handleAuthentication;
+        handleAuthentication = async command => command.operation === 'cancel' ? { status: 'cancelled', attemptId: command.attemptId }
+            : command.operation === 'read' ? { status: 'awaitingManual', attemptId: 'left-over' }
+                : await nativeAuthentication(command);
+        await installNativeConfigurationAttemptBoundary();
+        const screen = await renderScreen(element(selection));
+        try {
+            await vi.waitFor(() => expect(controlCommands.map(command => command.operation)).toContain('listPendingAttempts'));
+            await vi.waitFor(() => expect(authenticationCommands).toContainEqual({ operation: 'cancel', attemptId: 'left-over' }));
+            // The person can see and correct every setting, not only the key.
+            await vi.waitFor(() => expect(screen.findHostByTestId('connected-account-configuration:endpoint'), screen.getTextContent()).not.toBeNull());
+            expect(screen.findHostByTestId('connected-account-manual:token')).not.toBeNull();
+            expect(authenticationCommands.some(command => command.operation === 'submitManual')).toBe(false);
+        } finally { await screen.unmount(); }
+    });
+
     it.each(['oauth', 'device'] as const)('retires the acknowledged %s form before notifying the setup host', async kind => {
         const callbackUrl = 'http://127.0.0.1:4000/auth/callback';
         installDescription({ ...described, descriptor: { ...described.descriptor,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { PluginDiagnosticDataV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
 import type { ConnectedAccountAuthenticationContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import { neonPortableRuntime } from '../../../../../../packages/plugins/deployment-neon/src/connectedAccounts/runtime';
@@ -148,15 +149,23 @@ describe('connected-service settings errors', () => {
   });
 
   it.each([
-    { status: 'unavailable', code: 'connected_account_service_unavailable' },
-    { status: 'unavailable', code: 'connected_account_authentication_unavailable' },
-    { status: 'rejected', code: 'connected_account_authentication_rejected' },
-  ])('names the typed cause over the generic $code copy, with its remediation', ({ status, code }) => {
+    { status: 'unavailable', code: 'connected_account_service_unavailable', remediation: { kind: 'retry' },
+      remedy: () => t('externalSessions.settingsIntegrationRemediationRetry') },
+    { status: 'rejected', code: 'connected_account_authentication_rejected', remediation: { kind: 'openSettings', path: '/settings/accounts' },
+      remedy: () => t('externalSessions.settingsIntegrationRemediationOpenSettings', { path: '/settings/accounts' }) },
+    { status: 'unavailable', code: 'connected_account_authentication_unavailable',
+      remediation: { kind: 'selectAccount', service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' } },
+      remedy: () => t('externalSessions.settingsIntegrationRemediationSelectAccount', { service: 'happier.deploy.cloudflare/cloudflare' }) },
+    { status: 'unavailable', code: 'connected_account_service_unavailable', remediation: { kind: 'installDependency', dependencyId: 'cloudflared' },
+      remedy: () => t('externalSessions.settingsIntegrationRemediationInstallDependency', { dependency: 'cloudflared' }) },
+    { status: 'unavailable', code: 'connected_account_service_unavailable', remediation: { kind: 'openUrl', url: 'https://example.com/sign-in' },
+      remedy: () => t('externalSessions.settingsIntegrationRemediationOpenUrl', { url: 'https://example.com/sign-in' }) },
+  ] as const)('names the typed cause over the generic $code copy, with its $remediation.kind remediation', ({ status, code, remediation, remedy }) => {
     const message = 'Cloudflare could not verify this connection. No token was saved.';
-    expect(resolveConnectedServiceSettingsErrorMessage({ status, code,
-      diagnostic: { code: 'cloudflare_verification_unavailable', severity: 'error', message } })).toBe(message);
-    expect(resolveConnectedServiceSettingsErrorMessage({ status, code, diagnostic: { code: 'cloudflare_verification_unavailable',
-      severity: 'error', message, remediation: 'Try again in a minute.' } })).toBe(`${message} Try again in a minute.`);
+    // The wire diagnostic as the connected-account host projects it (protocol schema, not a hand copy).
+    const diagnostic = PluginDiagnosticDataV1Schema.parse({ code: 'cloudflare_verification_unavailable', severity: 'error', message, remediation });
+    expect(resolveConnectedServiceSettingsErrorMessage({ status, code, diagnostic })).toBe(`${message} ${remedy()}`);
+    expect(resolveConnectedServiceSettingsErrorMessage({ status, code, diagnostic: { ...diagnostic, remediation: undefined } })).toBe(message);
   });
 
   it('preserves typed rejection when no probe message is available without exposing untyped errors', () => {

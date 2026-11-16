@@ -1004,6 +1004,18 @@ const ConnectedAccountServiceController = React.memo(
                 setNoPendingAttempt(true);
                 return;
             }
+            // The attempt owner keeps a refused key open at awaitingManual for correction, but a
+            // settings-and-key draft resumed there shows only the key: the settings it saved (and
+            // that may have caused the refusal) are out of reach. The add panel releases it and
+            // opens the full draft instead.
+            const pendingMode = description.descriptor.authentication.modes.find(mode => mode.id === pending.modeId);
+            if (panelIntent?.kind === 'add' && pending.intent === 'connect' && pending.phase === 'awaitingManual'
+                && pendingMode?.kind === 'manual' && pendingMode.configuration !== undefined) {
+                cancelDiscardedAttempt(pending.attemptId);
+                completed = true;
+                setNoPendingAttempt(true);
+                return;
+            }
             const response = await runConnectedAccountAuthenticationAction({
                 serverId,
                 expectedAccountId: accountLifetime.scope.accountId,
@@ -1037,7 +1049,7 @@ const ConnectedAccountServiceController = React.memo(
                 discoveredScopeRef.current = null;
             }
         };
-    }, [acceptAttemptResponse, accountLifetime, activeModeId, assertCapturedAccountCurrent, attempt, busy, description, executeAction, expectedActiveServer, hasExplicitAuthenticationIntent, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, panelIntent?.kind, preparesInitialClientConfiguration, serverId, service]);
+    }, [acceptAttemptResponse, accountLifetime, activeModeId, assertCapturedAccountCurrent, attempt, busy, cancelDiscardedAttempt, description, executeAction, expectedActiveServer, hasExplicitAuthenticationIntent, isControllerCurrent, getLifecycleSignal, machineId, machineRequired, panelIntent?.kind, preparesInitialClientConfiguration, serverId, service]);
 
     const runAuthentication = React.useCallback(async (
         command: Parameters<typeof runConnectedAccountAuthenticationAction>[0]['command'],

@@ -1,4 +1,6 @@
 import { t } from '@/text';
+import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import { resolvePluginDiagnosticRemediationMessage } from '@/components/settings/plugins/diagnostics/pluginDiagnosticRemediation';
 import { readRpcErrorCode, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { normalizeLegacyConnectedServiceUxDiagnosticCode } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
@@ -75,7 +77,9 @@ function readAuthenticationCauseMessage(errorLike: ErrorLike): string | null {
     if (diagnostic === null || typeof diagnostic !== 'object' || !('message' in diagnostic) || typeof diagnostic.message !== 'string') return null;
     const message = diagnostic.message.trim();
     if (!message || 'code' in diagnostic && message === diagnostic.code) return null;
-    const remediation = 'remediation' in diagnostic && typeof diagnostic.remediation === 'string' ? diagnostic.remediation.trim() : '';
+    // The wire carries the closed remediation union; one renderer owns its copy.
+    const remediation = resolvePluginDiagnosticRemediationMessage(
+        PluginDiagnosticRemediationV1Schema.safeParse('remediation' in diagnostic ? diagnostic.remediation : undefined).data);
     return remediation ? `${message} ${remediation}` : message;
 }
 
