@@ -991,9 +991,11 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
 });
 
 describe('Environment → Domains: whether the address reaches this Machine (#2)', () => {
-  const dnsHealth = (status: 'up' | 'down' | 'unknown', reason: string) => ({ status, evidence: { v: 1 as const,
+  const dnsHealth = (status: 'up' | 'down' | 'unknown', reason: string) => ({ status,
+    cause: { kind: 'dns' as const, reason, observerMachineId: 'controller', vantage: 'sameMachine' as const },
+    evidence: { v: 1 as const,
     items: [{ source: { kind: 'alert' as const, label: 'DNS' }, author: { kind: 'process' as const },
-      text: JSON.stringify({ kind: 'dns', reason }) }] } });
+      text: 'DNS finite observation' }] } });
 
   it('checks a complete draft only when asked, says what the native check found, and forgets it when the address changes', async () => {
     const base = createDeploymentEnvironmentDetailV1();

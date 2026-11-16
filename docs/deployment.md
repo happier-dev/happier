@@ -234,8 +234,10 @@ bodies are excluded from published evidence. A same-Machine observation proves
 this route from its vantage; it does not establish outside-network reachability,
 application health, certificate validity or a public-IP record value.
 
-Attached observations use the existing signed P40 semantic settlement. Both
-surfaces consume the same typed DNS projection. The nonvisual Action adapter
+Attached public-listener Add and Verify observations use this finite proof before
+the existing signed P40 semantic settlement. Private-origin observations omit the
+inapplicable public proof. Both surfaces consume the same typed DNS projection.
+The nonvisual Action adapter
 performs work only on explicit demand; the surface owner wires open and manual
 Check again. There is no polling, background registry or public-address discovery.
 

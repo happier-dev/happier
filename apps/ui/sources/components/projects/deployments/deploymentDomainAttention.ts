@@ -61,11 +61,13 @@ export function deploymentDomainNeedKind(
   return cause !== undefined && cause !== 'certificate' ? 'notReachable' : null;
 }
 
-/** The native DNS check's verdict (SOS-GAP-DOMAINS): only a missing record or a name that reaches elsewhere needs the person. */
+/** The native DNS verdict explains missing or misplaced records and unavailable coverage without claiming failed reachability. */
 function dnsState(dnsHealth: DomainItem['domain']['dnsHealth']): DomainAttention | null {
-  const { state } = projectDeploymentDomainDnsReadinessV1(dnsHealth);
+  const { state, reason } = projectDeploymentDomainDnsReadinessV1(dnsHealth);
   if (state === 'missing') return { variant: 'attention', label: t('projects.deployments.domainDnsRowMissing') };
   if (state === 'not_this_machine') return { variant: 'attention', label: t('projects.deployments.domainDnsRowElsewhere') };
+  if (state === 'unavailable') return { variant: 'attention',
+    label: reason ? `${t('common.unavailable')} · ${reason}` : t('common.unavailable') };
   return null;
 }
 

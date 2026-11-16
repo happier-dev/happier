@@ -654,8 +654,10 @@ describe('deployment UI Action callbacks', () => {
         homes.answer(serverId, `GET /v1/deployments/environments/${environment.id}`, {
             body: { ok: true, environment, targetLinks: [] },
         });
-        const dnsHealth = { status: 'down', evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'DNS' },
-            author: { kind: 'process' }, text: JSON.stringify({ kind: 'dns', reason: 'dns_not_this_machine' }) }] } };
+        const dnsHealth = { status: 'down', cause: { kind: 'dns', reason: 'dns_not_this_machine',
+            observerMachineId: environment.controllerMachineId, vantage: 'sameMachine' },
+            evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'DNS' },
+                author: { kind: 'process' }, text: 'DNS finite observation' }] } };
         const content = { hostname: 'docs.happier.dev', target: { service: 'web', containerPort: 3000 } };
         await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId,
             actionId: 'deployments.domains.verify', tokenEpoch: 0, execute: raw => {
