@@ -57,9 +57,10 @@ type MachineProvisionerPickerProps = Readonly<{
 
 export function MachineProvisionerPicker(props: MachineProvisionerPickerProps) {
     useServerProfilesGeneration();
-    const [selectedHome, setSelectedHome] = React.useState(props.serverId);
+    const [chosenHome, setChosenHome] = React.useState('');
+    const selectedHome = props.serverId || chosenHome;
     if (!selectedHome) return <View testID="managed-picker"><ItemGroup title={t('managedMachines.receipt.joins')}>
-        {listServerProfiles().map(home => <Item key={home.id} testID={`managed-picker.home:${home.id}`} title={resolveHomeDisplayLabel(home, home.id)} onPress={() => setSelectedHome(home.id)} />)}
+        {listServerProfiles().map(home => <Item key={home.id} testID={`managed-picker.home:${home.id}`} title={resolveHomeDisplayLabel(home, home.id)} onPress={() => setChosenHome(home.id)} />)}
     </ItemGroup></View>;
     const shared = { serverId: selectedHome, presetOnly: props.presetOnly, controller: props.controller,
         sessionPlacement: props.sessionPlacement, onSelectProvisioner: props.onSelectProvisioner,

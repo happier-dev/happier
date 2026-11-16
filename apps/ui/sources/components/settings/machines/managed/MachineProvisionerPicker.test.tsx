@@ -138,6 +138,43 @@ async function publishNoAccountProvisioners(serverId: string) {
 }
 
 describe('provisioner picker demand', () => {
+  it('returns to Home selection when the parent clears its target instead of retaining the previous Home', async () => {
+    const homeId = await harness.addHome({ name: 'Picker target', serverUrl: 'https://picker-target.example.test',
+      serverIdentityId: 'srv_picker_target', accountId: 'owner', currentAccount: true });
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} presetOnly />);
+    expect(screen.findByTestId(`managed-picker.home:${homeId}`)).toBeNull();
+    await screen.update(<ListPresentationProvider value="page"><MachineProvisionerPicker serverId="" presetOnly /></ListPresentationProvider>);
+    expect(screen.findByTestId(`managed-picker.home:${homeId}`)).not.toBeNull();
+    await screen.pressByTestIdAsync(`managed-picker.home:${homeId}`);
+    expect(screen.findByTestId(`managed-picker.home:${homeId}`)).toBeNull();
+  });
+  it('chooses a provisioner on the parent current Home after that target changes', async () => {
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const { lima } = await installBundledMachinePlugins();
+    const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const first = await harness.addHome({ name: 'First', serverUrl: 'https://picker-first.example.test',
+      serverIdentityId: 'srv_picker_first', accountId: 'owner', currentAccount: true });
+    const second = await harness.addHome({ name: 'Second', serverUrl: 'https://picker-second.example.test',
+      serverIdentityId: 'srv_picker_second', accountId: 'owner', currentAccount: true });
+    for (const serverId of [first, second]) {
+      replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+      await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+    }
+    const selected = vi.fn();
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={first} presetOnly onSelectProvisioner={selected} />);
+    await screen.update(<ListPresentationProvider value="page"><MachineProvisionerPicker serverId={second} presetOnly onSelectProvisioner={selected} /></ListPresentationProvider>);
+    const provisioner = buildQualifiedPluginContributionKey({ pluginId: lima.id, localId: lima.contributes.machineProvisioners[0]!.id });
+    const group = readMachineProvisionerSessionPlacementV1(lima.contributes.machineProvisioners[0]!, {})?.kind === 'controller-local' ? 'local' : 'cloud-sandboxes';
+    const row = `managed-picker.provisioners.${group}.${provisioner}`;
+    await waitForHomeGovernance(() => expect(screen.findByTestId(row)).not.toBeNull());
+    await screen.pressByTestIdAsync(screen.findByTestId(`${row}.action`) ? `${row}.action` : row);
+    expect(selected).toHaveBeenCalledExactlyOnceWith({ serverId: second, provisioner });
+    expect(harness.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
+  });
   it('offers contributed controller-local types regardless of billing and leaves remote types unchecked in Isolation', async () => {
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const serverId = await harness.addHome({ name: 'Isolation', serverUrl: 'https://isolation-picker.example.test',
