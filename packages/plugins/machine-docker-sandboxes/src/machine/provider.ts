@@ -40,7 +40,7 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'> & P
     inspectPreparation: preparation.inspect,
     destroyPreparation: preparation.destroy,
     async stream(resource: DockerSandboxesResourceV1, argv: readonly string[]) {
-      return native.stream(await requirePresent(resource), argv, signal);
+      return native.stream(resource, argv, signal);
     },
     async check() {
       const probe = await native.probe(signal);
@@ -100,7 +100,7 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'> & P
         : pending(resource);
     },
     async bootstrap(resource: DockerSandboxesResourceV1) {
-      await requirePresent(resource);
+      DockerSandboxesResourceV1Schema.parse(resource);
       return { kind: 'native' as const, transport: { contributionRef, schemaVersion: 1 } };
     },
     async inspect(resource: DockerSandboxesResourceV1) {
@@ -138,8 +138,7 @@ export function createDockerSandboxesProvider(exec: Pick<ExecService, 'run'> & P
       return { kind: 'presence' in observed && observed.presence === 'absent' ? 'confirmed' as const : 'unknown' as const };
     },
     async exec(resource: DockerSandboxesResourceV1, argv: readonly string[], input?: Uint8Array) {
-      const exact = await requirePresent(resource);
-      return native.exec(exact, argv, signal, input);
+      return native.exec(resource, argv, signal, input);
     },
     async putFile(resource: DockerSandboxesResourceV1, guestPath: string, bytes: Uint8Array, mode = 0o600) {
       if (!guestPath.startsWith('/') || /[\0\r\n]/u.test(guestPath) || !Number.isInteger(mode) || mode < 0 || mode > 0o7777) {

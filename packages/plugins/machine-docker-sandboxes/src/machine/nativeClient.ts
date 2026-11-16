@@ -21,6 +21,16 @@ function completed(result: PluginProcessResult) {
     && result.termination.requestedBy.kind === 'none';
 }
 
+function checkExecTermination(termination: PluginProcessResult['termination']) {
+  // Local sbx exec never creates a missing sandbox and starts stopped ones.
+  // https://docs.docker.com/reference/cli/sbx/exec/
+  if (termination.requestedBy.kind === 'none' && termination.observed.kind === 'exit'
+    && termination.observed.exitCode === 125) {
+    throw new PluginError({ code: 'docker_sandbox_absent' });
+  }
+  return termination;
+}
+
 const invalidName = () => ({ status: 'refused', code: 'docker_sandbox_name_invalid' } as const);
 const invalidResource = () => ({ status: 'refused', code: 'docker_sandbox_resource_invalid' } as const);
 
@@ -57,8 +67,20 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
       // sbx 0.53.0: -i keeps stdin open; omitting -t preserves binary bytes.
       // Exec owns channel delivery/cancellation. Its exit says nothing about
       // the retained guest's power; inspect remains the native power owner.
-      return exec.spawn({ executable, args },
+      const channel = await exec.spawn({ executable, args },
         { signal, outputDelivery: 'invocation' });
+      return {
+        write: (data: Uint8Array) => channel.write(data),
+        closeStdin: () => channel.closeStdin(),
+        onOutput: (listener: Parameters<typeof channel.onOutput>[0]) => channel.onOutput(listener),
+        dispose: () => channel.dispose(),
+        waitForExit: async () => checkExecTermination(await channel.waitForExit()),
+        wait: async () => {
+          const result = await channel.wait();
+          checkExecTermination(result.termination);
+          return result;
+        },
+      };
     },
     async create(input: DockerSandboxesLaunchV1, signal?: AbortSignal, options?: { hostIntegrations: 'disabled' }) {
       const launch = DockerSandboxesLaunchV1Schema.safeParse(input);
@@ -145,7 +167,9 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
       // No TTY, environment variable, uploaded script or public command argument
       // carries private bytes. Native stdin and buffered binary output remain
       // with the admitted invocation's existing ExecService owner.
-      return run(execArguments(resource, command, input !== undefined), signal, input);
+      const result = await run(execArguments(resource, command, input !== undefined), signal, input);
+      checkExecTermination(result.termination);
+      return result;
     },
     async start(resource: SandboxLocator, signal?: AbortSignal) {
       const observation = await client.inspect(resource, signal);

@@ -25,7 +25,6 @@ describe('Docker Sandboxes managed provisioner roles', () => {
     const signal = new AbortController().signal;
     const provider = nativeModule.createDockerSandboxesProvider({ run, spawn }, executable, 123, signal);
     const opened = await provider.stream(resource, ['hshim', 'attach', '--socket', '/tmp/private.sock']);
-    expect(opened).toBe(channel);
     expect(spawn).toHaveBeenCalledWith({ executable, args: ['exec', '--interactive', '--', resource.sandboxName,
       'hshim', 'attach', '--socket', '/tmp/private.sock'] }, { signal, outputDelivery: 'invocation' });
     expect(await opened.waitForExit()).toEqual(termination);
@@ -256,11 +255,10 @@ describe('Docker Sandboxes managed provisioner roles', () => {
     expect(process.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['exec']);
   });
 
-  it('does not recreate an absent retained name on Start or bootstrap', async () => {
+  it('does not recreate an absent retained name on Start', async () => {
     const process = { run: vi.fn<ExecService['run']>(async () => result(0, inventory('happier-another-row'))) };
     const provisioner = nativeModule.createDockerSandboxesProvider(process, executable, 123);
     expect(await provisioner.power(resource, 'start')).toEqual({ kind: 'refused', code: 'docker_sandbox_absent' });
-    await expect(provisioner.bootstrap(resource)).rejects.toMatchObject({ code: 'docker_sandbox_absent' });
     expect(process.run.mock.calls.every(([request]) => request.args?.[0] === 'ls')).toBe(true);
   });
 
