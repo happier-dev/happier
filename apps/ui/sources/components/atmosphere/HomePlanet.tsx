@@ -108,6 +108,12 @@ export const HomePlanet = React.memo(function HomePlanet(
   const fade = homePlanetFootFade(props);
   const height = homePlanetDrawnHeight(pane.height, fade);
   const [drawn, setDrawn] = React.useState(false);
+  // Home remounts its planet on every return, so its first draw is a return, not an arrival: it shows
+  // at once. Only a reveal after this mount held it hidden (a moment's hand-over, a picture leaving, the
+  // send's return) arrives as `arrive` says. A fade replayed per return cost a pane-sized compositing
+  // surface WebKit never returned, ~190 MB per 12 visits on desktop (P03-DESKTOP-MEMORY-3).
+  const heldHidden = React.useRef(false);
+  if (props.hidden) heldHidden.current = true;
   const onDrawn = React.useRef(props.onDrawn);
   onDrawn.current = props.onDrawn;
   const onReady = React.useCallback(() => {
@@ -134,7 +140,7 @@ export const HomePlanet = React.memo(function HomePlanet(
     <AtmosphereDissolve
       visible={drawn && !props.hidden}
       leave={props.leave}
-      arrive={props.arrive}
+      arrive={heldHidden.current ? props.arrive : 'instant'}
       height={height}
       reducedMotion={props.reducedMotion}
       onHidden={props.onHidden}
