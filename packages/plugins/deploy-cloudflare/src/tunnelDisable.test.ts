@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { manifest } from './manifest.js';
 import * as cloudflareModule from './index.js';
 
@@ -24,7 +26,7 @@ describe('Cloudflare owned tunnel disable through public activation', () => {
   ] as const)('settles exact tunnel retirement: %j', async ({ ownership, retire, effect, expected }) => {
     let present = effect !== 'absent' && effect !== 'tombstone';
     const deleted: string[] = [];
-    const send = vi.fn(async (input: { method: string; url: string }) => {
+    const send = vi.fn(async (input: HttpRequest) => {
       const url = new URL(input.url);
       if (input.method === 'DELETE') {
         deleted.push(url.pathname);
@@ -55,7 +57,7 @@ describe('Cloudflare owned tunnel disable through public activation', () => {
   });
 
   it.each([false, true])('does not accept DELETE acknowledgement while the exact tunnel is still present (later page %s)', async laterPage => {
-    const send = async (input: { method: string; url: string }) => ({ status: 200, headers: {},
+    const send = async (input: HttpRequest) => ({ status: 200, headers: {},
       body: new TextEncoder().encode(JSON.stringify({ success: true,
         result_info: { page: Number(new URL(input.url).searchParams.get('page') ?? 1), total_pages: laterPage ? 2 : 1 },
         result: new URL(input.url).pathname.endsWith('/cfd_tunnel')
@@ -72,7 +74,10 @@ describe('Cloudflare owned tunnel disable through public activation', () => {
     const send = vi.fn(async () => { throw new Error('No provider request expected'); });
     const kit = await createPluginTestkit({ manifest, module: cloudflareModule, services: { http: createPluginHttpFixture({ request: send }) } });
     try {
-      for (const extra of [{ purpose: 'deploy.manage' }, { token: 'must-never-send' }]) {
+      const extraInputs: readonly Readonly<Record<string, JsonValue>>[] = [
+        { purpose: 'deploy.manage' }, { token: 'must-never-send' },
+      ];
+      for (const extra of extraInputs) {
         await expect(kit.invokeAction('cloudflare-named/disable', { ...request, ...extra })).rejects.toThrow();
         const { tunnelId: _tunnelId, ...unprepared } = request;
         await expect(kit.invokeAction('cloudflare-named/disable', { ...unprepared, tunnelName: 'reviewed-tunnel', ...extra })).rejects.toThrow();

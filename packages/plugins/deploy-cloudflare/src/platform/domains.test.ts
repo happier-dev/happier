@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import * as entry from '../index.js';
 import { activateAccount } from '../accountRuntime.js';
 
@@ -127,7 +128,7 @@ it.each([undefined, { zoneId: '', name: 'example.test' }])('requires an explicit
   } finally { await kit.dispose(); }
 });
 
-it.each([
+it.each<{ action: string; providerEnvironment: JsonValue }>([
   { action: 'pages-domains-add', providerEnvironment: { kind: 'preview', gitBranch: 'main' } },
   { action: 'workers-domains-add', providerEnvironment: { kind: 'preview', scriptName: 'worker-exact', previewName: 'candidate' } },
 ])('refuses Preview Domains before touching production ($action)', async ({ action, providerEnvironment }) => {

@@ -383,9 +383,8 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
       return { grants };
     });
     const unavailable = (): never => { throw new Error('Unexpected service'); };
-    // A local structural variable keeps this RED compilable before the new
-    // optional SDK member lands; it mirrors the agreed public service shape.
     const services = { http, ...(!options.noGrant ? { machineConnectorSecrets: { write } } : {}),
+      get machineProvisioners() { return unavailable(); },
       get secrets() { return unavailable(); },
       get connectedAccounts() { return unavailable(); },
       get storage() { return unavailable(); }, get settings() { return unavailable(); },
@@ -519,7 +518,10 @@ describe('Cloudflare controller create/adopt through the activated Account Actio
   it('keeps raw tokens, caller purpose and Machine authority outside its closed Action input', async () => {
     const state = await controller();
     try {
-      for (const extra of [{ token: connectorToken }, { purpose: 'deploy.manage' }, { machineId: 'other-machine' }]) {
+      const extraInputs: readonly Readonly<Record<string, JsonValue>>[] = [
+        { token: connectorToken }, { purpose: 'deploy.manage' }, { machineId: 'other-machine' },
+      ];
+      for (const extra of extraInputs) {
         await expect(state.kit.invokeAction(action, { ...state.input, ...extra })).rejects.toThrow();
       }
       expect(state.requests).toEqual([]);

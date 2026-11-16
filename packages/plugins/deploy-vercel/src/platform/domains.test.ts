@@ -31,7 +31,7 @@ it('adds, checks and removes only the exact preview Domain without changing DNS 
   } });
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
   try {
-    expect(entry.manifest.contributes.deploymentTargets[0]).toMatchObject({ actions: { domains: {
+    expect(entry.manifest.contributes.deploymentTargets?.[0]).toMatchObject({ actions: { domains: {
       add: 'domains-add', read: 'domains-read', verify: 'domains-verify', remove: 'domains-remove' } } });
     for (const action of ['domains-add', 'domains-verify']) {
       await expect(kit.invokeAction(action, input)).resolves.toMatchObject({ v: 1, hostname: 'app.example.test', state: 'pending',
