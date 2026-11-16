@@ -5,15 +5,16 @@ import { presentProviderError, presentProviderRecoveryAction } from './errorPres
 
 describe('provider error presentation', () => {
     it('distinguishes catalog, runtime, materialization, settings and connection failures in picker titles', () => {
-        const codes = [
-            'provider_probe_response_invalid',
-            'provider_agent_runtime_unsupported',
-            'provider_materialization_failed',
-            'provider_settings_invalid',
-            'provider_connection_invalid',
+        const cases = [
+            ['provider_probe_response_invalid', 'settingsProviders.errors.probeResponseInvalidTitle'],
+            ['provider_agent_runtime_unsupported', 'settingsProviders.errors.agentRuntimeUnsupportedTitle'],
+            ['provider_materialization_failed', 'settingsProviders.errors.materializationFailedTitle'],
+            ['provider_settings_invalid', 'settingsProviders.errors.connectionInvalidTitle'],
+            ['provider_connection_invalid', 'settingsProviders.errors.connectionConfigurationInvalidTitle'],
         ] as const;
-        const titles = codes.map(code => presentProviderError(createProviderErrorV1(code)).titleKey);
-        expect(new Set(titles).size).toBe(codes.length);
+        for (const [code, titleKey] of cases) {
+            expect(presentProviderError(createProviderErrorV1(code)).titleKey).toBe(titleKey);
+        }
     });
     it('presents a refused server save with Retry and retains the closed database cause', () => {
         const failureCause = { phase: 'providers.connections.save', errorCode: 'database_transaction_timeout',

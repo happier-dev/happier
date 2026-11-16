@@ -85,6 +85,8 @@ it('observes native Muse models through its published managed account declaratio
       return recording.rows.find((row: { message?: { result?: { models?: unknown } } }) => row.message?.result?.models)?.message.result;
     } }).refresh()).models;
     const key = await read();
+    expect(key.error).toBeUndefined();
+    expect(key.groups).toHaveLength(3);
     expect(key.groups.every(group => group.rows.some(row => row.descriptor.id === 'muse-spark-1.2-contributor'))).toBe(true);
     expect.soft(reads).toBe(6);
   } finally { await fixture.dispose(); }
