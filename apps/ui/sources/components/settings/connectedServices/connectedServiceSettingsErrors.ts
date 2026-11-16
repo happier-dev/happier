@@ -158,6 +158,7 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE:
             return t('connectedServices.errors.accountMachineUnavailable');
         case 'connected_account_app_service_unavailable':
+        case 'artifact_source_unavailable':
             return t('connectedServices.errors.accountAppServiceUnavailable');
         case 'connect_quotas_not_found':
         case 'connected_account_service_unavailable':

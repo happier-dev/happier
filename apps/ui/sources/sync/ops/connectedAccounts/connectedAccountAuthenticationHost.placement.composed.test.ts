@@ -3,11 +3,13 @@ import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGov
 import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { resolveConnectedServiceSettingsErrorMessage } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
+import { t } from '@/text';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 
 const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [] as unknown[],
-    files: new Map<number, Uint8Array>(), reads: 0 }));
+    files: new Map<number, Uint8Array>(), reads: 0, missingFiles: false }));
 // Native HTTP resolution must load the real Expo platform branch. No HTTP
 // request is expected while an authorization-code attempt only builds its URL.
 vi.mock('expo/fetch', () => ({ fetch: () => { throw new Error('Unexpected native HTTP request'); } }));
@@ -27,7 +29,7 @@ vi.mock('expo-file-system', () => ({ File: class {
     async bytes() {
         packaged.reads += 1;
         const bytes = packaged.files.get(Number(this.uri.split('/').at(-1)));
-        if (!bytes) throw new Error('Missing authentication artifact');
+        if (!bytes || packaged.missingFiles) throw new Error('Missing authentication artifact');
         return bytes;
     }
 } }));
@@ -90,6 +92,7 @@ afterEach(async () => {
     await homes.reset();
     vi.restoreAllMocks();
     packaged.reads = 0;
+    packaged.missingFiles = false;
     Object.defineProperty(Platform, 'OS', platformDescriptor);
 });
 
@@ -263,6 +266,23 @@ it.each(['beginConnect', 'beginReconnect'] as const)('refuses Claude %s without 
     expect(fixture.transactions.size).toBe(0);
     expect(fixture.vendorRequests()).toBe(0);
     expect(fixture.outgoing.length).toBe(0);
+});
+
+it('presents missing packaged authentication artifact bytes as app/plugin repair rather than a Machine outage', async () => {
+    // Native asset IO is the failing boundary; the compiled Claude artifact,
+    // Account admission, registration and Action executor remain real.
+    packaged.missingFiles = true;
+    const fixture = await restorePlacementAccount();
+    const result = await createDefaultActionExecutor().execute('connectedServices.authentication.beginConnect',
+        { service, modeId: 'setup-token' }, fixture.context);
+    if (!result.ok || !result.result || typeof result.result !== 'object') throw new Error('Expected authentication outcome');
+    const response = result.result;
+    expect(response).toMatchObject({ status: 'unavailable', code: 'artifact_source_unavailable' });
+    expect(resolveConnectedServiceSettingsErrorMessage(response)).toBe(t('connectedServices.errors.accountAppServiceUnavailable'));
+    expect(packaged.reads).toBeGreaterThan(0);
+    expect(fixture.transactions.size).toBe(0);
+    expect(fixture.outgoing).toEqual([]);
+    expect(fixture.vendorRequests()).toBe(0);
 });
 
 it.each(['beginConnect', 'beginReconnect'] as const)('refuses Claude %s on a Machine without the authentication operation before issuing RPC', async operation => {

@@ -25,6 +25,9 @@ import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { DaemonContributionRegistryProjectionDescribeRequestSchema, DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { ManagedListInputV1Schema, ManagedListOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+
+const managedListPath = managedMachineActionEndpointPathV1('machines.managed.list');
 
 const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [] as unknown[],
     files: new Map<number, Uint8Array>(), reads: 0 }));
@@ -271,6 +274,12 @@ async function restorePortableFixture(requestedService = service, homeClient = f
             }
             paths.push(request.pathname);
             if (request.pathname.startsWith('/v1/machines')) {
+                // The selector's shared managed-resource inventory is a Home read,
+                // separate from native Machine lookup or authentication placement.
+                if (request.pathname === managedListPath) {
+                    expect(ManagedListInputV1Schema.parse(await new Response(init?.body).json()).homeId).toBe(serverIdentityId);
+                    return Response.json(ManagedListOutputV1Schema.parse({ machines: [] }));
+                }
                 machineReads += 1;
                 finishBootstrap();
                 if (request.pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
