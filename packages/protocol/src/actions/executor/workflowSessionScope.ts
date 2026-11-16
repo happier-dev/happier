@@ -8,6 +8,7 @@ import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import type { ActionId } from '../actionIds.js';
 import type { WorkflowMaterializedLeafV1 } from '../../workflows/workflowDefinitionV1.js';
 import { readWorkflowCurrentInvocationAncestryV1 } from '../../workflows/workflowInvocationMembersV1.js';
+import { createActionExecuteFailureError } from '../actionExecutionResult.js';
 
 type WorkflowActionInvocationContextV1 = Readonly<{
   opened: ReturnType<typeof WorkflowRunGetResultV1Schema.parse>;
@@ -19,7 +20,8 @@ type WorkflowActionInvocationContextV1 = Readonly<{
   leaf: WorkflowMaterializedLeafV1;
 }>;
 
-const invalidScope = Object.assign(new Error('workflow_scope_content_unavailable'), { code: 'content_unavailable' });
+const invalidScope = createActionExecuteFailureError({ ok: false, errorCode: 'content_unavailable',
+  error: 'workflow_scope_content_unavailable' });
 
 /** Opens the exact accepted frame; neither Action operands nor sibling targets supply authority.
  * Missing/misbound facts return null; read failures propagate to the Action failure owner.

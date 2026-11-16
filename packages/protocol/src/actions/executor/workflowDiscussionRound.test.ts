@@ -3,6 +3,7 @@ import { createWorkflowDiscussionRoundFixture as fixture } from '../../../testki
 import { WorkflowDiscussionRoundProjectResultV1Schema } from '../../workflows/workflowDiscussionRoundV1.js';
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actionExecutor.js';
+import { createActionExecuteFailureError } from '../actionExecutionResult.js';
 
 const runId = '11111111-1111-4111-8111-111111111111';
 const participantCount = process.env.HAPPIER_WORKFLOW_SCALE_MEASUREMENT === '1' ? 500 : 24;
@@ -26,11 +27,22 @@ describe('Discussion round projection demand', () => {
   it('preserves a Session read failure instead of claiming the admitted review scope is missing', async () => {
     const f = await fixture('projector-in-if', 2, 'review');
     const executor = createActionExecutor({ ...f.deps,
-      resolveSessionReference: async () => { throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' }); },
+      resolveSessionReference: async () => { throw createActionExecuteFailureError({
+        ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' }); },
       reviewCommentAction: async () => { throw new Error('review_must_not_dispatch'); },
     } as unknown as ActionExecutorDeps);
     await expect(executor.execute('reviews.comments.list', { sessionId: f.address.sessionId }, f.context(f.rounds[2]!.complete)))
       .resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable', failureCause: { errorCode: 'target_unavailable' } });
+  });
+
+  it('keeps an untyped Session read exception distinct from a target refusal', async () => {
+    const f = await fixture('projector-in-if', 2, 'review');
+    const executor = createActionExecutor({ ...f.deps,
+      resolveSessionReference: async () => { throw Object.assign(new Error('private failure'), { code: 'vendor_private_code' }); },
+      reviewCommentAction: async () => { throw new Error('review_must_not_dispatch'); },
+    } as unknown as ActionExecutorDeps);
+    await expect(executor.execute('reviews.comments.list', { sessionId: f.address.sessionId }, f.context(f.rounds[2]!.complete)))
+      .resolves.toMatchObject({ ok: false, errorCode: 'action_failed' });
   });
 
   it('carries one host-admitted Workflow Session scope through review dispatch and refreshes it for the next Action', async () => {

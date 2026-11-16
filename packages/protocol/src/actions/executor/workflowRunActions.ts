@@ -62,7 +62,7 @@ import { readWorkflowDiscussionRoundBindingV1 } from '../../workflows/builtins/c
 import type { WorkflowPluginSourceReaderV1 } from '../../workflows/workflowPluginSourceContractV1.js';
 import { resolveInputTypeOptions, readInputFieldOptionsConstraint, validateInputFieldSchema, validateInputFieldValue } from '../../inputs/inputTypeRuntime.js';
 import type { InputOption } from '../../inputs/inputFields.js';
-import { ActionExecuteFailureSchema } from '../actionExecutionResult.js';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError, parseActionExecuteFailure } from '../actionExecutionResult.js';
 import { WorkflowOperationErrorCodeV1Schema, type WorkflowOperationErrorCodeV1 } from '../../workflows/workflowProgressV1.js';
 import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from './actionStartDiagnostics.js';
 import { prepareWorkflowRunStartV1, resolveWorkflowContextInputsV1, resolveWorkflowRunStartInputsV1 as resolveInputs,
@@ -241,7 +241,8 @@ function projectRunCallerAccess(census: Pick<WorkflowRunRecipientCensusResponseV
 }
 
 function workflowError(code: string, details?: unknown): Error & { code: string; details?: unknown } {
-  return Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
+  return createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
+    ...(details === undefined ? {} : { details }) });
 }
 
 
@@ -485,7 +486,11 @@ function translateStorageError(error: unknown, options: Readonly<{ unconfirmedWr
   const status = (error as { status?: unknown })?.status;
   const responseError = response?.data?.error;
   const typedCode = WorkflowOperationErrorCodeV1Schema.safeParse(responseError ?? code);
-  if (typedCode.success && code === typedCode.data) throw error;
+  if (typedCode.success && code === typedCode.data) {
+    if (parseActionExecuteFailure(error)) throw error;
+    throw Object.assign(workflowError(typedCode.data, error && typeof error === 'object' && 'details' in error ? error.details : undefined),
+      { cause: error }, response === undefined ? {} : { response }, typeof status === 'number' ? { status } : {});
+  }
   const httpStatus = response?.status ?? status;
   // Authentication middleware can refuse a signed storage phase with no JSON
   // error body. That is a permanent access refusal, not a storage outage.
