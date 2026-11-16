@@ -309,27 +309,35 @@ function declarationRefKey(pluginId: string, version: string, machineId?: string
 export async function resolveCurrentPluginDeclarationsTx(params: Readonly<{
     tx: Tx;
     accountId: string;
-    refs: readonly Readonly<{ pluginId: string; version: string; machineId?: string; machineInstallationId?: string }>[];
+    refs: readonly Readonly<{ pluginId: string; version: string; machineId?: string; machineInstallationId?: string;
+        /** Recheck selection by identity while reusing this previously admitted immutable body. */
+        admittedDeclaration?: CurrentPluginDeclarationV1 }>[];
 }>): Promise<ReadonlyMap<string, CurrentPluginDeclarationV1>> {
     const resolved = new Map<string, CurrentPluginDeclarationV1>();
     if (params.refs.length === 0) return resolved;
     const pluginIds = [...new Set(params.refs.map((ref) => ref.pluginId))];
     const intents = await readDeclarationIntentIdentitiesTx(params.tx, params.accountId, pluginIds);
     const intentsByPluginId = new Map(intents.map((intent) => [intent.pluginId, intent] as const));
-    const releaseRefs = [...new Map(params.refs.flatMap((ref) => (
-        intentsByPluginId.get(ref.pluginId)?.desiredVersion === ref.version
-            ? [[declarationRefKey(ref.pluginId, ref.version), ref] as const]
-            : []
-    ))).values()];
-    const releases = [];
-    for (const refs of portableQueryChunks({ values: releaseRefs, bindingsPerValue: 2, fixedBindings: 2 })) {
-        releases.push(...await params.tx.accountPluginRelease.findMany({
-            where: {
-                accountId: params.accountId,
-                OR: refs.map((ref) => ({ pluginId: ref.pluginId, version: ref.version })),
-            },
-            select: { pluginId: true, version: true, archiveDigestSha256: true, normalizedManifest: true },
-        }));
+    const releaseRefs = new Map<string, typeof params.refs[number]>();
+    for (const ref of params.refs) {
+        if (intentsByPluginId.get(ref.pluginId)?.desiredVersion !== ref.version) continue;
+        const key = declarationRefKey(ref.pluginId, ref.version);
+        // A mixed batch fetches a body only when one of its consumers needs it.
+        if (!releaseRefs.has(key) || !ref.admittedDeclaration) releaseRefs.set(key, ref);
+    }
+    const releases: Array<Readonly<{ pluginId: string; version: string; archiveDigestSha256: unknown;
+        normalizedManifest?: unknown }>> = [];
+    for (const reuseAdmitted of [false, true]) {
+        const requested = [...releaseRefs.values()].filter(ref => Boolean(ref.admittedDeclaration) === reuseAdmitted);
+        for (const refs of portableQueryChunks({ values: requested, bindingsPerValue: 2, fixedBindings: 2 })) {
+            releases.push(...await params.tx.accountPluginRelease.findMany({
+                where: {
+                    accountId: params.accountId,
+                    OR: refs.map((ref) => ({ pluginId: ref.pluginId, version: ref.version })),
+                },
+                select: { pluginId: true, version: true, archiveDigestSha256: true, normalizedManifest: !reuseAdmitted },
+            }));
+        }
     }
     const releasesByRef = new Map(releases.map((release) => [
         declarationRefKey(release.pluginId, release.version),
@@ -338,7 +346,7 @@ export async function resolveCurrentPluginDeclarationsTx(params: Readonly<{
     const projected = projectsDeclarationIdentities();
     const selected = new Map(params.refs.flatMap(ref => {
         const intent = intentsByPluginId.get(ref.pluginId);
-        if (!projected || !intent?.enabled || intent.desiredVersion !== null) return [];
+        if (ref.admittedDeclaration || !projected || !intent?.enabled || intent.desiredVersion !== null) return [];
         const current = readReleaseLessDeclarationListSummary(intent.releaseLessDeclaration, ref.pluginId,
             ref.machineId === undefined ? undefined : { machineId: ref.machineId,
                 ...(ref.machineInstallationId === undefined ? {} : { machineInstallationId: ref.machineInstallationId }) }).currentDeclaration;
@@ -353,11 +361,17 @@ export async function resolveCurrentPluginDeclarationsTx(params: Readonly<{
         const key = declarationRefKey(ref.pluginId, ref.version, ref.machineId, ref.machineInstallationId);
         const chosen = selected.get(key);
         const manifest = chosen ? readStoredPluginManifestV2(manifests.get(key), ref.pluginId) : null;
-        const declaration = projected && intent?.desiredVersion === null
+        const admitted = ref.admittedDeclaration;
+        const release = releasesByRef.get(declarationRefKey(ref.pluginId, ref.version));
+        const declaration = !admitted && projected && intent?.desiredVersion === null
             ? chosen && manifest ? { manifest, declarationDigestSha256: chosen.declarationDigestSha256 } : null
             : readCurrentPluginDeclarationV1({ ...ref, intent,
-                release: releasesByRef.get(declarationRefKey(ref.pluginId, ref.version)) });
-        if (declaration?.manifest.version === ref.version) resolved.set(key, declaration);
+                release: release && { ...release, normalizedManifest: admitted?.manifest ?? release.normalizedManifest } });
+        if (declaration?.manifest.version === ref.version
+            && (!admitted || (admitted.manifest.id === ref.pluginId && admitted.manifest.version === ref.version
+                && declaration.declarationDigestSha256 === admitted.declarationDigestSha256))) {
+            resolved.set(key, admitted ?? declaration);
+        }
     }
     return resolved;
 }
@@ -369,6 +383,7 @@ export async function resolveCurrentPluginDeclarationTx(params: Readonly<{
     version: string;
     machineId?: string;
     machineInstallationId?: string;
+    admittedDeclaration?: CurrentPluginDeclarationV1;
 }>): Promise<CurrentPluginDeclarationV1 | null> {
     const resolved = await resolveCurrentPluginDeclarationsTx({
         tx: params.tx,
