@@ -7,7 +7,7 @@ import { AnyClientUpgradeRequiredV1Schema } from '@happier-dev/protocol/clientCo
 import { OperationUpdateRequiredV1Schema } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SESSION_LIST_PAGE_DEFAULT_LIMIT, SESSION_LIST_PAGE_MAX_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
-import { V2SessionByIdNotFoundSchema, V2SessionByIdResponseSchema, V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, V2SessionByIdNotFoundSchema, V2SessionByIdResponseSchema, V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
@@ -141,6 +141,12 @@ type SessionDetailInput = Readonly<{ userId: string; authentication: SessionAcce
     includePrivateRuleProjection?: boolean;
     /** Usage consumes projected state facts separately; encrypted documents stay opaque. */
     usageProjection?: boolean;
+    /**
+     * The Session runner's snapshot consumes only shared Session state (metadata, Agent state,
+     * organization, archive, pending queue and execution-run targets, latest turn status), so
+     * the viewer's personal facts and the owner's launch/activation facts are neither loaded nor sent.
+     */
+    runtimeSnapshot?: boolean;
     /** Internal evidence authority from the existing recipient projector, never a wire field. */
     onUsageStateAdmission?: (sessionId: string, admitted: boolean) => void;
     /**
@@ -203,7 +209,9 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                 const observationCursor = await readSessionObservationCursorInTx(tx, userId, authentication);
                 const managedIds = await readManagedIds(tx, batch);
                 const verifiedSessionRuntimePrincipal = authentication.sessionRuntimePrincipal !== undefined;
-                const ruleRows = verifiedSessionRuntimePrincipal || input.includePrivateRuleProjection === false ? null
+                // Runtime credentials never acquire their hosting Account's private facts; a runtime snapshot never reads them.
+                const omitViewer = verifiedSessionRuntimePrincipal || input.runtimeSnapshot === true;
+                const ruleRows = omitViewer || input.includePrivateRuleProjection === false ? null
                     : await readAccountFollowRuleProjectionRowsInTx(tx, { accountId: userId, authentication });
                 const result = new Map<string, SessionDetailCapture>();
                 const rows = await findV2SessionDetailRowsInTx(tx, { ...input,
@@ -227,12 +235,11 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                     const documents = await readUsageDetailDocumentsInTx(tx, candidates.map(session => session.id));
                     candidates = candidates.map(session => ({ ...session, ...documents.get(session.id) }));
                 }
-                // Runtime credentials never acquire their hosting Account's private facts.
-                const discussionFacts = verifiedSessionRuntimePrincipal ? undefined : await readSessionListViewerDiscussionFacts(candidates, userId, tx);
-                const latestFailureSequences = verifiedSessionRuntimePrincipal ? undefined : await loadSessionLatestFailureSequencesInTx(tx, candidates);
-                const ruleReadStates = verifiedSessionRuntimePrincipal || input.includePrivateRuleProjection === false ? undefined
+                const discussionFacts = omitViewer ? undefined : await readSessionListViewerDiscussionFacts(candidates, userId, tx);
+                const latestFailureSequences = omitViewer ? undefined : await loadSessionLatestFailureSequencesInTx(tx, candidates);
+                const ruleReadStates = omitViewer || input.includePrivateRuleProjection === false ? undefined
                     : await loadSessionRuleReadStatesInTx(tx, { accountId: userId, authentication, rows: candidates, ruleRows });
-                const otherNamed = runtimeManagedSubtree ? undefined : await readSessionListOtherNamedCollaboratorFacts(candidates, userId, tx);
+                const otherNamed = runtimeManagedSubtree || input.runtimeSnapshot ? undefined : await readSessionListOtherNamedCollaboratorFacts(candidates, userId, tx);
                 const ownerModes = new Map<string, ReturnType<typeof deriveSessionMetadataOwnerAccountMode>>();
                 const mapped = candidates.flatMap(session => {
                     try {
@@ -244,7 +251,7 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                         return [mapV2SessionListRow({ row: session, userId,
                             ownerAccountMode: ownerModes.get(session.accountId),
                             discussionFacts, latestFailureSequences, ruleReadStates,
-                            hasOtherNamedCollaborator: otherNamed?.get(session.id), effectiveAccess: admission.access, verifiedSessionRuntimePrincipal,
+                            hasOtherNamedCollaborator: otherNamed?.get(session.id), effectiveAccess: admission.access, omitViewer,
                             ...(input.usageProjection ? { onMetadataDocumentProjection: descriptor =>
                                 input.onUsageStateAdmission?.(session.id, descriptor.agentStateDocument === 'omitted') } : {}) })];
                     } catch (error) { result.set(session.id, sessionDetailFailure(error)); return []; }
@@ -262,11 +269,12 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                     runs.push(target.runId);
                     pendingRuns.set(target.sessionId, runs);
                 }
-                const bindings = await readAcceptedSessionTeamCredentialProviderModelBindingsInTx(tx, ownerIds);
-                const activations = await loadPendingActivationPublicationsInTx(tx, ownerIds);
+                const launchFactIds = input.runtimeSnapshot ? [] : ownerIds;
+                const bindings = await readAcceptedSessionTeamCredentialProviderModelBindingsInTx(tx, launchFactIds);
+                const activations = await loadPendingActivationPublicationsInTx(tx, launchFactIds);
                 const owners = new Set(ownerIds);
                 const computerBindings = await readSessionComputerBindingsInTx(tx, {
-                    accountId: userId, sessions: verifiedSessionRuntimePrincipal ? [] : projected,
+                    accountId: userId, sessions: omitViewer ? [] : projected,
                 });
                 for (const session of projected) {
                     try {
@@ -277,7 +285,7 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                         const payload = runtimeManagedSubtree
                             ? parseProjectedSessionByIdResponse({ session: SessionRuntimeManagedSubtreeSnapshotRecordV1Schema.parse(session) })
                             : { session: assembleProjectedSessionRecord(owners.has(session.id) ? { ...session,
-                                acceptedTeamCredentialBinding: binding?.status === 'fulfilled' ? binding.value : null,
+                                ...(input.runtimeSnapshot ? {} : { acceptedTeamCredentialBinding: binding?.status === 'fulfilled' ? binding.value : null }),
                                 pendingActivationAuthorization: activations.get(session.id), pendingExecutionRunIds: pendingRuns.get(session.id) ?? [],
                             } : { ...session, ...(computerBindings.has(session.id)
                                 ? { computerMachineBinding: computerBindings.get(session.id) } : {}) }) };
@@ -464,6 +472,7 @@ export function registerSessionListingRoutes(app: Fastify) {
             }),
             querystring: z.optional(z.object({
                 accessProjectionVersion: z.optional(z.coerce.number().check(z.int(), z.positive())),
+                projection: z.optional(z.literal(SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION)),
             })),
             response: {
                 200: V2SessionByIdResponseSchema,
@@ -482,7 +491,8 @@ export function registerSessionListingRoutes(app: Fastify) {
             },
         },
     }, async (request, reply) => {
-        const result = await readSessionDetail({ userId: request.userId, sessionId: request.params.sessionId, authentication: readSessionAccessAuthenticationFromRequest(request), accessProjectionVersion: request.query?.accessProjectionVersion, storedContentCompatibility: readAccountStoredContentCompatibilityForHttpRequest(request) });
+        const result = await readSessionDetail({ userId: request.userId, sessionId: request.params.sessionId, authentication: readSessionAccessAuthenticationFromRequest(request), accessProjectionVersion: request.query?.accessProjectionVersion, storedContentCompatibility: readAccountStoredContentCompatibilityForHttpRequest(request),
+            ...(request.query?.projection === SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION ? { runtimeSnapshot: true } : {}) });
         // readSessionDetails admitted this body with the same response schema.
         if (result.status === 200) return reply.serializer(JSON.stringify).code(200).send(result.body);
         return reply.code(result.status).send(result.body);

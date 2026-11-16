@@ -2,6 +2,7 @@ import type { AgentState, Metadata } from '../types';
 import type { StoredCredentials } from '@/persistence';
 import { decodeBase64, decrypt } from '../encryption';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION } from '@happier-dev/protocol/sessions/control/contract';
 import { isDeepStrictEqual } from 'node:util';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
 import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -74,7 +75,9 @@ async function fetchRawSessionSnapshotOnce(opts: { token: string; sessionId: str
         return await existing;
     }
 
-    const promise = fetchSessionByIdCompat({ token: opts.token, sessionId: opts.sessionId, reason: opts.reason });
+    // This snapshot consumes only shared Session state: the server skips the viewer's personal and the owner's launch facts.
+    const promise = fetchSessionByIdCompat({ token: opts.token, sessionId: opts.sessionId, reason: opts.reason,
+        projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION });
     rawSessionSnapshotInFlight.set(key, promise);
     try {
         return await promise;

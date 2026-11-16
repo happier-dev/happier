@@ -79,6 +79,17 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
         getSpy.mockResolvedValueOnce({ status: 200, data: { session: row } });
         await expect(fetchSessionSnapshotUpdateFromServer(input)).resolves.toMatchObject({ organization: {}, archivedAt: null });
     });
+    it('reads the runtime snapshot projection, which carries every field the snapshot consumes', async () => {
+        const getSpy = vi.spyOn(axios, 'get');
+        const row = createSessionRecordFixture({ id: 's1' });
+        getSpy.mockResolvedValueOnce({ status: 200, data: { session: { ...row, pendingExecutionRunIds: ['run-a'] } } });
+        await expect(fetchSessionSnapshotUpdateFromServer({
+            token: 't', sessionId: 's1', mode: 'e2ee',
+            ctx: { encryptionKey: new Uint8Array(32), encryptionVariant: 'legacy' },
+            currentMetadataVersion: row.metadataVersion, currentAgentStateVersion: row.agentStateVersion ?? 0,
+        })).resolves.toMatchObject({ pendingExecutionRunIds: ['run-a'] });
+        expect(new URL(String(getSpy.mock.calls[0]?.[0])).searchParams.get('projection')).toBe('runtime-snapshot');
+    });
     it('projects exact queued Execution Run target ids from the current Session snapshot', async () => {
         const getSpy = vi.spyOn(axios, 'get');
         getSpy.mockResolvedValueOnce({

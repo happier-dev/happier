@@ -14,7 +14,7 @@ import { agentEventLocalIdAttentionImpact } from '@happier-dev/protocol/sessions
 import type { SessionMessageAttentionImpact, SessionStoredMessageContent, V2SessionByIdResponse, V2SessionListResponse, SessionLookupByTagsResponseV2, SessionMetadataInactiveModelIntentExpectationV1, SessionMetadataInactiveModelIntentOwnerPatchV1, SessionMetadataInactiveModelIntentPatchV1, SessionMetadataTuplePatchV1, SessionOrganizationPlacementV1, SessionTurnsProjectionV1, SessionListQueryV1, SessionListQueryResponseV1, SessionListUnavailableQueryV1, SessionAttentionSetResultV1, SessionManagerSetActionInputV1, SessionManagerSetResultV1 } from '@happier-dev/protocol';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SESSION_HISTORICAL_TRANSCRIPT_IMPORT_MAX_ITEMS, SessionTranscriptSurfaceItemReferenceInputV1Schema, type SessionTranscriptSurfaceItemReferenceInputV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
-import { SessionExternalIdentityClaimConflictV1Schema, SessionExternalIdentityClaimRequestV1Schema, SessionExternalIdentityClaimResponseV1Schema, SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema, V2SessionListResponseSchema, V2SessionMessageResponseSchema, type SessionExternalIdentityClaimConflictV1, type SessionExternalIdentityClaimResponseV1 } from '@happier-dev/protocol/sessions/control/contract';
+import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, SessionExternalIdentityClaimConflictV1Schema, SessionExternalIdentityClaimRequestV1Schema, SessionExternalIdentityClaimResponseV1Schema, SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema, V2SessionByIdResponseSchema, V2SessionListResponseSchema, V2SessionMessageResponseSchema, type SessionExternalIdentityClaimConflictV1, type SessionExternalIdentityClaimResponseV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SessionMetadataActiveConflictV1Schema, SessionMetadataInactiveModelIntentPatchSuccessV1Schema, SessionMetadataInactiveModelIntentVersionConflictV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionMetadataVersionConflictV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { buildSessionOrganizationAssignmentSnapshotHttpRequestV1, SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
@@ -317,7 +317,8 @@ function buildSessionByIdInFlightKey(params: Readonly<{
   token: string;
   encodedSessionId: string;
   requestPurpose: string;
-  accessProjectionVersion?: 1;
+  /** The request's query (access projection version and record projection): each selects a different body. */
+  query: string;
   timeoutMs: number;
 }>): string {
   return [
@@ -325,7 +326,7 @@ function buildSessionByIdInFlightKey(params: Readonly<{
     params.token,
     params.encodedSessionId,
     params.requestPurpose,
-    String(params.accessProjectionVersion ?? ''),
+    params.query,
     String(params.timeoutMs),
   ].join('\u0000');
 }
@@ -343,12 +344,18 @@ async function getSessionByIdResponse(params: Readonly<{
   deadlineAtMs?: number;
   accessProjectionVersion?: 1;
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
+  projection?: typeof SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION;
 }>): Promise<SessionByIdHttpResponse> {
   const serverUrl = params.serverUrl ?? resolveServerHttpBaseUrl();
   const encodedSessionId = encodeSessionIdPathSegment(params.sessionId);
   const accessProjectionVersion = resolveRequestedSessionDetailAccessProjectionVersion(params);
-  const sessionDetailUrl = `${serverUrl}/v2/sessions/${encodedSessionId}${accessProjectionVersion === 1 ? '?accessProjectionVersion=1' : ''}`;
-  const requestPath = `/v2/sessions/${encodedSessionId}${accessProjectionVersion === 1 ? '?accessProjectionVersion=1' : ''}`;
+  const queryParams = [
+    ...(accessProjectionVersion === 1 ? ['accessProjectionVersion=1'] : []),
+    ...(params.projection ? [`projection=${params.projection}`] : []),
+  ];
+  const query = queryParams.length > 0 ? `?${queryParams.join('&')}` : '';
+  const sessionDetailUrl = `${serverUrl}/v2/sessions/${encodedSessionId}${query}`;
+  const requestPath = `/v2/sessions/${encodedSessionId}${query}`;
   const resolvedAuthorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path: requestPath })
     ?? (params.resolveAuthorizationHeaders ? null : params.authorizationHeaders);
   if (params.resolveAuthorizationHeaders && !resolvedAuthorizationHeaders) {
@@ -395,7 +402,7 @@ async function getSessionByIdResponse(params: Readonly<{
     token: params.token,
     encodedSessionId,
     requestPurpose: resolveSessionSnapshotRequestPurpose(resolveSessionSnapshotRequestCoalescingReason(params.reason)),
-    accessProjectionVersion,
+    query,
     timeoutMs,
   });
   const existing = sessionByIdInFlightRequests.get(key);
@@ -436,6 +443,8 @@ export async function fetchSessionById(params: Readonly<{
   accessProjectionVersion?: 1;
   /** Exact Home snapshot already owned by the caller's runtime/connection; never fetched here. */
   serverFeaturesSnapshot?: CliServerFeaturesSnapshot;
+  /** The Session runner's snapshot reads only shared Session state. */
+  projection?: typeof SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION;
 }>): Promise<RawSessionRecord | null> {
   const accessProjectionVersion = resolveRequestedSessionDetailAccessProjectionVersion(params);
   const response = await getSessionByIdResponse({ ...params, accessProjectionVersion });

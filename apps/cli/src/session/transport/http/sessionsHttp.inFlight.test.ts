@@ -50,6 +50,22 @@ describe('sessionControl.sessionsHttp in-flight session detail coalescing', () =
     expect(getSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('never shares a runtime snapshot read with a concurrent full read of the same Session', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+
+    vi.resetModules();
+    const { fetchSessionById } = await import('./sessionsHttp');
+    const response = { status: 200, data: { session: createSessionRecordFixture({ id: 'sess-1', metadataVersion: 0, agentStateVersion: 0 }) } };
+    const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(response as any);
+
+    await Promise.all([
+      fetchSessionById({ reason: 'session-query', token: 'token-1', sessionId: 'sess-1' }),
+      fetchSessionById({ reason: 'session-query', token: 'token-1', sessionId: 'sess-1', projection: 'runtime-snapshot' }),
+    ]);
+
+    expect(getSpy.mock.calls.map(([url]) => new URL(String(url)).searchParams.get('projection'))).toEqual([null, 'runtime-snapshot']);
+  });
+
   it('shares requests only when concurrent hosted Sessions have the same HTTP timeout policy', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
 

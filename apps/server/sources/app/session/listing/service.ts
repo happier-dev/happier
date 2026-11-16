@@ -251,7 +251,7 @@ async function listSessionRuntimeManagedSubtree(params: Readonly<{
         for (const row of page.rows) {
             try {
                 const { share: _share, ...session } = mapV2SessionCompactListRow({ row, userId: params.userId, ownerAccountModes,
-                    verifiedSessionRuntimePrincipal: true, effectiveAccess: viewAccess(row.id) });
+                    omitViewer: true, effectiveAccess: viewAccess(row.id) });
                 sessions.push(session);
             } catch (error) {
                 if (!isSessionMetadataPrivacyUpgradeRequiredError(error)) throw error;

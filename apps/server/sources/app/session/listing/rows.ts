@@ -368,12 +368,12 @@ type SessionRowMappingParams = Readonly<{
     effectiveAccess?: EffectiveSessionAccess;
     recipientReadiness?: AccountRecipientEnvelopeReadinessReadScope;
     /**
-     * The caller has already verified the current Session-scoped runtime
-     * principal through exact access or the canonical managed-subtree proof. Runtime credentials
-     * receive shared Session state, never their hosting Account's personal
-     * Follow/read/attention/authorship projection.
+     * Omit the viewer's personal Follow/read/attention/authorship projection. Set for a
+     * verified Session-scoped runtime principal (exact access or the canonical managed-subtree
+     * proof), which never receives its hosting Account's personal facts, and for a runtime
+     * snapshot read, whose consumer reads only shared Session state.
      */
-    verifiedSessionRuntimePrincipal?: boolean;
+    omitViewer?: boolean;
     qualifiedTeamIds?: ReadonlySet<string>;
     accessMode?: "effective_access_v1" | "legacy_owner_or_direct";
     now?: number;
@@ -459,7 +459,7 @@ function mapV2SessionRow<TProjection>(params: SessionRowMappingParams,
     if (!effectiveAccess) {
         throw new Error("Session list row lacks effective viewer access");
     }
-    const viewer = params.verifiedSessionRuntimePrincipal
+    const viewer = params.omitViewer
         ? undefined
         : projectSessionViewer({
             row,
