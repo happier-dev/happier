@@ -7,7 +7,7 @@ import { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/wo
 import { createAccountServerWorkspaceWorkerPreferenceClient } from '@/api/workspaces/workspaceWorkerPreferences';
 import { logger } from '@/ui/logger';
 import type { WorkerDestinationV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
-import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import type { MachinePoolPrivateViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import * as machineRpcTransport from '@/session/transport/rpc/machineRpc';
@@ -2323,7 +2323,11 @@ describe('authenticated finite Project Action owner', () => {
         const target = await h.addWorkerTarget();
         const poolId = '99d55938-f860-4af8-8023-01fecec86f35';
         h.setWorkerPool(poolId);
-        let members: MachinePoolViewV1['pool']['members'] = [
+        // Pool label opening reads the Account's current storage contract over Home HTTP.
+        h.get.mockImplementation(async url => ({ status: 200, data: String(url).endsWith('/v1/account/encryption/currentness')
+            ? { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }
+            : { mode: 'plain', updatedAt: 1 } }));
+        let members: MachinePoolPrivateViewV1['pool']['members'] = [
             ...(scenario === 'workspace' ? [] : [{ machineId: 'another-machine', priorityTier: 0, enabled: true, state: 'connected' as const }]),
             { machineId: 'machine', priorityTier: 1, enabled: true, state: 'connected' },
         ];
@@ -2331,7 +2335,7 @@ describe('authenticated finite Project Action owner', () => {
         vi.spyOn(axios, 'request').mockImplementation(async config => {
             if (config.headers?.Authorization) expect(config.headers).toMatchObject({ Authorization: `Bearer ${token}` });
             else expect(config.headers).toMatchObject({ 'x-happier-action-execution-authorization': 'home-issued-finite-authorization' });
-            if (scenario === 'workspace' && config.url === 'https://home.example/v1/account/encryption') {
+            if (config.url === 'https://home.example/v1/account/encryption') {
                 return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             }
             if (scenario === 'workspace' && config.url === `https://home.example${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`) {
@@ -2343,7 +2347,8 @@ describe('authenticated finite Project Action owner', () => {
             expect(config.url).toBe('https://home.example/v1/machines/pools/get');
             expect(config.method).toBe('POST');
             expect(config.data).toEqual({ poolId });
-            const view: MachinePoolViewV1 = { pool: { id: poolId, name: 'Workers', description: null, revision: 1, createdAt: 1, updatedAt: 1, members },
+            // Home returns recipient projections; the canonical Action opens them before receiving admission.
+            const view: MachinePoolPrivateViewV1 = { pool: { id: poolId, name: { kind: 'available', label: { content: { t: 'plain', v: 'Workers' }, recipientEnvelope: null } }, description: null, revision: 1, createdAt: 1, updatedAt: 1, members },
                 availability: { state: 'known', connectedCount: members.filter(member => member.enabled && member.state === 'connected').length,
                     enabledCount: members.filter(member => member.enabled).length } };
             return { status: 200, data: view };

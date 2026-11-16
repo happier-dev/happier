@@ -73,7 +73,7 @@ import { MachineProcessesStartAgainResultV1Schema } from '@happier-dev/protocol/
 import { readProcessCensus } from '@/processes/census/processCensus';
 import { listHappierProcessRoots } from '@/daemon/processes/roots/listHappierProcessRoots';
 import type { ProjectServicePlacementV1 } from '@happier-dev/protocol/workspaces/projectServicePlacementV1';
-import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
+import type { MachinePoolPrivateViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import type { PluginApi, PluginInvocationContext, Disposable } from '@happier-dev/plugin-sdk';
@@ -537,10 +537,11 @@ describe('accepted Project Service declaration starter', () => {
         vi.spyOn(axios, 'request').mockImplementation(async config => {
             if (config.url === 'https://home.example/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             expect(config.url).toBe('https://home.example/v1/machines/pools/get');
-            return { status: 200, data: { pool: { id: poolId, name: 'Workers', description: null, revision: 1,
+            const view: MachinePoolPrivateViewV1 = { pool: { id: poolId, name: { kind: 'available', label: { content: { t: 'plain', v: 'Workers' }, recipientEnvelope: null } }, description: null, revision: 1,
                 createdAt: 1, updatedAt: 1, members: connected ? [{ machineId: h.targetWorkspace.machineId,
                     priorityTier: 0, enabled: true, state: 'connected' }] : [] },
-                availability: { state: 'known', connectedCount: connected ? 1 : 0, enabledCount: connected ? 1 : 0 } } };
+                availability: { state: 'known', connectedCount: connected ? 1 : 0, enabledCount: connected ? 1 : 0 } };
+            return { status: 200, data: view };
         });
         const request = { ...h.request, choice: { kind: 'workers' as const,
             destination: { kind: 'pool' as const, poolId, selection: 'automatic' as const } } };
@@ -2861,7 +2862,7 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
     it.each(['explicit', 'saved', 'withdrawn_after_copy'] as const)('uses current canonical pool membership at the receiving worker without reranking (%s)', async scenario => {
         const h = await fixture(false, undefined, false, 'portable');
         const poolId = '99d55938-f860-4af8-8023-01fecec86f35';
-        let members: MachinePoolViewV1['pool']['members'] = [
+        let members: MachinePoolPrivateViewV1['pool']['members'] = [
             { machineId: 'higher-priority-machine', priorityTier: 0, enabled: true, state: 'connected' },
             { machineId: h.targetWorkspace.machineId, priorityTier: 1, enabled: true, state: 'connected' },
         ];
@@ -2872,7 +2873,8 @@ server.listen(0, '127.0.0.1', () => fs.writeFileSync(${JSON.stringify(portPath)}
             expect(config.url).toBe('https://home.example/v1/machines/pools/get');
             expect(config.method).toBe('POST');
             expect(config.data).toEqual({ poolId });
-            const view: MachinePoolViewV1 = { pool: { id: poolId, name: 'Workers', description: null, revision: 1, createdAt: 1, updatedAt: 1, members },
+            // Home returns recipient projections; the canonical Action opens them before receiving admission.
+            const view: MachinePoolPrivateViewV1 = { pool: { id: poolId, name: { kind: 'available', label: { content: { t: 'plain', v: 'Workers' }, recipientEnvelope: null } }, description: null, revision: 1, createdAt: 1, updatedAt: 1, members },
                 availability: { state: 'known', connectedCount: members.length, enabledCount: members.length } };
             return { status: 200, data: view };
         });

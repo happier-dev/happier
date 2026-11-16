@@ -1,6 +1,6 @@
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
-import { MachinePoolPrivateViewV1Schema } from '@happier-dev/protocol/machines/pools/v1';
+import { MachinePoolViewV1Schema } from '@happier-dev/protocol/machines/pools/v1';
 
 /** Receiving admission validates the already addressed Machine; it never selects or reranks. */
 export async function assertProjectReceivingPlacement(input: Readonly<{
@@ -23,10 +23,9 @@ export async function assertProjectReceivingPlacement(input: Readonly<{
     if (!input.readPool) return fail('preferences_unavailable');
     const result = await input.readPool(destination.poolId);
     if (!result.ok) return fail(result.errorCode);
-    // Placement only decides membership and connection state. It must consume
-    // the private wire projection structurally, without opening or displaying
-    // a Pool's recipient-scoped labels.
-    const view = MachinePoolPrivateViewV1Schema.safeParse(result.result);
+    // The canonical Action has already opened the Home's recipient-scoped labels.
+    // Receiving admission consumes its rendered result and only decides membership.
+    const view = MachinePoolViewV1Schema.safeParse(result.result);
     if (!view.success) return fail('preferences_unavailable');
     if (view.data.pool.id !== destination.poolId || !view.data.pool.members.some(member =>
         member.machineId === input.receivingMachineId && member.enabled && member.state === 'connected')) fail('target_not_local');
