@@ -41,8 +41,9 @@ export type InTxOptions = Readonly<{
      * With `readOnly`: the callback issues exactly one read statement, which is
      * atomic on its own. PostgreSQL and MySQL run it on the primary client with
      * no transaction, because the frame (BEGIN, isolation, READ ONLY, SHOW, SET
-     * LOCAL, COMMIT) costs more CPU than the read. SQLite keeps its read
-     * snapshot so the read stays off the writer queue. A callback that issues
+     * LOCAL, COMMIT) costs more CPU than the read. SQLite runs it on the
+     * read-only connection, so it stays off the writer queue, without the
+     * BEGIN/ROLLBACK frame. A callback that issues
      * two statements, or needs afterTx, must not set this. Combining it with
      * `prepare` or a deadline/timeout option is refused: none of them can apply.
      * The read carries only an operator's `statement_timeout`, as any direct
@@ -318,7 +319,9 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                 return resolveTransactionResult(await fn(tx));
             }, { deadlineAtMs: options.deadlineAtMs });
         }
-        return await withSqliteReadSnapshot(async tx => resolveTransactionResult(await fn(tx)), { deadlineAtMs: options.deadlineAtMs });
+        return await withSqliteReadSnapshot(async tx => resolveTransactionResult(await fn(tx)), {
+            deadlineAtMs: options.deadlineAtMs, singleStatement: options.singleStatementRead === true,
+        });
     }
     if (options?.readOnly && options.singleStatementRead) {
         try {

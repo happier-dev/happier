@@ -430,7 +430,11 @@ export async function initDbSqlite(): Promise<void> {
  */
 export async function withSqliteReadSnapshot<T>(
     read: (reader: TransactionClient) => Promise<T>,
-    options: Readonly<{ deadlineAtMs?: number }> = {},
+    options: Readonly<{
+        deadlineAtMs?: number;
+        /** The read issues exactly one statement: SQLite runs it as its own snapshot, with no BEGIN/ROLLBACK frame. */
+        singleStatement?: boolean;
+    }> = {},
 ): Promise<T> {
     const state = sqliteReadSnapshot;
     if (!state) throw new Error("SQLite database client is not initialized.");
@@ -449,6 +453,9 @@ export async function withSqliteReadSnapshot<T>(
             }
         }
         const client = state.client;
+        // An autocommit statement is atomic and sees one committed state; the read-only
+        // connection keeps it off the writer queue either way.
+        if (options.singleStatement) return await read(client);
         await client.$executeRawUnsafe("BEGIN DEFERRED;");
         try {
             return await read(client);

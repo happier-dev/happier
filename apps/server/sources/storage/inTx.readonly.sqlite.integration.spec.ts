@@ -239,6 +239,33 @@ describe("SQLite read snapshots", () => {
         await expect(auth.verifyToken(token)).resolves.toBeNull();
     });
 
+    it("serves a single-statement read on the read connection with no transaction frame", async () => {
+        // Prisma's tracing helper is the client's own instrumentation boundary: every client operation passes it.
+        const operations: string[] = [];
+        const instrumented = globalThis as { PRISMA_INSTRUMENTATION?: unknown };
+        const previous = instrumented.PRISMA_INSTRUMENTATION;
+        instrumented.PRISMA_INSTRUMENTATION = { helper: {
+            isEnabled: () => false,
+            getTraceParent: () => "00-10-10-00",
+            dispatchEngineSpans: () => undefined,
+            getActiveContext: () => undefined,
+            runInChildSpan: (options: { name?: string; attributes?: { name?: string } } | string, callback: () => unknown) => {
+                if (typeof options === "object" && options.name === "operation") operations.push(options.attributes?.name ?? "?");
+                return callback();
+            },
+        } };
+        const writer = await holdSqliteWriteLock();
+        try {
+            // Still off the writer queue: a separate process holds the writer lock.
+            await expect(inTx(tx => tx.account.findUniqueOrThrow({ where: { id: "snapshot-account" }, select: { seq: true } }),
+                { readOnly: true, singleStatementRead: true })).resolves.toEqual({ seq: 4 });
+        } finally {
+            await writer.release();
+            instrumented.PRISMA_INSTRUMENTATION = previous;
+        }
+        expect(operations).toEqual(["Account.findUniqueOrThrow"]);
+    });
+
     it("drains an active read on shutdown and creates a fresh read connection after initialization", async () => {
         let entered!: () => void;
         const started = new Promise<void>(resolve => { entered = resolve; });
