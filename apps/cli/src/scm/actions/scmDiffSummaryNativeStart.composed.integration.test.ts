@@ -15,7 +15,7 @@ import { removeTempDir } from '@/testkit/fs/tempDir';
 
 const nativeObservation = z.object({ input: z.string(), inputIds: z.array(z.string()), output: z.string(), pid: z.number() });
 
-it('generates and refines a saved Changes revision with a selected Connected Account through the installed native Run', async () => {
+it('generates saved Changes revisions with a selected Connected Account through the native Run (detached) and attached Run', async () => {
   const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-changes-native-' });
   const cwd = repository.rootPath;
   onTestFinished(() => removeTempDir(cwd));
@@ -98,6 +98,39 @@ it('generates and refines a saved Changes revision with a selected Connected Acc
         expectedCredentialRevision: null, content: { t: 'plain', v: credential }, metadata: { scopes: [] } }),
     });
     expect(connected.status, await connected.text()).toBe(200);
+    const verifyDetachedComparison = async () => {
+      // A Changes page can generate without a carrier Session. Its selected
+      // Connected Account still belongs to the requester at catalog admission.
+      const detachedRequest = { cwd, source: { kind: 'workingTree' },
+        modelSelector: { backendTargetKey: `backend:${target.identity.pluginId}/${target.identity.localId}`, modelId: 'default', connectedServices },
+        outputs: ['summary'], cachePolicy: { mode: 'bypass' } };
+      const detachedAction = await owner.execute('scm.diffSummary.generate', detachedRequest, context);
+      expect(detachedAction).toMatchObject({ ok: true });
+      if (!detachedAction.ok) throw new Error('Detached Changes Generate Action refused');
+      const detached = ScmDiffSummaryGenerateOutputSchema.parse(detachedAction.result);
+      expect(detached, JSON.stringify(detached)).toMatchObject({ success: true, runId: expect.any(String), resultId: expect.any(String) });
+      const detachedOutput = await owner.execute('execution.run.get', { runId: detached.runId, includeStructured: true,
+        waitForOutput: { kind: 'scm_diff_summary', comparisonId: detached.comparison?.id, resultId: detached.resultId,
+          output: 'summary', afterRevision: 0 } }, context);
+      expect(detachedOutput).toMatchObject({ ok: true });
+      const detachedSaved = await owner.execute('scm.diffSummary.result.read', { cwd, resultId: detached.resultId }, context);
+      expect(detachedSaved).toMatchObject({ ok: true, result: { success: true,
+        result: { output: { outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Generated: Native captured change.' } } } } } } });
+      if (!detachedSaved.ok) throw new Error('Detached saved output refused');
+      const beforeRefine = ScmDiffSummaryResultResponseSchema.parse(detachedSaved.result);
+      if (!beforeRefine.success) throw new Error('Detached saved result unavailable');
+      const refined = await owner.execute('scm.diffSummary.refine', { cwd, resultId: detached.resultId,
+        expectedRevision: beforeRefine.result.revision, output: 'summary', instructions: refinement },
+      { ...context, actionRequestId: randomUUID() });
+      expect(refined).toMatchObject({ ok: true, result: { success: true, runId: detached.runId } });
+      const refinedOutput = await owner.execute('execution.run.get', { runId: detached.runId, includeStructured: true,
+        waitForOutput: { kind: 'scm_diff_summary', comparisonId: detached.comparison?.id, resultId: detached.resultId,
+          output: 'summary', afterRevision: beforeRefine.result.revision } }, context);
+      expect(refinedOutput).toMatchObject({ ok: true });
+      const refinedSaved = await owner.execute('scm.diffSummary.result.read', { cwd, resultId: detached.resultId }, context);
+      expect(refinedSaved).toMatchObject({ ok: true, result: { success: true,
+        result: { output: { outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Refined: Native captured change.' } } } } } } });
+    };
     const birth = await owner.execute('session.spawn_new', projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
       creationKey: randomUUID(), executionTarget: { serverId: fixture.serverId, machineId: fixture.machineId },
       directory: { kind: 'path', path: cwd }, organizationPlacement: { folderId: null, tagIds: [] },
@@ -220,6 +253,33 @@ it('generates and refines a saved Changes revision with a selected Connected Acc
     expect(await observations()).toEqual(native);
     expect(await fixture.home.readWorkflowSessionEffects()).toEqual(effects);
     expect(await readSaved()).toEqual(latest);
+
+    // One daemon runtime serves both placements; stopping it between cases
+    // closes the process-wide plugin owner used by the next fixture.
+    await verifyDetachedComparison();
+    // Approval replay restores the original requester's custody. A deciding
+    // invocation must not replace its native model reader with host credentials.
+    const proposed = await owner.execute('approval.request.create', { actionId: 'scm.diffSummary.generate',
+      actionArgs: { cwd, source: { kind: 'workingTree' },
+      modelSelector: { backendTargetKey: `backend:${target.identity.pluginId}/${target.identity.localId}`, modelId: 'default', connectedServices },
+      outputs: ['summary'], cachePolicy: { mode: 'bypass' } },
+      summary: 'Generate the selected-account comparison.', createdBy: { surface: 'cli' } },
+    { ...context, actionRequestId: randomUUID() });
+    expect(proposed, JSON.stringify(proposed)).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
+    if (!proposed.ok) throw new Error('Comparison approval proposal refused');
+    const { artifactId } = z.object({ artifactId: z.string() }).parse(proposed.result);
+    const decided = await owner.execute('approval.request.decide', { artifactId, decision: 'approve' }, context);
+    expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true, result: { status: 'executed', execution: {
+      ok: true, result: { success: true, runId: expect.any(String), resultId: expect.any(String) },
+    } } });
+    if (!decided.ok) throw new Error('Comparison approval decision refused');
+    const approved = z.object({ execution: z.object({ result: ScmDiffSummaryGenerateOutputSchema }) }).parse(decided.result).execution.result;
+    await owner.execute('execution.run.get', { runId: approved.runId, includeStructured: true,
+      waitForOutput: { kind: 'scm_diff_summary', comparisonId: approved.comparison?.id, resultId: approved.resultId,
+        output: 'summary', afterRevision: 0 } }, context);
+    const approvedSaved = await owner.execute('scm.diffSummary.result.read', { cwd, resultId: approved.resultId }, context);
+    expect(approvedSaved).toMatchObject({ ok: true, result: { success: true,
+      result: { output: { outputs: { summary: { state: 'complete', value: { summaryMarkdown: 'Generated: Native captured change.' } } } } } } });
   } finally {
     await fixture.stop();
   }

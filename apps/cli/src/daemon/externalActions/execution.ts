@@ -41,7 +41,10 @@ import { configuration } from "@/configuration";
 import { runWithServerHttpBaseUrl } from "@/api/client/serverHttpBaseUrl";
 import type { RequesterSessionRuntimeContext } from "@/daemon/sessionEncryption/requesterSessionCredentials";
 import { isOriginalOwnAccountActionCustody, readRequesterDeploymentArtifactStore } from "@/daemon/sessionEncryption/requesterAccountActionProjection";
-import { readRequesterAccountActionContext, type RequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { readRequesterAccountActionContext, rebindRequesterAccountActionContext, type RequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
+import { modelCatalogUnavailable, readNativeExecutionRunOfferedModel } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
+import { resolveExecutionRunRuntimeBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import { createProjectFiniteAction } from "@/workspaces/projectSetup/projectFiniteAction";
 import type { RpcHandlerContext } from "@/api/rpc/types";
 import { decodeBase64 } from "@happier-dev/protocol/crypto/base64";
@@ -664,7 +667,7 @@ resolveServerFeaturesSnapshot?: () =>
               ? { resolveServerFeaturesSnapshot: params.resolveServerFeaturesSnapshot } : {}),
           })
         : externalActionApprovalExecutionOriginCurrentness;
-      const prepareInvocationApprovalExecutionAuthorization = createDaemonApprovalExecutionAuthorizationPreparer({
+      const prepareRequesterApprovalExecutionAuthorization = createDaemonApprovalExecutionAuthorizationPreparer({
         machineId: params.machineId, serverId: params.serverId, serverBaseUrl: params.serverBaseUrl,
         resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext,
         requesterAccountContext,
@@ -683,6 +686,10 @@ resolveServerFeaturesSnapshot?: () =>
         },
         daemonWorkSignal: shutdownCancellationDomains.daemonWorkSignal,
       });
+      const prepareInvocationApprovalExecutionAuthorization: ReturnType<typeof createDaemonApprovalExecutionAuthorizationPreparer> = async request => {
+        const prepared = await prepareRequesterApprovalExecutionAuthorization(request);
+        return prepared ? { ...prepared, authorization: decorateRequesterAuthorization(prepared.authorization) } : null;
+      };
       const invocationContributedApprovalReplay = requesterAccountContext || externalActionContributedApprovalReplay
         ? createDaemonExternalActionContributedApprovalReplay({ credentials,
             isApprovalExecutionOriginCurrent: invocationApprovalCurrentness,
@@ -733,25 +740,68 @@ resolveServerFeaturesSnapshot?: () =>
           || input && typeof input === 'object' && 'machineId' in input && input.machineId === params.machineId)
         ? apiMachineForSessions : null;
       let composerAttachmentLease: ReturnType<typeof pluginRuntimeController.tryAcquireRuntimeRegistry> = null;
+      const createRequesterAccountReaders = (account: typeof providerProjectionAccount) => {
+        let requesterPurposeRuntime: ReturnType<typeof createRequesterConnectedAccountPurposeBindingRuntime> | undefined;
+        const readRequesterPurposeRuntime = async (signal?: AbortSignal) => {
+          if (!account) return null;
+          const isCurrent = async (operationSignal = signal) => !operationSignal?.aborted && !isRuntimePublicationQuiescing()
+            && await account.isCurrent()
+            && await account.operationContext.isCurrent(operationSignal);
+          if (!await isCurrent()) return null;
+          requesterPurposeRuntime ??= createRequesterConnectedAccountPurposeBindingRuntime({
+            executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
+            serverId: params.serverId, operationContext: account.operationContext,
+            accountId: account.accountId, machineId: params.machineId,
+            reloadController: pluginRuntimeController, isCurrent,
+            getAccountEncryptionMode: async options => (await fetchAccountEncryptionCurrentness({ credentials: account.operationContext.credentials, token: account.operationContext.credentials.token,
+              serverBaseUrl: account.operationContext.serverHttpBaseUrl, ...(options?.signal ? { signal: options.signal } : {}) })).mode,
+            allowNativeAccountCredentials: account.operationContext.machineAdmission?.actorAccountId
+              === account.accountId
+              && isCustodianMachineAdmission(account.operationContext.machineAdmission),
+            resolveQualifiedConnectedAccountV4Support: () => params.resolveQualifiedConnectedAccountV4Support?.() ?? 'indeterminate',
+          });
+          return { purposes: requesterPurposeRuntime.purposes, isCurrent };
+        };
+        const readNativeOfferedModel: NonNullable<RequesterAccountActionContext['readNativeOfferedModel']> = async (request, signal) => {
+          const runtime = await readRequesterPurposeRuntime(signal);
+          const snapshot = account?.operationContext.readSnapshot();
+          if (!runtime || !snapshot || !account) {
+            throw modelCatalogUnavailable(request.modelId, 'requester_account_context_unavailable');
+          }
+          const operation = account.operationContext;
+          return await withAgentPreflightCatalog({ agentId: resolveExecutionRunRuntimeBackendId(request.backendTarget), signal },
+            catalog => readNativeExecutionRunOfferedModel({ ...request, ...catalog, signal,
+              promptCredentials: operation.credentials, accountSettings: snapshot.settings,
+              preflightDependencies: {
+                createApiClient: async credentials => await runWithServerHttpBaseUrl(operation.serverHttpBaseUrl,
+                  async () => (await import('@/api/api')).ApiClient.create(credentials)),
+                activatePurposeBindings: runtime.purposes.activatePurposeBindings,
+                connectedAccountsOwner: runtime.purposes.owner,
+              },
+            }));
+        };
+        return { readRequesterPurposeRuntime, readNativeOfferedModel };
+      };
+      const requesterAccountReaders = createRequesterAccountReaders(providerProjectionAccount);
+      const decorateRequesterAuthorization = (authorization: Parameters<typeof rebindRequesterAccountActionContext>[0]) => {
+        const requester = readRequesterAccountActionContext(authorization);
+        if (!requester) return authorization;
+        const readers = requester.savedSecretOperationContext === providerProjectionAccount?.operationContext
+          ? requesterAccountReaders
+          : createRequesterAccountReaders({
+              operationContext: requester.savedSecretOperationContext,
+              accountId: authorization.binding.accountId,
+              custodianAccountId: authorization.binding.custodianAccountId,
+              isCurrent: requester.isCurrent,
+            });
+        return rebindRequesterAccountActionContext(authorization, authorization,
+          { ...requester, readNativeOfferedModel: readers.readNativeOfferedModel });
+      };
       const createProviderReadContext = async (actionContext: ActionExecutorContext): Promise<import('@/providers/modelManagement/runtimeServices').RuntimeProviderAccountModelProjectionContext | null> => {
-        if (!providerProjectionAccount) return null;
         const signal = actionContext.signal ?? new AbortController().signal;
-        const isCurrent = async () => !signal.aborted && !isRuntimePublicationQuiescing()
-          && await providerProjectionAccount.isCurrent()
-          && await providerProjectionAccount.operationContext.isCurrent(signal);
-        if (!await isCurrent()) return null;
-        const { purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
-          executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
-          serverId: params.serverId, operationContext: providerProjectionAccount.operationContext,
-          accountId: providerProjectionAccount.accountId, machineId: params.machineId,
-          reloadController: pluginRuntimeController, isCurrent,
-          getAccountEncryptionMode: async options => (await fetchAccountEncryptionCurrentness({ credentials: providerProjectionAccount.operationContext.credentials, token: providerProjectionAccount.operationContext.credentials.token,
-            serverBaseUrl: providerProjectionAccount.operationContext.serverHttpBaseUrl, ...(options?.signal ? { signal: options.signal } : {}) })).mode,
-          allowNativeAccountCredentials: providerProjectionAccount.operationContext.machineAdmission?.actorAccountId
-            === providerProjectionAccount.accountId
-            && isCustodianMachineAdmission(providerProjectionAccount.operationContext.machineAdmission),
-          resolveQualifiedConnectedAccountV4Support: () => params.resolveQualifiedConnectedAccountV4Support?.() ?? 'indeterminate',
-        });
+        const runtime = await requesterAccountReaders.readRequesterPurposeRuntime(signal);
+        if (!runtime || !providerProjectionAccount) return null;
+        const { purposes, isCurrent } = runtime;
         return {
           getAccountSettingsSnapshot: providerProjectionAccount.operationContext.readSnapshot,
           resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
@@ -1426,6 +1476,12 @@ resolveServerFeaturesSnapshot?: () =>
       const executeAccepted = async (acceptedContext: ActionExecutorContext | undefined) => {
         const release = requesterAccountContext?.retain();
         try {
+          const authorization = acceptedContext?.externalActionExecutionAuthorization;
+          if (authorization) {
+            acceptedContext = { ...acceptedContext,
+              externalActionExecutionAuthorization: decorateRequesterAuthorization(authorization),
+            };
+          }
           const execute = () => confidential
             ? executor.continueConfidentialApprovalRequest(confidential.input, acceptedContext)
             : replay ? executor.replayApprovedApprovalRequest(replay, replayIngress)

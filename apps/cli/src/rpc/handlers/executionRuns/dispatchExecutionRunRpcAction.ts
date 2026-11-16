@@ -7,6 +7,7 @@ import { ExecutionRunCancelTurnRequestSchema } from '@happier-dev/protocol/execu
 import { ExecutionRunGetRequestSchema, ExecutionRunListRequestSchema, readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails, ExecutionRunTransportErrorCodeSchema, type ExecutionRunStartFailureDetailsV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { projectRpcRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { ExecutionRunTurnStreamCancelRequestSchema, ExecutionRunTurnStreamStartRequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { ExecutionRunTurnStreamReadRequestSchema } from '@happier-dev/protocol/execution/runs/runPrimitives';
@@ -524,8 +525,14 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         && params.context.readRequesterWorkAttributionV1
         ? await params.context.readRequesterWorkAttributionV1()
         : actionOptions?.requesterWorkAttributionV1;
-      let promptCredentials = (sessionId !== null || parsed.data.roleId || parsed.data.intent === 'review')
-        ? await params.context.readPromptCredentials?.() ?? undefined
+      const requesterAccountContext = readRequesterAccountActionContext(actionOptions?.externalActionExecutionAuthorization);
+      // Detached signed work consumes finite requester custody. Attached work
+      // keeps the incumbent reader bound to its owning Session.
+      let promptCredentials = (sessionId !== null || parsed.data.roleId
+        || parsed.data.intent === 'review' || parsed.data.intent === 'scm_diff_summary')
+        ? sessionId === null && actionOptions?.externalActionExecutionAuthorization
+          ? requesterAccountContext?.credentials
+          : await params.context.readPromptCredentials?.() ?? undefined
         : undefined;
       if (sessionId !== null && promptCredentials && !promptCredentials.requesterSessionCredentialScope) {
         // Ordinary Session credentials also need their captured Home. Missing
@@ -553,6 +560,9 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         // the public request carries identity only.
         resolvedRole: parsed.data.roleId ? actionOptions?.agentStartContext?.roles[parsed.data.roleId] : undefined,
         promptCredentials,
+        // Detached admission uses the accepted requester's private catalog owner.
+        // Attached Runs acquire their reader from the retained Session snapshot.
+        readNativeOfferedModel: sessionId === null ? requesterAccountContext?.readNativeOfferedModel : undefined,
         workspaceWrites: actionOptions?.workspaceWrites,
         workDepth: actionOptions?.workDepth ?? 0,
         // The outer Action/RPC scope is authoritative; a passthrough field in

@@ -199,6 +199,10 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
             : {}),
           localActionContext: {
             ...admittedExecutionRunContext(opts),
+            // Private requester ports stay on this in-process dispatch only.
+            ...(opts?.externalActionExecutionAuthorization
+              ? { externalActionExecutionAuthorization: opts.externalActionExecutionAuthorization } : {}),
+            ...(opts?.externalActionTarget ? { externalActionTarget: opts.externalActionTarget } : {}),
             ...(opts?.permissionRequestStore === undefined ? {} : { executionRunPermissionRequestStore: opts.permissionRequestStore }),
             ...(opts?.workflowObservationSink === undefined ? {} : { executionRunWorkflowObservationSink: opts.workflowObservationSink }),
           },

@@ -6,6 +6,7 @@ import type { AccountSettingsContext } from '@/settings/accountSettings/bootstra
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import type { ResolveExternalActionEncryption } from '../externalActions/executeExternalAction';
 import type { RequesterEnvironmentAccessObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
+import type { ExecutionRunNativeOfferedModelReader } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 
 export type RetainedRequesterAccountCustody = Readonly<{
   isCurrent(): Promise<boolean>;
@@ -26,6 +27,8 @@ export type RequesterAccountActionContext = Readonly<{
   accountSettingsContext: AccountSettingsContext;
   savedSecretOperationContext: SavedSecretOperationContextV1;
   authorization: ExternalActionExecutionAuthorizationV1;
+  /** Invocation-local native catalog admission; never serialized or retained as Run custody. */
+  readNativeOfferedModel?: ExecutionRunNativeOfferedModelReader;
   serverHttpBaseUrl: string;
   resolveEncryption: ResolveExternalActionEncryption;
   isCurrent(): Promise<boolean>;

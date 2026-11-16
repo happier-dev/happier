@@ -27,7 +27,7 @@ export async function assertExecutionRunStructuredAnalysisModelAllowed(params: M
   await assertExecutionRunStructuredOutputModelAllowed(params);
 }
 
-function modelCatalogUnavailable(modelId: string, reason: string, causeCode?: string): Error {
+export function modelCatalogUnavailable(modelId: string, reason: string, causeCode?: string): Error {
   const code = 'model_catalog_unavailable';
   return Object.assign(new Error('The selected model catalog could not be read.'), {
     code,
