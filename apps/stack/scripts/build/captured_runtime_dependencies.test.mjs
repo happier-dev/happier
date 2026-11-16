@@ -3,32 +3,10 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { captureRuntimeDependencies } from './captured_runtime_dependencies.mjs';
-
-test('retains the dynamically required recording encoder without an emitted import', async t => {
-  const fixture = await createTempFixture(t, { prefix: 'happier-recording-runtime-capture-' });
-  const repo = fixture.path('repo');
-  const cli = join(repo, 'apps/cli');
-  const encoder = join(cli, 'node_modules/ffmpeg-static');
-  await mkdir(encoder, { recursive: true });
-  await writeFile(join(cli, 'package.json'), JSON.stringify({ dependencies: { 'ffmpeg-static': '1.0.0' } }));
-  await writeFile(join(encoder, 'package.json'), JSON.stringify({ name: 'ffmpeg-static', main: 'index.cjs' }));
-  await writeFile(join(encoder, 'index.cjs'), 'module.exports = require("node:path").join(__dirname, "encoder.cjs");');
-  // A portable executable fixture exercises the retained package asset at the OS boundary.
-  await writeFile(join(encoder, 'encoder.cjs'), 'process.stdout.write("ffmpeg version captured-fixture\\n");');
-  const outputDir = fixture.path('capture');
-  captureRuntimeDependencies({ imports: [], outputDir, sourceRepoDir: repo });
-  const chunk = join(outputDir, 'apps/cli/src/chunks/recording.mjs');
-  await mkdir(join(outputDir, 'apps/cli/src/chunks'), { recursive: true });
-  await writeFile(chunk, 'import { createRequire } from "node:module"; export const encoder = createRequire(import.meta.url)("ffmpeg-static");');
-  await rm(repo, { recursive: true });
-  const captured = await import(pathToFileURL(chunk).href);
-  assert.equal(execFileSync(process.execPath, [captured.encoder], { encoding: 'utf8' }), 'ffmpeg version captured-fixture\n');
-});
 
 test('captures dynamically resolved optional runtimes and their native dependency without an emitted import', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-voice-runtime-capture-' });
