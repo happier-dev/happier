@@ -327,7 +327,48 @@ describe('createAccountPluginSecretCustodyRouter', () => {
         expect(snapshot.savedSecretResources?.length).toBe(2);
         expect(resourceReads, 'retirement withdraws resource-read authority before cleanup starts').not.toHaveBeenCalled();
     });
-    it('admits a cold shared ref before binding, rotates by revision, and fails terminally after revocation', async () => {
+    it.each([undefined, 'ready'] as const)('binds a missing shared row through real Home admission (catalog %s)', async catalogState => {
+        const previous = getActiveAccountSettingsSnapshot();
+        onTestFinished(() => {
+            axiosGetMock.mockReset();
+            axiosPostMock.mockReset();
+            readStoredCredentialsMock.mockReset();
+            if (previous) setActiveAccountSettingsSnapshot(previous);
+            else resetActiveAccountSettingsSnapshotForTests();
+        });
+        const credentials = { token: 'synthetic-plugin-bind', encryption: null };
+        readStoredCredentialsMock.mockResolvedValue(credentials);
+        const resourceId = 'resource-plugin-cold';
+        const ref = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
+        setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}),
+            settingsVersion: 4, loadedAtMs: 1, settingsSecretsReadKeys: [],
+            scopeKey: resolveAccountSettingsScopeKey(credentials), savedSecretResources: [],
+            savedSecretCatalogState: catalogState });
+        axiosGetMock.mockImplementation(async (url: string, config: { params?: unknown }) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 4 } };
+            expect(path).toBe('/v1/account/saved-secrets/resources/materials');
+            expect(config.params).toMatchObject({ resourceIds: [resourceId] });
+            return { status: 200, data: { resources: [{ resourceId, encryptionMode: 'plain', recipientEnvelope: null,
+                entry: { ref, source: 'shared_resource', relationship: 'recipient', name: 'Plugin token', kind: 'token',
+                    ownerAccountId: 'owner-a', revision: 1, materialStatus: 'ready',
+                    capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
+                storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
+                    content: { v: 1, name: 'Plugin token', kind: 'token', value: 'synthetic-shared-token' } }),
+            }] } };
+        });
+        axiosPostMock.mockResolvedValue({ status: 200, data: { success: true, version: 5 } });
+        // No injected Settings owner or admission callback: exercise the production
+        // binding -> Home admission -> inspection -> Account writer composition.
+        await expect(createRouter().bindExisting({ pluginId: 'acme.example', secretId: 'token', savedSecretId: ref }))
+            .resolves.toMatchObject({ revision: expect.stringMatching(/^account-secret-r1:/u) });
+        expect(resolveAccountSettingsPluginSecretBinding(getActiveAccountSettingsSnapshot()!.settings,
+            { pluginId: 'acme.example', localId: 'token' })?.savedSecretId).toBe(ref);
+        expect(axiosPostMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('rotates an admitted shared binding by revision and fails terminally after revocation', async () => {
         const resourceId = 'resource-plugin';
         const sharedRef = formatSavedSecretCatalogReferenceV1({ kind: 'shared_resource', id: resourceId });
         const resource = (revision: number, value: string) => ({
@@ -350,19 +391,15 @@ describe('createAccountPluginSecretCustodyRouter', () => {
             settingsVersion: 4,
             loadedAtMs: 1,
             settingsSecretsReadKeys: [],
-            savedSecretResources: [],
+            savedSecretResources: [resource(1, 'shared-v1')],
+            savedSecretCatalogState: 'ready',
             scopeKey: 'account:a',
         };
         const router = createAccountPluginSecretCustodyRouter({
             owner: {
                 readSnapshot: () => snapshot,
-                // The first Home admission supplies the cold row; subsequent
-                // answers are driven by the rotation/revocation below.
-                async admitSharedSecretForOperation() {
-                    if (snapshot.savedSecretCatalogState === undefined) snapshot = {
-                        ...snapshot, savedSecretResources: [resource(1, 'shared-v1')], savedSecretCatalogState: 'ready',
-                    };
-                },
+                // This rotation fixture starts admitted; Home admission is covered above.
+                async admitSharedSecretForOperation() {},
                 async updateOnce(input: Readonly<{
                     expectedVersion: number;
                     mutate(settings: Readonly<Record<string, unknown>>): Record<string, unknown>;
