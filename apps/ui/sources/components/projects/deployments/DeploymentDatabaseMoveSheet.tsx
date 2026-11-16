@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useRouter } from 'expo-router';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
-import type { DeploymentEnvironmentReadDetailV1, DeploymentReadControllerV1 } from '@happier-dev/deployments';
+import { deploymentDataTargetOperands, type DeploymentEnvironmentReadDetailV1, type DeploymentReadControllerV1 } from '@happier-dev/deployments';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { Item } from '@/components/ui/lists/Item';
@@ -14,14 +15,21 @@ import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 import { DeploymentEnvironmentChooser } from './DeploymentEnvironmentCollection';
 import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
-import { showDeploymentRestoreSheet } from './DeploymentRestoreSheet';
-import { readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { readDeploymentActionError } from './deploymentActionOutcome';
 import type { createDeploymentActions } from './deploymentActions';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
-import { deploymentDatabaseMoveDestination, deploymentRestoreOperands } from './deploymentRestore';
+import { deploymentDatabaseMoveDestination } from './deploymentRestore';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { useDeploymentEnvironmentRecord } from './useDeploymentReads';
+import { authorDatabaseMoveCutoverPatch } from './databaseMoveCutover';
+import { prepareDatabaseMoveWriters } from './databaseMoveWriters';
+import { useDeploymentMoveWorkflow } from './useDeploymentMoveWorkflow';
 
+type MoveInput = Extract<Parameters<ReturnType<typeof useDeploymentMoveWorkflow>['run']>[0], { kind: 'stateful' }>;
+type Writers = Extract<ReturnType<typeof prepareDatabaseMoveWriters>, { kind: 'ready' }>;
+type Prepared = Extract<ReturnType<typeof authorDatabaseMoveCutoverPatch>, { kind: 'ready' }>;
 type Actions = ReturnType<typeof createDeploymentActions>;
 type Detail = DeploymentEnvironmentReadDetailV1;
 type Data = NonNullable<NonNullable<Detail['content']['template']>['data']>[number];
@@ -32,7 +40,7 @@ type Input = Readonly<{
   actions: Actions;
   backupTarget: Parameters<Actions['runBackup']>[0];
   review: DeploymentReviewHandle;
-  machine: string;
+  lifetime: ServerAccountScopeLifetime;
 }>;
 
 export function showDeploymentDatabaseMoveSheet(input: Input): void {
@@ -48,46 +56,68 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   const selection = destinationDecision?.kind === 'ready' ? destinationDecision.selection : null;
   const destinationRefusal = destinationDecision?.kind === 'unavailable' ? destinationDecision.reason : undefined;
   const [busy, setBusy] = React.useState(false);
-  const [code, setCode] = React.useState<string | null>(null);
+  const [refusal, setRefusal] = React.useState<Readonly<{ code: string; variable?: string }> | null>(null);
   const select = React.useCallback((row: DeploymentEnvironmentCollectionV1['items'][number]) => {
-    setSelectedId(row.environment.id); setCode(null);
+    setSelectedId(row.environment.id); setRefusal(null);
   }, []);
-  const copy = async () => {
+  const reviewDestination = async () => {
     if (busy || !destination || !selection) return;
-    setBusy(true); setCode(null);
+    setBusy(true); setRefusal(null);
     try {
-      const backed = await props.actions.runBackup(props.backupTarget);
-      if (backed.kind !== 'verified') { setCode(backed.kind); return; }
+      const sourceTarget = deploymentDataTargetOperands(props.source);
+      const destinationTarget = deploymentDataTargetOperands(destination);
+      const controllerMachineId = props.source.environment.controllerMachineId;
+      const destinationDeploymentId = destination.runtimeTargetLink?.activeDeploymentId;
+      if (!sourceTarget || !destinationTarget || !controllerMachineId || !destinationDeploymentId) {
+        setRefusal({ code: 'machine_unavailable' }); return;
+      }
       const configuration = props.source.content.backup;
       const dump = configuration && 'configRevision' in configuration
         ? configuration.sources.find(source => source.kind === 'dump' && source.service === props.data.service) : undefined;
-      const manifest = backed.manifests.find(entry => entry.sourceId === dump?.sourceId);
-      if (!manifest) { setCode('backup_required'); return; }
-      const backup = { deploymentId: props.backupTarget.deploymentId, restoreBackupId: manifest.snapshot.snapshotId,
-        takenAtMs: Date.parse(manifest.snapshot.time), service: selection.sourceService, database: selection.database, versionLabel: null };
-      const operands = deploymentRestoreOperands(props.source, backup, { detail: destination, service: selection.sourceService,
-        database: selection.database, backupOperationId: backed.operationId });
-      if (!operands) { setCode('machine_unavailable'); return; }
+      if (!dump) { setRefusal({ code: 'backup_required' }); return; }
+      const prepared = authorDatabaseMoveCutoverPatch(props.source.content, { ...selection, sourceService: props.data.service });
+      if (prepared.kind !== 'ready') { setRefusal({ code: prepared.reason, ...('variable' in prepared ? { variable: prepared.variable } : {}) }); return; }
+      const inventory = await props.actions.readMoveServices({ machineId: sourceTarget.machineId,
+        environmentId: props.source.environment.id });
+      const writers = prepareDatabaseMoveWriters(props.source.content, props.source.environment.id, props.data.service,
+        [{ machineId: sourceTarget.machineId, installationId: sourceTarget.installationId,
+          deploymentId: props.backupTarget.deploymentId, result: inventory }]);
+      if (writers.kind !== 'ready') { setRefusal({ code: writers.reason }); return; }
+      const serverId = props.lifetime.scope.serverId;
+      const primary = prepared.patch.definition.primaryService;
+      const composeService = primary && writers.runningServices.includes(primary) ? primary : writers.runningServices[0]!;
+      const environment = props.source.environment;
+      const input: MoveInput = { kind: 'stateful', serverId, writers: writers.writers,
+        backupTarget: { ...props.backupTarget, serverId }, sourceId: dump.sourceId,
+        origin: { environmentId: environment.id, targetLinkId: sourceTarget.targetLinkId },
+        // Cross-Environment restore reads the source capture receipt; destination health names its own receipt.
+        restoreTarget: { ...destinationTarget, serverId, deploymentId: props.backupTarget.deploymentId,
+          destination: { kind: 'database', service: selection.sourceService, database: selection.database } },
+        cutover: { serverId, environmentId: environment.id, expectedRevision: environment.revision,
+          contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
+          contentBodyVersion: environment.contentBodyVersion, patch: prepared.patch },
+        deploy: { serverId, environmentId: environment.id, targetLinkId: sourceTarget.targetLinkId, services: writers.runningServices },
+        health: { environmentId: destination.environment.id, machineId: destinationTarget.machineId,
+          installationId: destinationTarget.installationId, targetLinkId: destinationTarget.targetLinkId,
+          deploymentId: destinationDeploymentId, composeService: selection.sourceService },
+        appHealth: { environmentId: environment.id, machineId: sourceTarget.machineId,
+          installationId: sourceTarget.installationId, targetLinkId: sourceTarget.targetLinkId, composeService },
+      };
       props.onClose();
-      showDeploymentRestoreSheet({ name: destination.content.name, machine: props.machine, backup, operands,
-        restore: props.actions.restore, onApproval: props.review.request,
-        continuation: { title: t('projects.deployments.databaseMoveReview'), onContinue: restored => {
-          const prepared = props.actions.prepareDatabaseMoveCutover(props.source.environment, props.source.content,
-            { ...selection, sourceService: props.data.service }, restored);
-          showDeploymentSheet({ component: DeploymentDatabaseMoveCutoverSheet,
-            props: { prepared, review: props.review, name: destination.content.name, sourceService: props.data.service },
-            title: t('projects.deployments.databaseMoveReview'), testID: 'project-deployments.move.review.modal' });
-        } },
-      });
+      showDeploymentSheet({ component: DeploymentDatabaseMoveCutoverSheet,
+        props: { prepared, writers, input, lifetime: props.lifetime, projectSourceId: environment.projectSourceId,
+          controllerMachineId, name: destination.content.name, sourceService: props.data.service,
+          title: `${props.source.content.name} · ${t('projects.deployments.databaseMoveTitle')}` },
+        title: t('projects.deployments.databaseMoveReview'), testID: 'project-deployments.move.review.modal', closeOnBackdrop: false });
     } catch (error) {
       const outcome = readDeploymentActionError(error);
       if (outcome.kind === 'approval') { props.onClose(); props.review.request(outcome.artifactId); }
-      else if (outcome.kind === 'refused') setCode(outcome.code);
+      else if (outcome.kind === 'refused') setRefusal({ code: outcome.code });
     } finally { setBusy(false); }
   };
   const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy }}>
-    <RoundButton testID="project-deployments.move.copy" size="normal" title={t('projects.deployments.databaseMoveCopy')}
-      disabled={busy || !selection} loading={busy} onPress={() => { void copy(); }} />
+    <RoundButton testID="project-deployments.move.copy" size="normal" title={t('common.review')}
+      disabled={busy || !selection} loading={busy} onPress={() => { void reviewDestination(); }} />
   </ModalCardFooterActions>;
   const { setChrome } = props;
   React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
@@ -109,47 +139,59 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
           : t('projects.deployments.loading')}
         diagnosticCode={destinationRefusal ?? selected.snapshot.failure?.code}
         reason={destinationRefusal === 'unsupported' ? deploymentActionRefusalRemedy(destinationRefusal) : undefined} /> : null}
-      {code ? <SurfaceStateCard testID="project-deployments.move.refused" size="line" kind="error"
-        title={t('projects.deployments.restoreRefused')} diagnosticCode={code} reason={deploymentActionRefusalRemedy(code)} /> : null}
+      {refusal ? <SurfaceStateCard testID="project-deployments.move.refused" size="line" kind="error"
+        title={t('projects.deployments.databaseMoveUnavailable')} diagnosticCode={refusal.code} reason={refusal.variable ?? (refusal.code === 'writer_review_required' ? t('projects.deployments.move.writerReviewRequired')
+          : refusal.code === 'noRunningWriter' ? t('projects.deployments.move.noRunningWriter') : deploymentActionRefusalRemedy(refusal.code))} /> : null}
       {setChrome ? null : footer}
     </View>
   </ListPresentationProvider>;
 }
 
-type Prepared = ReturnType<Actions['prepareDatabaseMoveCutover']>;
-function DeploymentDatabaseMoveCutoverSheet(props: Readonly<{ prepared: Prepared; review: DeploymentReviewHandle;
-  name: string; sourceService: string }> & CustomModalInjectedProps) {
-  const [done, setDone] = React.useState(false);
-  const press = useDeploymentChangePress({ request: artifactId => { props.onClose(); props.review.request(artifactId); } }, () => setDone(true));
-  const prepared = props.prepared;
-  const footer = done || prepared.kind !== 'ready' ? <ModalCardFooterActions>
-    <RoundButton size="normal" title={t('common.done')} onPress={props.onClose} />
-  </ModalCardFooterActions> : <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: press.running }}>
-    <RoundButton testID="project-deployments.move.save" size="normal" title={t('common.save')} loading={press.running}
-      disabled={press.running} onPress={() => { void press.press(() => prepared.save()); }} />
+function DeploymentDatabaseMoveCutoverSheet(props: Readonly<{ prepared: Prepared; writers: Writers; input: MoveInput;
+  lifetime: ServerAccountScopeLifetime; projectSourceId: string; controllerMachineId: string;
+  name: string; sourceService: string; title: string }> & CustomModalInjectedProps) {
+  const router = useRouter();
+  const move = useDeploymentMoveWorkflow(props.lifetime, props.projectSourceId, props.input.cutover.environmentId);
+  const [starting, setStarting] = React.useState(false);
+  const busy = starting || move.pending;
+  const confirm = async () => {
+    if (busy) return;
+    setStarting(true);
+    try {
+      const accepted = await move.run(props.input, props.title, props.controllerMachineId);
+      if (accepted) {
+        props.onClose();
+        router.push(createWorkflowRunRoute(accepted.run.id, props.lifetime.scope.serverId) as never);
+      }
+    } finally { setStarting(false); }
+  };
+  const footer = <ModalCardFooterActions cancel={{ onPress: props.onClose, disabled: busy }}>
+    <RoundButton testID="project-deployments.move.save" size="normal" title={t('projects.deployments.move.run')} loading={busy}
+      disabled={busy} onPress={() => { void confirm(); }} />
   </ModalCardFooterActions>;
   const { setChrome } = props;
   React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
   return <ListPresentationProvider value="page" pageInsets="contained">
     <View testID="project-deployments.move.review" style={deploymentSheetStyles.body}>
-      {done ? <SurfaceStateCard testID="project-deployments.move.saved" size="details" kind="success" title={t('projects.deployments.databaseMoveDone')} />
-        : prepared.kind !== 'ready' ? <SurfaceStateCard size="line" kind="unavailable" title={t('projects.deployments.databaseMoveUnavailable')}
-          diagnosticCode={prepared.reason} reason={'variable' in prepared ? prepared.variable : undefined} /> : <>
-          <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseMoveReviewLead')}</Text>
-          <ItemGroup title={t('projects.deployments.databaseMoveDestination')}>
-            <Item title={props.name} mode="info" />
-            <Item title={t('projects.deployments.databaseMoveRemovedService')} detail={props.sourceService} mode="info" />
-          </ItemGroup>
-          <ItemGroup title={t('projects.deployments.databaseMoveBindings')}>
-            {prepared.patch.bindings?.set.map(binding => <Item key={binding.name} title={binding.name} mode="info" />)}
-          </ItemGroup>
-          <ItemGroup title={t('projects.deployments.databaseMoveDefinition')}>
-            <CodeBlockView code={prepared.patch.definition?.document ?? ''} language="yaml" showCopyButton showHeaderRow={false} wrap />
-          </ItemGroup>
-          {press.outcome?.kind === 'refused' ? <SurfaceStateCard size="line" kind="error" title={t('projects.deployments.databaseMoveUnavailable')}
-            diagnosticCode={press.outcome.code} reason={deploymentActionRefusalRemedy(press.outcome.code)} /> : null}
-        </>}
+      <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.move.dataReviewLead')}</Text>
+      <ItemGroup title={t('projects.deployments.move.writers')}>
+        {props.writers.writers.map(writer => <Item key={`${writer.machineId}:${writer.serviceId}`}
+          testID={`project-deployments.move.writer:${writer.serviceId}`} title={writer.serviceId} detail={writer.machineId} mode="info" />)}
+        {props.writers.stopped.map(service => <Item key={`${service.machineId}:${service.serviceId}`}
+          testID={`project-deployments.move.stopped:${service.serviceId}`} title={service.composeService}
+          detail={t('projects.deployments.move.stopped')} mode="info" />)}
+      </ItemGroup>
+      <ItemGroup title={t('projects.deployments.databaseMoveDestination')}>
+        <Item title={props.name} mode="info" />
+        <Item title={t('projects.deployments.databaseMoveRemovedService')} detail={props.sourceService} mode="info" />
+      </ItemGroup>
+      <ItemGroup title={t('projects.deployments.databaseMoveBindings')}>
+        {props.prepared.patch.bindings.set.map(binding => <Item key={binding.name} title={binding.name} mode="info" />)}
+      </ItemGroup>
+      <ItemGroup title={t('projects.deployments.databaseMoveDefinition')}>
+        <CodeBlockView code={props.prepared.patch.definition.document} language="yaml" showCopyButton showHeaderRow={false} wrap />
+      </ItemGroup>
       {setChrome ? null : footer}
     </View>
   </ListPresentationProvider>;

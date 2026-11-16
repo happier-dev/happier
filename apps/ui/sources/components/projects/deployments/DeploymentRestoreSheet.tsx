@@ -66,11 +66,6 @@ export type DeploymentRestoreSheetInput = Readonly<{
    * A point the restore Action can't admit yet is listed but not selectable.
    */
   loadChoices?: (signal: AbortSignal) => Promise<readonly DeploymentRestoreChoice[]>;
-  /** A verified copy can continue to the existing app-change review; failures offer no continuation. */
-  continuation?: Readonly<{
-    title: string;
-    onContinue: (result: Extract<DeploymentBackupRestoreResultV1, { kind: 'restored' }>) => void;
-  }>;
 }>;
 
 /** One backup the person can pick; `restore` is null when the restore Action can't restore it yet. */
@@ -298,25 +293,12 @@ function DeploymentRestoreSheet(
   const footer =
     step.kind === 'settled' ? (
       <ModalCardFooterActions>
-        {step.result.kind === 'restored' && props.continuation ? (
-          <RoundButton
-            testID="project-deployments.restore.continue"
-            size="normal"
-            title={props.continuation.title}
-            onPress={() => {
-              if (step.result.kind !== 'restored') return;
-              onClose();
-              props.continuation?.onContinue(step.result);
-            }}
-          />
-        ) : (
-          <RoundButton
-            testID="project-deployments.restore.done"
-            size="normal"
-            title={t('common.done')}
-            onPress={onClose}
-          />
-        )}
+        <RoundButton
+          testID="project-deployments.restore.done"
+          size="normal"
+          title={t('common.done')}
+          onPress={onClose}
+        />
       </ModalCardFooterActions>
     ) : (
       <ModalCardFooterActions cancel={{ onPress: () => { uploadController.current?.abort(); onClose(); }, testID: 'project-deployments.restore.cancel', disabled: busy && !uploadController.current }}>
@@ -440,8 +422,9 @@ function DeploymentRestoreSheet(
   if (step.kind === 'settled') {
     const { result } = step;
     const restored = result.kind === 'restored';
+    const superseded = result.kind === 'superseded';
     const code = isRecord(result.evidence) && typeof result.evidence.code === 'string' ? result.evidence.code : result.kind;
-    const failure = restored ? null : presentActionFailureOutcome({ errorCode: code, error: code,
+    const failure = restored || superseded ? null : presentActionFailureOutcome({ errorCode: code, error: code,
       details: result.evidence }, 'deployment');
     return (
       <ListPresentationProvider value="page" pageInsets="contained">
@@ -453,7 +436,7 @@ function DeploymentRestoreSheet(
             kind={
               restored
                 ? 'success'
-                : result.kind === 'rolledBack'
+                : result.kind === 'rolledBack' || superseded
                   ? 'warning'
                   : 'error'
             }
@@ -462,6 +445,8 @@ function DeploymentRestoreSheet(
                 ? t('projects.deployments.restoreRestored', {
                     name: props.name,
                   })
+                : superseded
+                  ? t('projects.deployments.restoreSuperseded')
                 : result.kind === 'rolledBack'
                   ? t('projects.deployments.restoreRolledBack')
                   : result.kind === 'outcome_unknown'
@@ -469,7 +454,7 @@ function DeploymentRestoreSheet(
                     : t('projects.deployments.restoreRecoveryRequired')
             }
             reason={t('projects.deployments.restoreCodeUnchanged')}
-            diagnosticCode={restored ? undefined : code}
+            diagnosticCode={restored || superseded ? undefined : code}
             diagnosticDetail={failure?.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n')}
           />
           {stepRows}

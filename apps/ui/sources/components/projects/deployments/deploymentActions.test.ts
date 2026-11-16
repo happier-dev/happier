@@ -22,8 +22,6 @@ import { DeploymentDeployInputV1Schema, DeploymentPromoteInputV1Schema } from '@
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createApprovalArtifact } from '@/sync/ops/actions/approvalArtifactWriter';
 import { resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
-import { parse } from 'yaml';
-import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { DeploymentBackupConfigurationV1Schema } from '@happier-dev/deployment-protocol';
 import type { DeploymentPreviewTemplateV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
@@ -257,62 +255,6 @@ describe('deployment UI Action callbacks', () => {
         await expect(createDeploymentActions(lifetime, 'project').prepare(input, 'workspace')).resolves.toEqual({
             kind: 'handedOff', sessionRef: { serverId, sessionId: 'prepare-session' },
         });
-    });
-
-    it('offers one reviewed Move patch only after verified copy, preserving source volume data', () => {
-        const detail = createDeploymentEnvironmentDetailV1();
-        const lifetime: ServerAccountScopeLifetime = { scope: { serverId: 'home', accountId: 'owner' },
-            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
-        const actions = createDeploymentActions(lifetime, 'project');
-        const content = { ...detail.content, definition: { kind: 'stored' as const, contentRevision: 1,
-            composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['app', 'database'],
-            document: 'services:\n  app:\n    image: app:1\n    environment:\n      DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}?sslmode=prefer\n      DIRECT_URL: postgresql://${DB_USER}:${DB_PASSWORD}@database:5432/${DB_NAME}\n    depends_on: [database, cache]\n  database:\n    image: postgres:17\n    volumes: [data:/var/lib/postgresql/data]\n  cache:\n    image: redis:7\nvolumes:\n  data: {}\n' } };
-        const selection = { sourceService: 'database', destinationEnvironmentId: 'dedicated-db', exportKey: 'postgres',
-            username: 'app', database: 'app', password: { kind: 'secret' as const,
-                ref: formatSharedSavedSecretRefV1('password'), resourceRevision: 1 } };
-        for (const kind of ['rolledBack', 'outcome_unknown', 'recoveryRequired'] as const) {
-            expect(actions.prepareDatabaseMoveCutover(detail.environment, content, selection,
-                { kind, verified: false, nextAction: 'retry', evidence: {} }))
-                .toEqual({ kind: 'unavailable', reason: 'copy_not_verified' });
-        }
-        const ready = actions.prepareDatabaseMoveCutover(detail.environment, content, selection,
-            { kind: 'restored', verified: true, nextAction: 'review', evidence: {} });
-        expect(ready.kind).toBe('ready');
-        if (ready.kind !== 'ready') throw new Error(ready.reason);
-        const source = parse(ready.patch.definition.document);
-        expect(source.services.database).toBeUndefined();
-        expect(source.services.app.depends_on).toEqual(['cache']);
-        expect(source.volumes).toEqual({ data: {} });
-        expect(source.services.app.environment.DATABASE_URL)
-            .toBe('postgres://app:${DB_MOVE_PASSWORD}@${DB_MOVE_HOST}:${DB_MOVE_PORT}/app?sslmode=prefer');
-        expect(source.services.app.environment.DIRECT_URL)
-            .toBe('postgresql://app:${DB_MOVE_PASSWORD}@${DB_MOVE_HOST}:${DB_MOVE_PORT}/app');
-        expect(ready.patch.bindings.set).toEqual(expect.arrayContaining([
-            expect.objectContaining({ name: 'DB_MOVE_PASSWORD', source: selection.password }),
-            expect.objectContaining({ name: 'DB_MOVE_HOST', source: { kind: 'reference', environmentId: 'dedicated-db',
-                export: 'postgres', via: 'auto', component: 'host' } }),
-            expect.objectContaining({ name: 'DB_MOVE_PORT', source: { kind: 'reference', environmentId: 'dedicated-db',
-                export: 'postgres', via: 'auto', component: 'port' } }),
-        ]));
-        const multiple = parse(content.definition.document);
-        multiple.services.worker = { image: 'worker:1',
-            environment: ['DATABASE_URL=postgres://user:password@database:5432/app'],
-            depends_on: { database: { condition: 'service_healthy' }, cache: { condition: 'service_started' } } };
-        multiple.services.other = { image: 'other:1', environment: { DATABASE_URL: 'postgres://user:password@cache:5432/other' } };
-        const allConsumers = actions.prepareDatabaseMoveCutover(detail.environment,
-            { ...content, definition: { ...content.definition, document: JSON.stringify(multiple) } }, selection,
-            { kind: 'restored', verified: true, nextAction: 'review', evidence: {} });
-        expect(allConsumers.kind).toBe('ready');
-        if (allConsumers.kind !== 'ready') throw new Error(allConsumers.reason);
-        const allServices = parse(allConsumers.patch.definition.document).services;
-        expect(allServices.worker.environment).toEqual(['DATABASE_URL=postgres://app:${DB_MOVE_PASSWORD}@${DB_MOVE_HOST}:${DB_MOVE_PORT}/app']);
-        expect(allServices.worker.depends_on).toEqual({ cache: { condition: 'service_started' } });
-        expect(allServices.other.environment.DATABASE_URL).toBe('postgres://user:password@cache:5432/other');
-        const opaque = { ...content, definition: { ...content.definition,
-            document: 'services: {app: {image: "app:1", environment: {DATABASE_URL: "${OPAQUE}"}}, database: {image: "postgres:17"}}' } };
-        expect(actions.prepareDatabaseMoveCutover(detail.environment, opaque, selection,
-            { kind: 'restored', verified: true, nextAction: 'review', evidence: {} }))
-            .toEqual({ kind: 'unavailable', reason: 'non_machine_rewritable_dsn', variable: 'DATABASE_URL' });
     });
 
     it.each((['plain', 'e2ee'] as const).flatMap(mode => (['account', 'team'] as const).map(ownerKind => ({ mode, ownerKind }))))(

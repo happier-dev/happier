@@ -36,12 +36,16 @@ import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/pr
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { createNightlyBackupsWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/backupExamples';
+import { MachineServicesListInputV1Schema, MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
+import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -140,7 +144,8 @@ async function renderDatabase(
     /** The Environment shares the database on a private network (its saved export). */
     shared?: boolean;
     moveDestination?: boolean;
-    moveCopySucceeds?: boolean;
+    sourceMultiMachine?: boolean;
+    moveWritersUnavailable?: boolean;
     moveDestinationUnprotected?: boolean;
     moveManagedDestination?: boolean;
   }> = {},
@@ -215,10 +220,13 @@ async function renderDatabase(
     },
   });
   // Each case uses its own Home and Machine.
-  const detail = { ...authored, targetLinks: authored.targetLinks.map((row) => ({ ...row, targetLink: { ...row.targetLink,
-    ...('machines' in row.targetLink && Array.isArray(row.targetLink.machines) ? { machines: [machineId] } : {}),
+  const detail = { ...authored, environment: { ...authored.environment, controllerMachineId: machineId },
+    targetLinks: authored.targetLinks.map((row) => ({ ...row, targetLink: { ...row.targetLink,
+    ...('machines' in row.targetLink && Array.isArray(row.targetLink.machines)
+      ? { machines: [machineId, ...(input.sourceMultiMachine ? [`${machineId}-second`] : [])] } : {}),
     ...('members' in row.targetLink && Array.isArray(row.targetLink.members)
-      ? { members: row.targetLink.members.map((member) => ({ ...member, machineId })) } : {}) } })) } as typeof authored;
+      ? { members: row.targetLink.members.flatMap((member) => [{ ...member, machineId },
+          ...(input.sourceMultiMachine ? [{ ...member, machineId: `${machineId}-second` }] : [])]) } : {}) } })) } as typeof authored;
   homes.answer(serverId, `GET /v1/deployments/environments/${environmentId}`, { body: {
     ok: true, environment: { ...detail.environment, controllerMachineId: machineId },
     targetLinks: detail.targetLinks.map(row => row.targetLink),
@@ -388,24 +396,25 @@ async function renderDatabase(
   let setBindings = input.setBindings ?? null;
   if (input.moveDestination) {
     await answerExternalActionAccountForHome(homes, serverId, {
-      machineId, installationId: 'installation-a', actionId: 'deployments.backups.restore', tokenEpoch: 0,
+      machineId, installationId: 'installation-a', actionId: 'machines.services.list', tokenEpoch: 0, requesterInvocation: 'optional',
       execute: raw => {
-        const operand = DeploymentActionInputSchemasV1['deployments.backups.restore'].parse(raw);
-        effects.push({ actionId: 'deployments.backups.restore', input: operand });
-        if (input.moveCopySucceeds) {
-          return operand.mode === 'confirm'
-            ? { kind: 'restored', verified: true, nextAction: 'none', evidence: {} }
-            : { kind: 'prepared', operationId: 'copy-prepared', evidence: { native: {
-              configuration: backup,
-              prepared: { kind: 'prepared', operationId: 'copy-prepared',
-                source: manifest(environmentId, 'e'.repeat(64), '2026-11-07T10:00:00Z'), sourceFormat: 'postgresCustom',
-                repository: { repository: 's3:https://backup.test/bucket' },
-                destination: { service: 'postgres', adapter: 'postgres-v1', database: 'shop', environmentId: moved.environment.id,
-                  revision: 3, stagingDatabase: 'shop_staging', recoveryDatabase: 'shop_recovery', databaseExists: true,
-                  hasMeaningfulData: false, writerServices: [] } },
-            } } };
-        }
-        return { kind: 'recoveryRequired', verified: false, nextAction: 'manualRecovery', evidence: { code: 'restore_failed' } };
+        effects.push({ actionId: 'machines.services.list', input: MachineServicesListInputV1Schema.parse(raw) });
+        return MachineServicesListResultV1Schema.parse(input.moveWritersUnavailable
+        ? { kind: 'snapshot', services: [] }
+        : { kind: 'snapshot', services: [{ serviceId: 'instance/app', name: 'Shop app', authority: 'project',
+          lifecyclePurpose: 'deployment', generation: 'app-generation', state: 'running', native: { phase: 'running', readiness: 'ready' },
+          environmentId, deployment: { deploymentId: 'deployment-a', installationId: 'installation-a',
+            service: { kind: 'deployment', machineId, environmentId, environmentInstanceId: 'instance', composeService: 'app', serviceId: 'instance/app' } },
+          capabilities: { start: true, stop: true, restart: true, logs: true, accounting: false } }] });
+      },
+    });
+    await answerExternalActionAccountForHome(homes, serverId, {
+      machineId, installationId: 'installation-a', actionId: 'workflow.run.start', tokenEpoch: 0,
+      execute: raw => {
+        const operand = WorkflowRunStartRequestV1Schema.parse(raw);
+        effects.push({ actionId: 'workflow.run.start', input: operand });
+        return { admission: 'created', run: createWorkflowRunSummaryFixture({ id: operand.runId, machineId,
+          ownerAccountId: 'account-owner', origin: { kind: 'direct' } }) };
       },
     });
     homes.answer(serverId, `GET /v1/deployments/environments/${environmentId}`, { body: {
@@ -775,6 +784,14 @@ describe('Environment → Database → Read-only query', () => {
 });
 
 describe('Environment → Database → Move', () => {
+  it('uses the data owner’s single-Machine prerequisite instead of leaving other source writers running', async () => {
+    const view = await renderDatabase({ moveDestination: true, storedDefinition: true, sourceMultiMachine: true });
+    try {
+      expect(await view.settle(`${page}.connection`)).not.toBeNull();
+      expect(view.screen.findByTestId(`${page}.move`)).toBeNull();
+      expect(view.effects.filter(effect => effect.actionId === 'workflow.run.start')).toEqual([]);
+    } finally { await view.dispose(); }
+  });
   it('explains unsupported managed import without starting a copy or offering cutover', async () => {
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const view = await renderDatabase({ moveDestination: true, moveManagedDestination: true, storedDefinition: true });
@@ -788,8 +805,8 @@ describe('Environment → Database → Move', () => {
         .find(card => card.props.testID === 'project-deployments.move.destination.unavailable')?.props.diagnosticCode).toBe('unsupported'));
       expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(true);
       expect(view.screen.findByTestId('project-deployments.move.review')).toBeNull();
-      expect(view.effects.filter(effect => effect.actionId !== 'deployments.backups.history')).toEqual([]);
-    } finally { view.dispose(); }
+      expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
+    } finally { await view.dispose(); }
   });
 
   it('requires destination backups before copying into an already provisioned database', async () => {
@@ -805,65 +822,50 @@ describe('Environment → Database → Move', () => {
     } finally { await view.dispose(); }
   });
 
-  it('reviews one combined app patch after confirmed copy and leaves deployment to the ordinary Deploy action', async () => {
-    const view = await renderDatabase({ moveDestination: true, moveCopySucceeds: true, storedDefinition: true });
+  it('reviews source writers and the cutover before admitting one persisted Workflow, with no page-owned effects', async () => {
+    const view = await renderDatabase({ moveDestination: true, storedDefinition: true });
     try {
       await view.settle(`${page}.move`);
       await view.screen.pressByTestIdAsync(`${page}.move`);
       await view.settle('project-deployments.move.destination:database-dedicated');
       await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
-      await view.settle('project-deployments.move.copy');
       await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
       await view.screen.pressByTestIdAsync('project-deployments.move.copy');
-      await view.settle('project-deployments.restore.check');
-      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
-      expect(await view.settle('project-deployments.restore.confirm')).not.toBeNull();
-      expect(view.screen.findByTestId('project-deployments.restore.continue')).toBeNull();
-      await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
-      expect(await view.settle('project-deployments.restore.continue')).not.toBeNull();
-      expect(view.effects.filter(effect => effect.actionId === 'deployments.environments.update')).toHaveLength(0);
-      await view.screen.pressByTestIdAsync('project-deployments.restore.continue');
-      expect(await view.settle('project-deployments.move.save')).not.toBeNull();
-      expect(view.effects.filter(effect => effect.actionId === 'deployments.environments.update')).toHaveLength(0);
+      const review = await view.settle('project-deployments.move.save');
+      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+      const refusalCodes = view.screen.findAllByType(SurfaceStateCard).map(card => card.props.diagnosticCode);
+      expect(review, JSON.stringify({ refusalCodes, effects: view.effects })).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.move.writer:instance/app')).not.toBeNull();
+      expect(view.effects.filter(effect => effect.actionId === 'machines.services.list')).toHaveLength(1);
+      expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
       await view.screen.pressByTestIdAsync('project-deployments.move.save');
-      expect(await view.settle('project-deployments.move.saved')).not.toBeNull();
-      const updates = view.effects.filter(effect => effect.actionId === 'deployments.environments.update');
-      expect(updates).toHaveLength(1);
-      expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.run')).toHaveLength(1);
-      expect(updates[0]?.input.patch).toMatchObject({
-        definition: { from: 'compose', services: ['app'] },
-        bindings: { set: expect.arrayContaining([
-          expect.objectContaining({ name: 'DB_MOVE_HOST', source: { kind: 'reference', environmentId: 'database-dedicated',
-            export: 'database', via: 'auto', component: 'host' } }),
-          expect.objectContaining({ name: 'DB_MOVE_PASSWORD', source: expect.objectContaining({ kind: 'secret' }) }),
-        ]) },
-      });
-      expect(view.effects.some(effect => effect.actionId === 'deployments.deploy')).toBe(false);
+      await waitForHomeGovernance(() => expect(view.effects.some(effect => effect.actionId === 'workflow.run.start')).toBe(true));
+      expect(view.effects.filter(effect => effect.actionId === 'workflow.run.start')).toHaveLength(1);
+      const admitted = view.effects.find(effect => effect.actionId === 'workflow.run.start')?.input;
+      expect(admitted).toMatchObject({ executionTarget: { kind: 'detached_run' }, source: { kind: 'saved' },
+        inputs: { dataMove: { writers: [{ machineId: view.machineId, serviceId: 'instance/app', expectedGeneration: 'app-generation' }],
+          sourceId: 'database', origin: { environmentId: view.environmentId },
+          restoreTarget: { environmentId: 'database-dedicated', targetLinkId: 'target-database-dedicated', deploymentId: 'deployment-a' },
+          health: { environmentId: 'database-dedicated', deploymentId: 'deployment-dedicated' },
+          cutover: { patch: { definition: { from: 'compose', services: ['app'] } } } } } });
+      expect(view.effects.filter(effect => effect.actionId !== 'workflow.run.start'
+        && getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
+      expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringContaining(String(admitted?.runId)));
     } finally { await view.dispose(); }
   });
 
-  it('copies to the chosen dedicated database and never offers cutover after a failed copy', async () => {
-    const view = await renderDatabase({ moveDestination: true, storedDefinition: true });
+  it('requires writer review when the native service cannot be identified and starts no backup', async () => {
+    const view = await renderDatabase({ moveDestination: true, moveWritersUnavailable: true, storedDefinition: true });
     try {
-      expect(await view.settle(`${page}.move`)).not.toBeNull();
-      expect(view.effects.filter(effect => effect.actionId === 'deployments.backups.run')).toHaveLength(0);
+      await view.settle(`${page}.move`);
       await view.screen.pressByTestIdAsync(`${page}.move`);
-      expect(await view.settle('project-deployments.move.destination:database-dedicated')).not.toBeNull();
+      await view.settle('project-deployments.move.destination:database-dedicated');
       await view.screen.pressByTestIdAsync('project-deployments.move.destination:database-dedicated');
-      expect(await view.settle('project-deployments.move.copy')).not.toBeNull();
       await waitForHomeGovernance(() => expect(view.screen.findByTestId('project-deployments.move.copy')?.props.disabled).toBe(false));
       await view.screen.pressByTestIdAsync('project-deployments.move.copy');
-      expect(await view.settle('project-deployments.restore.check')).not.toBeNull();
-      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
-      expect(await view.settle('project-deployments.restore.result.recoveryRequired')).not.toBeNull();
-      const copy = view.effects.find(effect => effect.actionId === 'deployments.backups.restore');
-      expect(copy?.input).toMatchObject({ environmentId: 'database-dedicated', expectedRevision: 3,
-        targetLinkId: 'target-database-dedicated', deploymentId: 'deployment-a',
-        source: { kind: 'repository', backupOperationId: 'manual-backup', snapshotId: 'e'.repeat(64),
-          origin: { environmentId: view.environmentId, targetLinkId: 'target-link' } },
-        destination: { kind: 'database', service: 'postgres', database: 'shop' } });
-      expect(view.screen.findByTestId('project-deployments.restore.continue')).toBeNull();
-      expect(view.effects.some(effect => effect.actionId === 'deployments.environments.update')).toBe(false);
+      expect(await view.settle('project-deployments.move.refused')).not.toBeNull();
+      expect(view.screen.findByTestId('project-deployments.move.save')).toBeNull();
+      expect(view.effects.filter(effect => getActionSpec(effect.actionId)?.sideEffectClass !== 'read')).toEqual([]);
     } finally { await view.dispose(); }
   });
 });

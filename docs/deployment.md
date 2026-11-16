@@ -5268,6 +5268,27 @@ re-adopting the same observed timestamp does not append it again. No new probe,
 timer, table, poll or alert transition is introduced. A held view crossing UTC
 midnight refreshes on its next existing read or push.
 
+## Database Move Workflow (0.3 development)
+
+The data-safe Move starter uses the existing Workflow Run and Action owners.
+It stops each reviewed source writer and observes its native stopped state before
+capturing the final backup. Only the selected source's final snapshot is verified
+and restored. Current destination health precedes the reviewed Connect change;
+the app deploy and health check follow that change. Source data stays retained
+unless the person explicitly supplies a separate resource-retirement request.
+
+For a cross-Environment restore, `deploymentId` names the source capture receipt
+under `source.origin`. The restore owner resolves the destination's active
+generation independently; destination health uses that destination receipt.
+
+A refusal before cutover offers a review that explicitly resumes the captured
+source writers and abandons the Move. An uncertain child operation preserves its
+receipt for recovery. After acknowledged or unknown cutover, the Run requires a
+decision about the actual serving configuration; it never blindly restarts the
+old writer or replays an unknown restore. Continuation uses the Workflow engine's
+persisted invocations. The stateless Machine Move starter retains its existing
+repository-only behavior.
+
 ## Database size observations (0.3 development)
 
 `acquireDataServicePage` exposes `items[].databaseSizes`, keyed by the declared

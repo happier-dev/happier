@@ -516,6 +516,28 @@ describe('Environment → Settings → Backups: restore a backup (L3B)', () => {
     }
   });
 
+  it('presents a superseded restore as a warning without requesting data recovery', async () => {
+    const view = await renderRestore(input => input.mode === 'prepare'
+      ? { ok: true, result: prepared(String(input.environmentId), true) }
+      : { ok: true, result: { kind: 'superseded', verified: false, nextAction: 'none',
+          newerActivation: { deploymentId: 'newer-deployment', revision: 2 }, evidence: {} } });
+    try {
+      await view.until(`${settings}.restore.open`);
+      await view.screen.pressByTestIdAsync(`${settings}.restore.open`);
+      await view.until('project-deployments.restore.check');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.check');
+      await view.until('project-deployments.restore.confirm');
+      await view.screen.pressByTestIdAsync('project-deployments.restore.confirm');
+      await view.until('project-deployments.restore.result.superseded');
+      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+      const result = view.screen.findAllByType(SurfaceStateCard)
+        .find(card => card.props.testID === 'project-deployments.restore.result.superseded');
+      expect(result?.props.kind).toBe('warning');
+      expect(view.screen.getTextContent()).not.toContain('the data needs recovery');
+      expect(view.screen.findByTestId('project-deployments.restore.done')).not.toBeNull();
+    } finally { view.dispose(); }
+  });
+
   it('shows the restore steps the owner reported once the restore settles', async () => {
     const view = await renderRestore((input) =>
       input.mode === 'prepare'

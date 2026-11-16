@@ -1,4 +1,5 @@
 import { WorkflowDefinitionCreateResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { z } from 'zod/mini';
 import type { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -29,9 +30,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentDomainContentV1Schema } from '@happier-dev/deployment-protocol/v1';
 import { DeploymentDomainDnsPreviewResultV1Schema, type DeploymentDomainAddInputV1, type DeploymentDomainPreviewInputV1, type DeploymentDomainRemoveInputV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
-import { prepareDatabaseMoveCutoverPatch, type DatabaseMoveCutoverSelection } from './databaseMoveCutover';
 import { DeploymentMoveToRepositoryResultV1Schema, type DeploymentMoveToRepositoryInputV1 } from '@happier-dev/protocol/deployments/deploymentMoveToRepositoryV1';
 import { DeploymentPrepareResultV1Schema, type DeploymentPrepareInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import type { DeploymentCreationDefaultsV1 } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
@@ -107,6 +106,14 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
         return result.sets;
     }
     return {
+        /** A Move review selects exact native writers; it never stops services from the page. */
+        async readMoveServices(input: Readonly<{ machineId: string; environmentId: string }>) {
+            assertCurrent();
+            const result = MachineServicesListResultV1Schema.parse(await execute('machines.services.list',
+                { ...input, serverId: lifetime.scope.serverId }));
+            assertCurrent();
+            return result;
+        },
         /** This sheet's person gesture confirms only the normal Session handoff, on its chosen checkout Machine. */
         async prepare(input: DeploymentPrepareInputV1, workspaceMachineId: string) {
             assertCurrent();
@@ -152,21 +159,6 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
             if (!result.ok) throw new HappyError(result.error, false, { details: result });
             if (!result.forkEligibility) throw new HappyError('invalid_action_output', false);
             return result.forkEligibility;
-        },
-        /** Verified copy precedes one review and one ordinary Environment update. */
-        prepareDatabaseMoveCutover(environment: DeploymentEnvironmentHeaderV1, content: DeploymentEnvironmentContentV1,
-            selection: DatabaseMoveCutoverSelection, restored: DeploymentBackupRestoreResultV1) {
-            assertCurrent();
-            const prepared = prepareDatabaseMoveCutoverPatch(content, selection, restored);
-            if (prepared.kind !== 'ready') return prepared;
-            return { ...prepared, async save(operation?: UiActionOperation) {
-                assertCurrent();
-                return DeploymentActionOutputSchemasV1['deployments.environments.update'].parse(await invoke('deployments.environments.update', {
-                    serverId: lifetime.scope.serverId, environmentId: environment.id, expectedRevision: environment.revision,
-                    contentArtifactId: environment.contentArtifactId, contentHeaderVersion: environment.contentHeaderVersion,
-                    contentBodyVersion: environment.contentBodyVersion, patch: prepared.patch,
-                }, operation));
-            } };
         },
         async queryDatabase(input: Omit<DeploymentDataQueryInputV1, 'serverId'>) {
             assertCurrent();

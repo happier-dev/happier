@@ -19088,6 +19088,7 @@ settingsSession: {
       restoreRolledBack: "La restauración no terminó, así que los datos volvieron a como estaban",
       restoreUnknown: "Happier no pudo confirmar si se sustituyeron los datos",
       restoreRecoveryRequired: "La restauración se detuvo a medias y hay que recuperar los datos",
+      restoreSuperseded: "Una activación más reciente reemplazó esta restauración. Esta restauración no necesita recuperación.",
       restoreCodeUnchanged: "El código en ejecución no cambia.",
       restoreCheckAgain: "Esa comprobación ya no está al día. Comprueba la copia otra vez.",
       addOpenStore: "Buscar una base de datos en Store",

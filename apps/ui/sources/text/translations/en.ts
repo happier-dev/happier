@@ -22537,6 +22537,7 @@ const enProjects = {
       restoreRolledBack: "The restore didn’t finish, so the data was put back as it was",
       restoreUnknown: "Happier couldn’t confirm whether the data was replaced",
       restoreRecoveryRequired: "The restore stopped partway and the data needs recovery",
+      restoreSuperseded: "A newer activation replaced this restore. No recovery is needed for this restore.",
       restoreCodeUnchanged: "The running code is unchanged.",
       restoreCheckAgain: "That check is no longer current. Check the backup again.",
       addOpenStore: "Find a database in Store",

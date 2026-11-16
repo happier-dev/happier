@@ -19200,6 +19200,7 @@ settingsSession: {
       restoreRolledBack: "Die Wiederherstellung wurde nicht abgeschlossen, daher wurden die Daten zurückgesetzt",
       restoreUnknown: "Happier konnte nicht bestätigen, ob die Daten ersetzt wurden",
       restoreRecoveryRequired: "Die Wiederherstellung brach mittendrin ab; die Daten müssen repariert werden",
+      restoreSuperseded: "Eine neuere Aktivierung hat diese Wiederherstellung ersetzt. Für diese Wiederherstellung ist keine Wiederherstellung der Daten nötig.",
       restoreCodeUnchanged: "Der laufende Code bleibt unverändert.",
       restoreCheckAgain: "Diese Prüfung ist nicht mehr aktuell. Prüfe das Backup erneut.",
       addOpenStore: "Datenbank im Store finden",

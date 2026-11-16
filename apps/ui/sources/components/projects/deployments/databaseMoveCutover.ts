@@ -1,6 +1,5 @@
 import type { DeploymentEnvironmentContentV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentSecretBindingSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
-import type { DeploymentBackupRestoreResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { DeploymentEnvironmentContentPatchV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
 import type { DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isMap, isSeq, parseDocument } from 'yaml';
@@ -10,7 +9,7 @@ export type DatabaseMoveCutoverSelection = Readonly<{
     username: string; database: string; password: DeploymentSecretBindingSourceV1;
 }>;
 type Unavailable = Readonly<{ kind: 'unavailable';
-    reason: 'copy_not_verified' | 'repository_definition' | 'non_machine_rewritable_dsn'; variable?: string }>;
+    reason: 'repository_definition' | 'non_machine_rewritable_dsn'; variable?: string }>;
 type EnvironmentPatch = NonNullable<DeploymentEnvironmentUpdateInputV1['patch']>;
 type CutoverBindings = NonNullable<EnvironmentPatch['bindings']>;
 type CutoverPatch = Readonly<{ definition: NonNullable<EnvironmentPatch['definition']>;
@@ -19,11 +18,9 @@ type CutoverPatch = Readonly<{ definition: NonNullable<EnvironmentPatch['definit
     } }>;
 export type DatabaseMoveCutoverPreparation = Unavailable | Readonly<{ kind: 'ready'; patch: CutoverPatch }>;
 
-/** The review changes desired configuration only; the retained source volume is never deleted. */
-export function prepareDatabaseMoveCutoverPatch(content: DeploymentEnvironmentContentV1,
-    selection: DatabaseMoveCutoverSelection, restored: DeploymentBackupRestoreResultV1): DatabaseMoveCutoverPreparation {
-    if (restored.kind !== 'restored' || restored.verified !== true)
-        return { kind: 'unavailable', reason: 'copy_not_verified' } satisfies Unavailable;
+/** Authors the reviewed Connect patch; the Workflow gates its application on verified restore and health. */
+export function authorDatabaseMoveCutoverPatch(content: DeploymentEnvironmentContentV1,
+    selection: DatabaseMoveCutoverSelection): DatabaseMoveCutoverPreparation {
     const definition = content.definition;
     if (definition.kind !== 'stored') return { kind: 'unavailable', reason: 'repository_definition' } satisfies Unavailable;
     const unavailable = (variable: string): Unavailable => ({ kind: 'unavailable', reason: 'non_machine_rewritable_dsn', variable });

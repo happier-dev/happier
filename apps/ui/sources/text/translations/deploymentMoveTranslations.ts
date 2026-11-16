@@ -2,6 +2,11 @@ import type { SupportedLanguage } from '../_all';
 
 export const deploymentMoveTranslations = {
   "en": {
+    "dataReviewLead": "Review the source services to stop and the app changes. The Workflow stops writes, verifies a final backup, restores and checks the destination, then deploys the app. The original data stays on the source. An uncertain cutover needs your decision in the run before continuing.",
+    "writers": "Services to stop",
+    "writerReviewRequired": "The source writers could not be identified. Review the source services and their running state, then try again.",
+    "noRunningWriter": "Start the app services that should use the moved database, then review Move again.",
+    "stopped": "Already stopped · stays stopped",
     "menu": "Move to another Machine…",
     "title": "Move to another Machine",
     "description": "Uses the same commit. The source stays online until the destination is healthy; its local data is retained.",
@@ -12,6 +17,11 @@ export const deploymentMoveTranslations = {
     "run": "Start Move Workflow"
   },
   "ca": {
+    "dataReviewLead": "Revisa els serveis d’origen que s’aturaran i els canvis de l’aplicació. El flux atura les escriptures, verifica una còpia final, restaura i comprova la destinació i desplega l’aplicació. Les dades originals es conserven a l’origen. Un canvi incert necessita la teva decisió al flux abans de continuar.",
+    "writers": "Serveis que s’aturaran",
+    "writerReviewRequired": "No s’han pogut identificar els processos que escriuen a l’origen. Revisa els serveis i el seu estat i torna-ho a provar.",
+    "noRunningWriter": "Inicia els serveis de l’aplicació que han d’utilitzar la base de dades traslladada i revisa el trasllat de nou.",
+    "stopped": "Ja aturat · continuarà aturat",
     "menu": "Mou a una altra màquina…",
     "title": "Mou a una altra màquina",
     "description": "Utilitza el mateix commit. L’origen continua actiu fins que la destinació està bé; les dades locals es conserven.",
@@ -22,6 +32,11 @@ export const deploymentMoveTranslations = {
     "run": "Inicia el flux de trasllat"
   },
   "de": {
+    "dataReviewLead": "Prüfe die anzuhaltenden Quelldienste und die App-Änderungen. Der Workflow stoppt Schreibzugriffe, prüft eine letzte Sicherung, stellt das Ziel wieder her und prüft es, dann wird die App bereitgestellt. Die ursprünglichen Daten bleiben an der Quelle. Bei einem ungewissen Wechsel musst du im Lauf entscheiden, bevor es weitergeht.",
+    "writers": "Anzuhaltende Dienste",
+    "writerReviewRequired": "Die schreibenden Quelldienste konnten nicht bestimmt werden. Prüfe die Dienste und ihren Laufzustand und versuche es erneut.",
+    "noRunningWriter": "Starte die App-Dienste, die die verschobene Datenbank verwenden sollen, und prüfe den Umzug erneut.",
+    "stopped": "Bereits gestoppt · bleibt gestoppt",
     "menu": "Auf einen anderen Rechner verschieben…",
     "title": "Auf einen anderen Rechner verschieben",
     "description": "Verwendet denselben Commit. Die Quelle läuft bis zum erfolgreichen Gesundheitscheck weiter; lokale Daten bleiben erhalten.",
@@ -32,6 +47,11 @@ export const deploymentMoveTranslations = {
     "run": "Umzugs-Workflow starten"
   },
   "es": {
+    "dataReviewLead": "Revisa los servicios de origen que se detendrán y los cambios de la aplicación. El flujo detiene las escrituras, verifica una copia final, restaura y comprueba el destino y despliega la aplicación. Los datos originales se conservan en el origen. Un cambio incierto requiere tu decisión en la ejecución antes de continuar.",
+    "writers": "Servicios que se detendrán",
+    "writerReviewRequired": "No se pudieron identificar los servicios que escriben en el origen. Revisa los servicios y su estado y vuelve a intentarlo.",
+    "noRunningWriter": "Inicia los servicios de la aplicación que usarán la base de datos trasladada y vuelve a revisar el traslado.",
+    "stopped": "Ya detenido · seguirá detenido",
     "menu": "Mover a otra máquina…",
     "title": "Mover a otra máquina",
     "description": "Usa el mismo commit. El origen sigue activo hasta que el destino esté sano; los datos locales se conservan.",
@@ -42,6 +62,11 @@ export const deploymentMoveTranslations = {
     "run": "Iniciar flujo de traslado"
   },
   "fr": {
+    "dataReviewLead": "Vérifiez les services source à arrêter et les modifications de l’application. Le workflow arrête les écritures, vérifie une dernière sauvegarde, restaure et contrôle la destination, puis déploie l’application. Les données originales restent à la source. Une bascule incertaine nécessite votre décision dans l’exécution avant de continuer.",
+    "writers": "Services à arrêter",
+    "writerReviewRequired": "Les services source qui écrivent n’ont pas pu être identifiés. Vérifiez les services et leur état, puis réessayez.",
+    "noRunningWriter": "Démarrez les services de l’application qui utiliseront la base déplacée, puis vérifiez à nouveau le déplacement.",
+    "stopped": "Déjà arrêté · reste arrêté",
     "menu": "Déplacer vers une autre machine…",
     "title": "Déplacer vers une autre machine",
     "description": "Utilise le même commit. La source reste en ligne jusqu’à ce que la destination soit saine ; les données locales sont conservées.",
@@ -52,6 +77,11 @@ export const deploymentMoveTranslations = {
     "run": "Démarrer le workflow de déplacement"
   },
   "it": {
+    "dataReviewLead": "Controlla i servizi di origine da arrestare e le modifiche all’app. Il flusso arresta le scritture, verifica un backup finale, ripristina e controlla la destinazione, poi distribuisce l’app. I dati originali restano all’origine. Un passaggio incerto richiede la tua decisione nell’esecuzione prima di continuare.",
+    "writers": "Servizi da arrestare",
+    "writerReviewRequired": "Non è stato possibile identificare i servizi che scrivono all’origine. Controlla i servizi e il loro stato, poi riprova.",
+    "noRunningWriter": "Avvia i servizi dell’app che useranno il database spostato, poi controlla di nuovo lo spostamento.",
+    "stopped": "Già arrestato · resta arrestato",
     "menu": "Sposta su un’altra macchina…",
     "title": "Sposta su un’altra macchina",
     "description": "Usa lo stesso commit. L’origine resta online finché la destinazione è sana; i dati locali vengono conservati.",
@@ -62,6 +92,11 @@ export const deploymentMoveTranslations = {
     "run": "Avvia il workflow di spostamento"
   },
   "ja": {
+    "dataReviewLead": "停止する移動元のサービスとアプリの変更を確認します。ワークフローは書き込みを停止し、最終バックアップを検証して移動先に復元・確認した後、アプリをデプロイします。元のデータは移動元に保持されます。 切り替えが不確かな場合は、続行前に実行画面で判断が必要です。",
+    "writers": "停止するサービス",
+    "writerReviewRequired": "移動元の書き込みサービスを特定できませんでした。サービスと実行状態を確認してから、もう一度お試しください。",
+    "noRunningWriter": "移動したデータベースを使用するアプリサービスを起動してから、移動を再確認してください。",
+    "stopped": "停止済み · 停止を維持",
     "menu": "別のマシンに移動…",
     "title": "別のマシンに移動",
     "description": "同じコミットを使用します。移動先の正常性が確認されるまで移動元は稼働し、ローカルデータは保持されます。",
@@ -72,6 +107,11 @@ export const deploymentMoveTranslations = {
     "run": "移動ワークフローを開始"
   },
   "pl": {
+    "dataReviewLead": "Sprawdź usługi źródłowe do zatrzymania i zmiany aplikacji. Przepływ zatrzyma zapisy, zweryfikuje końcową kopię, przywróci i sprawdzi cel, a potem wdroży aplikację. Oryginalne dane pozostaną u źródła. Niepewne przełączenie wymaga twojej decyzji w uruchomieniu przed kontynuowaniem.",
+    "writers": "Usługi do zatrzymania",
+    "writerReviewRequired": "Nie udało się zidentyfikować usług zapisujących u źródła. Sprawdź usługi i ich stan, a potem spróbuj ponownie.",
+    "noRunningWriter": "Uruchom usługi aplikacji, które mają używać przeniesionej bazy, a potem ponownie sprawdź przenoszenie.",
+    "stopped": "Już zatrzymana · pozostanie zatrzymana",
     "menu": "Przenieś na inną maszynę…",
     "title": "Przenieś na inną maszynę",
     "description": "Używa tego samego commitu. Źródło działa do potwierdzenia sprawności celu; dane lokalne są zachowane.",
@@ -82,6 +122,11 @@ export const deploymentMoveTranslations = {
     "run": "Uruchom przepływ przenoszenia"
   },
   "pt": {
+    "dataReviewLead": "Revise os serviços de origem a parar e as alterações da aplicação. O fluxo para as escritas, verifica uma cópia final, restaura e verifica o destino e implementa a aplicação. Os dados originais ficam na origem. Uma mudança incerta exige a tua decisão na execução antes de continuar.",
+    "writers": "Serviços a parar",
+    "writerReviewRequired": "Não foi possível identificar os serviços que escrevem na origem. Revise os serviços e o seu estado e tente novamente.",
+    "noRunningWriter": "Inicie os serviços da aplicação que usarão a base movida e volte a rever a mudança.",
+    "stopped": "Já parado · continua parado",
     "menu": "Mover para outra máquina…",
     "title": "Mover para outra máquina",
     "description": "Usa o mesmo commit. A origem fica online até o destino estar saudável; os dados locais são mantidos.",
@@ -92,6 +137,11 @@ export const deploymentMoveTranslations = {
     "run": "Iniciar fluxo de mudança"
   },
   "ru": {
+    "dataReviewLead": "Проверьте останавливаемые службы источника и изменения приложения. Процесс остановит запись, проверит итоговую резервную копию, восстановит и проверит назначение, затем развернёт приложение. Исходные данные останутся на источнике. При неопределённом переключении перед продолжением нужно ваше решение в запуске.",
+    "writers": "Службы для остановки",
+    "writerReviewRequired": "Не удалось определить службы, записывающие в источник. Проверьте службы и их состояние, затем повторите попытку.",
+    "noRunningWriter": "Запустите службы приложения, которые будут использовать перенесённую базу, затем проверьте перенос снова.",
+    "stopped": "Уже остановлена · останется остановленной",
     "menu": "Перенести на другую машину…",
     "title": "Перенести на другую машину",
     "description": "Используется тот же коммит. Источник работает до проверки нового сервера; локальные данные сохраняются.",
@@ -102,6 +152,11 @@ export const deploymentMoveTranslations = {
     "run": "Запустить процесс переноса"
   },
   "zh-Hans": {
+    "dataReviewLead": "检查要停止的源服务和应用更改。工作流将停止写入、验证最终备份、恢复并检查目标，然后部署应用。原始数据会保留在源端。 切换结果不确定时，需要你在运行中决定后再继续。",
+    "writers": "要停止的服务",
+    "writerReviewRequired": "无法确定源端的写入服务。请检查源服务及其运行状态，然后重试。",
+    "noRunningWriter": "请先启动应使用迁移后数据库的应用服务，然后重新检查迁移。",
+    "stopped": "已停止 · 保持停止",
     "menu": "移至另一台机器…",
     "title": "移至另一台机器",
     "description": "使用同一提交。目标通过健康检查前，源机器会保持运行，并保留本地数据。",
@@ -112,6 +167,11 @@ export const deploymentMoveTranslations = {
     "run": "启动迁移工作流"
   },
   "zh-Hant": {
+    "dataReviewLead": "檢查要停止的來源服務與應用程式變更。工作流程會停止寫入、驗證最終備份、還原並檢查目標，然後部署應用程式。原始資料會保留在來源端。 切換結果不確定時，需要你在執行中決定後再繼續。",
+    "writers": "要停止的服務",
+    "writerReviewRequired": "無法識別來源端的寫入服務。請檢查來源服務及其執行狀態，然後重試。",
+    "noRunningWriter": "請先啟動應使用移轉後資料庫的應用程式服務，然後重新檢查移轉。",
+    "stopped": "已停止 · 保持停止",
     "menu": "移至另一台機器…",
     "title": "移至另一台機器",
     "description": "使用相同提交。目標通過健康檢查前，來源機器會持續執行，並保留本機資料。",
@@ -121,4 +181,4 @@ export const deploymentMoveTranslations = {
     "destination": "目標",
     "run": "啟動移轉工作流程"
   }
-} satisfies Record<SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run', string>>>;
+} satisfies Record<SupportedLanguage, Readonly<Record<'menu' | 'title' | 'description' | 'restriction' | 'stateless' | 'source' | 'destination' | 'run' | 'dataReviewLead' | 'writers' | 'writerReviewRequired' | 'noRunningWriter' | 'stopped', string>>>;

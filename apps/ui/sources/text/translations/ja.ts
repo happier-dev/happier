@@ -19002,6 +19002,7 @@ settingsSession: {
       restoreRolledBack: "復元が完了しなかったため、データは元の状態に戻されました",
       restoreUnknown: "データが置き換えられたかどうか Happier で確認できませんでした",
       restoreRecoveryRequired: "復元が途中で止まり、データの回復が必要です",
+      restoreSuperseded: "新しい有効化によって、この復元は置き換えられました。この復元のリカバリーは不要です。",
       restoreCodeUnchanged: "実行中のコードは変わりません。",
       restoreCheckAgain: "この確認は最新ではありません。バックアップをもう一度確認してください。",
       addOpenStore: "Store でデータベースを探す",

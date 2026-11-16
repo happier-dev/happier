@@ -485,10 +485,10 @@ export function DeploymentDatabasePage(
     title: t('projects.deployments.databaseConnectTitle'),
     testID: 'project-deployments.connect.modal',
   }) : null;
-  const openMove = database.kind === 'selfHosted' && database.data.engine === 'postgres' && controller && actions && factsInput
+  const openMove = database.kind === 'selfHosted' && database.data.engine === 'postgres' && controller && actions && factsInput && lifetime
     && detail.environment.capabilities.manage ? () => showDeploymentDatabaseMoveSheet({
       controller, source: detail, data: database.data, actions, backupTarget: factsInput,
-      review: props.review, machine: machineName(factsInput.machineId),
+      review: props.review, lifetime,
     }) : null;
   const openManaged = database.kind === 'managed' && lifetime && actions && detail.environment.capabilities.manage
     ? () => showManagedDataSheet({ detail, lifetime, actions, linked: database.link,

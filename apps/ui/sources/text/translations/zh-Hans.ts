@@ -18707,6 +18707,7 @@ settingsSession: {
       restoreRolledBack: "恢复未完成，数据已还原为原样",
       restoreUnknown: "Happier 无法确认数据是否已被替换",
       restoreRecoveryRequired: "恢复中途停止，数据需要修复",
+      restoreSuperseded: "较新的激活已取代此恢复操作。此恢复操作无需数据修复。",
       restoreCodeUnchanged: "正在运行的代码保持不变。",
       restoreCheckAgain: "该检查已过期。请重新检查备份。",
       addOpenStore: "在 Store 中查找数据库",

@@ -18913,6 +18913,7 @@ settingsSession: {
       restoreRolledBack: "Przywracanie nie zakończyło się, więc dane wróciły do poprzedniego stanu",
       restoreUnknown: "Happier nie mógł potwierdzić, czy dane zostały zastąpione",
       restoreRecoveryRequired: "Przywracanie zatrzymało się w połowie i dane wymagają odzyskania",
+      restoreSuperseded: "Nowsza aktywacja zastąpiła to przywracanie. To przywracanie nie wymaga odzyskiwania danych.",
       restoreCodeUnchanged: "Działający kod pozostaje bez zmian.",
       restoreCheckAgain: "To sprawdzenie jest już nieaktualne. Sprawdź kopię ponownie.",
       addOpenStore: "Znajdź bazę danych w Store",

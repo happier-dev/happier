@@ -18962,6 +18962,7 @@ settingsSession: {
       restoreRolledBack: "La restauration n’a pas abouti, les données ont donc été remises en l’état",
       restoreUnknown: "Happier n’a pas pu confirmer si les données ont été remplacées",
       restoreRecoveryRequired: "La restauration s’est arrêtée en cours de route et les données doivent être récupérées",
+      restoreSuperseded: "Une activation plus récente a remplacé cette restauration. Aucune récupération n’est nécessaire pour cette restauration.",
       restoreCodeUnchanged: "Le code en cours d’exécution ne change pas.",
       restoreCheckAgain: "Cette vérification n’est plus à jour. Vérifie à nouveau la sauvegarde.",
       addOpenStore: "Trouver une base de données dans le Store",
