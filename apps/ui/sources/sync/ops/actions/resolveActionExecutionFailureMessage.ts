@@ -11,6 +11,7 @@ import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/pr
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { FeatureDecisionSchema } from '@happier-dev/protocol/features/decision';
 
 import { t } from '@/text';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
@@ -18,6 +19,8 @@ import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pe
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { resolveFeatureAvailabilityArm } from '@/hooks/server/resolveFeatureAvailabilityArm';
+import { getUiFeatureDefinition } from '@/sync/domains/features/featureRegistry';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
@@ -198,7 +201,15 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'approval_canceled' || code === 'plugin_action_current_intent_rejected') {
         return options?.notAppliedMessage ?? t('voiceSurface.actionCanceled');
     }
-    if (isActionTurnedOffErrorCode(code)) return t('actionConfirmations.turnedOffUnnamedMessage');
+    if (isActionTurnedOffErrorCode(code)) {
+        // Decode the owner's decision at the public failure boundary; presentation never resolves policy again.
+        const decision = FeatureDecisionSchema.safeParse(asRecord(record.details)?.featureDecision).data;
+        const titleKey = decision && resolveFeatureAvailabilityArm(decision) === 'policy_disabled' && decision.blockedBy === 'local_policy'
+            ? getUiFeatureDefinition(decision.featureId).settingsToggle?.titleKey : undefined;
+        return titleKey
+            ? t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t(titleKey) })
+            : t('actionConfirmations.turnedOffUnnamedMessage');
+    }
     const widgetRefusal = readWidgetRefusalMessage(code, record.details);
     if (widgetRefusal) return widgetRefusal;
     const sessionInputLabel = getSessionInputFailureLabelKey({ code });

@@ -9,6 +9,7 @@ export async function readNewWorkFeatureAdmission(actionId: string, input: unkno
     const featureId = getActionNewWorkFeatureId(actionId, context, input);
     if (featureId === null) return null;
     const settings = await readSettings();
-    return (await resolveRuntimeFeatureDecision({ featureId, settings, serverId })).state === 'enabled'
-        ? null : { ok: false as const, errorCode: 'action_disabled', error: 'action_disabled' };
+    const featureDecision = await resolveRuntimeFeatureDecision({ featureId, settings, serverId });
+    return featureDecision.state === 'enabled'
+        ? null : { ok: false as const, errorCode: 'action_disabled', error: 'action_disabled', details: { featureDecision } };
 }
