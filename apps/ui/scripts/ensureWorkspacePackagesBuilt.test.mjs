@@ -437,3 +437,91 @@ test('live UI failure publication uses scoped target-owned artifacts on executio
     assert.equal(artifact.args.includes('--target-owned-only'), false);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('source inventory refreshes compile only when their observed inputs changed', async t => {
+  const { default: childProcess } = await import('node:child_process');
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { basename, dirname } = await import('node:path');
+  const fixture = await createTempFixture(t, { prefix: 'happier-ui-refresh-identity-' });
+  const repoRoot = fixture.path('source');
+  const uiPackageDir = join(repoRoot, 'apps/ui');
+  const write = async (path, contents) => {
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, contents);
+  };
+  const cliManifestPath = join(repoRoot, 'apps/cli/package.json');
+  const localeSource = join(uiPackageDir, 'sources/text/_all.ts');
+  await write(cliManifestPath, JSON.stringify({ bundledDependencies: [] }));
+  await write(join(repoRoot, 'package.json'), JSON.stringify({ private: true }));
+  await write(join(uiPackageDir, 'package.json'), JSON.stringify({ name: '@fixture/ui' }));
+  await write(localeSource, 'export const en = 1;\n');
+  await mkdir(join(uiPackageDir, '.expo/hstack/locales'), { recursive: true });
+  const inventoryPath = fixture.path('consumer/inventory.js');
+  // The published source-assets record names checkout-root inputs, as the
+  // live record does (root package.json, app manifests, locale sources).
+  const record = JSON.stringify({ inputPaths: [join(repoRoot, 'package.json'), join(uiPackageDir, 'package.json'), localeSource],
+    assetPaths: [], publications: [] });
+  await write(join(dirname(inventoryPath), 'source-assets.json'), record);
+  await write(inventoryPath, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [];\n');
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.root, HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY: inventoryPath };
+  // The compiler process is the boundary: replace only its spawned payload
+  // with one that publishes a valid candidate. Discovery, matching, admission
+  // waits, publication and the refresh queue stay real.
+  let compilations = 0;
+  const compiler = `const options = JSON.parse(process.argv[1]);
+    const { mkdirSync, writeFileSync } = require('node:fs');
+    const { dirname, join } = require('node:path');
+    mkdirSync(dirname(options.inventoryPath), { recursive: true });
+    writeFileSync(options.inventoryPath, 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [];\\n');
+    writeFileSync(join(dirname(options.inventoryPath), 'source-assets.json'), ${JSON.stringify(record)});`;
+  const nativeFork = childProcess.fork;
+  t.mock.method(childProcess, 'fork', (modulePath, args, options) => {
+    if (basename(modulePath) === 'proc.mjs' && typeof args?.[1] === 'string') {
+      const invocation = JSON.parse(args[1]);
+      const index = invocation.args?.findIndex(arg => typeof arg === 'string' && basename(arg) === 'build_source_web_ui.mjs') ?? -1;
+      if (index >= 0) {
+        compilations += 1;
+        args = [args[0], JSON.stringify({ ...invocation, command: process.execPath,
+          args: ['-e', compiler, invocation.args[index + 1]] })];
+      }
+    }
+    return nativeFork(modulePath, args, options);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const watcher = new EventEmitter();
+  const graph = { doesFileExist: () => true };
+  const metroServer = { getWatchFolders: () => [],
+    getBundler: () => ({ getBundler: () => ({ getWatcher: () => watcher, getDependencyGraph: async () => graph }) }) };
+  const metroConfig = { projectRoot: fixture.root, resolver: { sourceExts: ['js'], assetExts: ['bundle'] },
+    watcher: { additionalExts: [] } };
+  const failures = [];
+  const { watchUiSourcePluginInventory } = await import('./ensureWorkspacePackagesBuilt.mjs');
+  const owner = watchUiSourcePluginInventory({ uiPackageDir, env, metroServer, metroConfig,
+    logger: { info() {}, error: (_message, error) => failures.push(error) } });
+  t.after(() => owner.close());
+  const observe = async (path, type) => {
+    watcher.emit('change', { eventsQueue: [{ filePath: path, type }] });
+    await owner.ready();
+    assert.deepEqual(failures, []);
+    return compilations;
+  };
+  assert.equal(await observe(cliManifestPath, 'change'), 1, 'the first observed input event prepares');
+  // Events that leave every observed input unchanged: a generated locale
+  // bundle, an unrelated file beneath an input directory's subtree, and a
+  // same-bytes rewrite of an input.
+  const localeBundle = join(uiPackageDir, '.expo/hstack/locales/0123.locale.bundle');
+  await write(localeBundle, 'bundle');
+  assert.equal(await observe(localeBundle, 'add'), 1, 'a published locale bundle is not a Plugin UI input');
+  const unrelated = join(repoRoot, 'apps/server/sources/changes/page.ts');
+  await write(unrelated, 'export {};\n');
+  assert.equal(await observe(unrelated, 'add'), 1, 'an addition outside every input directory is not an input change');
+  await write(localeSource, 'export const en = 1;\n');
+  assert.equal(await observe(localeSource, 'change'), 1, 'a same-bytes rewrite is not an input change');
+  // Real input changes still refresh promptly.
+  await write(localeSource, 'export const en = 2;\n');
+  assert.equal(await observe(localeSource, 'change'), 2, 'an edited input prepares');
+  const added = join(uiPackageDir, 'sources/text/es.ts');
+  await write(added, 'export const es = 1;\n');
+  assert.equal(await observe(added, 'add'), 3, 'a new member of an input directory prepares');
+});

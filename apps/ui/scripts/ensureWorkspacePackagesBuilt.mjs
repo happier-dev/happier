@@ -139,6 +139,8 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
   let pending = Promise.resolve();
   let inputsPromise;
   let admission;
+  // Identity of the observed inputs the last successful preparation consumed.
+  let preparedIdentity;
   const sourceAssetsRecordPath = resolveSourceUiAssetsRecordPath(inventoryPath);
   const publicationIdentity = async () => (await Promise.all([inventoryPath, sourceAssetsRecordPath].map(async path => {
     try { return fileDigestMetadataIdentity(await stat(path, { bigint: true })); }
@@ -189,7 +191,6 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
       });
       if (closed || !changed || queued) return;
       queued = true;
-      logger.info?.(`[source-ui] phase=plugin-ui-refresh input=${relative(repoRoot, changed.filePath)}`);
       await previous;
       // Arrivals during an install share one refresh. Edits during the actual
       // compiler still request the existing trailing preparation.
@@ -197,8 +198,19 @@ export function watchUiSourcePluginInventory({ metroServer, metroConfig, uiPacka
         await waitForDependencyRefresh({ installDir: repoRoot, env, signal: cancellation.signal });
       } finally { queued = false; }
       if (closed) return;
+      // An event is not a change: generated locale bundles, files added beneath
+      // an input directory's subtree and same-bytes rewrites leave every observed
+      // input (content, and member names of input directories) as the last
+      // successful preparation read it. Read after the install wait and before
+      // compiling, so an edit made while compiling still differs next time.
+      const { readBuildInputIdentity } = await import('../../../scripts/workspaces/buildInputConvergence.mjs');
+      const identity = await readBuildInputIdentity({ sourceDir: repoRoot,
+        files: [...paths].map(path => relative(repoRoot, path)), directoryEntries: true });
+      if (closed || identity === preparedIdentity) return;
+      logger.info?.(`[source-ui] phase=plugin-ui-refresh input=${relative(repoRoot, changed.filePath)}`);
       try {
         const { published } = await prepareUiSourcePluginInventory({ uiPackageDir, env, signal: cancellation.signal, metroServer, metroConfig });
+        preparedIdentity = identity;
         // The Stack supervisor retires superseded graphs after this line.
         if (published) logger.info?.(PLUGIN_UI_PUBLISHED_LINE);
       } finally { inputsPromise = null; }

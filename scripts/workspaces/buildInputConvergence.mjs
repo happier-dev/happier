@@ -41,8 +41,10 @@ export async function withBuildInputDependencies({ sourceDir, env = process.env,
   return result;
 }
 
-/** Identity of an admitted input view, distinct from any emitted-code digest. */
-export async function readBuildInputIdentity({ sourceDir, files, options = [] }) {
+/** Identity of an admitted input view, distinct from any emitted-code digest.
+ * `directoryEntries` adds each directory's member names, for observers whose
+ * inputs include directory membership (additions/removals that change resolution). */
+export async function readBuildInputIdentity({ sourceDir, files, options = [], directoryEntries = false }) {
   const hash = createHash('sha256').update(JSON.stringify(options));
   for (const path of [...new Set(files)].sort()) {
     const absolute = join(sourceDir, path);
@@ -53,6 +55,13 @@ export async function readBuildInputIdentity({ sourceDir, files, options = [] })
     hash.update(JSON.stringify([path, info ? String(info.mode) : null]));
     if (info?.isFile()) hash.update(await readCachedFileDigest(absolute, info));
     else if (info?.isSymbolicLink()) hash.update(await readlink(absolute));
+    else if (directoryEntries && info?.isDirectory()) {
+      const entries = await readdir(absolute).catch(error => {
+        if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+        throw error;
+      });
+      hash.update(JSON.stringify(entries?.sort() ?? null));
+    }
   }
   return hash.digest('hex');
 }
