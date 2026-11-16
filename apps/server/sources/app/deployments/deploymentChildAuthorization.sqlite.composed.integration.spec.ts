@@ -3762,6 +3762,29 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await readDeploymentReadAuthorizationInTx(db, binding, admission)).toBeNull();
     });
 
+    it.each([['plain', 'account'], ['e2ee', 'account'], ['plain', 'terminal'], ['e2ee', 'terminal']] as const)(
+        'mints the %s owner current health read on the controller through the Home route (%s token)', async (contentMode, kind) => {
+            const f = await fixture('account', 'account', { contentMode });
+            const actionId = 'deployments.health.current';
+            const input = { serverId, environmentId: f.environment.id, targetLinkId: f.link.id, machineId: f.controller.id };
+            const token = await auth.createToken(f.account.id, undefined, kind === 'terminal'
+                ? { kind: 'terminal', authority: 'account_automation' } : { kind: 'account', authority: 'present_user' });
+            await withAuthenticatedTestApp(registerExternalActionRoutes, async app => {
+                const requestId = crypto.randomUUID();
+                const target = { kind: 'machine' as const, machineId: f.controller.id };
+                const envelope = contentMode === 'plain' ? { v: 1 as const, requestId, target, input }
+                    : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                        binding: { serverIdentityId: serverId, accountId: f.account.id,
+                            authentication: { kind, tokenEpoch: f.account.tokenEpoch }, actionId, requestId, target },
+                        input, material: { type: 'dataKey', machineKey: f.controller.contentKey }, randomBytes: nacl.randomBytes });
+                const minted = await app.inject({ method: 'POST', url: `/v1/actions/${actionId}/execution-authorization`,
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: f.controller.id, envelope } });
+                expect(minted.statusCode, minted.body).toBe(200);
+                expect(minted.json().binding).toMatchObject({ actionId, machineId: f.controller.id,
+                    deploymentReadAdmission: { actionId, machineId: f.controller.id, targetLinkId: f.link.id } });
+            }, { authentication: 'real' });
+        });
+
     it.each(['vercel', 'workers'] as const)(
         'admits the %s Environment owner current health read on its controller; another Account or a former Team member stays refused',
         async platformTarget => {

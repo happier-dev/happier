@@ -13,7 +13,8 @@ import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
-import { ExternalActionActionIdV1Schema, projectDeploymentReadAdmissionV1, type ExternalActionExecutionAuthorizationV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { readDeploymentReadReceiverMachineId } from '@/deployments/deploymentReadReceiver';
+import { ExternalActionActionIdV1Schema, type ExternalActionExecutionAuthorizationV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -68,11 +69,7 @@ export function createDaemonSessionAccountActionAuthorizationPreparer(params: Re
     // Actions only, so a read served by another Machine settles here, typed.
     // Deployment reads are Account-placed, so their receiver is never re-selected below.
     const sessionMachineId = targetMachineId ?? params.machineId;
-    let readReceiverMachineId: string | undefined;
-    try {
-      const read = projectDeploymentReadAdmissionV1(operation.actionId, operation.input);
-      readReceiverMachineId = read && 'machineId' in read ? read.machineId : undefined;
-    } catch { return refused('preparation', 'deployment_read_input'); }
+    const readReceiverMachineId = readDeploymentReadReceiverMachineId(operation.actionId, operation.input);
     if (readReceiverMachineId && readReceiverMachineId !== sessionMachineId) {
       return projectSessionActionIssuerRefusal({ ok: false, phase: 'preparation', requiredFact: 'deployment_read_receiver',
         code: 'target_unavailable', details: { reason: 'read_receiver_placement', requiredFact: 'sessionOnReceiverMachine',

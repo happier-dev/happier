@@ -1,4 +1,5 @@
 import { BotTemplateInstantiateInputV1Schema, projectBotTemplateInstantiationRequesterInputV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
+import { readDeploymentReadReceiverMachineId } from '@/deployments/deploymentReadReceiver';
 import { createSessionFollowActionDeps, createSessionTrackedTargetCompatibilityDep } from '@/api/sessionFollowActionDeps';
 import { measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { randomUUID } from 'node:crypto';
@@ -807,6 +808,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   workflowAction?: ActionExecutorDeps['workflowAction'];
   registerWorkflowTriggerList?: Parameters<typeof createCliActionDeps>[0]['registerWorkflowTriggerList'];
   managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
+  acquireSessionIsolationSandbox?: Parameters<typeof createCliActionDeps>[0]['acquireSessionIsolationSandbox'];
   machineRecipesRead?: ActionExecutorDeps['machineRecipesRead'];
   machineSetupPlan?: ActionExecutorDeps['machineSetupPlan'];
   machineReachabilityAction?: ActionExecutorDeps['machineReachabilityAction'];
@@ -1444,6 +1446,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.sessionSpawnDirectTargetTransport
         ? { sessionSpawnDirectTargetTransport: params.sessionSpawnDirectTargetTransport }
         : {}),
+      ...(params.acquireSessionIsolationSandbox ? { acquireSessionIsolationSandbox: params.acquireSessionIsolationSandbox } : {}),
       ...(params.machineActionDirectTargetTransport
         ? { machineActionDirectTargetTransport: params.machineActionDirectTargetTransport }
         : {}),
@@ -2040,7 +2043,10 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           }
           return (await resolveExecutor(credentials)).execute(...args);
         };
+        // A deployment read is minted for the Machine its admission names, wherever this CLI runs.
+        const readReceiverMachineId = readDeploymentReadReceiverMachineId(actionId, admittedInput);
         let target = context?.externalActionTarget
+          ?? (readReceiverMachineId ? { kind: 'machine' as const, machineId: readReceiverMachineId } : undefined)
           ?? (params.machineId ? { kind: 'machine' as const, machineId: params.machineId } : undefined)
           ?? (liveResultMachineId ? { kind: 'machine' as const, machineId: liveResultMachineId } : undefined)
           ?? (selectedOriginalMachine?.kind === 'ready'
