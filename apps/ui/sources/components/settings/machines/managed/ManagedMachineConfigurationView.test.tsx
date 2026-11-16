@@ -1092,7 +1092,7 @@ describe('mounted managed configurator', () => {
     }
     expect(onUse).not.toHaveBeenCalled();
   });
-  it.each(['published', 'private', 'private-after-catalog'])('retains the Lume native-image editor through options settling (%s)', imageKind => withPopoverWebGlobals(async () => {
+  it.each(['published', 'private', 'private-after-catalog', 'catalog-location-first'])('retains the Lume native-image editor through options settling (%s)', imageKind => withPopoverWebGlobals(async () => {
     const { PLUGIN_MANIFEST: manifest } = await import('../../../../../../../packages/plugins/machine-lume/src/manifest');
     const { LumeOptionsInputV1Schema } = await import('../../../../../../../packages/plugins/machine-lume/src/machine/schemas');
     const descriptor = MachineProvisionerContributionV1Schema.parse(manifest.contributes.machineProvisioners?.[0]);
@@ -1147,6 +1147,15 @@ describe('mounted managed configurator', () => {
       provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={defaultController} />);
     try {
       await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.images:${catalogReference}`)).not.toBeNull());
+      if (imageKind === 'catalog-location-first') {
+        await screen.pressByTestIdAsync('managed-config.locations:home');
+        await screen.pressByTestIdAsync(`managed-config.images:${catalogReference}`);
+        await waitForHomeGovernance(() => {
+          expect(screen.findByTestId('managed-config.field:diskBytes')?.props.value).toBe('150');
+          expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false);
+        });
+        return;
+      }
       if (imageKind === 'private-after-catalog') {
         await screen.pressByTestIdAsync(`managed-config.images:${catalogReference}`);
         await screen.pressByTestIdAsync('managed-config.locations:home');
