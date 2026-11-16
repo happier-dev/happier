@@ -29,16 +29,14 @@ export function isSimulatorStreamLive(phase: SimulatorPreviewViewModel['stream']
 export type SimulatorBarStatus = Readonly<{ label: string; variant: StreamStatusDotVariant }>;
 
 /**
- * The bar's one status. A browser that cannot play the video says so as a typed cause; otherwise only
- * a live device has a status here (who has it). Opening, connecting, reconnecting and failures are
- * said once, on the stage, so the bar carries no second copy of them.
+ * The bar's one status: only a live device has one here (who has it). Opening, connecting,
+ * reconnecting, failures and a browser that cannot play the video are said once, on the stage, so the
+ * bar carries no second copy of them.
  */
 export function resolveSimulatorBarStatus(
   viewModel: SimulatorPreviewViewModel,
 ): SimulatorBarStatus | null {
-  if (viewModel.controls.canWatch && resolveSimulatorVideoUnsupportedReason(viewModel.stream)) {
-    return { label: t('simulatorPreview.device.videoUnsupported'), variant: 'error' };
-  }
+  if (resolveSimulatorVideoUnsupportedReason(viewModel.stream)) return null;
   if (!viewModel.controls.canWatch || !isSimulatorStreamLive(viewModel.stream.phase))
     return null;
   const variant = resolveStreamStatusDotVariant(viewModel.stream.phase, viewModel.stream.diagnostic?.reasonCode);
@@ -106,7 +104,7 @@ export function SimulatorViewerBar(
             ? `${entry.platformLabel} · ${t('simulatorPreview.device.stopped')}`
             : entry.platformLabel,
           disabled: entry.state === 'stopped' && !entry.canBoot,
-          category: t('simulatorPreview.viewer.switchDevice'),
+          category: 'devices',
           checked: entry.simulatorId === resource.simulatorId,
           testID: `${props.testID}-device:${entry.simulatorId}`,
         }))
@@ -116,7 +114,18 @@ export function SimulatorViewerBar(
           {
             id: 'renew',
             title: t('simulatorPreview.toolbar.renewControl'),
+            category: 'view',
             testID: `${props.testID}-renew-lease`,
+          },
+        ]
+      : []),
+    ...(props.onHideControls
+      ? [
+          {
+            id: 'hide-controls',
+            title: t('simulatorPreview.viewer.hideControls'),
+            category: 'view',
+            testID: `${props.testID}-hide-controls`,
           },
         ]
       : []),
@@ -126,17 +135,9 @@ export function SimulatorViewerBar(
             id: 'power-off',
             title: t('simulatorPreview.device.powerOff'),
             destructive: true,
+            category: 'device',
             loading: props.powerOffPending,
             testID: `${props.testID}-power-off`,
-          },
-        ]
-      : []),
-    ...(props.onHideControls
-      ? [
-          {
-            id: 'hide-controls',
-            title: t('simulatorPreview.viewer.hideControls'),
-            testID: `${props.testID}-hide-controls`,
           },
         ]
       : []),
@@ -217,7 +218,9 @@ export function SimulatorViewerBar(
             open={menuOpen}
             onOpenChange={setMenuOpen}
             items={menuItems}
-            showCategoryTitles
+            // Switching device is titled; the viewer's own actions, then powering the device off, stand apart.
+            categoryTitles={{ devices: t('simulatorPreview.viewer.switchDevice') }}
+            separateCategories
             onSelect={(id) => {
               setMenuOpen(false);
               if (id.startsWith('device:')) {

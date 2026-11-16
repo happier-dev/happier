@@ -4,6 +4,7 @@ import { BACKED_SIMULATOR_SIDEBAND_KINDS_V1 } from '@happier-dev/protocol/device
 import type { SimulatorSidebandKindV1, SimulatorSidebandMessageV1 } from '@happier-dev/protocol/devices/simulator/sidebandV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SidePaneInspectorSections } from '@/components/ui/lists/SidePaneInspectorSections';
@@ -148,9 +149,9 @@ function SidebandRows(props: Readonly<{
 }
 
 /**
- * The on-demand Tools panel: rare stream presets, the device's test tools (apps, links, settings,
- * accessibility) and capture health
- * with its diagnostics. Only what the producer backs is listed; nothing here is needed to watch or drive
+ * The on-demand Tools panel: the device's test tools (apps, links, settings, accessibility) first,
+ * then the rare stream presets and capture health with its diagnostics. Only what the producer backs
+ * is listed; nothing here is needed to watch or drive
  * the device, so it stays closed until asked for.
  */
 export function SimulatorSidebandPanel(props: Readonly<{
@@ -186,20 +187,6 @@ export function SimulatorSidebandPanel(props: Readonly<{
             </View>
             <ScrollView contentContainerStyle={simulatorStreamStyles.toolsBody} testID={`${props.testID}-drawer`}>
                 <SidePaneInspectorSections>
-                {streamPresets.length > 0 ? (
-                    <ItemGroup title={t('simulatorPreview.viewer.streamSection')} description={t('simulatorPreview.viewer.streamDescription')}>
-                        {streamPresets.map((preset) => (
-                            <Item
-                                key={preset.id}
-                                testID={`${props.testID}-${preset.id}`}
-                                title={preset.title}
-                                showChevron={false}
-                                disabled={!controls.canWatch}
-                                onPress={() => { void preset.onPress?.(); }}
-                            />
-                        ))}
-                    </ItemGroup>
-                ) : null}
                 {props.operations && props.viewModel.resource ? (
                     <SimulatorDeviceTools
                         key={props.viewModel.resource.simulatorId}
@@ -207,6 +194,23 @@ export function SimulatorSidebandPanel(props: Readonly<{
                         operations={props.operations}
                         testID={props.testID}
                     />
+                ) : null}
+                {streamPresets.length > 0 ? (
+                    <ItemGroup testID={`${props.testID}-stream`} surface="none" title={t('simulatorPreview.viewer.streamSection')} description={t('simulatorPreview.viewer.streamDescription')}>
+                        <View style={simulatorStreamStyles.toolActions}>
+                            {streamPresets.map((preset) => (
+                                <RoundButton
+                                    key={preset.id}
+                                    size="small"
+                                    display="secondary"
+                                    testID={`${props.testID}-${preset.id}`}
+                                    title={preset.title}
+                                    disabled={!controls.canWatch}
+                                    onPress={() => { void preset.onPress?.(); }}
+                                />
+                            ))}
+                        </View>
+                    </ItemGroup>
                 ) : null}
                 {kinds.map((kind) => {
                     const title = sidebandTitle(kind);

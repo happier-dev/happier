@@ -165,10 +165,24 @@ export const simulatorStreamStyles = StyleSheet.create((theme) => ({
         ...Typography.variant('label', 'semiBold'),
         color: theme.colors.text.primary,
     },
-    inlineActions: {
+    // A tool's field and the operations that act on it read as one row of the panel.
+    toolField: {
+        gap: theme.space.s8,
+    },
+    toolFieldRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: theme.space.s4,
+        gap: theme.space.s8,
+    },
+    toolFieldGrow: {
+        flex: 1,
+        minWidth: 0,
+    },
+    toolActions: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: theme.space.s8,
     },
     toolsBody: {
         paddingBottom: theme.space.s16,

@@ -16,6 +16,7 @@ type SimulatorDeviceToolsCopy = Readonly<{
   linkSection: string;
   url: string;
   open: string;
+  settingsSection: string;
   appearance: string;
   light: string;
   dark: string;
@@ -74,6 +75,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "Open a link",
     url: "URL or deep link",
     open: "Open",
+    settingsSection: "Device settings",
     appearance: "Appearance",
     light: "Light",
     dark: "Dark",
@@ -129,6 +131,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "Ouvrir un lien",
     url: "URL ou lien profond",
     open: "Ouvrir",
+    settingsSection: "Réglages de l’appareil",
     appearance: "Apparence",
     light: "Clair",
     dark: "Sombre",
@@ -184,6 +187,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "Link öffnen",
     url: "URL oder Deep Link",
     open: "Öffnen",
+    settingsSection: "Geräteeinstellungen",
     appearance: "Darstellung",
     light: "Hell",
     dark: "Dunkel",
@@ -239,6 +243,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "Abrir un enlace",
     url: "URL o enlace profundo",
     open: "Abrir",
+    settingsSection: "Ajustes del dispositivo",
     appearance: "Apariencia",
     light: "Clara",
     dark: "Oscura",
@@ -294,6 +299,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "Apri un link",
     url: "URL o deep link",
     open: "Apri",
+    settingsSection: "Impostazioni del dispositivo",
     appearance: "Aspetto",
     light: "Chiaro",
     dark: "Scuro",
@@ -349,6 +355,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "Abrir um link",
     url: "URL ou deep link",
     open: "Abrir",
+    settingsSection: "Ajustes do dispositivo",
     appearance: "Aparência",
     light: "Clara",
     dark: "Escura",
@@ -404,6 +411,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "Obre un enllaç",
     url: "URL o enllaç profund",
     open: "Obre",
+    settingsSection: "Configuració del dispositiu",
     appearance: "Aparença",
     light: "Clara",
     dark: "Fosca",
@@ -459,6 +467,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "Otwórz link",
     url: "URL lub deep link",
     open: "Otwórz",
+    settingsSection: "Ustawienia urządzenia",
     appearance: "Wygląd",
     light: "Jasny",
     dark: "Ciemny",
@@ -514,6 +523,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "Открыть ссылку",
     url: "URL или диплинк",
     open: "Открыть",
+    settingsSection: "Настройки устройства",
     appearance: "Оформление",
     light: "Светлое",
     dark: "Тёмное",
@@ -569,6 +579,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "リンクを開く",
     url: "URL またはディープリンク",
     open: "開く",
+    settingsSection: "デバイスの設定",
     appearance: "外観",
     light: "ライト",
     dark: "ダーク",
@@ -624,6 +635,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "打开链接",
     url: "URL 或深层链接",
     open: "打开",
+    settingsSection: "设备设置",
     appearance: "外观",
     light: "浅色",
     dark: "深色",
@@ -679,6 +691,7 @@ export const simulatorDeviceToolsTranslations = {
     linkSection: "開啟連結",
     url: "URL 或深層連結",
     open: "開啟",
+    settingsSection: "裝置設定",
     appearance: "外觀",
     light: "淺色",
     dark: "深色",

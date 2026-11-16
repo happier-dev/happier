@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { renderScreen } from '@/dev/testkit';
 import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator/types';
 import type { SimulatorDeviceOperationKindV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
@@ -39,11 +40,14 @@ async function renderTools(
 ) {
   const { SimulatorDeviceTools } = await import('./SimulatorDeviceTools');
   const screen = await renderScreen(
-    <SimulatorDeviceTools
-      viewModel={model}
-      operations={{ pending: null, run: run as never }}
-      testID="tools"
-    />,
+    // The tools draw inside the viewer's page-presented side pane; section actions live in its headers.
+    <ListPresentationProvider value="page">
+      <SimulatorDeviceTools
+        viewModel={model}
+        operations={{ pending: null, run: run as never }}
+        testID="tools"
+      />
+    </ListPresentationProvider>,
   );
   return { screen, run };
 }
@@ -72,18 +76,31 @@ describe('SimulatorDeviceTools', () => {
       operation: 'app_launch',
       appId: 'com.example.app',
     });
-    await screen.pressByTestIdAsync('tools-text-size-large');
-    expect(run).toHaveBeenCalledWith('text_size_set', 'sim_1', {
+    await screen.pressByTestIdAsync('tools-text-size:large');
+    expect(run).toHaveBeenCalledWith('textSize:large', 'sim_1', {
       operation: 'text_size_set',
       size: '1.3',
     });
-    await screen.pressByTestIdAsync('tools-permission-camera-grant');
+    // One permission is chosen, then one decision applies to it (camera until another is picked).
+    await screen.pressByTestIdAsync('tools-permission-grant');
     expect(run).toHaveBeenCalledWith('permission:camera:grant', 'sim_1', {
       operation: 'permission_set',
       appId: 'com.example.app',
       permission: 'android.permission.CAMERA',
       value: 'grant',
     });
+  });
+
+  it('shows the setting it last applied, and only once the device accepted it', async () => {
+    let accept = false;
+    const run = vi.fn(async (): Promise<unknown> => ({ ok: accept }));
+    const { screen } = await renderTools(viewModel('ios', ['appearance_set']), run);
+
+    await screen.pressByTestIdAsync('tools-appearance:dark');
+    expect(screen.findByTestId('tools-appearance:dark')?.props.accessibilityState?.checked).not.toBe(true);
+    accept = true;
+    await screen.pressByTestIdAsync('tools-appearance:dark');
+    expect(screen.findByTestId('tools-appearance:dark')?.props.accessibilityState?.checked).toBe(true);
   });
 
   it('reads the screen and presses an element by its identifier, then reads it again', async () => {

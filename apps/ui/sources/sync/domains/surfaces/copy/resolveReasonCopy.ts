@@ -506,6 +506,13 @@ const PLUGIN_RUNTIME_TITLE_KEYS = {
     account_encryption_mode_unavailable: 'pluginRuntime.homeUnreachableTitle',
 } as const satisfies Record<string, 'pluginRuntime.homeUnreachableTitle'>;
 
+/** A device-viewer cause that names itself in the card's title, in place of the generic stream title. */
+const SIMULATOR_PREVIEW_TITLE_KEYS = {
+    webcodecs_unavailable: 'simulatorPreview.device.videoUnsupported',
+    webcodecs_decoder_unavailable: 'simulatorPreview.device.videoUnsupported',
+    webcodecs_chunk_unavailable: 'simulatorPreview.device.videoUnsupported',
+} as const satisfies Record<string, 'simulatorPreview.device.videoUnsupported'>;
+
 type SimulatorPreviewMessageKey =
     | 'simulatorPreview.availability.noDevices'
     | 'simulatorPreview.availability.captureUnavailable'
@@ -890,8 +897,10 @@ export function resolveReasonCopy(input: Readonly<{
     serviceNamedByTitle?: boolean;
 }>): ResolvedReasonCopy {
     const rawCode = input.reasonCode ?? null;
-    const frameTitleKey = input.kind === 'browserFrame' && rawCode
-        ? BROWSER_FRAME_TITLE_KEYS[rawCode as keyof typeof BROWSER_FRAME_TITLE_KEYS] : undefined;
+    const frameTitleKey = !rawCode ? undefined
+        : input.kind === 'browserFrame' ? BROWSER_FRAME_TITLE_KEYS[rawCode as keyof typeof BROWSER_FRAME_TITLE_KEYS]
+        : input.kind === 'simulatorPreview' ? SIMULATOR_PREVIEW_TITLE_KEYS[rawCode as keyof typeof SIMULATOR_PREVIEW_TITLE_KEYS]
+        : undefined;
     const startFailed = input.kind === 'localServiceAction' && rawCode === 'plugin_managed_service_establishment_failed';
     const title = startFailed ? t('localServices.actions.failure.startFailedTitle') : frameTitleKey ? t(frameTitleKey) : resolveTitle(input.kind);
     const known = rawCode ? resolveKnownMessage(input.kind, rawCode, input.servicesActionOffered) : null;

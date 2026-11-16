@@ -664,6 +664,12 @@ describe('resolveReasonCopy — simulator / stream / plugin-runtime kinds (L0-3)
     expect(copy.diagnosticCode).toBe('no_simulator_devices');
   });
 
+  it('names a browser that cannot decode the device video in the card title, not a generic stream title', () => {
+    const copy = resolveReasonCopy({ reasonCode: 'webcodecs_decoder_unavailable', kind: 'simulatorPreview' });
+    expect(copy.title).toBe(t('simulatorPreview.device.videoUnsupported'));
+    expect(copy.body).toBe(t('simulatorPreview.device.videoUnsupportedBody'));
+  });
+
   it('maps known simulator preview codes to their availability copy', () => {
     for (const { code, expected } of SIMULATOR_PREVIEW_CODES) {
       const copy = resolveReasonCopy({

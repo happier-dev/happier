@@ -225,13 +225,14 @@ describe('SimulatorPreviewPane', () => {
         expect(withoutSession.findByTestId('simulator-preview-toolbar-screenshot')).toBeNull();
     });
 
-    it('says in the bar when this browser cannot play the device video, with no retry that cannot help', async () => {
+    it('says once, on the stage, when this browser cannot play the device video, with no retry that cannot help', async () => {
         vi.stubGlobal('VideoDecoder', undefined);
         try {
             const screen = await renderPane(selectedViewModel({
                 stream: { ...selectedViewModel().stream, selectedCodec: 'h264.avcc', lastFrameUrl: undefined, avccChunks: [new Uint8Array([0, 0, 0, 1])] },
             }), { openStream: vi.fn() });
-            expect(screen.findByTestId('simulator-preview-bar-status-label')?.props.children).toBe('simulatorPreview.device.videoUnsupported');
+            // One cause, one place: the stage card names it; the bar carries no second copy.
+            expect(screen.findByTestId('simulator-preview-bar-status')).toBeNull();
             expect(screen.findByTestId('simulator-preview-stream-unavailable')).toBeTruthy();
             expect(screen.findByTestId('simulator-preview-stream-unavailable-action')).toBeNull();
             expect(screen.findByTestId('simulator-preview-bar-acquire-lease')).toBeNull();
