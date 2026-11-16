@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { configuration, reloadConfiguration } from '@/configuration';
-import { useServerProfile } from '@/server/serverProfiles';
+import { adoptServerProfileHomeConnectionDescriptor, setServerProfileEndpointsById, upsertServerProfileByUrl, useServerProfile } from '@/server/serverProfiles';
 import { prepareRemoteEnrollmentHomeTarget } from './enrollRemote';
 
 describe('prepareRemoteEnrollmentHomeTarget', () => {
@@ -42,6 +42,9 @@ describe('prepareRemoteEnrollmentHomeTarget', () => {
         HAPPIER_ACTIVE_SERVER_ID: undefined,
       });
       reloadConfiguration();
+      // A repeated enrollment repairs the profile left by an earlier controller-local transfer.
+      await upsertServerProfileByUrl({ name: 'existing', serverUrl: 'https://public-home.example.test',
+        localServerUrl: 'http://127.0.0.1:3010', webappUrl: 'https://app.example.test', use: false });
       const prepared = await prepareRemoteEnrollmentHomeTarget({
         kind: 'https_url',
         url: 'https://public-home.example.test',
@@ -77,9 +80,13 @@ describe('prepareRemoteEnrollmentHomeTarget', () => {
       reloadConfiguration();
       const canonicalServerUrl = 'http://happier-agent-qa-servers-deploy.localhost:3033';
       const applicationUrl = 'https://home-route.example.test';
+      const descriptor = { v: 1 as const, homeServerIdentityId: 'srv_guest_route', canonicalServerUrl, revision: 1,
+        endpoints: [{ kind: 'https' as const, url: canonicalServerUrl }, { kind: 'https' as const, url: applicationUrl }] };
+      const old = await adoptServerProfileHomeConnectionDescriptor({ descriptor, observation: 'exact', use: false });
+      await setServerProfileEndpointsById({ id: old.profile.id, serverUrl: canonicalServerUrl,
+        localServerUrl: 'http://127.0.0.1:3010', webappUrl: applicationUrl, use: false });
       const prepared = await prepareRemoteEnrollmentHomeTarget({ kind: 'descriptor', authority: 'trusted_enrollment',
-        descriptor: { v: 1, homeServerIdentityId: 'srv_guest_route', canonicalServerUrl, revision: 1,
-          endpoints: [{ kind: 'https', url: canonicalServerUrl }, { kind: 'https', url: applicationUrl }] } });
+        descriptor });
       await useServerProfile(prepared.profileId);
       // A later command starts with the persisted profile, without enrollment's process-local route.
       envScope.patch(cleanEnvironment);
@@ -87,6 +94,7 @@ describe('prepareRemoteEnrollmentHomeTarget', () => {
       expect(configuration.activeServerId).toBe(prepared.profileId);
       expect(configuration.serverUrl).toBe(canonicalServerUrl);
       expect(configuration.apiServerUrl).toBe(applicationUrl);
+      expect(configuration.webappUrl).toBe(applicationUrl);
       expect(prepared.target).toMatchObject({ homeServerIdentityId: 'srv_guest_route',
         canonicalAuthUrl: canonicalServerUrl, applicationUrl });
     });

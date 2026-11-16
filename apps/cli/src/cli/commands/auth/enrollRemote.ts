@@ -12,6 +12,7 @@ import { resolveCliHomeTarget } from '@/server/homeTarget';
 import { applyResolvedServerSelectionNonFocusing } from '@/server/serverSelection';
 import {
   adoptServerProfileHomeConnectionDescriptor,
+  setServerProfileEndpointsById,
   upsertServerProfileByUrl,
   useServerProfile,
 } from '@/server/serverProfiles';
@@ -93,7 +94,8 @@ export async function prepareRemoteEnrollmentHomeTarget(input: HomeTargetInput):
   }
   // Use the same transfer decision for stdin URL inputs and controller-produced profiles.
   input = createTransferableHomeTargetInput(await resolveCliHomeTarget(input));
-  const profile = input.kind === 'descriptor'
+  const guestTarget = await resolveCliHomeTarget(input);
+  const adopted = input.kind === 'descriptor'
     ? (await adoptServerProfileHomeConnectionDescriptor({
         descriptor: input.descriptor,
         suggestedName: input.descriptor.homeServerIdentityId,
@@ -107,6 +109,10 @@ export async function prepareRemoteEnrollmentHomeTarget(input: HomeTargetInput):
         webappUrl: input.webappUrl ?? new URL(input.url).origin,
         use: false,
       });
+  // Explicitly replace a route retained from a previous controller-local enrollment.
+  const profile = await setServerProfileEndpointsById({ id: adopted.id,
+    serverUrl: adopted.serverUrl, localServerUrl: guestTarget.applicationUrl,
+    webappUrl: adopted.webappUrl, use: false });
   const target = await resolveCliHomeTarget({ kind: 'saved_profile', profileRef: profile.id });
   await applyResolvedServerSelectionNonFocusing({
     homeTarget: target,
