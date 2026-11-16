@@ -9027,6 +9027,21 @@ plugin projections and client/daemon readers reload together under the developme
 direct cut; older strict development readers reject the new variants. No migration,
 wire epoch or compatibility adapter is added.
 
+Unreleased 0.3 deployment target fit facts optionally declare closed
+`sources: { gitIntegration: string[], upload: boolean }`. The declaration, normalized
+target and suggestion catalog share the same Protocol schema owner. Matching
+Protocol, deployment-protocol, SDK projections, CLI and UI reload together under
+the development direct cut; older strict development readers reject the new
+field. This adds no persisted format, migration, wire epoch or compatibility
+adapter.
+
+The same development cut extends `projects.starters.create` with a selected
+repository `providerKind` and a `source` alternative for an empty scratch
+repository. Existing starter operands retain their meaning. Scratch results may
+omit the informational starter id and commit because the repository has no
+initial commit. The create executor still returns the ordinary Project, Source
+and Session handoff; no new deployment or Session lifecycle is introduced.
+
 Unreleased 0.3 deployment lifecycle results optionally retain `builtInUrls`,
 provider-observed built-in routing addresses separate from deployment-specific
 `urls`. The lifecycle result and receipt content remain closed V1 objects;

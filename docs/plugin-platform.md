@@ -13206,6 +13206,13 @@ loaded native operation or provider cache lifetime.
 
 Plugins may contribute a `starter` registry source alongside app sources. A starter names an HTTPS forge repository, an optional repository subpath, human-facing title and description, tags, an optional preview image, and a build goal. It deliberately carries no commit pin: project creation resolves the repository's current release or default branch through the SCM owner and records the resolved checkout commit on the created Project.
 
+In unreleased 0.3 source, deployment targets optionally declare `sources` with
+`gitIntegration` provider kinds and an `upload` boolean through the shared
+`deploymentTargetFitFieldsV1` schema. Missing facts mean unknown support, not an
+implicit integration. The suggestion catalog obtains publish-capable forges from
+the admitted hosting-provider registry's repository-publishing capability; clone
+support alone does not establish that a forge can create a repository.
+
 ## Plugin UI Action failure presentation (unreleased 0.3)
 
 Native and hosted-web plugin UIs share `hostApi.presentActionFailure(failure)`.

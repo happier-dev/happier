@@ -4716,8 +4716,10 @@ Deploy suggestions store the same runner choice in `deploySuggestionRunnerV1`
 reads one catalog snapshot and runs the existing `task` intent in a Machine
 workspace without creating a Session. Its typed result passes through
 `validateDeploySuggestionV1`, which checks catalog identities and delegates target
-fit to `resolvePublishTargetRecommendation`. Starter choices create through
-`projects.starters.create` and open its Session handoff; catalog apps continue to
+fit to `resolvePublishTargetRecommendation`. Starter and scratch choices create
+through `projects.starters.create` on the selected publishing forge and open its
+ordinary Session handoff. Scratch creates an empty repository and an unborn
+local checkout; the agent builds and commits in that Session. Catalog apps continue to
 target selection without opening a Session. The shared task lifecycle reports the
 accepted run before waiting, so Stop reaches that run through `execution.run.stop`.
 
