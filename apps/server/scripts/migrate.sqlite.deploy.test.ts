@@ -172,7 +172,7 @@ describe("migrate.sqlite.deploy.ts", () => {
             await verify.pluginCollectionRow.update({ where: { accountId_pluginId_collectionId_rowId: {
                 accountId: 'retained', pluginId: 'example.backfill', collectionId: 'rows', rowId: 'live',
             } }, data: { contentEnvelope: commandEnvelope } });
-            await runCommand(process.execPath, ['./scripts/runTsx.mjs', '--tsconfig', './tsconfig.json', './scripts/pluginCollectionUsageBackfill.ts'],
+            await runCommand(process.execPath, ['./scripts/runTsx.mjs', '--tsconfig', './tsconfig.exec.json', './scripts/pluginCollectionUsageBackfill.ts'],
                 { ...process.env, HAPPIER_DB_PROVIDER: 'sqlite', DATABASE_URL: databaseUrl },
                 { cwd: fileURLToPath(new URL('../', import.meta.url)) });
             expect(await verify.account.findUniqueOrThrow({ where: { id: 'retained' }, select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } }))

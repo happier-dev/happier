@@ -7,7 +7,7 @@
  * the admission point where load shedding has to happen. Run it on the actual
  * deployment image before changing the persisted parameters:
  *
- *   node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json \
+ *   node ./scripts/runTsx.mjs --tsconfig ./tsconfig.exec.json \
  *     ./scripts/benchmarkPasswordHashPrimitive.ts
  */
 import { randomBytes, scrypt } from 'node:crypto';

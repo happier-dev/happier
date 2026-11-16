@@ -223,7 +223,7 @@ describe('shared QA schema errors at the Prisma and socket boundaries', () => {
 
     it('exits startup with the same actionable diagnostic when its real database query fails', () => {
         const result = spawnSync(process.execPath, [
-            './scripts/runTsx.mjs', '--tsconfig', './tsconfig.json',
+            './scripts/runTsx.mjs', '--tsconfig', './tsconfig.exec.json',
             './sources/main.light.ts', '--claim-home-owner=missing-fixture-account',
         ], {
             cwd: process.cwd(),

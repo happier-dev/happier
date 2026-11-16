@@ -1,0 +1,12 @@
+{
+  // Runtime execution (tsx via scripts/runTsx.mjs). tsconfig.json also maps some workspace packages to
+  // their dist/*.d.ts so the typecheck consumes declarations; a runtime given those paths loads an
+  // empty declaration module instead of the package (Docker `start`, `dev:light`). Execution keeps only
+  // the server's own alias and resolves workspace packages through their package exports.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./sources/*"]
+    }
+  }
+}

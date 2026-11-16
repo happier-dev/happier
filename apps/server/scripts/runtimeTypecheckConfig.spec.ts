@@ -86,7 +86,7 @@ describe('server runtime TypeScript inputs', () => {
             scripts?: Record<string, string>;
         };
         expect(packageJson.scripts?.['typecheck:runtime']).toBe(
-            'node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json ./scripts/generateClients.ts --check && node ./scripts/runTypeScriptCli.mjs -p tsconfig.runtime.json --noEmit',
+            'node ./scripts/runTsx.mjs --tsconfig ./tsconfig.exec.json ./scripts/generateClients.ts --check && node ./scripts/runTypeScriptCli.mjs -p tsconfig.runtime.json --noEmit',
         );
         expect(packageJson.devDependencies?.['@types/node']).toBe('^22.15.3');
 
