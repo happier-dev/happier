@@ -1330,10 +1330,9 @@ export async function claudeRemoteLauncher(
         };
         const surfaceRemoteRateLimitRuntimeIssue = async (
             details: NormalizedProviderUsageLimitDetailsV1,
-            observedWindows?: readonly NormalizedProviderUsageLimitDetailsV1[],
         ): Promise<void> => {
             recordPrimaryProviderUnavailableForPromptDelivery(details);
-            await surfaceClaudeRateLimitRuntimeIssue(session, details, '[remote]', { observedWindows });
+            await surfaceClaudeRateLimitRuntimeIssue(session, details, '[remote]');
         };
         const recordRemoteQuotaEvidence = async (windows: readonly NormalizedProviderUsageLimitDetailsV1[]): Promise<void> => {
             await recordClaudeRateLimitQuotaEvidence(session, windows, '[remote]');
@@ -1898,8 +1897,8 @@ export async function claudeRemoteLauncher(
                         workflowActivitySource?.observeTranscriptMessage(value, observation);
                     },
                     onWorkStateSnapshot: publishWorkStateSnapshot,
-                    onRateLimitEvent: async (details: NormalizedProviderUsageLimitDetailsV1, observedWindows: readonly NormalizedProviderUsageLimitDetailsV1[]) => {
-                        await surfaceRemoteRateLimitRuntimeIssue(details, observedWindows);
+                    onRateLimitEvent: async (details: NormalizedProviderUsageLimitDetailsV1) => {
+                        await surfaceRemoteRateLimitRuntimeIssue(details);
                     },
                     onQuotaEvidence: async (windows: readonly NormalizedProviderUsageLimitDetailsV1[]) => {
                         await recordRemoteQuotaEvidence(windows);

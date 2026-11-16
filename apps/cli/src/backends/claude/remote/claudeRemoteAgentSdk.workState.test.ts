@@ -235,7 +235,7 @@ describe('claudeRemoteAgentSdk work-state projection', () => {
       retryAfterMs: null,
       quotaScope: 'account',
       recoverability: 'wait',
-    }), []);
+    }));
     expect(onRateLimitEvent.mock.calls[0]?.[0]).not.toHaveProperty('providerLimitId');
     expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
       type: 'assistant',

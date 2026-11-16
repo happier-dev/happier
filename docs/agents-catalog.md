@@ -680,6 +680,15 @@ Runtime failure attribution and direct-account recovery compare that same
 context; an ambiguous live identity cannot authorize mutation of the runner's
 old launch profile. The public Session runtime-issue shape is unchanged.
 
+Claude runtime quota windows share the existing request-auth context. SDK dispatch
+and authenticated `UserPromptSubmit` replace that context, so measured windows
+cannot carry into the next request or selected account. A later failure supplements
+its scalar details with that request's observed windows; one resolved collection
+feeds both the Session runtime issue and the account-usage snapshot. Matching
+failure resets stay on their own window, and missing utilization remains unknown.
+Sidechain failures retain their account-quota evidence without failing the parent
+turn or replacing a complete observation with a single window.
+
 Credential metadata projects the attested organization through the protocol
 credential builder. The server invalidates usage-source aliases when that account
 context changes, while ordinary same-context token rotations retain their usage.
