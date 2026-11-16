@@ -1,6 +1,6 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { parseThemeProfileDocument, ThemeMiniatureDataSchema, type ThemeProfileDocument } from '../account/settings/themeProfiles.js';
+import { mergeThemeProfileDocumentEdit, parseThemeProfileDocument, ThemeMiniatureDataSchema, type ThemeProfileDocument } from '../account/settings/themeProfiles.js';
 import { ThemeImportIssueCodeSchema } from '../account/settings/themeProfileExternalThemeImportVsCode.js';
 import { RegistryContentRefV1Schema } from './registryContentRefV1.js';
 import { normalizeRegistrySourceUrlV1 } from './registrySourcesV1.js';
@@ -26,7 +26,10 @@ export const RegistryThemeDocumentV1Schema = lazyZodSchema(() => z.pipe(z.strict
   ctx.issues.push({ code: 'custom', input: value, message: result.error });
   return z.NEVER;
 })));
-export const RegistryThemeFaceV1Schema = lazyZodSchema(() => z.strictObject({ key: identity(), label: identity(), mode: mode(), document: RegistryThemeDocumentV1Schema }));
+/** A selected face's advertised mode is its preferred appearance in the installed library. */
+export const RegistryThemeFaceV1Schema = lazyZodSchema(() => z.strictObject({
+  key: identity(), label: identity(), mode: mode(), document: RegistryThemeDocumentV1Schema,
+}).check(z.overwrite(face => ({ ...face, document: mergeThemeProfileDocumentEdit(face.document, { assetAppearance: face.mode }) }))));
 export type RegistryThemeFaceV1 = z.infer<typeof RegistryThemeFaceV1Schema>;
 export const RegistryThemeContentUrlV1Schema = lazyZodSchema(() => z.string().check(z.url(), z.refine(value => {
   try { normalizeRegistrySourceUrlV1(value); return true; } catch { return false; }

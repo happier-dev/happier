@@ -28,7 +28,9 @@ it('discovers catalog summaries without opening bodies and preserves selected fu
   expect(metadata.op === 'read' && metadata.item.payload).toMatchObject({ kind: 'theme', state: 'listing' });
   expect(calls).toEqual([url, url]);
   const item = await host.fetchRequest({ op: 'read', sourceId: source.id, kind: 'theme', itemId: 'sample', version: '1.0.0', themeContent: true });
-  expect(item.op === 'read' && item.item.payload).toMatchObject({ kind: 'theme', state: 'ready', themes: [{ document: { raw: { futurePresentation: { value: 'retained' } } } }] });
+  expect(item.op === 'read' && item.item.payload).toMatchObject({ kind: 'theme', state: 'ready', themes: [{ document: {
+    profile: { assetAppearance: 'dark' }, raw: { assetAppearance: 'dark', futurePresentation: { value: 'retained' } },
+  } }] });
   expect(calls).toEqual([url, url, url, 'https://catalog.example.test/sample.json']);
 });
 

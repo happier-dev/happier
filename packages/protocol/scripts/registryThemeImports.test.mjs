@@ -10,9 +10,10 @@ for (const [entry, module] of [
   ['registries/registryItemsV1', './src/registries/registryItemsV1.ts'],
   ['account/settings/themeProfiles', './src/account/settings/themeProfiles.ts'],
   ['plugin-sdk/ui', '../plugin-sdk/src/ui/index.ts'],
+  ['registries/formats/happierCatalog', './src/registries/formats/happierCatalog.ts'],
 ]) {
   const result = spawnSync(process.execPath, [
-    '--import', 'tsx', '--conditions=happier-source', '--input-type=module', '--eval', `
+    '--import', '../cli-common/registerSourceRuntime.mjs', '--conditions=happier-source', '--input-type=module', '--eval', `
       import assert from 'node:assert/strict';
       await import(${JSON.stringify(module)});
       const { ThemeProfileV1Schema } = await import('./src/account/settings/themeProfiles.ts');

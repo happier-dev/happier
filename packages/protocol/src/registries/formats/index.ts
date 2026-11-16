@@ -12,7 +12,9 @@ import { chromeWebStoreRegistryAdapterV1 } from './chromeWebStore.js';
 import type { RegistryFormatAdapterV1 } from './registryFormatAdapterV1.js';
 export const REGISTRY_FORMAT_ADAPTERS_V1 = {
   git:githubRegistryAdapterV1, 'skills-sh':skillsShRegistryAdapterV1, 'claude-marketplace':claudeMarketplaceRegistryAdapterV1,
-  'happier-npm':happierNpmRegistryAdapterV1, 'happier-catalog':happierCatalogRegistryAdapterV1,
+  'happier-npm':happierNpmRegistryAdapterV1,
+  // Catalog picks delegate through this table after module initialization.
+  get 'happier-catalog'() { return happierCatalogRegistryAdapterV1; },
   'acp-registry': acpRegistryAdapterV1,
   'mcp-registry': mcpRegistryAdapterV1,
   'coolify-templates': composeCatalogRegistryAdapterV1,
