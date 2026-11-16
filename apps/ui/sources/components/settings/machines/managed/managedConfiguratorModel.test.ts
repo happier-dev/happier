@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { z } from 'zod/mini';
-import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerCheckResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { ManagedPrerequisiteV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { ManagedCredentialSelectionV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { TeamResourceConnectedServiceSelectionV2Schema } from '@happier-dev/protocol/connect/connectedServiceBindings';
 import { QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
@@ -19,6 +20,7 @@ import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { PLUGIN as HETZNER_PLUGIN, MACHINE_PROVISIONER as HETZNER_MACHINE_PROVISIONER } from '../../../../../../../packages/plugins/machine-hetzner/src/index';
 import { createManagedConfiguratorDraft, type ManagedConfiguratorDraft, refreshManagedConfiguratorOptions, refreshManagedConfiguratorProvisioner, selectManagedConfiguratorDimension, managedConfiguratorDimensionSelection, managedConfiguratorDimensionChoices, managedConfiguratorFacts, managedConfiguratorAcquireInput, managedConfiguratorOptionsSelectors, setManagedConfiguratorOptionsSelectors, managedConfiguratorCredentialSelections, managedConfiguratorCapabilities, managedConfiguratorEnrollmentDefault, managedConfiguratorChoiceOwnsField, resolveManagedConfiguratorAcquireDraft } from './managedConfiguratorModel';
+import { managedConfiguratorReadiness } from './managedConfiguratorModel';
 
 const descriptor = MachineProvisionerContributionV1Schema.parse({
     id: 'vm', title: 'Virtual machine', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
@@ -44,6 +46,36 @@ const fresh = (name = 'Guest') => createManagedConfiguratorDraft({ provisioner, 
 const small = () => selectManagedConfiguratorDimension(refreshManagedConfiguratorOptions(fresh(), options), 'size', 'small');
 
 describe('managed configurator draft owner', () => {
+    it('keeps readiness specific to the selected configuration and its native prerequisites', () => {
+        const check = MachineProvisionerCheckResultV1Schema.parse({ available: true,
+            prerequisites: [{ requirement: { kind: 'systemTool', id: 'docker' }, status: 'available' }] });
+        const cli = ManagedPrerequisiteV1Schema.parse({ requirement: { kind: 'systemTool', id: 'devcontainer' }, status: 'unavailable',
+            setupSources: [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe', selection: {
+                ref: { pluginId: 'fixture.recipes', recipeId: 'install-cli', revision: '1' }, inputs: {},
+            } }] } }],
+            repairAction: { action: { pluginId: 'fixture.compute', localId: 'install' }, input: {} } });
+        const advanced = refreshManagedConfiguratorOptions({ ...small(), check }, { ...options,
+            base: { launch: {}, available: false, prerequisites: [cli] } });
+        const image = refreshManagedConfiguratorOptions({ ...small(), check }, { ...options,
+            base: { launch: {}, prerequisites: [] } });
+        expect(managedConfiguratorReadiness(advanced)).toMatchObject({ kind: 'needsInstall', prerequisites: [cli], repair: { action: cli.repairAction, kind: 'install' } });
+        expect(managedConfiguratorReadiness(image)).toMatchObject({ kind: 'ready', prerequisites: [] });
+        expect(managedConfiguratorReadiness(advanced).prerequisites[0]?.setupSources).toEqual(cli.setupSources);
+    });
+    it('does not claim readiness before Check or while a selected prerequisite is unverified', () => {
+        expect(managedConfiguratorReadiness(small()).kind).toBe('unverified');
+        const unchecked = refreshManagedConfiguratorOptions({ ...small(), check: { available: true, prerequisites: [] } }, {
+            ...options, base: { launch: {}, prerequisites: [{ requirement: { kind: 'systemTool', id: 'docker' }, status: 'unknown' }] },
+        });
+        expect(managedConfiguratorReadiness(unchecked)).toMatchObject({ kind: 'unverified', prerequisites: [{ status: 'unknown' }] });
+    });
+    it('does not claim readiness with unavailable selected options even when the native Check is available', () => {
+        const blocked = refreshManagedConfiguratorOptions({ ...small(), check: { available: true, prerequisites: [] } }, {
+            ...options, base: { launch: {}, available: false, prerequisites: [] },
+        });
+        expect(managedConfiguratorFacts(blocked)?.optionStatus).toBe('unavailable');
+        expect(managedConfiguratorReadiness(blocked).kind).toBe('unavailable');
+    });
     it('keeps unedited own-preset creation on the sealed preset path after native checks', () => {
         const native = { ...small(), check: { available: true, prerequisites: [] },
             preset: { id: 'preset', revision: 1 } };

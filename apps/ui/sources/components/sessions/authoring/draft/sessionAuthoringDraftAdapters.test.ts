@@ -279,6 +279,21 @@ describe('sessionAuthoringDraftAdapters', () => {
         expect(executionTarget.machineId).toBe('enrolled');
         expect(continuation).toEqual(spawnAuthoring);
     });
+    it('retains a one-Session Directly override through draft reopen and submits it only to ordinary Session admission', () => {
+        const draft = buildNewSessionAuthoringDraftFromTempData({ prompt: 'Start here', directory: '/workspace/project',
+            executionTarget: { kind: 'machine', target: { serverId: 'server-1', machineId: 'machine-1' } },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            ...{ isolationOverride: 'directly' as const } });
+        const temp = buildNewSessionTempDataFromAuthoringDraft({ draft, machineId: 'machine-1' });
+        expect(buildNewSessionAuthoringDraftFromTempData(temp)).toMatchObject({ isolationOverride: 'directly' });
+        const persisted = buildPersistedNewSessionDraftFromAuthoringDraft({ draft, machineId: 'machine-1', updatedAt: 1,
+            selectedSecretId: null, selectedSecretIdByProfileIdByEnvVarName: {},
+            sessionOnlySecretValueEncByProfileIdByEnvVarName: {}, backendNewSessionOptionStateByTargetKey: {} });
+        const reopened = buildNewSessionAuthoringDraftFromPersistedDraft(persisted);
+        const params = { draft: reopened, creationKey: 'directly-creation', permissionMode: 'default', configurationUpdatedAtMs: 1 };
+        expect(buildSessionSpawnNewInputV2FromAuthoringDraft(params)).toMatchObject({ isolationOverride: 'directly' });
+        expect(buildManagedAcquireAgentStartV1FromAuthoringDraft(params)).not.toHaveProperty('isolationOverride');
+    });
     it('round-trips initial triggers with the draft and includes them in the atomic spawn input', () => {
         const initialTriggers = mini.array(SessionInitialTriggerV1Schema).parse([{
             trigger: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'everyMatch' } },

@@ -21,6 +21,7 @@ import { MACHINE_PROVISIONER_DIMENSIONS_V1, type MachineProvisionerDimensionV1, 
 import { resolveDeclaredInputLeaves } from '@happier-dev/protocol/plugins/actions/inputSchemaTraversal';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { managedSizeMemoryRecommendation } from './managedSizeMemoryRecommendation';
+import { describeManagedProvisionerReadiness } from './managedProvisionerReadiness';
 
 type CatalogProvisioner = MachineProvisionersListResultV1['provisioners'][number];
 /** Saved descriptors author choices without claiming an installed executable occurrence. */
@@ -288,6 +289,13 @@ export function refreshManagedConfiguratorOptions(draft: ManagedConfiguratorDraf
         ? selectedProjection(next, projection) : draft.selected;
     return refreshEnrollmentDefault({ ...next, dimensionSelection: selection, selected,
         optionsSelectorsEdited: projection?.kind === 'ready' ? undefined : draft.optionsSelectorsEdited });
+}
+/** The selected launch's native answer; a descriptor alone never establishes readiness. */
+export function managedConfiguratorReadiness(draft: ManagedConfiguratorDraft | null, failure?: string | null,
+    facts = draft ? managedConfiguratorFacts(draft) : null) {
+    return describeManagedProvisionerReadiness({ check: draft?.check, failure,
+        prerequisites: facts?.prerequisites ?? readMachineProvisionerPrerequisitesV1(draft?.check, draft?.options),
+        optionStatus: facts?.optionStatus ?? (draft?.optionStatus === 'unavailable' ? 'unavailable' : 'loading') });
 }
 export function managedConfiguratorFacts(draft: ManagedConfiguratorDraft, projection?: ReturnType<typeof managedConfiguratorProjection>): ManagedConfigurationFactsV1 | null {
     const selected = draft.selected;

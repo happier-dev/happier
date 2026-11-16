@@ -1,10 +1,16 @@
 import * as React from 'react';
 import type { MachineIsolationPolicyV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
-import { MachineIsolationMutationResultV1Schema } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
+import { MachineIsolationMutationResultV1Schema, type MachineIsolationGetResultV1 } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { readSyncedMachineIsolationPolicy } from '@/sync/domains/machines/machineIsolationPolicy';
+import { proposeMachineIsolationOutcome, readSyncedMachineIsolationPolicy } from '@/sync/domains/machines/machineIsolationPolicy';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+
+/** Reuses the authoring owner's opened snapshot; no Action, metadata read or authorization. */
+export function useMachineIsolationProposedOutcome(snapshot: MachineIsolationGetResultV1,
+    workKind: keyof MachineIsolationPolicyV1['workKinds'], override?: 'directly') {
+    return React.useMemo(() => proposeMachineIsolationOutcome(snapshot, workKind, override), [snapshot, workKind, override]);
+}
 
 /** Security's data owner: synced policy reads and the existing metadata CAS Action. No acquisition. */
 export function useMachineIsolationPolicy(input: Readonly<{ serverId: string; machine: Machine | null }>) {

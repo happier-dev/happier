@@ -204,6 +204,15 @@ export const SESSION_AUTHORING_FIELD_CATALOG = defineSessionAuthoringFields({
     },
     default: null,
   },
+  isolationOverride: {
+    schema: z.optional(z.literal('directly')),
+    description: 'Explicit one-Session Directly choice; trusted interactive admission decides whether it is allowed.',
+    storageClass: 'derived',
+    draftStorage: 'composer',
+    contexts: ['newSession'],
+    defaultSurface: 'hidden',
+    defaultEditabilityByContext: { newSession: 'editable' },
+  },
   temporaryComputerActivationRef: {
     schema: z.optional(z.nullable(TemporaryComputerActivationRefV1Schema)),
     description: 'Non-authoritative reference to a pending Temporary computer activation; private launch custody stays on its creating device.',

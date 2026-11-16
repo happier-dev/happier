@@ -78,6 +78,15 @@ export type NewSessionScreenModel =
         /** Editable local draft context; presentation is supplied by the creation host. */
         spaceMembership?: SessionSpaceMembershipTargetV1 | null;
         setSpaceMembership?: (next: SessionSpaceMembershipTargetV1 | null) => void;
+        sessionIsolation?: Readonly<{
+            snapshot: import('@happier-dev/protocol/machines/machineIsolationPolicyV1').MachineIsolationGetResultV1;
+            /** Proposed stored Machine policy choice; receiver authorization and readiness remain unresolved. */
+            proposedOutcome?: ReturnType<typeof import('@/hooks/machine/useMachineIsolationPolicy').useMachineIsolationProposedOutcome>;
+            /** Actual accepted Session operation; presentation derives its stages from the existing progress owner. */
+            progress?: ManagedMachineCreationProgress;
+            override: 'directly' | undefined;
+            onOverrideChange?: (value: 'directly' | undefined) => void;
+        }>;
     }> & (
     | Readonly<{
         variant: 'simple';

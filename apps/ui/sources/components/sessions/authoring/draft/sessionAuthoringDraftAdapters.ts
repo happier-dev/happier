@@ -386,6 +386,7 @@ export function buildNewSessionAuthoringDraft(params: NewSessionAuthoringDraftPa
             initialSessionFacts: SessionIdentityAdditionsV1Schema.parse(params.initialSessionFacts),
         }),
         ...(params.memoryEnabled === undefined ? {} : { memoryEnabled: params.memoryEnabled }),
+        ...(params.isolationOverride === undefined ? {} : { isolationOverride: params.isolationOverride }),
         ...(params.promptStack === undefined ? {} : { promptStack: SessionPromptStackV1Schema.parse(params.promptStack) }),
         ...(params.instructionsDraft === undefined ? {} : { instructionsDraft: readSessionInstructionsAuthoringDraft(params.instructionsDraft) }),
         executionTarget: SessionAuthoringValueV1Schema.shape.executionTarget.parse(params.executionTarget ?? null),
@@ -435,6 +436,7 @@ type ResolvedNewSessionAuthoringDraftInputs = Readonly<{
     sessionName?: SessionAuthoringDraft['sessionName'];
     initialSessionFacts?: SessionAuthoringDraft['initialSessionFacts'];
     memoryEnabled?: SessionAuthoringDraft['memoryEnabled'];
+    isolationOverride?: SessionAuthoringDraft['isolationOverride'];
     promptStack?: SessionAuthoringDraft['promptStack'];
     instructionsDraft?: SessionAuthoringDraft['instructionsDraft'];
     executionTarget?: SessionAuthoringDraft['executionTarget'];
@@ -479,6 +481,7 @@ export function buildNewSessionAuthoringDraftFromResolvedInputs(
         sessionName: params.sessionName,
         initialSessionFacts: params.initialSessionFacts,
         memoryEnabled: params.memoryEnabled,
+        isolationOverride: params.isolationOverride,
         promptStack: params.promptStack,
         instructionsDraft: params.instructionsDraft,
         executionTarget: params.executionTarget ?? null,
@@ -562,6 +565,7 @@ function buildNewSessionAuthoringDraftFromSource(source: NewSessionAuthoringDraf
         sessionName: source.source.sessionName,
         initialSessionFacts: source.source.initialSessionFacts,
         memoryEnabled: source.source.memoryEnabled,
+        isolationOverride: source.source.isolationOverride,
         promptStack: source.source.promptStack,
         instructionsDraft: source.source.instructionsDraft,
         executionTarget: source.source.executionTarget !== undefined ? source.source.executionTarget : fromExactMachineTarget(
@@ -1366,6 +1370,7 @@ export function buildSessionSpawnNewInputV2FromAuthoringDraft(
     return { ...SessionSpawnNewInputV2Schema.parse({
         ...buildSessionServerStartSpawnDraftV1FromAuthoringDraft(params),
         ...resolveSessionAuthoringCreationInput(params),
+        ...(params.draft.isolationOverride === undefined ? {} : { isolationOverride: params.draft.isolationOverride }),
     }), creationKey: SessionCreationKeyV1Schema.parse(params.creationKey) };
 }
 
@@ -1412,6 +1417,7 @@ export function buildNewSessionTempDataFromAuthoringDraft(params: Readonly<{
         ...(params.draft.sessionName === undefined ? {} : { sessionName: params.draft.sessionName }),
         ...(params.draft.initialSessionFacts === undefined ? {} : { initialSessionFacts: params.draft.initialSessionFacts }),
         ...(params.draft.memoryEnabled === undefined ? {} : { memoryEnabled: params.draft.memoryEnabled }),
+        ...(params.draft.isolationOverride === undefined ? {} : { isolationOverride: params.draft.isolationOverride }),
         ...(params.draft.promptStack === undefined ? {} : { promptStack: params.draft.promptStack }),
         ...(params.draft.instructionsDraft === undefined ? {} : { instructionsDraft: params.draft.instructionsDraft }),
         ...(params.draft.executionTarget?.kind === 'machine'
@@ -1498,6 +1504,7 @@ export function buildPersistedNewSessionDraftFromAuthoringDraft(params: Readonly
         ...(params.draft.sessionName === undefined ? {} : { sessionName: params.draft.sessionName }),
         ...(params.draft.initialSessionFacts === undefined ? {} : { initialSessionFacts: params.draft.initialSessionFacts }),
         ...(params.draft.memoryEnabled === undefined ? {} : { memoryEnabled: params.draft.memoryEnabled }),
+        ...(params.draft.isolationOverride === undefined ? {} : { isolationOverride: params.draft.isolationOverride }),
         ...(params.draft.promptStack === undefined ? {} : { promptStack: params.draft.promptStack }),
         ...(params.draft.instructionsDraft === undefined ? {} : { instructionsDraft: params.draft.instructionsDraft }),
         ...(params.composerAttachments && params.composerAttachments.length > 0

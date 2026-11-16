@@ -1,5 +1,6 @@
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { readMachineIsolationPolicyV1, type MachineIsolationPolicyV1, type MachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
+import { selectMachineIsolationWorkChoiceV1 } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation, readInitiatingActionCallerV1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
@@ -69,13 +70,16 @@ function resolveSessionSpawnIsolation(input: SpawnDefaultSelections, openedMetad
     if (!manage || !interactive || run || bot) throw createActionExecuteFailureError({ ok: false,
       errorCode: 'permission_denied', error: 'permission_denied',
       details: { reason: 'machine_isolation_override_requires_interactive_manage' }, effectAttempted: false });
-    return { policy, workKind, choice: { kind: 'directly' } };
   }
-  const choice = selectedSandbox ? { kind: selectedSandbox.kind, configuredSandboxId: selectedSandbox.configuredSandboxId,
-    lifecycle: selectedSandbox.lifecycle } : policy.workKinds[workKind];
-  if (choice.kind === 'directly') return { policy, workKind, choice };
-  const configuredSandbox = policy.configuredSandboxes[choice.configuredSandboxId];
-  if (!configuredSandbox || selectedSandbox && (selectedSandbox.presetId !== configuredSandbox.presetId
+  const selection = selectMachineIsolationWorkChoiceV1(policy, { workKind,
+    ...(input.isolationOverride ? { choice: { kind: 'directly' as const } } : selectedSandbox ? {
+      choice: { kind: selectedSandbox.kind, configuredSandboxId: selectedSandbox.configuredSandboxId,
+        lifecycle: selectedSandbox.lifecycle },
+    } : {}),
+  });
+  if (selection.status === 'unavailable') return isolationUnavailable(selection.reason);
+  const { choice, configuredSandbox } = selection;
+  if (selectedSandbox && configuredSandbox && (selectedSandbox.presetId !== configuredSandbox.presetId
     || buildQualifiedPluginContributionKey(selectedSandbox.provisioner) !== buildQualifiedPluginContributionKey(configuredSandbox.provisioner))) {
     return isolationUnavailable('machine_isolation_sandbox_unavailable');
   }

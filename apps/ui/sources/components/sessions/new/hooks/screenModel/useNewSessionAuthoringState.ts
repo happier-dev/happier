@@ -70,6 +70,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
     getInstructionsPromptStack?: () => SessionAuthoringDraft['promptStack'];
     initialSessionFacts?: SessionAuthoringDraft['initialSessionFacts'];
     memoryEnabled?: SessionAuthoringDraft['memoryEnabled'];
+    isolationOverride?: SessionAuthoringDraft['isolationOverride'];
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     promptStore: NewSessionPromptStore;
     /** Compatibility-only bundled identity for persisted legacy draft fields. */
@@ -163,6 +164,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         promptStack: params.getInstructionsPromptStack?.(),
         initialSessionFacts: params.initialSessionFacts,
         memoryEnabled: params.memoryEnabled,
+        isolationOverride: params.isolationOverride,
         executionTarget: params.executionTarget,
         temporaryComputerActivationRef: params.temporaryComputerActivationRef,
         directory: params.selectedPath,
@@ -213,6 +215,7 @@ export function useNewSessionAuthoringState(params: Readonly<{
         params.getInstructionsPromptStack,
         params.initialSessionFacts,
         params.memoryEnabled,
+        params.isolationOverride,
         params.acpSessionModeId,
         params.temporaryComputerActivationRef,
         params.staticAgentId,

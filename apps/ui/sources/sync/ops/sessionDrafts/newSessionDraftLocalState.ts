@@ -16,6 +16,7 @@ import { ManagedMachineAcquisitionDraftSchema, ManagedMachineSelectionDraftSchem
  */
 export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
     | 'instructionsDraft'
+    | 'isolationOverride'
     | 'entryIntent'
     | 'selectedSecretId'
     | 'selectedSecretIdByProfileIdByEnvVarName'
@@ -39,6 +40,7 @@ export type NewSessionDraftLocalState = Readonly<Pick<NewSessionDraft,
 /** Device-local New Session choices that must not enter the synchronized document. */
 export function buildNewSessionDraftLocalState(draft: NewSessionDraft): NewSessionDraftLocalState {
     return {
+        ...(draft.isolationOverride === undefined ? {} : { isolationOverride: draft.isolationOverride }),
         ...(draft.placementExplicit === true ? { placementExplicit: true } : {}),
         ...(draft.permissionModeExplicit === true ? { permissionModeExplicit: true } : {}),
         ...(draft.instructionsDraft === undefined ? {} : { instructionsDraft: readSessionInstructionsAuthoringDraft(draft.instructionsDraft) }),

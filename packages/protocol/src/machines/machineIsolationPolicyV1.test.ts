@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MachineMetadataFieldPortV1 } from './machineMetadataFieldV1.js';
-import { getMachineIsolationV1, machineIsolationMetadataFieldV1, mutateMachineIsolationV1 } from './machineIsolationPolicyV1.js';
+import { getMachineIsolationV1, machineIsolationMetadataFieldV1, mutateMachineIsolationV1, selectMachineIsolationWorkChoiceV1 } from './machineIsolationPolicyV1.js';
 
 function boundary(metadata: Record<string, unknown> = {}) {
   let current = metadata;
@@ -17,6 +17,23 @@ function boundary(metadata: Record<string, unknown> = {}) {
 }
 
 describe('Machine isolation metadata policy', () => {
+  it('projects the same policy differently for interactive Sessions and unattended work, without admitting either', () => {
+    const policy = { ...machineIsolationMetadataFieldV1.defaultValue(),
+      configuredSandboxes: { development: { provisioner: { pluginId: 'example.sandbox', localId: 'local' }, presetId: 'python' } },
+      workKinds: { sessions: { kind: 'sandbox' as const, configuredSandboxId: 'development', lifecycle: 'fresh' as const },
+        botsChannels: { kind: 'directly' as const }, automationsWorkflows: { kind: 'directly' as const } } };
+    expect(selectMachineIsolationWorkChoiceV1(policy, { workKind: 'sessions' })).toEqual({ status: 'selected',
+      workKind: 'sessions', choice: policy.workKinds.sessions, configuredSandbox: policy.configuredSandboxes.development });
+    expect(selectMachineIsolationWorkChoiceV1(policy, { workKind: 'automationsWorkflows' })).toEqual({ status: 'selected',
+      workKind: 'automationsWorkflows', choice: { kind: 'directly' } });
+    expect(selectMachineIsolationWorkChoiceV1(policy, { workKind: 'sessions', choice: { kind: 'directly' } })).toEqual({
+      status: 'selected', workKind: 'sessions', choice: { kind: 'directly' } });
+    expect(selectMachineIsolationWorkChoiceV1(policy, { workKind: 'sessions', choice: {
+      kind: 'sandbox', configuredSandboxId: 'missing', lifecycle: 'shared-kept',
+    } })).toEqual({ status: 'unavailable', reason: 'machine_isolation_sandbox_unavailable' });
+    expect(selectMachineIsolationWorkChoiceV1(machineIsolationMetadataFieldV1.defaultValue(), { workKind: 'sessions' }))
+      .toEqual({ status: 'selected', workKind: 'sessions', choice: { kind: 'directly' } });
+  });
   it('reads missing policy as Directly and refuses malformed saved isolation', async () => {
     expect(await getMachineIsolationV1(boundary().port)).toMatchObject({ status: 'ready', source: 'default',
       policy: { configuredSandboxes: {}, workKinds: { sessions: { kind: 'directly' }, botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } } });

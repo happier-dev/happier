@@ -19,6 +19,9 @@ import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import { useAiLaunchProfiles, useAiLaunchProfilesForLegacyUi } from '@/sync/store/useAiLaunchProfiles';
 import { canCreateSessionWithInitialAccess, useSessionCollaborationAvailabilityState } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { readSyncedMachineIsolationPolicy } from '@/sync/domains/machines/machineIsolationPolicy';
+import { useMachineIsolationProposedOutcome } from '@/hooks/machine/useMachineIsolationPolicy';
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import React from 'react';
 import { readLastNewSessionAgentPickerView, rememberLastNewSessionAgentPickerView } from '@/sync/domains/state/newSessionTargetUiState';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -2593,6 +2596,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         backendTarget,
         externalSessionsFeatureEnabled,
     });
+    const isolationSnapshot = React.useMemo(() => readSyncedMachineIsolationPolicy(selectedMachine ?? null), [selectedMachine]);
     const {
         permissionMode,
         nativeSandbox,
@@ -2879,6 +2883,14 @@ export function useNewSessionScreenModel(input?: Readonly<{
 
     // A Bot draft's face is drawn from the draft's own seed until another is chosen; birth carries the same seed.
     const hydratedInitialSessionFacts = hydratedTempAuthoringDraft?.initialSessionFacts ?? hydratedPersistedAuthoringDraft?.initialSessionFacts;
+    const [isolationEdit, setIsolationEdit] = React.useState<Readonly<{
+        key: string; value: 'directly' | undefined;
+    }> | null>(null);
+    const isolationOverride = isolationEdit?.key === approvalProfileDraftKey ? isolationEdit.value
+        : hydratedTempAuthoringDraft?.isolationOverride ?? hydratedPersistedContentAuthoringDraft?.isolationOverride;
+    const changeIsolationOverride = React.useCallback((value: 'directly' | undefined) => {
+        setIsolationEdit({ key: approvalProfileDraftKey, value });
+    }, [approvalProfileDraftKey]);
     const draftInitialSessionFacts = React.useMemo(
         () => withNewBotDraftFaceSeed(hydratedInitialSessionFacts, draftId),
         [hydratedInitialSessionFacts, draftId],
@@ -2903,6 +2915,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         getInstructionsPromptStack,
         initialSessionFacts: draftInitialSessionFacts,
         memoryEnabled: hydratedTempAuthoringDraft?.memoryEnabled ?? hydratedPersistedAuthoringDraft?.memoryEnabled,
+        isolationOverride,
         approvalProfileId,
         authoringOrigin: persistedDraft?.authoringOrigin,
         automationDraft,
@@ -4322,6 +4335,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
     // name), so the draft actions beside it read as the card's header row, as a Session's status row does.
     const dockedComposer = embeddedHost?.kind === 'docked';
     const isBotDraft = Boolean(effectiveCurrentAuthoringDraft.initialSessionFacts?.bot);
+    const proposedIsolationOutcome = useMachineIsolationProposedOutcome(isolationSnapshot,
+        isBotDraft ? 'botsChannels' : 'sessions', isolationOverride);
     const composerConnectionStatus = React.useMemo(() => {
         if (!connectionStatus && !launchStatus.line && dockedComposer) {
             return { text: isBotDraft ? t('bots.new') : t('sessionDrafts.new.action'), color: theme.colors.text.secondary,
@@ -4694,6 +4709,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
         creationReview: { draft: effectiveCurrentAuthoringDraft, serverId: targetServerId ?? null, teamCredentialPresentation },
         spaceMembership: organizationPlacementState.spaceMembership,
         setSpaceMembership: organizationPlacementState.setSpaceMembership,
+        sessionIsolation: { snapshot: isolationSnapshot, proposedOutcome: proposedIsolationOutcome,
+            override: isolationOverride, progress: managedMachineCreationProgress,
+            ...(!hostSpawnExecutor && selectedMachine && canManageMachine(selectedMachine) ? { onOverrideChange: changeIsolationOverride } : {}) },
         requesterIsolation: ownIsolation,
         instructionsCreation,
         botCreation: isBotDraft

@@ -25,6 +25,7 @@ import { useManagedMachineAccountSettings } from './useManagedMachineAccountSett
 import type { ManagedProvisionerOptionsInput } from './useManagedProvisionerOptionsInput';
 import { describeManagedNativeFailureDiagnostic } from './managedNativeFailurePresentation';
 import { readManagedConfiguration } from './readManagedConfiguration';
+import { managedConfiguratorReadiness } from './managedConfiguratorModel';
 import { refreshManagedProvisionerAvailability } from './managedProvisionerAvailability';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { resumeActionExecutionResult } from '@/components/approvals/actionApprovalContinuation';
@@ -308,7 +309,9 @@ export function useMachinePresetConfiguration(input: Readonly<{
         [visibleDraft, settings.settings]);
     const delegated = binding?.isCurrent() && hasOpenedManagedMachinePresetCreationV1(preset) && preset.teamAcquireDelegated === true;
     const error = delegated ? null : state.queryKey === queryKey ? state.error ?? settings.error : settings.error;
+    const readiness = React.useMemo(() => managedConfiguratorReadiness(visibleDraft, error, facts), [visibleDraft, error, facts]);
     return { facts: delegated ? null : facts,
+        readiness,
         unavailable: Boolean(error) || !delegated && facts?.optionStatus === 'unavailable',
         loading: delegated ? false : visibleDraft?.optionStatus === 'loading',
         error,

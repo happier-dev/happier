@@ -29,6 +29,7 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
     useEnhancedSessionWizard: boolean;
     spaceMembership?: NewSessionScreenModel['spaceMembership'];
     setSpaceMembership?: NewSessionScreenModel['setSpaceMembership'];
+    sessionIsolation?: NewSessionScreenModel['sessionIsolation'];
     requesterIsolation?: NewSessionScreenModel['requesterIsolation'];
     creationReview?: Readonly<{
         draft: Parameters<typeof buildSessionAuthoringCredentialOperands>[0];
@@ -77,6 +78,7 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
             variant: 'simple',
             spaceMembership: params.spaceMembership,
             setSpaceMembership: params.setSpaceMembership,
+            sessionIsolation: params.sessionIsolation,
             requesterIsolation: params.requesterIsolation,
             popoverBoundaryRef: params.popoverBoundaryRef,
             temporaryComputerLaunch: params.temporaryComputerLaunch,
@@ -91,6 +93,7 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
         variant: 'wizard',
         spaceMembership: params.spaceMembership,
         setSpaceMembership: params.setSpaceMembership,
+        sessionIsolation: params.sessionIsolation,
         requesterIsolation: params.requesterIsolation,
         popoverBoundaryRef: params.popoverBoundaryRef,
         temporaryComputerLaunch: params.temporaryComputerLaunch,

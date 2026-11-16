@@ -22,6 +22,7 @@ import { t } from '@/text';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { useManagedProvisioners } from './useManagedProvisioners';
 import { readManagedProvisionerAvailability } from './managedProvisionerAvailability';
+import { describeManagedProvisionerReadiness } from './managedProvisionerReadiness';
 import { describeManagedProvisionerFailure, useManagedProvisionerPresentation, useManagedProvisionerRuntimeHost } from './useManagedProvisionerPresentation';
 import { MachineProvisionerSections, MachineProvisionerSectionsSkeleton } from './MachineProvisionerSections';
 import { ManagedScopeRow } from './ManagedScopeRow';
@@ -173,24 +174,22 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         if (placement.requiresController && local) { waiting.push(titleOf(provisioner)); return []; }
         const hostPending = needsRuntimeHost(provisioner, controller) && (accountHost === null || accountHost === 'unavailable');
         const needsApp = !hostPending && !placement.available;
-        const check = outcome?.kind === 'succeeded' ? outcome.value : undefined;
-        const repairAction = check?.prerequisites?.find(prerequisite => prerequisite.status !== 'available' && prerequisite.repairAction)?.repairAction;
-        const missingExecutable = check?.prerequisites?.some(prerequisite => prerequisite.status !== 'available');
-        const noAccount = check?.code === 'credential_unavailable' || outcome?.kind === 'failed' && outcome.code === 'credential_unavailable';
+        const readiness = describeManagedProvisionerReadiness({ check: outcome?.kind === 'succeeded' ? outcome.value : undefined,
+            failure: outcome?.kind === 'failed' ? outcome.code : null });
+        const repairAction = readiness.repair?.action;
         // Conditionally credentialed providers enter their selector form before offering account setup.
-        const connectPurpose = noAccount ? provisioner.credentialPurposes?.find(({ purpose }) =>
+        const connectPurpose = readiness.kind === 'needsAccount' ? provisioner.credentialPurposes?.find(({ purpose }) =>
             readMachineProvisionerCredentialPurposeSelectorPathsV1(provisioner.descriptor, purpose.purpose).length === 0)?.purpose.purpose : undefined;
         // A failed read keeps the offer with a reason and an explicit retry, never an empty disabled card.
-        const unreadable = outcome?.kind === 'failed' && !noAccount;
-        const caveat = check?.available === true && check.code === 'home_not_guest_reachable';
-        if (caveat) homeUnreachable = true;
+        if (readiness.homeUnreachable) homeUnreachable = true;
         const statusLabel = placement.requiresController ? t('managedMachines.add.chooseController') : needsApp ? t('managedMachines.add.status.needsApp')
-            : caveat ? t('managedMachines.add.status.needsSetup')
-            : check?.status ? localized(provisioner.contribution.pluginId, check.status)
-            : noAccount ? t('managedMachines.add.status.noAccount')
-            : check ? t(check.available ? 'managedMachines.add.status.ready'
-                : missingExecutable ? 'managedMachines.add.status.notInstalled' : 'managedMachines.add.status.needsSetup')
-                : unreadable ? describeManagedProvisionerFailure(outcome.code) : t('managedMachines.add.status.checking');
+            : readiness.homeUnreachable ? t('managedMachines.add.status.needsSetup')
+            : readiness.status ? localized(provisioner.contribution.pluginId, readiness.status)
+            : readiness.kind === 'needsAccount' ? t('managedMachines.add.status.noAccount')
+            : readiness.kind === 'ready' ? t('managedMachines.add.status.ready')
+            : readiness.kind === 'needsInstall' ? t('managedMachines.add.status.notInstalled')
+            : readiness.kind === 'needsSetup' ? t('managedMachines.add.status.needsSetup')
+            : readiness.failure ? describeManagedProvisionerFailure(readiness.failure) : t('managedMachines.add.status.checking');
         const title = titleOf(provisioner);
         return [{ id, title,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
@@ -200,20 +199,19 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
                 && repairFailure.controller?.machineId === controller?.machineId
                 && repairFailure.controller?.installationId === controller?.installationId ? repairFailure.outcome : undefined,
             // Amber means "needs you": a service nobody connected or a tool not yet installed is an offer, so it stays quiet.
-            status: { tone: check?.available && location !== 'unknown' && !caveat ? 'ready'
-                : noAccount || (check && !check.available && missingExecutable) ? 'none' : check ? 'attention' : 'none',
+            status: { tone: readiness.tone === 'ready' && location === 'unknown' ? 'attention' : readiness.tone,
                 label: [statusLabel, location === 'unknown' ? t('managedMachines.add.status.billingUnknown') : null].filter(Boolean).join(' · ') },
             action: needsApp ? { kind: 'handoff', label: t('managedMachines.add.action.getTheApp'),
                 onPress: () => showManagedGetTheAppModal(title) }
             // Only the card's own failed check offers Retry here; a failed controller catalog is said once, by the
             // page line and its Retry, while each card keeps the step its own answer gives (Connect pairs with No account).
-            : unreadable ? { kind: 'retry', label: t('common.retry'), onPress: catalog.refresh }
+            : readiness.kind === 'unavailable' ? { kind: 'retry', label: t('common.retry'), onPress: catalog.refresh }
             : repairAction && repairOpened?.id === id && repairOpened.binding === catalog.binding
                 && repairOpened.controller?.machineId === controller?.machineId
                 && repairOpened.controller?.installationId === controller?.installationId
                 ? { kind: 'retry', label: t('machinePresets.setup.tab.checkAgain'), onPress: () => { setRepairOpened(null); catalog.refresh(); } }
-            : repairAction ? { kind: 'repair', label: t(noAccount ? 'managedMachines.add.action.connect'
-                : missingExecutable ? 'managedMachines.add.action.getApp' : 'managedMachines.add.action.setUp'), onPress: () => {
+            : repairAction ? { kind: 'repair', label: t(readiness.repair?.kind === 'connect' ? 'managedMachines.add.action.connect'
+                : readiness.repair?.kind === 'install' ? 'managedMachines.add.action.getApp' : 'managedMachines.add.action.setUp'), onPress: () => {
                 const binding = catalog.binding;
                 if (!binding?.isCurrent()) return;
                 repairAbort.current?.abort();
@@ -228,7 +226,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
             } } : { kind: 'choose', label: t(connectPurpose ? 'managedMachines.add.action.connect' : 'managedMachines.add.action.choose'),
                 onPress: () => open(id, placement.controller, connectPurpose),
                 // Retained checks describe the card; its answering catalog owns whether the handoff is current.
-                ...(!catalog.isCurrentFor(id) || hostPending || unreadable || check?.available === false && missingExecutable
+                ...(!catalog.isCurrentFor(id) || hostPending || !readiness.canConfigure
                     ? { disabled: true } : {}) } }];
     });
     const controllerName = scope.machine ? getMachineSentenceName(scope.machine) : '';

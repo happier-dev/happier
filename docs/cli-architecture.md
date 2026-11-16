@@ -820,6 +820,20 @@ the response's completeness fact, including genuinely partial answers.
 
 ## Explicit session creation targets (0.3 development)
 
+Foreground daemon handoff carries the original native Agent arguments in
+`session.spawn_new.agentArgs`. The array is launch-only and preserves order,
+spaces and empty values. The daemon's shared Session-control argument builder
+encodes it as `--agent-args-v1` JSON; the ordinary CLI argument partitioner
+restores the array directly to Agent passthrough without interpreting its
+contents as Happier controls. Browser-safe server-start drafts and persisted
+runner respawn descriptors omit this raw launch input.
+
+A native fork keeps its source workspace. Its private foreground admission
+marks continuation locality without copying the source into public spawn input.
+Directly policy preserves the existing local fork path; a sandbox policy
+returns `target_unavailable` before allocation or local Agent authority rather
+than converting the continuation into a fresh Session.
+
 Fresh Workflow Session birth requires the installed startup Action context and
 prepares `session.spawn_new` once before creating the Session. Discussion model
 birth reuses its reservation's Workflow context. Missing admission context is
@@ -1291,6 +1305,51 @@ The common CLI argument partitioner consumes `--auto` as `--permission-mode auto
 The canonical permission policy allows reads and edits; other tools can still
 require approval. `--yolo` requests full access. This is current development
 behavior, not a claim of released or live OpenCode validation.
+
+### Machine sandbox placement (0.3 development)
+
+Machine metadata `isolationPolicyV1` holds configured provisioner/preset references
+and independent choices for Sessions, bots/channels, and automations/workflows.
+The receiving `session.spawn_new` owner resolves the choice from admitted execution
+context. Public origin labels, environment variables and transport surface do not
+select a work kind. A Directly override requires the existing signed present-user
+confirmation and Machine Manage authority; it belongs only to the current New
+Session draft and is excluded from templates and synced defaults.
+
+New Session describes a stored Machine policy through the same pure
+`selectMachineIsolationWorkChoiceV1` owner. Its `sessionIsolation.proposedOutcome`
+is a proposal, including a draft Directly choice pending confirmation; it grants
+no authority and does not assert preset or native availability. An absent or
+unopened policy has no proposal. Explicit cloud placement and Account/Team/Home
+defaults remain with their existing authoring owners. The receiver alone derives
+trusted work kind and validates overrides and admitted Workflow references.
+
+An accepted Workflow run can retain a saved Session placement in its host context,
+separate from the portable Workflow definition. A saved Machine selects the target
+and keeps that Machine's workflow policy; a saved configured sandbox selects its
+qualified preset reference and lifecycle through the same receiving resolver.
+Missing or changed configured references fail unavailable. Cloud presets use the
+existing remote Machine acquisition before the run's workspace is admitted.
+
+The canonical creation owner checks existing creation correspondence before
+allocating a policy-selected target. Local placement uses the incumbent managed
+acquire/reconcile owner in resource-bound mode, without enrolling another daemon.
+Retry retains that mode and resource identity. Shared-kept selection uses the
+existing managed row and Session association, scoped to the same custody, preset
+revision and controller. A nonarchived Session keeps its association occupied;
+archiving releases it. The atomic Session birth owns the exclusive association
+before target installation or execution.
+
+Provisioner `sessionPlacement` supplies locality and native-sandbox support;
+billing and transport do not. Providers' `resolveManagedAgentSandbox` consumes
+the admitted target facts and the policy's native preference. Missing preference
+means OFF for an isolated target, and an incapable explicit ON reports its typed
+unavailable reason before Agent launch. For controller-held sandboxes, the
+qualified preset callback resolves native intent before managed admission;
+Session birth consumes that result. Setup, connected-account materialization,
+host-key trust and Session target lifetime keep their existing owners. These are
+development-source contracts; focused and loaded-runtime evidence are reported
+at the Machine-sandbox integration boundary.
 
 ### Checkout directory mapping (0.3 development)
 

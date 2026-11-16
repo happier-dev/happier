@@ -27,6 +27,26 @@ export type MachineIsolationMutationResultV1 = z.infer<typeof MachineIsolationMu
 export type MachineIsolationConfiguredSandboxV1 = MachineIsolationPolicyV1['configuredSandboxes'][string];
 export type MachineIsolationReferenceValidationV1 = 'valid' | 'invalid' | 'locked' | 'unavailable';
 
+export type MachineIsolationWorkSelectionV1 = Readonly<{
+  status: 'selected';
+  workKind: keyof MachineIsolationPolicyV1['workKinds'];
+  choice: MachineIsolationPolicyV1['workKinds']['sessions'];
+  configuredSandbox?: MachineIsolationConfiguredSandboxV1;
+}> | Readonly<{ status: 'unavailable'; reason: 'machine_isolation_sandbox_unavailable' }>;
+
+/** Pure policy selection only. A proposed choice grants no permission or target availability. */
+export function selectMachineIsolationWorkChoiceV1(policy: MachineIsolationPolicyV1, input: Readonly<{
+  workKind: keyof MachineIsolationPolicyV1['workKinds'];
+  choice?: MachineIsolationPolicyV1['workKinds']['sessions'];
+}>): MachineIsolationWorkSelectionV1 {
+  const choice = input.choice ?? policy.workKinds[input.workKind];
+  if (choice.kind === 'directly') return { status: 'selected', workKind: input.workKind, choice };
+  const configuredSandbox = policy.configuredSandboxes[choice.configuredSandboxId];
+  return configuredSandbox
+    ? { status: 'selected', workKind: input.workKind, choice, configuredSandbox }
+    : { status: 'unavailable', reason: 'machine_isolation_sandbox_unavailable' };
+}
+
 export const machineIsolationMetadataFieldV1 = {
   field: 'isolationPolicyV1', storedSchema: createStoredReadSchema(MachineIsolationPolicyV1Schema),
   defaultValue: (): MachineIsolationPolicyV1 => ({ configuredSandboxes: {}, workKinds: {
