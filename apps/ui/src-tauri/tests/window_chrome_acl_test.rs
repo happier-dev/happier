@@ -85,6 +85,28 @@ fn default_capability_allows_main_window_chrome_commands_without_losing_pet_over
 }
 
 #[test]
+fn main_window_can_show_notifications_and_consume_pending_clicks() {
+    let capability = read_default_capability();
+    let permissions = capability["permissions"]
+        .as_array()
+        .expect("default capability permissions should be an array");
+
+    for command in [
+        "desktop_show_clickable_notification",
+        "desktop_take_pending_notification_data",
+    ] {
+        assert!(
+            APP_TAURI_COMMANDS.contains(&command),
+            "{command} must be declared in the application command manifest",
+        );
+        assert!(
+            permissions.contains(&Value::String(app_command_permission(command))),
+            "the main window must be allowed to invoke {command}",
+        );
+    }
+}
+
+#[test]
 fn stable_preview_and_publicdev_configs_use_integrated_main_window_chrome() {
     for config_name in [
         "tauri.conf.json",

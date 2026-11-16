@@ -52,7 +52,6 @@ export const classicDarkProfile = createBuiltInProfile('classicDark', 'Classic D
         'control.switch.thumb.inactive': '#767577',
         'control.radio.active': '#0A84FF',
         'control.radio.inactive': '#48484A',
-        'control.radio.dot': '#0A84FF',
         'control.segmentedControl.trackBackground': '#292929',
         'control.segmentedControl.activeBackground': '#202020',
         'control.fab.background': '#303030',

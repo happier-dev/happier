@@ -3329,7 +3329,7 @@ export const en = {
         trayOpenInHappier: 'Open in Happier',
         traySettings: 'Settings…',
         trayStartAtLogin: 'Start at login',
-        trayStopAndQuit: 'Stop background services and quit',
+        trayStopAndQuit: 'Quit Happier (close background services)',
         trayStart: 'Start',
         trayRestart: 'Restart',
         trayStop: 'Stop',
@@ -8138,6 +8138,8 @@ settingsSession: {
           inputBehavior: {
               keepFocusTitle: "Keep composer focused after sending",
               keepFocusSubtitle: "Stay in the message field so you can write the next message right away.",
+              typeToFocusTitle: "Type anywhere to write",
+              typeToFocusSubtitle: "Start typing outside a text field to jump into the message field.",
               title: 'Input behavior',
               footer: 'Configure Enter-to-send and message history behavior.',
               enterToSendEnabledNativeSubtitle: 'Press Enter to send',
@@ -8223,6 +8225,8 @@ settingsSession: {
               customResumePromptPlaceholder: 'Continue from where you left off.',
           },
           providerUsageGauge: {
+              numberTitle: "Ring centre number",
+              numberSubtitle: "Choose the limit for the number inside the rings. If unavailable, use the most constrained limit.",
               title: 'Provider usage',
               footer: "Choose composer gauges for all accounts. Gauges respect each pool’s selected usage limits. Account favorites add extra gauges for the active account.",
               visibilityTitle: 'Show provider usage gauge',

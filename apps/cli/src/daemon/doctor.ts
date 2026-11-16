@@ -7,11 +7,12 @@
 
 import spawn from 'cross-spawn';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { readFile, readlink } from 'node:fs/promises';
 import { PUBLIC_RELEASE_RING_IDS, resolveFirstPartyComponentPublicReleaseVariant } from '@happier-dev/cli-common/firstPartyRuntime';
 import { listProcessSnapshot } from './processSnapshotCache';
 import { posixPsEnvironment } from './posixPs';
+import { logger } from '@/ui/logger';
 
 const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CODEX_SQLITE_HOME'] as const;
 const DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS = [
@@ -197,6 +198,31 @@ function parseWindowsProcessInfoOutput(output: string): Map<number, RawProcessIn
   return result;
 }
 
+// CIM may take several seconds on Windows. Await completion without blocking the daemon's
+// event loop or imposing a query-local deadline on otherwise valid process evidence.
+async function runWindowsProcessQuery(
+  script: string,
+): Promise<Map<number, RawProcessInfo>> {
+  try {
+    const output = await new Promise<string>((resolve, reject) => {
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        { encoding: 'utf8', windowsHide: true },
+        (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout);
+        },
+      );
+    });
+    return parseWindowsProcessInfoOutput(output);
+  } catch {
+    // Keep best-effort inspection observable without logging command lines or query output.
+    logger.warnFile('[DAEMON] Windows process query failed; process information is unavailable');
+    return new Map();
+  }
+}
+
 async function getProcessInfosByPidWindows(
   pids: readonly number[],
 ): Promise<Map<number, RawProcessInfo>> {
@@ -205,22 +231,13 @@ async function getProcessInfosByPidWindows(
   const uniquePids = Array.from(new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0)));
   if (uniquePids.length === 0) return new Map();
 
-  try {
-    const filter = uniquePids.map((pid) => `ProcessId=${pid}`).join(' OR ');
-    const script = [
-      `$rows = Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId, ParentProcessId, Name, CommandLine`,
-      'if ($null -eq $rows) { return }',
-      '$rows | ConvertTo-Json -Compress',
-    ].join('; ');
-    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-    });
-    return parseWindowsProcessInfoOutput(output);
-  } catch {
-    return new Map();
-  }
+  const filter = uniquePids.map((pid) => `ProcessId=${pid}`).join(' OR ');
+  const script = [
+    `$rows = Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId, ParentProcessId, Name, CommandLine`,
+    'if ($null -eq $rows) { return }',
+    '$rows | ConvertTo-Json -Compress',
+  ].join('; ');
+  return await runWindowsProcessQuery(script);
 }
 
 async function getAllProcessInfosWindows(): Promise<Map<number, RawProcessInfo>> {
@@ -231,12 +248,7 @@ async function getAllProcessInfosWindows(): Promise<Map<number, RawProcessInfo>>
     'if ($null -eq $rows) { return }',
     '$rows | ConvertTo-Json -Compress',
   ].join('; ');
-  const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-    windowsHide: true,
-  });
-  return parseWindowsProcessInfoOutput(output);
+  return await runWindowsProcessQuery(script);
 }
 
 /** Read the live ancestor chain through the same Windows inventory used by daemon inspection. */

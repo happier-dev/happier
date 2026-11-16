@@ -655,6 +655,10 @@ on Windows from the existing on-disk dependency payload through the canonical CL
 including installed channel shortcuts. This preserves the dependency's own parser and Windows
 helper lookup: bundling its `import.meta.url` would point at Bun's virtual filesystem instead.
 POSIX keeps the dependency's JavaScript embedded, including in detached installer runners.
+The shared process-tree cleanup owner retains recognized OS/import error codes and numeric
+helper exit codes when discovery fails. The CLI's existing file diagnostic includes that code
+without exposing native error messages, paths, command arguments or stderr; cleanup still fails
+closed when descendant discovery cannot be verified.
 The legacy Claude SDK launcher records unverified process cleanup through the existing
 primary-session turn lifecycle, allocating a failed turn when idle, before preserving the
 resume identity and exiting. Failed issue publication is logged and does not admit a replacement.

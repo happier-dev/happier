@@ -106,7 +106,6 @@ export const BUILT_IN_THEME_PROFILES: readonly BuiltInThemeProfileDefinition[] =
                 'control.switch.thumb.inactive': '#898892',
                 'control.radio.active': '#E8C46F',
                 'control.radio.inactive': '#5D5C66',
-                'control.radio.dot': '#020204',
                 'control.segmentedControl.trackBackground': '#0D0E14',
                 'control.segmentedControl.activeBackground': '#141620',
                 'control.fab.background': '#141620',

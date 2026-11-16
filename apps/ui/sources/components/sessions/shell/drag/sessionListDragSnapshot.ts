@@ -165,7 +165,7 @@ function buildTopology(tree: SessionListTreeModel, sourceRowId: string): Session
     }
     return {
         insertionPositionsByContainerId,
-        rows,
+        rowsById: new Map(rows.map((row) => [row.rowId, row])),
         dropZones: buildTopologyDropZones(tree.containerMetadataById, tree.rowMetadataById),
         rowMetadataById: tree.rowMetadataById,
         containerMetadataById: tree.containerMetadataById,

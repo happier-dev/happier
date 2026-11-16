@@ -43,6 +43,7 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
     const [newSessionAfterSend, setNewSessionAfterSend] = useSettingMutable('newSessionAfterSendV1');
     const [, setKeepFocusAfterSend] = useLocalSettingMutable('composerKeepFocusAfterSend');
     const keepFocusAfterSend = useComposerKeepsFocusAfterSend();
+    const [typeToFocusEnabled, setTypeToFocusEnabled] = useLocalSettingMutable('composerTypeToFocusEnabled');
     const [collapsedBannerKinds, setCollapsedBannerKinds] = useLocalSettingMutable('sessionComposerCollapsedBannerKinds');
     const [openHistoryScopeMenu, setOpenHistoryScopeMenu] = React.useState(false);
     const [openInactiveResumePolicyMenu, setOpenInactiveResumePolicyMenu] = React.useState(false);
@@ -233,6 +234,17 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                     showChevron={false}
                     onPress={() => setKeepFocusAfterSend(!keepFocusAfterSend)}
                 />
+                {Platform.OS === 'web' ? (
+                    <Item
+                        testID="settings-composer-type-to-focus"
+                        title={t('settingsSession.inputBehavior.typeToFocusTitle')}
+                        subtitle={t('settingsSession.inputBehavior.typeToFocusSubtitle')}
+                        icon={<Icon name="pencil-simple" size={29} color={theme.colors.accent.indigo} />}
+                        rightElement={<Switch value={typeToFocusEnabled} onValueChange={setTypeToFocusEnabled} />}
+                        showChevron={false}
+                        onPress={() => setTypeToFocusEnabled(!typeToFocusEnabled)}
+                    />
+                ) : null}
                 <Item
                     title={t('settingsFeatures.enterToSend')}
                     subtitle={enterToSendSubtitle}

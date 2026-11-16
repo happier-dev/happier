@@ -3634,7 +3634,7 @@ export const pl: TranslationStructure = {
     trayOpenInHappier: 'Otwórz w Happier',
     traySettings: 'Ustawienia…',
     trayStartAtLogin: 'Uruchamiaj przy logowaniu',
-    trayStopAndQuit: 'Zatrzymaj usługi w tle i zakończ',
+    trayStopAndQuit: 'Zamknij Happier (zatrzymaj usługi w tle)',
     trayStart: 'Uruchom',
     trayRestart: 'Uruchom ponownie',
     trayStop: 'Zatrzymaj',
@@ -8534,6 +8534,8 @@ settingsSession: {
       inputBehavior: {
           keepFocusTitle: "Zachowaj fokus w edytorze po wysłaniu",
           keepFocusSubtitle: "Pozostań w polu wiadomości, aby od razu pisać następną.",
+          typeToFocusTitle: "Pisz z dowolnego miejsca",
+          typeToFocusSubtitle: "Zacznij pisać poza polem tekstowym, aby przejść do pola wiadomości.",
           title: 'Zachowanie wprowadzania',
           footer: 'Skonfiguruj wysyłanie klawiszem Enter i zachowanie historii wiadomości.',
           enterToSendEnabledNativeSubtitle: 'Naciśnij Enter, aby wysłać',
@@ -8646,6 +8648,8 @@ settingsSession: {
         customResumePromptPlaceholder: "Kontynuuj od miejsca, w którym skończyłeś.",
       },
       providerUsageGauge: {
+          numberTitle: "Liczba w środku pierścieni",
+          numberSubtitle: "Wybierz limit dla liczby w pierścieniach. Jeśli jest niedostępny, używany jest najbardziej ograniczający limit.",
         title: "Użycie dostawcy",
         footer:
           "Wybierz wskaźniki edytora dla wszystkich kont. Uwzględniają limity użycia wybrane w każdej puli. Ulubione dodają wskaźniki aktywnego konta.",

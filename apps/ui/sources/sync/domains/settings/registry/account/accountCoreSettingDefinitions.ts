@@ -423,6 +423,12 @@ export const ACCOUNT_CORE_SETTING_DEFINITIONS = defineSettingDefinitions({
         storageScope: 'account',
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'person' },
     },
+    sessionProviderUsageGaugeNumberWindowMode: {
+        schema: z.enum(QUOTA_GAUGE_WINDOW_MODES),
+        default: 'most_constrained',
+        description: 'Quota window for the number inside provider usage rings; missing windows use the most constrained available quota',
+        storageScope: 'account',
+    },
     sessionProviderUsageGaugeWindowModes: {
         schema: z.array(z.enum(QUOTA_GAUGE_WINDOW_MODES)).min(1).nullable(),
         default: null,

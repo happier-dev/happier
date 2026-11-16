@@ -3905,7 +3905,7 @@ localTailscale: {
     trayOpenInHappier: 'Happier で開く',
     traySettings: '設定…',
     trayStartAtLogin: 'ログイン時に起動',
-    trayStopAndQuit: 'バックグラウンドサービスを停止して終了',
+    trayStopAndQuit: 'Happier を終了（バックグラウンドサービスを停止）',
     trayStart: '開始',
     trayRestart: '再起動',
     trayStop: '停止',
@@ -8792,6 +8792,8 @@ settingsSession: {
     inputBehavior: {
         keepFocusTitle: "送信後もコンポーザーにフォーカスを保つ",
         keepFocusSubtitle: "入力欄に留まり、すぐ次のメッセージを書けます。",
+        typeToFocusTitle: "どこからでも入力",
+        typeToFocusSubtitle: "テキスト欄の外で入力を始めると、メッセージ欄に移動します。",
         title: '入力の動作',
         footer: 'Enterで送信とメッセージ履歴の動作を設定します。',
         enterToSendEnabledNativeSubtitle: 'Enterで送信',
@@ -8901,6 +8903,8 @@ settingsSession: {
         customResumePromptPlaceholder: "中断したところから続けてください。",
       },
       providerUsageGauge: {
+          numberTitle: "リング中央の数値",
+          numberSubtitle: "リング内の数値に使う上限を選択します。利用できない場合は、残量が最も少ない上限を使います。",
         title: "プロバイダー使用量",
         footer:
           "すべてのアカウントの入力欄に表示するゲージを選択します。各プールで選択された使用制限が適用されます。お気に入りは現在のアカウントにゲージを追加します。",

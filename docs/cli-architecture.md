@@ -1036,7 +1036,7 @@ platform opens its menu, built by one native builder (`src-tauri/src/tray/model.
   template (`Sessions: {count}`), including zero; absent/null makes no session-count claim;
 - Open Happier (⌘O), the Updates item when there is one, Settings… (⌘,), the **Start at login** check
   item (the same login-start setting, through `daemon.service.autostart.set.v1`), then **Quit Happier**
-  (⌘Q) and **Stop background services and quit**.
+  (⌘Q) and **Quit Happier (close background services)**.
   Tray Quit, service mutations and the login toggle are disabled while a native service action runs.
 
 The web UI pushes its localized labels (U14), its rows, the setting and the status task's params
@@ -1073,7 +1073,7 @@ from its `tauri.conf.json` entry (`"create": false`: the app creates it at start
 implicit exit request, which menu-bar mode holds; only an explicit Quit ends the tray process, and it
 follows the one login-start setting (D11-1): **on**, it leaves every service running — they and the
 tray come back at the next login; **off**, it stops every desktop-managed service first, through the
-same confirmed path as **Stop background services and quit**, and a stop that fails keeps the tray
+same confirmed path as **Quit Happier (close background services)**, and a stop that fails keeps the tray
 alive with the failure shown so it can be retried; **unknown**, it leaves every service as it is. Once
 the setting is known the item says which it will do (*Quit Happier (keep background services
 running)* / *Quit Happier and stop background services*); unknown, it is the plain *Quit Happier*.
@@ -1098,6 +1098,17 @@ creation, and the same creation path applies the resolved decorations when the t
 the window. Changing the setting applies the native frame immediately. A failed save retains the
 applied runtime mode and exposes the persistence failure in settings so another change can retry.
 This is unreleased development behavior; compatibility with ActualTitleButtons has not been tested.
+
+On Windows and Linux, `window_frame.rs` owns the main window's remembered physical position,
+inner size and maximized state in `window-state/main-window-frame.json`. One app-lifetime tracker
+survives tray-driven window recreation, debounces changes and flushes pending state on destruction,
+actual app exit and Windows updater installation. Failed writes remain pending for the next flush.
+Controls and persistence share the chrome owner's native presentation-state read; Linux uses
+current GDK flags so stale GTK/Tao flags cannot classify maximized geometry as normal.
+Minimized and fullscreen geometry does not replace the last normal frame. Restoration rejects
+frames without reachable title-bar space on a connected monitor; Linux Wayland does not support
+restoring window position.
+macOS continues to use its native frame autosave. This persistence is development-only.
 
 ### What may repoint this computer's daemon
 
@@ -1850,6 +1861,14 @@ be verified requires reopening the original server; live custom sockets remain
 attachable. There is no parallel Herdr session synchronization service.
 
 ## Daemon architecture
+
+In current 0.2 development source, Windows process inspection in
+`apps/cli/src/daemon/doctor.ts` awaits PowerShell/CIM asynchronously for both
+PID-specific enrichment and the full-discovery fallback. Slow queries keep the
+daemon event loop available; inspection adds no query-local deadline or buffer
+override. Query and JSON failures retain the existing unavailable-evidence result
+and write a file warning without command lines or query output. Process
+classification and PID safety continue to use the same inspection owner.
 
 Startup reattachment and resume of an already-running session reconcile both
 the daemon's session access key and the session's machine routing metadata.

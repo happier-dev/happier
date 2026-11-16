@@ -5,6 +5,7 @@ import { readTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttach
 
 import type { SessionRunnerEntrypointIdentity } from '../sessionRunnerRuntime/types';
 import { resolveSessionRunnerRuntimeState } from '../sessionRunnerRuntime/resolveRuntimeState';
+import { resolveSessionRunnerActivityDisabledReason } from '../sessionRunnerRuntime/resolveActivityDisabledReason';
 import { resolveSessionRunnerEntrypointIdentityFromProcessCommand } from '../sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
 import {
   resolveSessionRunnerRestartEligibility,
@@ -235,7 +236,9 @@ export async function restartSessionRunnerOnCurrentRuntime(input: Readonly<{
   });
   if (versionGate) return versionGate;
 
-  const activityDisabledReason = input.resolveActivityDisabledReason?.(sessionId) ?? null;
+  const activityDisabledReason = resolveSessionRunnerActivityDisabledReason(sessionId, {}, tracked)
+    ?? input.resolveActivityDisabledReason?.(sessionId)
+    ?? null;
   if (activityDisabledReason) {
     return skipped('busy', sessionId, activityDisabledReason);
   }

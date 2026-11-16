@@ -3315,7 +3315,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         trayOpenInHappier: '在 Happier 中開啟',
         traySettings: '設定…',
         trayStartAtLogin: '登入時啟動',
-        trayStopAndQuit: '停止背景服務並結束',
+        trayStopAndQuit: '結束 Happier（停止背景服務）',
         trayStart: '啟動',
         trayRestart: '重新啟動',
         trayStop: '停止',
@@ -7258,6 +7258,8 @@ settingsSession: {
         inputBehavior: {
             keepFocusTitle: "傳送後保持編輯器焦點",
             keepFocusSubtitle: "留在訊息欄位，以便立即撰寫下一則訊息。",
+            typeToFocusTitle: "隨處輸入",
+            typeToFocusSubtitle: "在文字欄位外直接輸入即可跳到訊息欄位。",
             title: '輸入行為',
             footer: '設定按 Enter 傳送與訊息歷史行為。',
             enterToSendEnabledNativeSubtitle: '按 Enter 傳送',
@@ -7343,6 +7345,8 @@ settingsSession: {
             customResumePromptPlaceholder: '從你上次停下的地方繼續。',
         },
         providerUsageGauge: {
+            numberTitle: "圓環中心數值",
+            numberSubtitle: "選擇圓環中數值對應的限額。若無法使用，則使用剩餘額度最少的限額。",
             title: '提供者使用量',
             footer: "為所有帳戶選擇輸入框上方的用量儀表。儀表遵循每個池所選的用量限制。收藏的限額會為目前帳戶新增額外儀表。",
             visibilityTitle: '顯示提供者使用量儀表',

@@ -3556,7 +3556,7 @@ export const ru: TranslationStructure = {
     trayOpenInHappier: 'Открыть в Happier',
     traySettings: 'Настройки…',
     trayStartAtLogin: 'Запускать при входе',
-    trayStopAndQuit: 'Остановить фоновые службы и выйти',
+    trayStopAndQuit: 'Выйти из Happier (остановить фоновые службы)',
     trayStart: 'Запустить',
     trayRestart: 'Перезапустить',
     trayStop: 'Остановить',
@@ -8518,6 +8518,8 @@ settingsSession: {
     inputBehavior: {
         keepFocusTitle: "Сохранять фокус в редакторе после отправки",
         keepFocusSubtitle: "Оставаться в поле сообщения, чтобы сразу написать следующее.",
+        typeToFocusTitle: "Печатать откуда угодно",
+        typeToFocusSubtitle: "Начните печатать вне текстового поля, чтобы перейти в поле сообщения.",
         title: 'Поведение ввода',
         footer: 'Настройте отправку по Enter и поведение истории сообщений.',
         enterToSendEnabledNativeSubtitle: 'Нажмите Enter, чтобы отправить',
@@ -8630,6 +8632,8 @@ settingsSession: {
         customResumePromptPlaceholder: "Продолжай с того места, где остановился.",
       },
       providerUsageGauge: {
+          numberTitle: "Число в центре колец",
+          numberSubtitle: "Выберите лимит для числа внутри колец. Если он недоступен, используется самый ограничивающий лимит.",
         title: "Использование провайдера",
         footer:
           "Выберите индикаторы редактора для всех аккаунтов. Они учитывают лимиты использования, выбранные в каждом пуле. Избранные лимиты добавляют индикаторы активного аккаунта.",

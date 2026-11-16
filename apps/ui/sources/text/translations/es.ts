@@ -3603,7 +3603,7 @@ export const es: TranslationStructure = {
     trayOpenInHappier: 'Abrir en Happier',
     traySettings: 'Ajustes…',
     trayStartAtLogin: 'Iniciar al acceder',
-    trayStopAndQuit: 'Detener los servicios en segundo plano y salir',
+    trayStopAndQuit: 'Salir de Happier (detener los servicios en segundo plano)',
     trayStart: 'Iniciar',
     trayRestart: 'Reiniciar',
     trayStop: 'Detener',
@@ -8540,6 +8540,8 @@ settingsSession: {
       inputBehavior: {
           keepFocusTitle: "Mantener el editor enfocado al enviar",
           keepFocusSubtitle: "Permanece en el campo de mensaje para escribir el siguiente enseguida.",
+          typeToFocusTitle: "Escribir desde cualquier lugar",
+          typeToFocusSubtitle: "Empieza a escribir fuera de un campo de texto para ir al campo de mensaje.",
           title: 'Comportamiento de la entrada',
           footer: 'Configura Enviar con Intro y el comportamiento del historial de mensajes.',
           enterToSendEnabledNativeSubtitle: 'Pulsa Intro para enviar',
@@ -8652,6 +8654,8 @@ settingsSession: {
         customResumePromptPlaceholder: "Continúa desde donde lo dejaste.",
       },
       providerUsageGauge: {
+          numberTitle: "Número en el centro de los anillos",
+          numberSubtitle: "Elige el límite para el número dentro de los anillos. Si no está disponible, se usa el más restrictivo.",
         title: "Uso del proveedor",
         footer:
           "Elige los indicadores del editor para todas las cuentas. Respetan los límites de uso seleccionados en cada grupo. Los favoritos añaden indicadores para la cuenta activa.",

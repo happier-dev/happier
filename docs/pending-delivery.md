@@ -1,5 +1,18 @@
 # Pending delivery architecture
 
+## Idleness evidence (development)
+
+The single-session `GET /v2/sessions/:sessionId` response includes optional
+`pendingBlockedNoEffectCount`: queued blocked inputs whose protocol delivery
+status proves that no provider effect is possible. The database reads this count
+with the session's existing Pending counters in one snapshot. Uncertain delivery,
+unknown reasons, and missing reasons do not contribute to this proof.
+
+The CLI subtracts only this proven subset when checking for an in-flight turn.
+An older server's missing proof preserves conservative treatment of all Pending
+input. `pendingCount` and `pendingBlockedCount` keep their existing meanings;
+list and socket payloads do not carry the additional detail-only count.
+
 ## Explicit non-interrupting delivery (development)
 
 **Steer now** requests immediate delivery of the exact Pending row without

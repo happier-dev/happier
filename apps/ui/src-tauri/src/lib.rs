@@ -23,6 +23,9 @@ mod pet_overlay;
 mod system_tasks;
 
 #[cfg(desktop)]
+mod desktop_notification;
+
+#[cfg(desktop)]
 mod window_chrome;
 
 #[cfg(desktop)]
@@ -79,6 +82,10 @@ pub fn run() {
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            #[cfg(target_os = "windows")]
+            for argument in &args {
+                desktop_notification::handle_activation(app, argument);
+            }
             menu_bar::on_second_launch(app, args);
         }));
         builder = builder.plugin(tauri_plugin_deep_link::init());
@@ -113,6 +120,7 @@ pub fn run() {
             .manage(pet_overlay::DesktopPetOverlayState::default())
             .manage(system_tasks::SystemTasksState::default())
             .manage(shutdown::DesktopShutdownState::default())
+            .manage(desktop_notification::PendingNotificationData::default())
             .manage(menu_bar::MenuBarState::default())
             .invoke_handler(tauri::generate_handler![
                 app_updates::desktop_fetch_update,
@@ -144,6 +152,8 @@ pub fn run() {
                 window_chrome::desktop_minimize_window,
                 window_chrome::desktop_toggle_window_maximize,
                 window_chrome::desktop_close_window,
+                desktop_notification::desktop_show_clickable_notification,
+                desktop_notification::desktop_take_pending_notification_data,
                 window_chrome::desktop_show_main_window,
                 window_chrome::desktop_start_window_dragging,
                 shutdown::desktop_finish_shutdown
@@ -166,6 +176,11 @@ pub fn run() {
                 system_tasks::set_desktop_context(app.handle())?;
                 autostart::register(app)?;
                 menu_bar::prepare_launch(app.handle());
+                // Preserve a retained toast's data before the cold-launch renderer subscribes.
+                #[cfg(target_os = "windows")]
+                for argument in std::env::args().skip(1) {
+                    desktop_notification::handle_activation(app.handle(), &argument);
+                }
                 // The main window first (unless this is a login start in menu-bar mode), so the
                 // tray can follow its theme events on Windows.
                 window_chrome::register(app)?;
@@ -198,6 +213,8 @@ pub fn run() {
                         api.prevent_exit();
                     }
                 }
+                #[cfg(not(target_os = "macos"))]
+                tauri::RunEvent::Exit => window_chrome::flush_main_window_frame(app_handle),
                 tauri::RunEvent::Ready => {
                     startup::emit_ready(app_handle);
                     window_chrome::present_main_window_for_lifecycle_event(
@@ -304,8 +321,18 @@ mod app_updates {
         app: AppHandle,
         pending_update: State<'_, PendingUpdate>,
     ) -> Result<Option<UpdateMetadata>, String> {
-        let update = app
-            .updater()
+        let updater = app.updater_builder();
+        #[cfg(target_os = "windows")]
+        let updater = {
+            let app = app.clone();
+            updater.on_before_exit(move || {
+                // The Windows installer exits the process without RunEvent::Exit.
+                crate::window_chrome::flush_main_window_frame(&app);
+                app.cleanup_before_exit();
+            })
+        };
+        let update = updater
+            .build()
             .map_err(|e| e.to_string())?
             .check()
             .await

@@ -3414,7 +3414,7 @@ export const ca: TranslationStructure = {
         trayOpenInHappier: 'Obre a Happier',
         traySettings: 'Configuració…',
         trayStartAtLogin: 'Inicia en entrar',
-        trayStopAndQuit: 'Atura els serveis en segon pla i surt',
+        trayStopAndQuit: 'Surt de Happier (atura els serveis en segon pla)',
         trayStart: 'Inicia',
         trayRestart: 'Reinicia',
         trayStop: 'Atura',
@@ -8103,6 +8103,8 @@ settingsSession: {
             inputBehavior: {
                 keepFocusTitle: "Mantén el redactor enfocat després d’enviar",
                 keepFocusSubtitle: "Queda’t al camp del missatge per escriure el següent de seguida.",
+                typeToFocusTitle: "Escriu des de qualsevol lloc",
+                typeToFocusSubtitle: "Comença a escriure fora d’un camp de text per anar al camp del missatge.",
                 title: 'Comportament de l’entrada',
                 footer: 'Configura Enviar amb Retorn i el comportament de l’historial de missatges.',
                 enterToSendEnabledNativeSubtitle: 'Prem Retorn per enviar',
@@ -8195,6 +8197,8 @@ settingsSession: {
               customResumePromptPlaceholder: 'Continua des d’on ho vas deixar.',
           },
           providerUsageGauge: {
+              numberTitle: "Número al centre dels anells",
+              numberSubtitle: "Tria el límit del número dins dels anells. Si no està disponible, s’utilitza el límit més restrictiu.",
               title: 'Ús del proveïdor',
               footer: "Tria els indicadors de l’editor per a tots els comptes. Respecten els límits d’ús seleccionats a cada grup. Els preferits afegeixen indicadors per al compte actiu.",
               visibilityTitle: 'Mostra l’indicador d’ús del proveïdor',

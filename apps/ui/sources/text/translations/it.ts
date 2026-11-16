@@ -3956,7 +3956,7 @@ export const it: TranslationStructure = {
     trayOpenInHappier: 'Apri in Happier',
     traySettings: 'Impostazioni…',
     trayStartAtLogin: 'Avvia all’accesso',
-    trayStopAndQuit: 'Arresta i servizi in background ed esci',
+    trayStopAndQuit: 'Esci da Happier (arresta i servizi in background)',
     trayStart: 'Avvia',
     trayRestart: 'Riavvia',
     trayStop: 'Arresta',
@@ -8871,6 +8871,8 @@ settingsSession: {
       inputBehavior: {
           keepFocusTitle: "Mantieni l’editor attivo dopo l’invio",
           keepFocusSubtitle: "Resta nel campo del messaggio per scrivere subito il successivo.",
+          typeToFocusTitle: "Scrivi da qualsiasi punto",
+          typeToFocusSubtitle: "Inizia a digitare fuori da un campo di testo per passare al campo del messaggio.",
           title: 'Comportamento dell\'immissione',
           footer: 'Configura Invio con Enter e il comportamento della cronologia dei messaggi.',
           enterToSendEnabledNativeSubtitle: 'Premi Invio per inviare',
@@ -8983,6 +8985,8 @@ settingsSession: {
         customResumePromptPlaceholder: "Continua da dove eri rimasto.",
       },
       providerUsageGauge: {
+          numberTitle: "Numero al centro degli anelli",
+          numberSubtitle: "Scegli il limite per il numero negli anelli. Se non è disponibile, viene usato quello più restrittivo.",
         title: "Uso del provider",
         footer:
           "Scegli gli indicatori del compositore per tutti gli account. Rispettano i limiti selezionati in ogni pool. I preferiti aggiungono indicatori per l’account attivo.",

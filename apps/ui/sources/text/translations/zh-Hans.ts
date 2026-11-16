@@ -3506,7 +3506,7 @@ export const zhHans: TranslationStructure = {
     trayOpenInHappier: '在 Happier 中打开',
     traySettings: '设置…',
     trayStartAtLogin: '登录时启动',
-    trayStopAndQuit: '停止后台服务并退出',
+    trayStopAndQuit: '退出 Happier（停止后台服务）',
     trayStart: '启动',
     trayRestart: '重新启动',
     trayStop: '停止',
@@ -8305,6 +8305,8 @@ settingsSession: {
     inputBehavior: {
         keepFocusTitle: "发送后保持编辑器焦点",
         keepFocusSubtitle: "留在消息框中，以便立即编写下一条消息。",
+        typeToFocusTitle: "随处输入",
+        typeToFocusSubtitle: "在文本框外直接输入即可跳到消息框。",
         title: '输入行为',
         footer: '设置按 Enter 发送以及消息历史行为。',
         enterToSendEnabledNativeSubtitle: '按 Enter 发送',
@@ -8414,6 +8416,8 @@ settingsSession: {
       customResumePromptPlaceholder: "从你上次停下的地方继续。",
     },
     providerUsageGauge: {
+        numberTitle: "圆环中心数值",
+        numberSubtitle: "选择圆环中数值对应的限额。若不可用，则使用剩余额度最少的限额。",
       title: "提供方使用量",
       footer:
         "为所有账户选择输入框上方的用量仪表。仪表遵循每个池所选的用量限制。收藏的限额会为当前账户添加额外仪表。",
