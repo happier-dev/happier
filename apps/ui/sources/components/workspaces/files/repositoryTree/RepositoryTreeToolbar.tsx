@@ -318,12 +318,15 @@ const stylesheet = StyleSheet.create((theme) => ({
   // The toolbar sits on the pane without a rule under it; the tree follows (lab FB1 `.fl-ftool`).
   row: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: theme.space.s6,
     paddingVertical: theme.space.s8,
   },
   field: {
     flex: 1,
+    // Let the other controls wrap before they consume the query's entire width at large text sizes.
+    flexBasis: '50%',
     minWidth: 0,
   },
   inline: {

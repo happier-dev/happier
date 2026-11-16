@@ -2,6 +2,7 @@ import type * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
+import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import type {
   CustomModalCallerProps,
@@ -53,6 +54,7 @@ export const deploymentSheetStyles = StyleSheet.create((theme) => ({
     paddingBottom: theme.space.s16,
   },
   lead: {
+    ...Typography.variant('body'),
     color: theme.colors.text.secondary,
   },
 }));
