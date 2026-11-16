@@ -212,8 +212,15 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const counted = useDeploymentCollection(view === 'apps' && props.demand ? props.controller ?? null : null,
     props.demand ?? NO_DEMAND, COUNT_QUERY);
   const total = counted.snapshot.value?.totalCount;
-  const appsCount = React.useMemo(() => view === 'apps' ? describeAppsCount(items, pagedRead, total) : null,
-    [items, pagedRead, total, view]);
+  // What the filters keep (the saved view's conditions, Not backed up): the rows shown and the count line both say it.
+  const { isVisible, narrowing } = servicesView;
+  const narrowed = narrowing || filtering;
+  const keptItems = React.useMemo(() => narrowed
+    ? items.filter((item) => (!filtering || uncovered.has(item.environment.id)) && isVisible(item.environment.id))
+    : items, [filtering, isVisible, items, narrowed, uncovered]);
+  // The Account-wide total counts everything, so a narrowed line counts the rows it kept (SERVICES-ACCEPT-1116 F3).
+  const appsCount = React.useMemo(() => view === 'apps' ? describeAppsCount(keptItems, pagedRead, narrowed ? undefined : total) : null,
+    [keptItems, narrowed, pagedRead, total, view]);
   const count = view === 'apps' ? appsCount : viewCount?.view === view ? viewCount.parts : null;
   const header = (create: boolean) => (
     <ServicesPageHeader servicesView={servicesView} placesSpaces={placesSpaces && create} header={{
@@ -233,12 +240,10 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   }, [read]);
   // The search narrows the rows already read by the names they show (Environment and Project).
   const needle = query.trim().toLocaleLowerCase();
-  const { isVisible } = servicesView;
-  const shownItems = React.useMemo(() => items.filter((item) => (!filtering || uncovered.has(item.environment.id))
-    && isVisible(item.environment.id)
-    && (needle === '' || item.title.toLocaleLowerCase().includes(needle)
-      || (item.projectSourceName ?? '').toLocaleLowerCase().includes(needle))),
-  [filtering, isVisible, items, needle, uncovered]);
+  const shownItems = React.useMemo(() => needle === '' ? keptItems : keptItems.filter((item) =>
+    item.title.toLocaleLowerCase().includes(needle)
+      || (item.projectSourceName ?? '').toLocaleLowerCase().includes(needle)),
+  [keptItems, needle]);
 
   // Each view owns its read state; an empty or unavailable Apps page cannot withhold another view.
   const selectedView = view === 'databases' && props.controller && serverId ? (

@@ -111,7 +111,10 @@ type DatabaseRow = Readonly<{
   service: string;
   engine: string | null;
   growth: string | null;
+  /** Under the Size column's head. */
   size: string;
+  /** On line 2 of a phone row, which has no head to name it. */
+  sizeInline: string;
 }>;
 const keyOfDatabase = (row: DatabaseRow) => row.key;
 const groupOfDatabase = (row: DatabaseRow) => row.environmentId;
@@ -150,7 +153,8 @@ export function ServicesDatabasesView(
         service: database.service,
         engine: declared ? databaseEngineTitle(declared) : null,
         growth: describeDatabaseGrowth(database.growth),
-        size: describeDatabaseSize(database.size),
+        size: describeDatabaseSize(database.size, 'labelled'),
+        sizeInline: describeDatabaseSize(database.size, 'inline'),
       };
     })), [items]);
   const groups = React.useMemo(() => ({
@@ -180,7 +184,7 @@ export function ServicesDatabasesView(
       title: (row) => row.service,
       // Line 2: the engine and how it grew; a phone also says its size.
       // A phone row (no columns) leads line 2 with "Not backed up" when it speaks; the name keeps line 1 whole.
-      byline: (row, layout) => [row.engine, row.growth, layout?.fieldColumns === true ? null : row.size].filter(Boolean).join(' · ') || null,
+      byline: (row, layout) => [row.engine, row.growth, layout?.fieldColumns === true ? null : row.sizeInline].filter(Boolean).join(' · ') || null,
       bylineLead: (row, layout) => layout?.fieldColumns !== true && coverage.get(row.environmentId) === 'uncovered' ? backupWord(row) : null,
       fields: [
         { key: 'size', title: t('projects.deployments.services.sizeLabel'), minWidth: 216, priority: 2, listColumn: true,
@@ -191,7 +195,7 @@ export function ServicesDatabasesView(
         { key: 'backups', title: t('projects.deployments.services.columnBackups'), minWidth: 140, priority: 1, align: 'end',
           listColumn: true, render: backupWord },
       ],
-      accessibilityLabel: (row) => [row.service, row.engine, row.size].filter(Boolean).join(', '),
+      accessibilityLabel: (row) => [row.service, row.engine, row.sizeInline].filter(Boolean).join(', '),
       testID: (row) => `services.databases.row.${row.environmentId}.${row.service}`,
       columnTitles: { title: t('projects.deployments.services.columnDatabase') },
     };

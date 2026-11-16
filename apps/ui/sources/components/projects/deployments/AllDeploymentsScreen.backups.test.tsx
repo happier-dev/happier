@@ -265,6 +265,7 @@ describe('All deployments → Not backed up', () => {
       ]);
       expect(screen.getTextContent()).toContain('Not backed up · 2');
       expect(rowIds(screen)).toHaveLength(3);
+      expect(screen.getTextContent()).toContain('3 environments in 2 projects');
       // The filter sits inline in the list, one press away, never folded into the header's phone overflow (DEPLOY-REACCEPT-1113 D3).
       const { PageHeader } = await import('@/components/ui/layout/PageHeader');
       expect(screen.findAllByType(PageHeader).flatMap((node) => node.findAll((child) =>
@@ -282,6 +283,10 @@ describe('All deployments → Not backed up', () => {
           'all-deployments.row.env-api-production',
         ]);
       });
+      // The count line counts what the filter keeps (SERVICES-ACCEPT-1116 F3), not every Environment read.
+      expect(screen.findByTestId('all-deployments.header:count')).not.toBeNull();
+      expect(screen.getTextContent()).toContain('2 environments in 2 projects');
+      expect(screen.getTextContent()).not.toContain('3 environments');
 
       // A row shown for "Not backed up" opens where that Environment's backups are set up.
       await screen.pressByTestIdAsync('all-deployments.row.env-api-production');

@@ -148,7 +148,8 @@ export const ServicesColumn = React.memo(function ServicesColumn() {
     matchedCount: servicesView.filterResult.matchedCount,
     titleControl: spaceHeader.titleControl,
     filterButton: spaceHeader.filterButton,
-    band: <>{spaceHeader.strip}{spaceHeader.conditionRow}{spaceHeader.overlays}</>,
+    band: <>{spaceHeader.strip}{spaceHeader.overlays}</>,
+    conditions: spaceHeader.conditionRow,
   };
   return (
     <ServicesColumnView
@@ -424,7 +425,7 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
         title={t('projects.deployments.services.title')}
         // The grouping switch (owner 2026-11-16 10:20Z): the Session list's own control (SegmentedTabBar) in the title row.
         titleAccessory={<ServicesColumnGroupingSwitch grouping={props.grouping} onChange={props.onGroupingChange} />}
-        {...(props.space ? { titleControl: props.space.titleControl, strip: props.space.band } : {})}
+        {...(props.space ? { titleControl: props.space.titleControl, strip: props.space.band, conditions: props.space.conditions } : {})}
         // A count speaks only once the whole list is known (no "0", no count of one page); a saved view counts what it keeps.
         count={complete && items.length > 0 ? (props.space?.narrowing ? props.space.matchedCount : items.length) : undefined}
         create={props.create}
@@ -566,12 +567,25 @@ type ServicesColumnSpace = Readonly<{
   titleControl: React.ReactNode;
   filterButton: React.ReactNode;
   band: React.ReactNode;
+  /** The saved view's condition tokens, on a line of their own under the band. */
+  conditions: React.ReactNode;
 }>;
 
-/** Named by its Project, the Environment beside it (lab "billing-api  Production"): the All and Pinned rows. */
+/**
+ * Named by its Project, the Environment beside it (lab "billing-api  Production"): the All and Pinned rows. An
+ * Environment named after its Project ("sweep-a1-preview" in "sweep-a1-starter") already says which Project it is in,
+ * so its own name takes the row: beside the Project each got half, and like-named rows read alike (SERVICES-ACCEPT-1116 F6).
+ */
 function namedByProject(row: Readonly<{ title: string; titleQualifier?: string | null; projectName?: string | null }>) {
-  const project = row.projectName && !isSameDeploymentName(row.title, row.projectName) ? row.projectName : null;
+  const project = row.projectName && !namesItsProject(row.title, row.projectName) ? row.projectName : null;
   return { title: project ?? row.title, titleQualifier: project ? row.title : row.titleQualifier ?? null };
+}
+
+const NAME_WORD = /[\s._-]+/;
+function namesItsProject(environment: string, project: string): boolean {
+  if (isSameDeploymentName(environment, project)) return true;
+  const [first] = project.trim().toLocaleLowerCase().split(NAME_WORD);
+  return first !== undefined && first.length > 1 && environment.trim().toLocaleLowerCase().split(NAME_WORD)[0] === first;
 }
 
 /**

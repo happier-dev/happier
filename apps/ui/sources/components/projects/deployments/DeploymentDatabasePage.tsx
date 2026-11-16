@@ -458,7 +458,7 @@ export function DeploymentDatabasePage(
       value: t('projects.deployments.databaseAvailabilityOneServer'),
       detail: t('projects.deployments.databaseAvailabilityNotHighlyAvailable') },
     { key: 'size', label: t('projects.deployments.services.sizeLabel'),
-      value: measured ? describeDatabaseSize(measured.size) : '—' },
+      value: measured ? describeDatabaseSize(measured.size, 'labelled') : '—' },
   ] : [];
   // The variables that carry this database to its Environment's apps, by the names its template declares.
   const databaseVariableNames = database.kind === 'selfHosted'

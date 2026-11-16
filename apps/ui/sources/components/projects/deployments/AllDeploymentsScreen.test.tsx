@@ -510,8 +510,8 @@ describe('Services (pfc-redesign svcApps · svcDb)', () => {
     const { t } = await import('@/text');
     expect(screen.getTextContent()).toContain(t('projects.deployments.services.title'));
     expect(screen.getTextContent()).toMatch(/1\.\d+ GB/);
-    // A size the owner could not read says why, never a made-up figure.
-    expect(screen.getTextContent()).toContain(t('projects.deployments.services.sizeUnsupported'));
+    // A size the owner could not read says why, never a made-up figure (under its Size head, without saying "Size" again).
+    expect(screen.getTextContent()).toContain(t('projects.deployments.services.sizeCellUnsupported'));
     // The Apps list is not drawn under the Databases view.
     expect(screen.findByTestId('all-deployments.row.env-shop')).toBeNull();
     controller.retire();

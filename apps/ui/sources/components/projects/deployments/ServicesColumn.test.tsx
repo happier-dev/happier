@@ -419,6 +419,24 @@ describe('Services column grouping (owner 2026-11-16 10:20Z: All Â· By project Â
     controller.retire();
   });
 
+  // SERVICES-ACCEPT-1116 F6: "SWEEP-A1 DJ28 build oracle" + "SWEEP-A1 DJ28 repository oracle" each took half the row and
+  // both halves cut to the same words, so five rows read alike. An Environment named after its Project says its
+  // Project already: its own name takes the whole row.
+  it('All names an Environment that carries its Project\'s name by its own name alone, so like-named rows stay apart', async () => {
+    const controller = controllerFor([
+      environment('env-oracle', 'source-oracle', 'SWEEP-A1 DJ28 repository oracle', 'SWEEP-A1 DJ28 build oracle'),
+      environment('env-preview', 'source-starter', 'sweep-a1-preview-push-a-1113', 'sweep-a1-1113-starter'),
+      ...ITEMS,
+    ]);
+    const { screen } = await render(controller, { kind: 'all' }, vi.fn(), 'services-column:environment:env-oracle', { grouping: 'all' });
+    const rowOf = (id: string) => screen.root.findAll((node) => node.props.testID === `services-column:environment:${id}` && 'row' in node.props)[0]!;
+    expect(rowOf('env-oracle').props.row).toMatchObject({ title: 'SWEEP-A1 DJ28 repository oracle', titleQualifier: null });
+    expect(rowOf('env-preview').props.row).toMatchObject({ title: 'sweep-a1-preview-push-a-1113', titleQualifier: null });
+    // A stage name still reads with its Project (lab "billing-api  Production").
+    expect(rowOf('env-shop-staging').props.row).toMatchObject({ title: 'storefront', titleQualifier: 'Staging' });
+    controller.retire();
+  });
+
   it('By type draws Apps and each type that has items as its own section, every row through the one Environment row', async () => {
     const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const shop = createDeploymentEnvironmentHeaderV1({ id: 'env-shop-staging', projectSourceId: 'source-shop' });
@@ -454,6 +472,7 @@ describe('Services column saved view (owner D5: one Services header, the column 
       titleControl: <View testID="space:title" />,
       filterButton: <View testID="space:filter" />,
       band: <View testID="space:strip" />,
+      conditions: <View testID="space:conditions" />,
     };
     const { screen } = await render(controller, { kind: 'all' }, vi.fn(), 'services-column:project:source-shop',
       { space, pinnedEnvironmentIds: ['env-shop-production', 'env-api'] });
@@ -467,7 +486,7 @@ describe('Services column saved view (owner D5: one Services header, the column 
     expect(screen.findByTestId('services-column:pinned:env-api')).not.toBeNull();
     const list = screen.root.findAll((node) => node.props.testID === 'services-column:list' && 'title' in node.props)[0]!;
     expect(list.props.count).toBe(2);
-    for (const id of ['space:title', 'space:strip']) expect(screen.findByTestId(id)).not.toBeNull();
+    for (const id of ['space:title', 'space:strip', 'space:conditions']) expect(screen.findByTestId(id)).not.toBeNull();
     // The funnel ends the column's search field (behind the magnifier, as the Sessions and Discussions columns).
     expect(list.props.search?.trailing).toBe(space.filterButton);
     controller.retire();

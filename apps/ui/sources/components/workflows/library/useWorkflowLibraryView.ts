@@ -142,7 +142,7 @@ export function useWorkflowLibraryView(focused: boolean) {
     const controller = { lifetime, focused, filters, selectedSpaceId, spaces: binding.spaces, selectedSpace: binding.selectedSpace,
         activeSpace: binding.activeSpace, spacesEnabled: binding.spacesEnabled,
         spacesReady: binding.spacesReady, spaceSettingsScope: binding.spaceSettingsScope,
-        view: filters.view, searchQuery, offeredViews, visibleKeys, filterResult, filter, isVisible, needle, update, reset, setView, setSearchQuery,
+        view: filters.view, searchQuery, offeredViews, visibleKeys, filterResult, filter, isVisible, needle, update, setFilters: binding.setFilters, reset, setView, setSearchQuery,
         library, split, rows, summaries, accountWorkflows, automationSummaries, libraryRows, libraryCount, visibleLibraryRows,
         libraryCoverage: sourceCoverage, libraryIsEmpty };
     const latest = React.useRef(controller);

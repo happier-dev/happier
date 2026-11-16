@@ -273,7 +273,8 @@ function WatchedList(props: Readonly<{
     byline: (item, layout) => item.service
       ? machineServiceByline(item.service, layout?.fieldColumns === true)
       : <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 }} numberOfLines={1}>
-          {t(`machineServices.purpose.${item.lifecyclePurpose === 'infrastructure' ? 'infrastructure' : 'watched'}`)}
+          {item.lifecyclePurpose === 'infrastructure' ? t('projects.deployments.services.watchedInfrastructureByline')
+            : t('projects.deployments.services.watchedServiceByline')}
         </Text>,
     bylineLead: (item, layout) => item.service ? machineServiceBylineLead(item.service, layout?.fieldColumns === true) : null,
     titleMeta: (item) => item.service ? renderMachineServicePort(item.service) : null,

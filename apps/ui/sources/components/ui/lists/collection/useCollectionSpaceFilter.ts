@@ -88,22 +88,27 @@ export function useCollectionSpaceFilter<K extends CollectionEntityKindV1>(entit
         if (draft) draft.set(next(draft.get() ?? latest.current));
         else setLocalState(next);
     }, [draft]);
-    // Admission stays at the entity's typed mutation boundary; stored baselines come from settings ingress.
-    const update = React.useCallback((patch: Readonly<{ filters?: Partial<CollectionFilterMapV1[K]>; searchQuery?: string }>): boolean => {
+    const write = React.useCallback((next: (previous: CollectionFilterMapV1[K]) => CollectionFilterMapV1[K], query?: string): boolean => {
         if (!lifetime?.isCurrent() || !binding.spacesReady) return false;
         setDraft(previous => {
-            const filters = patch.filters ? { ...previous.filters, ...patch.filters } : previous.filters;
-            const searchQuery = patch.searchQuery ?? previous.searchQuery;
+            const filters = next(previous.filters);
+            const searchQuery = query ?? previous.searchQuery;
             return sameStrictJsonValue(filters, previous.filters) && searchQuery === previous.searchQuery
                 ? previous : { ...previous, filters, searchQuery };
         });
         return true;
     }, [binding.spacesReady, lifetime, setDraft]);
+    // An Action's patch (admitted at the entity's typed mutation boundary) changes the fields it names.
+    const update = React.useCallback((patch: Readonly<{ filters?: Partial<CollectionFilterMapV1[K]>; searchQuery?: string }>): boolean =>
+        write(previous => patch.filters ? { ...previous, ...patch.filters } : previous, patch.searchQuery), [write]);
+    // The condition header hands over the whole next filter from the entity's own registry; a field it removed is an
+    // absent key, so the filter is replaced, never merged (SERVICES-ACCEPT-1116 F1).
+    const setFilters = React.useCallback((filters: CollectionFilterMapV1[K]): boolean => write(() => filters), [write]);
     const reset = React.useCallback((): boolean => {
         if (!lifetime?.isCurrent() || !binding.spacesReady) return false;
         setDraft(previous => previous.filters === previous.savedFilter && previous.searchQuery === ''
             ? previous : { ...previous, filters: previous.savedFilter, searchQuery: '' });
         return true;
     }, [binding.spacesReady, lifetime, setDraft]);
-    return { ...binding, filters: current.filters, searchQuery: current.searchQuery, bound: current.bound, update, reset };
+    return { ...binding, filters: current.filters, searchQuery: current.searchQuery, bound: current.bound, update, setFilters, reset };
 }

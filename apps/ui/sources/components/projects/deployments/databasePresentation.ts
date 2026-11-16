@@ -15,8 +15,11 @@ export function databaseEngineTitle(data: Readonly<{ engine: string; version?: s
   return `${names[data.engine] ?? data.engine}${data.version ? ` ${data.version}` : ''}`;
 }
 
-/** The size the owner (DB-SIZE-1113) measured, or why it has none: never a guessed figure. */
-export function describeDatabaseSize(size: DeploymentDatabaseSizeV1['size']): string {
+/**
+ * The size the owner (DB-SIZE-1113) measured, or why it has none: never a guessed figure. Under a "Size" head or
+ * label the reason does not say "Size" again (SERVICES-ACCEPT-1116 F8); on a line of its own it does.
+ */
+export function describeDatabaseSize(size: DeploymentDatabaseSizeV1['size'], placement: 'labelled' | 'inline'): string {
   if (size.status === 'available') {
     const parts = formatHappierDataBytesParts(size.bytes, { kind: 'storage' });
     const text = `${parts.value} ${parts.unit}`;
@@ -24,7 +27,12 @@ export function describeDatabaseSize(size: DeploymentDatabaseSizeV1['size']): st
       ? t('projects.deployments.services.sizeAbout', { size: text })
       : text;
   }
-  if (size.reason === 'unsupported_engine') return t('projects.deployments.services.sizeUnsupported');
-  if (size.reason === 'active_deployment_required') return t('projects.deployments.services.sizeAfterDeploy');
-  return t('projects.deployments.services.sizeUnavailable');
+  const labelled = placement === 'labelled';
+  if (size.reason === 'unsupported_engine') {
+    return labelled ? t('projects.deployments.services.sizeCellUnsupported') : t('projects.deployments.services.sizeUnsupported');
+  }
+  if (size.reason === 'active_deployment_required') {
+    return labelled ? t('projects.deployments.services.sizeCellAfterDeploy') : t('projects.deployments.services.sizeAfterDeploy');
+  }
+  return labelled ? t('projects.deployments.services.sizeCellUnavailable') : t('projects.deployments.services.sizeUnavailable');
 }

@@ -1,9 +1,6 @@
 import * as React from 'react';
 import type { CollectionConditionBindings } from '@happier-dev/plugin-ui/components';
-import {
-  workflowListFilterFieldsV1,
-  type WorkflowListFilterV1,
-} from '@happier-dev/protocol/workflows/listing/workflowListFilterV1';
+import { workflowListFilterFieldsV1 } from '@happier-dev/protocol/workflows/listing/workflowListFilterV1';
 
 import { useCollectionSpaceHeader } from '@/components/ui/lists/collection/useCollectionSpaceHeader';
 import { t } from '@/text';
@@ -61,11 +58,6 @@ export function useWorkflowLibrarySpaceHeader(
       yield workflowLibraryRowFilterFacts(row, summaries);
     }
   }, [rows, summaries]);
-  const updateLibraryView = libraryView.update;
-  const setFilters = React.useCallback(
-    (filters: WorkflowListFilterV1) => updateLibraryView({ filters }),
-    [updateLibraryView],
-  );
   return useCollectionSpaceHeader({
     entityKind: 'workflow',
     keyboardEnabled: focusEligible && libraryView.focused,
@@ -80,7 +72,7 @@ export function useWorkflowLibrarySpaceHeader(
       spacesReady: libraryView.spacesReady,
       spaceSettingsScope: libraryView.spaceSettingsScope,
       filters: libraryView.filters,
-      setFilters,
+      setFilters: libraryView.setFilters,
     },
     registry: workflowListFilterFieldsV1,
     bindings,

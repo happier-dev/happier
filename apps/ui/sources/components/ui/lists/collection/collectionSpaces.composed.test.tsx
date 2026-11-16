@@ -57,7 +57,7 @@ async function mountEntity<K extends 'workflow' | 'discussion' | 'deploymentEnvi
         const lifetime = useActiveServerAccountScopeLifetime();
         view = useCollectionSpaceFilter(input.kind, { lifetime, defaultName: 'All', defaultFilter: input.defaultFilter });
         header = useCollectionSpaceHeader({ entityKind: input.kind, testIDPrefix: 'joined', defaultName: 'All',
-            view: { ...view, setFilters: filters => view.update({ filters }) }, registry: input.registry, bindings: {},
+            view, registry: input.registry, bindings: {},
             defaultIcon: createDefaultCollectionSpaceV1(input.kind).icon });
         const match = compileEntityListFilterV1(input.registry, view.filters);
         ids = input.rows.filter(row => match(row) === 'match').map(row => row.id);
@@ -161,6 +161,25 @@ describe('shared entity Space presentation through real settings Actions and HTT
                 await screen.pressByTestIdAsync('joined-delete');
                 await vi.waitFor(() => expect(account.persistedSettings.collectionSpacesV1.spaces.filter(space => space.id === saved.id)).toEqual([]));
                 await vi.waitFor(() => expect(mounted.ids()).toHaveLength(2));
+            } finally { standardCleanup(); await account.dispose(); }
+        });
+    }
+
+    // SERVICES-ACCEPT-1116 F1: a Services condition is removed by dropping its key, so the header's whole next filter
+    // must replace the draft rather than merge over it.
+    const tokenField = { workflow: 'view', discussion: 'unreadOnly', deploymentEnvironment: 'states' } as const;
+    for (const input of cases) {
+        it(`${input.kind}: removing a condition's token through the header shows every row again`, async () => {
+            const mounted = input.kind === 'workflow' ? await mountEntity(input)
+                : input.kind === 'discussion' ? await mountEntity(input) : await mountEntity(input);
+            const { account, screen } = mounted;
+            try {
+                await act(async () => { mounted.view().update({ filters: input.narrowed }); });
+                expect(mounted.ids()).toEqual([input.rows[0]!.id]);
+                await screen.pressByTestIdAsync(`joined-filter-token:${tokenField[input.kind]}`);
+                expect(mounted.ids()).toHaveLength(2);
+                expect(mounted.view().filters).toEqual(input.defaultFilter);
+                expect(screen.findByTestId(`joined-filter-token:${tokenField[input.kind]}`)).toBeNull();
             } finally { standardCleanup(); await account.dispose(); }
         });
     }

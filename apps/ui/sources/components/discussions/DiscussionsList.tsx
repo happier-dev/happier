@@ -372,7 +372,6 @@ function DiscussionsListReady(props: Readonly<{
             yield discussionListFilterFacts(row, attention.get(row.id));
         }
     }, [active.items, archived.items, attention]);
-    const setFilters = React.useCallback((next: DiscussionListFilterV1) => update({ filters: next }), [update]);
     const discussionFacets = React.useMemo(() => [
         { fieldId: 'attention', value: true, label: t('session.collaboration.discussion.home.needsYou') },
         { fieldId: 'unreadOnly', value: true, label: t('session.collaboration.discussion.home.filterUnread') },
@@ -384,7 +383,7 @@ function DiscussionsListReady(props: Readonly<{
         defaultName: t('sessionsList.spacesAllDiscussions'),
         view: { spaces: view.spaces, selectedSpaceId: view.selectedSpaceId, selectedSpace: view.selectedSpace,
             activeSpace: view.activeSpace, spacesEnabled: view.spacesEnabled,
-            spacesReady: view.spacesReady, spaceSettingsScope: view.spaceSettingsScope, filters, setFilters },
+            spacesReady: view.spacesReady, spaceSettingsScope: view.spaceSettingsScope, filters, setFilters: view.setFilters },
         registry: discussionListFilterFieldsV1,
         bindings: conditionBindings,
         fieldIcons: DISCUSSION_FILTER_FIELD_ICONS,
@@ -658,7 +657,8 @@ function DiscussionsListReady(props: Readonly<{
                 title={t('session.collaboration.discussion.title')}
                 // The title names the space and opens its menu (R9, the Sessions title chevron).
                 titleControl={spaceHeader.titleControl}
-                strip={<>{spaceHeader.strip}{spaceHeader.conditionRow}{spaceHeader.overlays}</>}
+                strip={<>{spaceHeader.strip}{spaceHeader.overlays}</>}
+                conditions={spaceHeader.conditionRow}
                 // A narrowed column counts what it shows, once that answer is whole.
                 count={searching || filter !== 'all' ? narrowedCount : activeCount ?? null}
                 // A main screen's search waits behind its magnifier; the space's conditions (R9, the Sessions editor)

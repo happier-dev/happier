@@ -2,14 +2,11 @@ import * as React from 'react';
 import type { CollectionConditionBindings } from '@happier-dev/plugin-ui/components';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 import type { EntityListFilterResultV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
-import { getUnsupportedEntityFilterFieldsV1 } from '@happier-dev/protocol/collections/filter/fieldRegistryV1';
 import {
   compileDeploymentEnvironmentListFilterV1,
   DEFAULT_DEPLOYMENT_ENVIRONMENT_LIST_FILTER_V1,
-  DeploymentEnvironmentListFilterPatchV1Schema,
   deploymentEnvironmentListFilterFieldsV1,
   type DeploymentEnvironmentListFilterFactsV1,
-  type DeploymentEnvironmentListFilterV1,
 } from '@happier-dev/protocol/deployments/deploymentEnvironmentListFilterV1';
 
 import {
@@ -114,29 +111,12 @@ export function useServicesListView(
     (environmentId: string) => !narrowing || visible.has(environmentId),
     [narrowing, visible],
   );
-  const bindingUpdate = binding.update;
-  const setFilters = React.useCallback(
-    (next: DeploymentEnvironmentListFilterV1): boolean => {
-      const parsed =
-        DeploymentEnvironmentListFilterPatchV1Schema.safeParse(next);
-      if (
-        !parsed.success ||
-        getUnsupportedEntityFilterFieldsV1(
-          deploymentEnvironmentListFilterFieldsV1,
-          { ...DEFAULT_DEPLOYMENT_ENVIRONMENT_LIST_FILTER_V1, ...parsed.data },
-          'list',
-        ).length > 0
-      )
-        return false;
-      return bindingUpdate({ filters: parsed.data });
-    },
-    [bindingUpdate],
-  );
   return {
     focused,
     items: held,
     filters,
-    setFilters,
+    // The header's whole next filter from this registry: it replaces the draft, so a removed condition is gone.
+    setFilters: binding.setFilters,
     isVisible,
     narrowing,
     filterResult,
