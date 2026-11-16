@@ -17,6 +17,8 @@ import {
 } from '@/components/ui/setupBlocks/SetupSteps';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import type { InteractionTransientQuestionV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
+import { TransientQuestionFields, useTransientQuestionAnswers, type TransientQuestionAnswerState } from '@/components/appShell/plugins/TransientQuestionForm';
 
 import { NewAppDeploySummary } from '../NewAppDeploySteps';
 
@@ -69,6 +71,8 @@ export type NewAppAutoView =
       source: string | null;
     }>
   | Readonly<{ kind: 'noAgent'; machines: readonly NewAppAutoMachine[] }>
+  /** The suggestion owner needs answers first: the canonical questions, asked in the step (journey-deploy F2). */
+  | Readonly<{ kind: 'questions'; questions: readonly InteractionTransientQuestionV1[] }>
   | Readonly<{ kind: 'nothing' }>
   | Readonly<{ kind: 'failed' }>;
 
@@ -82,6 +86,8 @@ export function NewAppAutoStep(
     onEditDescription: () => void;
     onTryAgain: () => void;
     onChooseStarter: () => void;
+    /** The open round's answers and whether they are complete, for the dialog footer's Suggest again. */
+    onQuestionState?: (state: TransientQuestionAnswerState) => void;
     phone: boolean;
     /** The dialog's inset for content that has no sheet of its own (NewAppScreen `dialogInset`). */
     insetStyle: object | null;
@@ -177,6 +183,14 @@ export function NewAppAutoStep(
           />
         </View>
       </ItemGroup>
+      {view.kind === 'questions' ? (
+        <ItemGroup surface="none" testID="newApp.auto.questions">
+          <View style={props.insetStyle}>
+            <AutoQuestions key={view.questions.map((question) => question.id).join('|')} questions={view.questions}
+              onState={props.onQuestionState} />
+          </View>
+        </ItemGroup>
+      ) : null}
       {view.kind === 'working' ? (
         <ItemGroup
           title={t('newApp.auto.workingTitle')}
@@ -270,6 +284,18 @@ export function NewAppAutoStep(
       ) : null}
     </View>
   );
+}
+
+/** One round of questions: its answers live here, so a new round starts empty; the footer reads them through `onState`. */
+function AutoQuestions(props: Readonly<{
+  questions: readonly InteractionTransientQuestionV1[];
+  onState?: (state: TransientQuestionAnswerState) => void;
+}>) {
+  const state = useTransientQuestionAnswers(props.questions);
+  const { onState } = props;
+  const { answers, ready } = state;
+  React.useEffect(() => { onState?.(state); }, [onState, answers, ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <TransientQuestionFields questions={props.questions} state={state} />;
 }
 
 const FACT_LABEL_KEY = {

@@ -28,6 +28,8 @@ type Copy = Readonly<{
     descriptionLabel: string;
     descriptionPlaceholder: string;
     suggest: string;
+    questionsDescription: string;
+    suggestAgain: string;
     workingTitle: string;
     stepStore: string;
     stepStoreRunning: string;
@@ -53,6 +55,14 @@ type Copy = Readonly<{
     factRunsOn: string;
     factData: string;
     useSetup: string;
+    adjust: string;
+    adjustTitle: string;
+    adjustDescription: string;
+    askElse: string;
+    askElseDescription: string;
+    scratch: string;
+    dataNone: string;
+    adjustRefused: string;
     noAgentTitle: string;
     noAgentBody: string;
     whatsMissing: string;
@@ -78,13 +88,13 @@ type Copy = Readonly<{
   describeLabel: string;
   name: string;
   namePlaceholder: string;
-  codeLivesIn: string;
+  codeLivesOn: string;
   privateRepository: string;
   builtBy: string;
   on: string;
   noComputer: string;
   connectGithub: string;
-  githubNeeded: string;
+  forgeNeeded: (p: Readonly<{ forge: string }>) => string;
   computerNeeded: string;
   machineHomeMismatch: string;
   addComputer: string;
@@ -113,7 +123,7 @@ type Copy = Readonly<{
   readyTitle: string;
   readyDescription: string;
   startBuilding: string;
-  unavailable: string;
+  forgeUnavailable: (p: Readonly<{ forge: string }>) => string;
   /** Deploy an app's Where → Configure → Review steps, hosted in the dialog (journey-deploy D3). */
   deploy: Readonly<{
     source: string;
@@ -196,6 +206,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "What your app should do",
       descriptionPlaceholder: "A booking page for my yoga classes: people pick a class, pay by card, and get a reminder the day before.",
       suggest: "Suggest a setup",
+      questionsDescription: "Answer and Happier suggests a setup.",
+      suggestAgain: "Suggest again",
       workingTitle: "Working on it",
       stepStore: "Looked at your Store",
       stepStoreRunning: "Looking at your Store",
@@ -221,6 +233,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "Runs on",
       factData: "Data",
       useSetup: "Use this setup",
+      adjust: "Adjust",
+      adjustTitle: "Adjust the setup",
+      adjustDescription: "Change any part, or tell it what to do differently.",
+      askElse: "Ask for something else",
+      askElseDescription: "It suggests again with your note; this setup stays until it answers.",
+      scratch: "An empty repository",
+      dataNone: "None in the app",
+      adjustRefused: "That doesn’t fit the rest of this setup. Choose another.",
       noAgentTitle: "No agent can make suggestions right now",
       noAgentBody: "Suggestions run on a Machine with a signed-in agent.",
       whatsMissing: "What’s missing",
@@ -248,14 +268,14 @@ export const newAppTranslations: Readonly<
     describeLabel: 'What your app should do',
     name: 'Name',
     namePlaceholder: 'My app',
-    codeLivesIn: 'Code lives in',
+    codeLivesOn: 'Code lives on',
     privateRepository: 'Private',
     builtBy: 'Built on',
     on: 'on',
     noComputer: 'No computer yet',
     connectGithub: 'Connect GitHub',
-    githubNeeded:
-      'Your code lives in a repository on GitHub, so it is backed up and can be published. Connect GitHub to continue.',
+    forgeNeeded: ({ forge }) =>
+      `Your code lives in a repository on ${forge}, so it is backed up and can be published. Connect ${forge} to continue.`,
     computerNeeded:
       'An agent needs a computer to build on. Add one; nothing you wrote here is lost.',
     addComputer: 'Add a computer',
@@ -288,7 +308,8 @@ export const newAppTranslations: Readonly<
     readyDescription:
       'Your project is set up. Start your agent with your description when you’re ready.',
     startBuilding: 'Start building',
-    unavailable: 'Couldn’t check GitHub from this computer.',
+    forgeUnavailable: ({ forge }) =>
+      `Couldn’t check ${forge} from this computer.`,
     deploy: {
       source: 'Source',
       runsOn: 'Runs on',
@@ -350,6 +371,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "Què ha de fer la teva app",
       descriptionPlaceholder: "Una pàgina de reserves per a les meves classes de ioga: la gent tria una classe, paga amb targeta i rep un recordatori el dia abans.",
       suggest: "Suggereix una configuració",
+      questionsDescription: "Respon i Happier et suggereix una configuració.",
+      suggestAgain: "Torna a suggerir",
       workingTitle: "Hi estem treballant",
       stepStore: "Hem mirat la teva Store",
       stepStoreRunning: "Mirant la teva Store",
@@ -375,6 +398,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "S’executa a",
       factData: "Dades",
       useSetup: "Fes servir aquesta configuració",
+      adjust: "Ajusta",
+      adjustTitle: "Ajusta la configuració",
+      adjustDescription: "Canvia qualsevol part o digues-li què ha de fer diferent.",
+      askElse: "Demana una altra cosa",
+      askElseDescription: "Torna a suggerir amb la teva nota; aquesta configuració es manté fins que respongui.",
+      scratch: "Un repositori buit",
+      dataNone: "Cap a l’app",
+      adjustRefused: "Això no encaixa amb la resta de la configuració. Tria’n una altra.",
       noAgentTitle: "Ara mateix cap agent pot fer suggeriments",
       noAgentBody: "Els suggeriments s’executen en una Machine amb un agent connectat.",
       whatsMissing: "Què hi falta",
@@ -402,14 +433,14 @@ export const newAppTranslations: Readonly<
     describeLabel: 'Què ha de fer la teva aplicació',
     name: 'Nom',
     namePlaceholder: 'La meva aplicació',
-    codeLivesIn: 'El codi viu a',
+    codeLivesOn: 'El codi viu a',
     privateRepository: 'Privat',
     builtBy: 'Construït a',
     on: 'a',
     noComputer: 'Encara cap ordinador',
     connectGithub: 'Connecta GitHub',
-    githubNeeded:
-      'El codi viu en un repositori de GitHub, amb còpia de seguretat i llest per publicar. Connecta GitHub per continuar.',
+    forgeNeeded: ({ forge }) =>
+      `El codi viu en un repositori de ${forge}, amb còpia de seguretat i llest per publicar. Connecta ${forge} per continuar.`,
     computerNeeded:
       'Un agent necessita un ordinador on construir. Afegeix-ne un; no es perd res del que has escrit.',
     addComputer: 'Afegeix un ordinador',
@@ -442,7 +473,8 @@ export const newAppTranslations: Readonly<
     readyDescription:
       'El projecte està preparat. Inicia l’agent amb la teva descripció quan vulguis.',
     startBuilding: 'Comença a construir',
-    unavailable: 'No s’ha pogut comprovar GitHub des d’aquest ordinador.',
+    forgeUnavailable: ({ forge }) =>
+      `No s’ha pogut comprovar ${forge} des d’aquest ordinador.`,
     deploy: {
       source: 'Origen',
       runsOn: 'S’executa a',
@@ -504,6 +536,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "Was deine App tun soll",
       descriptionPlaceholder: "Eine Buchungsseite für meine Yogakurse: Leute wählen einen Kurs, zahlen per Karte und bekommen am Vortag eine Erinnerung.",
       suggest: "Setup vorschlagen",
+      questionsDescription: "Antworte, dann schlägt Happier ein Setup vor.",
+      suggestAgain: "Erneut vorschlagen",
       workingTitle: "Wird erarbeitet",
       stepStore: "Store angesehen",
       stepStoreRunning: "Store wird angesehen",
@@ -529,6 +563,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "Läuft auf",
       factData: "Daten",
       useSetup: "Dieses Setup verwenden",
+      adjust: "Anpassen",
+      adjustTitle: "Setup anpassen",
+      adjustDescription: "Ändere einen Teil oder sag, was anders sein soll.",
+      askElse: "Um etwas anderes bitten",
+      askElseDescription: "Es schlägt mit deiner Notiz erneut vor; dieses Setup bleibt, bis es antwortet.",
+      scratch: "Ein leeres Repository",
+      dataNone: "Keine in der App",
+      adjustRefused: "Das passt nicht zum Rest dieses Setups. Wähle etwas anderes.",
       noAgentTitle: "Gerade kann kein Agent Vorschläge machen",
       noAgentBody: "Vorschläge laufen auf einer Machine mit angemeldetem Agenten.",
       whatsMissing: "Was fehlt",
@@ -556,14 +598,14 @@ export const newAppTranslations: Readonly<
     describeLabel: 'Was deine App tun soll',
     name: 'Name',
     namePlaceholder: 'Meine App',
-    codeLivesIn: 'Code liegt in',
+    codeLivesOn: 'Code liegt in',
     privateRepository: 'Privat',
     builtBy: 'Gebaut auf',
     on: 'auf',
     noComputer: 'Noch kein Computer',
     connectGithub: 'GitHub verbinden',
-    githubNeeded:
-      'Dein Code liegt in einem GitHub-Repository, gesichert und bereit zum Veröffentlichen. Verbinde GitHub, um fortzufahren.',
+    forgeNeeded: ({ forge }) =>
+      `Dein Code liegt in einem ${forge}-Repository, gesichert und bereit zum Veröffentlichen. Verbinde ${forge}, um fortzufahren.`,
     computerNeeded:
       'Ein Agent braucht einen Computer zum Bauen. Füge einen hinzu; nichts von deinem Text geht verloren.',
     addComputer: 'Computer hinzufügen',
@@ -596,7 +638,8 @@ export const newAppTranslations: Readonly<
     readyDescription:
       'Dein Projekt ist eingerichtet. Starte deinen Agent mit deiner Beschreibung, wenn du bereit bist.',
     startBuilding: 'Mit dem Bauen beginnen',
-    unavailable: 'GitHub konnte von diesem Computer aus nicht geprüft werden.',
+    forgeUnavailable: ({ forge }) =>
+      `${forge} konnte von diesem Computer aus nicht geprüft werden.`,
     deploy: {
       source: 'Quelle',
       runsOn: 'Läuft auf',
@@ -658,6 +701,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "Qué debe hacer tu app",
       descriptionPlaceholder: "Una página de reservas para mis clases de yoga: la gente elige una clase, paga con tarjeta y recibe un recordatorio el día antes.",
       suggest: "Sugerir una configuración",
+      questionsDescription: "Responde y Happier te sugiere una configuración.",
+      suggestAgain: "Sugerir de nuevo",
       workingTitle: "Trabajando en ello",
       stepStore: "Revisamos tu Store",
       stepStoreRunning: "Revisando tu Store",
@@ -683,6 +728,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "Se ejecuta en",
       factData: "Datos",
       useSetup: "Usar esta configuración",
+      adjust: "Ajustar",
+      adjustTitle: "Ajustar la configuración",
+      adjustDescription: "Cambia cualquier parte o dile qué hacer de otra forma.",
+      askElse: "Pedir otra cosa",
+      askElseDescription: "Sugiere de nuevo con tu nota; esta configuración se queda hasta que responda.",
+      scratch: "Un repositorio vacío",
+      dataNone: "Ninguno en la app",
+      adjustRefused: "Eso no encaja con el resto de la configuración. Elige otra opción.",
       noAgentTitle: "Ahora mismo ningún agente puede hacer sugerencias",
       noAgentBody: "Las sugerencias se ejecutan en una Machine con un agente con sesión iniciada.",
       whatsMissing: "Qué falta",
@@ -710,14 +763,14 @@ export const newAppTranslations: Readonly<
     describeLabel: 'Qué debe hacer tu app',
     name: 'Nombre',
     namePlaceholder: 'Mi app',
-    codeLivesIn: 'El código vive en',
+    codeLivesOn: 'El código vive en',
     privateRepository: 'Privado',
     builtBy: 'Creada en',
     on: 'en',
     noComputer: 'Aún no hay ordenador',
     connectGithub: 'Conectar GitHub',
-    githubNeeded:
-      'Tu código vive en un repositorio de GitHub, con copia de seguridad y listo para publicar. Conecta GitHub para continuar.',
+    forgeNeeded: ({ forge }) =>
+      `Tu código vive en un repositorio de ${forge}, con copia de seguridad y listo para publicar. Conecta ${forge} para continuar.`,
     computerNeeded:
       'Un agente necesita un ordenador donde construir. Añade uno; no se pierde nada de lo que escribiste.',
     addComputer: 'Añadir un ordenador',
@@ -750,7 +803,8 @@ export const newAppTranslations: Readonly<
     readyDescription:
       'Tu proyecto está preparado. Inicia tu agente con tu descripción cuando quieras.',
     startBuilding: 'Empezar a construir',
-    unavailable: 'No se pudo comprobar GitHub desde este ordenador.',
+    forgeUnavailable: ({ forge }) =>
+      `No se pudo comprobar ${forge} desde este ordenador.`,
     deploy: {
       source: 'Origen',
       runsOn: 'Se ejecuta en',
@@ -812,6 +866,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "Ce que votre app doit faire",
       descriptionPlaceholder: "Une page de réservation pour mes cours de yoga : on choisit un cours, on paie par carte et on reçoit un rappel la veille.",
       suggest: "Proposer une configuration",
+      questionsDescription: "Répondez et Happier propose une configuration.",
+      suggestAgain: "Proposer à nouveau",
       workingTitle: "En cours",
       stepStore: "Store consulté",
       stepStoreRunning: "Consultation de votre Store",
@@ -837,6 +893,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "S’exécute sur",
       factData: "Données",
       useSetup: "Utiliser cette configuration",
+      adjust: "Ajuster",
+      adjustTitle: "Ajuster la configuration",
+      adjustDescription: "Changez une partie, ou dites-lui quoi faire autrement.",
+      askElse: "Demander autre chose",
+      askElseDescription: "Elle propose à nouveau avec votre note ; cette configuration reste jusqu’à sa réponse.",
+      scratch: "Un dépôt vide",
+      dataNone: "Aucune dans l’app",
+      adjustRefused: "Cela ne va pas avec le reste de la configuration. Choisissez autre chose.",
       noAgentTitle: "Aucun agent ne peut faire de propositions pour l’instant",
       noAgentBody: "Les propositions s’exécutent sur une Machine avec un agent connecté.",
       whatsMissing: "Ce qui manque",
@@ -864,14 +928,14 @@ export const newAppTranslations: Readonly<
     describeLabel: 'Ce que votre app doit faire',
     name: 'Nom',
     namePlaceholder: 'Mon app',
-    codeLivesIn: 'Le code est dans',
+    codeLivesOn: 'Le code est dans',
     privateRepository: 'Privé',
     builtBy: 'Construite sur',
     on: 'sur',
     noComputer: 'Pas encore d’ordinateur',
     connectGithub: 'Connecter GitHub',
-    githubNeeded:
-      'Votre code vit dans un dépôt GitHub, sauvegardé et prêt à publier. Connectez GitHub pour continuer.',
+    forgeNeeded: ({ forge }) =>
+      `Votre code vit dans un dépôt ${forge}, sauvegardé et prêt à publier. Connectez ${forge} pour continuer.`,
     computerNeeded:
       'Un agent a besoin d’un ordinateur pour construire. Ajoutez-en un ; rien de ce que vous avez écrit n’est perdu.',
     addComputer: 'Ajouter un ordinateur',
@@ -904,7 +968,8 @@ export const newAppTranslations: Readonly<
     readyDescription:
       'Votre projet est en place. Démarrez votre agent avec votre description quand vous voulez.',
     startBuilding: 'Commencer à construire',
-    unavailable: 'Impossible de vérifier GitHub depuis cet ordinateur.',
+    forgeUnavailable: ({ forge }) =>
+      `Impossible de vérifier ${forge} depuis cet ordinateur.`,
     deploy: {
       source: 'Source',
       runsOn: 'S’exécute sur',
@@ -966,6 +1031,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "Cosa deve fare la tua app",
       descriptionPlaceholder: "Una pagina di prenotazione per i miei corsi di yoga: si sceglie un corso, si paga con carta e si riceve un promemoria il giorno prima.",
       suggest: "Suggerisci una configurazione",
+      questionsDescription: "Rispondi e Happier suggerisce una configurazione.",
+      suggestAgain: "Suggerisci di nuovo",
       workingTitle: "Al lavoro",
       stepStore: "Store esaminato",
       stepStoreRunning: "Esame del tuo Store",
@@ -991,6 +1058,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "Gira su",
       factData: "Dati",
       useSetup: "Usa questa configurazione",
+      adjust: "Modifica",
+      adjustTitle: "Modifica la configurazione",
+      adjustDescription: "Cambia una parte o digli cosa fare in modo diverso.",
+      askElse: "Chiedi altro",
+      askElseDescription: "Suggerisce di nuovo con la tua nota; questa configurazione resta finché non risponde.",
+      scratch: "Un repository vuoto",
+      dataNone: "Nessuno nell’app",
+      adjustRefused: "Non si adatta al resto della configurazione. Scegline un’altra.",
       noAgentTitle: "Al momento nessun agente può dare suggerimenti",
       noAgentBody: "I suggerimenti girano su una Machine con un agente collegato.",
       whatsMissing: "Cosa manca",
@@ -1018,14 +1093,14 @@ export const newAppTranslations: Readonly<
     describeLabel: 'Cosa deve fare la tua app',
     name: 'Nome',
     namePlaceholder: 'La mia app',
-    codeLivesIn: 'Il codice vive in',
+    codeLivesOn: 'Il codice vive in',
     privateRepository: 'Privato',
     builtBy: 'Costruita su',
     on: 'su',
     noComputer: 'Nessun computer ancora',
     connectGithub: 'Collega GitHub',
-    githubNeeded:
-      'Il tuo codice vive in un repository GitHub, salvato e pronto da pubblicare. Collega GitHub per continuare.',
+    forgeNeeded: ({ forge }) =>
+      `Il tuo codice vive in un repository ${forge}, salvato e pronto da pubblicare. Collega ${forge} per continuare.`,
     computerNeeded:
       'Un agente ha bisogno di un computer su cui costruire. Aggiungine uno; niente di ciò che hai scritto va perso.',
     addComputer: 'Aggiungi un computer',
@@ -1058,7 +1133,8 @@ export const newAppTranslations: Readonly<
     readyDescription:
       'Il progetto è pronto. Avvia il tuo agente con la tua descrizione quando vuoi.',
     startBuilding: 'Inizia a costruire',
-    unavailable: 'Impossibile verificare GitHub da questo computer.',
+    forgeUnavailable: ({ forge }) =>
+      `Impossibile verificare ${forge} da questo computer.`,
     deploy: {
       source: 'Origine',
       runsOn: 'Viene eseguita su',
@@ -1120,6 +1196,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "アプリでやりたいこと",
       descriptionPlaceholder: "ヨガクラスの予約ページ：クラスを選んでカードで支払い、前日にリマインダーが届く。",
       suggest: "構成を提案",
+      questionsDescription: "回答すると Happier が構成を提案します。",
+      suggestAgain: "もう一度提案",
       workingTitle: "作業中",
       stepStore: "Store を確認しました",
       stepStoreRunning: "Store を確認しています",
@@ -1145,6 +1223,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "実行場所",
       factData: "データ",
       useSetup: "この構成を使う",
+      adjust: "調整",
+      adjustTitle: "構成を調整",
+      adjustDescription: "どこでも変更できます。または違う進め方を伝えてください。",
+      askElse: "別のことを頼む",
+      askElseDescription: "メモをもとにもう一度提案します。回答があるまでこの構成は残ります。",
+      scratch: "空のリポジトリ",
+      dataNone: "アプリ内になし",
+      adjustRefused: "この構成の他の部分と合いません。別のものを選んでください。",
       noAgentTitle: "今は提案できるエージェントがいません",
       noAgentBody: "提案は、エージェントにサインインしている Machine で実行されます。",
       whatsMissing: "足りないもの",
@@ -1172,14 +1258,14 @@ export const newAppTranslations: Readonly<
     describeLabel: 'アプリでできること',
     name: '名前',
     namePlaceholder: 'マイアプリ',
-    codeLivesIn: 'コードの保存先',
+    codeLivesOn: 'コードの保存先',
     privateRepository: '非公開',
     builtBy: '作成場所',
     on: '上で',
     noComputer: 'まだコンピューターがありません',
     connectGithub: 'GitHub を接続',
-    githubNeeded:
-      'コードは GitHub のリポジトリに保存され、バックアップされ公開できます。続けるには GitHub を接続してください。',
+    forgeNeeded: ({ forge }) =>
+      `コードは ${forge} のリポジトリに保存され、バックアップされ公開できます。続けるには ${forge} を接続してください。`,
     computerNeeded:
       'エージェントが作業するにはコンピューターが必要です。追加しても、ここに書いた内容は失われません。',
     addComputer: 'コンピューターを追加',
@@ -1212,7 +1298,8 @@ export const newAppTranslations: Readonly<
     readyDescription:
       'プロジェクトの準備ができました。準備ができたら説明を添えてエージェントを開始してください。',
     startBuilding: '作り始める',
-    unavailable: 'このコンピューターから GitHub を確認できませんでした。',
+    forgeUnavailable: ({ forge }) =>
+      `このコンピューターから ${forge} を確認できませんでした。`,
     deploy: {
       source: 'ソース',
       runsOn: '実行先',
@@ -1274,6 +1361,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "Co ma robić twoja aplikacja",
       descriptionPlaceholder: "Strona rezerwacji moich zajęć jogi: ludzie wybierają zajęcia, płacą kartą i dostają przypomnienie dzień wcześniej.",
       suggest: "Zaproponuj konfigurację",
+      questionsDescription: "Odpowiedz, a Happier zaproponuje konfigurację.",
+      suggestAgain: "Zaproponuj ponownie",
       workingTitle: "Trwa praca",
       stepStore: "Sprawdzono twój Store",
       stepStoreRunning: "Sprawdzam twój Store",
@@ -1299,6 +1388,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "Działa na",
       factData: "Dane",
       useSetup: "Użyj tej konfiguracji",
+      adjust: "Dostosuj",
+      adjustTitle: "Dostosuj konfigurację",
+      adjustDescription: "Zmień dowolną część albo powiedz, co zrobić inaczej.",
+      askElse: "Poproś o coś innego",
+      askElseDescription: "Zaproponuje ponownie z twoją notatką; ta konfiguracja zostaje do odpowiedzi.",
+      scratch: "Puste repozytorium",
+      dataNone: "Brak w aplikacji",
+      adjustRefused: "To nie pasuje do reszty konfiguracji. Wybierz coś innego.",
       noAgentTitle: "Żaden agent nie może teraz nic zaproponować",
       noAgentBody: "Propozycje działają na Machine z zalogowanym agentem.",
       whatsMissing: "Czego brakuje",
@@ -1326,14 +1423,14 @@ export const newAppTranslations: Readonly<
     describeLabel: 'Co ma robić twoja aplikacja',
     name: 'Nazwa',
     namePlaceholder: 'Moja aplikacja',
-    codeLivesIn: 'Kod jest w',
+    codeLivesOn: 'Kod jest w',
     privateRepository: 'Prywatne',
     builtBy: 'Budowana na',
     on: 'na',
     noComputer: 'Jeszcze bez komputera',
     connectGithub: 'Połącz GitHub',
-    githubNeeded:
-      'Twój kod jest w repozytorium GitHub, z kopią zapasową i gotowy do publikacji. Połącz GitHub, aby kontynuować.',
+    forgeNeeded: ({ forge }) =>
+      `Twój kod jest w repozytorium ${forge}, z kopią zapasową i gotowy do publikacji. Połącz ${forge}, aby kontynuować.`,
     computerNeeded:
       'Agent potrzebuje komputera, na którym zbuduje aplikację. Dodaj go; nic z tego, co napisano, nie zginie.',
     addComputer: 'Dodaj komputer',
@@ -1366,7 +1463,8 @@ export const newAppTranslations: Readonly<
     readyDescription:
       'Projekt jest gotowy. Uruchom agenta ze swoim opisem, kiedy zechcesz.',
     startBuilding: 'Zacznij budować',
-    unavailable: 'Nie udało się sprawdzić GitHuba z tego komputera.',
+    forgeUnavailable: ({ forge }) =>
+      `Nie udało się sprawdzić ${forge} z tego komputera.`,
     deploy: {
       source: 'Źródło',
       runsOn: 'Działa na',
@@ -1428,6 +1526,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "O que seu app deve fazer",
       descriptionPlaceholder: "Uma página de reservas para minhas aulas de ioga: as pessoas escolhem uma aula, pagam com cartão e recebem um lembrete no dia anterior.",
       suggest: "Sugerir uma configuração",
+      questionsDescription: "Responda e o Happier sugere uma configuração.",
+      suggestAgain: "Sugerir de novo",
       workingTitle: "Trabalhando nisso",
       stepStore: "Olhamos sua Store",
       stepStoreRunning: "Olhando sua Store",
@@ -1453,6 +1553,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "Roda em",
       factData: "Dados",
       useSetup: "Usar esta configuração",
+      adjust: "Ajustar",
+      adjustTitle: "Ajustar a configuração",
+      adjustDescription: "Mude qualquer parte ou diga o que fazer de outro jeito.",
+      askElse: "Pedir outra coisa",
+      askElseDescription: "Sugere de novo com sua nota; esta configuração fica até a resposta.",
+      scratch: "Um repositório vazio",
+      dataNone: "Nenhum no app",
+      adjustRefused: "Isso não combina com o resto da configuração. Escolha outra opção.",
       noAgentTitle: "Nenhum agente pode fazer sugestões agora",
       noAgentBody: "As sugestões rodam em uma Machine com um agente conectado.",
       whatsMissing: "O que falta",
@@ -1480,14 +1588,14 @@ export const newAppTranslations: Readonly<
     describeLabel: 'O que seu app deve fazer',
     name: 'Nome',
     namePlaceholder: 'Meu app',
-    codeLivesIn: 'O código fica em',
+    codeLivesOn: 'O código fica em',
     privateRepository: 'Privado',
     builtBy: 'Criado em',
     on: 'em',
     noComputer: 'Ainda sem computador',
     connectGithub: 'Conectar GitHub',
-    githubNeeded:
-      'Seu código fica em um repositório no GitHub, com backup e pronto para publicar. Conecte o GitHub para continuar.',
+    forgeNeeded: ({ forge }) =>
+      `Seu código fica em um repositório no ${forge}, com backup e pronto para publicar. Conecte o ${forge} para continuar.`,
     computerNeeded:
       'Um agente precisa de um computador para construir. Adicione um; nada do que você escreveu se perde.',
     addComputer: 'Adicionar um computador',
@@ -1520,7 +1628,8 @@ export const newAppTranslations: Readonly<
     readyDescription:
       'Seu projeto está configurado. Inicie seu agente com sua descrição quando quiser.',
     startBuilding: 'Começar a construir',
-    unavailable: 'Não foi possível verificar o GitHub neste computador.',
+    forgeUnavailable: ({ forge }) =>
+      `Não foi possível verificar o ${forge} neste computador.`,
     deploy: {
       source: 'Origem',
       runsOn: 'Executa em',
@@ -1582,6 +1691,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "Что должно делать приложение",
       descriptionPlaceholder: "Страница записи на мои занятия йогой: человек выбирает занятие, платит картой и получает напоминание накануне.",
       suggest: "Предложить конфигурацию",
+      questionsDescription: "Ответьте, и Happier предложит конфигурацию.",
+      suggestAgain: "Предложить снова",
       workingTitle: "В работе",
       stepStore: "Store просмотрен",
       stepStoreRunning: "Смотрим ваш Store",
@@ -1607,6 +1718,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "Работает на",
       factData: "Данные",
       useSetup: "Использовать эту конфигурацию",
+      adjust: "Изменить",
+      adjustTitle: "Изменить конфигурацию",
+      adjustDescription: "Измените любую часть или скажите, что сделать иначе.",
+      askElse: "Попросить другое",
+      askElseDescription: "Предложит снова с вашей заметкой; эта конфигурация останется до ответа.",
+      scratch: "Пустой репозиторий",
+      dataNone: "Нет в приложении",
+      adjustRefused: "Это не подходит к остальной конфигурации. Выберите другое.",
       noAgentTitle: "Сейчас ни один агент не может ничего предложить",
       noAgentBody: "Предложения работают на Machine с агентом, в который выполнен вход.",
       whatsMissing: "Чего не хватает",
@@ -1634,14 +1753,14 @@ export const newAppTranslations: Readonly<
     describeLabel: 'Что должно делать приложение',
     name: 'Название',
     namePlaceholder: 'Моё приложение',
-    codeLivesIn: 'Код хранится в',
+    codeLivesOn: 'Код хранится в',
     privateRepository: 'Приватный',
     builtBy: 'Создаётся на',
     on: 'на',
     noComputer: 'Пока нет компьютера',
     connectGithub: 'Подключить GitHub',
-    githubNeeded:
-      'Код хранится в репозитории GitHub — с резервной копией и готовым к публикации. Подключите GitHub, чтобы продолжить.',
+    forgeNeeded: ({ forge }) =>
+      `Код хранится в репозитории ${forge} — с резервной копией и готовым к публикации. Подключите ${forge}, чтобы продолжить.`,
     computerNeeded:
       'Агенту нужен компьютер для работы. Добавьте его — написанное здесь не пропадёт.',
     addComputer: 'Добавить компьютер',
@@ -1674,7 +1793,8 @@ export const newAppTranslations: Readonly<
     readyDescription:
       'Проект настроен. Запустите агента с вашим описанием, когда будете готовы.',
     startBuilding: 'Начать работу',
-    unavailable: 'Не удалось проверить GitHub с этого компьютера.',
+    forgeUnavailable: ({ forge }) =>
+      `Не удалось проверить ${forge} с этого компьютера.`,
     deploy: {
       source: 'Источник',
       runsOn: 'Где работает',
@@ -1736,6 +1856,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "你的应用要做什么",
       descriptionPlaceholder: "我的瑜伽课预约页面：大家选课、刷卡付款，并在前一天收到提醒。",
       suggest: "推荐一个配置",
+      questionsDescription: "回答后 Happier 会推荐一个配置。",
+      suggestAgain: "重新推荐",
       workingTitle: "正在处理",
       stepStore: "已查看你的 Store",
       stepStoreRunning: "正在查看你的 Store",
@@ -1761,6 +1883,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "运行于",
       factData: "数据",
       useSetup: "使用这个配置",
+      adjust: "调整",
+      adjustTitle: "调整配置",
+      adjustDescription: "修改任意部分，或告诉它换一种做法。",
+      askElse: "提出其他要求",
+      askElseDescription: "它会根据你的备注重新推荐；在回答之前保留此配置。",
+      scratch: "一个空仓库",
+      dataNone: "应用中没有",
+      adjustRefused: "这与此配置的其余部分不匹配。请另选一个。",
       noAgentTitle: "目前没有可以提供推荐的代理",
       noAgentBody: "推荐在已登录代理的 Machine 上运行。",
       whatsMissing: "缺少什么",
@@ -1787,14 +1917,14 @@ export const newAppTranslations: Readonly<
     describeLabel: '你的应用要做什么',
     name: '名称',
     namePlaceholder: '我的应用',
-    codeLivesIn: '代码存放于',
+    codeLivesOn: '代码存放于',
     privateRepository: '私有',
     builtBy: '构建于',
     on: '在',
     noComputer: '还没有电脑',
     connectGithub: '连接 GitHub',
-    githubNeeded:
-      '你的代码存放在 GitHub 仓库中，有备份且可以发布。连接 GitHub 以继续。',
+    forgeNeeded: ({ forge }) =>
+      `你的代码存放在 ${forge} 仓库中，有备份且可以发布。连接 ${forge} 以继续。`,
     computerNeeded:
       '智能体需要一台电脑来构建。添加一台吧，你写的内容不会丢失。',
     addComputer: '添加电脑',
@@ -1824,7 +1954,8 @@ export const newAppTranslations: Readonly<
     readyTitle: '项目已就绪',
     readyDescription: '项目已设置好。准备好后，用你的描述启动智能体。',
     startBuilding: '开始构建',
-    unavailable: '无法从这台电脑检查 GitHub。',
+    forgeUnavailable: ({ forge }) =>
+      `无法从这台电脑检查 ${forge}。`,
     deploy: {
       source: '来源',
       runsOn: '运行于',
@@ -1886,6 +2017,8 @@ export const newAppTranslations: Readonly<
       descriptionLabel: "你的應用程式要做什麼",
       descriptionPlaceholder: "我的瑜伽課預約頁面：大家選課、刷卡付款，並在前一天收到提醒。",
       suggest: "推薦一個設定",
+      questionsDescription: "回答後 Happier 會推薦一個設定。",
+      suggestAgain: "重新推薦",
       workingTitle: "處理中",
       stepStore: "已查看你的 Store",
       stepStoreRunning: "正在查看你的 Store",
@@ -1911,6 +2044,14 @@ export const newAppTranslations: Readonly<
       factRunsOn: "執行於",
       factData: "資料",
       useSetup: "使用這個設定",
+      adjust: "調整",
+      adjustTitle: "調整設定",
+      adjustDescription: "修改任意部分，或告訴它換一種做法。",
+      askElse: "提出其他要求",
+      askElseDescription: "它會根據你的備註重新推薦；在回答之前保留此設定。",
+      scratch: "一個空的儲存庫",
+      dataNone: "應用程式中沒有",
+      adjustRefused: "這與此設定的其餘部分不相符。請另選一個。",
       noAgentTitle: "目前沒有可以提供推薦的代理程式",
       noAgentBody: "推薦會在已登入代理程式的 Machine 上執行。",
       whatsMissing: "缺少什麼",
@@ -1937,14 +2078,14 @@ export const newAppTranslations: Readonly<
     describeLabel: '你的應用程式要做什麼',
     name: '名稱',
     namePlaceholder: '我的應用程式',
-    codeLivesIn: '程式碼存放於',
+    codeLivesOn: '程式碼存放於',
     privateRepository: '私人',
     builtBy: '建構於',
     on: '在',
     noComputer: '還沒有電腦',
     connectGithub: '連接 GitHub',
-    githubNeeded:
-      '你的程式碼存放在 GitHub 儲存庫中，有備份且可以發佈。連接 GitHub 以繼續。',
+    forgeNeeded: ({ forge }) =>
+      `你的程式碼存放在 ${forge} 儲存庫中，有備份且可以發佈。連接 ${forge} 以繼續。`,
     computerNeeded:
       '代理程式需要一台電腦來建構。新增一台吧，你寫的內容不會遺失。',
     addComputer: '新增電腦',
@@ -1974,7 +2115,8 @@ export const newAppTranslations: Readonly<
     readyTitle: '專案已就緒',
     readyDescription: '專案已設定好。準備好後，用你的描述啟動代理程式。',
     startBuilding: '開始建構',
-    unavailable: '無法從這台電腦檢查 GitHub。',
+    forgeUnavailable: ({ forge }) =>
+      `無法從這台電腦檢查 ${forge}。`,
     deploy: {
       source: '來源',
       runsOn: '執行於',

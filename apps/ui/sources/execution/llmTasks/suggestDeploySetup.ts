@@ -47,6 +47,16 @@ export type DeploySuggestionOutcome =
     | Readonly<{ kind: 'failed'; code: string }>
     | Readonly<{ kind: 'stopped' }>;
 
+/** The one read of what can be offered (`deployments.suggestions.catalog`); a starter picked by hand reads the same snapshot. */
+export async function readDeploySuggestionCatalog(params: Readonly<{ serverId: string; signal?: AbortSignal }>): Promise<
+    Readonly<{ kind: 'catalog'; catalog: DeploySuggestionCatalogV1 }> | Readonly<{ kind: 'failed'; code: string }>> {
+    const listed = await executeAction(DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, {}, { surface: 'ui', authority: 'present_user',
+        actionCaller: { kind: 'host' }, serverId: params.serverId, ...(params.signal ? { signal: params.signal } : {}) });
+    if (!listed.ok) return { kind: 'failed', code: listed.errorCode };
+    const parsed = DeploySuggestionCatalogV1Schema.safeParse(listed.result);
+    return parsed.success ? { kind: 'catalog', catalog: parsed.data } : { kind: 'failed', code: 'invalid_action_output' };
+}
+
 /** One snapshot and one accepted task; answers reuse the snapshot supplied by the dialog. */
 export async function suggestDeploySetup(params: Readonly<{
     serverId: string;
@@ -64,12 +74,10 @@ export async function suggestDeploySetup(params: Readonly<{
         if (params.signal?.aborted) return { kind: 'stopped' };
         let catalog = params.catalog;
         if (!catalog) {
-            const listed = await executeAction(DEPLOYMENT_SUGGESTIONS_CATALOG_ACTION_ID_V1, {}, context);
+            const listed = await readDeploySuggestionCatalog(params);
             if (params.signal?.aborted) return { kind: 'stopped' };
-            if (!listed.ok) return { kind: 'failed', code: listed.errorCode };
-            const parsed = DeploySuggestionCatalogV1Schema.safeParse(listed.result);
-            if (!parsed.success) return { kind: 'failed', code: 'invalid_action_output' };
-            catalog = parsed.data;
+            if (listed.kind === 'failed') return listed;
+            catalog = listed.catalog;
         }
         params.onProgress?.({ kind: 'catalog', counts: { starters: catalog.starters.length, apps: catalog.apps.length,
             targets: catalog.targets.length, machines: catalog.machines.length, stores: catalog.stores.length } });

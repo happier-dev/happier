@@ -29,6 +29,10 @@ vi.mock('@/components/ui/popover', async (importOriginal) =>
 );
 
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
+// Where a new repository would go on each forge is a Machine RPC (the SCM describe boundary); none answers by default.
+vi.mock('@/sync/ops/scm/machineScm', () => ({
+  machineScmHostingRepositoryDescribePublishTargets: vi.fn(async () => ({ success: false, error: 'Machine unavailable' })),
+}));
 // The UI transport adapter delegates into the real Action executor; only its host ports are fixtures (the
 // suggestion owner's own test harness, suggestDeploySetup.test.ts).
 vi.mock(
@@ -49,6 +53,14 @@ const { createPlainPromptLibraryCatalogHomeFixture } =
 const { waitForHomeGovernance } =
   await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { NewAppScreen } = await import('./NewAppScreen');
+const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+/** A field select's menu (ValueFieldSelect renders one DropdownMenu carrying its testID, items and onSelect). */
+const menu = (screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) =>
+  screen.findAllByType(DropdownMenu).find((node) => node.props.testID === testID);
+const { Item } = await import('@/components/ui/lists/Item');
+/** The row itself (its testID also lands on inner hosts, which carry no subtitle). */
+const row = (screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) =>
+  screen.findAllByType(Item).find((node) => node.props.testID === testID);
 
 afterEach(() => standardCleanup());
 beforeEach(() => {
@@ -482,6 +494,67 @@ it('when every suggestion is dropped it says it couldn’t suggest, and Try agai
   }
 });
 
+
+it('a questions round asks in the step: the footer waits for an answer, then one more run brings the cards (journey-deploy F2)', async () => {
+  const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: true }] };
+  let round = 0;
+  suggestionBoundary({ executionRunWait: async () => {
+    round++;
+    return { ok: true, status: 'succeeded', result: terminal(round === 1 ? { recommendations: [], questions } : { recommendations: [recommendation] }) };
+  } });
+  const { fixture, screen } = await openDescribe('auto-questions');
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('app-shell-question-purpose-text')).toBeTruthy());
+    expect(screen.findByTestId('newApp.auto.questions'), 'the questions sit in the step, not a stacked dialog').toBeTruthy();
+    expect(screen.findByTestId('app-shell-question-submit'), 'the dialog footer owns the answer action').toBeNull();
+    expect(screen.findByTestId('newApp.auto.suggestAgain')?.props.disabled, 'nothing to send until it is answered').toBe(true);
+    execute.mockClear();
+    await act(async () => screen.changeTextByTestId('app-shell-question-purpose-text', 'Order bread'));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.suggestAgain')?.props.disabled).toBe(false));
+    await screen.pressByTestIdAsync('newApp.auto.suggestAgain');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy());
+    expect(calls('execution.run.start')).toHaveLength(1);
+    expect(calls('deployments.suggestions.catalog')).toHaveLength(0);
+    expect(calls('execution.run.start')[0]![1]).toMatchObject({ intentInput: { input: { answers: { purpose: { kind: 'text', value: 'Order bread' } } } } });
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
+it('Adjust changes one fact through the validator and asks again with a note, from the same snapshot (journey-deploy autoAdjust)', async () => {
+  suggestionBoundary({ deploymentSuggestionTargets: async () => ({ targets, stores: [{ id: 'db', engine: 'postgres' }] }),
+    executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }) });
+  const { fixture, screen } = await openDescribe('auto-adjust');
+  try {
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.adjust')).toBeTruthy());
+    await screen.pressByTestIdAsync('newApp.auto.adjust');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.adjust.data.trigger')).toBeTruthy());
+    execute.mockClear();
+    await act(async () => { menu(screen, 'newApp.auto.adjust.data')!.props.onSelect('store:db'); });
+    expect(execute, 'an adjustment is checked locally, no I/O').not.toHaveBeenCalled();
+    expect(menu(screen, 'newApp.auto.adjust.data')?.props.selectedId).toBe('store:db');
+    await act(async () => screen.changeTextByTestId('newApp.auto.adjust.note', 'Keep it free'));
+    await screen.pressByTestIdAsync('newApp.auto.suggestAgain');
+    await waitForHomeGovernance(() => expect(calls('execution.run.start')).toHaveLength(1));
+    expect(calls('deployments.suggestions.catalog')).toHaveLength(0);
+    expect(calls('execution.run.start')[0]![1]).toMatchObject({ intentInput: { input: { note: 'Keep it free' } } });
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('F2: canonical answers and adjustment notes each start one checked run with zero catalog reads; connect refresh reads once', async () => {
   const { useNewAppAutoSuggestions } = await import('./auto/useNewAppAutoSuggestions');
   const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: true }] };
@@ -546,4 +619,60 @@ it('F2: canonical answers and adjustment notes each start one checked run with z
     expect(calls('execution.run.start')).toHaveLength(1);
     expect(calls('deployments.suggestions.check')).toHaveLength(1);
   } finally { await screen.unmount(); await fixture.dispose(); }
+});
+
+it('F5: Code lives on offers only forges that pair with the target, describes each once on open, and a choice reads and writes nothing', async () => {
+  const pairing: DeploySuggestionCatalogV1['targets'] = [{ ...targets[0]!, sources: { gitIntegration: ['github', 'bitbucket'], upload: false } }];
+  suggestionBoundary({
+    deploymentSuggestionTargets: async () => ({ targets: pairing, stores: [] }),
+    // GitLab can create a repository but this target can't deploy from it, so it is never offered.
+    deploymentSuggestionForges: async () => [{ providerKind: 'github', title: 'GitHub' },
+      { providerKind: 'bitbucket', title: 'Bitbucket' }, { providerKind: 'gitlab', title: 'GitLab' }],
+    executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }),
+  });
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const { machineScmHostingRepositoryDescribePublishTargets: describeTargets } = await import('@/sync/ops/scm/machineScm');
+  const { ScmHostingRepositoryDescribePublishTargetsResponseSchema } = await import('@happier-dev/protocol/scm');
+  vi.mocked(describeTargets).mockImplementation(async (_machineId, request) => {
+    const kind = (request as { providerKind: string }).providerKind;
+    const title = kind === 'github' ? 'GitHub' : 'Bitbucket';
+    return ScmHostingRepositoryDescribePublishTargetsResponseSchema.parse({
+      success: true, defaultRepositoryName: 'bakery', auth: { state: 'authenticated', profileKind: 'connected_account' },
+      targets: [{ provider: { id: `happier.scm.forge.${kind}/${kind}`, kind, displayName: title, baseUrl: `https://${kind}.example.test`,
+        urlSafety: { allowedSchemes: ['https:'] } }, owner: `${kind}-team`, ownerKind: 'org', label: `${kind}-team`, isDefault: true,
+        supportedVisibilities: ['private'], supportedRemoteUrlKinds: ['https'] }],
+    });
+  });
+  const { fixture, screen } = await openDescribe('auto-forge');
+  try {
+    const scope = storage.getState().settingsScope;
+    if (!scope) throw new Error('Expected admitted Home Account');
+    await publishMachineInventoryForTest(scope, [createMachineFixture({ activeAt: Date.now() })]);
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A bakery page'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.useSetup')?.props.disabled).toBe(false));
+    vi.mocked(describeTargets).mockClear();
+    await screen.pressByTestIdAsync('newApp.auto.useSetup');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.forge')).toBeTruthy());
+    await waitForHomeGovernance(() => expect(vi.mocked(describeTargets)).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(describeTargets).mock.calls.map((row) => (row[1] as { providerKind: string }).providerKind).sort())
+      .toEqual(['bitbucket', 'github']);
+    expect(menu(screen, 'newApp.forge')?.props.items.map((item: { id: string }) => item.id)).toEqual(['github', 'bitbucket']);
+    expect(menu(screen, 'newApp.forge')?.props.selectedId, 'GitHub is the default').toBe('github');
+    await waitForHomeGovernance(() => expect(row(screen, 'newApp.repository')?.props.subtitle).toContain('github-team/'));
+    execute.mockClear();
+    await act(async () => { menu(screen, 'newApp.forge')!.props.onSelect('bitbucket'); });
+    expect(menu(screen, 'newApp.forge')?.props.selectedId).toBe('bitbucket');
+    expect(row(screen, 'newApp.repository')?.props.subtitle).toContain('bitbucket-team/');
+    expect(vi.mocked(describeTargets), 'a choice reads nothing more').toHaveBeenCalledTimes(2);
+    expect(execute, 'and writes nothing until Create').not.toHaveBeenCalled();
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
 });

@@ -11,8 +11,9 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { SelectionTiles, type SelectionTile } from '@/components/ui/forms/SelectionTiles';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -39,9 +40,6 @@ import { useActiveMachineFacts } from '@/sync/store/hooks';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { resolveMachineActionCandidates } from '@/utils/sessions/resolveMachineActionCandidates';
-import { machineScmHostingRepositoryDescribePublishTargets } from '@/sync/ops/scm/machineScm';
-import type { ScmHostingRepositoryDescribePublishTargetsResponse } from '@happier-dev/protocol/scm';
-import { resolveSourceControlPublishRepositoryRemediation } from '@/components/workspaces/scm/update/resolveSourceControlPublishRepositoryRemediation';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { t } from '@/text';
@@ -66,8 +64,12 @@ import type { DeploymentDraftFrame } from '@/components/projects/deployments/Dep
 import { NewAppCodeSources } from './NewAppCodeSources';
 import { NewAppDeploySteps, NewAppDeploySummary, type NewAppDeploySource } from './NewAppDeploySteps';
 import { NewAppAutoStep } from './auto/NewAppAutoStep';
+import { NewAppAutoAdjust } from './auto/NewAppAutoAdjust';
+import type { TransientQuestionAnswerState } from '@/components/appShell/plugins/TransientQuestionForm';
 import { useNewAppAutoSuggestions, type NewAppAutoChosen } from './auto/useNewAppAutoSuggestions';
+import { DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1 } from '@happier-dev/protocol/projects/starters/createV1';
 import { applyDeploySuggestion } from './applyDeploySuggestion';
+import { useNewAppForges, type ForgeOwnerFact } from './useNewAppForges';
 import { isRepositoryAddressCandidate } from '@/components/projects/sources/projectSourceAddress';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -95,12 +97,6 @@ const catalogDoor = (item: RegistryCatalogItemSummary): Door => `catalog:${JSON.
 
 /** The Action each control uses (lab s1 NOTES "actions"). */
 const CREATE_ACTION = 'projects.starters.create' as const;
-
-type OwnerFact =
-  | Readonly<{ kind: 'loading' }>
-  | Readonly<{ kind: 'ready'; owner: string }>
-  | Readonly<{ kind: 'needsAccount' }>
-  | Readonly<{ kind: 'unavailable' }>;
 
 type CreateState =
   | Readonly<{ kind: 'running' }>
@@ -174,6 +170,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // Describe your app (journey-deploy S1/S2/S!): the suggestion owner's last report, and the setup the person chose.
   const auto = useNewAppAutoSuggestions({ serverId: scope?.serverId ?? null, active: step === 'auto' });
   const [appliedSuggestion, setAppliedSuggestion] = React.useState<NewAppAutoChosen | null>(null);
+  // The open questions round's answers (journey-deploy F2): the step owns them, the footer sends them.
+  const [questionAnswers, setQuestionAnswers] = React.useState<TransientQuestionAnswerState | null>(null);
+  // Adjust (journey-deploy autoAdjust) is a view of the cards: it holds only while a chosen setup is shown.
+  const [adjusting, setAdjusting] = React.useState(false);
+  const [adjustNote, setAdjustNote] = React.useState('');
   const [starterId, setStarterId] = React.useState<string | null>(
     props.starterId ?? (starters.length === 1 && !props.projectSourceId ? starters[0]!.itemId : null),
   );
@@ -256,7 +257,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const [machineHomeMismatch, setMachineHomeMismatch] = React.useState(false);
   const [machineCreationDraft, setMachineCreationDraft] = React.useState<MachineCreationContinuationDraft | null>(null);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
-  const [owner, setOwner] = React.useState<OwnerFact>({ kind: 'loading' });
   const [create, setCreate] = React.useState<CreateState | null>(null);
   // One create intent per reviewed draft: a retry of the same review reuses it, so nothing is created twice.
   const [intentKeyFor] = React.useState(() => createStarterIntentKeys(randomUUID));
@@ -274,57 +274,33 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     machines.find((candidate) => candidate.id === effectiveMachineId) ?? null;
   const homeDir = readMachineHomeDir(machine);
 
-  // Code lives in: the default GitHub owner the Machine's SCM owner would publish to.
-  const ownerProbe = React.useRef(0);
-  const probeOwner = React.useCallback(() => {
-    if (!effectiveMachineId || !homeDir) {
-      setOwner({ kind: 'unavailable' });
-      return;
-    }
-    const probe = ++ownerProbe.current;
-    setOwner((current) =>
-      current.kind === 'ready' ? current : { kind: 'loading' },
-    );
-    void machineScmHostingRepositoryDescribePublishTargets(effectiveMachineId, {
-      cwd: homeDir,
-      providerKind: 'github',
-    })
-      .then((response) => {
-        if (probe !== ownerProbe.current) return;
-        // The Git panel's publish owner decides what a describe answer needs; New app reads the same verdict.
-        const targets = response && 'success' in response ? (response as ScmHostingRepositoryDescribePublishTargetsResponse) : null;
-        const target = targets?.success === true
-          ? targets.targets.find((candidate) => candidate.isDefault) ?? targets.targets[0] ?? null
-          : null;
-        const verdict = resolveSourceControlPublishRepositoryRemediation({
-          targetsResponse: targets, selectedTarget: target, publishFailure: null,
-        });
-        if (target && verdict.authState !== null && !verdict.authUnavailable) setOwner({ kind: 'ready', owner: target.owner });
-        else if (verdict.action !== null || (targets?.success === true && !verdict.authState)) setOwner({ kind: 'needsAccount' });
-        else setOwner({ kind: 'unavailable' });
-      })
-      .catch(() => {
-        if (probe === ownerProbe.current) setOwner({ kind: 'unavailable' });
-      });
-  }, [effectiveMachineId, homeDir]);
-  React.useEffect(() => {
-    if (step === 'describe') probeOwner();
-  }, [probeOwner, step]);
+  // Code lives on (journey-deploy F5): the forge owner offers forges and says where the repository would go on each.
+  const forge = useNewAppForges({ serverId: scope?.serverId ?? null, machineId: effectiveMachineId, homeDir,
+    active: step === 'describe', suggestion: appliedSuggestion });
+  const owner = forge.owner;
+  // A suggested scratch setup creates an empty repository; a starter picked by hand clears it.
+  const scratch = starterId === null && appliedSuggestion?.recommendation.source.kind === 'scratch';
 
   const repositoryName = deriveRepositoryName(name);
   const input = scope
     ? buildStarterCreateInput(
-        { starterId, description, name, machineId: effectiveMachineId },
+        { starterId, scratch, description, name, machineId: effectiveMachineId },
         {
           serverId: scope.serverId,
           homeDir,
           owner: owner.kind === 'ready' ? owner.owner : null,
+          providerKind: forge.chosen,
+          // The exact deployment the row described (two Azure orgs, cloud and self-managed GitLab): U5 9f807c9bfa6.
+          provider: owner.kind === 'ready' ? { id: owner.target.provider.id, baseUrl: owner.target.provider.baseUrl } : null,
           requestKey: intentKeyFor({
             starterId,
+            scratch,
             description,
             name,
             machineId: effectiveMachineId,
             owner: owner.kind === 'ready' ? owner.owner : null,
+            providerKind: forge.chosen,
+            providerId: owner.kind === 'ready' ? owner.target.provider.id : null,
           }),
         },
       )
@@ -373,9 +349,37 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         intent: 'link',
       });
       // The SCM owner reads the repaired credential; the starter and writing stay in this screen.
-      probeOwner();
+      forge.recheck();
     })();
-  }, [probeOwner, scope]);
+  }, [forge.recheck, scope]);
+  // Code lives on · <forge> · owner/name · Private (journey-deploy F5). The forge is a choice only when more than one fits.
+  const forgeTitle = forge.forges.find((candidate) => candidate.providerKind === forge.chosen)?.title
+    ?? (owner.kind === 'ready' ? owner.target.provider.displayName : owner.kind === 'loading' ? null : owner.providerName)
+    ?? forge.chosen ?? '';
+  const codeLivesOnLine = owner.kind === 'ready'
+    ? [forge.forges.length > 1 ? null : forgeTitle, `${owner.owner}/${repositoryName || '…'}`, t('newApp.privateRepository')]
+      .filter(Boolean).join(' · ')
+    : owner.kind === 'loading' ? '—'
+      : owner.kind === 'needsAccount' ? t('newApp.forgeNeeded', { forge: forgeTitle })
+        : t('newApp.forgeUnavailable', { forge: forgeTitle });
+  const forgeChoice = forge.forges.length > 1 ? (
+    <ValueFieldSelect
+      testID="newApp.forge"
+      label={t('newApp.codeLivesOn')}
+      items={forge.forges.map((candidate) => ({ id: candidate.providerKind, title: candidate.title,
+        ...forgeOptionLine(forge.ownerOf(candidate.providerKind), repositoryName) }))}
+      selectedId={forge.chosen}
+      onSelect={forge.choose}
+    />
+  ) : null;
+  // The one way on when the chosen forge can't take the repository yet: connect GitHub here, or check again.
+  const forgeRepair = owner.kind === 'needsAccount' && forge.chosen === DEFAULT_PROJECT_REPOSITORY_PROVIDER_KIND_V1 ? (
+    <RoundButton testID="newApp.connectGithub" size="small" display="inverted"
+      title={t('newApp.connectGithub')} onPress={connectGithub} />
+  ) : (owner.kind === 'needsAccount' || owner.kind === 'unavailable') && machine ? (
+    <RoundButton testID="newApp.recheckGithub" size="small" display="inverted"
+      title={t('newApp.retry')} onPress={forge.recheck} />
+  ) : null;
   const addComputer = React.useCallback(() => {
     setMachineHomeMismatch(false);
     setAddingMachine(true);
@@ -427,12 +431,16 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     submittedInput.current = actionInput;
     setStep('create');
     setCreate({ kind: 'running' });
-    const suggestion = appliedSuggestion && suggestedStarterItemId(appliedSuggestion) === actionInput.starterId ? appliedSuggestion : null;
+    const suggestion = appliedSuggestion && (actionInput.source?.kind === 'scratch'
+      ? appliedSuggestion.recommendation.source.kind === 'scratch'
+      : suggestedStarterItemId(appliedSuggestion) === actionInput.starterId) ? appliedSuggestion : null;
     const lifetime = suggestion ? captureActiveServerAccountScopeLifetime() : null;
     if (suggestion && lifetime) {
       // Use this setup: the suggestion owner creates through the same Action with the plan brief, then opens the Session.
-      const { serverId: _serverId, starterId: _starterId, description: _description, ...createInput } = actionInput;
-      const applied = await applyDeploySuggestion({ serverId: scope.serverId, suggestion: suggestion.recommendation,
+      const { serverId: _serverId, starterId: _starterId, source: _source, description: _description, ...createInput } = actionInput;
+      // The brief names the forge the person kept, which the validator admitted with this target.
+      const applied = await applyDeploySuggestion({ serverId: scope.serverId,
+        suggestion: { ...suggestion.recommendation, repositoryProviderKind: actionInput.repository.providerKind },
         catalog: suggestion.catalog, description: auto.description,
         create: { input: createInput, lifetime, ...(name.trim() ? { sessionName: name.trim() } : {}) } });
       if (applied.kind === 'created') {
@@ -445,7 +453,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         : readStarterCreateOutcome({ kind: 'failed', code: applied.kind === 'failed' ? applied.code : applied.kind }, actionInput.resume);
       setCreate(settled);
       if (settled.kind === 'needsScmAccount') {
-        setOwner({ kind: 'needsAccount' });
+        forge.markNeedsAccount();
         setStep('describe');
       }
       return;
@@ -473,7 +481,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     }
     setCreate(outcome);
     if (outcome.kind === 'needsScmAccount') {
-      setOwner({ kind: 'needsAccount' });
+      forge.markNeedsAccount();
       setStep('describe');
       return;
     }
@@ -481,7 +489,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       if (await startSession(outcome)) stepAside();
       else setCreate({ kind: 'projectReady', created: outcome });
     }
-  }, [appliedSuggestion, auto.description, create, input, name, scope, startSession, stepAside]);
+  }, [appliedSuggestion, auto.description, create, forge.markNeedsAccount, input, name, scope, startSession, stepAside]);
 
   // Use this setup (journey-deploy F4): the suggestion owner routes it. A starter continues in this flow's review, which
   // creates through the owner with the plan brief; a catalog app continues in this dialog's Where it runs.
@@ -496,10 +504,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       startDeploy({ kind: 'catalogApp', app: applied.app, targetId: applied.targetId });
       return;
     }
-    if (applied.kind === 'needsCreateInput' && source.kind === 'starter') {
+    if (applied.kind === 'needsCreateInput') {
+      // A starter or scratch setup builds code: it continues in this flow's review (Code lives on, Built by), then a Session.
       setAppliedSuggestion(chosen);
       setDescription(auto.description);
-      setStarterId(suggestedStarterItemId(chosen));
+      setStarterId(source.kind === 'starter' ? suggestedStarterItemId(chosen) : null);
       setPickedStarter(null);
       setCodeSourceId(null);
       setDoor(null);
@@ -538,6 +547,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // With nothing to pick, the state's own next step (Add a computer, Retry) is the only action. Your code continues
   // in that Project's own new-Environment draft (lab f1cfg); a starter continues here.
   const autoKind = auto.view.kind;
+  const adjustingNow = adjusting && autoKind === 'recommendations' && auto.chosen !== null;
   const primary = addingMachine ? null :
     step === 'deploy'
       ? deployFrame ? { ...deployFrame.primary, onPress: deployFrame.press } : null
@@ -548,6 +558,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           ? { title: t('newApp.auto.useSetup'), disabled: auto.chosen === null, onPress: () => { void applySuggestionRef.current(); }, testID: 'newApp.auto.useSetup' }
           : autoKind === 'noAgent'
             ? { title: t('newApp.auto.addMachine'), disabled: false, onPress: addComputer, testID: 'newApp.auto.addMachine' }
+          : autoKind === 'questions'
+            ? { title: t('newApp.auto.suggestAgain'), disabled: !questionAnswers?.ready,
+                onPress: () => { if (questionAnswers?.ready) auto.answerQuestions(questionAnswers.answers); }, testID: 'newApp.auto.suggestAgain' }
             : null
       : step === 'start'
       ? {
@@ -629,15 +642,22 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   );
   // The step's quieter ways out, before Back and the primary (lab autoThink: Stop · Close; autoNoAgent: Choose a starter myself).
   const autoStop = auto.view.kind === 'working' ? (typeof auto.view.stop === 'object' ? 'refused' : auto.view.stop) : null;
-  const autoSecondary: ReadonlyArray<Readonly<{ title: string; testID: string; onPress: () => void; loading?: boolean }>> | null =
+  const autoSecondary: ReadonlyArray<Readonly<{ title: string; testID: string; onPress: () => void; loading?: boolean; disabled?: boolean }>> | null =
     step !== 'auto' || addingMachine ? null
+    : adjustingNow ? [
+        { title: t('common.back'), testID: 'newApp.auto.adjustBack', onPress: () => setAdjusting(false) },
+        { title: t('newApp.auto.suggestAgain'), testID: 'newApp.auto.suggestAgain', disabled: !adjustNote.trim(),
+          onPress: () => { const note = adjustNote.trim(); if (!note) return; setAdjusting(false); setAdjustNote(''); auto.suggestAgain(note); } },
+      ]
+    : autoKind === 'recommendations' ? [{ title: t('newApp.auto.adjust'), testID: 'newApp.auto.adjust', disabled: auto.chosen === null,
+        onPress: () => setAdjusting(true) }]
     : autoKind === 'working' ? [
         // A refused Stop's Retry lives in its notice; while Stop is asked, the button waits for its answer.
         ...(autoStop === 'refused' ? [] : [{ title: t('newApp.auto.stop'), testID: 'newApp.auto.stop', onPress: () => auto.stop(),
           loading: autoStop === 'stopping' }]),
         { title: t('common.close'), testID: 'newApp.auto.close', onPress: () => closeRef.current() },
       ]
-    : autoKind === 'noAgent' ? [{ title: t('newApp.auto.chooseStarter'), testID: 'newApp.auto.chooseStarter', onPress: () => backRef.current() }]
+    : autoKind === 'noAgent' || autoKind === 'questions' ? [{ title: t('newApp.auto.chooseStarter'), testID: 'newApp.auto.chooseStarter', onPress: () => backRef.current() }]
     : null;
   const primaryRef = React.useRef(primary);
   primaryRef.current = primary;
@@ -846,12 +866,21 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     );
   } else if (step === 'auto') {
     const recommending = auto.view.kind === 'recommendations';
-    body = (
+    const chosenCard = auto.view.kind === 'recommendations' ? auto.view.cards.find((card) => card.id === auto.chosenCardId) ?? null : null;
+    body = adjustingNow && auto.chosen && chosenCard ? (
+      <>
+        {header(t('newApp.auto.adjustTitle'), t('newApp.auto.adjustDescription'))}
+        <NewAppAutoAdjust chosen={auto.chosen} title={chosenCard.title}
+          source={auto.view.kind === 'recommendations' ? auto.view.source : null}
+          note={adjustNote} onNoteChange={setAdjustNote} adjust={auto.adjustChosen}
+          onEditDescription={auto.backToDescription} phone={phone} insetStyle={dialog ? styles.dialogInset : null} />
+      </>
+    ) : (
       <>
         {recommending
           ? header(t('newApp.auto.recommendationsTitle'), t('newApp.auto.recommendationsDescription', {
               count: auto.view.kind === 'recommendations' ? auto.view.cards.length : 0 }))
-          : header(t('newApp.auto.title'), t('newApp.auto.description'))}
+          : header(t('newApp.auto.title'), t(auto.view.kind === 'questions' ? 'newApp.auto.questionsDescription' : 'newApp.auto.description'))}
         <NewAppAutoStep
           view={auto.view}
           description={auto.description}
@@ -861,6 +890,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           onEditDescription={auto.backToDescription}
           onTryAgain={auto.suggest}
           onChooseStarter={back}
+          onQuestionState={setQuestionAnswers}
           phone={phone}
           insetStyle={dialog ? styles.dialogInset : null}
         />
@@ -903,45 +933,16 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           />
           <Item
             testID="newApp.repository"
-            title={t('newApp.codeLivesIn')}
+            title={t('newApp.codeLivesOn')}
             showChevron={false}
-            subtitle={
-              owner.kind === 'ready'
-                ? `${owner.owner}/${repositoryName || '…'} · ${t('newApp.privateRepository')}`
-                : owner.kind === 'loading'
-                  ? '—'
-                  : owner.kind === 'needsAccount'
-                    ? t('newApp.githubNeeded')
-                    : t('newApp.unavailable')
-            }
+            subtitle={codeLivesOnLine}
             subtitleLines={0}
-            icon={
-              <Icon
-                name="github-logo"
-                size={ICON_SIZE.sm}
-                color={theme.colors.text.secondary}
-              />
-            }
-            rightElement={
-              owner.kind === 'needsAccount' ? (
-                <RoundButton
-                  testID="newApp.connectGithub"
-                  size="small"
-                  display="inverted"
-                  title={t('newApp.connectGithub')}
-                  onPress={connectGithub}
-                />
-              ) : owner.kind === 'unavailable' && machine ? (
-                <RoundButton
-                  testID="newApp.recheckGithub"
-                  size="small"
-                  display="inverted"
-                  title={t('newApp.retry')}
-                  onPress={probeOwner}
-                />
-              ) : undefined
-            }
+            {...(forgeChoice ? { accessoryLayout: 'adaptive' as const } : {})}
+            rightElement={forgeChoice ?? forgeRepair}
           />
+          {forgeChoice && forgeRepair ? (
+            <View style={styles.forgeRepair}>{forgeRepair}</View>
+          ) : null}
           {machines.length === 0 ? (
             <Item
               testID="newApp.machine"
@@ -1096,7 +1097,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                 ) : null}
                 {autoSecondary?.map((action) => (
                   <RoundButton key={action.testID} testID={action.testID} size="small" display="inverted"
-                    title={action.title} loading={action.loading ?? false} onPress={action.onPress} />
+                    title={action.title} loading={action.loading ?? false} disabled={action.disabled ?? false} onPress={action.onPress} />
                 ))}
                 {showBack ? (
                   <RoundButton
@@ -1131,6 +1132,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       step,
       autoKind,
       autoStop,
+      adjustingNow,
+      adjustNote.trim() === '',
       showBack,
       addingMachine,
       stepIndex,
@@ -1164,7 +1167,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             ) : null}
             {autoSecondary?.map((action) => (
               <RoundButton key={action.testID} testID={action.testID} size="normal" display="inverted"
-                title={action.title} loading={action.loading ?? false} onPress={action.onPress} />
+                title={action.title} loading={action.loading ?? false} disabled={action.disabled ?? false} onPress={action.onPress} />
             ))}
             {primary ? (
               <RoundButton
@@ -1181,6 +1184,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     </View>
   );
 });
+
+/** The line under a forge in Code lives on's menu: where the repository would go, or nothing while it is checked. */
+function forgeOptionLine(owner: ForgeOwnerFact | undefined, repositoryName: string): { subtitle?: string } {
+  return owner?.kind === 'ready' ? { subtitle: `${owner.owner}/${repositoryName || '…'}` } : {};
+}
 
 /** The registry item a suggested starter names: the catalog snapshot carries the item id the review selects by. */
 function suggestedStarterItemId(chosen: NewAppAutoChosen): string | null {
@@ -1217,6 +1225,7 @@ const styles = StyleSheet.create((theme) => ({
   // twice: once around the group (its title lines up with the page title), once around tiles that have no sheet, so
   // they line up with the title and the run-existing row (measured live on #136: 416 → 432 against a 434 title).
   dialogInset: { paddingHorizontal: theme.space.s16 },
+  forgeRepair: { alignItems: 'flex-end', paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s12 },
 
   phoneFooter: { gap: theme.space.s8 },
   wideFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s12,
