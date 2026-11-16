@@ -16,5 +16,9 @@ export function deploymentTargetFitFieldsV1() {
     return {
         accepts: z.optional(z.array(DeployOutputV1Schema)),
         needs: z.optional(z.array(z.enum(['repository', 'stateless', 'volumes']))),
+        sources: z.optional(z.strictObject({
+            gitIntegration: z.array(z.string().check(z.minLength(1))),
+            upload: z.boolean(),
+        })),
     };
 }
