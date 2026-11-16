@@ -400,12 +400,12 @@ pub fn desktop_app_window_open(
     let (_, opened_records) = edit_records(&app, |records| {
         records.insert(record.window_id.clone(), record.clone());
     })?;
-    let created = builder
-        .decorations(crate::window_chrome::window_creation_uses_decorations(
+    let created = crate::window_chrome::apply_window_creation_chrome(
+            builder,
             &app,
             &label,
             record.chrome == Some(AppWindowChrome::Full),
-        ))
+        )
         .title("Happier")
         .resizable(true)
         .transparent(cfg!(any(target_os = "macos", target_os = "windows")))

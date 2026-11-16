@@ -939,14 +939,37 @@ fn resolve_window_chrome_policy<R: Runtime>(
     )
 }
 
-/// Creation precedes the app-window live record, so its caller supplies the known chrome kind.
+/// Where macOS draws native traffic lights, in window points: the close button's left edge on the
+/// rail's selected tile ((rail 56 − tile 36) / 2 = 10) and the buttons' centre on the title strip's
+/// line, where the Happier logo sits (strip 40 / 2 = 20). The web geometry lives in
+/// `apps/ui/sources/components/navigation/shell/appRail/appRailMetrics.ts`. AppKit keeps the
+/// buttons' own offset inside the title bar, so their centre lands 2.25 pt above `y` (measured on a
+/// macOS build: `y` 14 drew the centre at 11.75).
 #[cfg(desktop)]
-pub(crate) fn window_creation_uses_decorations<R: Runtime>(
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn native_traffic_light_inset(policy: DesktopWindowChromeRuntimePolicy) -> Option<(f64, f64)> {
+    (policy.strategy == DesktopWindowChromeStrategy::NativeMacosTrafficLights).then_some((10.0, 22.0))
+}
+
+/// Applies the chrome a window is created with: decorations and, for native macOS traffic lights,
+/// their inset. Every release channel's config and every full-chrome app window get it here, since
+/// a channel's `windows` entry replaces the base config's. Creation precedes the app-window live
+/// record, so its caller supplies the known chrome kind.
+#[cfg(desktop)]
+pub(crate) fn apply_window_creation_chrome<'a, R: Runtime, M: Manager<R>>(
+    builder: tauri::WebviewWindowBuilder<'a, R, M>,
     app: &tauri::AppHandle<R>,
     label: &str,
     full_chrome: bool,
-) -> bool {
-    resolve_window_chrome_policy(app, chrome_policy_label(label, full_chrome)).use_window_decorations
+) -> tauri::WebviewWindowBuilder<'a, R, M> {
+    let policy = resolve_window_chrome_policy(app, chrome_policy_label(label, full_chrome));
+    let builder = builder.decorations(policy.use_window_decorations);
+    #[cfg(target_os = "macos")]
+    let builder = match native_traffic_light_inset(policy) {
+        Some((x, y)) => builder.traffic_light_position(tauri::LogicalPosition::new(x, y)),
+        None => builder,
+    };
+    builder
 }
 
 #[cfg(desktop)]
@@ -1239,9 +1262,8 @@ pub(crate) fn create_main_window(
         .ok_or_else(|| tauri::Error::WindowNotFound)?;
     // The renderer starts solid and clears selected paint roles only after native success.
     config.transparent = cfg!(any(target_os = "macos", target_os = "windows"));
-    let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
-        .visible(false)
-        .decorations(window_creation_uses_decorations(app, MAIN_WINDOW_LABEL, false))
+    let builder = tauri::WebviewWindowBuilder::from_config(app, &config)?.visible(false);
+    let window = apply_window_creation_chrome(builder, app, MAIN_WINDOW_LABEL, false)
         .on_page_load(|window, payload| {
             if payload.event() == tauri::webview::PageLoadEvent::Started {
                 window.app_handle().state::<MainWindowPresentationState>().0.lock().unwrap()
@@ -1677,6 +1699,27 @@ mod tests {
         assert!(policy.use_window_decorations);
         assert_eq!(policy.title_bar_style, Some(TitleBarStyle::Overlay));
         assert!(policy.hide_native_title);
+    }
+
+    #[test]
+    fn only_native_macos_traffic_lights_take_the_shell_inset() {
+        let macos = resolve_desktop_window_chrome_runtime_policy(
+            MAIN_WINDOW_LABEL,
+            DesktopWindowPlatform::MacOs,
+            false,
+        );
+        // Close button on the rail tile's left edge; buttons centred on the logo's line.
+        assert_eq!(native_traffic_light_inset(macos), Some((10.0, 22.0)));
+        for platform in [DesktopWindowPlatform::Windows, DesktopWindowPlatform::Linux] {
+            for native_title_bar in [false, true] {
+                let policy = resolve_desktop_window_chrome_runtime_policy(
+                    MAIN_WINDOW_LABEL,
+                    platform,
+                    native_title_bar,
+                );
+                assert_eq!(native_traffic_light_inset(policy), None);
+            }
+        }
     }
 
     #[test]
