@@ -6,10 +6,10 @@ const catalog = DeploySuggestionCatalogV1Schema.parse({
     starters: [{ id: 'static', title: 'Static', deploy: { framework: 'html', output: 'static' } }],
     apps: [{ id: 'analytics', title: 'Analytics' }],
     targets: [
-        { id: 'pages', title: 'Pages', targetClass: 'platform', availability: 'available', accepts: ['static'], needs: ['repository'] },
+        { id: 'pages', title: 'Pages', targetClass: 'platform', availability: 'available', accepts: ['static'], needs: ['repository'], sources: { gitIntegration: ['github'], upload: false } },
         { id: 'workers', title: 'Workers', targetClass: 'platform', availability: 'available', accepts: ['workers'], needs: ['stateless'] },
         { id: 'own', title: 'Own server', targetClass: 'ownServer', availability: 'available', accepts: ['compose'], needs: [] },
-    ], machines: [], stores: [],
+    ], machines: [], stores: [], forges: [{ providerKind: 'github', title: 'GitHub' }],
 });
 const recommendation = { source: { kind: 'starter', starterId: 'static' }, targetId: 'pages',
     whatToBuild: 'A bakery website', stack: { framework: 'html', output: 'static' }, data: { kind: 'none' }, variables: [] } satisfies DeploySuggestionRecommendationV1;
@@ -52,4 +52,21 @@ it.each(['starter', 'scratch'] as const)('preserves description bytes and carrie
 it('routes catalog apps only to a declared Compose host', () => {
     const app = { ...recommendation, source: { kind: 'catalogApp', appId: 'analytics' }, targetId: 'own' };
     expect(validateDeploySuggestionV1({ recommendations: [app, { ...app, targetId: 'pages' }] }, catalog).recommendations).toEqual([app]);
+});
+
+it('checks the selected forge against registry publication and declared target source routes', () => {
+    const declared = { ...catalog, targets: catalog.targets.map(target => ({ ...target,
+        sources: { gitIntegration: ['github'], upload: false } })) };
+    const selected = { ...recommendation, repositoryProviderKind: 'github' };
+    expect(validateDeploySuggestionV1({ recommendations: [selected] }, declared).recommendations).toEqual([selected]);
+    expect(validateDeploySuggestionV1({ recommendations: [selected] }, { ...declared, forges: [] }).recommendations).toEqual([]);
+    expect(validateDeploySuggestionV1({ recommendations: [selected] }, { ...declared,
+        targets: declared.targets.map(target => ({ ...target, sources: { gitIntegration: [], upload: true } })) }).recommendations).toEqual([]);
+});
+
+it('admits a setup served by another publishing forge before a repository provider is chosen', () => {
+    const gitlab = { ...catalog, forges: [{ providerKind: 'gitlab', title: 'GitLab' }],
+        targets: catalog.targets.map(target => ({ ...target, sources: { gitIntegration: ['gitlab'], upload: false } })) };
+    expect(validateDeploySuggestionV1({ recommendations: [recommendation] }, gitlab).recommendations).toEqual([recommendation]);
+    expect(validateDeploySuggestionV1({ recommendations: [recommendation] }, { ...gitlab, forges: [] }).recommendations).toEqual([]);
 });

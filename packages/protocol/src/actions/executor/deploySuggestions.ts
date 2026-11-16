@@ -15,7 +15,7 @@ type Section = NonNullable<DeploySuggestionCatalogV1['issues']>[number]['section
 /** One finite read composition. Catalog owners retain their original placement and transport. */
 export async function readDeploySuggestionCatalogV1(context: ActionExecutorContext, deps: ActionExecutorDeps,
     execute: (id: ActionId, input: unknown) => Promise<ActionExecuteResult>): Promise<DeploySuggestionCatalogV1> {
-    const catalog: DeploySuggestionCatalogV1 = { starters: [], apps: [], targets: [], stores: [], machines: [], connectedAccounts: [], issues: [] };
+    const catalog: DeploySuggestionCatalogV1 = { starters: [], apps: [], targets: [], stores: [], forges: [], machines: [], connectedAccounts: [], issues: [] };
     const issues = catalog.issues!;
     async function read(id: ActionId, input: unknown, section: Section) {
         const answer = await execute(id, input);
@@ -26,21 +26,23 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
         const raw = await read('registries.items.list', { kind, ...(cursor ? { cursor } : {}), ...(sourceId ? { sourceIds: [sourceId] } : {}) }, kind === 'starter' ? 'starters' : 'apps');
         return raw === null ? [] : REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(raw).pages;
     }
-    async function targets() {
-        if (!deps.deploymentSuggestionTargets) { issues.push({ section: 'targets', code: 'unsupported_action' }); return null; }
-        try { return await deps.deploymentSuggestionTargets(context); }
+    async function descriptors<T>(section: Section, readOwner: ((context: ActionExecutorContext) => Promise<T>) | undefined) {
+        if (!readOwner) { issues.push({ section, code: 'unsupported_action' }); return null; }
+        try { return await readOwner(context); }
         catch (error: unknown) {
             const code = error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
                 ? error.code : 'action_failed';
-            issues.push({ section: 'targets', code }); return null;
+            issues.push({ section, code }); return null;
         }
     }
-    const [starterPages, appPages, accounts, machines, targetRead] = await Promise.all([
+    const [starterPages, appPages, accounts, machines, targetRead, forgeRead] = await Promise.all([
         list('starter'), list('app'), read('connectedServices.accounts.list', {}, 'connectedAccounts'),
         read('machines.list', { refresh: true }, 'machines'),
-        targets(),
+        descriptors('targets', deps.deploymentSuggestionTargets),
+        descriptors('forges', deps.deploymentSuggestionForges),
     ]);
     if (targetRead) { catalog.targets = targetRead.targets; catalog.stores = targetRead.stores; }
+    if (forgeRead) catalog.forges = forgeRead;
     // A registry cursor belongs to its source. Keep the owner's paging rather than rereading other sources.
     async function completePages(kind: 'starter' | 'app', pages: RegistryListPageV1[]) {
         await Promise.all(pages.map(async page => {

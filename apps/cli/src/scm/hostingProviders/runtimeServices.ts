@@ -11,12 +11,10 @@ import type {
 } from '@happier-dev/plugin-sdk/scm/hosting';
 import { z } from 'zod/mini';
 import {
-    createScmHostingProviderRegistry,
     type ResolvedScmHostingProviderRegistry,
     type ScmHostingProviderConfiguredDeployments,
-    type ScmHostingProviderDescriptor,
-    type ScmHostingProviderRuntimeBinding,
 } from './registry';
+import { createHostScmHostingProviderRegistry } from './hostRegistry';
 import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { createStableManagedExecutableResolver } from '@/plugins/runtime/invocation/services/managedExecutableResolver';
@@ -146,22 +144,6 @@ function assertHostingOperationCurrent(signal?: AbortSignal): void {
     if (signal?.aborted) throw new Error('SCM hosting operation was aborted');
 }
 
-function normalizeUrlSafety(
-    provider: Readonly<{
-        urlSafety?: Readonly<{
-            allowedSchemes?: readonly string[];
-            allowedBaseUrls?: readonly string[];
-            allowedOrigins?: readonly string[];
-        }>;
-    }>,
-): NonNullable<ScmHostingProviderDescriptor['urlSafety']> {
-    return {
-        allowedSchemes: provider.urlSafety?.allowedSchemes ?? ['https:'],
-        allowedBaseUrls: provider.urlSafety?.allowedBaseUrls ?? [],
-        allowedOrigins: provider.urlSafety?.allowedOrigins ?? [],
-    };
-}
-
 function resolveProviderPurposeAuthorization(
     input: ScmHostingProviderRuntimeRegistryInput,
     providerId: string,
@@ -272,33 +254,13 @@ async function resolveScmHostingConfiguredDeployments(
     return deploymentsByProviderId;
 }
 
-function createHostScmHostingProviderRegistry(
+function createHostScmHostingProviderOperationRegistry(
     input: ScmHostingProviderRuntimeRegistryInput,
     configuredDeploymentsByProviderId: ReadonlyMap<string, ScmHostingProviderConfiguredDeployments> | undefined,
     signal: AbortSignal,
     runtimeServices: ScmHostingProviderRuntimeServices,
 ): ResolvedScmHostingProviderRegistry {
-    const providers: ScmHostingProviderDescriptor[] = (input.contributes.scmHostingProviders ?? [])
-        .flatMap((provider) => {
-            const { title, ...definition } = provider.definition;
-            return [Object.freeze({
-                ...definition,
-                displayName: typeof title === 'string' ? title : title.fallback,
-                pluginId: provider.pluginId,
-                urlSafety: normalizeUrlSafety({}),
-            })];
-        });
-    const runtimeRegistrations: ScmHostingProviderRuntimeBinding[] = [
-        ...input.scmHostingProvidersById.values(),
-    ].map((entry) => ({
-        pluginId: entry.pluginId,
-        occurrenceId: entry.occurrenceId,
-        registration: entry.registration,
-    }));
-
-    return createScmHostingProviderRegistry({
-        providers,
-        runtimeRegistrations,
+    return createHostScmHostingProviderRegistry(input, {
         runtimeServices,
         async prepareHostingProviderOperation({ action, input: actionInput }) {
             const execute = readScmHostingActionExecutor();
@@ -349,7 +311,7 @@ export function createHostScmHostingProviderRuntimeServices(
         options?: Readonly<{ signal?: AbortSignal }>,
     ): Promise<ResolvedScmHostingProviderRegistry> => {
         const signal = options?.signal ?? new AbortController().signal;
-        return createHostScmHostingProviderRegistry(
+        return createHostScmHostingProviderOperationRegistry(
             input,
             await resolveScmHostingConfiguredDeployments(input, signal),
             signal,

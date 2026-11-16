@@ -9,9 +9,13 @@ export type PublishTargetRecommendationInput = Readonly<{
     targets: readonly (Target & Readonly<{ availability: 'available' | 'unavailable' | 'unknown';
         accepts?: Readonly<DeploymentTargetContributionV1['accepts']>;
         needs?: Readonly<DeploymentTargetContributionV1['needs']>;
+        sources?: Readonly<DeploymentTargetContributionV1['sources']>;
     }>)[];
     explicitTarget?: Target | null;
     existingTarget?: Target | null;
+    repositoryProviderKind?: string;
+    publishProviderKinds?: readonly string[];
+    uploadAvailable?: boolean;
 }>;
 
 /** No detection, probes, credential reads or effects. Owners supply admitted definition and availability facts. */
@@ -31,7 +35,15 @@ export function resolvePublishTargetRecommendation(input: PublishTargetRecommend
     }
     const outputs: readonly DeployShapeV1['output'][] | null = input.deploy ? [input.deploy.output]
         : stored ? ['compose', 'container'] : compose ? ['compose'] : null;
+    const sourceCompatible = (target: PublishTargetRecommendationInput['targets'][number]) => {
+        if (input.publishProviderKinds === undefined && input.repositoryProviderKind === undefined) return true;
+        return Boolean(input.publishProviderKinds?.some(providerKind =>
+            (!input.repositoryProviderKind || providerKind === input.repositoryProviderKind)
+            && (target.sources?.gitIntegration.includes(providerKind)
+                || target.sources?.upload && input.uploadAvailable)));
+    };
     const compatible = input.targets.filter(target => {
+        if (!sourceCompatible(target)) return false;
         if (!target.accepts || !outputs) return target.targetClass === 'ownServer';
         if (stored && target.needs?.includes('repository')) return false;
         return outputs.some(output => target.accepts!.includes(output)
@@ -61,8 +73,8 @@ export function resolvePublishTargetRecommendation(input: PublishTargetRecommend
     return {
         target: preferred ?? (recommended ? { id: recommended.id, targetClass: recommended.targetClass } : null),
         compatibleTargetIds: compatible.map(target => target.id),
-        offeredTargetIds: input.targets.filter(target => compatible.includes(target)
-            || (!target.accepts || !outputs) && !stored).map(target => target.id),
+        offeredTargetIds: input.targets.filter(target => sourceCompatible(target) && (compatible.includes(target)
+            || (!target.accepts || !outputs) && !stored)).map(target => target.id),
         evidence, uncertainty, corrections,
     };
 }

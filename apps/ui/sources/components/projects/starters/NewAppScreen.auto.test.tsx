@@ -71,6 +71,8 @@ const targets: DeploySuggestionCatalogV1['targets'] = [
     availability: 'available',
     accepts: ['static'],
     needs: [],
+    // The own server builds from a GitHub checkout (U5 source facts); without them starters can't pair with it.
+    sources: { gitIntegration: ['github'], upload: false },
   },
 ];
 const recommendation = {
@@ -145,6 +147,7 @@ function suggestionBoundary(overrides: Ports) {
         ],
       }),
       deploymentSuggestionTargets: async () => ({ targets, stores: [] }),
+      deploymentSuggestionForges: async () => [{ providerKind: 'github', title: 'GitHub' }],
       machineSetupPlan: async () => ({ targets: [] }),
       agentsModelsList: async () => ({
         llmTaskRunner: {

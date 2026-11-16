@@ -1498,6 +1498,9 @@ export type ActionExecutorDeps = Readonly<{
   /** Admitted target descriptors projected through the same catalog used by Where it runs. */
   deploymentSuggestionTargets?: (context: ActionExecutorContext) => Promise<Pick<
     import('../../deployments/suggestions/deploySuggestionsV1.js').DeploySuggestionCatalogV1, 'targets' | 'stores'>>;
+  /** Publish-capable forges from the admitted SCM hosting-provider registry. */
+  deploymentSuggestionForges?: (context: ActionExecutorContext) => Promise<
+    import('../../deployments/suggestions/deploySuggestionsV1.js').DeploySuggestionCatalogV1['forges']>;
   personalSavedSecretActionExecute?: (args: Readonly<{ actionId: import('../../account/settings/personalSavedSecretActionsV1.js').PersonalSavedSecretActionIdV1;
     input: unknown; context: ActionExecutorContext }>) => Promise<unknown>;
   /** A client relays admitted contributed-type Resource discovery to the daemon's same options owner. */

@@ -36,6 +36,10 @@ export type DeploymentSuggestionsActionInputById = {
                 availability: 'available' | 'unavailable' | 'unknown';
                 accepts?: ('compose' | 'container' | 'native' | 'server' | 'static' | 'workers')[] | undefined;
                 needs?: ('repository' | 'stateless' | 'volumes')[] | undefined;
+                sources?: undefined | {
+                    gitIntegration: string[];
+                    upload: boolean;
+                };
             }[];
             machines: {
                 machineId: string;
@@ -48,6 +52,10 @@ export type DeploymentSuggestionsActionInputById = {
                 id: string;
                 engine: string;
             }[];
+            forges: {
+                providerKind: string;
+                title: string;
+            }[];
             connectedAccounts?: undefined | {
                 account: {
                     service: {
@@ -59,7 +67,7 @@ export type DeploymentSuggestionsActionInputById = {
                 health: 'attention' | 'error' | 'healthy';
             }[];
             issues?: undefined | {
-                section: 'apps' | 'connectedAccounts' | 'machines' | 'starters' | 'targets';
+                section: 'apps' | 'connectedAccounts' | 'forges' | 'machines' | 'starters' | 'targets';
                 code: string;
             }[];
         };
@@ -97,6 +105,10 @@ export type DeploymentSuggestionsActionResultById = {
             availability: 'available' | 'unavailable' | 'unknown';
             accepts?: ('compose' | 'container' | 'native' | 'server' | 'static' | 'workers')[] | undefined;
             needs?: ('repository' | 'stateless' | 'volumes')[] | undefined;
+            sources?: undefined | {
+                gitIntegration: string[];
+                upload: boolean;
+            };
         }[];
         machines: {
             machineId: string;
@@ -109,6 +121,10 @@ export type DeploymentSuggestionsActionResultById = {
             id: string;
             engine: string;
         }[];
+        forges: {
+            providerKind: string;
+            title: string;
+        }[];
         connectedAccounts?: undefined | {
             account: {
                 service: {
@@ -120,7 +136,7 @@ export type DeploymentSuggestionsActionResultById = {
             health: 'attention' | 'error' | 'healthy';
         }[];
         issues?: undefined | {
-            section: 'apps' | 'connectedAccounts' | 'machines' | 'starters' | 'targets';
+            section: 'apps' | 'connectedAccounts' | 'forges' | 'machines' | 'starters' | 'targets';
             code: string;
         }[];
     };
@@ -162,6 +178,7 @@ export type DeploymentSuggestionsActionResultById = {
                 secret: boolean;
                 purpose?: string | undefined;
             }[];
+            repositoryProviderKind?: string | undefined;
         }[];
         dropped: {
             index: number;

@@ -18,9 +18,10 @@ export const DeploySuggestionCatalogV1Schema = lazyZodSchema(() => z.strictObjec
     machines: z.array(z.strictObject({ machineId: id(), label: z.string(), online: z.boolean(),
         homeDir: z.optional(z.string()), readiness: z.enum(['ready', 'needsSetup', 'unknown']) })),
     stores: z.array(z.strictObject({ id: id(), engine: z.string() })),
+    forges: z.array(z.strictObject({ providerKind: id(), title: z.string() })),
     connectedAccounts: z.optional(z.array(z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema),
         health: z.enum(['healthy', 'attention', 'error']) }))),
-    issues: z.optional(z.array(z.strictObject({ section: z.enum(['starters', 'apps', 'targets', 'machines', 'connectedAccounts']),
+    issues: z.optional(z.array(z.strictObject({ section: z.enum(['starters', 'apps', 'targets', 'machines', 'connectedAccounts', 'forges']),
         code: id() }))),
 }));
 export type DeploySuggestionCatalogV1 = z.infer<typeof DeploySuggestionCatalogV1Schema>;
@@ -31,7 +32,7 @@ export const DeploySuggestionRecommendationV1Schema = lazyZodSchema(() => z.stri
         z.strictObject({ kind: z.literal('catalogApp'), appId: id() }),
         z.strictObject({ kind: z.literal('scratch') }),
     ]),
-    targetId: id(), whatToBuild: z.string(), stack: DeployShapeV1Schema,
+    targetId: id(), repositoryProviderKind: z.optional(id()), whatToBuild: z.string(), stack: DeployShapeV1Schema,
     data: z.discriminatedUnion('kind', [z.strictObject({ kind: z.literal('none') }),
         z.strictObject({ kind: z.literal('store'), storeId: id(), engine: z.string() }),
         z.strictObject({ kind: z.literal('catalogApp'), appId: id() })]),
@@ -90,6 +91,11 @@ export function validateDeploySuggestionV1(raw: unknown, catalog: DeploySuggesti
             definition: source.kind === 'catalogApp' ? { kind: 'stored' } : null,
             deploy: source.kind === 'starter' ? starter?.deploy : source.kind === 'scratch' ? recommendation.stack : undefined,
             targets: catalog.targets,
+            ...(source.kind !== 'catalogApp' ? {
+                repositoryProviderKind: recommendation.repositoryProviderKind,
+                publishProviderKinds: catalog.forges.map(forge => forge.providerKind),
+                uploadAvailable: catalog.machines.some(machine => machine.online),
+            } : {}),
         });
         if (!fit.compatibleTargetIds.includes(recommendation.targetId)) {
             result.dropped.push({ index, reason: 'incompatible_pair' }); return;

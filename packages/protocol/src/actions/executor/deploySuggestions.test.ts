@@ -8,9 +8,10 @@ import { DeploySuggestionCatalogV1Schema } from '../../deployments/suggestions/d
 
 const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'profile-alias', serverIdentityId: 'home' } as const;
 const deploy = { framework: 'html', output: 'static' } as const;
-const targets = DeploySuggestionCatalogV1Schema.parse({ starters: [], apps: [], machines: [], stores: [], targets: [
+const forges = [{ providerKind: 'github', title: 'GitHub' }];
+const targets = DeploySuggestionCatalogV1Schema.parse({ starters: [], apps: [], machines: [], stores: [], forges: [], targets: [
   { id: 'own-server', title: 'Own server', targetClass: 'ownServer', availability: 'available',
-    accepts: ['static', 'server', 'container', 'compose'], needs: [] },
+    accepts: ['static', 'server', 'container', 'compose'], needs: [], sources: { gitIntegration: ['github'], upload: false } },
 ] }).targets;
 
 describe('deploy suggestion read Actions', () => {
@@ -40,6 +41,7 @@ describe('deploy suggestion read Actions', () => {
         { machineId: 'online', label: 'Dev box', active: true, homeDir: '/home/dev' }, { machineId: 'offline', label: 'Offline', active: false },
       ] }; },
       deploymentSuggestionTargets: async () => { calls.push('targets'); return { targets: [...targets], stores: [] }; },
+      deploymentSuggestionForges: async () => { calls.push('forges'); return forges; },
       machineSetupPlan: async ({ input }) => {
         expect(input.homeId).toBe('home');
         calls.push('docker'); return { ok: false, errorCode: 'machine_unreachable', error: 'machine_unreachable' };
@@ -47,7 +49,8 @@ describe('deploy suggestion read Actions', () => {
     });
     const result = await executor.execute('deployments.suggestions.catalog', {}, context);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { starters: [{ id: JSON.stringify(['starters', 'website']), deploy }],
-      apps: [{ id: JSON.stringify(['apps', 'database']) }, { id: JSON.stringify(['apps', 'analytics']) }], targets, machines: [
+      apps: [{ id: JSON.stringify(['apps', 'database']) }, { id: JSON.stringify(['apps', 'analytics']) }], targets,
+      forges, machines: [
         { machineId: 'online', online: true, readiness: 'unknown', homeDir: '/home/dev' }, { machineId: 'offline', online: false, readiness: 'unknown' },
       ] } });
     expect(calls.filter(call => call.startsWith('starter:'))).toHaveLength(1);
@@ -56,11 +59,12 @@ describe('deploy suggestion read Actions', () => {
     expect(calls.filter(call => call === 'machines')).toHaveLength(1);
     expect(calls.filter(call => call === 'docker')).toHaveLength(1);
     expect(calls.filter(call => call === 'targets')).toHaveLength(1);
+    expect(calls.filter(call => call === 'forges')).toHaveLength(1);
   });
 
   it('checks the held snapshot without rereading owners and is available only with deployments', async () => {
     const catalog = DeploySuggestionCatalogV1Schema.parse({ starters: [{ id: 'website', title: 'Website', deploy }],
-      apps: [], targets, machines: [], stores: [] });
+      apps: [], targets, machines: [], stores: [], forges });
     const recommendation = { source: { kind: 'starter', starterId: 'website' }, targetId: 'own-server',
       whatToBuild: 'Bakery website', stack: deploy, data: { kind: 'none' }, variables: [] };
     const result = await createActionExecutor({}).execute('deployments.suggestions.check', {
@@ -71,6 +75,20 @@ describe('deploy suggestion read Actions', () => {
     expect(getActionSpec('deployments.suggestions.check').sideEffectClass).toBe('read');
     expect(getActionRequiredServerFeatureId('deployments.suggestions.check')).toBe('deployments');
     expect(getActionRequiredServerFeatureId('deployments.suggestions.catalog')).toBe('deployments');
+  });
+
+  it('withdraws only forge suggestions when the hosting owner refuses the read', async () => {
+    const executor = createActionExecutor({
+      registryActionExecute: async () => ({ pages: [] }),
+      connectedServiceAction: async () => ({ accounts: [], pools: [], healthBasis: 'credentials',
+        source: { completeness: 'complete', observedAtMs: 1 } }),
+      machinesList: async () => ({ items: [] }),
+      deploymentSuggestionTargets: async () => ({ targets, stores: [] }),
+      deploymentSuggestionForges: async () => { throw Object.assign(new Error('Forge owner unavailable'), { code: 'hosting_unavailable' }); },
+    });
+    expect(await executor.execute('deployments.suggestions.catalog', {}, context)).toMatchObject({
+      ok: true, result: { targets, forges: [], issues: [{ section: 'forges', code: 'hosting_unavailable' }] },
+    });
   });
 
   it('retains starters from later source-owned pages', async () => {

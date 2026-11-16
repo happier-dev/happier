@@ -368,6 +368,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
   | 'pathsListRecent'
   | 'machinesList'
   | 'deploymentSuggestionTargets'
+  | 'deploymentSuggestionForges'
   | 'machineRecipesRead'
   | 'serversList'
   | 'reviewEnginesList'
@@ -593,6 +594,19 @@ export function createCliActionInventoryDeps(params: Readonly<{
     deploymentSuggestionTargets: async () => {
       const { listDeploymentTargetsV1, projectDeploymentSuggestionTargetsV1 } = await import('@happier-dev/deployments');
       return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsV1(readCurrentContributionRegistry().deploymentTargets));
+    },
+    deploymentSuggestionForges: async (context) => {
+      const [{ acquireAuthoritativePluginRuntimeRegistryLease }, { listPublishCapableForgesV1 }] = await Promise.all([
+        import('@/plugins/runtime/reload/runtimeLease'), import('@/scm/hostingProviders/hostRegistry'),
+      ]);
+      context.signal?.throwIfAborted();
+      const lease = await acquireAuthoritativePluginRuntimeRegistryLease({});
+      try {
+        await lease.registry.activateContributionsOnDemand((lease.registry.contributes.scmHostingProviders ?? []).flatMap(entry =>
+          entry.pluginId ? [{ pluginId: entry.pluginId, family: 'scmHostingProviders' as const, localId: entry.definition.id }] : []));
+        context.signal?.throwIfAborted();
+        return listPublishCapableForgesV1(lease.registry);
+      } finally { await lease.release(); }
     },
     serversList: async (args) => {
       const { listServerProfiles } = await import("@/server/serverProfiles");
