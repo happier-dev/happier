@@ -14,6 +14,7 @@ import { subscribeOptionalRuntimeInstallSuccess } from '@/packagedRuntime/instal
 import { startSingleFlightIntervalLoop, type SingleFlightIntervalLoopHandle } from '@/daemon/lifecycle/singleFlightIntervalLoop';
 import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION } from '@happier-dev/protocol/sessions/control/contract';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { AccountEncryptionMaterialUnavailableError } from '@/api/client/encryptionKey';
 import { readRequesterAccountEncryptionCurrentness, waitForObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
@@ -207,7 +208,7 @@ export async function prepareMemoryWorker(params: Readonly<{
       cwd: configuration.activeServerDir, credentials: params.credentials, signal }),
     commitHint: async (request, signal) => {
       signal?.throwIfAborted();
-      const raw = await fetchSessionById({ reason: 'memory-change', token: params.credentials.token, sessionId: request.sessionId, signal });
+      const raw = await fetchSessionById({ reason: 'memory-change', projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, token: params.credentials.token, sessionId: request.sessionId, signal });
       signal?.throwIfAborted();
       if (!raw) return;
       const mode = resolveSessionStoredContentEncryptionMode(raw);
@@ -626,7 +627,7 @@ export async function prepareMemoryWorker(params: Readonly<{
         const signal = connectionLifetime.signal;
         // Only this request owns the admission; removal can withdraw it during IO.
         const [session, currentness] = await Promise.all([
-          fetchSessionById({ reason: 'memory-change', token: params.credentials.token, sessionId: change.sessionId, signal }),
+          fetchSessionById({ reason: 'memory-change', projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, token: params.credentials.token, sessionId: change.sessionId, signal }),
           readRequesterAccountEncryptionCurrentness({ token: params.credentials.token, signal }),
         ]);
         signal.throwIfAborted();

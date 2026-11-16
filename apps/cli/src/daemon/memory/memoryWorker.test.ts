@@ -734,6 +734,45 @@ describe('memoryWorker', () => {
     } finally { opens.mockRestore(); await worker.stop(); setDaemonProcess(configuration, daemonBefore); vi.useRealTimers(); }
   });
 
+  it('reads a changed Session through the shared-state projection: Memory consumes no viewer or launch facts', async () => {
+    const axios = (await import('axios')).default;
+    const { createTestMetadata } = await import('@/testkit/backends/sessionMetadata');
+    const { buildSessionMetadataEnvelopeFields } = await import('@/session/metadata/buildSessionMetadataEnvelopeCreateFields');
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`, encryption: null };
+    const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
+      agentState: null, metadata: createTestMetadata({ machineId: 'machine_1' }) });
+    const session = { id: 's1', seq: 2, createdAt: 1, updatedAt: 1, active: false, activeAt: 0, encryptionMode: 'plain' as const,
+      metadataLayoutVersion: fields.metadataLayoutVersion, metadata: fields.sharedMetadata.ciphertext, metadataVersion: 1,
+      ownerMetadata: fields.ownerMetadata, agentState: fields.agentState, agentStateVersion: 0, dataEncryptionKey: null, share: null };
+    const detailReads: URL[] = [];
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname === '/v2/sessions/s1') { detailReads.push(parsed); return { status: 200, data: { session } }; }
+      if (parsed.pathname === '/v1/account/encryption/currentness') return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      throw new Error(`Unexpected memory test HTTP path: ${parsed.pathname}`);
+    });
+    // Inventory and transcript pages are boundaries outside this read; the Session detail read stays real HTTP.
+    vi.doMock('@/session/transport/http/sessionsHttp', async () => ({
+      ...await vi.importActual<typeof import('@/session/transport/http/sessionsHttp')>('@/session/transport/http/sessionsHttp'),
+      fetchSessionListPage: fetchMemorySessionListVisibilityFixture,
+      fetchSessionsPage: vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false })),
+    }));
+    vi.doMock('@/session/replay/fetchEncryptedTranscriptMessages', () => ({
+      fetchEncryptedTranscriptMessagesPage: async () => ({ messages: [], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null }),
+    }));
+    const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
+    await writeMemorySettingsToDisk({ v: 1, enabled: true, indexMode: 'deep', backfillPolicy: 'all_history' });
+    const { startMemoryWorker } = await import('./testkit/startMemoryWorker');
+    const worker = await startMemoryWorker({ credentials, machineId: 'machine_1', deps: { fetchDecryptedTranscriptPageAfterSeq: async () => [] } });
+    try {
+      await worker.noteSessionChanged!({ sessionId: 's1' });
+      await worker.ensureUpToDate('s1');
+      expect(detailReads.length).toBeGreaterThanOrEqual(2);
+      expect(detailReads.map(url => url.searchParams.get('projection'))).toEqual(detailReads.map(() => 'runtime-snapshot'));
+    } finally { await worker.stop(); }
+  });
+
   it('removes retained foreign and unknown Session ownership at restart and after a local Session moves', async () => {
     let localMachine = 'machine_1';
     let waitForVisibility: Promise<void> | undefined;

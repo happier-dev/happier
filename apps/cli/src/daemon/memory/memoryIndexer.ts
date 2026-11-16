@@ -14,6 +14,7 @@ import { openSummaryShardIndexDb, type SummaryShardIndexDbHandle } from './summa
 import { openDeepIndexDb, type DeepIndexDbHandle } from './deepIndex/deepIndexDb';
 import type { DecryptedTranscriptRow } from '@/session/replay/decryptTranscriptRows';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION } from '@happier-dev/protocol/sessions/control/contract';
 import {
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
@@ -192,7 +193,7 @@ export async function createMemoryIndexer(params: Readonly<{
     const cached = sessionCryptoContextCache.get(sessionId);
     if (cached) return cached;
 
-    const raw = await fetchSessionById({ reason: 'memory-change', token: params.credentials.token, sessionId, signal });
+    const raw = await fetchSessionById({ reason: 'memory-change', projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, token: params.credentials.token, sessionId, signal });
     signal?.throwIfAborted();
     if (!raw) return null;
 
@@ -1388,7 +1389,7 @@ export async function createMemoryIndexer(params: Readonly<{
         embeddingsResolutionEpoch = null;
         await refreshEmbeddingsDiagnostics(operationSignal);
         operationSignal.throwIfAborted();
-        const session = await fetchSessionById({ reason: 'memory-change', token: params.credentials.token, sessionId: _sessionId, signal: operationSignal });
+        const session = await fetchSessionById({ reason: 'memory-change', projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, token: params.credentials.token, sessionId: _sessionId, signal: operationSignal });
         const accountEncryptionMode = (await readRequesterAccountEncryptionCurrentness({ token: params.credentials.token, signal: operationSignal })).mode;
         operationSignal.throwIfAborted();
         const eligibility = session && sessionLocality.isOnMachine(session, accountEncryptionMode)

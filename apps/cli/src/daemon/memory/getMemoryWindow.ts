@@ -15,6 +15,7 @@ import { externalMemoryStorageId, extractExternalMemoryTranscriptItems } from '.
 import type { DeepIndexDbHandle } from './deepIndex/deepIndexDb';
 
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION } from '@happier-dev/protocol/sessions/control/contract';
 import type { FetchEncryptedTranscriptMessagesPageResult } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { configuration } from '@/configuration';
@@ -144,7 +145,7 @@ export async function getMemoryWindow(params: SessionMemoryWindowRequest | Exter
   const effectiveTo = requestedMessages > maxMessages ? Math.max(effectiveFrom, effectiveFrom + maxMessages - 1) : paddedTo;
 
   params.signal?.throwIfAborted();
-  const rawSession = await fetchSession({ reason: 'memory-change', token: params.credentials.token, sessionId, ...(params.signal ? { signal: params.signal } : {}) });
+  const rawSession = await fetchSession({ reason: 'memory-change', projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, token: params.credentials.token, sessionId, ...(params.signal ? { signal: params.signal } : {}) });
   params.signal?.throwIfAborted();
   if (!rawSession) {
     return {

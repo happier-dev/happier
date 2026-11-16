@@ -12,6 +12,7 @@ import { createSessionProjectPromptStackPreparation } from '@/agent/prompting/co
 import { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
 import { readRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { fetchSessionById, fetchSessionsPage, fetchSessionsQueryPage, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION } from '@happier-dev/protocol/sessions/control/contract';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readSessionOwnerLocality, tryDecryptSessionOwnerMetadata, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -96,7 +97,7 @@ export async function syncMemoryDocuments(params: Readonly<{
     const projectContext = project && params.readProjectContext ? await params.readProjectContext(project, params.signal) : undefined;
     const projectScope = project ? resolveSessionProjectScopeV1(project, projectContext?.workspaceRefs) : undefined;
     if (params.scope.type === 'session') {
-      const session = await fetchSessionById({ reason: 'memory-change', token: params.credentials.token, sessionId: params.scope.sessionId, signal: params.signal });
+      const session = await fetchSessionById({ reason: 'memory-change', projection: SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION, token: params.credentials.token, sessionId: params.scope.sessionId, signal: params.signal });
       if (session) sessions.set(session.id, session);
     }
     else {

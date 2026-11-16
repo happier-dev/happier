@@ -644,10 +644,10 @@ export const V2SessionByIdResponseSchema = lazyZodSchema(() => z.looseObject({
 export type V2SessionByIdResponse = z.infer<typeof V2SessionByIdResponseSchema>;
 
 /**
- * `GET /v2/sessions/:id?projection=runtime-snapshot`: the Session runner's snapshot, which reads
- * only shared Session state. The record omits the viewer's personal projection (viewer facts, read
- * state, received rule count, named collaborators) and the owner's accepted Team credential binding
- * and pending activation authorization.
+ * `GET /v2/sessions/:id?projection=runtime-snapshot`: the shared-state read for consumers that read
+ * only shared Session state (the Session runner's snapshot, Memory). The record omits the viewer's
+ * personal projection (viewer facts, read state, received rule count, named collaborators) and the
+ * owner's accepted Team credential binding and pending activation authorization.
  */
 export const SESSION_DETAIL_RUNTIME_SNAPSHOT_PROJECTION = 'runtime-snapshot';
 
