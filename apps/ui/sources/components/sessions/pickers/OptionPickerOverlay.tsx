@@ -137,6 +137,8 @@ export type OptionPickerOption<TValue = string> = Readonly<{
 export type OptionPickerSection<TValue = string> = Readonly<{
     id: string;
     title?: string;
+    /** One closed disclosure row until pressed (`SelectionListSection.collapsible`). */
+    collapsible?: boolean;
     options: ReadonlyArray<OptionPickerOption<TValue>>;
 }>;
 

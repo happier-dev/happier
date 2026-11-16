@@ -1,11 +1,12 @@
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import { t } from '@/text';
 
-import { isSessionComposerBannerKind, type SessionComposerBannerKind } from './composerBannerKinds';
+import { isSessionComposerBannerKind, isSessionComposerBannerKindCollapsedByDefault, type SessionComposerBannerKind } from './composerBannerKinds';
 
 /**
- * Persisted collapse state. Only collapsed kinds are stored, so an absent key always
- * means "expanded" and retiring a banner kind cannot leave a dangling hidden banner.
+ * Persisted collapse state. Only kinds toggled away from their default are stored, so an absent key
+ * always means "as the kind starts" (open, or closed for a default-closed kind) and retiring a banner kind
+ * cannot leave a dangling hidden banner.
  */
 export type ComposerBannerCollapseRecord = Readonly<Record<string, boolean>>;
 
@@ -13,7 +14,7 @@ export function isComposerBannerCollapsedInRecord(
     record: ComposerBannerCollapseRecord | null | undefined,
     kind: SessionComposerBannerKind,
 ): boolean {
-    return record?.[kind] === true;
+    return (record?.[kind] === true) !== isSessionComposerBannerKindCollapsedByDefault(kind);
 }
 
 export function normalizeComposerBannerCollapseRecord(

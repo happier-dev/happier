@@ -14,6 +14,7 @@
  */
 
 import { rankHappierQueryMatches, type HappierQueryText } from '@happier-dev/plugin-ui/presentation';
+import { buildSelectionListSectionDisclosureOption, type SelectionListSectionDisclosures } from './selectionListSectionDisclosure';
 
 import { SELECTION_LIST_DEFAULT_LOADING_SKELETON_ROWS } from './_constants';
 import { filterSelectionListSections } from './filterSelectionListSections';
@@ -97,6 +98,8 @@ export type SynthesizeSelectionListRenderPlanArgs = Readonly<{
     /** Dynamic-section state map, keyed by section id. */
     dynamicSectionStates: ReadonlyMap<string, DynamicSectionState>;
     searchAcrossSections?: boolean;
+    /** Which collapsible sections are open (the list's `useSelectionListSectionDisclosures`). */
+    sectionDisclosures?: SelectionListSectionDisclosures;
 }>;
 
 /**
@@ -158,6 +161,20 @@ export function synthesizeSelectionListRenderPlan(
             // example, incomplete Session discovery), while an empty Favorites
             // section remains absent instead of rendering a bare header.
             if (filtered.options.length === 0 && !filtered.resultHint) continue;
+            // A collapsible section reads as one disclosure row until it is opened; a search shows its matches.
+            if (filtered.collapsible === true && filterQuery.trim().length === 0 && args.sectionDisclosures) {
+                const disclosure = args.sectionDisclosures(filtered.id);
+                plan.push({
+                    id: filtered.id,
+                    options: [
+                        buildSelectionListSectionDisclosureOption({ sectionId: filtered.id,
+                            label: filtered.title ?? filtered.id, open: disclosure.open, onToggle: disclosure.onToggle }),
+                        ...(disclosure.open ? filtered.options : []),
+                    ],
+                    virtualization: filtered.virtualization,
+                });
+                continue;
+            }
             plan.push({
                 id: filtered.id,
                 title: filtered.title,

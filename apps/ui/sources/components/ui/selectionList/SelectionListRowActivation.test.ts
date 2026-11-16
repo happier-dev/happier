@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { GestureResponderEvent } from 'react-native';
 
 import { activateSelectionListRow } from './SelectionListRowActivation';
+import { buildSelectionListSectionDisclosureOption } from './selectionListSectionDisclosure';
 import type { SelectionListOption, SelectionListStep } from './_types';
 
 function activation() {
@@ -32,6 +33,16 @@ describe('activateSelectionListRow', () => {
         const option = { id: 'pick', label: 'Pick', onSelect: (pressed?: GestureResponderEvent) => { callbacks.events.push(pressed); } };
         activateSelectionListRow({ ...callbacks, option, event });
         expect(callbacks.events).toEqual([event, { selected: 'pick', option }]);
+    });
+
+    it('toggles a collapsible section without telling the consumer a value was picked (owner 11-16 F2)', () => {
+        const callbacks = activation();
+        const option = buildSelectionListSectionDisclosureOption({
+            sectionId: 'unavailable', label: 'Unavailable (3)', open: false,
+            onToggle: () => { callbacks.events.push('toggle'); },
+        });
+        activateSelectionListRow({ ...callbacks, option });
+        expect(callbacks.events).toEqual(['toggle']);
     });
 
     it.each([false, true])('does nothing for a disabled row (requiresInputValue=%s)', (requiresInputValue) => {

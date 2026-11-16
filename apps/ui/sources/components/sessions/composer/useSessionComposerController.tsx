@@ -297,9 +297,10 @@ import { type SessionPresentationIntentApplier } from "@/components/sessions/com
 import { ComposerAuxiliaryFrame } from "@/components/sessions/shell/view/ComposerAuxiliaryFrame";
 import { COMPOSER_CONTENT_HORIZONTAL_INSET } from "@/components/sessions/agentInput/composerContentInset";
 import { WarningActionBanner } from "@/components/sessions/shell/view/WarningActionBanner";
-import { isVersionSupported, MINIMUM_CLI_VERSION } from "@/utils/system/versionUtils";
+import { resolveSessionCliVersionNotice } from "@/components/sessions/sessionRunner/sessionCliVersionNotice";
 import { RowStatusLine } from '@/components/ui/status/RowStatusLine';
 import { useComposerBannerCollapse } from "@/components/sessions/composerBanners/ComposerBannerCollapseProvider";
+import { useClipboardWrite } from "@/hooks/ui/useClipboardWrite";
 import { buildCollapsedComposerBannerBadge, buildComposerBannerHideAction } from "@/components/sessions/composerBanners/composerBannerCollapse";
 import { readExternalSessionLink } from "@/sync/domains/session/external/readExternalSessionLink";
 import { createExternalSessionTranscriptLiveSourceKeyFromLink, readExternalSessionTranscriptStorageState, resolveExternalSessionTranscriptAuthorityState } from "@/sync/runtime/external/externalSessionTranscriptAuthority";
@@ -2069,24 +2070,27 @@ export function useSessionComposerController({
         staleSessionRunnerPresentation,
         t,
     ]);
-    // An outdated CLI is said once, in the status row (0.2 "Older CLI", owner 11-16): the chip opens its notice
-    // above the composer and Hide folds it back. The stale-runner notice, which carries Restart, speaks for it.
-    const sessionCliVersion = ownerMetadata?.version;
-    const cliVersionOutdated = typeof sessionCliVersion === 'string'
-        && !isVersionSupported(sessionCliVersion, MINIMUM_CLI_VERSION)
-        && staleSessionRunnerPresentation === null;
-    const [cliVersionNoticeOpen, setCliVersionNoticeOpen] = React.useState(false);
-    const toggleCliVersionNotice = React.useCallback(() => setCliVersionNoticeOpen((open) => !open), []);
-    const cliVersionBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => (cliVersionOutdated ? [{
+    // A CLI below the minimum is said once (owner 11-16 F3/F4): a status-row chip whose notice, closed by default
+    // through the one composer banner owner, carries Session Info's words and its command to copy. The stale-runner
+    // notice, which carries Restart runner, speaks for a runner that is only older than the Machine's CLI.
+    const cliVersionNotice = React.useMemo(() => (staleSessionRunnerPresentation === null
+        ? resolveSessionCliVersionNotice({
+            version: ownerMetadata?.version,
+            machineLabel: sessionMachineRecord ? getMachineSentenceName(sessionMachineRecord) : ownerMetadata?.host,
+        })
+        : null), [ownerMetadata?.host, ownerMetadata?.version, sessionMachineRecord, staleSessionRunnerPresentation]);
+    const cliVersionBanner = useComposerBannerCollapse('cliVersionOutdated');
+    const writeCliUpdateCommand = useClipboardWrite(sessionRouteServerId || null, { enabled: cliVersionNotice !== null && !cliVersionBanner.collapsed });
+    const cliVersionBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => (cliVersionNotice ? [{
         key: 'cli-version-outdated',
         testID: 'session-cliVersion-status-badge',
-        label: t('sessionInfo.cliVersionOutdatedBadge'),
-        accessibilityLabel: t('sessionInfo.cliVersionOutdatedTitle'),
-        accessibilityState: { expanded: cliVersionNoticeOpen },
+        label: t('sessionInfo.cliVersionOutdated'),
+        accessibilityLabel: cliVersionNotice.title,
+        accessibilityState: { expanded: !cliVersionBanner.collapsed },
         tone: 'warning',
         icon: (tint) => <Icon name="arrow-clockwise" size={14} color={tint} />,
-        onPress: toggleCliVersionNotice,
-    }] : []), [cliVersionNoticeOpen, cliVersionOutdated, t, toggleCliVersionNotice]);
+        onPress: cliVersionBanner.toggle,
+    }] : []), [cliVersionBanner.collapsed, cliVersionBanner.toggle, cliVersionNotice, t]);
     const usageLimitRecoveryBadges = React.useMemo<ReadonlyArray<AgentInputStatusBadge>>(() => {
         if (!usageLimitRecoveryPresentation) return [];
         const badge = buildCollapsedComposerBannerBadge({
@@ -6062,16 +6066,18 @@ export function useSessionComposerController({
                     />
                 </ComposerAuxiliaryFrame>
             ) : null}
-            {cliVersionOutdated && cliVersionNoticeOpen && typeof sessionCliVersion === 'string' ? (
+            {cliVersionNotice && !cliVersionBanner.collapsed ? (
                 <ComposerAuxiliaryFrame>
                     <WarningActionBanner
                         testID="session-cliVersion-notice"
-                        title={t('sessionInfo.cliVersionOutdatedTitle')}
-                        body={`${t('sessionInfo.cliVersionOutdatedMessage', { currentVersion: sessionCliVersion, requiredVersion: MINIMUM_CLI_VERSION })}. ${t('sessionInfo.updateCliInstructions')}`}
+                        title={cliVersionNotice.title}
+                        body={cliVersionNotice.reason}
+                        actionLabel={t('common.copy')}
+                        onActionPress={() => { void writeCliUpdateCommand(cliVersionNotice.command); }}
                         secondaryActions={[buildComposerBannerHideAction({
                             bannerTestID: 'session-cliVersion-notice',
                             accessibilityLabel: t('session.composerBanners.hideBannerAction'),
-                            onPress: toggleCliVersionNotice,
+                            onPress: cliVersionBanner.toggle,
                         })]}
                     />
                 </ComposerAuxiliaryFrame>

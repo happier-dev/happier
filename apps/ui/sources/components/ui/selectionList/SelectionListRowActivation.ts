@@ -16,7 +16,8 @@
  *   3. `openStep` wins over `onSelect`; the type-level discriminated union
  *      already enforces mutual exclusion, but the runtime check matches the
  *      type contract for safety.
- *   4. Otherwise: invoke the option-level `onSelect` first, then bubble to
+ *   4. A collapsible section's disclosure row only toggles its section.
+ *   5. Otherwise: invoke the option-level `onSelect` first, then bubble to
  *      the orchestrator's top-level `onSelect`. The order is observable —
  *      consumers rely on the option-level callback to mutate state before the
  *      orchestrator's `onSelect` reads it.
@@ -26,6 +27,7 @@ import type { GestureResponderEvent } from 'react-native';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { SelectionListOption, SelectionListStep } from './_types';
+import { readSelectionListSectionDisclosureSectionId } from './selectionListSectionDisclosure';
 
 export type ActivateSelectionListRowArgs = Readonly<{
     option: SelectionListOption;
@@ -52,6 +54,11 @@ export function activateSelectionListRow(args: ActivateSelectionListRowArgs): bo
     }
     if (option.openStep !== undefined) {
         onPushStep(option.openStep);
+        return true;
+    }
+    // A collapsible section's own row (synthesized by the list) opens or closes it; no consumer value was picked.
+    if (readSelectionListSectionDisclosureSectionId(option.id) !== null) {
+        option.onSelect?.(args.event);
         return true;
     }
     if (args.context || args.invocation) {

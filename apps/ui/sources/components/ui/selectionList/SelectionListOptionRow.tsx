@@ -47,6 +47,7 @@ import {
   resolveSelectionListSectionColumnCount,
   resolveSelectionListSectionColumnSpan,
 } from './selectionListGridGeometry';
+import { isSelectionListSingleColumnSection } from './selectionListSectionDisclosure';
 import {
   buildSelectionListGridCellWrapperA11yProps,
   buildSelectionListOptionA11yProps,
@@ -804,13 +805,16 @@ export function PlanSuccessRows(
   // A section too short to fill a row spans the pane instead of leaving a
   // hole beside its only card. Decided by the geometry module so the ARIA
   // column indices and the arrow keys agree with what is painted.
+  const singleColumn = isSelectionListSingleColumnSection(options);
   const sectionColumnCount = resolveSelectionListSectionColumnCount(
     options.length,
     columnCount,
+    singleColumn,
   );
   const columnSpan = resolveSelectionListSectionColumnSpan(
     options.length,
     columnCount,
+    singleColumn,
   );
   const rowOffset = props.rowOffset;
   return (

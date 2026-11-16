@@ -320,6 +320,11 @@ export type SelectionListSection = Readonly<{
     /** Optional non-activatable status rendered after this static section. */
     resultHint?: string;
     /**
+     * The section reads as ONE disclosure row (its title and count), closed until pressed; open, its rows follow
+     * it in one column (owner 11-16). A search shows its matches whether it is open or not.
+     */
+    collapsible?: boolean;
+    /**
      * Optional virtualization hint consumed by `SelectionListVirtualizedSection`.
      * Defaults to `'auto'`. See `SelectionListVirtualizationMode`.
      */

@@ -11609,8 +11609,6 @@ const enSessionInfo = {
   peerUnnamedSender: 'another agent',
   cliVersion: 'CLI version',
   cliVersionOutdated: 'CLI update required',
-  cliVersionOutdatedBadge: "Older CLI",
-  cliVersionOutdatedTitle: "Session is still running on an older CLI",
   cliVersionOutdatedMessage: ({
     currentVersion,
     requiredVersion,

@@ -50,6 +50,12 @@ export type SessionCapabilitiesContentProps = Readonly<{
   model: SessionCapabilitiesModel;
   /** A dedicated destination uses the same controls for one capability kind. */
   kind?: 'skills';
+  /**
+   * `embedded`: hosted inside another page's row (Session Info's Skills row, owner 11-16 F1). The host owns the
+   * scroll, the heading and the edges: no scroller or top rule of its own, no group heading that repeats the host
+   * row, dividers on the row inset, and the destinations as trailing rows.
+   */
+  presentation?: 'popover' | 'embedded';
   skillDetails?: (skillId: string) => Pick<CapabilityRowProps, 'description' | 'mark' | 'note' | 'onPress'>;
   skillSection?: (skillId: string) => Readonly<{ key: string; title: string; order?: number }>;
   adding?: boolean;
@@ -110,6 +116,7 @@ export function SessionCapabilitiesContent(
   props: SessionCapabilitiesContentProps,
 ): React.ReactElement {
   const { model } = props;
+  const embedded = props.presentation === 'embedded';
   const groups = React.useMemo(() => (props.kind ? model.groups.filter(group => group.kind === props.kind) : model.groups)
     .flatMap(group => {
       const sectionFor = props.skillSection;
@@ -207,9 +214,10 @@ export function SessionCapabilitiesContent(
               <View
                 key={group.key}
                 testID={`${props.testID}:group:${group.key}`}
-                style={index > 0 ? styles.groupDivider : null}
+                style={index > 0 ? (embedded ? styles.groupDividerEmbedded : styles.groupDivider) : null}
               >
-                <CollectionListGroupLabel
+                {/* Hosted in a row that already names the kind, the kind's own heading is not said again. */}
+                {embedded && group.key === group.kind ? null : <CollectionListGroupLabel
                   presentation="menu"
                   title={group.title}
                   count={count}
@@ -223,7 +231,7 @@ export function SessionCapabilitiesContent(
                       {group.trailing}
                     </Text>
                   }
-                />
+                />}
                 {resolvingWithoutRows ? (
                   <SkeletonRows
                     testID={`${props.testID}:resolving${index === 0 ? '' : `:${group.kind}`}`}
@@ -307,7 +315,7 @@ export function SessionCapabilitiesContent(
   );
 
   const footer = (
-    <View style={styles.footer}>
+    <View style={embedded ? undefined : styles.footer}>
       {adding ? (
         <SessionCapabilityAddField
           items={props.kind ? model.addItems.filter(item => item.kind === 'skill') : model.addItems}
@@ -322,7 +330,7 @@ export function SessionCapabilitiesContent(
           testID={`${props.testID}:add`}
         />
       )}
-      <View style={styles.costLine}>
+      {embedded ? null : <View style={styles.costLine}>
         <Text
           variant="meta"
           numberOfLines={1}
@@ -331,7 +339,7 @@ export function SessionCapabilitiesContent(
         >
           {props.kind ? null : model.costLine}
         </Text>
-        {props.onOpen ? (
+        {props.onOpen && !embedded ? (
           <View style={styles.destinations}>
             <TextLinkButton
               size="meta"
@@ -354,9 +362,44 @@ export function SessionCapabilitiesContent(
             />}
           </View>
         ) : null}
-      </View>
+      </View>}
+      {props.onOpen && embedded ? (
+        <Item
+          testID={`${props.testID}:open:skills`}
+          title={t(props.kind ? 'capabilities.skills.pane.allSkills' : 'capabilities.skills.title')}
+          subtitle={props.openUnavailableReason ?? undefined}
+          disabled={Boolean(props.openUnavailableReason)}
+          density="compact"
+          onPress={() => props.onOpen?.('skills')}
+        />
+      ) : null}
     </View>
   );
+
+  if (embedded) {
+    return (
+      <View testID={props.testID}>
+        {body}
+        {props.undo ? (
+          <View style={styles.undoLineEmbedded}>
+            <SurfaceStateCard
+              testID={`${props.testID}:undo`}
+              kind="success"
+              size="line"
+              accessibilitySemantics="status"
+              title={
+                props.undo.change === 'added'
+                  ? t('capabilities.session.sheet.itemAdded', { item: props.undo.title })
+                  : t('capabilities.session.sheet.itemRemoved', { item: props.undo.title })
+              }
+              action={{ label: t('capabilities.session.ask.undo'), onPress: props.undo.onUndo }}
+            />
+          </View>
+        ) : null}
+        {footer}
+      </View>
+    );
+  }
 
   return (
     <View
@@ -663,6 +706,16 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.border.subtle,
     marginTop: theme.space.s8,
+  },
+  // Hosted in a page row, a rule between groups starts on the rows' text edge, as the host's dividers do.
+  groupDividerEmbedded: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border.subtle,
+    marginTop: theme.space.s8,
+    marginLeft: MENU_ROW_METRICS.paddingHorizontalPx,
+  },
+  undoLineEmbedded: {
+    paddingVertical: theme.space.s4,
   },
   trailing: { color: theme.colors.text.tertiary },
   reserved: { opacity: 0 },

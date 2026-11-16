@@ -54,7 +54,7 @@ function SessionSkillsRow(props: Readonly<{ sessionId: string; serverId: string 
     <WorkSection testID="session-setup-skills" nativeID="skills" anatomy="page" icon="lightbulb"
       title={t('capabilities.skills.title')} count={count ?? 0} summary={count === null ? '—' : String(count)}
       setupDefaultExpanded={false}>
-      <SessionPaneLazyLoader load={loadSessionSkillsPane} props={{ sessionId: props.sessionId, serverId: props.serverId }}
+      <SessionPaneLazyLoader load={loadSessionSkillsPane} props={{ sessionId: props.sessionId, serverId: props.serverId, presentation: 'embedded' }}
         testID="session-setup-skills-loading" />
     </WorkSection>
   );

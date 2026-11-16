@@ -9910,8 +9910,6 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         peerUnnamedSender: 'einem anderen Agenten',
         cliVersion: 'CLI-Version',
         cliVersionOutdated: 'CLI-Update erforderlich',
-        cliVersionOutdatedBadge: "Älteres CLI",
-        cliVersionOutdatedTitle: "Die Sitzung läuft noch mit einem älteren CLI",
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `Version ${currentVersion} installiert. Aktualisiere auf ${requiredVersion} oder neuer`,
         updateCliInstructions: 'Führ happier self update aus',

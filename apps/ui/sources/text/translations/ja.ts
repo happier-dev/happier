@@ -10225,8 +10225,6 @@ localTailscale: {
     peerUnnamedSender: "別のエージェント",
     cliVersion: "CLIバージョン",
     cliVersionOutdated: "CLIの更新が必要",
-    cliVersionOutdatedBadge: "古いCLI",
-    cliVersionOutdatedTitle: "セッションはまだ古いCLIで実行されています",
     cliVersionOutdatedMessage: ({
       currentVersion,
       requiredVersion,

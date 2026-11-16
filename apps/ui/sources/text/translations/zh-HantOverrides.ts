@@ -8027,8 +8027,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         peerUnnamedSender: '另一個代理',
         cliVersion: 'CLI 版本',
         cliVersionOutdated: '需要更新 CLI',
-        cliVersionOutdatedBadge: '舊版 CLI',
-        cliVersionOutdatedTitle: '工作階段仍在舊版 CLI 上執行',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `已安裝版本 ${currentVersion}。請更新到 ${requiredVersion} 或更高版本`,
         updateCliInstructions: '請執行 happier self update',

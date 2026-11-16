@@ -95,6 +95,8 @@ async function render(
     preview?: boolean;
     knownRows?: Readonly<{ skills: number; mcp: number }>;
     kind?: 'skills';
+    presentation?: 'popover' | 'embedded';
+    onOpen?: (destination: 'skills' | 'mcp') => void;
     skillDetails?: Parameters<typeof SessionCapabilitiesContent>[0]['skillDetails'];
     skillSection?: Parameters<typeof SessionCapabilitiesContent>[0]['skillSection'];
     undo?: Parameters<
@@ -132,6 +134,8 @@ async function render(
       undo={options.undo}
       knownRows={options.knownRows}
       kind={options.kind}
+      presentation={options.presentation}
+      onOpen={options.onOpen}
       skillDetails={options.skillDetails}
       skillSection={options.skillSection}
       machineName="nl2"
@@ -214,6 +218,20 @@ describe('SessionCapabilitiesContent', () => {
     expect(screen.findAll(node => node.props?.testID === 'caps:add:pick:mcp_server:available-server')).toHaveLength(0);
     await press(screen, 'caps:add:pick:skill:available-skill');
     expect(changes).toEqual([{ kind: 'skill', id: 'available-skill', state: 'on' }]);
+  });
+
+  it('sits in a host row when embedded: no scroller or repeated kind heading, destinations as a trailing row (owner 11-16 F1)', async () => {
+    const onOpen = vi.fn();
+    const { screen } = await render([
+      { kind: 'skill', id: 'included-skill', ruleOn: true, override: null },
+    ], 'ready', { kind: 'skills', presentation: 'embedded', onOpen });
+    const { ScrollView } = await import('react-native');
+    const { CollectionListGroupLabel } = await import('@/components/ui/lists/collection/CollectionList');
+    expect(screen.tree.root.findAllByType(ScrollView)).toHaveLength(0);
+    expect(screen.tree.root.findAllByType(CollectionListGroupLabel)).toHaveLength(0);
+    // The destination is an ordinary trailing row, pressable like the rows above it.
+    await press(screen, 'caps:open:skills');
+    expect(onOpen).toHaveBeenCalledWith('skills');
   });
 
   it('turns an inherited row off, returns an added row to its rules, and turns a removed row back on', async () => {

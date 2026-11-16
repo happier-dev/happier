@@ -28,7 +28,9 @@ import { useExistingSessionCapabilitiesPopover } from './useSessionCapabilitiesP
 import { useSessionCapabilityRestart } from './sessionCapabilityRestart';
 
 /** The Session destination borrows the composer's capability owner and its existing Actions. */
-export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?: string | null }>) {
+export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?: string | null;
+    /** `embedded`: hosted in Session Info's Skills row (the same component as the rail's panel). */
+    presentation?: 'pane' | 'embedded' }>) {
     const serverId = props.serverId ?? null;
     const router = useRouter();
     const session = useSessionViewShellSession(props.sessionId, serverId);
@@ -140,8 +142,9 @@ export function SessionSkillsPane(props: Readonly<{ sessionId: string; serverId?
         }) : []),
     ], [onOpen, onRetry, undo, owner.undoLast, reportFailure, restart.badge, restart.restart, model.groups, skills, makers, openSkill, openMaker, onChange, destination.available]);
     useCurrentUiContextLocalCommands(commands);
-    return <View style={{ flex: 1, minHeight: 0 }}>
-        <SessionCapabilitiesContent kind="skills" model={model} onChange={onChange} undo={undo}
+    const embedded = props.presentation === 'embedded';
+    return <View style={embedded ? undefined : { flex: 1, minHeight: 0 }}>
+        <SessionCapabilitiesContent kind="skills" presentation={embedded ? 'embedded' : 'popover'} model={model} onChange={onChange} undo={undo}
             skillDetails={skillDetails} skillSection={skillSection} adding={adding} onAddingChange={setAdding}
             onRetry={onRetry} onOpen={onOpen} openUnavailableReason={destination.unavailableLabel}
             machineName={machineName} testID="session-skills" />

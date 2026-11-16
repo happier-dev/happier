@@ -15,6 +15,18 @@ import {
     toggleComposerBannerCollapsedInRecord,
 } from './composerBannerCollapse';
 
+describe('composer banner per-kind default', () => {
+    it('opens a default-closed kind only after its chip is pressed, and closes it again (owner 11-16 F4)', () => {
+        expect(isComposerBannerCollapsedInRecord({}, 'cliVersionOutdated')).toBe(true);
+        const opened = toggleComposerBannerCollapsedInRecord({}, 'cliVersionOutdated');
+        expect(isComposerBannerCollapsedInRecord(opened, 'cliVersionOutdated')).toBe(false);
+        expect(isComposerBannerCollapsedInRecord(toggleComposerBannerCollapsedInRecord(opened, 'cliVersionOutdated'), 'cliVersionOutdated')).toBe(true);
+        // Default-open kinds keep their stored meaning: a present key is collapsed.
+        expect(isComposerBannerCollapsedInRecord({}, 'staleSessionRunner')).toBe(false);
+        expect(isComposerBannerCollapsedInRecord({ staleSessionRunner: true }, 'staleSessionRunner')).toBe(true);
+    });
+});
+
 describe('composer banner kinds', () => {
     it('recognizes registered kinds and rejects everything else', () => {
         for (const kind of SESSION_COMPOSER_BANNER_KINDS) {

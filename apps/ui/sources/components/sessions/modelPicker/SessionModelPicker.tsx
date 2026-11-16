@@ -578,7 +578,8 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
             isUnavailable: (option) => option.availability === 'unavailable',
             reason: (option) => option.unavailableReason,
             group: (options, title, reason): SessionModelPickerSection => ({
-                id: reason === null ? 'unavailable' : `unavailable:${reason}`, title, options }),
+                // One closed disclosure row each (owner 11-16): what can run stays the list.
+                id: reason === null ? 'unavailable' : `unavailable:${reason}`, title, options, collapsible: true }),
             title: t('common.unavailable'),
             present: (option, _section, sharedReason) => ({
                 ...option,

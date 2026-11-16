@@ -30,6 +30,8 @@
  * would make ↓ jump from item 1 to item 4.
  */
 
+import { isSelectionListSingleColumnSection } from './selectionListSectionDisclosure';
+
 export type SelectionListGridArrowKey =
     | 'ArrowUp'
     | 'ArrowDown'
@@ -95,9 +97,12 @@ function normalizeColumnCount(columnCount: number): number {
 export function resolveSelectionListSectionColumnCount(
     optionCount: number,
     columnCount: number,
+    /** An open collapsible section (`isSelectionListSingleColumnSection`) stands in one column. */
+    singleColumn = false,
 ): number {
     const normalized = normalizeColumnCount(columnCount);
     if (normalized <= 1 || optionCount <= 0) return normalized;
+    if (singleColumn) return 1;
     return optionCount < normalized ? 1 : normalized;
 }
 
@@ -109,9 +114,10 @@ export function resolveSelectionListSectionColumnCount(
 export function resolveSelectionListSectionColumnSpan(
     optionCount: number,
     columnCount: number,
+    singleColumn = false,
 ): number {
     const normalized = normalizeColumnCount(columnCount);
-    return resolveSelectionListSectionColumnCount(optionCount, normalized) === 1
+    return resolveSelectionListSectionColumnCount(optionCount, normalized, singleColumn) === 1
         ? normalized
         : 1;
 }
@@ -129,6 +135,7 @@ export function buildSelectionListGridGeometry(params: Readonly<{
         const groupColumnCount = resolveSelectionListSectionColumnCount(
             group.options.length,
             columnCount,
+            isSelectionListSingleColumnSection(group.options),
         );
         // A fresh group always starts a fresh visual row.
         let column = groupColumnCount;

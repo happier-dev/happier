@@ -25,6 +25,7 @@ import { SelectionListOptionTabBehaviorContext } from './SelectionListOptionTabB
 import { createSelectionListKeyPressHandler } from './SelectionListKeyboardInput';
 import { SelectionListMeasureHost } from './SelectionListMeasureHost';
 import { synthesizeSelectionListRenderPlan, type SectionRenderPlan } from './SelectionListRenderPlan';
+import { useSelectionListSectionDisclosures } from './selectionListSectionDisclosure';
 import { activateSelectionListRow } from './SelectionListRowActivation';
 import { SelectionListSearchHeader } from './SelectionListSearchHeader';
 import { resolveSelectionListA11yPattern } from './buildSelectionListOptionA11yProps';
@@ -495,6 +496,8 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     });
     // Resolve sections to render via the pure synthesizer (R14 extraction).
     const buildInputRow = currentStep.buildInputRow;
+    // Which collapsible sections are open (`SelectionListSection.collapsible`): owned here, per list.
+    const sectionDisclosures = useSelectionListSectionDisclosures();
     const renderPlan = React.useMemo(
         () => {
             const base = synthesizeSelectionListRenderPlan({
@@ -507,6 +510,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 filterQuery: currentStep.disableInputFilter === true ? '' : filterQuery,
                 dynamicSectionStates,
                 searchAcrossSections: currentStep.searchAcrossSections,
+                sectionDisclosures,
             });
             // Combobox-create: a step can synthesize an "act on current input"
             // row (e.g. "Create worktree '<typed>'"). Prepend it as a
@@ -520,7 +524,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
             };
             return [inputRowSection, ...base];
         },
-        [currentStep.sections, currentStep.disableInputFilter, currentStep.searchAcrossSections, buildInputRow, dynamicSectionStates, inputValue, filterQuery],
+        [currentStep.sections, currentStep.disableInputFilter, currentStep.searchAcrossSections, buildInputRow, dynamicSectionStates, inputValue, filterQuery, sectionDisclosures],
     );
     if (
         selection.kind === 'multiple'

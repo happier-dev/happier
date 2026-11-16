@@ -49,6 +49,7 @@ import {
     type SelectionListGridRowModel,
 } from './selectionListGridRowModel';
 import { SelectionListSectionHeader } from './SelectionListSectionHeader';
+import { isSelectionListSingleColumnSection } from './selectionListSectionDisclosure';
 import { renderSelectionListAccessory } from './renderSelectionListAccessory';
 import {
     collectVirtualizationEligibleSectionIds,
@@ -397,8 +398,9 @@ export function groupVirtualizedItemsIntoColumnRows(
 
     const flushPending = (): void => {
         if (pending.length === 0) return;
-        const sectionColumnCount = resolveSelectionListSectionColumnCount(pending.length, count);
-        const columnSpan = resolveSelectionListSectionColumnSpan(pending.length, count);
+        const singleColumn = isSelectionListSingleColumnSection(pending.map((item) => item.option));
+        const sectionColumnCount = resolveSelectionListSectionColumnCount(pending.length, count, singleColumn);
+        const columnSpan = resolveSelectionListSectionColumnSpan(pending.length, count, singleColumn);
         for (const cells of chunkIntoColumnBlocks(pending, sectionColumnCount)) {
             grouped.push({
                 kind: 'option-row',

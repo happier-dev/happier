@@ -696,6 +696,11 @@ describe('SessionView (control switch timeout)', () => {
 
     expect(screen.findByTestId('session-cliVersion-notice')).toBeTruthy();
     expect(findStatusBadge('cli-version-outdated')).toEqual(expect.objectContaining({ accessibilityState: { expanded: true } }));
+    // One presentation per state (owner 11-16 F3): Session Info's words and its command to copy.
+    const notice = getWarningActionBannerPropsByTestId('session-cliVersion-notice');
+    expect(notice.title).toBe('sessionPages.info.cliNoticeTitle');
+    expect(notice.body).toBe('sessionPages.info.cliNoticeReason');
+    expect(notice.actionLabel).toBe('common.copy');
 
     await act(async () => {
       getBannerHideAction('session-cliVersion-notice').onPress();

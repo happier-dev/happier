@@ -38,10 +38,6 @@ import {
   useSessionStatus,
 } from '@/utils/sessions/sessionUtils';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
-import {
-  isVersionSupported,
-  MINIMUM_CLI_VERSION,
-} from '@/utils/system/versionUtils';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { HappyError } from '@/utils/errors/errors';
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
@@ -151,6 +147,10 @@ import {
   useSessionResumeRequestAvailable,
 } from '@/components/sessions/model/sessionResumeRequests';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import {
+  isSessionCliVersionBelowMinimum,
+  resolveSessionCliVersionNotice,
+} from '@/components/sessions/sessionRunner/sessionCliVersionNotice';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 
@@ -326,10 +326,7 @@ function SessionInfoContent({
   const automationsSupport = useAutomationsSupport();
   const showAutomations = automationsSupport?.enabled !== false;
   // Check if CLI version is outdated
-  const isCliOutdated = Boolean(
-    metadata?.version &&
-    !isVersionSupported(metadata.version, MINIMUM_CLI_VERSION),
-  );
+  const isCliOutdated = isSessionCliVersionBelowMinimum(metadata?.version);
   // A session whose Agent the presentation reader cannot name has no brand to
   // show. Substituting the product default would present it as Claude's.
   const agentId = readSessionPresentationAgentId(session);
@@ -1119,7 +1116,6 @@ function SessionInfoContent({
     }
   });
 
-  const updateCommand = 'happier self update';
   const aiProviderTitle = resolveSessionActionDefaultBackendTitle({
     session,
     sessionActionDefaultBackendEntryTitle:
@@ -1128,6 +1124,8 @@ function SessionInfoContent({
   });
   const identityMachineLabel =
     currentExecutionMachineLabel ?? metadata?.host ?? null;
+  // The one presentation of a CLI below the minimum, shared with the composer's notice (owner 11-16 F3).
+  const cliVersionNotice = resolveSessionCliVersionNotice({ version: metadata?.version, machineLabel: identityMachineLabel });
   const identityPath =
     metadata?.path && readSessionDirectoryKind(metadata) !== 'managed'
       ? formatSessionPath(metadata.path, metadata.homeDir)
@@ -1304,27 +1302,18 @@ function SessionInfoContent({
       />
 
       {/* What blocks use comes first: an outdated CLI, with the command to copy. */}
-      {!contentUnavailable && isCliOutdated ? (
+      {!contentUnavailable && cliVersionNotice ? (
         <ItemGroup surface="none">
           <SurfaceStateCard
             testID="session-info-cli-notice"
             kind="warning"
             layout="inline"
-            title={
-              identityMachineLabel
-                ? t('sessionPages.info.cliNoticeTitle', {
-                    machine: identityMachineLabel,
-                  })
-                : t('sessionInfo.cliVersionOutdated')
-            }
-            reason={t('sessionPages.info.cliNoticeReason', {
-              version: MINIMUM_CLI_VERSION,
-              command: updateCommand,
-            })}
+            title={cliVersionNotice.title}
+            reason={cliVersionNotice.reason}
             action={{
               label: t('common.copy'),
               onPress: () => {
-                void writeClipboard(updateCommand);
+                void writeClipboard(cliVersionNotice.command);
               },
             }}
           />

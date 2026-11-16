@@ -9759,8 +9759,6 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     peerUnnamedSender: "un autre agent",
     cliVersion: "Version du CLI",
     cliVersionOutdated: "Mise à jour du CLI requise",
-    cliVersionOutdatedBadge: "Ancien CLI",
-    cliVersionOutdatedTitle: "La session s’exécute encore avec un ancien CLI",
     cliVersionOutdatedMessage: ({
       currentVersion,
       requiredVersion,

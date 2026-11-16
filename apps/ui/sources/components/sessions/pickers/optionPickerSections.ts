@@ -32,6 +32,7 @@ export function useOptionPickerSections<TValue>(input: Readonly<{
             kind: 'static' as const,
             id: section.id,
             title: section.title,
+            ...(section.collapsible ? { collapsible: true } : {}),
             virtualization: 'auto' as const,
             options: section.options.flatMap((option): SelectionListOption[] => {
                 const valueKey = optionPickerOptionKey(section.id, option, getValueKey);

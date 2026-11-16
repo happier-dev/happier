@@ -10036,8 +10036,6 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     peerUnnamedSender: "outro agente",
     cliVersion: "Versão do CLI",
     cliVersionOutdated: "Atualização do CLI necessária",
-    cliVersionOutdatedBadge: "CLI antigo",
-    cliVersionOutdatedTitle: "A sessão ainda roda em um CLI antigo",
     cliVersionOutdatedMessage: ({
       currentVersion,
       requiredVersion,

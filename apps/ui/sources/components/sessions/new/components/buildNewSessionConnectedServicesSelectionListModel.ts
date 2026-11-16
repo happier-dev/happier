@@ -600,7 +600,7 @@ export function foldUnavailableSelectionRows(
     return [...dynamic, ...foldUnavailableRows<SelectionListOption, StaticSection>({
         sections: sections.filter((section): section is StaticSection => section.kind === 'static'),
         isUnavailable: (option) => isOptionUnavailable(option, optionAvailabilityById),
-        group: (options, groupTitle) => ({ kind: 'static', id: 'unavailable', title: groupTitle, options }),
+        group: (options, groupTitle) => ({ kind: 'static', id: 'unavailable', title: groupTitle, options, collapsible: true }),
         title,
     })];
 }
