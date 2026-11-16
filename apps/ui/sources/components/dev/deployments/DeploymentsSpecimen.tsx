@@ -654,6 +654,14 @@ const SPECIMEN_REMOVALS: Readonly<Record<string, Omit<DeploymentDispositionSheet
   nodelete: { subject: { kind: 'target', targetLinkId: 'link-pages' }, name: 'Docs', machine: null, provider: 'Cloudflare Pages',
     running: true, hasRetainedAssociations: true, canRemove: false,
     providerResource: { name: 'acme-docs', consequence: null, defaultChoice: 'unlink' } },
+  // A managed database project, from the Database page: the provider's own delete words, Environment kept.
+  'data-created': { subject: { kind: 'target', targetLinkId: 'link-neon' }, name: 'Production', machine: null, provider: 'Neon',
+    running: false, hasRetainedAssociations: true, canRemove: true,
+    providerResource: { name: 'shop-orders', consequence: 'Delete this Neon project and all of its data?', defaultChoice: 'delete' } },
+  'data-linked': { subject: { kind: 'target', targetLinkId: 'link-supabase' }, name: 'Production', machine: null, provider: 'Supabase',
+    running: false, hasRetainedAssociations: true, canRemove: true,
+    providerResource: { name: 'acme-auth', consequence: 'Delete the recorded Supabase project and all of its data',
+      defaultChoice: 'unlink' } },
   machine: { subject: { kind: 'target', targetLinkId: 'link-machine' }, name: 'Production', machine: 'vps-fra-1',
     running: true, services: ['web', 'worker', 'postgres'], hasRetainedAssociations: true, canRemove: true },
 };

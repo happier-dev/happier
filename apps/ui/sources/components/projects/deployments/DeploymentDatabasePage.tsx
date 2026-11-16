@@ -80,7 +80,11 @@ import {
   deploymentRestoreOperands,
   retainedBackupFromSummary,
 } from './deploymentRestore';
-import { deploymentDataTargetOperands } from '@happier-dev/deployments';
+import { deploymentDataTargetOperands, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
+import { useDeploymentEnvironmentDeletion } from './useDeploymentEnvironmentDeletion';
+import { showDeploymentDispositionSheet } from './DeploymentDispositionSheet';
+import { managedDataTargets } from './managedData';
+import { readPlatformResourceName } from './platformTargetLink';
 import {
   showDeploymentRestoreSheet,
   type DeploymentRestoreChoice,
@@ -215,6 +219,9 @@ export function DeploymentDatabasePage(
     database?.kind === 'managed',
   );
   const queryDeclarations = useDeploymentTargetDeclarations(database?.kind === 'managed' ? lifetime : null);
+  // Unlink or delete a managed project through the same removal review and action owner as a runtime target.
+  const disposition = useDeploymentEnvironmentDeletion({ environmentId: props.environmentId, lifetime,
+    snapshot: record.snapshot, actions, controller: props.controller, demand: props.demand });
   const catalog = useSavedSecretCatalogEntries({
     scope: lifetime?.scope ?? null,
   });
@@ -486,6 +493,30 @@ export function DeploymentDatabasePage(
   const openManaged = database.kind === 'managed' && lifetime && actions && detail.environment.capabilities.manage
     ? () => showManagedDataSheet({ detail, lifetime, actions, linked: database.link,
       onApproval: props.review.request }) : null;
+  const managedTarget = database.kind === 'managed' && database.link.targetLink.source.kind === 'plugin'
+    && queryDeclarations.state.status === 'ready' ? (() => {
+      const source = database.link.targetLink.source.contribution;
+      return managedDataTargets(queryDeclarations.state.declarations)
+        .find(target => target.pluginId === source.pluginId && target.targetId === source.localId) ?? null;
+    })() : null;
+  // The removal owner decides which choices exist and where the review starts (created: Delete; linked: Unlink).
+  const openRemoval = database.kind === 'managed' && managedTarget && disposition.canDelete ? () => {
+    const link = database.link;
+    const removal = selectDeploymentTargetRemovalChoicesV1(link.targetLink.source, [managedTarget],
+      link.content.providerResourceOrigin);
+    showDeploymentDispositionSheet({
+      subject: { kind: 'target', targetLinkId: link.targetLink.id },
+      name: detail.content.name, machine: null, provider: managedTarget.title, running: false,
+      hasRetainedAssociations: true, canRemove: removal.choices.includes('delete'),
+      providerResource: { name: readPlatformResourceName(link.content) ?? managedTarget.title,
+        consequence: managedTarget.teardownConsequence ?? null, defaultChoice: removal.defaultChoice },
+      // A project's removal is one teardown of its data link; the Environment stays.
+      run: choice => disposition.stopAndRemove(link.targetLink.id, undefined, undefined,
+        { providerRemoval: choice === 'remove' ? 'delete' : 'unlink', removeEnvironment: false }),
+      onApproval: props.review.request,
+      onDone: () => {},
+    });
+  } : null;
 
   return (
     <NavigationBackChromeProvider control={backControl}>
@@ -721,6 +752,10 @@ export function DeploymentDatabasePage(
                 subtitle={database.link.content.providerIdentity?.providerResourceId}
                 mode="info"
               />
+              {/* Removal comes last in the provider section: Unlink is the safe choice, deletion is typed. */}
+              {openRemoval ? <Item testID={`${id}.remove`} title={t('projects.deployments.platformLink.removalTitle',
+                { resource: readPlatformResourceName(database.link.content) ?? database.link.targetLink.targetKind })}
+                onPress={openRemoval} /> : null}
             </ItemGroup>
           ) : null}
         </ItemList>

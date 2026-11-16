@@ -42,6 +42,7 @@ export type DeploymentPlatformTarget = Readonly<{
   needs?: DeploySuggestionCatalogV1['targets'][number]['needs'];
   runtimeLogs?: true;
   teardown?: true;
+  /** The provider's own words for what its teardown deletes ("Delete this Vercel project and its deployments?"). */
   teardownConsequence?: string;
   create?: Readonly<{
     localId: string;
@@ -69,8 +70,8 @@ const record = (value: unknown): value is UnknownRecord =>
 const text = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0;
 
-/** The teardown Action's declared confirmation names what the provider deletes with the resource. */
-function readTeardownConsequence(actions: readonly unknown[], localId: string) {
+/** A delete Action's declared confirmation names what the provider deletes with the resource (runtime and data targets). */
+export function readTeardownConsequence(actions: readonly unknown[], localId: string) {
   const action = actions.find(entry => record(entry) && entry.id === localId);
   const title = record(action) && record(action.confirmation) ? action.confirmation.title : undefined;
   const consequence = title === undefined ? '' : resolvePluginLocalizedStringV2Text(title);

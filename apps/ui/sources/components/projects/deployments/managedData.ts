@@ -6,7 +6,7 @@ import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { isRecord } from '@happier-dev/protocol/common/records';
-import { readPluginActionCredentialPurpose } from './platformTargetLink';
+import { readPluginActionCredentialPurpose, readTeardownConsequence, type DeploymentPlatformTarget } from './platformTargetLink';
 
 const roleInputSchemas = new Map(Object.entries(DeploymentTargetRoleInputProtocolSchemasV1));
 
@@ -30,8 +30,10 @@ export function managedDataTargets(declarations: readonly Readonly<{ manifest: P
             && !Object.hasOwn(protocolFields, root));
         }) } }];
     });
-    return [{ key: `${manifest.id}/${target.id}`, pluginId: manifest.id, targetId: target.id, target,
-      ...(target.dataV1?.projects?.delete ? { teardown: true as const } : {}),
+    // The same delete metadata a runtime platform target carries: whether delete is declared, and its own words.
+    const removal: Pick<DeploymentPlatformTarget, 'teardown' | 'teardownConsequence'> = target.dataV1?.projects?.delete
+      ? { teardown: true, ...readTeardownConsequence(manifest.contributes.actions ?? [], target.dataV1.projects.delete) } : {};
+    return [{ key: `${manifest.id}/${target.id}`, pluginId: manifest.id, targetId: target.id, target, ...removal,
       title: resolvePluginLocalizedStringV2Text(target.title), operations }];
   }));
 }
@@ -44,7 +46,6 @@ export function managedDataLinkContent(credentialPrincipal: unknown, value: unkn
   if (!isRecord(value) || value.status === 'outcome_unknown' || value.status === 'unavailable') return null;
   const parsed = DeploymentTargetLinkProviderContentV1Schema.safeParse({ credentialPrincipal,
     providerIdentity: value.providerIdentity, providerEnvironment: value.providerEnvironment,
-    ...(value.providerResourceOrigin === 'created' ? { providerResourceOrigin: value.providerResourceOrigin } : {}),
     ...(typeof value.engine === 'string' ? { data: { engine: value.engine,
       ...(typeof value.engineVersion === 'number' || typeof value.engineVersion === 'string' ? { version: String(value.engineVersion) }
         : typeof value.version === 'string' ? { version: value.version } : {}),

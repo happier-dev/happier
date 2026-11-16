@@ -642,6 +642,76 @@ describe('Environment → Database → Read-only query', () => {
           role: 'readOnlyPassword', source: { kind: 'secret', ref: readRoleRef, resourceRevision: 1 } }], remove: [] })]);
     } finally { await screen.unmount(); controller.retire(); await installed.dispose(); account.dispose(); }
   });
+  it.each([
+    { origin: 'created' as const, starts: 'remove' },
+    { origin: undefined, starts: 'detach' },
+  ])('unlinks or deletes a managed database project through the one removal review (origin $origin)', async ({ origin, starts }) => {
+    const { definePlugin, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } = await import('@happier-dev/plugin-sdk');
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const pluginId = 'com.example.removable-database';
+    const execution = { target: 'account', account: { artifactId: 'removal-runtime', exportName: 'activate' } } as const;
+    const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
+    const plugin = definePlugin({ id: pluginId, version: '1.0.0', displayName: 'Managed Postgres', actions: {
+      'projects-delete': { title: 'Delete the recorded project', execution, surfaces: ['ui'], readOnly: false, dangerLevel: 'destructive',
+        confirmation: { title: 'Delete this Postgres project and all of its data?' },
+        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.delete'].jsonSchema,
+        resultSchema: DeploymentTargetRoleResultV1ProtocolSchema,
+        run: async () => ({ v: 1, state: 'succeeded', observedAtMs: 1, providerResourceAbsent: true } as const) },
+    }, deploymentTargets: { database: { role: 'data', title: 'Managed Postgres', targetKind: 'database', icon: 'server-outline',
+      targetSchema: closed, linkSchema: closed, dataV1: { projects: { delete: 'projects-delete' } } } } });
+    const serverId = await homes.addHome({ name: 'Managed removal', serverUrl: `https://managed-removal-${starts}.test`,
+      serverIdentityId: `srv_managed_removal_${starts}`, accountId: 'owner', currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+      activate: api => plugin.activateAccount(api, execution.account), accountLifetime: account.accountLifetime, publishProjection: true });
+    const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'managed-removal', role: 'data', targetKind: 'database', machines: [], members: [],
+      source: { kind: 'plugin', contribution: { pluginId, localId: 'database' } } });
+    const principal = { kind: 'account' as const, accountId: 'owner',
+      purpose: { consumer: { pluginId, localId: 'link' }, purpose: 'deploy-manage' },
+      target: { kind: 'account' as const, account: { service: { pluginId, localId: 'database' }, accountId: 'token' } } };
+    const detail = createDeploymentEnvironmentDetailV1({ environment: (({ runtimeTargetLinkId: _runtime, ...header }) => header)(createDeploymentEnvironmentHeaderV1({ serverId })),
+      targetLinks: [{ targetLink, content: { ...(origin ? { providerResourceOrigin: origin } : {}), credentialPrincipal: principal,
+        providerIdentity: { providerAccountId: 'organization', providerResourceId: 'shop-orders', providerEnvironment: 'main' },
+        providerEnvironment: { kind: 'custom', id: 'main' } } }] });
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
+      environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
+    const removals: unknown[] = [];
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: detail.environment.controllerMachineId,
+      actionId: 'deployments.teardown', tokenEpoch: 0, requesterInvocation: 'required', execute: raw => {
+        removals.push(raw);
+        return { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1,
+          deploymentId: 'data-teardown', deploymentRevision: 1, state: 'queued' };
+      } });
+    const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'owner', projectSourceId: detail.environment.projectSourceId },
+      transport: { listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+        readEnvironment: async () => ({ ok: true, value: detail }),
+        listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+        readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }) } });
+    const screen = await renderScreen(<ModalProvider><DeploymentDatabasePage controller={controller}
+      environmentId={detail.environment.id} database={targetLink.id} demand={shown} phone={false}
+      lifetime={account.accountLifetime} review={noReview} restore={null} setBindings={null} onBack={() => {}} onNavigate={() => {}} /></ModalProvider>);
+    try {
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findByTestId(`${page}.remove`)?.props.onPress).toBeTypeOf('function'); });
+      await screen.pressByTestIdAsync(`${page}.remove`);
+      // The removal owner picks the start: a project Happier created starts on Delete, a linked one on Unlink.
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findByTestId(`project-deployments.disposition.choice:${starts}`)?.props.accessibilityState).toMatchObject({ selected: true }); });
+      if (starts === 'detach') await screen.pressByTestIdAsync('project-deployments.disposition.choice:remove');
+      expect(screen.getTextContent()).toContain('Delete this Postgres project and all of its data?');
+      expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
+      await act(async () => screen.findByTestId('project-deployments.disposition.resourceConfirmation')!.props.onChangeText('shop-orders'));
+      await waitForHomeGovernance(async () => { await act(async () => {});
+        expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false); });
+      await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
+      await waitForHomeGovernance(async () => { await act(async () => {}); expect(removals).toHaveLength(1); });
+      // Deleting the project leaves the Environment; only its data link goes.
+      expect(removals[0]).toMatchObject({ environmentId: detail.environment.id, targetLinkId: targetLink.id, providerRemoval: 'delete' });
+      expect(removals[0]).not.toHaveProperty('removeEnvironment');
+    } finally { await screen.unmount(); controller.retire(); await installed.dispose(); account.dispose(); }
+  });
+
   it('keeps invalid parameter JSON local and shows a complete empty result without inventing rows', async () => {
     const view = await renderDatabase({ answers: { query: { ok: true, columns: [{ name: 'value' }], rows: [], complete: true } } });
     try {

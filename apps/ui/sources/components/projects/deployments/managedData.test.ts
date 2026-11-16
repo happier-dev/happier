@@ -34,6 +34,8 @@ it('projects a data descriptor, its credential purpose and authored fields witho
   const [target] = managedDataTargets([{ manifest }]);
   expect(target?.targetId).toBe('database');
   expect(target?.teardown).toBe(true);
+  // The provider's own words say what its delete takes with the project.
+  expect(target?.teardownConsequence).toBe('Delete project?');
   const [withoutDeletion] = managedDataTargets([{ manifest: { ...manifest, contributes: { ...manifest.contributes,
     deploymentTargets: manifest.contributes.deploymentTargets?.map(descriptor => descriptor.role === 'data'
       ? { ...descriptor, dataV1: {} } : descriptor) } } }]);
@@ -46,8 +48,10 @@ it('projects a data descriptor, its credential purpose and authored fields witho
 });
 
 it('keeps an ambiguous resource unlinked while exact provision/link identities remain recoverable', () => {
+  // Creation provenance is authored by the host, never by client-supplied provider results.
   expect(managedDataLinkContent(principal, { state: 'provisioned', providerResourceOrigin: 'created', providerIdentity: identity,
-    providerEnvironment: { kind: 'custom', id: 'main' } })).toMatchObject({ providerResourceOrigin: 'created' });
+    providerEnvironment: { kind: 'custom', id: 'main' } })).toEqual({ credentialPrincipal: principal,
+    providerIdentity: identity, providerEnvironment: { kind: 'custom', id: 'main' } });
   expect(managedDataLinkContent(principal, { state: 'provisioned', providerIdentity: identity,
     providerEnvironment: { kind: 'custom', id: 'main' } })).toEqual({ credentialPrincipal: principal,
     providerIdentity: identity, providerEnvironment: { kind: 'custom', id: 'main' } });
