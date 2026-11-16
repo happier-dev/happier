@@ -360,6 +360,47 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(os.runAs).toEqual([]);
   });
 
+  it('refuses a Manage clone into a member folder under a broad Project root', async () => {
+    const f = await fixture();
+    const targeted = (input: unknown) => ({ v: 1, kind: 'targeted_action_rpc', input,
+      target: { kind: 'machine', machineId: 'separate-users-machine',
+        project: { machineId: 'separate-users-machine', directory: '/' } } });
+    expect(await f.invoke(RPC_METHODS.SCM_REPOSITORY_CLONE,
+      targeted({ destinationParentPath: f.memberRoot, destinationDirectoryName: 'clone' }), 'manager-account', 'manage'))
+      .toMatchObject({ success: false, actionErrorCode: 'credential_scope_denied' });
+    expect(gitLaunches()).toEqual([]);
+  });
+
+  it('routes Manage local operations by their effective directory under a broad Project root', async () => {
+    const f = await fixture();
+    const targeted = (input: unknown) => ({ v: 1, kind: 'targeted_action_rpc', input,
+      target: { kind: 'machine', machineId: 'separate-users-machine',
+        project: { machineId: 'separate-users-machine', directory: '/' } } });
+    for (const cwd of [f.memberRepository, f.memberRepository.slice(1)]) {
+      const response = await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, targeted({ cwd }), 'manager-account', 'manage');
+      expect(response, JSON.stringify(response)).toMatchObject({ success: true, snapshot: { repo: { isRepo: true } } });
+    }
+    expect(os.runAs.map(run => [run.args[0], run.uid])).toEqual([['workspace-effect', 2401], ['workspace-effect', 2401]]);
+    // Selecting a narrower Project still cannot reach a sibling in the member folder.
+    const outsideProject = await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT,
+      { ...targeted({ cwd: f.memberRoot }), target: { kind: 'machine', machineId: 'separate-users-machine',
+        project: { machineId: 'separate-users-machine', directory: f.memberRepository } } }, 'manager-account', 'manage');
+    expect(outsideProject).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    // A broad Project does not grant Can use access outside that person's member folder.
+    expect(await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, targeted({}), 'member-account', 'use'))
+      .toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    expect(await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, targeted({ cwd: f.ownerRepository }), 'member-account', 'use'))
+      .toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    const link = join(f.memberRoot, 'outside-link');
+    await symlink(f.ownerRepository, link);
+    expect(await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT,
+      { ...targeted({ cwd: link }), target: { kind: 'machine', machineId: 'separate-users-machine',
+        project: { machineId: 'separate-users-machine', directory: link } } }, 'member-account', 'use'))
+      .toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+    expect(daemonGit()).toEqual([]);
+    expect(os.daemonTouches).toEqual([]);
+  });
+
   // SEC-FORKC-1116 N1: hosting work that reads no member folder runs as it does elsewhere, and repository
   // hosting work there is refused by Git's own ownership check (no second refusal).
   it('resolves a hosting address for a member Project like any other, and Git refuses a member-folder PR create', async () => {

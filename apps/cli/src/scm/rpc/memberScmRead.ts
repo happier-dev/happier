@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { resolve as resolvePath } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
@@ -11,7 +12,7 @@ import {
   runWorkspaceEffectChild,
 } from '@/workspaces/activation/workspaceEffectProcess';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
-import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { expandHomeDirPath, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import {
   createWorkspaceEffectScmRegistry,
   prepareAdmittedScmEffect,
@@ -63,7 +64,8 @@ export async function readScmAsMember(
   // Lexical only: the member child resolves links as the member.
   if (
     input.root !== undefined &&
-    !isCanonicalAbsolutePathInsideRoot(input.workspaceRoot, input.root)
+    !isCanonicalAbsolutePathInsideRoot(input.workspaceRoot, input.root) &&
+    !isCanonicalAbsolutePathInsideRoot(input.root, input.workspaceRoot)
   ) {
     return {
       success: false,
@@ -136,13 +138,13 @@ export async function executeMemberScmRead(
   effect: MemberScmReadEffect,
   signal: AbortSignal,
 ): Promise<unknown> {
-  const folder =
-    effect.root !== undefined
-      ? resolveCwd(effect.root, effect.workspaceRoot, {
-          kind: 'restrictedRoots',
-          roots: [effect.workspaceRoot],
-        })
-      : { ok: true as const, cwd: effect.workspaceRoot };
+  const root = effect.root ?? effect.workspaceRoot;
+  // isCanonicalAbsolutePathInsideRoot takes (rootPath, candidatePath).
+  // If Project contains the member folder, confinement remains the member folder;
+  // otherwise the existing parent check requires Project to be inside that folder.
+  const boundary = isCanonicalAbsolutePathInsideRoot(root, effect.workspaceRoot) ? effect.workspaceRoot : root;
+  const folder = resolveCwd(boundary, effect.workspaceRoot,
+    { kind: 'restrictedRoots', roots: [effect.workspaceRoot] });
   if (!folder.ok)
     return {
       success: false,
@@ -169,7 +171,9 @@ export async function executeMemberScmRead(
     const handler = handlers.get(effect.method);
     if (!handler) throw unavailable('machine_manage_required');
     const context: RpcHandlerContext = { signal };
-    return await handler(effect.input, context);
+    const rawCwd: unknown = effect.input && typeof effect.input === 'object' ? Reflect.get(effect.input, 'cwd') : undefined;
+    return await handler(effect.input && typeof effect.input === 'object' && (rawCwd === undefined || typeof rawCwd === 'string')
+      ? { ...effect.input, cwd: resolvePath(root, expandHomeDirPath(rawCwd || root)) } : effect.input, context);
   } finally {
     await registry.dispose();
   }

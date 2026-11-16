@@ -113,6 +113,7 @@ import { isScmHostingCredentialRpcMethod, isScmLocalRepositoryReadRpcMethod, isS
 import { isScmActionId } from '@happier-dev/protocol/actions/executor/actionFamilies';
 import { randomUUID } from 'node:crypto';
 import { resolve as resolvePath } from 'node:path';
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { registerScmWorkspaceWatchHandler } from './scmWorkspaceWatch';
 import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import { bindWorkspaceSourceRegistrar, currentWorkspaceSource, runWithWorkspaceSource, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
@@ -177,12 +178,13 @@ export function registerScmHandlers(
             return refused(readErrorCode(error));
         } finally { await native.dispose(); }
     };
-    const readRequestCwd = (input: unknown): string | undefined => {
+    const readRequestCwd = (input: unknown, projectRoot: string | undefined): string => {
         // A clone names its folder as the destination parent.
         const cwd: unknown = input && typeof input === 'object'
             ? Reflect.get(input, 'cwd') ?? Reflect.get(input, 'destinationParentPath') : undefined;
         // Lexical, against the same base the handler resolves it on; the member child resolves links.
-        return typeof cwd === 'string' ? resolvePath(workingDirectory, cwd) : undefined;
+        const base = projectRoot ? resolvePath(workingDirectory, expandHomeDirPath(projectRoot)) : workingDirectory;
+        return typeof cwd === 'string' && cwd ? resolvePath(base, expandHomeDirPath(cwd)) : base;
     };
     // Manage is full control of this Machine (owner ruling 2026-10-31): an admitted Manage
     // requester's Project SCM runs as the daemon user, like its file effects and shell.
@@ -201,7 +203,7 @@ export function registerScmHandlers(
                 // clone writes a new directory with this Machine's hosting credentials, and Git cannot
                 // check ownership of a directory that does not yet exist. It protects no other person
                 // and is not a credential or security boundary (SEC-FORKC-1116B subtraction note).
-                const target = projectRoot ?? readRequestCwd(input);
+                const target = readRequestCwd(input, projectRoot);
                 const readOwner = deps.nativeOperationRuntime?.readMemberFolderOwner;
                 const hosting = isScmHostingCredentialRpcMethod(method);
                 const member = readOwner && target !== undefined && (hosting || isScmLocalRepositoryRpcMethod(method))

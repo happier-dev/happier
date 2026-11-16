@@ -2756,8 +2756,10 @@ non-repository method there, or registering a member Session's Project), Git its
 `detected dubious ownership` before the backend opens any state file, so those
 reads fail closed rather than reaching member-planted files (MEMBER-PATH-READS-1115).
 A `safe.directory` exception in the daemon user's Git config removes that refusal. The child
-resolves the Project root and `cwd` with the member folder as the
-access-policy root, so a path outside it is `INVALID_PATH`. The child has no
+resolves `cwd` against the selected Project root and confines it to the intersection
+of that Project and the member folder, so a path outside either is `INVALID_PATH`.
+Member placement uses the operation's effective `cwd` (or clone destination parent),
+even when the Project root is an ancestor of the member folder. The child has no
 daemon credentials, so captured diff evidence is unavailable to it. Every other `scm.*` method (forge, hosting, saved results, Agent
 runs, writes) is refused at ingress with `machine_manage_required` for a
 requester without Manage; Agent and Session sources keep
