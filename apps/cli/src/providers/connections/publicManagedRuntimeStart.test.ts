@@ -33,7 +33,7 @@ import {
 import { createPublicManagedProviderRuntimeStartOperation } from './publicManagedRuntimeStart';
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
@@ -122,6 +122,33 @@ it('retains the runtime startup cause in the explicit-start refusal log through 
         expect(body).not.toContain('Worker must not start');
       } finally { await server.close(); }
 
+    } finally { await fixture.cleanup(); }
+  });
+});
+
+it('retains request-auth acquisition causes through public Managed Start', async () => {
+  await withManagedProviderTestHome({ prefix: 'managed-start-acquisition-cause-' }, async ({ homeDir }) => {
+    const directory = join(homeDir, 'fixture');
+    const controller = createPluginReloadController();
+    const fixture = await createManagedRunLaunchFixture({ directory, happyHomeDir: homeDir, controller,
+      physicalGateway: true });
+    try {
+      // Fail the real filesystem boundary beneath request-auth activation.
+      await writeFile(join(directory, 'request-auth'), 'The required directory is occupied by a file.');
+      const gateway = fixture.gateway!;
+      const start = createPublicManagedProviderRuntimeStartOperation({ machineId: fixture.machineId, happyHomeDir: homeDir,
+        controller, resolveSharedGateway: createMachineSharedProviderGatewayResolver({ machineId: fixture.machineId,
+          readAccountId: () => 'account', readOrigin: async () => ({ serverIdentityId: 'home', machineId: fixture.machineId }) }) });
+      const error: unknown = await start({ identity: gateway.identity,
+        contributionKey: `${gateway.identity.pluginId}/${gateway.identity.localId}`, connectionId: fixture.record.connectionId,
+        request: { reason: 'explicitStartLocal', endpointTemplateIds: ['api'] }, purposeBindings: gateway.purposeBindings,
+        isAuthorizationCurrent: () => true, revalidateAuthorization: async () => true,
+      }).catch((failure: unknown) => failure);
+      expect(error).toMatchObject({ code: 'provider_endpoint_unavailable', retryable: true, action: 'retry', failureCause: {
+        phase: 'providers.runtime_acquire', errorClass: 'Error', errorCode: 'EEXIST', httpStatus: null,
+      } });
+      expect(JSON.stringify(error)).not.toContain(directory);
+      expect(existsSync(join(gateway.directory, 'gateway-started'))).toBe(false);
     } finally { await fixture.cleanup(); }
   });
 });

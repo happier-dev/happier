@@ -307,6 +307,7 @@ function createManagedProviderExplicitStartOperation(input: Readonly<{
       if (providerError.success) throw providerError.data;
       throw createProviderErrorV1('provider_endpoint_unavailable', {
         machineId: input.machineId,
+        failureCause: projectActionFailureCauseV1(failure, 'providers.runtime_acquire'),
       });
     }
     return result;
