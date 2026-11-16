@@ -1258,10 +1258,10 @@ describe('createCliActionDeps workflow boundary', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { set: { project } } });
   });
 
-  it.each(['session', 'detached', 'wrong_run', 'invalid_response', 'transport_failure', 'wrong_machine'] as const)(
-    'arms an exact-output trigger through production Run observation (%s)', async (scenario) => {
+  it.each(['session', 'detached', 'workflow', 'wrong_run', 'invalid_response', 'transport_failure', 'wrong_machine'] as const)(
+    'arms a lifecycle trigger through production Run observation (%s)', async (scenario) => {
     const sessionId = 'c' + '2'.repeat(24);
-    const runId = 'run-observed';
+    const runId = scenario === 'workflow' ? '11111111-1111-4111-8111-111111111111' : 'run-observed';
     const baseGet = http.get.getMockImplementation()!;
     http.get.mockImplementation(async (url: string) => {
       if (url.includes(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
@@ -1282,6 +1282,30 @@ describe('createCliActionDeps workflow boundary', () => {
     };
     sessionRpc.mockImplementation(observe);
     machineRpc.mockImplementation(observe);
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    if (scenario === 'workflow') {
+      const app = Fastify({ ajv: { customOptions: { removeAdditional: false } } });
+      onTestFinished(() => app.close());
+      // Mirror the real workflow-storage GET HTTP contract: transport cancellation is not stored input.
+      app.post('/v3/automations/runs/workflow-storage', { schema: { body: { type: 'object', additionalProperties: false,
+        required: ['operation', 'runId'], properties: { operation: { const: 'get' }, runId: { type: 'string' } },
+      } } }, async () => ({ run: WorkflowRunSummaryV1Schema.parse({
+        id: runId, ownerAccountId: 'account-1', sourceArtifactId: null, visibleTeamId: null,
+        origin: { kind: 'direct' }, state: 'queued', revision: 1, machineId: 'machine-1', workflowCustodyState: 'pending',
+        originDeliveryAckRevision: null, finishedAt: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null,
+        availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: true, disabledReasons: [] },
+        createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      }) }));
+      http.post.mockImplementation(async (url: string, body: unknown, config: { signal?: AbortSignal }) => {
+        const response = await app.inject({ method: 'POST', url: new URL(url).pathname, payload: JSON.stringify(body),
+          headers: { 'content-type': 'application/json' } });
+        if (response.statusCode !== 200) throw Object.assign(new Error('invalid storage request'), { response: { status: response.statusCode } });
+        observedSignal = config.signal;
+        return { status: response.statusCode, data: response.json() };
+      });
+    }
     http.request.mockImplementation(async ({ data }: { data: unknown }) => {
       const input = AutomationDefinitionCreateRequestSchema.parse(data);
       return { status: 200, data: AutomationDefinitionDetailSchema.parse({
@@ -1301,12 +1325,18 @@ describe('createCliActionDeps workflow boundary', () => {
       project: { machineId: 'machine-1', directory: '/repo' },
       target: { kind: 'inline', definition: { version: 1, blocks: [{ kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
         input: { message: { kind: 'literal', value: 'Walkthrough complete' } } }] } },
-      trigger: { kind: 'runLifecycle', enabled: true, condition: 'terminal', source: { kind: 'execution_run',
+      trigger: { kind: 'runLifecycle', enabled: true, condition: 'terminal', source: scenario === 'workflow' ? { kind: 'workflow_run', runId } : { kind: 'execution_run',
         machineId: scenario === 'wrong_machine' ? 'foreign-machine' : 'machine-1', runId,
         ...(scenario === 'detached' ? {} : { sessionId }), observation: { kind: 'scm_diff_summary', comparisonId: 'comparison',
           resultId: 'result', output: 'walkthrough', afterRevision: 0 } } },
-    }, { surface: 'ui', authority: 'present_user' });
-    if (scenario === 'session' || scenario === 'detached') {
+    }, { surface: 'ui', authority: 'present_user', signal: controller.signal });
+    if (scenario === 'workflow') {
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { set: { health: 'available',
+        triggers: [{ kind: 'runLifecycle', source: { kind: 'workflow_run', runId } }] } } });
+      expect(observedSignal?.aborted).toBe(false);
+      controller.abort();
+      expect(observedSignal?.aborted).toBe(true);
+    } else if (scenario === 'session' || scenario === 'detached') {
       expect(result).toMatchObject({ ok: true, result: { set: { health: 'available', triggers: [{ kind: 'runLifecycle',
         source: { runId, observation: { output: 'walkthrough', resultId: 'result' } } }] } } });
       expect(http.request).toHaveBeenCalled();

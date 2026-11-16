@@ -235,8 +235,8 @@ export function createCliWorkflowFamily(
       },
       resolveRunSource: async (source, caller) => {
         if (source.kind === 'workflow_run') {
-          const raw = await workflowRunStorage.execute({ operation: 'get', runId: source.runId,
-            ...(caller?.signal ? { signal: caller.signal } : {}) });
+          const raw = await workflowRunStorage.execute({ operation: 'get', runId: source.runId },
+            caller?.signal ? { signal: caller.signal } : undefined);
           const run = raw !== null && typeof raw === 'object' && 'run' in raw ? WorkflowRunSummaryV1Schema.safeParse(raw.run) : null;
           if (!run?.success || run.data.id !== source.runId) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
           return { terminal: isTerminalAutomationRunStateV3(run.data.state) };
