@@ -80,7 +80,7 @@ import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanE
 import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
 import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from '@happier-dev/cli-common/cliRuntimeSidecars';
-import { assertHostCanExcludeBundledPlugin, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures } from '@happier-dev/cli-common/bundledPluginPublicationPolicy';
+import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures } from '@happier-dev/cli-common/bundledPluginPublicationPolicy';
 import { readAdmittedBundledPluginPublicationFailures } from '@/plugins/projection/registry/builtIn/locators';
 import {
   copyCliNodeWorkspaceRuntimePackages,
@@ -537,9 +537,7 @@ function resolvePinnedSnapshotLocation(input: Readonly<{
   try {
     publicationFailuresBytes = readAdmittedBundledPluginPublicationFailures()
       ?? readFileSync(join(runtimeRoot, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH), 'utf8');
-    for (const failure of parseBundledPluginPublicationFailures(publicationFailuresBytes)) {
-      assertHostCanExcludeBundledPlugin('', failure.packageName, new Error(failure.diagnostic.message));
-    }
+    parseBundledPluginPublicationFailures(publicationFailuresBytes);
   } catch { return null; }
   const publicationIdentity = createHash('sha256').update(publicationFailuresBytes).digest('hex');
   const snapshotsDir = resolvePinnedRunnerSnapshotsDir(input.entrypoint, input.env);

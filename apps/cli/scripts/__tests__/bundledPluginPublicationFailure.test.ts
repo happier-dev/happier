@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { it as test } from 'vitest';
 
 import { assertHostCanExcludeBundledPlugin, createBundledPluginPublicationFailure, readBundledPluginPublicationFailures, writeBundledPluginPublicationFailures } from '../../../../scripts/workspaces/bundledPluginPublicationFailure.mjs';
-import { BUNDLED_PLUGIN_PUBLICATION_DIAGNOSTIC_CODES, REQUIRED_BUNDLED_PLUGIN_PACKAGES, parseBundledPluginPublicationFailures } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
+import { BUNDLED_PLUGIN_PUBLICATION_DIAGNOSTIC_CODES, REQUIRED_BUNDLED_PLUGIN_PACKAGES, classifyBundledPluginPublicationFailures, parseBundledPluginPublicationFailures, readBundledPluginUiArtifactsDigest } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 
 test.each([
   ['cliproxyapi', 'happier.provider.cliproxyapi'],
@@ -31,6 +31,28 @@ test.each(['codex', 'elevenlabs', 'openai', 'xai'])(
     }), /required by host code/);
   },
 );
+
+test('a UI record carries the graph it evaluated and a later publication supersedes it', () => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-ui-record-scope-'));
+  try {
+    const pluginRoot = join(root, 'packages', 'plugins', 'codex');
+    const created = createBundledPluginPublicationFailure({
+      repoRoot: root, packageName: '@happier-dev/plugins-codex', pluginId: 'happier.agent.codex',
+      code: 'plugin_ui_artifact_invalid', error: new Error('Bundled Plugin UI artifact manifest is missing'),
+    });
+    const [record] = parseBundledPluginPublicationFailures(JSON.stringify([created]));
+    assert.equal(record!.uiArtifactsDigest, null);
+    const classifyNow = () => classifyBundledPluginPublicationFailures([record!],
+      () => readBundledPluginUiArtifactsDigest(pluginRoot));
+    // Same graph: the required package is retained (reported), never withdrawn or fatal.
+    assert.deepEqual(classifyNow(), { withdrawn: [], superseded: [], retained: [record] });
+    mkdirSync(join(pluginRoot, 'dist', 'happier-plugin-ui'), { recursive: true });
+    writeFileSync(join(pluginRoot, 'dist', 'happier-plugin-ui', 'ui-artifacts.json'), '{"version":2,"entries":[]}');
+    assert.deepEqual(classifyNow(), { withdrawn: [], superseded: [record], retained: [] });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('one publication diagnostic code set validates persisted failures', () => {
   assert.deepEqual(BUNDLED_PLUGIN_PUBLICATION_DIAGNOSTIC_CODES, [

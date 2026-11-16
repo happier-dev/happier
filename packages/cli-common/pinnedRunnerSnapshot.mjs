@@ -4,7 +4,7 @@ import { dirname, join, relative } from 'node:path';
 
 import { findUnservableBundledPluginPackageResources } from './bundledPluginResources.mjs';
 import { CLI_RUNTIME_SIDECAR_ENTRIES } from './cliRuntimeSidecars.mjs';
-import { assertHostCanExcludeBundledPlugin, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures } from './bundledPluginPublicationPolicy.mjs';
+import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH, classifyBundledPluginPublicationFailures, parseBundledPluginPublicationFailures } from './bundledPluginPublicationPolicy.mjs';
 import cliDistBuildManifest from './cliDistBuildManifest.cjs';
 
 export const PINNED_RUNNER_LAYOUT_VERSION = 'package-dist-v7';
@@ -31,8 +31,8 @@ const PINNED_RUNNER_REQUIRED_ASSET_RELATIVE_PATHS = [
 function readPinnedRunnerSnapshotPublicationState(runtimeRoot) {
   try {
     const bytes = readFileSync(join(runtimeRoot, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH));
-    const failures = parseBundledPluginPublicationFailures(bytes.toString('utf8'));
-    for (const failure of failures) assertHostCanExcludeBundledPlugin('', failure.packageName, new Error(failure.diagnostic.message));
+    // Only withdrawn packages are absent from this runtime; retained required packages still serve.
+    const failures = classifyBundledPluginPublicationFailures(parseBundledPluginPublicationFailures(bytes.toString('utf8'))).withdrawn;
     return { identity: createHash('sha256').update(bytes).digest('hex'), failures };
   } catch {
     // Absent or invalid publication state supplies no healthy-plugin claim.

@@ -1,17 +1,15 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import { formatPluginManifestIngestionDiagnostics, readPluginManifestReferencedPluginIdsV2 } from '@happier-dev/protocol/plugins/manifest/ingest';
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
 import { isDynamicPluginResourceContributionV2 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { assertHostCanExcludeBundledPlugin } from '@happier-dev/cli-common/bundledPluginPublicationPolicy';
-import { readCurrentBundledPluginPublicationFailures } from './publication';
+import { readCurrentBundledPluginPublicationFailures, resolveInstalledBundledPluginRootPath } from './publication';
 export { readCurrentBundledPluginPublicationFailures, readAdmittedBundledPluginPublicationFailures } from './publication';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
-import { defaultCanImportFirstPartyPluginSource, isExecutingFirstPartySourceRuntime } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
+import { defaultCanImportFirstPartyPluginSource } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { readGeneratedPluginUiArtifactsManifestSync, readGeneratedPluginCompiledAccountResourceIdsSync } from '@/plugins/install/ui/generatedArtifacts';
 import { projectPluginManifestCompatibilityDiagnostic } from '../../../manifest/diagnostics';
 import type { BundledPluginPublicationFailure } from '@/plugins/validation/diagnostics/types';
@@ -39,7 +37,6 @@ function readBundledPluginRootPath(locator: BundledPluginLocator): string {
     return locator.sourceSpec.locator;
 }
 
-const requireFromCli = createRequire(import.meta.url);
 function managedProviderKey(pluginId: string, providerId: string): string {
     return `${pluginId}\u0000${providerId}`;
 }
@@ -123,21 +120,6 @@ export function projectManagedRuntimePublicationManifest(
         ...manifest,
         contributes: { ...contributionRecord, providers },
     };
-}
-
-function resolveInstalledBundledPluginRootPath(packageName: string): string | null {
-    // Source runtime emission puts the plugin beside its CLI. Its immutable
-    // graph and bytes must not come from the moving dependency symlink instead.
-    if (isExecutingFirstPartySourceRuntime(import.meta.url) && packageName.startsWith('@happier-dev/plugins-')) {
-        return resolveCliRuntimeAssetPath('../../packages/plugins', packageName.slice('@happier-dev/plugins-'.length));
-    }
-    for (const searchPath of requireFromCli.resolve.paths(packageName) ?? []) {
-        const packageRootPath = join(searchPath, ...packageName.split('/'));
-        if (existsSync(join(packageRootPath, 'package.json'))) {
-            return packageRootPath;
-        }
-    }
-    return null;
 }
 
 export function loadBundledPluginLocatorResult(

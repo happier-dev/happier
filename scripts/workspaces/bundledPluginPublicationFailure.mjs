@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { assertHostCanExcludeBundledPlugin, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures } from '../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
+import { assertHostCanExcludeBundledPlugin, BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH, parseBundledPluginPublicationFailures, readBundledPluginUiArtifactsDigest } from '../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
 import { BuildInputDriftError, WorkspacePackageBuildError } from './buildInputConvergence.mjs';
 
 export { assertHostCanExcludeBundledPlugin } from '../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
@@ -101,5 +101,12 @@ export function createBundledPluginPublicationFailure({
       code,
       message: boundedMessage(error instanceof Error ? error.message : error),
     }),
+    // A UI record is scoped to the graph it evaluated, so readers can tell it from
+    // a later publication of that package (a stale per-host record never applies).
+    ...(code === 'plugin_ui_artifact_invalid' ? {
+      uiArtifactsDigest: readBundledPluginUiArtifactsDigest(
+        resolve(repoRoot, 'packages', 'plugins', packageName.replace(/^@happier-dev\/plugins-/, '')),
+      ),
+    } : {}),
   });
 }
