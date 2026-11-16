@@ -448,8 +448,11 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   edge inks, so a profile that sets either keeps its colour and relative strength. The edge owner
   (`theme/raisedEdge.ts`, `resolveThemeCardChromeStyle`) decides this once; no screen paints its own.
   The raised edge is one side of the border drawn a breath different — a dark lip along the bottom on
-  light, a light line along the top on dark. The composer has no lip: one even hairline (owner,
-  2026-10-15).
+  light, a light line along the top on dark. The composer has no lip (owner, 2026-10-15). Light glass
+  draws no line at all: the light composer and the floating glass capsules (the tab bar, the sidebar's
+  "+", jump to bottom) carry their edge with their fill, a subtle inner shade and a soft cast shadow, as
+  0.2's composer did; a white rim reads as a ring on anything but white. Dark keeps one even glass line
+  (owner, 2026-11-16; owner `resolveGlassRimStyle`).
   The default soft finish is a quiet edge, not a wash: a 32 px ink-alpha band over that role's
   existing fill, shading the bottom edge on light and lighting the top edge on dark, so the middle of
   a tall card stays flat. It applies
@@ -464,7 +467,7 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   for floating surfaces and the composer, and to a quarter of it (0.006) for in-flow cards. The theme's single editable
   `effect.surfaceFinish` ink controls colour and strength, with custom values left as authored.
 - **Flat edge in flow; the rim only for what floats.** Controls, rows, cards, grouped sheets and the
-  composer use the flat edge, in every theme. The message bubble is a fill only: no hairline and no rim.
+  composer use the flat edge, in every theme (the light composer's edge is its shadow, above). The message bubble is a fill only: no hairline and no rim.
   Popovers, menus, dialogs, sheets over content, toasts and tooltips use the directional rim: one corner light anchored top-left,
   running along the top and down the side and gone by about a third of the way round, with a short
   sheen inside the fill from the same corner. On dark the corner is lighter (white about 18% at the

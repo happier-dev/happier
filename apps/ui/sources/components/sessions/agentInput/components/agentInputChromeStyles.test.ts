@@ -18,6 +18,10 @@ describe('agent input panel chrome', () => {
             }
         }
     });
+    it('draws no edge line around the light composer, where its fill and cast shadow carry the edge, and keeps dark\'s glass line (owner, 2026-11-16)', () => {
+        expect(resolveAgentInputPanelLayoutStyle(lightTheme).borderWidth ?? 0).toBe(0);
+        expect(resolveAgentInputPanelLayoutStyle(darkTheme).borderWidth).toBeGreaterThan(0);
+    });
     it('rounds the composer panel with the theme composer radius', () => {
         const theme = { ...lightTheme, parts: { ...lightTheme.parts, composer: { ...lightTheme.parts.composer, radius: 37 } } };
 

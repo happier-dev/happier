@@ -125,11 +125,6 @@ export type GlassSurfaceProps = Pick<ViewProps, 'accessibilityRole' | 'accessibi
     /** Structural surfaces select a finish; chrome planes keep their existing flat material. */
     finishRole?: HappierSurfaceFinishRole | null;
     /**
-     * What the surface's own edge becomes while a picture or the live desktop shows through it (the same
-     * `backed` state that steps up its faint ink): the composer's edge turns to ink there (DESIGN.md).
-     */
-    backedStyle?: StyleProp<ViewStyle>;
-    /**
      * A floating surface's job: `panel` (dialogs, sheets, large anchored panels) carries the page at a
      * heavy coat behind the blur; `menu` (the default: menus, tooltips, small popovers) keeps the hair of tint.
      */
@@ -324,7 +319,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         // Only the SDK background changes tier. Input/scroll/selection state
         // must stay under the same native parent when a preset or OS choice changes.
         // A surface that keeps its tint on Android (no blur behind it) is not lifted there; an opaque one keeps its lift.
-        return <View {...viewProps} style={[props.style, backed ? props.backedStyle : null, props.noCoat ? null : { backgroundColor },
+        return <View {...viewProps} style={[props.style, props.noCoat ? null : { backgroundColor },
             finishLift, props.noCoat ? null : resolveAndroidTranslucentUnlift(backgroundColor)]}>
             {/* The material fills the border box, so the glass's own edge lies under the surface's border: one edge. */}
             <View pointerEvents="none" style={[
@@ -352,6 +347,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     // never moves the content to another parent. A CSS `backdrop-filter` makes its element a backdrop
     // root: on the surface itself it would cut everything inside (a menu, tooltip or popover opened
     // from this surface) off the page, and that nested glass would blur an empty plane.
+    const frosted = capability === 'webBlur' && props.plane !== true && !props.noCoat && !inheritsTranslucentMaterial;
     const paint = props.noCoat ? { backgroundColor: 'transparent' } : props.plane === true
         // The same CSS-to-RN-web boundary as the functional surface's backdrop below.
         ? { ...glassSurfacePlaneBackdropStyle(settings, group, theme.dark, effectiveEnvironment, props.atmosphereCoat),
@@ -377,9 +373,9 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
             && resolveGlassSurfacePlaneMaterial(settings, group, runtimeEnvironment).opacity === 0 ? 'transparent' : 'initial',
     } as unknown as ViewStyle;
     return (
-        <View {...viewProps} style={[props.style, backed ? props.backedStyle : null, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, backedInkStyle, innerPaint]}>
+        <View {...viewProps} style={[props.style, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, backedInkStyle, innerPaint]}>
             {/* Native View types omit RN-web's dataSet; this branch is the web boundary. */}
-            <View {...{ dataSet: { happyGlassBackdrop: 'true' } }} style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style, group === 'floating' && capability === 'webBlur' && !props.noCoat && !inheritsTranslucentMaterial), paint, happierSurfaceGradientWebStyle(gradient, !theme.dark)]} />
+            <View {...{ dataSet: { happyGlassBackdrop: 'true' } }} style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style, frosted, frosted && group === 'floating'), paint, happierSurfaceGradientWebStyle(gradient, !theme.dark)]} />
             <GlassSurfaceGroupContext.Provider value={plane}>
                 <HappierMaterialRoleProvider {...materialPlane}>
                     {withBackedInk(props.children)}
@@ -419,8 +415,13 @@ export const renderPanelMaterialSurface: HappierMaterialSurfaceRender = input =>
  */
 const SOFTWARE_BACKDROP_SHORTFALL_PX = 96;
 
-/** The layer fills the surface's padding box, so its corners follow the surface's inner radius. */
-function webMaterialLayerShape(style: StyleProp<ViewStyle>, reachPastSoftwareShortfall = false): ViewStyle {
+/**
+ * The layer fills the surface's padding box, so its corners follow the surface's inner radius. A frosted layer is
+ * shaped by a clip of those corners rather than by its own rounding: WebKit (the desktop app) drew ink ramps inside
+ * the left and top edges of rounded frosted cards and the composer on light, while clip-shaped frosted menus in the
+ * same window stayed clean (owner screenshots 2026-11-16, GLASS-SURFACES-1116).
+ */
+function webMaterialLayerShape(style: StyleProp<ViewStyle>, frosted = false, reachPastSoftwareShortfall = false): ViewStyle {
     const borderWidth = readSurfaceStyleProperty(style, 'borderWidth');
     const inset = typeof borderWidth === 'number' ? borderWidth : 0;
     // Unistyles styles retain non-enumerable geometry: flattening an array can
@@ -432,13 +433,12 @@ function webMaterialLayerShape(style: StyleProp<ViewStyle>, reachPastSoftwareSho
         const radius = readSurfaceStyleProperty(style, key);
         if (typeof radius === 'number') radii[key] = Math.max(0, radius - inset);
     }
-    if (!reachPastSoftwareShortfall) return Object.assign(shape, radii);
+    if (!frosted) return Object.assign(shape, radii);
     const corner = (key: (typeof WEB_CORNER_RADII)[number]) => radii[key] ?? radii.borderRadius ?? 0;
-    const reach = SOFTWARE_BACKDROP_SHORTFALL_PX;
+    const reach = reachPastSoftwareShortfall ? SOFTWARE_BACKDROP_SHORTFALL_PX : 0;
     return {
         pointerEvents: 'none',
-        right: -reach,
-        bottom: -reach,
+        ...(reach > 0 ? { right: -reach, bottom: -reach } : null),
         clipPath: `inset(0px ${reach}px ${reach}px 0px round ${corner('borderTopLeftRadius')}px ${corner('borderTopRightRadius')}px ${corner('borderBottomRightRadius')}px ${corner('borderBottomLeftRadius')}px)`,
     } as unknown as ViewStyle;
 }

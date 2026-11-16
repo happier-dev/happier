@@ -4,6 +4,7 @@ import type { UnistylesThemes } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
+import { resolveGlassRimStyle } from '@/shadowElevation';
 import { COMPOSER_PHONE_CARD_CONTENT_INSET } from '../composerContentInset';
 
 
@@ -58,24 +59,12 @@ export const AGENT_INPUT_FIELD_PADDING_Y = 5;
 export const AGENT_INPUT_FIELD_TO_CHIP_RAIL_GAP_PX = 8;
 
 /**
- * The composer's one edge (calm-shell C1), the same for live, read-only, document and preview composers and
- * for both composer styles: light draws no ink line, only the glass rim (white), so the fill and the contact/cast
- * shadow carry the edge; dark keeps one even glass line. Both read the theme's `glass.border`, so a custom
- * profile keeps its own edge. Width follows the predecessor glass recipe: a touch thicker on light, where the
- * rim must stay crisp over content.
+ * The composer's one edge (calm-shell C1), the same for live, read-only, document and preview composers and for
+ * both composer styles: the glass edge (`resolveGlassRimStyle`). Light draws no line, so the fill, inner shade and
+ * cast shadow carry the edge, as 0.2's composer did; dark keeps one even glass line (owner, 2026-11-16).
  */
 export function resolveAgentInputPanelEdgeStyle(theme: Theme) {
-    const width = theme.dark ? 1.5 : 2;
-    return { borderWidth: width, borderColor: theme.colors.glass.border } as const;
-}
-
-/**
- * Over a picture or the planet the light rim stops reading as a whisper and becomes a white outline, so
- * there the composer takes the flat edge's ink (DESIGN.md: the composer uses the flat edge; on light it
- * is ink, never white). Dark keeps its even glass line. `GlassSurface` applies it while it is backed.
- */
-export function resolveAgentInputPanelBackedEdgeStyle(theme: Theme) {
-    return theme.dark ? null : ({ borderColor: theme.colors.border.surface } as const);
+    return resolveGlassRimStyle(theme);
 }
 
 /** The material plane owns paint; this layout is shared by live input and previews. */

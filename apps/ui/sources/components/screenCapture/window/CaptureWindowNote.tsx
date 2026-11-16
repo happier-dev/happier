@@ -8,7 +8,6 @@ import {
     AGENT_INPUT_ACTION_CHIP_STYLE,
     AGENT_INPUT_FIELD_PADDING_Y,
     resolveAgentInputActionChipTextStyle,
-    resolveAgentInputPanelBackedEdgeStyle,
     resolveAgentInputPanelStyle,
 } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -82,10 +81,7 @@ export function CaptureWindowNote(props: Readonly<{
     const noTarget = props.target === null;
     const targetDisabled = noTarget || Boolean(props.target?.disabledReason);
     const chipText = resolveAgentInputActionChipTextStyle(theme);
-    const panel = React.useMemo(() => [
-        resolveAgentInputPanelStyle(theme),
-        resolveAgentInputPanelBackedEdgeStyle(theme),
-    ], [theme]);
+    const panel = React.useMemo(() => resolveAgentInputPanelStyle(theme), [theme]);
     const shortcuts = useSettingsValues([
         'keyboardShortcutsV2Enabled', 'keyboardSingleKeyShortcutsEnabled',
         'keyboardShortcutOverridesV1', 'keyboardShortcutDisabledCommandIdsV1',

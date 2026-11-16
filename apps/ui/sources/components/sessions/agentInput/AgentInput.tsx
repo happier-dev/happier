@@ -234,7 +234,6 @@ import {
     resolveAgentInputPhonePanelPaddingX,
     NATIVE_ACTION_CHIP_GAP_Y,
     resolveAgentInputActionChipTextStyle,
-    resolveAgentInputPanelBackedEdgeStyle,
     resolveAgentInputPanelLayoutStyle,
 } from './components/agentInputChromeStyles';
 import { resolveComposerCardContentInsetX } from './composerContentInset';
@@ -931,10 +930,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: resolveAgentInputPhonePanelPaddingX(theme),
         paddingTop: resolveAgentInputPanelPaddingTop(resolveAgentInputPhonePanelPaddingX(theme)),
     },
-    // Over a picture or the planet the composer's edge is the flat ink edge (light), never a white line.
-    unifiedPanelBackedEdge: resolveAgentInputPanelBackedEdgeStyle(theme) ?? {},
-    // The composer style changes its shadow; the Elements material owns its fill. The edge stays
-    // the standard single even hairline: the composer has no lip (DESIGN.md, owner 2026-10-15).
+    // The composer style changes its shadow; the Elements material owns its fill and
+    // `resolveGlassRimStyle` its edge: no lip, no line on light (DESIGN.md, owner 2026-11-16).
     // The cast shadow lives on the `panelShadow` wrapper (glass mode only).
     unifiedPanelGlass: {
         // Composer-only fainter inner shadow (the other glass surfaces keep `glass.innerShadow`).
@@ -1364,7 +1361,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const surfaceGroup = props.surfaceGroup ?? 'card';
     const composerSurfaceColor = isGlassComposer ? theme.colors.glass.composerSurface : theme.colors.input.background;
     const panelMaterialProps = { surfaceGroup, nested: surfaceGroup === 'card', solidColor: composerSurfaceColor, finishRole: 'composer' as const,
-        backedStyle: styles.unifiedPanelBackedEdge, ...(embeddedPanel ? { noCoat: true } : {}) };
+        ...(embeddedPanel ? { noCoat: true } : {}) };
     const keyboardShortcutsV2Enabled = useSetting('keyboardShortcutsV2Enabled') === true;
     const keyboardSingleKeyShortcutsEnabled = useSetting('keyboardSingleKeyShortcutsEnabled') === true;
     const keyboardShortcutOverridesV1 = useSetting('keyboardShortcutOverridesV1') ?? {};

@@ -149,6 +149,18 @@ describe('TabBarNewSessionButton', () => {
         expect(flatten(sidebar.panel.frameStyle)).toMatchObject({ width: 44, height: 44 });
     });
 
+    // Owner 2026-11-16: on light, a white rim reads as a ring wherever the glass stands on anything but white (the
+    // sidebar's grey list). Light glass carries its edge with the cast shadow and inner shade, never a full ring.
+    it('draws no ring around the light glass capsule', async () => {
+        const { TabBarNewSessionButton } = await import('./TabBarNewSessionButton');
+        const screen = await renderScreen(<TabBarNewSessionButton placement="sidebar" />);
+        const flatten = (style: unknown): Record<string, unknown> => Array.isArray(style)
+            ? Object.assign({}, ...style.map(flatten))
+            : (style && typeof style === 'object' ? style as Record<string, unknown> : {});
+        const ringed = screen.findAllByType('View' as never).filter((view) => Number(flatten(view.props.style).borderWidth ?? 0) > 0);
+        expect(ringed).toHaveLength(0);
+    });
+
     // The tab-bar row gives the capsule a square cell (`FloatingTabBarSurface`). The panel's
     // outermost box, the flex item that also casts the shadow, must fill that cell, and the glass
     // must fill the panel; sizing an inner box instead drew a 26x26 circle inside a 26x44 shadow.

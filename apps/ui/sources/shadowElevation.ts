@@ -167,6 +167,21 @@ export function buildGlassBorderColor(dark: boolean): string {
         : 'rgba(255, 255, 255, 0.92)';
 }
 
+/** The width of dark glass's one even line (the composer and the floating glass capsules, as in 0.2). */
+const GLASS_RIM_WIDTH_DARK = 1.5;
+
+/**
+ * The edge of floating glass and the composer, decided once. Light glass draws no line: its fill, inner shade and
+ * soft cast shadow carry the edge, as 0.2's composer did, because a white rim reads as a full ring wherever the
+ * glass stands on anything but white (the sidebar's "+" on the grey list) and an ink one as a drawn border (the
+ * composer over the planet) (owner, 2026-11-16). Dark keeps one even glass line.
+ */
+export function resolveGlassRimStyle(theme: Readonly<{ dark: boolean; colors: Readonly<{ glass: Readonly<{ border: string }> }> }>) {
+    return theme.dark
+        ? { borderWidth: GLASS_RIM_WIDTH_DARK, borderColor: theme.colors.glass.border }
+        : { borderWidth: 0 };
+}
+
 /**
  * The seam between the lifted page sheet and the navigation plane beside it (calm-shell `csedge.S1`).
  *

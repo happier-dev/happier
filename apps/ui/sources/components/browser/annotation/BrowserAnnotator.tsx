@@ -8,7 +8,6 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { isEmptyEdit, type ImageMarksDocumentV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
 
 import {
-    resolveAgentInputPanelBackedEdgeStyle,
     resolveAgentInputPanelStyle,
 } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -264,10 +263,7 @@ function BrowserAnnotatorCommentCard(props: Readonly<{
     const { theme } = useUnistyles();
     const inputRef = React.useRef<MultiTextInputHandle>(null);
     const keepRef = React.useRef<HappierFocusable | null>(null);
-    const panel = React.useMemo(() => [
-        resolveAgentInputPanelStyle(theme),
-        resolveAgentInputPanelBackedEdgeStyle(theme),
-    ], [theme]);
+    const panel = React.useMemo(() => resolveAgentInputPanelStyle(theme), [theme]);
     const elements = useImageAnnotatorState(annotator, (state) => state.document.marks.reduce((count, mark) => (mark.kind === 'element' ? count + 1 : count), 0));
     const shortcuts = useSettingsValues([
         'keyboardShortcutsV2Enabled', 'keyboardSingleKeyShortcutsEnabled',

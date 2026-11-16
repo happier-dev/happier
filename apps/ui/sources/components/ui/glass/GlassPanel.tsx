@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, type StyleProp, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { buildGlassCastShadowStyle, type ShadowLevel } from '@/shadowElevation';
+import { buildGlassCastShadowStyle, resolveGlassRimStyle, type ShadowLevel } from '@/shadowElevation';
 
 import { GlassSurface } from './GlassSurface';
 import type { GlassSurfaceGroup } from './glassMaterial';
@@ -55,8 +55,8 @@ export type GlassPanelProps = Readonly<{
 
 /**
  * Reusable iOS-26 "Liquid Glass" floating surface: a tiered glass/blur/solid
- * material (`GlassSurface`) wrapped with the canonical glass treatment — a bright
- * rim, a subtle top inner-shadow for inset depth, and a soft cast shadow on an
+ * material (`GlassSurface`) wrapped with the canonical glass treatment — the glass
+ * edge (`resolveGlassRimStyle`), a subtle top inner-shadow for inset depth, and a soft cast shadow on an
  * un-clipped wrapper (so it renders around the clipped material).
  *
  * Shared by the floating tab bars, the jump-to-bottom button, and the optional
@@ -89,9 +89,8 @@ export const GlassPanel = React.memo(function GlassPanel(props: GlassPanelProps)
                     {
                         borderRadius: radius,
                         overflow: 'hidden',
-                        // Reddit-style glass rim + (optional) subtle top inner-shadow for inset depth.
-                        borderWidth: 1.5,
-                        borderColor: theme.colors.glass.border,
+                        // The glass edge (no line on light, one even line on dark) + (optional) subtle top inner-shadow.
+                        ...resolveGlassRimStyle(theme),
                         boxShadow: props.innerShadow === false ? undefined : theme.colors.glass.innerShadow,
                     },
                     props.frameStyle ? FILL_FRAME : null,

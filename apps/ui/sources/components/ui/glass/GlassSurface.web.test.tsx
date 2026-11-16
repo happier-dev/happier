@@ -301,6 +301,25 @@ describe('web glass material', () => {
         expect(screen.findHostByTestId('draft')?.props.value).toBe('keep the web card draft');
         expect(screen.findAll(node => typeof node.type === 'string' && flattenTestStyle(node.props.style)?.backgroundColor === '#221c1c')).toHaveLength(1);
     });
+    // Owner 2026-11-16 (desktop app, light): frosted cards and the composer showed ink ramps along their edges,
+    // while menus, whose frosted layer is shaped by a clip, stayed clean. Every frosted layer takes that clip.
+    it('shapes a frosted Element\'s material by its own rounded clip, as floating glass is shaped', async () => {
+        const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        const scene = (atmosphereBehind: 'wallpaper' | 'none') => <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
+            <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind }}>
+                <GlassSurface plane surfaceGroup="content" finishRole={null}>
+                    <GlassSurface testID="card" surfaceGroup="card" nested finishRole="card" style={{ borderRadius: 14, borderWidth: 1 }}>{null}</GlassSurface>
+                </GlassSurface>
+            </GlassRuntimeEnvironmentProvider>
+        </GlassMaterialSettingsProvider>;
+        const screen = await renderScreen(scene('wallpaper'));
+        const frosted = screen.findAll(hasBackdrop);
+        expect(frosted).toHaveLength(1);
+        // The layer fills the padding box, so its clip follows the inner radius; nothing reaches past an in-flow card.
+        expect(String((flattenTestStyle(frosted[0]!.props.style) as Record<string, unknown>).clipPath)).toBe('inset(0px 0px 0px 0px round 13px 13px 13px 13px)');
+    });
     it('frosts Auto reading surfaces over a shown background and retains drafts through opaque overrides', async () => {
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
         const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
