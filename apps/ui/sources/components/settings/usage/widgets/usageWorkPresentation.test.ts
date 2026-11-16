@@ -86,7 +86,6 @@ describe('Work display grouping of the canonical allocation', () => {
     expect.soft(summary.outcomes[0]).toMatchObject({ amount: 3713, tokensFromParts: true });
     expect.soft(summary.projects[0]?.sessions[0]).toMatchObject({ amount: 3713, tokensFromParts: true });
     const autopsy = summarizeUsageWorkSession(work, basis, 'session');
-    expect.soft(autopsy).toMatchObject({ amount: 3713, tokensFromParts: true });
     expect(autopsy.turns[0]).toMatchObject({ amount: 3713, tokensFromParts: true });
     const exact = summarizeUsageWork(allocateUsageOutcomes({ contributions: [reported], evidence: [] }), basis);
     expect(exact).toMatchObject({ total: 2000, tokensFromParts: false });
@@ -206,7 +205,6 @@ describe('Work display grouping of the canonical allocation', () => {
     expect(summary.projects[0]?.amount).toBeCloseTo(0.12, 10);
     expect(summary.outcomes[0]?.amount).toBeNull();
     const autopsy = summarizeUsageWorkSession(work, basis, 's1');
-    expect(autopsy.amount).toBeCloseTo(0.12, 10);
     expect(autopsy.costTimeline.map(row => row.amount)).toEqual([null, 0.12]);
     expect(autopsy.turns.map(row => row.amount)).toEqual([null, null]);
   });
@@ -274,7 +272,6 @@ describe('Work display grouping of the canonical allocation', () => {
     expect(autopsy.turns[0]).toMatchObject({ checkpoints: ['checkpoint/s1/t1'], commits: ['b'.repeat(40)], branches: [],
       outcome: expect.objectContaining({ pullRequest: expect.objectContaining({ number: 7 }) }) });
     expect(autopsy.turns[2]).toMatchObject({ checkpoints: ['checkpoint/s1/t2'], commits: ['f'.repeat(40)], branches: ['refs/heads/glass'], outcome: null });
-    expect(autopsy.amount).toBe(9);
     expect(autopsy.costTimelineBasis).toEqual({ kind: 'reported', currency: 'USD' });
     expect(autopsy.costTimeline).toEqual([
       { id: 'early', observedAtMs: 10, amount: 3 },
@@ -304,7 +301,6 @@ describe('Work display grouping of the canonical allocation', () => {
       const summary = summarizeUsageWork(work, { metric: 'cost', costBasis: 'auto' });
       expect([summary.total, summary.unallocated, summary.projects[0]?.amount, summary.sessions[0]?.amount,
         summary.agents[0]?.amount, summary.unallocatedByReason.missing_evidence]).toEqual(Array(6).fill(expected));
-      expect(summarizeUsageWorkSession(work, { metric: 'cost', costBasis: 'auto' }, 's1').amount).toBe(expected);
       if (expected !== null) {
         expect(summary.moneyBasis).toEqual({ kind: 'mixed', currency: 'USD' });
         expect(summarizeUsageWorkSession(work, { metric: 'cost', costBasis: 'auto' }, 's1').costTimelineBasis).toEqual(summary.moneyBasis);

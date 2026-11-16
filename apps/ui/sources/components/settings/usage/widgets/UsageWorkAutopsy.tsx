@@ -24,12 +24,13 @@ import {
   UsageShowAllRows,
   leadingUsageRows,
   usageDimensionLabel,
+  useUsageAnalyticsView,
   useUsagePluginTheme,
   type UsageBodyProps,
 } from './usageBodyKit';
 import { useUsageWork } from './useUsageWork';
 import { useUsageChartDetails } from './usageMountedControls';
-import { usageCostKindPhrase } from '../usageCostPresentation';
+import { usageCostKindPhrase, usagePageCostCaption } from '../usageCostPresentation';
 import { useSessionMetadata } from '@/sync/store/hooks';
 import { findModelOptionForEffectiveModelId, getModelOptionsForSession } from '@/sync/domains/models/modelOptions';
 import { summarizeUsageWorkSession, type UsageWorkTurnRow } from './usageWorkPresentation';
@@ -73,6 +74,12 @@ export function UsageWorkAutopsy(
   const presentation = useWidgetPresentation();
   const rowMetrics = usePageRowMetrics('list');
   const { format, cell, datum, sessionLabel, machineNames } = useUsageWork(props.slice, props.query, props.serverId);
+  const accounting = useUsageAnalyticsView(props.slice, props.query);
+  const cost = accounting?.pageCost;
+  const costCurrency = cost?.selection?.currency ?? accounting?.costPresentation.currency ?? 'USD';
+  // Session totals use the same admitted accounting projection as Overview and Costs.
+  // Work allocations describe turn linkage; they cannot establish a second Session total.
+  const amount = props.query.metric === 'cost' ? cost?.amountUsd ?? null : accounting?.hero.totalTokens ?? null;
   const selected =
     typeof props.query.session === 'string'
       ? props.query.session
@@ -203,7 +210,7 @@ export function UsageWorkAutopsy(
   // The answer to "why is this Session expensive": where it went, largest first; the timeline above keeps the order.
   const ranked = [...turns].sort((left, right) => compareUsageMeasurementsDescending(left.amount, right.amount));
   const largest = ranked[0]?.amount != null && ranked[0].amount > 0 && ranked[0].turnId !== null ? ranked[0] : null;
-  const largestShare = largest && autopsy?.amount ? Math.round((largest.amount! / autopsy.amount) * 100) : null;
+  const largestShare = largest && amount ? Math.round((largest.amount! / amount) * 100) : null;
   // A long Session leads with its largest turns; the rest fold behind the Usage show-all footer (R135 item 3).
   const shownTurns = leadingUsageRows(ranked, turnsExpanded);
   // Phases keep their witnessed order and the Session's whole extent; a long Session leads with its first ones (sweep 1110 item 16).
@@ -213,7 +220,7 @@ export function UsageWorkAutopsy(
   const sharedIdentity = identities.size === 1 ? [...identities][0]! : null;
   return (
     <View testID={props.testID} style={styles.body}>
-      {autopsy && turns.length > 0 ? (
+      {accounting || autopsy && turns.length > 0 ? (
         <View style={styles.summary} testID={`${props.testID}.summary`}>
           <View style={styles.facts}>
             <HappierDataMetric
@@ -221,16 +228,29 @@ export function UsageWorkAutopsy(
               size="stat"
               showLabel
               label={t('usage.board.work.autopsyTitle')}
-              value={autopsy.amount ?? format(null, autopsy.moneyBasis)}
-              valueFormatter={value => format(value, autopsy.moneyBasis)}
-              caption={[sessionLabel(selected), autopsy.tokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ')}
+              value={amount ?? t('common.unavailable')}
+              valueFormatter={value => metric === 'cost' ? formatUsageCost(value, costCurrency) : format(value)}
+              caption={[sessionLabel(selected), metric === 'cost' && cost ? usagePageCostCaption(cost)
+                : accounting?.hero.totalTokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ')}
             />
+            {metric !== 'cost' && cost ? (
+              <HappierDataMetric
+                theme={theme}
+                size="stat"
+                showLabel
+                label={t('usage.cost')}
+                value={cost.amountUsd ?? t('common.unavailable')}
+                valueFormatter={value => formatUsageCost(value, costCurrency)}
+                caption={usagePageCostCaption(cost)}
+              />
+            ) : null}
             <HappierDataMetric
               theme={theme}
               size="stat"
               showLabel
               label={t('usage.board.work.turns')}
-              value={ordinals.size}
+              value={ordinals.size > 0 && turns.every(turn => turn.turnId !== null)
+                ? ordinals.size : t('usage.board.howYouWork.notRecorded')}
             />
             {largest ? (
               <HappierDataMetric
@@ -245,7 +265,7 @@ export function UsageWorkAutopsy(
               />
             ) : null}
           </View>
-          <View style={styles.outcome}>
+          {autopsy ? <View style={styles.outcome}>
             {/* The marks lead the line's first row; the outcome text wraps beside them, never below a lone glyph. */}
             <View style={[styles.outcomeMarks, { height: caption.lineHeight }]}>
             <UsageWorkMarks
@@ -272,7 +292,7 @@ export function UsageWorkAutopsy(
                 .filter(Boolean)
                 .join(' · ')}
             </Text>
-          </View>
+          </View> : null}
         </View>
       ) : work ? (
         <UsageBodyInsufficient
@@ -384,7 +404,7 @@ export function UsageWorkAutopsy(
       ) : null}
       <UsageCoverageLine
         slice={props.slice}
-        sources={['work', 'howYouWork']}
+        sources={['accounting', 'work', 'howYouWork']}
         onRetry={props.model.refresh}
         testID={`${props.testID}.coverage`}
       />

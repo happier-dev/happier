@@ -772,6 +772,31 @@ describe('Work and Coach widget bodies', () => {
       permissions: { ...howYouWork.permissions, decisionLatencyMs: 78 * 60_000 } } }} id="usage_human_loop" testID="loop" />);
     expect(screen.findAllByType(ChartDatum).some(node => node.props.testID === 'loop.waited.detail')).toBe(false);
   });
+  it.each(['tokens', 'cost'] as const)('shows the accounting Session amount without inventing cumulative-only turns (%s)', async (metric) => {
+    const sessionQuery = normalizeUsageQuery({ ...query, metric, session: 's1', costBasis: 'auto' });
+    // r178: the Session receives an API-equivalent total, but Pi supplies no turn_delta.
+    const paid = { input: 3305, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 3309 };
+    const cumulative = { ...contribution('cumulative', 's1', null), agentId: 'pi', modelId: 'openai/gpt-4.1-mini',
+      source: 'pi-session-stats', tokens: paid, cost: { reportedUsd: null, estimatedUsd: null, currency: 'USD' } };
+    const cumulativeSlice: UsageQueryResultSlice = { ...slice, shownQuery: sessionQuery,
+      accounting: { v: 1, totals: { eventCount: 1, tokens: paid,
+        cost: { ...cumulative.cost, apiEquivalentUsd: 0.0013284, pricingSource: 'catalog' } },
+        costPresentation: { mode: 'auto', effectiveUsd: 0.0013284, currency: 'USD', source: 'catalog' } },
+      work: allocateUsageOutcomes({ contributions: [cumulative], evidence: [] }) };
+    const screen = await renderScreen(<UsageSessionValueWidget {...props} query={sessionQuery} slice={cumulativeSlice}
+      id="usage_session_value" testID="value" />);
+    const metrics = screen.findAllByType(HappierDataMetric);
+    const totalLabel = t(metric === 'cost' ? 'usage.board.work.autopsyTitle' : 'usage.cost');
+    const total = metrics.find(node => node.props.label === totalLabel);
+    expect(total?.props.value).toBe(0.0013284);
+    expect(total?.props.valueFormatter(total.props.value)).toContain('$0.0013');
+    if (metric === 'tokens') expect(metrics.find(node => node.props.label === t('usage.board.work.autopsyTitle'))?.props.value).toBe(3309);
+    expect(metrics.find(node => node.props.label === t('usage.board.work.turns'))?.props.value)
+      .toBe(t('usage.board.howYouWork.notRecorded'));
+    await screen.update(<UsageSessionValueWidget {...props} query={sessionQuery} slice={{ ...cumulativeSlice, work: undefined }}
+      id="usage_session_value" testID="value" />);
+    expect(screen.findAllByType(HappierDataMetric).find(node => node.props.label === totalLabel)?.props.value).toBe(0.0013284);
+  });
   it('opens a selected Session autopsy with exact contribution, checkpoint and witnessed wait phases', async () => {
     const sessionQuery = normalizeUsageQuery({ ...query, session: 's1' });
     const howYouWork = resolveUsageHowYouWork({ period: { startMs: 0, endMs: 1000 }, timeZoneOffsetMinutes: 0,
@@ -852,11 +877,12 @@ describe('Work and Coach widget bodies', () => {
       cost: { reportedUsd: 0, estimatedUsd: 4.56789, currency: 'USD', costSource: 'pricing_estimate' as const } };
     const body = (rows: readonly UsageWorkContribution[]) => <UsageSessionValueWidget {...props} query={sessionQuery}
       slice={{ ...slice, shownQuery: sessionQuery,
+        accounting: { ...slice.accounting!, contributions: rows },
         work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [...rows], evidence: [] })) }}
       id="usage_session_value" testID="value" />;
     const screen = await renderScreen(body([reported]));
     const summary = screen.findAllByType(ChartDatum).find(node => node.props.datum.label === t('usage.board.work.autopsyTitle'));
-    expect.soft(summary?.props.datum).toMatchObject({ value: expect.stringMatching(/^1\.23456 \(€1\.23.*reported.*\)$/), subtitle: expect.stringMatching(/€1\.23.*reported/) });
+    expect.soft(summary?.props.datum).toMatchObject({ value: expect.stringMatching(/^1\.23456 \(€1\.23\)$/), subtitle: expect.stringContaining('€1.23') });
     expect(screen.getTextContent()).toContain('€1.23');
     await screen.update(body([reported, estimated]));
     const turnDatums = screen.findAllByType(ChartDatum)

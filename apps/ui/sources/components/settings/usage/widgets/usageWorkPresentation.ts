@@ -543,8 +543,7 @@ function retainedChanges(evidence: readonly RepositoryCheckpointCommitEvidence[]
   return [...new Map(evidence.flatMap(row => row.retainedChange ? [[JSON.stringify([row.commitSha, row.retainedChange]),
     { commitSha: row.commitSha, ...row.retainedChange }] as const] : [])).values()];
 }
-export type UsageWorkSessionAutopsy = UsageWorkIdentities & MoneyDisplay & Readonly<{
-  amount: number | null;
+export type UsageWorkSessionAutopsy = UsageWorkIdentities & Readonly<{
   turns: readonly UsageWorkTurnRow[];
   outcomes: readonly UsageWorkOutcome[];
   /** Cumulative selected cost kind at the accounting observation times; an unpriced part stays unknown. */
@@ -646,10 +645,5 @@ export function summarizeUsageWorkSession(
       amount: selected?.amountUsd ?? null };
   });
   const turns = groupUsageWorkTurns(contributionRows, id => allocations.get(id)!.contribution, basis);
-  const selected = basis.metric === 'cost' ? resolveUsageCostBasis(cumulativeCost, basis.costBasis) : null;
-  const measured = basis.metric === 'cost' ? null : measureTokens(contributionRows.map(row => allocations.get(row.contributionId)!.contribution));
-  const amount = measured ? measured.total : contributionRows.length > 0 ? selected?.amountUsd ?? null : null;
-  return { amount, moneyBasis: selected ? { kind: selected.kind, currency: selected.currency } : null,
-    tokensFromParts: measured?.fromParts ?? false,
-    turns, costTimeline, costTimelineBasis, outcomes: [...outcomes.values()], ...identities(marks) };
+  return { turns, costTimeline, costTimelineBasis, outcomes: [...outcomes.values()], ...identities(marks) };
 }
