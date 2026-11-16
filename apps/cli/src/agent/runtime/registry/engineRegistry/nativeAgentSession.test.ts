@@ -8404,7 +8404,7 @@ describe('native Agent session host adapter', () => {
         await created.operations.resetOrDisposeRuntime();
     });
 
-    it('requires an own credential selection before a Run can use direct Session custody', async () => {
+    it.each(['direct', 'brokered'] as const)('opens %s Team custody with late sensitive values and preserves Run custody', async (deliveryMode) => {
         const agentId = 'acme-direct-run-custody';
         const contributions = createExternalContributionFixtures(agentId);
         const nativeSession: AgentSessionRuntime = {
@@ -8420,11 +8420,15 @@ describe('native Agent session host adapter', () => {
                 upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.example/v1', credential: 'apiKey' },
                 materialization: { v: 1, kind: 'spawnEnv' },
             },
-            environmentOverlay: [{ name: 'TEAM_PROVIDER_CLEARED', value: '', source: 'provider' }], additionalRedactionValues: [], cleanup: () => undefined,
+            environmentOverlay: [
+                { name: 'TEAM_PROVIDER_CLEARED', value: '', source: 'provider' },
+                { name: 'TEAM_PROVIDER_TOKEN', value: 'team-provider-fixture-token', source: 'provider' },
+            ], additionalRedactionValues: [], cleanup: () => undefined,
         }));
         const plan = await createNativeAgentRuntimeSessionPlan({
             runtime: { sessions: { open: async request => {
                 expect(request.launchEnvironment?.values.TEAM_PROVIDER_CLEARED).toBe('');
+                expect(request.launchEnvironment?.values.TEAM_PROVIDER_TOKEN).toBe('team-provider-fixture-token');
                 return nativeSession;
             } } },
             lease: createLease(agentId), backend: contributions.backend, agent: contributions.agent,
@@ -8434,7 +8438,7 @@ describe('native Agent session host adapter', () => {
                 resolveLateEnvironment: async () => ({ environmentVariables: {}, unsetEnvironmentVariables: [], sensitiveEnvironmentVariableNames: [] }),
                 credentials, directory: `/tmp/${agentId}`, backendTarget: { kind: 'backend', backendId: agentId },
                 modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: `backend:${agentId}`, providerConnectionId: null, modelId: 'team-model' } },
-                teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-direct', expectedResourceRevision: 3, deliveryMode: 'direct', teamId: 'team-1' }],
+                teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, resourceId: 'resource-direct', expectedResourceRevision: 3, deliveryMode, teamId: 'team-1' }],
             }),
         });
         if (!plan.config.createSessionRuntime) throw new Error('expected a session runtime factory');
@@ -8447,16 +8451,18 @@ describe('native Agent session host adapter', () => {
         try {
             const prepareRun = created.nativeRuntime?.prepareRunTeamCredentialProviderBinding;
             if (!prepareRun) throw new Error('expected Run credential controls');
-            await expect(prepareRun({ runId: 'run-inherited', agentId, resourceId: 'resource-direct', modelId: 'team-model' }))
-                .rejects.toMatchObject({ code: 'provider_run_credential_selection_required' });
-            expect(prepare.mock.calls.map(([request]) => request.consumer?.kind ?? 'session')).toEqual(['session']);
+            if (deliveryMode === 'direct') {
+                await expect(prepareRun({ runId: 'run-inherited', agentId, resourceId: 'resource-direct', modelId: 'team-model' }))
+                    .rejects.toMatchObject({ code: 'provider_run_credential_selection_required' });
+                expect(prepare.mock.calls.map(([request]) => request.consumer?.kind ?? 'session')).toEqual(['session']);
+            }
             await expect(prepareRun({
                 runId: 'run-own-selection', agentId, resourceId: 'resource-direct', modelId: 'team-model',
-                selection: { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'resource-direct', expectedResourceRevision: 3, deliveryMode: 'direct', agentTargetKey: `backend:${agentId}`, modelId: 'team-model' },
+                selection: { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'resource-direct', expectedResourceRevision: 3, deliveryMode, agentTargetKey: `backend:${agentId}`, modelId: 'team-model' },
             })).resolves.toMatchObject({ providerBinding: { source: { resourceId: 'resource-direct' } } });
             expect(prepare.mock.calls.at(-1)?.[0]).toMatchObject({
                 consumer: { kind: 'execution_run', executionRunId: 'run-own-selection' },
-                executionRunSelection: { teamId: 'team-1', deliveryMode: 'direct' },
+                executionRunSelection: { teamId: 'team-1', deliveryMode },
             });
         } finally {
             await created.operations.resetOrDisposeRuntime();

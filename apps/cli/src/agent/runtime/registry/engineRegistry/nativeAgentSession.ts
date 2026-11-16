@@ -5348,6 +5348,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     }),
                     providerBinding: teamBinding.providerBinding,
                 });
+                resolvedLateEnvironmentValues = openInputs.launchEnvironment.values;
                 resolvedLateSensitiveEnvironmentVariableNames = Object.freeze([
                     ...new Set([
                         ...resolvedLateSensitiveEnvironmentVariableNames,
