@@ -56,7 +56,7 @@ import { sealPromptLibraryContentV1 } from '@happier-dev/protocol/prompts/librar
 import { RegistrySourcesRecordV1Schema } from '@happier-dev/protocol/registries';
 import { prepareConnectedAccountCatalogMutationInContext, readConnectedAccountCatalogInContext } from '@/sync/api/account/apiConnectedAccountCatalog';
 import { ConnectedAccountCatalogRowMutationV1Schema, type ConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { renderHook, renderScreen, standardCleanup, createDeferred } from '@/dev/testkit';
+import { renderHook, renderScreen, standardCleanup, createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { AccountSettingsV2UpdateRequestSchema, AccountSettingsV2HistoryListResponseSchema,
     AccountSettingsV2HistoryDetailResponseSchema, AccountSettingsV2HistoryMutationRequestSchema,
@@ -2122,7 +2122,11 @@ describe('Saved Secret operations through their real Account and Action owners',
             account.resources.set(second.id, { ...resource, recipientEnvelope: { ...resource.recipientEnvelope,
                 recipientContentPublicKeyFingerprint: 'different-content-key' } });
         }
-        if (observation === 'retired-scope') await openAccount('plain', { home: 'verification-other-home' });
+        if (observation === 'retired-scope') {
+            // Changing focus keeps a captured Home valid; dispose its credential fixture to retire it.
+            await connection?.dispose();
+            await openAccount('plain', { home: 'verification-other-home' });
+        }
         if (observation === 'changed-account-key') account.setBeforeMaterialRead(() => account.rotateServerContentKey());
         const finalTrustReads: string[] = [];
         if (mode === 'e2ee' && observation === 'matching') {
@@ -2174,7 +2178,8 @@ describe('Saved Secret operations through their real Account and Action owners',
         const pickerProps = { scope: account.scope, onClose, referenceSelection: { selected: null, onSelect } };
         const screen = await renderScreen(React.createElement(SavedSecretPickerModal, pickerProps));
         const capturedCatalog = await renderHook(() => useSavedSecretCatalog({ scope: account.scope }));
-        expect(screen.findByTestId('saved-secret:happier:shared-secret:v1:initiating-home-key')).toBeTruthy();
+        await waitForTestEvent(screen.subscribe, () =>
+            expect(screen.findByTestId('saved-secret-picker:saved:happier:shared-secret:v1:initiating-home-key')).toBeTruthy());
         const initiatingConnection = connection;
         let otherHomeWrites: typeof account.writes = [];
         await act(async () => {
@@ -2188,7 +2193,7 @@ describe('Saved Secret operations through their real Account and Action owners',
         });
         expect(onClose).not.toHaveBeenCalled();
         expect(onSelect).not.toHaveBeenCalled();
-        expect(Boolean(screen.findByTestId('saved-secret:happier:shared-secret:v1:other-home-key'))).toBe(false);
+        expect(screen.findByTestId('saved-secret-picker:saved:happier:shared-secret:v1:other-home-key')).toBeNull();
         expect(await capturedCatalog.getCurrent().personalMutations.create({ name: 'Retired draft', value: 'old-home-value' })).toBeNull();
         expect(account.writes).toEqual([]);
         expect(otherHomeWrites).toEqual([]);
