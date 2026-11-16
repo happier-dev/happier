@@ -61,6 +61,7 @@ import { hasSessionMessageToolChanges, publishSessionMessageChanges, type Sessio
 import { applyLatestWorkerUpdateChanges, EMPTY_LATEST_WORKER_UPDATES, type LatestWorkerUpdates } from '../latestWorkerUpdates';
 import { applySessionReturnedAnswerChanges, EMPTY_SESSION_RETURNED_ANSWERS, type SessionReturnedAnswersByRequest } from '../sessionReturnedAnswers';
 import { hasExecutionRunSignals } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
+import { hasRunningToolCall } from '@/sync/domains/session/changes/derivation/runningToolCalls';
 import { applySessionUserMessageHistory, removeSessionUserMessageHistory, EMPTY_SESSION_USER_MESSAGE_HISTORY, type SessionUserMessageHistory } from '../sessionUserMessageHistory';
 
 export type SessionMessages = {
@@ -74,6 +75,8 @@ export type SessionMessages = {
     returnedAnswersByRequest?: SessionReturnedAnswersByRequest;
     /** Transient kind index; plain text arrivals do not republish execution-run support. */
     executionRunSignalMessageIds?: ReadonlySet<string>;
+    /** Transient index of root rows with a running tool call (live file writes); text deltas never republish it. */
+    runningToolCallMessageIds?: ReadonlySet<string>;
     messageRevisionsById?: Record<string, number>;
     // Back-compat alias for older call sites (do not use in new code).
     messagesMap: Record<string, Message>;
@@ -170,21 +173,42 @@ function mergeLatestNumber(existing: number | null | undefined, incoming: number
         : normalizedIncoming;
 }
 
+function contributesExecutionRunSignal(message: Message): boolean {
+    return message.kind === 'tool-call' && hasExecutionRunSignals([message]);
+}
+
 function applyExecutionRunSignalChanges(
     previous: ReadonlySet<string> | undefined,
     messages: Readonly<Record<string, Message>>,
     changed: readonly Message[],
 ): ReadonlySet<string> {
+    return applyMessageMembershipChanges(previous, messages, changed, contributesExecutionRunSignal);
+}
+
+function applyRunningToolCallChanges(
+    previous: ReadonlySet<string> | undefined,
+    messages: Readonly<Record<string, Message>>,
+    changed: readonly Message[],
+): ReadonlySet<string> {
+    return applyMessageMembershipChanges(previous, messages, changed, hasRunningToolCall);
+}
+
+function applyMessageMembershipChanges(
+    previous: ReadonlySet<string> | undefined,
+    messages: Readonly<Record<string, Message>>,
+    changed: readonly Message[],
+    contributesMessage: (message: Message) => boolean,
+): ReadonlySet<string> {
     if (previous === undefined) {
-        return new Set(Object.values(messages).filter(message => message.kind === 'tool-call' && hasExecutionRunSignals([message])).map(message => message.id));
+        return new Set(Object.values(messages).filter(contributesMessage).map(message => message.id));
     }
-    // Membership stays O(changed), even with many historical execution tools.
+    // Membership stays O(changed), even with many historical tools.
     // The reducer may mutate a retained ToolCall, so its previous object is not
-    // the authority for whether this message used to contribute a signal.
+    // the authority for whether this message used to contribute.
     let updated: Set<string> | undefined;
     for (const message of changed) {
         const present = (updated ?? previous).has(message.id);
-        const contributes = message.kind === 'tool-call' && hasExecutionRunSignals([message]);
+        const contributes = contributesMessage(message);
         if (present === contributes) continue;
         updated ??= new Set(previous);
         if (contributes) updated.add(message.id);
@@ -263,6 +287,7 @@ function coerceSessionMessages(input: unknown): SessionMessages {
         latestWorkerUpdates: raw.latestWorkerUpdates as LatestWorkerUpdates | undefined,
         returnedAnswersByRequest: raw.returnedAnswersByRequest as SessionReturnedAnswersByRequest | undefined,
         executionRunSignalMessageIds: raw.executionRunSignalMessageIds as ReadonlySet<string> | undefined,
+        runningToolCallMessageIds: raw.runningToolCallMessageIds as ReadonlySet<string> | undefined,
         messageRevisionsById,
         messagesMap: messagesById,
         renderableAggregate,
@@ -450,9 +475,10 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
         || latestThinkingMessageActivityAtMs !== (existing.latestThinkingMessageActivityAtMs ?? null);
     const needsLatestWorkerUpdates = existing.latestWorkerUpdates === undefined;
     const needsReturnedAnswers = existing.returnedAnswersByRequest === undefined;
-    const needsExecutionRunSignals = existing.executionRunSignalMessageIds === undefined;
+    const needsToolCallIndexes = existing.executionRunSignalMessageIds === undefined
+        || existing.runningToolCallMessageIds === undefined;
 
-    if (!didMessageChange && !didThinkingMetadataChange && !needsLatestWorkerUpdates && !needsReturnedAnswers && !needsExecutionRunSignals) {
+    if (!didMessageChange && !didThinkingMetadataChange && !needsLatestWorkerUpdates && !needsReturnedAnswers && !needsToolCallIndexes) {
         return {
             sessionMessages: existing,
             messageChanges,
@@ -472,6 +498,7 @@ export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
             returnedAnswersByRequest: applySessionReturnedAnswerChanges({ previous: existing.returnedAnswersByRequest,
                 messages: messagesById, changes: messageChanges }),
             executionRunSignalMessageIds: applyExecutionRunSignalChanges(existing.executionRunSignalMessageIds, messagesById, processedMessages),
+            runningToolCallMessageIds: applyRunningToolCallChanges(existing.runningToolCallMessageIds, messagesById, processedMessages),
             messageRevisionsById,
             messagesMap: messagesById,
             // This reconcile path bypasses the incremental aggregate
@@ -499,6 +526,7 @@ function createEmptySessionMessages(): SessionMessages {
         latestWorkerUpdates: EMPTY_LATEST_WORKER_UPDATES,
         returnedAnswersByRequest: EMPTY_SESSION_RETURNED_ANSWERS,
         executionRunSignalMessageIds: new Set(),
+        runningToolCallMessageIds: new Set(),
         messageRevisionsById: {},
         messagesMap: messagesById,
         reducerState: createReducer(),
@@ -598,8 +626,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     && existingSession.latestWorkerUpdates === undefined;
                 const needsReturnedAnswers = state.sessionMessages[sessionId] !== undefined
                     && existingSession.returnedAnswersByRequest === undefined;
-                const needsExecutionRunSignals = state.sessionMessages[sessionId] !== undefined
-                    && existingSession.executionRunSignalMessageIds === undefined;
+                const needsToolCallIndexes = state.sessionMessages[sessionId] !== undefined
+                    && (existingSession.executionRunSignalMessageIds === undefined
+                        || existingSession.runningToolCallMessageIds === undefined);
                 const needsUserMessageHistory = state.sessionMessages[sessionId] !== undefined
                     && state.sessionUserMessageHistory?.[sessionId] === undefined;
 
@@ -617,7 +646,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 );
                 telemetryFields.agentStateApplied = shouldApplyAgentState ? 1 : 0;
                 if (messages.length === 0 && !options?.metadataUpdates?.length && !shouldApplyAgentState
-                    && !needsLatestWorkerUpdates && !needsReturnedAnswers && !needsExecutionRunSignals && !needsUserMessageHistory && options?.replaceExisting !== true) {
+                    && !needsLatestWorkerUpdates && !needsReturnedAnswers && !needsToolCallIndexes && !needsUserMessageHistory && options?.replaceExisting !== true) {
                     telemetryFields.processed = 0;
                     telemetryFields.changed = 0;
                     telemetryFields.noop = 1;
@@ -1002,7 +1031,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     || didThinkingMetadataChange
                     || needsLatestWorkerUpdates
                     || needsReturnedAnswers
-                    || needsExecutionRunSignals
+                    || needsToolCallIndexes
                     || needsUserMessageHistory
                     || didReadyMetadataChange
                     || nextLatestNonRenderableMessageSeq !== (existingSession.latestNonRenderableMessageSeq ?? null)
@@ -1050,6 +1079,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             returnedAnswersByRequest: applySessionReturnedAnswerChanges({ previous: existingSession.returnedAnswersByRequest,
                                 messages: messagesById, changes: reducedMessageChanges }),
                             executionRunSignalMessageIds: applyExecutionRunSignalChanges(existingSession.executionRunSignalMessageIds, messagesById, processedMessages),
+                            runningToolCallMessageIds: applyRunningToolCallChanges(existingSession.runningToolCallMessageIds, messagesById, processedMessages),
                             messageRevisionsById,
                             messagesMap: messagesById,
                             renderableAggregate,
@@ -1124,6 +1154,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
             const rawExistingSession = state.sessionMessages[sessionId];
             if (rawExistingSession?.isLoaded === true && rawExistingSession.latestWorkerUpdates !== undefined
                 && rawExistingSession.returnedAnswersByRequest !== undefined && rawExistingSession.executionRunSignalMessageIds !== undefined
+                && rawExistingSession.runningToolCallMessageIds !== undefined
                 && state.sessionUserMessageHistory?.[sessionId] !== undefined) {
                 return state;
             }
@@ -1204,6 +1235,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                             returnedAnswersByRequest: applySessionReturnedAnswerChanges({ previous: undefined,
                                 messages: messagesById, changes: [] }),
                             executionRunSignalMessageIds: applyExecutionRunSignalChanges(undefined, messagesById, []),
+                            runningToolCallMessageIds: applyRunningToolCallChanges(undefined, messagesById, []),
                             messageRevisionsById,
                             messagesMap: messagesById,
                             latestThinkingMessageId,
@@ -1235,6 +1267,7 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                         returnedAnswersByRequest: applySessionReturnedAnswerChanges({ previous: existingSession.returnedAnswersByRequest,
                             messages: existingSession.messagesById, changes: [] }),
                         executionRunSignalMessageIds: applyExecutionRunSignalChanges(existingSession.executionRunSignalMessageIds, existingSession.messagesById, []),
+                        runningToolCallMessageIds: applyRunningToolCallChanges(existingSession.runningToolCallMessageIds, existingSession.messagesById, []),
                         messagesVersion: existingSession.messagesVersion + (existingSession.latestWorkerUpdates === undefined ? 1 : 0),
                         isLoaded: true
                     } satisfies SessionMessages

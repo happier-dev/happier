@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { deriveLiveFileWrites, type LiveFileWrite } from '../derivation/deriveLiveFileWrites';
-import { useFileWriteSessionSnapshots, readFileWriteSessionMessages, type FileWriteSessionSnapshot } from './fileWriteSessionSnapshots';
+import { useFileWriteSessionRunningSnapshots, type FileWriteSessionRunningSnapshot } from './fileWriteSessionSnapshots';
 import { projectUiSessionRuntimeAwareness, readSessionRuntimePresentationFreshnessExpirations } from '@/sync/domains/session/attention/runtimePresentation';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 
@@ -15,9 +15,9 @@ function equalWrite(left: LiveFileWrite | undefined, right: LiveFileWrite): bool
 }
 
 /** Both session and workspace consumers read the same canonical effective activity answer. */
-export function useLiveFileWritesFromSessionSnapshots(snapshots: readonly FileWriteSessionSnapshot[], workspaceRoot: string | null, includeSidechains = false): ReadonlyMap<string, LiveFileWrite> {
+export function useLiveFileWritesFromSessionSnapshots(snapshots: readonly FileWriteSessionRunningSnapshot[], workspaceRoot: string | null, includeSidechains = false): ReadonlyMap<string, LiveFileWrite> {
     const projected = React.useRef(new Map<string, Readonly<{
-        transcript: FileWriteSessionSnapshot['transcript']; root: string | null; includeSidechains: boolean; writes: ReadonlyMap<string, LiveFileWrite>;
+        runningCalls: FileWriteSessionRunningSnapshot['runningCalls']; root: string | null; includeSidechains: boolean; writes: ReadonlyMap<string, LiveFileWrite>;
     }>>());
     const readNextRefreshAtMs = React.useCallback((nowMs: number) => {
         let next: number | null = null;
@@ -37,8 +37,8 @@ export function useLiveFileWritesFromSessionSnapshots(snapshots: readonly FileWr
             if (!activity.live || (!activity.working && !activity.backgroundActive)) continue;
             const root = workspaceRoot ?? snapshot.workspaceRoot;
             let projection = projected.current.get(snapshot.session.id);
-            if (!projection || projection.transcript !== snapshot.transcript || projection.root !== root || projection.includeSidechains !== includeSidechains) {
-                projection = { transcript: snapshot.transcript, root, includeSidechains, writes: deriveLiveFileWrites(readFileWriteSessionMessages(snapshot), { workspaceRoot: root, sessionId: snapshot.session.id, includeSidechains }) };
+            if (!projection || projection.runningCalls !== snapshot.runningCalls || projection.root !== root || projection.includeSidechains !== includeSidechains) {
+                projection = { runningCalls: snapshot.runningCalls, root, includeSidechains, writes: deriveLiveFileWrites(snapshot.runningCalls, { workspaceRoot: root, sessionId: snapshot.session.id, includeSidechains }) };
                 projected.current.set(snapshot.session.id, projection);
             }
             for (const [path, write] of projection.writes) {
@@ -60,5 +60,5 @@ export function useLiveFileWritesFromSessionSnapshots(snapshots: readonly FileWr
 
 /** Current-session activity for Track; descendant sidechains are not this session's current file. */
 export function useSessionLiveFileWrites(address: SessionAddress | null, workspaceRoot: string | null = null): ReadonlyMap<string, LiveFileWrite> {
-    return useLiveFileWritesFromSessionSnapshots(useFileWriteSessionSnapshots({ address }), workspaceRoot);
+    return useLiveFileWritesFromSessionSnapshots(useFileWriteSessionRunningSnapshots({ address }), workspaceRoot);
 }

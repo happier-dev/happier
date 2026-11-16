@@ -17,6 +17,8 @@ import { useSessionStatus } from '@/utils/sessions/sessionUtils';
 import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 
 import { useSessionAgentActivityRoster } from './useSessionAgentActivity';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { useSessionLiveFileWrites } from '@/sync/domains/session/changes/hooks/useSessionLiveFileWrites';
 
 afterEach(() => {
     standardCleanup();
@@ -34,15 +36,25 @@ const toolCall = (id: string, seq: number): NormalizedMessage => ({
     content: [{ type: 'tool-call', id: `call-${id}`, name: 'Bash', input: { command: 'ls' }, description: null, uuid: id, parentUUID: null }],
 } as unknown as NormalizedMessage);
 
+const writeCall = (id: string, seq: number, path: string): NormalizedMessage => ({
+    id, seq, localId: null, createdAt: 30 + seq, isSidechain: false, role: 'agent',
+    content: [{ type: 'tool-call', id: `call-${id}`, name: 'Write', input: { file_path: path, content: 'x' }, description: null, uuid: id, parentUUID: null }],
+} as unknown as NormalizedMessage);
+
 /**
  * Readers that present tool, request or status facts, never the streamed text, must not re-render
  * per text delta; a structural transcript change still reaches them.
  */
 describe('streaming-quiet transcript readers', () => {
-    async function measure<T>(sessionId: string, useReader: () => T) {
+    async function measure<T>(sessionId: string, useReader: () => T, options: Readonly<{
+        seed?: readonly NormalizedMessage[];
+        structural?: NormalizedMessage;
+    }> = {}) {
         const previous = storage.getState();
-        storage.getState().applySessions([createSessionFixture({ id: sessionId, thinking: true, active: true })]);
-        storage.getState().applyMessages(sessionId, [chunk('Starting', 2)]);
+        const nowMs = Date.now();
+        storage.getState().applySessions([createSessionFixture({ id: sessionId, thinking: true, thinkingAt: nowMs, active: true,
+            activeAt: nowMs, latestTurnStatus: 'in_progress' })]);
+        storage.getState().applyMessages(sessionId, [...(options.seed ?? []), chunk('Starting', 2)]);
         const counts = createRenderCommitCounter();
         const hook = await renderHook(() => { useRenderCommitCounter(counts); return useReader(); });
         try {
@@ -54,7 +66,7 @@ describe('streaming-quiet transcript readers', () => {
             }
             const perTextDelta = counts.read();
             counts.reset();
-            await act(async () => { storage.getState().applyMessages(sessionId, [toolCall('tool-1', 3)]); });
+            await act(async () => { storage.getState().applyMessages(sessionId, [options.structural ?? toolCall('tool-1', 3)]); });
             return { perTextDelta, structural: counts.read().renders > 0 };
         } finally {
             await hook.unmount();
@@ -66,6 +78,17 @@ describe('streaming-quiet transcript readers', () => {
         const sessionId = 'quiet-roster';
         expect(await measure(sessionId, () => useSessionAgentActivityRoster({ sessionId })))
             .toEqual({ perTextDelta: { renders: 0, commits: 0 }, structural: true });
+    });
+
+    it('composer write pill (live file writes) stays quiet per text delta and follows a new write', async () => {
+        const sessionId = 'quiet-live-writes';
+        let writes: ReadonlyMap<string, unknown> = new Map();
+        const result = await measure(sessionId, () => {
+            writes = useSessionLiveFileWrites({ serverId: getActiveServerSnapshot().serverId, sessionId });
+            return writes;
+        }, { seed: [writeCall('write-1', 1, 'src/one.ts')], structural: writeCall('write-2', 3, 'src/two.ts') });
+        expect(result).toEqual({ perTextDelta: { renders: 0, commits: 0 }, structural: true });
+        expect([...writes.keys()].sort()).toEqual(['src/one.ts', 'src/two.ts']);
     });
 
     it('session status (pending-request status) stays quiet per text delta', async () => {

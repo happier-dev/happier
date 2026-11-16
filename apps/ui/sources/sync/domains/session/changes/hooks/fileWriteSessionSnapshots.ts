@@ -11,10 +11,15 @@ import { readStoredSessionMessagesForAddress } from '@/sync/domains/messages/rea
 import type { Message } from '@happier-dev/session-core/messages';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { toAwarenessRuntimeInput } from '@/sync/domains/session/attention/runtimePresentation';
+import { hasRunningToolCall } from '../derivation/runningToolCalls';
 
-type SessionMessages = ReturnType<typeof storage.getState>['sessionMessages'][string];
+type StorageState = ReturnType<typeof storage.getState>;
+type SessionMessages = StorageState['sessionMessages'][string];
 export type FileWriteSessionSnapshot = Readonly<{ session: Session; address: SessionAddress; transcript: SessionMessages | null; workspaceRoot: string | null }>;
+/** A live-write snapshot carries only the Session's running root calls; streamed text keeps its identity. */
+export type FileWriteSessionRunningSnapshot = Readonly<{ session: Session; address: SessionAddress; runningCalls: readonly Message[]; workspaceRoot: string | null }>;
 type FileWriteSessionAdmission = Omit<FileWriteSessionSnapshot, 'transcript'>;
+const EMPTY_CALLS: readonly Message[] = Object.freeze([]);
 
 function sameRuntimeInput(previous: Session, next: Session): boolean {
     if (previous === next) return true;
@@ -31,11 +36,62 @@ function sameAdmissions(previous: readonly FileWriteSessionAdmission[], next: re
     });
 }
 
-/** Select existing transcripts only; this projection never hydrates sessions or starts a watcher. */
-export function useFileWriteSessionSnapshots(input: Readonly<{
+type FileWriteSessionInput = Readonly<{
     address?: SessionAddress | null;
     scope?: WorkspaceScopeBase | null;
-}>): readonly FileWriteSessionSnapshot[] {
+}>;
+
+/** Select existing transcripts only; this projection never hydrates sessions or starts a watcher. */
+export function useFileWriteSessionSnapshots(input: FileWriteSessionInput): readonly FileWriteSessionSnapshot[] {
+    return useAdmittedFileWriteSnapshots(input, readAdmittedTranscript, buildTranscriptSnapshot);
+}
+
+/**
+ * Live-write readers select each admitted Session's running root calls from the store's incremental index, so a
+ * streamed text delta (a new transcript snapshot) republishes nothing and re-renders no live-write reader.
+ */
+export function useFileWriteSessionRunningSnapshots(input: FileWriteSessionInput): readonly FileWriteSessionRunningSnapshot[] {
+    return useAdmittedFileWriteSnapshots(input, readAdmittedRunningCalls, buildRunningSnapshot);
+}
+
+function readAdmittedTranscript(state: StorageState, sessionId: string): SessionMessages | null {
+    return state.sessionMessages[sessionId] ?? null;
+}
+
+function buildTranscriptSnapshot(admission: FileWriteSessionAdmission, transcript: SessionMessages | null): FileWriteSessionSnapshot {
+    return { ...admission, transcript };
+}
+
+function readAdmittedRunningCalls(state: StorageState, sessionId: string, previous: readonly Message[] | undefined): readonly Message[] {
+    const transcript = state.sessionMessages[sessionId];
+    if (!transcript) return EMPTY_CALLS;
+    const indexed = transcript.runningToolCallMessageIds;
+    const calls: Message[] = [];
+    if (indexed) {
+        for (const id of indexed) {
+            const message = transcript.messagesById[id];
+            if (message) calls.push(message);
+        }
+    } else {
+        // A retained snapshot written before the index existed is admitted by its next store write.
+        for (const id of transcript.messageIdsOldestFirst) {
+            const message = transcript.messagesById[id];
+            if (message && hasRunningToolCall(message)) calls.push(message);
+        }
+    }
+    if (previous && previous.length === calls.length && previous.every((call, index) => call === calls[index])) return previous;
+    return calls.length === 0 ? EMPTY_CALLS : Object.freeze(calls);
+}
+
+function buildRunningSnapshot(admission: FileWriteSessionAdmission, runningCalls: readonly Message[]): FileWriteSessionRunningSnapshot {
+    return { ...admission, runningCalls };
+}
+
+function useAdmittedFileWriteSnapshots<TContent, TSnapshot extends Readonly<{ session: Session; address: SessionAddress; workspaceRoot: string | null }>>(
+    input: FileWriteSessionInput,
+    readContent: (state: StorageState, sessionId: string, previous: TContent | undefined) => TContent,
+    buildSnapshot: (admission: FileWriteSessionAdmission, content: TContent) => TSnapshot,
+): readonly TSnapshot[] {
     const serverId = input.address?.serverId ?? input.scope?.serverId ?? '';
     const sessionId = input.address?.sessionId ?? '';
     const machineId = input.scope?.machineId ?? '';
@@ -68,23 +124,24 @@ export function useFileWriteSessionSnapshots(input: Readonly<{
     // workspace admission to transcript arrivals from the rest of the Account.
     const admissions = storage(selectAdmissions, undefined, sameAdmissions);
     const transcriptScope = React.useMemo(() => ({ sessionMessages: admissions.map(entry => entry.session.id) }), [admissions]);
-    const cached = React.useMemo(() => new Map<string, FileWriteSessionSnapshot>(), [serverId, sessionId, machineId, rootPath]);
-    const selector = React.useMemo(() => (state: ReturnType<typeof storage.getState>): readonly FileWriteSessionSnapshot[] => {
-        const result: FileWriteSessionSnapshot[] = [];
-        for (const { session, address, workspaceRoot } of admissions) {
-            const transcript = state.sessionMessages[session.id] ?? null;
-            let snapshot = cached.get(session.id);
-            if (!snapshot || snapshot.address.serverId !== address.serverId || !sameRuntimeInput(snapshot.session, session)
-                || snapshot.transcript !== transcript || snapshot.workspaceRoot !== workspaceRoot) {
-                snapshot = { session, address, transcript, workspaceRoot };
-                cached.set(session.id, snapshot);
+    const cached = React.useMemo(() => new Map<string, Readonly<{ snapshot: TSnapshot; content: TContent }>>(), [serverId, sessionId, machineId, rootPath]);
+    const selector = React.useMemo(() => (state: StorageState): readonly TSnapshot[] => {
+        const result: TSnapshot[] = [];
+        for (const admission of admissions) {
+            const { session, address, workspaceRoot } = admission;
+            let entry = cached.get(session.id);
+            const content = readContent(state, session.id, entry?.content);
+            if (!entry || entry.snapshot.address.serverId !== address.serverId || !sameRuntimeInput(entry.snapshot.session, session)
+                || entry.content !== content || entry.snapshot.workspaceRoot !== workspaceRoot) {
+                entry = { snapshot: buildSnapshot(admission, content), content };
+                cached.set(session.id, entry);
             }
-            result.push(snapshot);
+            result.push(entry.snapshot);
         }
         const attached = new Set(result.map(snapshot => snapshot.session.id));
         for (const id of cached.keys()) if (!attached.has(id)) cached.delete(id);
         return result;
-    }, [admissions, cached]);
+    }, [admissions, buildSnapshot, cached, readContent]);
     return storage(useShallow(selector), transcriptScope);
 }
 
