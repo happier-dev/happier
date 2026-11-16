@@ -1,6 +1,8 @@
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
-import { TEAM_CREDENTIAL_ACTION_IDS_V1, TEAM_CREDENTIAL_HOME_ACTION_IDS_V1,
+import type { ActionExecutorContext, ActionExecutorDeps } from '../../actions/executor/types.js';
+import { createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
+import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1, TEAM_CREDENTIAL_ACTION_IDS_V1, TEAM_CREDENTIAL_HOME_ACTION_IDS_V1,
   type TeamCredentialActionIdV1, type TeamCredentialHomeActionIdV1 } from './actionIdsV1.js';
 export { TEAM_CREDENTIAL_ACTION_IDS_V1, TEAM_CREDENTIAL_HOME_ACTION_IDS_V1,
   type TeamCredentialActionIdV1, type TeamCredentialHomeActionIdV1 } from './actionIdsV1.js';
@@ -18,6 +20,8 @@ import {
   TeamCredentialResourceDiscoveryPageV1Schema,
   TeamCredentialResourceSummaryV1Schema,
   TeamCredentialResourceCreateInputV1Schema,
+  teamCredentialDisplayNamePrivateLabelBindingV1,
+  type TeamCredentialResourceCreateInputV1,
   TeamCredentialResourceUpdateInputV1Schema,
   TeamCredentialResourceActivityReadInputV1Schema,
   TeamCredentialResourceActivityPageV1Schema,
@@ -55,6 +59,28 @@ import { TeamCredentialResourceReadinessV1Schema } from './resourceReadinessV1.j
 import { TeamCredentialUsageExportInputV1Schema } from './usageExportV1.js';
 import { UsageFileResultSchema } from '../../usage/usageExport.js';
 import { TeamCredentialBrokerApplicationFailureCodeV1Schema, TeamCredentialExternalProviderErrorCodeV1Schema } from './externalProviderApiV1.js';
+
+/** Authored text is sealed by the captured Account host before the strict HTTP create. */
+export const TeamCredentialCreateActionInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...TeamCredentialResourceCreateInputV1Schema.shape,
+  displayName: z.union([z.string(), TeamCredentialResourceCreateInputV1Schema.shape.displayName]),
+}));
+export type TeamCredentialCreateActionInputV1 = z.infer<typeof TeamCredentialCreateActionInputV1Schema>;
+
+export async function prepareTeamCredentialCreateActionInput(
+  input: TeamCredentialCreateActionInputV1,
+  prepare: ActionExecutorDeps['privateLabelPrepare'],
+  context: ActionExecutorContext,
+): Promise<TeamCredentialResourceCreateInputV1> {
+  if (typeof input.displayName !== 'string') return { ...input, displayName: input.displayName };
+  if (!prepare) throw createActionExecuteFailureError({ ok: false, errorCode: 'client_required', error: 'Credential label preparation requires the Account client' });
+  const [displayName] = await prepare({ actionId: TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
+    owner: { kind: 'team', teamId: input.teamId },
+    labels: [{ binding: teamCredentialDisplayNamePrivateLabelBindingV1(input.resourceId), value: input.displayName }],
+    ...(context.signal ? { signal: context.signal } : {}),
+  }, context);
+  return { ...input, displayName: displayName! };
+}
 
 export const TeamCredentialTestActionInputV1Schema = lazyZodSchema(() => z.strictObject({
   teamId: z.string().check(z.minLength(1), z.maxLength(256)),
@@ -133,7 +159,7 @@ export const TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1 = lazyDefinition(() => ({
   'teams.credentials.sourceResources.list': TeamCredentialSourceResourceListInputV1Schema,
   'teams.credentials.get': TeamCredentialResourceGetInputV1Schema,
   'teams.credentials.entitled.list': z.union([TeamCredentialResourceReadInputV1Schema, TeamCredentialResourceDiscoverInputV1Schema]),
-  'teams.credentials.create': TeamCredentialResourceCreateInputV1Schema,
+  'teams.credentials.create': TeamCredentialCreateActionInputV1Schema,
   'teams.credentials.update': TeamCredentialResourceUpdateInputV1Schema,
   'teams.credentials.audience.set': TeamCredentialResourceAudienceInputV1Schema,
   'teams.credentials.delete': TeamCredentialResourceDeleteInputV1Schema,

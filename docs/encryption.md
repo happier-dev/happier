@@ -1560,6 +1560,15 @@ the stored value unchanged, and null clears it without authoring a label.
 Group creation retains its prepared-envelope input and caller-retained retry
 payload; this update contract does not alter creation idempotency.
 
+In unreleased 0.3, `teams.credentials.create` also accepts a string `displayName`
+from CLI and agent callers. The same captured Account private-label owner seals
+it against the current Team recipient census, bound to the client-authored
+resource id, before the HTTP create. Existing prepared labels from UI callers
+remain accepted. The HTTP and stored schemas still require private-label
+envelopes; E2EE preparation has no plaintext fallback and unavailable Account
+material prevents the mutation. Native-delivery disclosure still follows the
+existing Action approval owner for either input form.
+
 Group sorting and search run over the client's opened loaded collection. The
 server uses structural IDs for order and cursors; `nameKey` is removed. Credential
 audit subjects retain the resource binding and are opened by the client. Label

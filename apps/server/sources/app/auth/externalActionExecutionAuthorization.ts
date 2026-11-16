@@ -3,6 +3,7 @@ import { readHomeConfigEnv } from '@/app/home/settings/homeSettings';
 import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
 import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/teams/credentials/actionIdsV1';
 import { MachinePresetActionInputSchemasV1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { isMachinePresetFiniteOperationActionIdV1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
@@ -2925,7 +2926,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
             && preset.data.homeId === verified.binding.serverIdentityId
             && isAccountActionHttpOperation('machines.presets.get', proof);
     }
-    if (isTeamGroupUpdateActionIdV1(root)) {
+    if (isTeamGroupUpdateActionIdV1(root) || root === TEAM_CREDENTIAL_CREATE_ACTION_ID_V1) {
         if (verified.effectActionId !== root) return false;
         if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
         if (proof.method.toUpperCase() === 'POST' && proof.path === PRIVATE_LABEL_RECIPIENT_CENSUS_PATH) {

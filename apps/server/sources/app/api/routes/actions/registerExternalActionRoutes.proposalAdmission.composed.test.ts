@@ -1,5 +1,10 @@
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import fastify, { type FastifyRequest } from 'fastify';
+import { prepareTeamGroupUpdateActionInput } from '@happier-dev/protocol/teams/group';
+import { prepareTeamCredentialCreateActionInput, TeamCredentialCreateActionInputV1Schema } from '@happier-dev/protocol/teams/credentials/actionsV1';
+import { prepareCliPrivateLabels } from '../../../../../../cli/src/api/privateLabels';
+import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH } from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { randomUUID } from 'node:crypto';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import tweetnacl from 'tweetnacl';
@@ -135,6 +140,80 @@ function verifyProposalCurrentness(authorization: ExternalActionExecutionAuthori
 }
 
 describe('installed Session proposal admission at the Home mint route', () => {
+    it.each(['teams.groups.update', 'teams.credentials.create'] as const)('keeps encrypted %s intent within signed Team preparation and the sealed mutation grammar', async actionId => {
+        const previousMode = storage.account.encryptionMode;
+        storage.account.encryptionMode = 'e2ee';
+        const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(7) };
+        Object.assign(storage.state, { metadata: 'encrypted-controller-metadata',
+            dataEncryptionKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: material.machineKey,
+                recipientPublicKey: tweetnacl.box.keyPair().publicKey, randomBytes: tweetnacl.randomBytes }) });
+        const privateName = 'Private builders';
+        const privateDescription = 'Private purpose';
+        const intent = actionId === 'teams.groups.update'
+            ? { v: 1 as const, teamId: 'team', groupId: 'group', name: privateName, description: privateDescription }
+            : { teamId: 'team', resourceId: 'resource', displayName: privateName,
+                source: { v: 1 as const, kind: 'provider_connection' as const, connectionId: 'connection',
+                    connectionSecurityFingerprint: 'connection-security:v1:test', credentialSlotId: 'api-key' },
+                sessionUsePolicy: 'personal_allowed' as const, brokerPlacement: null, requestPolicy: null,
+                allMembersAllowedRoutes: null, groupGrants: [], memberGrants: [], usageLimits: [] };
+        const requested = proposal(actionId, intent);
+        const binding = { serverIdentityId: storage.state.homeId, accountId: 'account',
+            authentication: { kind: 'account' as const, tokenEpoch: 1 }, actionId,
+            requestId: requested.envelope.requestId, target: requested.envelope.target } satisfies Parameters<typeof sealExternalActionRequestV2>[0]['binding'];
+        const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+            binding, material, input: intent, randomBytes: tweetnacl.randomBytes });
+        const installationProof = signMachineInstallationProof({ privateKey: installation.secretKey,
+            payload: { version: 1, accountId: 'account', ...requested.sessionActionSource, externalActionOrigin: {
+                homeId: storage.state.homeId, actionId, requestId: binding.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: requested.sessionActionOrigin } } });
+        const { app, mint } = createApp('account');
+        try {
+            expect(JSON.stringify(envelope)).not.toContain(privateName);
+            expect(JSON.stringify(envelope)).not.toContain(privateDescription);
+            const minted = await mint(actionId, { ...requested, envelope, installationProof });
+            expect(minted.statusCode, minted.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            const censusBody = { owner: { kind: 'team' as const, teamId: intent.teamId } };
+            const censusProof = (body: unknown) => signedRequestProof(authorization, PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, body);
+            expect(await verifyExternalActionDomainExecutionRequest(censusProof(censusBody))).not.toBeNull();
+            expect(await verifyExternalActionDomainExecutionRequest(censusProof({ owner: { kind: 'account', accountId: 'other' } }))).toBeNull();
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                '/v1/account/encryption/currentness', undefined, actionId, 'GET'))).not.toBeNull();
+            const publicKey = tweetnacl.box.keyPair().publicKey;
+            let censuses = 0;
+            vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+                censuses++;
+                expect(JSON.parse(String(init?.body))).toEqual(censusBody);
+                return Response.json({ contentEncryptionMode: 'e2ee', recipients: [{
+                account: { kind: 'account', accountId: 'account', firstName: null, lastName: null, username: null, avatarUrl: null },
+                readiness: { status: 'available', contentPublicKey: encodeBase64(publicKey),
+                    contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) }, envelopeStatus: 'missing',
+                }] });
+            });
+            // The network census is substituted; semantic preparation and the CLI cipher owner stay real.
+            const prepare: NonNullable<ActionExecutorDeps['privateLabelPrepare']> = async request => await prepareCliPrivateLabels({
+                endpoint: 'http://home.test', token: 'captured-account-token', accountMode: 'e2ee',
+                recipientCensusPath: PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, owner: request.owner, labels: request.labels,
+            });
+            const wire = intent.groupId !== undefined
+                ? await prepareTeamGroupUpdateActionInput(intent, prepare, { surface: 'agent' })
+                : await prepareTeamCredentialCreateActionInput(TeamCredentialCreateActionInputV1Schema.parse(intent), prepare, { surface: 'agent' });
+            const request = bindHomeDomainActionHttpRequestV1(actionId, wire);
+            expect(censuses, 'one Team audience read for the name and description patch').toBe(1);
+            expect(JSON.stringify(request.body)).not.toContain(privateName);
+            expect(JSON.stringify(request.body)).not.toContain(privateDescription);
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                request.path, request.body, actionId, request.method))).not.toBeNull();
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                request.path, intent, actionId, request.method))).toBeNull();
+            expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                request.path, wire, 'teams.groups.create', request.method))).toBeNull();
+        } finally {
+            vi.unstubAllGlobals();
+            storage.account.encryptionMode = previousMode;
+            await app.close();
+        }
+    });
     it('names the refusing envelope admission projection instead of a bare invalid_envelope (COR6R-163)', async () => {
         // Live: a build-log read whose envelope the read-admission projection refused reached the person as a
         // bare invalid_envelope. The refusal keeps its code-only cause; no input content is disclosed.

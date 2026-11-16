@@ -9101,6 +9101,16 @@ Action readers load with this development correction; no reverse-development
 adapter is added. The scoped-clean `../0.2` frontier inspected at
 `87aaa83f6b81c92a4ceee5816df2e566ed429bc7` has no `packages/protocol/src/scm` owner.
 
+Unreleased 0.3 `teams.credentials.create` accepts authored `displayName` text
+alongside its existing prepared private-label envelope. The closed Action input
+extends the existing create schema; the captured Account host prepares text
+through the same private-label owner as Group update. The HTTP mutation and
+persisted label formats remain unchanged. Matching Protocol, generated Action
+DTOs and hosts consume this development author-contract change together; there
+is no new wire epoch, migration, or compatibility adapter. The inspected
+`../0.2` frontier at `d3b1be4dc48fa886c85fb03edc79e20f5d27dfd2` has no Team
+credential-resource schema or Action map at the corresponding Protocol paths.
+
 Unreleased 0.3 qualified provider-usage exact history supports an optional finite
 NDJSON response on its existing GET route through `Accept: application/x-ndjson`.
 Every line uses the existing V4 history response schema; the caller's `pageSize`

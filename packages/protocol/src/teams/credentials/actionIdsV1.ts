@@ -1,3 +1,5 @@
+export const TEAM_CREDENTIAL_CREATE_ACTION_ID_V1 = 'teams.credentials.create';
+
 /** Reachable Team credential-resource intents. Additional plan vocabulary is
  * intentionally not registered until its domain producer and result contract
  * exist. */
@@ -8,7 +10,7 @@ export const TEAM_CREDENTIAL_HOME_ACTION_IDS_V1 = [
   'teams.credentials.sourceResources.list',
   'teams.credentials.get',
   'teams.credentials.entitled.list',
-  'teams.credentials.create',
+  TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
   'teams.credentials.update',
   'teams.credentials.audience.set',
   'teams.credentials.delete',

@@ -138,9 +138,7 @@ export type TeamsActionInputById = {
         limit?: number | undefined;
     };
     readonly "teams.credentials.create": {
-        teamId: string;
-        resourceId: string;
-        displayName: {
+        displayName: string | {
             content: {
                 t: 'encrypted';
                 c: string;
@@ -156,6 +154,8 @@ export type TeamsActionInputById = {
                 };
             }[];
         };
+        teamId: string;
+        resourceId: string;
         source: {
             v: 1;
             kind: 'connected_account';

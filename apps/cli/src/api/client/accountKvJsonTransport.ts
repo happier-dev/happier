@@ -1,5 +1,6 @@
 import axios from '@/api/client/credentialAxios';
 import { z } from 'zod/mini';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createAccountKvCipher, openAccountKvJsonRow } from '@happier-dev/protocol/crypto/accountKvCipher';
@@ -18,7 +19,9 @@ export type CliAccountKvJsonTransportParams = Readonly<{
   resolveAuthorizationHeaders: (request: AccountKvAuthorizationRequest) => Readonly<Record<string, string>> | null;
 }>;
 class AccountKvJsonTransportError extends Error {
-  constructor(readonly code: string, message: string) { super(message); }
+  constructor(readonly code: string, message: string) {
+    super(message, { cause: createActionExecuteFailureError({ ok: false, errorCode: code, error: message }) });
+  }
 }
 /** Identity reads may borrow; sealing and final authority use fresh admission by default. */
 export async function resolveCliAccountStorageContext(params: Readonly<{

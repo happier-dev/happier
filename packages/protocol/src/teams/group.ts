@@ -7,6 +7,7 @@ import {
 } from '../crypto/privateLabelV1.js';
 import { TeamGroupNameProjectionV1Schema, TeamGroupLabelProjectionV1Schema, teamGroupLabelBinding } from './groupLabel.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../actions/executor/types.js';
+import { createActionExecuteFailureError } from '../actions/actionExecutionResult.js';
 import { TEAM_GROUP_UPDATE_ACTION_ID_V1 } from './actionIdsV1.js';
 export { TeamGroupLabelProjectionV1Schema, type TeamGroupLabelProjectionV1, TeamGroupNameProjectionV1Schema, type TeamGroupNameProjectionV1 } from './groupLabel.js';
 import {
@@ -248,7 +249,7 @@ export async function prepareTeamGroupUpdateActionInput(
     else labels.push({ field: 'description', value: description });
   }
   if (labels.length > 0) {
-    if (!prepare) throw Object.assign(new Error('Group label preparation requires the Account client'), { code: 'client_required' });
+    if (!prepare) throw createActionExecuteFailureError({ ok: false, errorCode: 'client_required', error: 'Group label preparation requires the Account client' });
     const sealed = await prepare({ actionId: TEAM_GROUP_UPDATE_ACTION_ID_V1, owner: { kind: 'team', teamId: input.teamId },
       labels: labels.map(label => ({ binding: teamGroupLabelBinding(input.groupId, label.field), value: label.value })),
       ...(context.signal ? { signal: context.signal } : {}),

@@ -1,6 +1,8 @@
 import { deriveActionActorV1 } from './actionRequestAttributionV1.js';
 import { prepareTeamGroupUpdateActionInput, type TeamGroupUpdateActionInputV1 } from '../teams/group.js';
 import { isTeamGroupUpdateActionIdV1 } from '../teams/actionIdsV1.js';
+import { prepareTeamCredentialCreateActionInput, type TeamCredentialCreateActionInputV1 } from '../teams/credentials/actionsV1.js';
+import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1 } from '../teams/credentials/actionIdsV1.js';
 import { admitDeploymentHomeInputV1 } from './executor/deploymentHomeAdmission.js';
 import { readSessionStopConfirmationFailure } from './executor/session/stopConfirmation.js';
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
@@ -5188,7 +5190,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         const homeInput = isTeamGroupUpdateActionIdV1(actionId)
           ? await prepareTeamGroupUpdateActionInput(parsed.data as TeamGroupUpdateActionInputV1, deps.privateLabelPrepare, ctx)
-          : parsed.data;
+          : actionId === TEAM_CREDENTIAL_CREATE_ACTION_ID_V1
+            ? await prepareTeamCredentialCreateActionInput(parsed.data as TeamCredentialCreateActionInputV1, deps.privateLabelPrepare, ctx)
+            : parsed.data;
         const result = await deps.homeDomainAction({
           actionId,
           input: homeInput,
