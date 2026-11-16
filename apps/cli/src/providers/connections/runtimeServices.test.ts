@@ -538,8 +538,8 @@ describe('runtime Provider connection composition', () => {
         return { status: 200, data: { status: 'present', revision: rowRevision, content: { t: 'plain', v: catalog } } };
       }
       if (path === '/v2/account/settings') return { status: 200, data: { version: 4, content: { t: 'plain', v: {} } } };
-      if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
-      if (path === '/v1/account/entity-rows/profiles/transfer' && outage === 'history') return { status: 503, data: {} };
+      // 80c169c430b6: empty history skips Profile authority; fail the history boundary itself.
+      if (path === '/v2/account/settings/history') return { status: outage === 'history' ? 503 : 200, data: { snapshots: [] } };
       const historyResponse = emptyAccountSettingsHistoryCaptureResponse(path);
       if (historyResponse) return historyResponse;
       throw new Error(`Unexpected Provider HTTP boundary: ${path}`);
@@ -714,7 +714,9 @@ describe('runtime Provider connection composition', () => {
       connectionId: ProviderConnectionIdSchema.parse('pc_gateway'),
     })).resolves.toEqual(outcome === 'applied' ? { status: 'success', connectionId: 'pc_gateway' } : {
       status: 'error', error: createProviderErrorV1(outcome === 'conflict'
-        ? 'provider_connection_changed' : 'provider_rpc_mutation_outcome_unknown', { machineId: 'machine-a' }),
+        // 832a9f96bd52: the Account owner carries the affected connection on conflicts.
+        ? 'provider_connection_changed' : 'provider_rpc_mutation_outcome_unknown', outcome === 'conflict'
+          ? { connectionId: 'pc_gateway' } : { machineId: 'machine-a' }),
     });
     expect(post).toHaveBeenCalledOnce();
     expect(new URL(String(post.mock.calls[0]?.[0])).pathname).toBe('/v1/account/entity-rows/provider-connections');
