@@ -4,6 +4,7 @@ export const THEME_ACTION_IDS = {
   tryOn: 'appearance.themes.tryOn', revert: 'appearance.themes.revert', keep: 'appearance.themes.keep',
   save: 'appearance.themes.save', duplicate: 'appearance.themes.duplicate', apply: 'appearance.themes.apply',
   undo: 'appearance.themes.undo', delete: 'appearance.themes.delete',
+  storeGet: 'appearance.themes.store.get', install: 'appearance.themes.install', uninstall: 'appearance.themes.uninstall',
   import: 'appearance.themes.import', export: 'appearance.themes.export',
   sharePlugin: 'appearance.themes.sharePlugin',
 } as const;

@@ -5,6 +5,8 @@ import { THEME_ACTION_IDS, THEME_ACTION_ID_LIST, type ThemeActionId } from './th
 import { ThemeProfileSourceSchema, ThemeReferenceSchema, ThemeMiniatureDataSchema,
   parseThemeProfileDocument, type ThemeProfileDocument } from '../account/settings/themeProfiles.js';
 import { RegistryItemPointerV1Schema } from '../registries/registryContentRefV1.js';
+import { RegistryItemSummaryV1Schema, RegistryProvenanceV1Schema } from '../registries/registryItemsV1.js';
+import { RegistryThemeListingV1Schema } from '../registries/registryThemeV1.js';
 import { SocketRpcAnsweringClientCandidateV1Schema } from '../rpc/answeringClient.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
 import type { ActionExecutorContext, HostReviewedChildrenPlanV1 } from './executor/types.js';
@@ -74,6 +76,24 @@ const entryResult = lazyZodSchema(() => z.strictObject({ entry: ThemeLibraryEntr
 const restoredResult = lazyZodSchema(() => z.strictObject({ restored: ThemeSelectionSchema }));
 const file = lazyZodSchema(() => z.strictObject({ name: z.string(), text: z.string() }));
 export const ThemeRegistryItemKeySchema = lazyZodSchema(() => z.pick(RegistryItemPointerV1Schema, { sourceId: true, itemId: true }));
+export type ThemeRegistryItemKey = z.infer<typeof ThemeRegistryItemKeySchema>;
+/** Portable selected-listing projection; React detail and current preview stay client-local. */
+export const ThemeStoreListingViewSchema = lazyZodSchema(() => z.strictObject({
+  pointer: RegistryItemPointerV1Schema, summary: RegistryItemSummaryV1Schema,
+  metadata: RegistryThemeListingV1Schema, provenance: RegistryProvenanceV1Schema,
+}));
+export type ThemeStoreListingView = z.infer<typeof ThemeStoreListingViewSchema>;
+export const ThemeStoreFaceCoverageSchema = lazyZodSchema(() => z.strictObject({
+  faceId: identifier, coverage: ThemeCssCoverageSchema,
+}));
+export type ThemeStoreFaceCoverage = DeepReadonly<z.infer<typeof ThemeStoreFaceCoverageSchema>>;
+export const ThemeInstallFaceOutcomeSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ faceId: identifier, status: z.literal('saved'), entry: ThemeLibraryEntrySchema }),
+  z.strictObject({ faceId: identifier, status: z.literal('failed'), error: z.strictObject({ code: identifier }) }),
+]));
+export type ThemeInstallFaceOutcome = DeepReadonly<z.infer<typeof ThemeInstallFaceOutcomeSchema>>;
+export const ThemeInstallResultSchema = lazyZodSchema(() => z.strictObject({ faces: z.array(ThemeInstallFaceOutcomeSchema) }));
+export type ThemeInstallResult = DeepReadonly<z.infer<typeof ThemeInstallResultSchema>>;
 export const ThemeActionInputSchemas = {
   [THEME_ACTION_IDS.list]: z.strictObject({ mode: z.optional(mode), includeDevices: z.optional(z.boolean()) }),
   [THEME_ACTION_IDS.get]: z.strictObject({ ref: ThemeReferenceSchema,
@@ -88,6 +108,9 @@ export const ThemeActionInputSchemas = {
   [THEME_ACTION_IDS.apply]: z.strictObject({ ref: z.nullable(ThemeReferenceSchema), mode }),
   [THEME_ACTION_IDS.undo]: z.strictObject({ undoHandle: identifier }),
   [THEME_ACTION_IDS.delete]: referenceInput,
+  [THEME_ACTION_IDS.storeGet]: z.strictObject({ listing: ThemeRegistryItemKeySchema }),
+  [THEME_ACTION_IDS.install]: z.strictObject({ listing: ThemeRegistryItemKeySchema, faceIds: z.optional(z.array(identifier)) }),
+  [THEME_ACTION_IDS.uninstall]: z.strictObject({ listing: ThemeRegistryItemKeySchema }),
   [THEME_ACTION_IDS.import]: z.strictObject({ file }),
   [THEME_ACTION_IDS.export]: referenceInput,
   [THEME_ACTION_IDS.sharePlugin]: z.strictObject({ refs: z.array(ThemeReferenceSchema).check(z.minLength(1)),
@@ -108,6 +131,10 @@ export const ThemeActionOutputSchemas = {
   [THEME_ACTION_IDS.apply]: z.strictObject({ applied, undoHandle: identifier }),
   [THEME_ACTION_IDS.undo]: restoredResult,
   [THEME_ACTION_IDS.delete]: z.strictObject({ deleted: ThemeReferenceSchema }),
+  [THEME_ACTION_IDS.storeGet]: z.strictObject({ listing: ThemeStoreListingViewSchema, faces: z.array(ThemeProfileDocumentSchema),
+    coverage: z.array(ThemeStoreFaceCoverageSchema) }),
+  [THEME_ACTION_IDS.install]: ThemeInstallResultSchema,
+  [THEME_ACTION_IDS.uninstall]: z.strictObject({ removedFaces: z.array(identifier), selectionFallback: z.optional(ThemeSelectionSchema) }),
   [THEME_ACTION_IDS.import]: entryResult,
   [THEME_ACTION_IDS.export]: z.strictObject({ file }),
   [THEME_ACTION_IDS.sharePlugin]: z.strictObject({ project: identifier, archive: identifier, digest: identifier }),
@@ -123,6 +150,8 @@ const titles = {
   [THEME_ACTION_IDS.keep]: 'Keep the current theme preview', [THEME_ACTION_IDS.save]: 'Save a theme',
   [THEME_ACTION_IDS.duplicate]: 'Duplicate a theme', [THEME_ACTION_IDS.apply]: 'Apply a theme',
   [THEME_ACTION_IDS.undo]: 'Undo the last theme operation', [THEME_ACTION_IDS.delete]: 'Delete a theme',
+  [THEME_ACTION_IDS.storeGet]: 'Read a Store theme', [THEME_ACTION_IDS.install]: 'Install a Store theme',
+  [THEME_ACTION_IDS.uninstall]: 'Uninstall a Store theme',
   [THEME_ACTION_IDS.import]: 'Import a theme file', [THEME_ACTION_IDS.export]: 'Export a theme file',
   [THEME_ACTION_IDS.sharePlugin]: 'Share themes as a plugin',
 } satisfies Record<ThemeActionId, string>;
@@ -146,12 +175,12 @@ function createThemeActionSpecs() {
   return THEME_ACTION_ID_LIST.map((id): Omit<PreNormalizedActionSpec, 'id'> & { id: ThemeActionId } => ({
     id, title: titles[id], description: 'Use the answering client’s shared theme library and temporary preview owner. Try on before Keep; immutable themes must be duplicated before editing. Connected client routing never queues offline effects.',
     approval: { result: 'required' },
-    approvalPolicy: id === THEME_ACTION_IDS.delete || id === THEME_ACTION_IDS.sharePlugin
+    approvalPolicy: id === THEME_ACTION_IDS.delete || id === THEME_ACTION_IDS.uninstall || id === THEME_ACTION_IDS.sharePlugin
       ? { agentDefault: 'authority', requiredSurfaces: ['agent', 'mcp', 'plugin', 'api'] }
       : { uiConfirmation: 'direct' },
-    safety: id === THEME_ACTION_IDS.delete ? 'danger' : 'safe',
+    safety: id === THEME_ACTION_IDS.delete || id === THEME_ACTION_IDS.uninstall ? 'danger' : 'safe',
     ...(id === THEME_ACTION_IDS.sharePlugin ? { hostReviewedChildren: themeSharePluginReviewedChildren } : {}),
-    sideEffectClass: id === THEME_ACTION_IDS.list || id === THEME_ACTION_IDS.get || id === THEME_ACTION_IDS.export ? 'read' : 'write',
+    sideEffectClass: id === THEME_ACTION_IDS.list || id === THEME_ACTION_IDS.get || id === THEME_ACTION_IDS.storeGet || id === THEME_ACTION_IDS.export ? 'read' : 'write',
     requiredAuthority: 'account_automation', executionPlacement: 'client', placements: [],
     bindings: { mcpToolName: id.replace(/[.]/g, '_') },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },

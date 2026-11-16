@@ -56,3 +56,34 @@ it('admits retained theme presentation through the real Action boundary and repo
   }, context);
   expect(invalid).toMatchObject({ ok: false, errorCode: 'theme_document_invalid' });
 });
+
+
+it('admits selected Store acquisition and face retry inputs while uninstall keeps the destructive approval default', async () => {
+  const listing = { sourceId: 'catalog', itemId: 'paper' };
+  for (const [suffix, input] of [
+    ['store.get', { listing }], ['install', { listing, faceIds: ['dark'] }], ['uninstall', { listing }],
+  ] as const) {
+    const id = THEME_ACTION_ID_LIST.find(candidate => candidate === `appearance.themes.${suffix}`);
+    expect(id, suffix).toBeDefined();
+    if (!id) throw new Error(`Store Action missing: ${suffix}`);
+    const spec = getActionSpec(id);
+    expect(spec.inputSchema.safeParse(input).success, suffix).toBe(true);
+    expect(spec.inputSchema.safeParse({ ...input, url: 'https://unselected.example.test/theme' }).success, suffix).toBe(false);
+    expect(isAgentInitiatedApprovalRequiredByDefault(id), suffix).toBe(suffix === 'uninstall');
+    const unavailable = await createActionExecutor({}).execute(id, input,
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    expect(unavailable).toMatchObject({ ok: false, errorCode: 'client_not_connected' });
+  }
+});
+
+it('publishes selected Store CSS coverage by face without changing preview documents', () => {
+  const listing = { sourceId: 'catalog', itemId: 'paper' };
+  const coverage = { total: 0, native: 0, webOnly: 0, affectedSurfaces: [], hides: [] };
+  const output = { listing: { pointer: { ...listing, version: '1.0.0' }, summary: { ...listing, kind: 'theme', title: 'Paper' },
+    metadata: { includes: [{ key: 'dark', label: 'Dark', mode: 'dark' }] },
+    provenance: { ...listing, format: 'happier-catalog', sourceUrl: 'https://themes.example.test/catalog',
+      ref: { kind: 'version', version: '1.0.0' }, importedAt: 0 } },
+    faces: [], coverage: [{ faceId: 'dark', coverage }] };
+  expect(ThemeActionOutputSchemas[THEME_ACTION_IDS.storeGet].parse(output))
+    .toMatchObject({ coverage: [{ faceId: 'dark', coverage }] });
+});
