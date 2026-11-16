@@ -32,6 +32,7 @@ import {
   FeaturesResponseSchema,
 } from '@happier-dev/protocol';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
+import { createManagedMachinePresetPreparationBindingV1 } from '@happier-dev/cli-common/machines/managed';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { createSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { encrypt, getRandomBytes } from './encryption';
@@ -304,11 +305,22 @@ describe('Account API token HTTP adapter', () => {
 
   it('dispatches preset Actions to the fixed Home and retains typed revision/refusal outcomes', async () => {
     const bodies: unknown[] = [];
-    const preset = { id: 'preset-a', homeId: 'srv_preset', revision: 1, name: 'Guest',
+    const preset = { id: 'preset-a', homeId: 'srv_preset', revision: 1,
       owner: { kind: 'account', accountId: 'owner' },
-      launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'guest', choices: { cores: 2 } },
+      contentEncryptionMode: 'plain', recipients: [], content: { t: 'plain', v: { v: 1, name: 'Guest',
+        launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' }, schemaVersion: 1, name: 'guest', choices: { cores: 2 } } } },
       controller: { machineId: 'host-a', installationId: 'installation-a' },
     } as const;
+    const patch = { content: { t: 'plain', v: { ...preset.content.v, name: 'Draft' } }, recipients: [] } as const;
+    // Restore retains a cold, settled preparation even after its provider is unavailable.
+    const restoredPreset = { ...preset, content: { t: 'plain', v: { ...preset.content.v,
+      prepared: { operationId: 'previous-prepare', status: 'cancelled', binding: createManagedMachinePresetPreparationBindingV1({
+        content: { ...preset.content.v, launch: { ...preset.content.v.launch,
+          provider: { pluginId: 'acme.removed-image-provider', localId: 'removed' } } },
+        cliIdentity: 'previous-cli', credentialConfigurations: [],
+      }) },
+    } } } as const;
+    let presetAvailable = false;
     app.post('/v1/machines/presets/list', async (request) => {
       expect(request.headers.authorization).toBe('Bearer interactive');
       bodies.push(request.body);
@@ -318,7 +330,8 @@ describe('Account API token HTTP adapter', () => {
       bodies.push(request.body);
       return reply.code(409).send({ kind: 'conflict', currentRevision: 3 });
     });
-    app.post('/v1/machines/presets/get', async (_request, reply) => reply.code(404).send({ kind: 'refused', code: 'preset_not_found' }));
+    app.post('/v1/machines/presets/get', async (_request, reply) => presetAvailable
+      ? { kind: 'found', preset: restoredPreset } : reply.code(404).send({ kind: 'refused', code: 'preset_not_found' }));
     app.post('/v1/machines/presets/archive', async (request, reply) => {
       bodies.push(request.body);
       return reply.code(403).send({ kind: 'refused', code: 'permission_denied' });
@@ -331,10 +344,11 @@ describe('Account API token HTTP adapter', () => {
     const context = { surface: 'cli', serverId: 'route-preset', authority: 'present_user', bypassApprovals: true } as const;
     expect(await executor.execute('machines.presets.list', { homeId: 'srv_preset' }, context))
       .toEqual({ ok: true, result: { kind: 'listed', presets: [] } });
-    expect(await executor.execute('machines.presets.update', { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 2, patch: { name: 'Draft' } }, context))
+    expect(await executor.execute('machines.presets.update', { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 2, patch }, context))
       .toEqual({ ok: true, result: { kind: 'conflict', currentRevision: 3 } });
     expect(await executor.execute('machines.presets.get', { homeId: 'srv_preset', id: 'preset-a' }, context))
       .toEqual({ ok: true, result: { kind: 'refused', code: 'preset_not_found' } });
+    presetAvailable = true;
     const { revision: _revision, ...create } = preset;
     expect(await executor.execute('machines.presets.create', create, context)).toMatchObject({ ok: true, result: { kind: 'saved', preset } });
     expect(await executor.execute('machines.presets.archive', { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }, context))
@@ -343,7 +357,7 @@ describe('Account API token HTTP adapter', () => {
       .toMatchObject({ ok: true, result: { kind: 'saved', preset } });
     expect(await executor.execute('machines.presets.list', { homeId: 'route-preset' }, context))
       .toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
-    expect(bodies).toEqual([{ homeId: 'srv_preset' }, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 2, patch: { name: 'Draft' } },
+    expect(bodies).toEqual([{ homeId: 'srv_preset' }, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 2, patch },
       create, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }, { homeId: 'srv_preset', id: 'preset-a', expectedRevision: 1 }]);
   });
 
@@ -490,7 +504,8 @@ describe('Account API token HTTP adapter', () => {
             requestEnvelopeDigest: 'A'.repeat(43), target: { kind: 'machine', machineId: 'worker' },
           } },
         } });
-        expect.soft(unsigned, JSON.stringify(unsigned)).toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+        expect.soft(unsigned, JSON.stringify(unsigned)).toMatchObject({ ok: false, errorCode: 'action_failed',
+          requestId: 'signed-pool', effectAttempted: false, details: { authorizationRefusalReason: 'signing_key_missing' } });
         for (const scenario of ['wrong', 'ambiguous', 'retired'] as const) {
           await updateSettings((settings): typeof settings => ({ ...settings, servers: scenario === 'wrong' ? { [profileId]: profile }
             : scenario === 'ambiguous' ? { [profileId]: profile, duplicate: { ...profile, id: 'duplicate' } }

@@ -74,6 +74,28 @@ describe('managed native-role custody at contributed dispatch', () => {
             actionHandlerInvocation: 'notStarted' } });
         expect(effects).toBe(0);
     });
+    it('keeps prepared-image Build outside an admitted Archive', async () => {
+        const manifest = normalizePluginManifestV2(createMachineProvisionerPreparationAuthorFixture().manifest);
+        let effects = 0;
+        const f = fixture({ fixtureManifest: manifest, credentialPurposes: [],
+            onAction() { effects++; } });
+        const context: ActionExecutorContext = { surface: 'cli', authority: 'account_automation', actionRequestId: 'archive' };
+        const action = { pluginId: manifest.id, localId: 'prepare-build' };
+        const port = createHostReviewedChildPortV1({ actionId: 'machines.presets.archive',
+            input: { homeId: 'home', id: 'preset', expectedRevision: 0 }, context, reviewAdmitted: true,
+            plan: { children: [{ action, role: 'preparationBuild' }] },
+            policies: [{ action, role: 'preparationBuild', surface: 'cli' }],
+            execute: async (body, childContext) => {
+                if (!body || typeof body !== 'object' || !('input' in body)) throw new Error('Expected provider envelope');
+                const result = await executeContributedAction({ runtimeRegistry: f.runtimeRegistry,
+                    actionId: `${manifest.id}/prepare-build`, input: body.input,
+                    approvalContext: childContext, context: { surface: 'plugin' } });
+                return result.matched ? result.result : { ok: false, errorCode: 'unsupported_action' };
+            } });
+        expect(await port.invoke({ action, role: 'preparationBuild', input: { operationId: 'archive', input: { name: 'base' } } }))
+            .toMatchObject({ ok: false, errorCode: 'plugin_managed_provider_operation_custody_invalid' });
+        expect(effects).toBe(0);
+    });
     it.each(['selected', 'foreign', 'absent', 'opaque', 'team', 'team-brokered', 'team-brokered-foreign'] as const)('uses the reviewed Account power credential without a controller (%s binding)', async scenario => {
         const service = { pluginId: 'acme.accounts', localId: 'cloud' };
         const team = scenario.startsWith('team');

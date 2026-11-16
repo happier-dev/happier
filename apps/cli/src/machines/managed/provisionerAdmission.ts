@@ -7,13 +7,49 @@ import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isManagedControlAdmissionActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { openManagedMachineRead } from './readManagedMachine';
+import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
+import { MachinePresetActionInputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { projectManagedMachinePresetForRecipientV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { createManagedPresetHydrator } from './presetHydration';
+import { managedMachinePresetPreparationNeedsNativeCleanupV1 } from '@happier-dev/cli-common/machines/managed';
 
 /** The ordinary Account selector admits one exact plugin; no native activation or fleet census. */
 export async function prepareCliManagedProvisionerAdmission(
     request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
-    account: Readonly<{ credentials?: StoredCredentials | null; serverUrl: string; managedMachineAction?: ActionExecutorDeps['managedMachineAction'] }>,
+    account: Readonly<{ credentials?: StoredCredentials | null; serverUrl: string; managedMachineAction?: ActionExecutorDeps['managedMachineAction'];
+        machinePresetAction?: ActionExecutorDeps['machinePresetAction'] }>,
 ) {
     const readSelected = (pluginId: string) => readCliManagedProvisioners(pluginId, account, request.context.signal);
+    if (request.actionId === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1) {
+        const input = MachinePresetActionInputSchemasV1[MACHINE_PRESET_ARCHIVE_ACTION_ID_V1].parse(request.input);
+        const credentials = account.credentials;
+        const accountId = credentials && readAccountIdFromToken(credentials.token);
+        if (!credentials || !accountId || !account.machinePresetAction) {
+            return { ok: false as const, errorCode: 'credential_unavailable', error: 'credential_unavailable' };
+        }
+        const raw = await account.machinePresetAction({ actionId: 'machines.presets.get', input: { homeId: input.homeId, id: input.id },
+            context: request.context, signal: request.context.signal });
+        const failure = ActionExecuteFailureSchema.safeParse(raw);
+        if (failure.success) return failure.data;
+        const result = ManagedMachinePresetGetResultV1Schema.parse(raw);
+        if (result.kind !== 'found') return { ok: false as const, errorCode: result.code, error: result.code };
+        const preset = result.preset;
+        const content = await createManagedPresetHydrator({ credentials, serverUrl: account.serverUrl }).openRecipientProjection({
+            presetId: preset.id, mode: preset.contentEncryptionMode, signal: request.context.signal,
+            projection: projectManagedMachinePresetForRecipientV1({ ...preset, recipientAccountId: accountId }),
+        });
+        if (!content.prepared || !managedMachinePresetPreparationNeedsNativeCleanupV1(content.prepared)) return null;
+        const launch = content.prepared.binding.configuration.launch;
+        const selected = (await readSelected(launch.provider.pluginId))?.find(candidate =>
+            candidate.contribution.localId === launch.provider.localId && candidate.descriptor.schemaVersion === launch.schemaVersion);
+        if (!selected?.descriptor.preparation) return { ok: false as const, errorCode: 'provider_unavailable', error: 'provider_unavailable' };
+        return { children: readMachineProvisionerActionRolesV1(selected.descriptor)
+            .filter(({ role }) => role === 'preparationInspect' || role === 'preparationDestroy')
+            .map(({ action, role }) => ({ action: { pluginId: launch.provider.pluginId, localId: action }, role })) };
+    }
     if (isManagedControlAdmissionActionIdV1(request.actionId) || request.actionId === 'machines.managed.inspect') {
         const input = ManagedMachineActionInputSchemasV1[request.actionId].parse(request.input);
         if ('when' in input && input.when !== 'now') return null;

@@ -15,7 +15,7 @@ import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
 import { bindManagedMachineRoleCredentials, projectManagedMachineRolePurposeBindingsV1 } from '@happier-dev/cli-common/machines/managed';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 
 /** Managed-resource custody supplied only by the authenticated host operation owner. */
 export type AdmittedManagedProviderOperationExecutionRequest = Readonly<{
@@ -144,8 +144,10 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
     const identity = params.action.pluginId ? { pluginId: params.action.pluginId, localId: params.action.definition.id } : undefined;
     const admitted = identity ? readHostReviewedChildOperationV1(params.approvalContext,
       formatQualifiedPluginActionId(identity), params.input) : null;
-    if (!identity || !admitted || admitted.parent.actionId !== MACHINE_PRESET_PREPARE_ACTION_ID_V1
-      || params.operation) return invalid();
+    const admittedPreparation = admitted?.parent.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1
+      || admitted?.parent.actionId === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1
+        && matches.some(({ role }) => role === 'preparationInspect' || role === 'preparationDestroy');
+    if (!identity || !admitted || !admittedPreparation || params.operation) return invalid();
     const purposes = resolveRegistryConnectedAccountActionPurposeAuthorizations({ registry: params.contributes,
       qualifiedActionId: buildQualifiedPluginContributionKey(identity) });
     if (!purposes || purposes.length > 0 && !params.probeBinding) return invalid();

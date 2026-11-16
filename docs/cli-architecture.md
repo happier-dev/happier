@@ -3341,6 +3341,13 @@ A Retry after interruption uses a new admission to inspect the retained native
 operation with its original launch. It adopts a current artifact or deletes the
 leftover before building the newly admitted target.
 
+The private prepared binding retains the original Prepare host for Machine-native
+image cleanup. Missing legacy placement or a different executing host returns
+`controller_unavailable` while retaining the image and preset for recovery.
+CLI, agent, Account and UI Archive entry points consume the Common preparation
+owner's cleanup-only settlement. A settled cold preparation needs no provider
+acquisition when the restored preset is archived again.
+
 In current 0.3 development, the terminal-auth verifier identifies a
 `HOME_AUTHORITY_MISMATCH` with a closed comparison label, verification phase,
 carrier kind and observed-descriptor-present boolean. The shared SSH failure

@@ -36,9 +36,11 @@ import { bindMachineAccessActionHttpRequestV1 } from '@happier-dev/protocol/acti
 import { MachineAccessGrantsListResultV1Schema, MachineAccessMutationResultV1Schema, MachineAccessPrepareKeysInputV1Schema, MachineAccessRefusalV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MachinePoolActionInputSchemasV1, MachinePoolWireOutputSchemasV1, openMachinePoolActionOutputV1, machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { MachinePresetActionInputSchemasV1, MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { ManagedAdmissionOutputV1Schema, ManagedErrorV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1, resolveManagedAcquireReviewV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeCliManagedAccountPower } from '@/machines/managed/accountPower';
 import { executeCliManagedAccountDelete } from '@/machines/managed/accountDelete';
+import { executeCliMachinePresetArchive } from '@/machines/managed/accountPresetArchive';
 import { executeCliManagedAccountResize } from '@/machines/managed/accountResize';
 import { executeCliManagedAccountInspect } from '@/machines/managed/accountInspect';
 import { isManagedControlAdmissionActionIdV1, MANAGED_DELETE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, MANAGED_RETIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -117,6 +119,7 @@ export type AccountServerActionDeps = Pick<
   | 'accountEmailChangeRequestAction'
   | 'machinePoolAction'
   | 'machinePresetAction'
+  | 'machinePresetArchive'
   | 'managedMachineAction'
   | 'homeDomainAction'
   | 'privateLabelOpen'
@@ -1074,12 +1077,18 @@ export function createAccountServerActionDeps(input: Readonly<{
       }
       return settleAccountServerActionHttpOutput({ data: response.data, outputSchema: ManagedMachineActionOutputSchemasV1[actionId], sideEffectClass: spec.sideEffectClass });
     },
+    machinePresetArchive: async request => executeCliMachinePresetArchive(request, {
+      credentials: input.credentials?.token === input.token ? input.credentials : { token: input.token, encryption: null },
+      serverUrl: serverHttpBaseUrl, transport: deps.machinePresetAction!,
+    }),
     machinePresetAction: async ({ actionId, input: actionInput, context: actionContext, signal }) => {
       const body = MachinePresetActionInputSchemasV1[actionId].parse(actionInput);
       const unavailable = await qualifiedHomeActionFailure({ actionId, homeId: body.homeId, context: actionContext, signal });
       if (unavailable) return unavailable;
       const path = machinePresetActionEndpointPathV1(actionId);
-      const requestHeaders = resolveRequestHeaders({ context: actionContext, effectActionId: actionId, method: 'POST', path, body });
+      const root = actionContext.externalActionExecutionAuthorization?.binding.actionId;
+      const requestHeaders = resolveRequestHeaders({ context: actionContext,
+        effectActionId: root === MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 ? root : actionId, method: 'POST', path, body });
       if (!requestHeaders.ok) return externalActionHeaderRefusalFailure(requestHeaders);
       const sideEffectClass = getActionSpec(actionId).sideEffectClass;
       const dispatch = await dispatchAccountServerActionHttpRequest({

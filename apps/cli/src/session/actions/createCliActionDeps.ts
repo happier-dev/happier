@@ -1094,6 +1094,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       const refusal = await prepareCliManagedProvisionerAdmission(request, {
         credentials: params.credentials, serverUrl: todoHomeBaseUrl,
         managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction,
+        machinePresetAction: (readEffectiveDeps?.() ?? actionDeps).machinePresetAction,
       });
       if (refusal) return refusal;
       const wake = await prepareCliManagedMachineWake(request, {
