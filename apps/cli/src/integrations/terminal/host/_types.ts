@@ -14,12 +14,15 @@ export type TerminalHostNativeLaunch = Readonly<{
   unsetEnvKeys?: readonly string[];
   isolatedEnv: boolean;
   windowsVerbatimArguments?: boolean;
+  stdinPreamble?: Uint8Array;
 }>;
 
 export type TerminalHostProcessObservation = Readonly<{ pid: number; argv: readonly string[] }>;
 
 /** Host-private prepared native invocation; never exposed through the plugin SDK. */
 export type TerminalHostAdapter = Omit<AgentTerminalHostAdapter, 'createOrAttachHost'> & Readonly<{
+  /** Host transport declaration, not an SDK capability or another authorization. */
+  nativePreambleTransport?: 'pty';
   /** Positive observations only: missing processes never prove native exit. */
   captureProcessObservations?(handle: TerminalHostHandle): Promise<readonly TerminalHostProcessObservation[] | null>;
   createOrAttachHost(opts: Parameters<AgentTerminalHostAdapter['createOrAttachHost']>[0] & Readonly<{

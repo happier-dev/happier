@@ -387,8 +387,8 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
         readAgentSessionRealtimeConversation: () => runtimeClosed
             ? null
             : currentOperations.readAgentSessionRealtimeConversation?.() ?? null,
-        readNativeAttachLaunchAuthority: () => runtimeClosed
-            ? null : currentOperations.readNativeAttachLaunchAuthority?.() ?? null,
+        readNativeLaunchAuthority: (kind) => runtimeClosed
+            ? null : currentOperations.readNativeLaunchAuthority?.(kind) ?? null,
         admitAgentSessionRealtimeInput: (input) => runtimeClosed
             ? null
             : currentOperations.admitAgentSessionRealtimeInput?.(input) ?? null,

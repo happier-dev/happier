@@ -96,6 +96,8 @@ export type AgentTerminalLaunchPlan = Readonly<{
    * here launches it twice.
    */
   argv: readonly string[];
+  /** Host-side launch dependencies selected into the native Agent identity. */
+  requiredFiles?: readonly string[];
   environment?: AgentLaunchEnvironment;
   process?: Readonly<{
     stdio?: 'inherit' | 'pipe';

@@ -36,6 +36,7 @@ import { delay } from '@/utils/time';
 import { createVirtualTerminalScreen, type VirtualTerminalScreen } from './virtualTerminalScreen';
 import { resolveSessionProcessPtyTarget, type SessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
 import { spawnHolderPtyProcess } from './holderProcess';
+import { createTerminalNativeLaunch } from './nativeLaunch';
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
@@ -274,6 +275,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
 
   return {
     kind: 'windows_console',
+    nativePreambleTransport: 'pty',
     async createOrAttachHost(opts) {
       const existing = sessions.get(opts.sessionName);
       if (existing && !existing.ended) {
@@ -334,6 +336,8 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
           },
         });
       }
+      const nativeLaunch = opts.stdinPreamble?.byteLength
+        ? createTerminalNativeLaunch(opts.stdinPreamble, data => pty.write(data)) : undefined;
       const session: PtyTerminalHostSession = {
         pty,
         disposables: [],
@@ -342,9 +346,11 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
         disposed: false,
       };
       session.disposables.push(pty.onData((data) => {
-        screen.write(String(data ?? ''));
+        if (nativeLaunch) nativeLaunch.consume(Buffer.from(String(data ?? '')), bytes => screen.write(bytes.toString('utf8')));
+        else screen.write(String(data ?? ''));
       }));
       session.disposables.push(pty.onExit((event) => {
+        nativeLaunch?.finish();
         session.ended = true;
         session.exitCode = event.exitCode ?? undefined;
         if (typeof event.signal === 'number') session.signal = event.signal;

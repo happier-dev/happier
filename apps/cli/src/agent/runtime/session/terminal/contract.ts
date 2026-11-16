@@ -137,6 +137,7 @@ export type HostTerminalProcessStdio = 'inherit' | 'pipe';
 export type HostTerminalProcessLaunchRequest = Readonly<{
     executable: HostTerminalProcessExecutable;
     args?: readonly string[];
+    requiredFiles?: readonly string[];
     cwd: string;
     env?: Readonly<Record<string, string | undefined>>;
     unsetEnvKeys?: readonly string[];

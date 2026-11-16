@@ -2466,6 +2466,21 @@ spawn when its producer or native root is missing. The shim owns publication
 and native cleanup; the plugin retains its host-file lifecycle. Ordinary host
 launches keep their existing file lifecycle.
 
+Claude declares its generated MCP configuration and startup-instruction files
+through that same `requiredFiles` contract for SDK queries, unified terminal
+hosts and SDK-to-terminal presentation. Terminal plans carry the declaration
+as data; the Session's captured native Exec authority owns finalization and
+file selection before the terminal process owner starts the finalized launch.
+PTY hosts pass its private stdin preamble to the existing
+`createTerminalNativeLaunch` framing owner, which keeps startup markers and
+selected material out of visible output. At the Exec-to-terminal boundary,
+transports without frame support refuse a nonempty preamble with
+`terminal_preamble_transport_unsupported` before launching. This includes
+tmux, zellij, private launch-spec runners and same-pane inherited stdio;
+launches without a preamble retain their existing behavior.
+The matching unreleased 0.3 SDK and host readers reload together; older strict
+development readers reject the terminal-plan field rather than ignoring it.
+
 Requester identity and placement are admitted once per operation and carried
 through preparation. Member preparation checks local custody once without
 rereading Machine policy. Prepared native material and workspace roots feed the

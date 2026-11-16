@@ -19,6 +19,7 @@ import {
     type AgentCliLaunchSpec,
 } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import type { PluginExecAgentCliGrantRecord } from '@/plugins/runtime/exec/system/tools/definitions';
+import { requireAgentNativeLaunchAuthorityForHost, type HostAgentNativeLaunchAuthority } from '@/plugins/runtime/invocation/services/exec';
 import { isDeniedPathOnlyRuntimeName } from '@/plugins/runtime/exec/system/tools/runtimeDeny';
 import { createProcessTreeStopper, terminateProcessTree as defaultKillProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { logger } from '@/ui/logger';
@@ -32,6 +33,8 @@ import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv'
 import { withHostProcessOwnerEnvironment } from '@/processes/ownerTag';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { spawnSessionProcess } from '@/subprocess/supervision/sessionHolder';
+import { assertTerminalPreambleTransport } from '@/integrations/terminal/host/errors';
+import { createProcessStdinWriter } from '@/plugins/runtime/exec/processSupervisor';
 
 type SpawnLike = (
     command: string,
@@ -159,6 +162,7 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
     verifyExecutableGrant?: TerminalRuntimeExecutableGrantVerifier;
     registerExecutableGrant?: TerminalRuntimeExecutableGrantRegistrar;
     resolveAgentCliLaunch?: TerminalRuntimeAgentCliLaunchResolver;
+    readNativeLaunchAuthority?(): HostAgentNativeLaunchAuthority | null;
     now?: () => number;
 }>): HostTerminalProcessService {
     const spawn = deps?.spawn ?? nodeSpawn;
@@ -226,16 +230,27 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
                 enableCgroupSelfMigration: false,
                 stackProcessKind: null,
             });
-            const child = spawnSessionProcess(request.executable.path, [...(request.args ?? [])], {
-                cwd: request.cwd,
-                env: withHostProcessOwnerEnvironment(childEnvironment),
-                stdio: request.stdio ?? 'pipe',
-                windowsHide: request.windowsHide,
-                windowsVerbatimArguments: request.windowsVerbatimArguments,
-            }, spawn);
+            const authority = requireAgentNativeLaunchAuthorityForHost(deps?.readNativeLaunchAuthority?.(), 'terminal');
+            const signal = request.signal ? AbortSignal.any([authority.signal, request.signal]) : authority.signal;
+            const launch = await authority.authorize({ command: request.executable.path, args: request.args ?? [],
+                cwd: request.cwd, env: childEnvironment,
+                ...(request.requiredFiles?.length ? { requiredFiles: request.requiredFiles } : {}),
+            }, signal);
+            let child: ChildProcess;
+            try {
+                assertNotAborted(signal);
+                assertTerminalPreambleTransport(launch.stdinPreamble, request.stdio !== 'inherit');
+                child = spawnSessionProcess(launch.command, [...launch.args], {
+                    cwd: launch.launcherCwd ?? launch.cwd,
+                    env: withHostProcessOwnerEnvironment(launch.env, launch.processOwnerTag),
+                    stdio: request.stdio ?? 'pipe',
+                    windowsHide: request.windowsHide,
+                    windowsVerbatimArguments: launch.windowsVerbatimArguments ?? request.windowsVerbatimArguments,
+                }, spawn);
+            } catch (error) { await launch.release(); throw error; }
             const stopProcess = createProcessTreeStopper(async options => {
                 await terminateProcessTree(child, options);
-                request.signal?.removeEventListener('abort', abortListener);
+                signal.removeEventListener('abort', abortListener);
             });
             const stop = stopProcess.stop;
             const abortListener = (): void => {
@@ -245,32 +260,34 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
                     });
                 });
             };
-            request.signal?.addEventListener('abort', abortListener, { once: true });
+            signal.addEventListener('abort', abortListener, { once: true });
 
             let managed: ManagedChildProcess;
             let readBufferedStderr: () => string;
             try {
                 managed = createManagedChildProcess(child);
                 readBufferedStderr = bufferChildStderr(child);
-                assertNotAborted(request.signal);
+                if (launch.stdinPreamble?.byteLength) await createProcessStdinWriter(child.stdin!)(launch.stdinPreamble);
+                assertNotAborted(signal);
             } catch (error) {
                 try {
-                    await stop();
+                    try { await stop(); }
+                    finally { await launch.release(); }
                 } catch (cleanupError) {
                     throw new AggregateError([error, cleanupError], 'Terminal process launch and cleanup failed', { cause: error });
                 }
                 throw error;
             }
 
+            const termination = managed.waitForTermination().then(mapTerminationEvent).finally(async () => {
+                signal.removeEventListener('abort', abortListener);
+                await launch.release();
+            });
+            // The terminal owner may ask to Stop before it starts awaiting the result.
+            void termination.catch(() => undefined);
             return Object.freeze({
                 pid: managed.pid,
-                waitForTermination: async () => {
-                    const termination = await managed.waitForTermination();
-                    if (termination.type === 'exited' || termination.type === 'signaled') {
-                        request.signal?.removeEventListener('abort', abortListener);
-                    }
-                    return mapTerminationEvent(termination);
-                },
+                waitForTermination: () => termination,
                 stop,
                 readBufferedStderr,
             });

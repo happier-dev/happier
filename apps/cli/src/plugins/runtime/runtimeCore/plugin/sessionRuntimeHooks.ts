@@ -40,8 +40,8 @@ export type PluginRuntimeApplyConfigDeltaInFlight = (
 
 export type PluginRuntimeHookOperations = RuntimeTurnOperations & Readonly<{
     runtimeAuth?: AgentSessionRuntimeAuthControl;
-    /** Exact current incarnation's original Exec custody, spent lazily on attach. */
-    readNativeAttachLaunchAuthority?: () => import('@/plugins/runtime/invocation/services/exec').HostAgentNativeLaunchAuthority | null;
+    /** Exact current incarnation's original Exec custody, spent lazily by its presentation. */
+    readNativeLaunchAuthority?: (kind: 'attach' | 'terminal') => import('@/plugins/runtime/invocation/services/exec').HostAgentNativeLaunchAuthority | null;
     /** Host-private repository execution through this Session's current Exec service. */
     runScmCommand?: ScmCommandRunner;
     /** The admitted native facet, withdrawn when this Session incarnation retires. */

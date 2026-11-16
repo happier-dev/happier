@@ -10,6 +10,22 @@ export type TerminalHostCreationFailure = Readonly<{
   cleanupIncomplete: boolean;
 }>;
 
+export class TerminalPreambleTransportUnsupportedError extends Error implements TerminalHostCreationFailure {
+  readonly code = 'terminal_preamble_transport_unsupported';
+  readonly creationDisposition = 'not_created' as const;
+  readonly cleanupIncomplete = false;
+
+  constructor() {
+    super('This terminal transport cannot deliver the native Agent startup frame.');
+    this.name = 'TerminalPreambleTransportUnsupportedError';
+  }
+}
+
+/** Decide frame availability once where a finalized Exec launch enters a terminal. */
+export function assertTerminalPreambleTransport(preamble: Uint8Array | undefined, supported: boolean): void {
+  if (preamble?.byteLength && !supported) throw new TerminalPreambleTransportUnsupportedError();
+}
+
 /** Internal ownership evidence, not a replay policy or a public terminal-host wire shape. */
 export class TerminalHostCreationError extends AggregateError implements TerminalHostCreationFailure {
   readonly creationDisposition: TerminalHostCreationDisposition;
@@ -24,6 +40,7 @@ export class TerminalHostCreationError extends AggregateError implements Termina
 }
 
 export function resolveTerminalHostCreationFailure(error: unknown): TerminalHostCreationFailure {
+  if (error instanceof TerminalPreambleTransportUnsupportedError) return error;
   if (error instanceof TerminalHostCreationError) return error;
   if (error instanceof TerminalHostStartupError && error.creationFailure) return error.creationFailure;
   return { creationDisposition: 'created_or_uncertain', cleanupIncomplete: true };

@@ -160,8 +160,9 @@ function assertTerminalControlPresentation(
 
 function assertNativeAgentTerminalLaunchPlan(value: unknown): asserts value is AgentTerminalLaunchPlan {
     assertPlainRecord(value, 'root');
-    assertOnlyKeys(value, ['argv', 'environment', 'process', 'presentation', 'resultMetadata'], 'root');
+    assertOnlyKeys(value, ['argv', 'requiredFiles', 'environment', 'process', 'presentation', 'resultMetadata'], 'root');
     assertStringArray(value.argv, 'argv');
+    if (value.requiredFiles !== undefined) assertStringArray(value.requiredFiles, 'requiredFiles');
     if (value.environment !== undefined) {
         assertPlainRecord(value.environment, 'environment');
         assertOnlyKeys(value.environment, ['values', 'unset'], 'environment');
@@ -778,6 +779,7 @@ export function resolveBackendExecutionSurfacesFromNativeAgentRuntime(params: Re
                         () => host.process.launch({
                             executable: executable.executable,
                             args: [...executable.args, ...plan.argv],
+                            ...(plan.requiredFiles?.length ? { requiredFiles: plan.requiredFiles } : {}),
                             cwd: request.directory,
                             ...(Object.keys(environment).length > 0 ? { env: environment } : {}),
                             ...(unsetEnvKeys.length > 0 ? { unsetEnvKeys } : {}),

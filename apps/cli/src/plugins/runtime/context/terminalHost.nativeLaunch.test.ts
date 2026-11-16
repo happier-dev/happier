@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 
 import { createStablePluginExecService } from '../invocation/services/exec';
 import { createPtyTerminalHostAdapter } from '@/terminal/pty/hostAdapter';
 import type { PtyProcess, PtySpawnParams } from '@/terminal/pty/provider';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import type { AgentTerminalHostLaunchInput } from '@happier-dev/plugin-sdk/agents/runtime';
+import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED, readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import type { TerminalHostAdapter } from '@/integrations/terminal/host/_types';
 import {
     createPluginTerminalHostService,
     installAgentChildLaunchEnvironmentTransformerForTerminalHost,
@@ -40,6 +44,108 @@ async function withNativeLaunchFixture(run: (fixture: Readonly<{
 }
 
 describe('terminal host final native launch', () => {
+    it.skipIf(process.platform !== 'linux').each(['pty', 'tmux-frame', 'tmux-plain'] as const)(
+        'preserves native frame custody at the terminal boundary: %s', async transport => {
+        await withTempDir('terminal-native-frame-', async root => {
+            const controller = new AbortController();
+            const framed = transport !== 'tmux-plain';
+            const source = join(root, 'mcp.json');
+            await writeFile(source, '{"mcpServers":{"fixture":{"env":{"TOKEN":"synthetic-frame-secret"}}}}');
+            const exec = createStablePluginExecService({ signal: controller.signal, isOccurrenceCurrent: () => true,
+                resolveExecutable: async () => { throw new Error('Resolved CLI only'); },
+                resolvePath: async () => root, prepareAgentNativeLaunch: async () => undefined,
+                ...(framed ? { agentIsolation: {
+                    requesterIdentity: { kind: 'isolated' as const, separationRequired: false, requester: {
+                        serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } },
+                    read: () => ({ enabled: true, status: { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' },
+                        workspaceRoots: [root], localTransport: { agentUid: 2402, agentGid: 2402 }, launch: {
+                            managedHappierBinaryPath: '/fixture/happier', runtimeHome: join(root, 'runtime'),
+                            selectedEnvironmentKeys: [], selectedMaterials: [], environment: {},
+                            sessionMcpContext: { v: 1 as const, socketPath: join(root, 'mcp.sock'), bearerToken: 'synthetic-terminal-token' },
+                        } }),
+                } } : {}),
+            });
+            const writes: string[] = [];
+            let onData: ((data: string) => void) | undefined;
+            const pty: PtyProcess = { pid: 1234, write(data) { writes.push(data); }, resize() {}, kill() {},
+                onData(listener) { onData = listener; return { dispose() {} }; }, onExit: () => ({ dispose() {} }) };
+            const physical = vi.fn(() => pty);
+            const ptyAdapter = createPtyTerminalHostAdapter({ sessionTarget: null, ptyProvider: { spawn: physical } });
+            const tmuxCreate = vi.fn(async (input: Parameters<TerminalHostAdapter['createOrAttachHost']>[0]) => {
+                await input.prepareLaunch?.();
+                return { kind: 'tmux' as const, sessionName: input.sessionName, paneId: 'fixture-pane' };
+            });
+            const adapter: TerminalHostAdapter = transport === 'pty' ? ptyAdapter
+                : { ...ptyAdapter, kind: 'tmux', nativePreambleTransport: undefined, createOrAttachHost: tmuxCreate };
+            const service = createPluginTerminalHostService({ hasCapability: () => true,
+                resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'windows_console_forced' }),
+                resolveAgentCliLaunch: () => ({ command: '/fixture/claude', args: [] }),
+                disposeHost: async () => {},
+            });
+            const binding = installAgentChildLaunchEnvironmentTransformerForTerminalHost(service, env => env, { exec, signal: controller.signal });
+            const launch = service.createOrAttachHost({ preference: transport === 'pty' ? 'windows_console' : 'tmux',
+                sessionName: 'native-frame', workingDirectory: root, isolatedEnv: true,
+                launch: { kind: 'agent-cli', agentId: 'claude', args: ['--mcp-config', source], requiredFiles: [source] } });
+            try {
+                if (transport === 'tmux-frame') {
+                    await expect(launch).rejects.toMatchObject({ code: 'terminal_preamble_transport_unsupported' });
+                    expect(physical).not.toHaveBeenCalled();
+                } else {
+                    const handle = await launch;
+                    if (transport === 'pty') {
+                        onData!(AGENT_LAUNCH_TERMINAL_READY);
+                        expect(writes).toHaveLength(1);
+                        const frame = await readAgentLaunchFrame(Readable.from(writes, { objectMode: false }), 'terminal');
+                        expect(frame.selectedMaterials.some(file => Buffer.from(file.contentBase64, 'base64').toString().includes('synthetic-frame-secret'))).toBe(true);
+                        onData!(AGENT_LAUNCH_TERMINAL_ACCEPTED + 'Agent ready');
+                        const control = adapter.createControlPort!(handle);
+                        const capture = await control.captureScreen();
+                        expect(JSON.stringify(capture)).not.toContain('synthetic-frame-secret');
+                        expect(JSON.stringify(capture)).not.toContain(AGENT_LAUNCH_TERMINAL_READY);
+                    } else expect(tmuxCreate).toHaveBeenCalledOnce();
+                }
+            } finally { binding.dispose(); controller.abort(); }
+        });
+    });
+
+    it.skipIf(process.platform !== 'linux')('refuses an unavailable declared terminal config before native PTY spawn', async () => {
+        await withTempDir('required-terminal-config-', async root => {
+            const signal = new AbortController().signal;
+            const exec = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
+                resolveExecutable: async () => { throw new Error('Resolved CLI only'); },
+                resolvePath: async () => root, prepareAgentNativeLaunch: async () => undefined,
+                agentIsolation: { requesterIdentity: { kind: 'isolated', separationRequired: false, requester: {
+                    serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } },
+                    read: () => ({ enabled: true, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' },
+                        workspaceRoots: [root], localTransport: { agentUid: 2402, agentGid: 2402 }, launch: {
+                            managedHappierBinaryPath: '/fixture/happier', runtimeHome: join(root, 'runtime'),
+                            selectedEnvironmentKeys: [], selectedMaterials: [], environment: {},
+                            sessionMcpContext: { v: 1, socketPath: join(root, 'mcp.sock'), bearerToken: 'synthetic-terminal-token' },
+                        } }) },
+            });
+            const physical: PtySpawnParams[] = [];
+            const adapter = createPtyTerminalHostAdapter({ ptyProvider: { spawn(input) {
+                physical.push(input); throw new Error('Missing config must fail before PTY spawn');
+            } } });
+            const service = createPluginTerminalHostService({ hasCapability: () => true,
+                resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'windows_console_forced' }),
+                resolveAgentCliLaunch: () => ({ command: '/fixture/claude', args: [] }),
+                disposeHost: async ({ handle, adapter: owner }) => owner.dispose(handle),
+            });
+            const binding = installAgentChildLaunchEnvironmentTransformerForTerminalHost(service, env => env, { exec, signal });
+            const missing = join(root, 'missing-mcp.json');
+            const launch = { kind: 'agent-cli', agentId: 'claude', args: ['--mcp-config', missing],
+                requiredFiles: [missing] } satisfies AgentTerminalHostLaunchInput & { requiredFiles: readonly string[] };
+            try {
+                await expect(service.createOrAttachHost({ preference: 'windows_console', sessionName: 'required-config',
+                    workingDirectory: root, isolatedEnv: true, launch })).rejects.toMatchObject({
+                    code: 'agent_launch_required_file_unavailable', execLaunch: 'notStarted',
+                });
+                expect(physical).toEqual([]);
+            } finally { binding.dispose(); }
+        });
+    });
+
     it('retains the terminal isolation refusal before reaching the PTY boundary', async () => {
         const signal = new AbortController().signal;
         const root = process.cwd();

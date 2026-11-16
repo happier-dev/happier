@@ -2004,6 +2004,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         launch: {
           kind: 'agent-cli',
           agentId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
+          requiredFiles: [...mcpConfigForSpawn.requiredFiles, ...(startupInstructionsFile?.requiredFiles ?? [])],
           args: applyClaudeUnifiedTerminalLaunchIntent(resolveClaudeLaunchSettingsOverlayArgs({
             args: [
               ...buildClaudeSettingSourcesArgs(params.settingSources),

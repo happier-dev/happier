@@ -12,6 +12,7 @@ import {
     type TerminalRuntimeExecutableGrantVerifier,
 } from './launchProcess';
 import { createTerminalRuntimeSwitchHandlerService } from './switchHandler';
+import type { HostAgentNativeLaunchAuthority } from '@/plugins/runtime/invocation/services/exec';
 
 type TerminalHostMessageQueue = Parameters<typeof createTerminalRuntimeInputTriggerService>[0]['messageQueue'];
 type TerminalHostSession = Readonly<{
@@ -28,6 +29,7 @@ export function createTerminalRuntimeHostOrchestration(params: Readonly<{
     transcriptFollow?: HostTerminalTranscriptFollowService;
     verifyExecutableGrant?: TerminalRuntimeExecutableGrantVerifier;
     registerExecutableGrant?: TerminalRuntimeExecutableGrantRegistrar;
+    readNativeLaunchAuthority?(): HostAgentNativeLaunchAuthority | null;
 }>): HostTerminalOrchestration | null {
     const registerHandler = params.session.rpcHandlerManager?.registerHandler?.bind(params.session.rpcHandlerManager);
     if (!params.messageQueue || !registerHandler) {
@@ -38,6 +40,7 @@ export function createTerminalRuntimeHostOrchestration(params: Readonly<{
             ? createTerminalRuntimeProcessService({
                 verifyExecutableGrant: params.verifyExecutableGrant,
                 registerExecutableGrant: params.registerExecutableGrant,
+                readNativeLaunchAuthority: params.readNativeLaunchAuthority,
             })
             : null);
     if (!process) {

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStdio } from 'node:child_process';
+import type { Writable } from 'node:stream';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import type {
@@ -26,6 +27,16 @@ import { adoptSessionHolderChild, resolveSessionProcessHolderLaunch, SessionHold
 import { logger } from '@/ui/logger';
 import { PROCESS_TERMINATION_GRACE_MS } from '@/subprocess/supervision/terminationPolicy';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
+
+/** Keep the pipe's error event handled while each write returns its own failure. */
+export function createProcessStdinWriter(stdin: Writable): (data: Uint8Array) => Promise<void> {
+    stdin.on('error', () => {
+        // Individual writes receive their callback error; prevent an unhandled EPIPE.
+    });
+    return data => new Promise<void>((resolve, reject) => {
+        stdin.write(data, error => error ? reject(error) : resolve());
+    });
+}
 
 type DisposeReason = Extract<PluginProcessTerminationRequest, { kind: 'dispose' }>['reason'];
 export type SupervisedPluginGracefulStop = (signal: AbortSignal) => Promise<void>;
@@ -399,9 +410,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     });
     child.stdout.once('end', () => { if (sanitizers && !input.pipeStdout) captureStdout(Buffer.from(sanitizers.stdout.flush(), 'utf8')); });
     child.stderr.once('end', () => { if (sanitizers) captureStderr(Buffer.from(sanitizers.stderr.flush(), 'utf8')); });
-    child.stdin.on('error', () => {
-        // Individual writes receive their callback error; prevent an unhandled EPIPE.
-    });
+    const writeStdin = createProcessStdinWriter(child.stdin);
 
     const freezeObserved = (next: PluginProcessObservedTermination): void => {
         if (observed) return;
@@ -646,9 +655,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     };
     const handle: PluginProcessHandle = Object.freeze({
         async write(data: Uint8Array) {
-            await new Promise<void>((resolve, reject) => {
-                child.stdin.write(data, (error) => error ? reject(error) : resolve());
-            });
+            await writeStdin(data);
         },
         async closeStdin() {
             // A finite child can exit before an asynchronous caller closes input.

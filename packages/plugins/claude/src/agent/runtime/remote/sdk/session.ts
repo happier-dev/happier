@@ -2459,6 +2459,7 @@ export function createClaudeAgentSdkTurnOperations(
                     ? materializeClaudeStartupInstructions(params.startupInstructions) : undefined;
                 terminalMcpConfig ??= materializeClaudeMcpConfigArgsForSpawn(buildClaudeMcpConfigArgs(mcpServers), message => params.ctx.logger.warn(message));
                 const plan: LocalTerminalHookBinding['plan'] = {
+                    requiredFiles: [...terminalMcpConfig.requiredFiles, ...(terminalStartupInstructions?.requiredFiles ?? [])],
                     argv: resolveClaudeLaunchSettingsOverlayArgs({
                         args: [
                             ...(resumeId ? ['--resume', resumeId] : []),

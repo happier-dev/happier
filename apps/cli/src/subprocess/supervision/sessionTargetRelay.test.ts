@@ -10,7 +10,7 @@ import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/nod
 
 import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
-import { createStablePluginExecService, installManagedProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
+import { captureAgentNativeLaunchAuthorityForHost, createStablePluginExecService, installManagedProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createTerminalRuntimeProcessService } from '@/agent/runtime/session/terminal/launchProcess';
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
 import { probeAcpAgentCapabilities } from '@/capabilities/probes/acpProbe';
@@ -155,7 +155,11 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session targ
             launch: { executables: { [process.execPath]: process.execPath }, env: { HAPPIER_TEST_AGENT_HOME: '/target/terminal-home' },
                 workspace: { hostRoot: directory, targetRoot } } });
         try {
-            const terminal = createTerminalRuntimeProcessService({ verifyExecutableGrant: () => true });
+            const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
+                resolveExecutable: async () => { throw new Error('Executable already resolved'); },
+                resolvePath: async () => directory, prepareAgentNativeLaunch: async () => undefined });
+            const terminal = createTerminalRuntimeProcessService({ verifyExecutableGrant: () => true,
+                readNativeLaunchAuthority: () => captureAgentNativeLaunchAuthorityForHost(exec, 'terminal') });
             const handle = await terminal.launch({ executable: { path: process.execPath,
                 hostGrant: { kind: 'agent-cli', grantId: 'fixture' } }, cwd: directory,
                 args: ['-e', 'process.stderr.write(JSON.stringify({cwd:process.cwd(),home:process.env.HAPPIER_TEST_AGENT_HOME??null}))'] });

@@ -638,7 +638,7 @@ type _TerminalLaunchRequestMustStayHostResolved = AssertTrue<
 type _TerminalLaunchPlanMustStayDataOnly = AssertTrue<
   Equal<
     keyof AgentTerminalLaunchPlan,
-    'argv' | 'environment' | 'process' | 'presentation' | 'resultMetadata'
+    'argv' | 'requiredFiles' | 'environment' | 'process' | 'presentation' | 'resultMetadata'
   >
 >;
 

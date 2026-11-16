@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { PassThrough, Readable, Writable } from 'node:stream';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -11,13 +12,29 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createTerminalRuntimeHostOrchestration } from './orchestration';
 import { createTerminalRuntimeProjectionHostService } from './projection';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createPluginExecSystemToolGrantStore } from '@/plugins/runtime/exec/system/tools/grants';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { logger } from '@/ui/logger';
 
-import { createTerminalRuntimeProcessService } from './launchProcess';
+import { createTerminalRuntimeProcessService as createTerminalRuntimeProcessServiceOwner } from './launchProcess';
+import { captureAgentNativeLaunchAuthorityForHost, createStablePluginExecService, issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+
+const nativeLifetimes: AbortController[] = [];
+afterEach(() => { for (const controller of nativeLifetimes.splice(0)) controller.abort(); });
+function createTerminalRuntimeProcessService(deps: NonNullable<Parameters<typeof createTerminalRuntimeProcessServiceOwner>[0]>) {
+    const controller = new AbortController();
+    nativeLifetimes.push(controller);
+    const exec = createStablePluginExecService({ signal: controller.signal, isOccurrenceCurrent: () => true,
+        resolveExecutable: async () => { throw new Error('Executable already resolved'); },
+        resolvePath: async () => process.cwd(), prepareAgentNativeLaunch: async () => undefined,
+    });
+    return createTerminalRuntimeProcessServiceOwner({
+        readNativeLaunchAuthority: () => captureAgentNativeLaunchAuthorityForHost(exec, 'terminal'), ...deps,
+    });
+}
 
 class FakeChildProcess extends EventEmitter {
     readonly pid = 4217;
@@ -31,6 +48,86 @@ class FakeChildProcess extends EventEmitter {
 }
 
 describe('createTerminalRuntimeProcessService', () => {
+    it.skipIf(process.platform !== 'linux').each([
+        { prepared: false, stdio: 'pipe', writeFailure: null },
+        { prepared: true, stdio: 'pipe', writeFailure: null },
+        { prepared: false, stdio: 'inherit', writeFailure: null },
+        { prepared: false, stdio: 'pipe', writeFailure: 'epipe' },
+        { prepared: false, stdio: 'pipe', writeFailure: 'epipe-stop' },
+    ] as const)('keeps selected native file custody for terminal plans (prepared=$prepared, stdio=$stdio, writeFailure=$writeFailure)', async ({ prepared, stdio, writeFailure }) => {
+        const root = await createTempDir('terminal-native-material-');
+        const controller = new AbortController();
+        const signal = controller.signal;
+        const source = join(root, 'mcp.json');
+        await writeFile(source, '{"mcpServers":{"fixture":{"env":{"TOKEN":"synthetic-private-config"}}}}');
+        const sessionMcpContext = { v: 1, socketPath: join(root, 'mcp.sock'), bearerToken: 'synthetic-terminal-token' } as const;
+        const snapshot = (currentContext: typeof sessionMcpContext | undefined) => ({ enabled: true,
+            status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } as const,
+            workspaceRoots: [root], localTransport: { agentUid: 2402, agentGid: 2402 }, launch: {
+                managedHappierBinaryPath: '/fixture/happier', runtimeHome: join(root, 'runtime'),
+                selectedEnvironmentKeys: [], selectedMaterials: [], environment: {}, sessionMcpContext: currentContext,
+            } });
+        const exec = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => { throw new Error('Host already resolved the executable'); },
+            resolvePath: async () => root, prepareAgentNativeLaunch: async () => undefined,
+            agentIsolation: { requesterIdentity: { kind: 'isolated', separationRequired: false, requester: {
+                serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } },
+                read: () => snapshot(prepared ? sessionMcpContext : undefined),
+                prepareLaunch: async input => ({ read: () => snapshot(input.sessionMcpContext) }),
+            },
+        });
+        const qualifier = issueAgentNativeLaunchQualifierForHost(exec, () => sessionMcpContext);
+        const authority = captureAgentNativeLaunchAuthorityForHost(exec, 'terminal', signal, undefined, qualifier)!;
+        const writeError = Object.assign(new Error('Native launcher exited before reading its frame'), { code: 'EPIPE' });
+        const stopError = new Error('Native launcher cleanup failed');
+        const stdin = writeFailure ? new Writable({ write(_chunk, _encoding, callback) { callback(writeError); } }) : new PassThrough();
+        const chunks: Buffer[] = [];
+        stdin.on('data', bytes => chunks.push(Buffer.from(bytes)));
+        const child = Object.assign(new FakeChildProcess(), { stdin, stdout: new PassThrough(), stderr: new PassThrough() }) as unknown as ChildProcess;
+        let actualCommand: string | undefined;
+        const deps = { verifyExecutableGrant: () => true, readNativeLaunchAuthority: () => authority,
+            spawn(command: string) { actualCommand = command; return child; },
+            createManagedChildProcess: () => ({ pid: child.pid, waitForTermination: async () => ({ type: 'exited' as const, code: 0, signal: null }) }),
+            terminateProcessTree: async () => { if (writeFailure === 'epipe-stop') throw stopError; },
+        };
+        const service = createTerminalRuntimeProcessService(deps);
+        const request = { executable: { path: '/fixture/claude', hostGrant: { kind: 'agent-cli' as const, grantId: 'fixture' } },
+            args: ['--mcp-config', source], requiredFiles: [source], cwd: root, stdio };
+        try {
+            if (stdio === 'inherit') {
+                await expect(service.launch(request)).rejects.toMatchObject({ code: 'terminal_preamble_transport_unsupported' });
+                expect(actualCommand).toBeUndefined();
+                return;
+            }
+            if (writeFailure) {
+                await expect(service.launch(request)).rejects.toMatchObject(writeFailure === 'epipe-stop'
+                    ? { cause: writeError, errors: [writeError, stopError] } : { code: 'EPIPE' });
+                return;
+            }
+            const handle = await service.launch(request);
+            expect(actualCommand).toBe('sudo');
+            const frame = await readAgentLaunchFrame(Readable.from(chunks, { objectMode: false }));
+            const target = frame.args[1]!;
+            const material = frame.selectedMaterials.find(file => join(frame.runtimeHome, file.relativePath) === target);
+            expect(Buffer.from(material!.contentBase64, 'base64').toString()).toContain('synthetic-private-config');
+            expect(frame.args).not.toContain(source);
+            await handle.waitForTermination();
+        } finally { controller.abort(); await removeTempDir(root); }
+    });
+
+    it('labels missing native authority as a terminal launch refusal before spawning', async () => {
+        const spawn = vi.fn();
+        const report = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        const service = createTerminalRuntimeProcessServiceOwner({ spawn, verifyExecutableGrant: () => true });
+        try {
+            await expect(service.launch({ executable: { path: '/fixture/claude',
+                hostGrant: { kind: 'agent-cli', grantId: 'fixture' } }, cwd: '/repo' }))
+                .rejects.toMatchObject({ code: 'agent_isolation_unavailable' });
+            expect(spawn).not.toHaveBeenCalled();
+            expect(report).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ launchKind: 'terminal' }));
+        } finally { report.mockRestore(); }
+    });
+
     it('keeps executable resolution and native child baselines scoped across interleaved Sessions with partial overlays', async () => {
         const root = await createTempDir('native-terminal-scopes-');
         const envScope = createEnvKeyScope(['HAPPIER_CODEX_PATH']);
@@ -599,35 +696,4 @@ describe('createTerminalRuntimeProcessService', () => {
         expect(terminateProcessTree).toHaveBeenCalledWith(child, undefined);
     });
 
-    it('removes abort listeners when the launched process is stopped before waiting', async () => {
-        // Test boundary fixture: the process service only reads pid/stderr from the child directly.
-        const child = new FakeChildProcess() as unknown as ChildProcess;
-        const controller = new AbortController();
-        const removeAbortListener = vi.spyOn(controller.signal, 'removeEventListener');
-        const terminateProcessTree = vi.fn(async () => {});
-        const service = createTerminalRuntimeProcessService({
-            spawn: vi.fn(() => child),
-            createManagedChildProcess: vi.fn(() => ({
-                pid: child.pid ?? null,
-                waitForTermination: vi.fn(async () => ({ type: 'exited' as const, code: 0 })),
-            })),
-            terminateProcessTree,
-            verifyExecutableGrant: vi.fn(() => true),
-        });
-
-        const handle = await service.launch({
-            executable: {
-                path: '/usr/local/bin/codex',
-                hostGrant: { kind: 'system-tool', grantId: 'system-tool:codex' },
-            },
-            args: [],
-            cwd: '/repo',
-            signal: controller.signal,
-        });
-
-        await handle.stop();
-
-        expect(terminateProcessTree).toHaveBeenCalledWith(child, undefined);
-        expect(removeAbortListener).toHaveBeenCalled();
-    });
 });

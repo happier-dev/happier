@@ -7,6 +7,9 @@ import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actio
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { HostAgentIsolationLaunchContext } from './agentIsolationLaunchPolicy';
 import { readAgentLaunchFrame, type AgentLaunchSelectedMaterial } from './agentLaunchFrame';
+import { createClaudeNativeSdkQueryContext } from '../../../../../packages/plugins/claude/src/agent/sdk/nativeExec';
+import { queryWithContext } from '../../../../../packages/plugins/claude/src/agent/sdk/query';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 
 const requesterIdentity = { kind: 'isolated', separationRequired: false, requester: {
   serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } } as const;
@@ -19,6 +22,43 @@ function context(root: string, selectedMaterials: readonly AgentLaunchSelectedMa
       selectedMaterials, environment,
     } }) };
 }
+
+it.skipIf(process.platform !== 'linux')('selects Claude generated MCP and startup files into the native launch instead of leaving host-private argv paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'required-claude-native-'));
+  const stopped = new Error('stop at the native process boundary');
+  let frame: Awaited<ReturnType<typeof readAgentLaunchFrame>> | undefined;
+  // OS boundary: finalize the real launch and decode its native stdin frame before sudo executes.
+  const exec = {
+    systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'claude-cli' }, executablePath: '/fixture/claude' }) },
+    clients: { spawn: async (spec: Parameters<ExecService['clients']['spawn']>[0]) => {
+      const launch = await authorizeResolvedProjectExecLaunchForHost({
+        launch: { command: '/fixture/claude', args: spec.launch.args ?? [],
+          requiredFiles: spec.launch.requiredFiles, cwd: root, env: spec.launch.env ?? {} },
+        agentIsolation: context(root, []), requesterIdentity, agentLaunchKind: 'workspaceExec',
+        signal: new AbortController().signal, assertCurrent() {},
+      });
+      try { frame = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble!], { objectMode: false })); }
+      finally { await launch.release(); }
+      throw stopped;
+    } },
+  } as unknown as ExecService;
+  const mcpServers = { happier: { type: 'stdio', command: '/fixture/happier', args: ['mcp', 'serve'] } };
+  const instructions = 'Keep this private startup text out of argv.';
+  const running = queryWithContext(createClaudeNativeSdkQueryContext(exec), { prompt: 'fixture', options: {
+    extraArgs: ['--mcp-config', JSON.stringify({ mcpServers })], appendSystemPrompt: instructions, appendSystemPromptFile: true,
+  } });
+  try {
+    await expect(running[Symbol.asyncIterator]().next()).rejects.toBe(stopped);
+    expect(frame).toBeDefined();
+    for (const [flag, contents] of [['--mcp-config', JSON.stringify({ mcpServers })], ['--append-system-prompt-file', instructions]]) {
+      const path = frame!.args[frame!.args.indexOf(flag!) + 1]!;
+      const material = frame!.selectedMaterials.find(file => join(frame!.runtimeHome, file.relativePath) === path);
+      expect(material, `${flag} must name a selected native file`).toBeDefined();
+      expect(Buffer.from(material!.contentBase64, 'base64').toString()).toBe(contents);
+    }
+    expect(frame!.args).not.toContain(instructions);
+  } finally { await running.dispose(); await rm(root, { recursive: true, force: true }); }
+});
 
 it.skipIf(process.platform !== 'linux')('keeps a missing generated source typed and nonretryable before native spawn', async () => {
   const root = await mkdtemp(join(tmpdir(), 'required-source-missing-'));

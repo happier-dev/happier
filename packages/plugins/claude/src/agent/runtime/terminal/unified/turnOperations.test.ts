@@ -516,11 +516,13 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
   it('delivers the startup plan through a private file on native resume and removes it on shutdown', async () => {
     const terminalHost = createTerminalHostFixture();
     const instructions = `ROLE\n${'雪 " $ \\'.repeat(8_000)}`;
+    const mcpServers = { fixture: { type: 'stdio', command: '/fixture/mcp', env: { TOKEN: 'synthetic-terminal-config' } } };
     const operations = createClaudeUnifiedTerminalProviderOperations({
       ctx: createPluginContextFixture(terminalHost.service, createEventsFixture().service),
       directory: '/tmp/claude-project', happierSessionId: 'happy-native-plan',
       hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
       startupInstructions: instructions,
+      mcpServers,
       launchIntent: { kind: 'resume_native', providerSessionId: 'claude-native-plan' },
       supportsSystemPromptSnapshotOff: true,
     });
@@ -532,6 +534,11 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       expect(args).toEqual(expect.arrayContaining(['--system-prompt-snapshot', 'off', '--resume', 'claude-native-plan']));
       path = args[args.indexOf('--append-system-prompt-file') + 1];
       expect(await readFile(path, 'utf8')).toBe(instructions);
+      const configPath = args[args.indexOf('--mcp-config') + 1];
+      const launch = terminalHost.service.createOrAttachHost.mock.calls[0]?.[0].launch;
+      expect(launch?.requiredFiles).toEqual(expect.arrayContaining([path, configPath]));
+      expect(await readFile(configPath, 'utf8')).toBe(JSON.stringify({ mcpServers }));
+      expect(JSON.stringify(args)).not.toContain('synthetic-terminal-config');
     } finally { await operations.disposeProviderSession(); }
     await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
   });

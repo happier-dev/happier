@@ -69,6 +69,7 @@ export function createClaudeNativeSdkQueryContext(
         launch: {
           executable: resolvedExecutable.executable,
           args: spec.launch.args,
+          ...(spec.launch.requiredFiles?.length ? { requiredFiles: spec.launch.requiredFiles } : {}),
           cwd: { root: 'workspace', relativePath: '' },
           ...(spec.launch.env ? { env: spec.launch.env } : {}),
         },

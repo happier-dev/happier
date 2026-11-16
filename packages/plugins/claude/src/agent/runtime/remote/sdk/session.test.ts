@@ -1053,9 +1053,11 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       exec: exec.service, sessionHooks: createSessionHooksFixture().service,
     });
     const instructions = 'RESOLVED_ROLE_AND_WORKER_PLAN';
+    const mcpServers = { fixture: { type: 'stdio', command: '/fixture/mcp' } };
     const operations = createClaudeAgentSdkProviderOperations({
       ctx, directory: '/tmp/claude-project', launchEnv: {}, permissionMode: 'default',
       startupInstructions: instructions, supportsSystemPromptSnapshotOff: true,
+      mcpServers,
       initialProviderSessionId: 'claude-native-plan', enableSessionResumability: true,
     });
     try {
@@ -1065,6 +1067,14 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       expect(args).not.toContain(instructions);
       expect(args).toEqual(expect.arrayContaining(['--resume', 'claude-native-plan', '--system-prompt-snapshot', 'off']));
       expect(await readFile(args[args.indexOf('--append-system-prompt-file') + 1], 'utf8')).toBe(instructions);
+      const presentation = await operations.prepareTerminalPresentation();
+      if (presentation.kind !== 'terminal_launch') throw new Error('Expected native terminal plan');
+      const plan = presentation.plan;
+      const promptFile = plan.argv[plan.argv.indexOf('--append-system-prompt-file') + 1];
+      const configFile = plan.argv[plan.argv.indexOf('--mcp-config') + 1];
+      expect(plan.requiredFiles).toEqual(expect.arrayContaining([promptFile, configFile]));
+      expect(await readFile(promptFile, 'utf8')).toBe(instructions);
+      expect(await readFile(configFile, 'utf8')).toBe(JSON.stringify({ mcpServers }));
     } finally { await operations.disposeProviderSession(); }
   });
 

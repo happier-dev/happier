@@ -64,6 +64,7 @@ export type ClaudeSdkJsonStreamClientSpec = Readonly<{
         kind: 'agent-cli';
         agentId: 'claude';
         args?: readonly string[];
+        requiredFiles?: readonly string[];
         cwd?: string;
         env?: Readonly<Record<string, string>>;
     }>;
@@ -621,6 +622,7 @@ export class ClaudeSdkQuery implements AsyncIterableIterator<SDKMessage> {
                     kind: 'agent-cli',
                     agentId: 'claude',
                     args: [...materializedMcpConfig.args, ...(startup?.args ?? [])],
+                    requiredFiles: [...materializedMcpConfig.requiredFiles, ...(startup?.requiredFiles ?? [])],
                     cwd: options.cwd,
                     env,
                 },

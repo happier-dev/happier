@@ -7,6 +7,7 @@ import { writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
 
 export type MaterializedClaudeMcpConfigArgs = Readonly<{
     args: string[];
+    requiredFiles: readonly string[];
     cleanup: () => Promise<void>;
 }>;
 
@@ -106,6 +107,7 @@ export function materializeClaudeMcpConfigArgsForSpawn(
     let cleanupPromise: Promise<void> | null = null;
     return {
         args,
+        requiredFiles: createdPaths,
         cleanup: () => {
             cleanupPromise ??= (async () => {
                 const errors: unknown[] = [];

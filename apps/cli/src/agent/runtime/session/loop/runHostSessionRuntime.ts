@@ -511,7 +511,7 @@ export type HostRuntimeReplacementLifecycle = Readonly<{
 }>;
 
 export type HostSessionRuntimeHookRuntime = SessionProviderInputOutcomePort & Readonly<{
-  readNativeAttachLaunchAuthority?: import('@/plugins/runtime/runtimeCore/plugin/sessionRuntimeHooks').PluginRuntimeHookOperations['readNativeAttachLaunchAuthority'];
+  readNativeLaunchAuthority?: import('@/plugins/runtime/runtimeCore/plugin/sessionRuntimeHooks').PluginRuntimeHookOperations['readNativeLaunchAuthority'];
   runScmCommand?: ScmCommandRunner;
   admitAgentSessionRealtimeInput?: import('@/plugins/runtime/runtimeCore/plugin/sessionRuntimeHooks').PluginRuntimeHookOperations['admitAgentSessionRealtimeInput'];
   readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;

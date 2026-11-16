@@ -702,6 +702,7 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
   it.each([true, false])('keeps process, projection, cancellation, and terminal-result ownership in the existing host orchestration (qualified=%s)', async (qualified) => {
     const resolveLaunch = vi.fn(async () => ({
       argv: ['terminal', '--model', 'fast'],
+      requiredFiles: ['/fixture/private-mcp.json'],
       environment: {
         values: { AGENT_MODE: 'terminal' },
         unset: ['REMOVE_ME'],
@@ -912,6 +913,7 @@ describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
         hostGrant: { kind: 'agent-cli', grantId: 'grant-1' },
       },
       args: ['host-prefix', 'terminal', '--model', 'fast'],
+      requiredFiles: ['/fixture/private-mcp.json'],
       cwd: '/repo',
       env: { HOST_ENV: 'one', ISOLATED_ENV: 'two', AGENT_MODE: 'terminal' },
       unsetEnvKeys: ['HOST_REMOVE', 'REMOVE_ME'],

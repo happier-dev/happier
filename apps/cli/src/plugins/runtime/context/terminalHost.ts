@@ -31,7 +31,7 @@ import { readHostProcessOwnerTag, withHostProcessOwnerEnvironment } from '@/proc
 import { createTerminalLaunchSpec, type TerminalLaunchSpec } from '@/terminal/host/launchSpec';
 import { createNativeProcessExitObserver } from '@/terminal/host/nativeProcessExit';
 import { matchesTerminalClientInvocation } from '@/terminal/host/terminalClientCustody';
-import { resolveTerminalHostCreationFailure, TerminalHostCreationError } from '@/integrations/terminal/host/errors';
+import { assertTerminalPreambleTransport, resolveTerminalHostCreationFailure, TerminalHostCreationError, TerminalPreambleTransportUnsupportedError } from '@/integrations/terminal/host/errors';
 import { createDefaultTerminalHostAdapterInventory } from '@/integrations/terminal/host/defaultAdapters';
 import { createPtyTerminalHostAdapter } from '@/terminal/pty/hostAdapter';
 import { resolveSessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
@@ -387,6 +387,8 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
         const prepareLaunch = request.finalizeNativeLaunch ? () => finalLaunchPromise ??= (async () => {
             try {
                 nativeLaunch = await request.finalizeNativeLaunch!();
+                assertTerminalPreambleTransport(nativeLaunch.stdinPreamble,
+                    !request.preparedLaunch && !currentHandle && resolution.adapter.nativePreambleTransport === 'pty');
                 try { request.signal?.throwIfAborted(); }
                 catch (error) {
                     await nativeLaunch.release();
@@ -409,12 +411,13 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
                     // The complete native export already applied removals. Neither a
                     // terminal server nor the runner's ambient env may revive them.
                     unsetEnvKeys: [], isolatedEnv: true,
+                    ...(nativeLaunch.stdinPreamble?.byteLength ? { stdinPreamble: nativeLaunch.stdinPreamble } : {}),
                     ...(nativeLaunch.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
                 };
             } catch (error) {
                 // Public terminal services retain the original typed refusal;
                 // only the private prepared owner has a staged handoff to retire.
-                if (!request.preparedLaunch) throw error;
+                if (!request.preparedLaunch || error instanceof TerminalPreambleTransportUnsupportedError) throw error;
                 // This exact callback precedes adapter submission. Later create
                 // failures still retain their own physical/uncertain disposition.
                 throw new TerminalHostCreationError([error], 'Native launch admission failed before terminal creation', {
@@ -573,6 +576,7 @@ function createPluginTerminalHostOwner(params: CreatePluginTerminalHostServicePa
                 ...(binding?.exec ? {
                     finalizeNativeLaunch: () => authorizeResolvedAgentNativeExecLaunchForHost(binding.exec!, {
                         command: launch.command, args: spawnArgv.slice(1), cwd: request.workingDirectory, env: spawnEnv,
+                        ...(request.launch.requiredFiles?.length ? { requiredFiles: request.launch.requiredFiles } : {}),
                     }, binding.signal, binding.nativeLaunch, 'terminal'),
                     ...(binding.signal ? { signal: binding.signal } : {}),
                 } : {}),

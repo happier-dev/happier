@@ -169,9 +169,10 @@ export type HostAgentNativeLaunchAuthority = Readonly<{
     authorize(launch: ResolvedHostExecLaunch, signal?: AbortSignal): Promise<HostAuthorizedPluginExecLaunch>;
 }>;
 
-export function requireAgentNativeLaunchAuthorityForHost(authority: HostAgentNativeLaunchAuthority | null | undefined): HostAgentNativeLaunchAuthority {
+export function requireAgentNativeLaunchAuthorityForHost(authority: HostAgentNativeLaunchAuthority | null | undefined,
+    kind: HostAgentIsolationLaunchKind = 'attach'): HostAgentNativeLaunchAuthority {
     if (!authority) assertHostRequesterExecutionAdmissionForHost({
-        identity: { kind: 'unknown', reason: 'requester_authority_unavailable' }, agentLaunchKind: 'attach',
+        identity: { kind: 'unknown', reason: 'requester_authority_unavailable' }, agentLaunchKind: kind,
     });
     // The canonical unknown admission above always throws.
     return authority!;
@@ -179,14 +180,15 @@ export function requireAgentNativeLaunchAuthorityForHost(authority: HostAgentNat
 
 export function captureAgentNativeLaunchAuthorityForHost(service: ExecService,
     kind: HostAgentIsolationLaunchKind, lifetime?: AbortSignal,
-    readMcpLaunchMaterial?: () => McpLaunchMaterial): HostAgentNativeLaunchAuthority | null {
+    readMcpLaunchMaterial?: () => McpLaunchMaterial,
+    nativeLaunch?: AgentNativeLaunchQualifier): HostAgentNativeLaunchAuthority | null {
     const authority = INTERNAL_RESOLVED_AGENT_LAUNCH_AUTHORIZERS.get(service);
     if (!authority) return null;
     const capturedSignal = lifetime && lifetime !== authority.signal ? AbortSignal.any([authority.signal, lifetime]) : authority.signal;
     const combined = (signal?: AbortSignal) => signal ? AbortSignal.any([capturedSignal, signal]) : capturedSignal;
     return Object.freeze({ signal: capturedSignal,
         admit: signal => authority.admit(kind, combined(signal)),
-        authorize: (launch, signal) => authorizeResolvedAgentNativeExecLaunchForHost(service, launch, combined(signal), undefined, kind,
+        authorize: (launch, signal) => authorizeResolvedAgentNativeExecLaunchForHost(service, launch, combined(signal), nativeLaunch, kind,
             readMcpLaunchMaterial?.()),
     });
 }

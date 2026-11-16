@@ -6294,8 +6294,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     ...(toolExecutionCapability === 'interceptable' ? {
                         setBeforeToolExecution: (handler: ((toolName: string) => Promise<void>) | null) => { beforeToolExecution = handler; },
                     } : {}),
-                    readNativeAttachLaunchAuthority: () => signal.aborted ? null
-                        : captureAgentNativeLaunchAuthorityForHost(services.exec, 'attach', signal),
+                    readNativeLaunchAuthority: (kind: 'attach' | 'terminal') => signal.aborted ? null
+                        : captureAgentNativeLaunchAuthorityForHost(services.exec, kind, signal, undefined, kind === 'terminal' ? nativeLaunch : undefined),
                     readActiveTurnAdmissionWitness: () => readActiveTurnAdmissionWitness(),
                     getRuntimeLifetimeSignal: () => signal,
                     readSessionStartupInstructions: () => startupInstructions,
@@ -6501,7 +6501,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                             reportSessionMetadataToDaemon: params.reportSessionMetadataToDaemon ?? reportSessionToDaemonIfRunning,
                             runtime,
                             attach,
-                            readNativeAttachLaunchAuthority: () => runtime.readNativeAttachLaunchAuthority?.() ?? null,
+                            readNativeAttachLaunchAuthority: () => runtime.readNativeLaunchAuthority?.('attach') ?? null,
                             workingDirectory: runtimeParams.directory,
                             session: runtimeParams.session,
                             ...(hostPresentation ? {
@@ -6554,6 +6554,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     messageQueue: runtimeParams.messageQueue,
                     session: runtimeParams.session,
                     projection: terminalProjection,
+                    readNativeLaunchAuthority: () => runtime.readNativeLaunchAuthority?.('terminal') ?? null,
                     verifyExecutableGrant: executableGrants.verifyGrant,
                     registerExecutableGrant: executableGrants.register,
                     ...(currentTerminalTranscriptFollowService

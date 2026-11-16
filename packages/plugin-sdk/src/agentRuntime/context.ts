@@ -383,6 +383,8 @@ export type AgentTerminalHostLaunchInput = Readonly<{
   kind: 'agent-cli';
   agentId: string;
   args?: readonly string[];
+  /** Host-side launch dependencies selected into the native Agent identity. */
+  requiredFiles?: readonly string[];
   cwd?: string;
   env?: Readonly<Record<string, string>>;
   unsetEnvKeys?: readonly string[];
