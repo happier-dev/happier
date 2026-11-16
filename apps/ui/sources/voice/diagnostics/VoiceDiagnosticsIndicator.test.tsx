@@ -7,6 +7,7 @@ import { createMachineFixture, registerStandardCleanupTarget, renderScreen, rend
 import { createDiagnosticsTestEvents } from './diagnosticsTestEvents';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { VoiceSpeechDiagnosticsConfigureRequestV1Schema, VoiceSpeechDiagnosticsRevokeCaptureRequestV1Schema, VoiceSpeechDiagnosticsStatusResponseV1Schema,
@@ -102,11 +103,13 @@ function VoiceDiagnosticsIndicator(props: React.ComponentProps<typeof Indicator>
     const machines = ['m1', 'm2'].map(id => createMachineFixture({ id, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, active: runtimeState.isOnline,
       activeAt: runtimeState.isOnline ? Date.now() : 0, daemonStateVersion: runtimeState.daemonStateVersion,
       daemonState: { status: 'running', startedAt: runtimeState.daemonStateVersion } }));
+    publishMachineActivityForTest(machines);
     storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
       machineListByServerId: { [home.homes.diagnostics!.id]: machines } });
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ diagnostics,
       executionMachine: { mode: 'fixed', machineId: machineState.machineId } }) }, storage.getState().settings));
-  });
+  }, [props.sessionId, runtimeState.isOnline, runtimeState.daemonStateVersion, machineState.machineId,
+    diagnostics.enabled, diagnostics.consentVersion, diagnostics.captureSttInput, diagnostics.captureTtsOutput]);
   return React.createElement(Indicator, props);
 }
 
@@ -193,7 +196,7 @@ describe('VoiceDiagnosticsIndicator', () => {
     revokeState.pending = null;
     resetVoiceDiagnosticsSessionPolicyForTests();
     const machine = createMachineFixture({ id: 'm1', activeAt: Date.now() });
-    storage.setState({ machines: { m1: machine }, machineListByServerId: { [home.homes.diagnostics!.id]: [machine] } });
+    await publishMachineInventoryForTest({ serverId: home.homes.diagnostics!.id, accountId: 'account-a' }, [machine]);
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: voiceSettingsParse({ diagnostics,
       executionMachine: { mode: 'fixed', machineId: 'm1' } }) }, storage.getState().settings));
     const readiness = await renderHook(() => useMachineCliDetectionTarget('m1'));

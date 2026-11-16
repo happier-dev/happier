@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, createSessionFixture, createMachineFixture } from '@/dev/testkit';
+import { createDeferred, createSessionFixture, createHydratedPlainMachineFixture } from '@/dev/testkit';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createVoiceSpeechOutputBoundary } from '@/dev/testkit/harness/voiceSpeechOutputBoundary';
 import { parseModelPackManifest } from '@happier-dev/protocol/voice/modelPacks/manifest';
@@ -58,7 +59,8 @@ describe('speakAssistantText', () => {
     primeServerFeaturesSnapshot({ serverId: getActiveServerSnapshot().serverId, snapshot: {
       status: 'ready', features: speechServerFeatures,
     } });
-    const machine = createMachineFixture({ id: 'speech-machine', activeAt: Date.now() });
+    const machine = createHydratedPlainMachineFixture({ id: 'speech-machine', accountId: 'speech-account', machine: { activeAt: Date.now() } });
+    publishMachineActivityForTest([machine]);
     storage.setState({ machines: { ...initialMachines, [machine.id]: machine },
       machineListByServerId: { ...initialMachineLists, [account.home.id]: [machine] } });
     storage.getState().applySettingsLocal({ voice: { ...storage.getState().settings.voice,
