@@ -59,7 +59,7 @@ export async function runBoundSessionSetup(input: Readonly<{
         sourceFacts[origin] = { ...observed[origin], ...sourceFacts[origin] };
         if (input.savedSecrets) secrets = await prepareMachineSetupSecretEnvironment({ ...input.savedSecrets,
             sources: execution.sources, signal, isCurrent: async () => !signal.aborted });
-        operation.operationOwnerUpdate.update({ progress: { kind: 'phase', phase: 'setup', label: 'Running setup' } });
+        operation.operationOwnerUpdate.update({ progress: { phase: 'setup', label: 'Running setup' } });
         const result = await applyBoundMachineSetup({ homeId: machine.homeId, controllerMachineId: machine.controller.machineId,
             requesterAccountId: input.requesterAccountId, userHomeDirectory: platform.home, setup: input.setup, recipePlans,
             sourceChange: { currentSources: sources, sources, currentExclusions: [], currentSourceFacts: input.sourceFacts, mode: 'recovery' },

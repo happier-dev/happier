@@ -23,6 +23,7 @@ import type { ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/ma
 import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import type { AdmittedManagedProviderOperationExecutionRequest } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import type { ManagedNativeCredentialInvocationBinding, PluginExternalActionContext } from '@/plugins/runtime/invocation/services/types';
@@ -616,7 +617,8 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                     const preparedLaunch = readMachineProvisionerPreparedLaunchV1({ provisioner: retainedProvisioner.identity,
                         descriptor: retainedProvisioner.definition, artifact: decision.artifact });
                     if (!preparedLaunch.success) throw new ManagedMachineControllerError('provider_unavailable');
-                    launch = { ...launch, choices: preparedLaunch.data };
+                    // Retained launch wire values use the canonical mutable JSON vocabulary.
+                    launch = { ...launch, choices: PluginJsonValueV2Schema.parse(preparedLaunch.data) };
                     preparationExecution = { launch, binaryPath: decision.binaryPath,
                         ...(decision.deferredSetup === undefined ? {} : { deferredSetup: decision.deferredSetup }) };
                 }

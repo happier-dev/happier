@@ -1131,7 +1131,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           sessionCreationCorrespondence: correspondence,
           ...(requestedConfigurationSnapshot?.nativeSandbox !== undefined
             ? { authoredNativeSandbox: requestedConfigurationSnapshot.nativeSandbox } : {}),
-          ...(prepareSessionIsolation ? { prepareSessionIsolation } : {}),
+          prepareSessionIsolation,
           organizationPlacement: normalizedPlacement,
           ...(placementOrigin && placementOriginSupported ? { placementOrigin } : {}),
           ...(managedTargetPlacement ? { managedTargetPlacement } : {}),

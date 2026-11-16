@@ -12,7 +12,7 @@ import type { WorkflowActionExecute } from '@happier-dev/protocol/actions/execut
 import { isWorkflowTriggerAgentCallerV1, type WorkflowTriggerActionsDependencies } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 import type { AutomationTemplateRetainedSessionV1 } from '@happier-dev/protocol/automations/automationTemplateStoredV1';
 import { WorkflowStepExecutionSelectionSchema } from '@happier-dev/protocol/workflows/workflowV1';
-import { ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import {
     createAccountWorkflowTriggerActions,
     createWorkflowActionExecutor,
@@ -375,7 +375,7 @@ export function createUiWorkflowAction(params: Readonly<{
             }, { includeAuth: false });
             account.assertCurrent();
             if (!response.ok) targetUnavailable();
-            return ManagedGetOutputV1Schema.parse(await response.json());
+            return unwrapManagedMachineReadV1(ManagedGetOutputV1Schema.parse(await response.json()));
         },
         pullRequests: {
             listLinks: async (sessionId, caller) => {

@@ -66,6 +66,7 @@ import {
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
@@ -590,6 +591,39 @@ function savedAutomationReceipt(automationId: string) {
 }
 
 describe('UI Workflow Action front door', () => {
+    it.each(['full', 'opaque'] as const)('saves a controller trigger from a %s Managed read and refuses a different controller', async format => {
+        const h = await createHarness('plain', { identity: true });
+        try {
+            const homeId = h.account.serverIdentityId;
+            if (!homeId) throw new Error('Expected authenticated Home identity');
+            const request = runtimeFetch.getMockImplementation()!;
+            let controllerMachineId = 'different-controller';
+            runtimeFetch.mockImplementation(async (url, init) => {
+                if (new URL(String(url)).pathname !== managedMachineActionEndpointPathV1('machines.managed.get')) return request(url, init);
+                const row = { id: 'managed-trigger', homeId, custodianAccountId: accountId,
+                    controller: { machineId: controllerMachineId, installationId: 'controller-install' }, enrolledMachineId: 'guest-machine',
+                    allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+                    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+                return json(ManagedGetOutputV1Schema.parse(format === 'opaque' ? {
+                    machine: { ...row, preset: { id: 'preset-trigger', revision: 1, contentEncryptionMode: 'e2ee' } },
+                    presetContent: { content: { t: 'encrypted', c: encodeBase64(new Uint8Array(40), 'base64') }, recipientEnvelope: null },
+                } : { ...row, launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+                    resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} } }));
+            });
+            const input = { project: { machineId: 'machine-a', directory: '/repo' }, trigger: scheduleTrigger,
+                target: { kind: 'inline' as const, definition: validateWorkflowDefinition({ version: 1, blocks: [{ kind: 'action', id: 'stop',
+                    actionId: 'machines.managed.power.set', input: { homeId: { kind: 'literal', value: homeId },
+                        managedId: { kind: 'literal', value: 'managed-trigger' }, when: { kind: 'literal', value: 'after-idle' },
+                        intent: { kind: 'literal', value: 'stop' } },
+                }] }).normalizedDefinition! } };
+            await expect(h.execute('workflow.trigger.add', input, h.context)).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            expect(h.automationRows.size).toBe(0);
+            controllerMachineId = 'machine-a';
+            const saved = await h.execute('workflow.trigger.add', input, h.context);
+            expect(saved, JSON.stringify(saved)).toMatchObject({ ok: true, result: { set: { project: input.project } } });
+            expect(h.automationRows.size).toBe(1);
+        } finally { h.account.dispose(); }
+    });
     it.each(['plain', 'e2ee'] as const)('saves person action approval without %s captured-Home deployment content reads through the UI factory', async mode => {
         const h = await createHarness(mode, { identity: true });
         const detail = createDeploymentEnvironmentDetailV1();
