@@ -168,7 +168,8 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
         if (props.presetOnly) return [{ id: buildQualifiedPluginContributionKey(provisioner.contribution), title: titleOf(provisioner),
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
             location: local ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
-            acquire: provisioner.acquireExecutionTarget === 'daemon' ? 'daemon' : 'account', mark: (size: number) => markFor(provisioner, size),
+            acquire: provisioner.acquireExecutionTarget === 'daemon' ? 'daemon' : 'account', canSetUpHere: true,
+            mark: (size: number) => markFor(provisioner, size),
             status: { tone: 'none', label: '' }, action: { kind: 'choose', label: t('managedMachines.add.action.choose'),
                 onPress: () => open(buildQualifiedPluginContributionKey(provisioner.contribution), undefined), disabled: !catalog.isCurrentFor(buildQualifiedPluginContributionKey(provisioner.contribution)) } }];
         const location = provisioner.descriptor.billing.location;
@@ -200,7 +201,10 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
         return [{ id, title,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
             location: local ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
-            acquire: placement.executionTarget, mark: (size: number) => markFor(provisioner, size),
+            acquire: placement.executionTarget,
+            canSetUpHere: placement.available && !placement.requiresController
+                && (readiness.canConfigure || readiness.kind === 'unavailable' || repairAction !== undefined),
+            mark: (size: number) => markFor(provisioner, size),
             repairFailure: repairFailure?.id === id && repairFailure.binding === catalog.binding
                 && repairFailure.controller?.machineId === controller?.machineId
                 && repairFailure.controller?.installationId === controller?.installationId ? repairFailure.outcome : undefined,

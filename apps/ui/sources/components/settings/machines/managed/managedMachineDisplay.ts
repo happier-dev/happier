@@ -31,6 +31,8 @@ export type ManagedProvisionerCard = Readonly<{
   enrollmentRole?: MachineProvisionersListResultV1['provisioners'][number]['descriptor']['enrollmentRole'];
   /** Where it runs, from the placement owner (`readMachineProvisionerHostAvailability`): the Account, or one of your computers. */
   acquire: 'account' | 'daemon';
+  /** Native placement/readiness permits setup here, independently of a catalog refresh disabling admission. */
+  canSetUpHere: boolean;
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;
   repairFailure?: ManagedProvisionerRepairFailure;
   /**

@@ -15,7 +15,7 @@ const { SelectionTiles } = await import('@/components/ui/forms/SelectionTiles');
 afterEach(() => standardCleanup());
 
 function card(id: string, action: ManagedProvisionerCard['action'], status: ManagedProvisionerCard['status']): ManagedProvisionerCard {
-  const value = { id, title: id, kind: 'VM', description: `${id} machines`, mark: () => null, location: 'cloud' as const, acquire: 'account' as const, status, action };
+  const value = { id, title: id, kind: 'VM', description: `${id} machines`, mark: () => null, location: 'cloud' as const, acquire: 'account' as const, canSetUpHere: true, status, action };
   return value;
 }
 

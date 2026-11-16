@@ -29,6 +29,7 @@ function card(
     mark: () => null,
     location: 'cloud',
     acquire: 'account',
+    canSetUpHere: true,
     status,
     action,
   };
