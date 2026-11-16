@@ -48,7 +48,7 @@ export async function answerDeploymentTargetInspectForHome(params: Readonly<{
 
 /** A third-party plugin declaring two runtime platforms, Alpha and Beta, through the public deployment target contract. */
 export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: (name: string, input: JsonValue) => Promise<void> = async () => {},
-  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean }> = {}) {
+  options: Readonly<{ emptyChoices?: boolean; upload?: boolean; create?: boolean; teardown?: boolean }> = {}) {
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
   const execution = DEPLOYMENT_TARGETS_TEST_EXECUTION;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
@@ -108,14 +108,18 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
       deploy: { ...lifecycle, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.deploy.jsonSchema },
       ...(options.upload ? { upload: { ...lifecycle, execution: { target: 'daemon' },
         inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.uploadDeploy.jsonSchema } } as const : {}),
-      observe: { ...lifecycle, dangerLevel: 'safe', readOnly: true, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.observe.jsonSchema } },
+      observe: { ...lifecycle, dangerLevel: 'safe', readOnly: true, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.observe.jsonSchema },
+      ...(options.teardown ? { 'teardown-beta': { ...lifecycle, title: 'Delete the linked Beta project', dangerLevel: 'writesRemote',
+        confirmation: { title: 'Delete this Beta project and its deployments?' },
+        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1.teardown.jsonSchema } } as const : {}) },
     deploymentTargets: {
       alpha: { role: 'runtime', title: 'Alpha runtime', targetKind: 'alpha', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
         actions: { inspect: 'inspect-alpha', link: 'link', deploy: 'deploy', observe: 'observe' } },
       beta: { role: 'runtime', title: 'Beta runtime', targetKind: 'beta', icon: 'server-outline', targetSchema: closed, linkSchema: closed,
         actions: { inspect: 'inspect-beta', link: 'link', deploy: 'deploy', observe: 'observe',
           ...(options.create ? { create: 'create-beta' } : {}),
-          ...(options.upload ? { uploadDeploy: 'upload' } : {}) } },
+          ...(options.upload ? { uploadDeploy: 'upload' } : {}),
+          ...(options.teardown ? { teardown: 'teardown-beta' } : {}) } },
     },
   });
 }

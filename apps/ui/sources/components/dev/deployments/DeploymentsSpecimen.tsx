@@ -15,6 +15,7 @@ import {
 
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { ProjectDeploymentsView } from '@/components/projects/deployments/ProjectDeploymentsBody';
+import { showDeploymentDispositionSheet, type DeploymentDispositionSheetInput } from '@/components/projects/deployments/DeploymentDispositionSheet';
 import { HappyError } from '@/utils/errors/errors';
 import { useAllMachines } from '@/sync/store/hooks';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
@@ -635,6 +636,37 @@ function specimenActions(deploy: string, restore: string | undefined) {
   };
 }
 
+/**
+ * `?removal=` opens the Delete/Unlink review over one target the way the Environment page builds it: a resource
+ * Happier created (starts on Delete), a linked one (starts on Unlink), a provider that declares no delete, a Machine.
+ */
+const SPECIMEN_REMOVALS: Readonly<Record<string, Omit<DeploymentDispositionSheetInput, 'run' | 'onApproval' | 'onDone'>>> = {
+  created: { subject: { kind: 'target', targetLinkId: 'link-vercel' }, name: 'Production', machine: null, provider: 'Vercel',
+    running: true, hasRetainedAssociations: true, canRemove: true,
+    providerResource: { name: 'acme-web', consequence: 'Delete this Vercel project and its deployments?', defaultChoice: 'delete' } },
+  linked: { subject: { kind: 'target', targetLinkId: 'link-workers' }, name: 'Production', machine: null, provider: 'Cloudflare Workers',
+    running: true, hasRetainedAssociations: true, canRemove: true,
+    providerResource: { name: 'acme-api', consequence: 'Delete this Cloudflare Worker or Preview and its associated resources?',
+      defaultChoice: 'unlink' } },
+  environment: { subject: { kind: 'environment' }, name: 'Staging', machine: null, provider: 'Vercel',
+    running: true, hasRetainedAssociations: true, canRemove: true,
+    providerResource: { name: 'acme-web-staging', consequence: 'Delete this Vercel project and its deployments?', defaultChoice: 'delete' } },
+  nodelete: { subject: { kind: 'target', targetLinkId: 'link-pages' }, name: 'Docs', machine: null, provider: 'Cloudflare Pages',
+    running: true, hasRetainedAssociations: true, canRemove: false,
+    providerResource: { name: 'acme-docs', consequence: null, defaultChoice: 'unlink' } },
+  machine: { subject: { kind: 'target', targetLinkId: 'link-machine' }, name: 'Production', machine: 'vps-fra-1',
+    running: true, services: ['web', 'worker', 'postgres'], hasRetainedAssociations: true, canRemove: true },
+};
+
+function useSpecimenRemoval(removal: string | undefined) {
+  React.useEffect(() => {
+    const input = removal ? SPECIMEN_REMOVALS[removal] : undefined;
+    if (!input) return;
+    showDeploymentDispositionSheet({ ...input, onApproval: () => {}, onDone: () => {},
+      run: async () => { await pause(); return { kind: 'refused', reason: 'other', code: 'deployment_conflict' }; } });
+  }, [removal]);
+}
+
 /** A Home/Account that stays current for the specimen's lifetime, so the Variables draft is editable. */
 const SPECIMEN_LIFETIME = {
   scope: { serverId: 'home', accountId: ACCOUNT },
@@ -644,8 +676,9 @@ const SPECIMEN_LIFETIME = {
 
 export function DeploymentsSpecimen(
   props: Readonly<{ state: string; receipt: string; deploy?: string; machine?: string; cancellable?: string; tabs?: string;
-    restore?: string; preview?: string }>,
+    restore?: string; preview?: string; removal?: string }>,
 ) {
+  useSpecimenRemoval(props.removal);
   // A real Machine of the signed-in Account: `?machine=` names one, else the longest name (the hardest wrap).
   const wanted = props.machine?.toLowerCase() ?? null;
   const machineId = useAllMachines((machines) => {

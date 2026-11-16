@@ -592,6 +592,29 @@ describe('Environment deletion client over the Action owner', () => {
         expect(homes.requestsFor('/v1/actions/deployments.teardown')).toHaveLength(running ? 0 : 1);
     });
 
+    it.each(['target', 'environment'] as const)('carries the chosen provider deletion for a %s subject', async subject => {
+        const f = await setup();
+        const inputs: unknown[] = [];
+        await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',
+            machineId: f.detail.environment.controllerMachineId!, installationId: 'installation-controller', tokenEpoch: 0,
+            requesterInvocation: 'required', execute: input => { inputs.push(input); return { ok: true, environmentId: f.detail.environment.id,
+                revision: f.detail.environment.revision + 3, deploymentId: 'teardown-3', deploymentRevision: 1, state: 'succeeded',
+                environmentRemoved: subject === 'environment' }; } });
+        const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: f.detail.environment.id,
+            lifetime: f.lifetime, snapshot: { status: 'ready', value: f.detail, failure: null }, actions: f.actions,
+            controller: null, demand: shown }));
+        const link = f.detail.targetLinks[0]!.targetLink.id;
+        await act(async () => {
+            await (subject === 'target'
+                ? hook.getCurrent().stopAndRemove(link, undefined, undefined, { providerRemoval: 'delete', removeEnvironment: false })
+                : hook.getCurrent().stopAndRemove(null, undefined, undefined, { providerRemoval: 'delete' }));
+        });
+        // Deleting only the target's resource keeps the Environment; deleting the Environment removes it after.
+        expect(inputs).toEqual([expect.objectContaining({ targetLinkId: link, providerRemoval: 'delete',
+            ...(subject === 'environment' ? { removeEnvironment: true } : {}) })]);
+        if (subject === 'target') expect(inputs[0]).not.toHaveProperty('removeEnvironment');
+    });
+
     it('returns a teardown that is still running as its receipt and removes nothing yet', async () => {
         const f = await setup();
         await answerExternalActionAccountForHome(homes, f.serverId, { actionId: 'deployments.teardown',

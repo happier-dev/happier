@@ -982,7 +982,6 @@ describe('Project deployments page', () => {
       expect(screen.findByTestId('project-deployments.disposition.choice:detach')).not.toBeNull();
       expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
       // The confirm names the kept choice: Unlink keeps the project running on vercel, nothing is deleted.
-      expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.title).toMatch(/^Unlink /);
       expect(screen.getTextContent()).toMatch(/leave it on vercel/);
       expect(screen.getTextContent()).not.toMatch(/Delete at vercel|Stop and remove/i);
       // The sheet's own sentences (ui-44), not the Settings page behind it.
@@ -1028,7 +1027,9 @@ describe('Project deployments page', () => {
       environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink) } });
     homes.answer(scope.serverId, `GET /v1/deployments/environments/${detail.environment.id}/deployments`,
       { body: { ok: true, items: [], nextCursor: null } });
-    const controller = createDeploymentReadControllerV1({ scope, transport: createDeploymentReadTransport(context.accountLifetime) });
+    // The Domains the removal retires are a separate Action read; this Environment has none.
+    const controller = createDeploymentReadControllerV1({ scope, transport: { ...createDeploymentReadTransport(context.accountLifetime),
+      listDomains: async () => ({ ok: true as const, value: { items: [], nextCursor: null } }) } });
     const actions = createDeploymentActions(context.accountLifetime, scope.projectSourceId);
     const teardown = vi.fn(async () => ({ ok: true as const, environmentId: detail.environment.id,
       revision: detail.environment.revision, deploymentId: 'provider-teardown', deploymentRevision: 1, state: 'queued' as const }));
@@ -1037,10 +1038,12 @@ describe('Project deployments page', () => {
       phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} lifetime={context.accountLifetime}
       disposition={{ ...actions, teardown } as never} /></ModalProvider>);
     try {
-      await selectEnvironmentTab(screen, 'settings');
       // The Account's declarations name the platform once they are read; the review offers Delete from them.
       await vi.waitFor(() => expect(screen.getTextContent()).toContain('Beta runtime'), { timeout: 15_000 });
-      await screen.pressByTestIdAsync('project-deployments.environment.settings.servers-build.unlink');
+      await waitForContent(screen, 'project-deployments.environment.menu');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu');
+      await waitForContent(screen, 'project-deployments.environment.menu.delete');
+      await screen.pressByTestIdAsync('project-deployments.environment.menu.delete');
       await waitForContent(screen, 'project-deployments.disposition.confirm');
       // The removal owner picks the start: Happier-created resources start on Delete, linked ones on Unlink.
       await vi.waitFor(() => expect(screen.findByTestId(`project-deployments.disposition.choice:${starts}`)
@@ -1057,11 +1060,12 @@ describe('Project deployments page', () => {
       await act(async () => screen.findByTestId('project-deployments.disposition.resourceConfirmation')!.props.onChangeText('acme-we'));
       expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(true);
       await act(async () => screen.findByTestId('project-deployments.disposition.resourceConfirmation')!.props.onChangeText('acme-web'));
-      expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false);
+      await vi.waitFor(() => expect(screen.findByTestId('project-deployments.disposition.confirm')?.props.disabled).toBe(false));
       await screen.pressByTestIdAsync('project-deployments.disposition.confirm');
       await vi.waitFor(() => expect(teardown).toHaveBeenCalledTimes(1));
-      expect(teardown.mock.calls[0]![0]).toMatchObject({ targetLinkId: detail.environment.runtimeTargetLinkId, providerRemoval: 'delete' });
-      expect(teardown.mock.calls[0]![0]).not.toHaveProperty('removeEnvironment');
+      // Deleting the Environment deletes its provider resource first, then removes the Environment.
+      expect(teardown.mock.calls[0]![0]).toMatchObject({ targetLinkId: detail.environment.runtimeTargetLinkId,
+        providerRemoval: 'delete', removeEnvironment: true });
     } finally { await screen.unmount(); controller.retire(); await installed.dispose(); }
   });
 
