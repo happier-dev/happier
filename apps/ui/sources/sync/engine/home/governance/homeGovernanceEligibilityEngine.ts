@@ -1,7 +1,7 @@
 import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { HomeGovernanceEligibilityV1Schema } from '@happier-dev/protocol/home/governance/projection';
 
-import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
+import type { HomeActionFailure } from '@/sync/ops/home/homeActionOutcome';
 import { queryHomeGovernanceAction } from '@/sync/ops/home/homeGovernanceActionExecution';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -22,10 +22,11 @@ function targetFor(scope: ServerAccountScope): EligibilityTarget {
     return { key: serverAccountScopeKeySuffix(scope), serverId: scope.serverId, scope };
 }
 
-function toSnapshotError(failure: HomeDomainFailure): ScopedSnapshotError {
+function toSnapshotError(failure: HomeActionFailure): ScopedSnapshotError {
     return {
         kind: failure.kind === 'conflict' || failure.kind === 'outcome_unknown' ? 'unknown' : failure.kind,
         retryable: failure.retryable,
+        code: failure.code,
     };
 }
 

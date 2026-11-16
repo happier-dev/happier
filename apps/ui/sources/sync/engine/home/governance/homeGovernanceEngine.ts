@@ -1,6 +1,6 @@
 import { HomeGovernanceProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 
-import type { HomeDomainFailure } from '@/sync/api/home/homeServerActionTransport';
+import type { HomeActionFailure } from '@/sync/ops/home/homeActionOutcome';
 import { queryHomeGovernanceAction } from '@/sync/ops/home/homeGovernanceActionExecution';
 import {
     serverAccountScopeKeySuffix,
@@ -41,7 +41,7 @@ function targetFor(scope: ServerAccountScope): HomeGovernanceTarget {
  * from this read-only projection; it is reported as `unknown` rather than
  * silently reinterpreted as a denial.
  */
-function toSnapshotError(failure: HomeDomainFailure): HomeGovernanceSnapshotError {
+function toSnapshotError(failure: HomeActionFailure): HomeGovernanceSnapshotError {
     // Setup-required is a typed recovery state, but it also withdraws any
     // retained administration projection. Classifying it as authoritative at
     // this domain boundary prevents Refresh from briefly revealing obsolete

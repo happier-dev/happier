@@ -75,6 +75,19 @@ describe.each(readers)('$actionId snapshot Action admission', reader => {
         } finally { decision.resolve(false); release(); }
     });
 
+    it('retains a canceled Action approval as the exact snapshot refusal without reading the Home', async () => {
+        const scope = await setup('ask');
+        vi.spyOn(Modal, 'confirm').mockResolvedValue(false);
+        const release = reader.observe(scope);
+        try {
+            await waitForHomeGovernance(() => expect(reader.snapshot(scope)).toMatchObject({
+                status: 'error', data: null,
+                error: { kind: 'forbidden', retryable: false, code: 'approval_canceled' },
+            }));
+            expect(homes.requestsFor(reader.path)).toHaveLength(0);
+        } finally { release(); }
+    });
+
     it('does not dispatch an Ask read after its last observer leaves', async () => {
         const scope = await setup('ask');
         const decision = createDeferred<boolean>();
