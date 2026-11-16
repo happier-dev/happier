@@ -5,6 +5,7 @@ import type {
 import { DEFAULT_SIMULATOR_STREAM_CONTROLS_V1 } from '@happier-dev/protocol/devices/simulator/v1';
 
 import { defaultSimulatorToolRunner, type SimulatorToolRunner } from '../process';
+import { getSimulatorDeviceOperationCapabilities } from '../operations/capabilities';
 import { createIosSimulatorUnavailableHealth } from './diagnostics';
 import {
     resolveIosSimulatorHelperArtifact,
@@ -25,6 +26,8 @@ export type IosSimulatorDiscoveryDevice = Readonly<{
     udid: string;
     name: string;
     runtime?: string;
+    state?: 'booted' | 'shutdown' | 'unavailable';
+    available?: boolean;
 }>;
 
 export type IosSimulatorDiscoveryReader = () =>
@@ -119,13 +122,30 @@ export function createIosSimulatorResource(input: Readonly<{
     health: IosSimulatorAdapterHealthV1;
     captureAdapterAvailable?: boolean;
 }>): SimulatorDeviceResourceV1 {
+    const state = input.device.available === false || input.device.state === 'unavailable'
+        ? 'unavailable' : input.device.state === 'shutdown' ? 'stopped' : 'running';
     const base = {
         v: 1 as const,
         simulatorId: iosSimulatorId(input.device.udid),
         platform: 'ios' as const,
         deviceId: input.device.udid,
         displayName: input.device.name,
+        state,
+        ...(input.device.runtime ? { runtimeId: input.device.runtime } : {}),
+        ...getSimulatorDeviceOperationCapabilities('ios', state),
     };
+
+    if (state !== 'running') {
+        return {
+            ...base,
+            capture: {
+                status: 'unavailable',
+                sourceId: iosSimulatorSourceId(input.device.udid),
+                reasonCode: 'simulator_not_booted',
+            },
+            unavailableReason: 'simulator_not_booted',
+        };
+    }
 
     if (input.health.status === 'available') {
         if (input.captureAdapterAvailable !== true) {
@@ -177,7 +197,7 @@ function diagnostic(input: Readonly<{
     };
 }
 
-function parseBootedDevicesFromSimctl(stdout: string): Readonly<
+export function parseIosSimulatorDevices(stdout: string): Readonly<
     | { ok: true; devices: readonly IosSimulatorDiscoveryDevice[] }
     | { ok: false; diagnostics: readonly Record<string, unknown>[] }
 > {
@@ -207,15 +227,13 @@ function parseBootedDevicesFromSimctl(stdout: string): Readonly<
     }
 
     const devices: IosSimulatorDiscoveryDevice[] = [];
-    const deviceGroups = Object.values((parsed as { devices: Record<string, unknown> }).devices);
-    for (const group of deviceGroups) {
+    const deviceGroups = Object.entries((parsed as { devices: Record<string, unknown> }).devices);
+    for (const [runtime, group] of deviceGroups) {
         if (!Array.isArray(group)) continue;
         for (const device of group) {
             if (
                 typeof device !== 'object'
                 || device === null
-                || (device as { state?: unknown }).state !== 'Booted'
-                || (device as { isAvailable?: unknown }).isAvailable === false
                 || typeof (device as { udid?: unknown }).udid !== 'string'
                 || typeof (device as { name?: unknown }).name !== 'string'
             ) {
@@ -224,6 +242,10 @@ function parseBootedDevicesFromSimctl(stdout: string): Readonly<
             devices.push({
                 udid: (device as { udid: string }).udid,
                 name: (device as { name: string }).name,
+                runtime,
+                state: (device as { state?: unknown }).state === 'Booted' ? 'booted'
+                    : (device as { state?: unknown }).state === 'Shutdown' ? 'shutdown' : 'unavailable',
+                available: (device as { isAvailable?: unknown }).isAvailable !== false,
             });
         }
     }
@@ -258,7 +280,7 @@ export async function discoverIosSimulatorResources(
 
     const simctl = await input.runSimctl({
         command: 'xcrun',
-        args: ['simctl', 'list', 'devices', 'booted', '--json'],
+        args: ['simctl', 'list', 'devices', '--json'],
         timeoutMs: input.timeoutMs ?? 5_000,
     });
     if (simctl.exitCode !== 0) {
@@ -267,7 +289,7 @@ export async function discoverIosSimulatorResources(
             diagnostics: [diagnostic({
                 reasonCode: 'simulator_not_booted',
                 diagnostics: [{
-                    code: 'simctl_booted_devices_failed',
+                    code: 'simctl_devices_failed',
                     exitCode: simctl.exitCode,
                 }],
             })],
@@ -275,7 +297,7 @@ export async function discoverIosSimulatorResources(
         };
     }
 
-    const parsed = parseBootedDevicesFromSimctl(simctl.stdout);
+    const parsed = parseIosSimulatorDevices(simctl.stdout);
     if (!parsed.ok) {
         return {
             resources: [],

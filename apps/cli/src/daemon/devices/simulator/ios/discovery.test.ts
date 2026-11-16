@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
 describe('discoverIosSimulatorResources', () => {
+    it('projects stopped devices independently of capture health', async () => {
+        const { createIosSimulatorResource } = await import('./discovery');
+        expect(createIosSimulatorResource({
+            device: { udid: 'stopped-device', name: 'iPhone', state: 'shutdown', runtime: 'ios-runtime' },
+            health: {
+                v: 1, platform: 'ios', status: 'unavailable', reasonCode: 'helper_artifact_missing',
+                diagnostics: [],
+            },
+        })).toMatchObject({
+            state: 'stopped', runtimeId: 'ios-runtime', supportedDeviceOperations: ['boot'],
+            capture: { status: 'unavailable', reasonCode: 'simulator_not_booted' },
+            unavailableReason: 'simulator_not_booted',
+        });
+    });
+
     it('returns unsupported-host diagnostics without projecting resources', async () => {
         const mod = await import('./discovery').catch(() => null);
 
