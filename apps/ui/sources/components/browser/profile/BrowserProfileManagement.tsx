@@ -36,6 +36,7 @@ export type BrowserProfileManagementModel = Readonly<{
 
 const stylesheet = StyleSheet.create(theme => ({
     root: { width: '100%', minHeight: 0, flexShrink: 1, marginTop: theme.space.s8 },
+    group: { minHeight: 0, flexShrink: 1 },
     list: { width: '100%', flexShrink: 1, minHeight: 0 },
 }));
 const profileKey = (profile: BrowserProfileV1) => profile.profileId;
@@ -145,7 +146,8 @@ export function BrowserProfileManagement(props: Readonly<{
     // scrolls once the panel is full.
     const [contentHeight, setContentHeight] = React.useState<number | null>(null);
     return <View testID={`${props.testID}-management`} style={stylesheet.root}>
-        <ItemGroup title={t('browserShell.profile.management.savedProfiles')}>
+        <ItemGroup title={t('browserShell.profile.management.savedProfiles')}
+            style={stylesheet.group} containerStyle={stylesheet.group}>
             {failed ? <Item testID={`${props.testID}-profiles-failed`} title={failed} titleLines={2} mode="info" showChevron={false}
                 rightElement={<RoundButton size="small" display="secondary" title={t('common.retry')}
                     testID={`${props.testID}-profiles-retry`} disabled={!ready} onPress={() => { void refresh(); }} />} /> : null}
