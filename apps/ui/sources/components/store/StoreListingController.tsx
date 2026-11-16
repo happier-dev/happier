@@ -29,6 +29,9 @@ type BrowserExtensionListingState = Readonly<{
     config: CapabilityListingConfig<RegistryItemV1>;
     item: RegistryItemV1 | null;
     resolving: boolean;
+    error: ReturnType<typeof useRegistryItem>['error'];
+    status: ReturnType<typeof useRegistryItem>['status'];
+    refresh: ReturnType<typeof useRegistryItem>['refresh'];
 }>;
 
 /** Catalog selection and presentation only; the existing browser Action owns acquisition, review and restart. */
@@ -62,7 +65,7 @@ function useBrowserExtensionListing(reference: MarketplaceCatalogReferenceV1): B
             } } }),
         testID: 'store.browserExtension',
     }), [read.item, read.loading, execution.ready, binding, execute, getSignal, seedMachineId, seedProfileId, sourceTitle]);
-    return { config, item: read.item, resolving: read.loading };
+    return { config, item: read.item, resolving: read.loading, error: read.error, status: read.status, refresh: read.refresh };
 }
 
 export type StoreListingState =

@@ -22,6 +22,8 @@ await Promise.all([import('@/auth/storage/tokenStorage'), import('@/sync/domains
     import('@/sync/domains/state/storage'), import('@/utils/system/runtimeFetch'),
     import('@/sync/runtime/orchestration/appliedActiveServerRuntime')]);
 const { StoreListingController } = await import('./StoreListingController');
+const { StoreListingBody } = await import('./StoreListing');
+const { RegistrySourcesUnavailable } = await import('@/components/capabilities/add/RegistrySourcesUnavailable');
 const { StoreDiscoverItemMark } = await import('./discover/StoreDirectorySection');
 const { StoreDiscover } = await import('./StoreDiscover');
 const { StoreDiscoverRegistryIdentityScope } = await import('./catalog/StoreDiscoverRegistryIdentityScope');
@@ -86,13 +88,13 @@ it('D7 draws curated app marks from one source listing without acquiring app pay
         choices.map(choice => ({ uri: `https://raw.githubusercontent.com/coollabsio/coolify/${commit}/public/${choice.logo}` })));
 });
 
-async function setup(suffix: string, kind: 'browserExtension' | 'mcpServer' | 'plugin' | 'app' | 'starter',
+async function setup(suffix: string, kind: 'browserExtension' | 'mcpServer' | 'plugin' | 'app' | 'starter' | 'agent',
     handleExternalRequest?: (url: string, init?: RequestInit) => Promise<Response | null>) {
     const serverUrl = `https://store-parity-${suffix}.test`;
     const sourceUrl = `${serverUrl}/catalog.json`;
     const sourceId = deriveMarketplaceSourceId(sourceUrl);
     const source: RegistrySourceV1 = { id: sourceId, title: 'Catalog', url: sourceUrl,
-        format: kind === 'mcpServer' ? 'mcp-registry' : 'happier-catalog', kinds: [kind], enabled: true, addedAt: 1 };
+        format: kind === 'mcpServer' ? 'mcp-registry' : kind === 'agent' ? 'acp-registry' : 'happier-catalog', kinds: [kind], enabled: true, addedAt: 1 };
     const serverIdentityId = `srv_store_parity_${suffix}`;
     const { upsertServerProfile, setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
     await upsertServerProfile({ serverUrl, name: 'Store' });
@@ -307,4 +309,67 @@ it('DJ41 reads a starter listing through its registry owner rather than declarin
     if (!selected.item) throw new Error('Expected the starter read');
     const detail = await renderScreen(<>{selected.config.renderDetail(selected.item)}</>);
     expect(detail.getTextContent()).toContain('Static website');
+});
+
+// Captured on #164 from the owned supplier (store-rows-malformed-supplier-response.json): metadata is
+// listable, but archive=47 makes its executable declaration unreadable. No install is attempted.
+const capturedAcpRegistry = {
+    "version": "1.0.0",
+    "agents": [
+        {
+            "id": "sweep164-agent-a983871e",
+            "name": "SWEEP164 owned Agent a983871e",
+            "version": "1.1.0",
+            "description": "Inert owned QA --version-only binary; no model/session execution.",
+            "distribution": {
+                "binary": {
+                    "linux-x86_64": {
+                        "archive": "https://nldw3-5-36-33.tailfce179.ts.net/sweep164-owned-a983871e/agent-1.1.0.tar.gz",
+                        "cmd": "sweep164-agent-a983871e",
+                        "args": [],
+                        "sha256": "51483f518796607d8f31ebb09b09d178eb63d88a0abaa7517aab01c049bbad72"
+                    }
+                }
+            }
+        },
+        {
+            "id": "sweep164-malformed-a983871e",
+            "name": "SWEEP164 malformed sibling a983871e",
+            "version": "1.1.0",
+            "distribution": {
+                "binary": {
+                    "linux-x86_64": {
+                        "archive": 47,
+                        "cmd": "inert-never-run"
+                    }
+                }
+            },
+            "description": "Owned malformed distribution; no executable declaration is admitted."
+        }
+    ]
+};
+const capturedMalformedAgent = capturedAcpRegistry.agents[1]!;
+it.each(['page', 'pane'] as const)('keeps the unreadable listed Agent and its recovery distinct from withdrawal (%s)', async presentation => {
+    const { answer, sourceId } = await setup(`malformed-agent-${presentation}`, 'agent');
+    answer('/catalog.json', { body: capturedAcpRegistry });
+    const screen = await renderScreen(<StoreListingBody reference={{ type: 'registryItem', kind: 'agent',
+        sourceId, itemId: capturedMalformedAgent.id, version: capturedMalformedAgent.version }}
+        presentation={presentation} onClose={() => {}} />);
+    await waitForHomeGovernance(() => {
+        expect(screen.findByTestId('store.listing.loading')).toBeFalsy();
+        expect(screen.findAllByType(RegistrySourcesUnavailable)).toHaveLength(1);
+    });
+    expect(screen.findByTestId('store.listing.removed')).toBeFalsy();
+    const failure = screen.findAllByType(RegistrySourcesUnavailable)[0]!;
+    expect(failure.props.failures).toMatchObject([{ key: sourceId, onRetry: expect.any(Function) }]);
+    expect(failure.props.failures[0].message).toContain('Catalog');
+    expect(screen.findByTestId('agents.add.detail.header')).toBeFalsy();
+    // Repair the external supplier, then use the existing read owner's Retry, without re-opening the listing.
+    answer('/catalog.json', { body: { version: '1.0.0', agents: [{ ...capturedMalformedAgent,
+        distribution: { binary: { 'linux-x86_64': { archive: 'https://example.test/owned-inert.tar.gz', cmd: 'inert-never-run' } } },
+    }] } });
+    await act(async () => { await failure.props.failures[0].onRetry(); });
+    await waitForHomeGovernance(() => expect(screen.findByTestId('agents.add.detail.header')).toBeTruthy());
+    expect(screen.findAllByType(RegistrySourcesUnavailable)).toHaveLength(0);
+    expect(screen.findByTestId('store.listing.removed')).toBeFalsy();
 });

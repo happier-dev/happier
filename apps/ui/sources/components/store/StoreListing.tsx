@@ -14,6 +14,8 @@ import {
   useLocalSearchParams,
 } from '@/components/appShell/workspace/destinationRoute';
 import { CapabilityListingDetail } from '@/components/capabilities/add/CapabilityAddModal';
+import type { CapabilityAddModalConfig } from '@/components/capabilities/add/CapabilityAddModal';
+import { RegistrySourcesUnavailable } from '@/components/capabilities/add/RegistrySourcesUnavailable';
 import { PluginListingRoute } from '@/components/settings/plugins/listing/PluginListingRoute';
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import {
@@ -342,8 +344,12 @@ function ListingContent(
       body={t('capabilities.store.listing.removedBody')}
     />
   );
+  const catalogFailure = (failures: CapabilityAddModalConfig<unknown>['catalog']['sourceFailures']) =>
+    failures?.length ? <RegistrySourcesUnavailable testID="store.listing.failed" size={size}
+      failures={failures.map(failure => ({ key: failure.sourceId, message: failure.message, onRetry: failure.onRetry }))} /> : removed;
   switch (state.kind) {
     case 'starter':
+    case 'browserExtension':
       if (state.item) return <CapabilityListingDetail config={state.config} item={state.item}
         onClose={props.onClose} pushed={props.pushed} />;
       if (state.resolving) return loading;
@@ -360,7 +366,7 @@ function ListingContent(
             pushed={props.pushed}
           />
         );
-      return !state.config || state.resolving ? loading : removed;
+      return !state.config || state.resolving ? loading : catalogFailure(state.config.catalog.sourceFailures);
     case 'skill':
       if (state.config && state.item)
         return (
@@ -371,18 +377,7 @@ function ListingContent(
             pushed={props.pushed}
           />
         );
-      return !state.config || state.resolving ? loading : removed;
-    case 'browserExtension':
-      if (state.item)
-        return (
-          <CapabilityListingDetail
-            config={state.config}
-            item={state.item}
-            onClose={props.onClose}
-            pushed={props.pushed}
-          />
-        );
-      return state.resolving ? loading : removed;
+      return !state.config || state.resolving ? loading : catalogFailure(state.config.catalog.sourceFailures);
     case 'agent':
       if (state.item)
         return (
@@ -393,7 +388,7 @@ function ListingContent(
             pushed={props.pushed}
           />
         );
-      return state.resolving ? loading : removed;
+      return state.resolving ? loading : catalogFailure(state.config.catalog.sourceFailures);
     case 'plugin':
       if (state.listing)
         return props.presentation === 'pane' ? (
