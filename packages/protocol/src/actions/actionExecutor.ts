@@ -1,3 +1,4 @@
+import { isMachineManagedInstallationActionIdV1 } from './specs/machineConnectionActionIdsV1.js';
 import { deriveActionActorV1 } from './actionRequestAttributionV1.js';
 import { prepareTeamGroupUpdateActionInput, type TeamGroupUpdateActionInputV1 } from '../teams/group.js';
 import { isTeamGroupUpdateActionIdV1 } from '../teams/actionIdsV1.js';
@@ -3879,10 +3880,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
       // A captured keyholder can execute this exact client Action locally.
       // Preserve generic reverse delivery only when that native port is absent.
-      const hasNativeTeamCredentialUsageExport = actionId === 'teams.credentials.usage.export'
-        && deps.teamCredentialUsageExport !== undefined;
+      const hasNativeClientEffect = actionId === 'teams.credentials.usage.export' && deps.teamCredentialUsageExport !== undefined
+        || isMachineManagedInstallationActionIdV1(actionId) && deps.machineManagedInstallationRespond !== undefined;
       if (admittedClientContext && deps.clientActionExecute && !existingAdmission?.clientExecutionContinued
-        && !hasNativeTeamCredentialUsageExport) {
+        && !hasNativeClientEffect) {
         const context = admittedClientContext;
         // Local client delivery continues the resolved leaf. Dropping it here
         // re-enters target resolution and then client delivery on every read.

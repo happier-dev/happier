@@ -1,3 +1,5 @@
+import { isMachineManagedInstallationActionIdV1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
+import { createCliManagedInstallationRespond } from '@/machines/managed/installationResponse';
 import { BotTemplateInstantiateInputV1Schema, projectBotTemplateInstantiationRequesterInputV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { readDeploymentReadReceiverMachineId } from '@/deployments/deploymentReadReceiver';
 import { createSessionFollowActionDeps, createSessionTrackedTargetCompatibilityDep } from '@/api/sessionFollowActionDeps';
@@ -1103,6 +1105,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(readAdmittedInputTypeOptions ? { readAdmittedInputTypeOptions } : {}),
       ...(sessionMemoryEnabled !== undefined ? { sessionMemoryEnabled } : {}),
       ...(teamCredentialUsageExport ? { teamCredentialUsageExport } : {}),
+      ...(params.externalActionClient ? { machineManagedInstallationRespond: createCliManagedInstallationRespond({
+        credentials, serverId: approvalServerId, serverIdentityId, serverUrl: approvalServerApiUrl,
+      }) } : {}),
       clientActionExecute: params.clientActionExecute ?? getDaemonClientActionExecutor(approvalServerId),
       confidentialSecretFill: params.confidentialSecretFill ?? getDaemonConfidentialSecretFillExecutor(approvalServerId),
       confidentialActionInputs: params.confidentialActionInputs ?? getDaemonConfidentialActionInputsExecutor(approvalServerId),
@@ -1838,6 +1843,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           settings: policy.getActionsSettings(), context: { ...context, surface: 'cli', authority } }).required;
       }
       const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, context.actionCaller, context.surface ?? 'cli');
+      // This invocation owns native answering-client custody; retain ordinary Action admission locally.
+      if (originalCliCaller && params.externalActionClient && isMachineManagedInstallationActionIdV1(actionId)
+        && executionPlacement === 'client') return { context, invocation: null };
       if (originalCliCaller && actionId === 'template.instantiate' && executionPlacement === 'account') {
         const parsed = BotTemplateInstantiateInputV1Schema.safeParse(admittedInput);
         if (!parsed.success) return { context,

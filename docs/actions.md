@@ -3361,8 +3361,9 @@ These client-placed Actions are available on UI and through an answering App for
 Agent/MCP; they do not promise headless CLI, RPC or Voice execution.
 
 Managed installation questions use the development client-placed
-`machines.managed.bootstrap.respond` Action through that same answering-App
-placement. Its strict input identifies the Home profile and identity, managed
+`machines.managed.bootstrap.respond` Action through answering-client
+placement. The CLI answers in its own invocation, without an App connection;
+UI and CLI share the installation-response decision owner in Protocol. Its strict input identifies the Home profile and identity, managed
 resource, creation operation and installer task. The `purpose: 'approve'` arm
 contains the exact projected approval question and explicit approval or refusal.
 The `purpose: 'establish'` arm carries only the current administrator-establishment
