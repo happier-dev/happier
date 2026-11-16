@@ -3,6 +3,7 @@ import { writeSync } from 'node:fs';
 
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import { requireAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import { detectProviderCliInfoRequest } from './providerCliInfoRequest';
@@ -32,15 +33,17 @@ export function passthroughProviderCliArgs(params: Readonly<{
   providerArgs: readonly string[];
   processEnv?: NodeJS.ProcessEnv;
 }>): void {
-  const launch = requireAgentCliLaunchSpec(params.agentId, { processEnv: params.processEnv });
+  const processEnv = params.processEnv ?? sessionProcessEnvironment();
+  const launch = requireAgentCliLaunchSpec(params.agentId, { processEnv });
   const invocation = resolveWindowsCommandInvocation({
     command: launch.command,
     args: [...launch.args, ...params.providerArgs],
-    env: params.processEnv ?? process.env,
+    env: processEnv,
     resolveCommandOnPath: false,
   });
   const result = spawnSync(invocation.command, invocation.args, {
-    env: params.processEnv ?? process.env,
+    cwd: sessionWorkingDirectory(),
+    env: processEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     maxBuffer: PROVIDER_CLI_PASSTHROUGH_MAX_BUFFER,
     windowsHide: true,

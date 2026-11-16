@@ -19,6 +19,7 @@ vi.mock('node:fs', async (importOriginal) => ({
 }));
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { maybePassthroughProviderCliInfoRequest, passthroughProviderCliArgs } from './providerCliPassthrough';
@@ -29,6 +30,8 @@ const envKeys = [
   'HAPPIER_JS_RUNTIME_PATH',
   'HAPPIER_MANAGED_NODE_BIN',
   'HAPPIER_NODE_PATH',
+  'HAPPIER_CODEX_PATH',
+  'HAPPIER_PASSTHROUGH_SCOPE',
 ] as const;
 
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -69,6 +72,45 @@ function successfulSpawnResult() {
 }
 
 describe('provider CLI passthrough', () => {
+  it('uses each hosted Session environment and directory while retaining explicit env and standalone defaults', async () => {
+    const root = await createTempDir('happier-provider-passthrough-scope-');
+    tempDirs.add(root);
+    const providerPath = await writeExecutableShim({
+      dir: root,
+      fileName: 'codex.cjs',
+      contents: '#!/usr/bin/env node\n'
+        + 'process.stdout.write(JSON.stringify({ scope: process.env.HAPPIER_PASSTHROUGH_SCOPE, args: process.argv.slice(2), cwd: process.cwd() }));\n',
+    });
+    envScope.patch({
+      HAPPIER_CODEX_PATH: providerPath,
+      HAPPIER_JS_RUNTIME_PATH: process.execPath,
+      HAPPIER_PASSTHROUGH_SCOPE: 'host',
+    });
+    await Promise.all(['first', 'second'].map(scope => mkdir(join(root, scope))));
+    await Promise.all(['first', 'second'].map(scope => runAddedHostedSession({
+      environment: { ...process.env, NODE_ENV: 'test', HAPPIER_PASSTHROUGH_SCOPE: scope },
+      workingDirectory: join(root, scope),
+      end: () => {},
+    }, async () => {
+      await Promise.resolve();
+      passthroughProviderCliArgs({ agentId: 'codex', providerArgs: ['providers', 'list'] });
+      if (scope === 'first') {
+        passthroughProviderCliArgs({ agentId: 'codex', providerArgs: ['--version'],
+          processEnv: { ...process.env, NODE_ENV: 'test', HAPPIER_PASSTHROUGH_SCOPE: 'explicit' } });
+      }
+    })));
+    passthroughProviderCliArgs({ agentId: 'codex', providerArgs: ['--help'] });
+
+    const output = writeSyncMock.mock.calls.filter(([fd]) => fd === 1)
+      .map(([, data]) => JSON.parse(String(data)));
+    expect(output).toEqual([
+      { scope: 'first', args: ['providers', 'list'], cwd: join(root, 'first') },
+      { scope: 'explicit', args: ['--version'], cwd: join(root, 'first') },
+      { scope: 'second', args: ['providers', 'list'], cwd: join(root, 'second') },
+      { scope: 'host', args: ['--help'], cwd: process.cwd() },
+    ]);
+  });
+
   it('does not native-spawn provider subcommands through the info passthrough path', () => {
     spawnSyncMock.mockReturnValue(successfulSpawnResult());
 
