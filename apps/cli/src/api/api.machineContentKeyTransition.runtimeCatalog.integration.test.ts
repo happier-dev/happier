@@ -26,7 +26,7 @@ describe('ApiClient Machine content-key preparation', () => {
     await expect(api.prepareMachineContentKey(row.id)).rejects.toMatchObject({ code: 'machine_content_key_unavailable' });
     expect(post).not.toHaveBeenCalled();
   });
-  it.each(predecessor.rows)('converts actual predecessor $credentialKind ciphertext without dropping the complete opened blobs', async (fixture) => {
+  it.each(predecessor.rows.flatMap(fixture => ['committed', 'lost-ack'].map(reply => ({ ...fixture, reply }))))('reconstructs a fresh reader of predecessor $credentialKind content after $reply conversion without replay', async (fixture) => {
     let row = fixture.machine;
     const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => url.endsWith(`/v1/machines/${row.id}`)
       ? { status: 200, data: { machine: row } } : { status: 200, data: { mode: 'e2ee', updatedAt: 1 } });
@@ -35,6 +35,7 @@ describe('ApiClient Machine content-key preparation', () => {
       if (transition.next.daemonState === null) throw new Error('Transition dropped the existing daemon content');
       row = { ...row, ...transition.next, daemonState: transition.next.daemonState,
         metadataVersion: row.metadataVersion + 1, daemonStateVersion: row.daemonStateVersion + 1 };
+      if (fixture.reply === 'lost-ack') throw new Error('Acknowledgement dropped after commit');
       return { status: 200, data: { kind: 'committed', machine: row } };
     });
     onTestFinished(() => { get.mockRestore(); post.mockRestore(); });
@@ -49,6 +50,18 @@ describe('ApiClient Machine content-key preparation', () => {
     expect(decrypt(converted.encryptionKey, 'dataKey', decodeBase64(row.metadata))).toEqual(predecessor.openedMetadata);
     expect(decrypt(converted.encryptionKey, 'dataKey', decodeBase64(row.daemonState))).toEqual(predecessor.openedDaemonState);
     expect(converted).toMatchObject({ metadataVersion: 5, daemonStateVersion: 4 });
+    expect(post).toHaveBeenCalledOnce();
+
+    // Reconstruct only from the persisted credentials and published row, as after
+    // daemon restart: the converting client's in-memory key cannot help this read.
+    const restarted = await ApiClient.create(structuredClone(credential));
+    const reopened = await restarted.prepareMachineContentKey(row.id);
+    if (reopened.encryptionMode === 'plain') throw new Error('Expected encrypted Machine');
+    expect(reopened.encryptionKey).toEqual(converted.encryptionKey);
+    expect(reopened).toMatchObject({ metadataVersion: 5, daemonStateVersion: 4,
+      dataEncryptionKey: row.dataEncryptionKey, daemonState: predecessor.openedDaemonState });
+    expect(decrypt(reopened.encryptionKey, 'dataKey', decodeBase64(row.metadata))).toEqual(predecessor.openedMetadata);
+    expect(decrypt(reopened.encryptionKey, 'dataKey', decodeBase64(row.daemonState))).toEqual(predecessor.openedDaemonState);
     expect(post).toHaveBeenCalledOnce();
   });
   it.each([
