@@ -133,4 +133,17 @@ describe('Open VSX theme acquisition through the registry host', () => {
       .toEqual([{ kind: 'theme', key: 'night', state: 'update_available' }, { kind: 'theme', key: 'day', state: 'update_available' }]);
     expect(f.calls).toHaveLength(1);
   });
+  it('includes Account theme observations in the ordinary all-kind update check', async () => {
+    const f = await fixture(); f.setLatest('2.0.0');
+    const provenance = { sourceId: source.id, sourceUrl: source.url, format: 'open-vsx' as const, itemId: 'sample/palette', ref: { kind: 'version' as const, version: '1.0.0' }, importedAt: 1 };
+    const host = createRegistryHostV1({ host: 'web', http: f.http, readSources: async () => [source],
+      readThemeUpdateItems: async () => [{ key: 'night', provenance }, { key: 'day', provenance }],
+      // The remaining kinds are supplied by the existing daemon transport boundary.
+      updates: async () => ({ checkedAt: 1, results: [] }) });
+    const result = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(
+      await host.execute('registries.updates.check', {}));
+    expect(result.results.map(item => ({ kind: item.kind, key: item.key, state: item.upstream.state })))
+      .toEqual([{ kind: 'theme', key: 'night', state: 'update_available' }, { kind: 'theme', key: 'day', state: 'update_available' }]);
+    expect(f.calls).toHaveLength(1);
+  });
 });

@@ -593,11 +593,21 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
       }
       case 'registries.updates.check': {
         const args = REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(value);
-        if (args.kind === 'theme' && deps.readThemeUpdateItems) {
-          const items = (await deps.readThemeUpdateItems()).filter(item => !args.keys || args.keys.includes(item.key));
-          const sources = await deps.readSources();
-          const observations = await checkRegistryUpstreamV1(ctx, { sources, items, admitSource: deps.admitSource });
-          output = { checkedAt: Date.now(), results: items.map(item => ({ kind: 'theme', key: item.key, upstream: observations.get(item.key)! })) };
+        if ((args.kind === undefined || args.kind === 'theme') && deps.readThemeUpdateItems) {
+          const readThemeItems = deps.readThemeUpdateItems;
+          const checkThemes = async () => {
+            const items = (await readThemeItems()).filter(item => !args.keys || args.keys.includes(item.key));
+            const sources = await deps.readSources();
+            const observations = await checkRegistryUpstreamV1(ctx, { sources, items, admitSource: deps.admitSource });
+            return { checkedAt: Date.now(), results: items.map(item => ({ kind: 'theme' as const, key: item.key, upstream: observations.get(item.key)! })) };
+          };
+          if (args.kind === 'theme') output = await checkThemes();
+          else {
+            if (!deps.updates) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
+            const [other, themes] = await Promise.all([deps.updates(args), checkThemes()]);
+            output = { checkedAt: Math.min(other.checkedAt, themes.checkedAt),
+              results: [...other.results.filter(item => item.kind !== 'theme'), ...themes.results] };
+          }
           break;
         }
         if (!deps.updates) throw new RegistryFetchErrorV1({ state: 'needs_machine' });
