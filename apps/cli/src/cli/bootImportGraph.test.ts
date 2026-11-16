@@ -17,6 +17,10 @@ const ROLE_ROOTS = {
   daemon: ['src/daemon/startDaemon.ts', 'src/api/apiMachine.ts'],
 } as const;
 type Role = keyof typeof ROLE_ROOTS;
+const START_ROOTS = { ...ROLE_ROOTS, actions: [
+  'src/cli/commands/actions.ts', 'src/session/actions/createCliActionExecutorFromCredentials.ts',
+] } as const;
+type StartRole = Role | 'actions';
 
 // Protocol barrels re-export whole families. A runtime import of one evaluates every module it
 // re-exports, including UI-only and generated tables no CLI process runs. Consumers import the
@@ -38,16 +42,16 @@ const HOST_NEVER_RUN_DAEMON_OWNERS = [
 
 const normalize = (path: string) => path.replaceAll('\\', '/');
 let inputs: Metafile['inputs'];
-const eagerGraphs = new Map<Role, readonly string[]>();
+const eagerGraphs = new Map<StartRole, readonly string[]>();
 
 beforeAll(async () => {
   const { metafile } = await build({
-    absWorkingDir: cliRoot, entryPoints: Object.values(ROLE_ROOTS).flat(), outdir: 'unused-boot-import-graph',
+    absWorkingDir: cliRoot, entryPoints: Object.values(START_ROOTS).flat(), outdir: 'unused-boot-import-graph',
     platform: 'node', format: 'esm', bundle: true, splitting: true, write: false, metafile: true,
     conditions: ['happier-source'], external: ['onnxruntime-node', '*.node'], logLevel: 'silent',
   });
   inputs = metafile!.inputs;
-  for (const [role, roots] of Object.entries(ROLE_ROOTS) as [Role, readonly string[]][]) {
+  for (const [role, roots] of Object.entries(START_ROOTS) as [StartRole, readonly string[]][]) {
     const eager = new Set<string>();
     const pending = [...roots];
     while (pending.length > 0) {
@@ -62,15 +66,15 @@ beforeAll(async () => {
   }
 }, 240_000);
 
-const roleGraph = (role: Role) => eagerGraphs.get(role)!;
+const roleGraph = (role: StartRole) => eagerGraphs.get(role)!;
 const endsWithAny = (path: string, suffixes: readonly string[]) => suffixes.some((suffix) => normalize(path).endsWith(suffix));
 
-describe('daemon and session host start graphs', () => {
+describe('daemon, session host and finite Action start graphs', () => {
   it('have no runtime importer of a Protocol barrel', () => {
-    const importerCounts = Object.fromEntries((Object.keys(ROLE_ROOTS) as Role[]).map((role) => [role,
+    const importerCounts = Object.fromEntries((Object.keys(START_ROOTS) as StartRole[]).map((role) => [role,
       roleGraph(role).filter((path) => (inputs[path]?.imports ?? []).some((dependency) =>
         dependency.kind !== 'dynamic-import' && !dependency.external && endsWithAny(dependency.path, PROTOCOL_BARRELS))).length]));
-    expect(importerCounts).toEqual({ host: 0, daemon: 0 });
+    expect(importerCounts).toEqual({ host: 0, daemon: 0, actions: 0 });
   });
 
   it('keep never-run daemon owners out of the session host', () => {

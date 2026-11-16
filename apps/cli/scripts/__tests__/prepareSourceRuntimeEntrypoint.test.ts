@@ -23,7 +23,7 @@ it('prepares current daemon source after a Protocol export is removed without lo
   };
   try {
     for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs',
-      'sourceRuntimeDependencies.mjs', 'cliRuntimeSidecars.mjs', 'cliSourceLoader.mjs']) {
+      'sourceRuntimeDependencies.mjs', 'packageExportMatch.cjs', 'cliRuntimeSidecars.mjs', 'cliSourceLoader.mjs']) {
       mkdirSync(common, { recursive: true });
       cpSync(join(repoRoot, 'packages/cli-common', name), join(common, name));
     }
@@ -46,6 +46,7 @@ it('prepares current daemon source after a Protocol export is removed without lo
     write(join(cli, 'dist/index.mjs'), oldClosure);
     cliDistBuildManifest.writeCliDistBuildManifest(join(cli, 'dist/index.mjs'), { outputDir: join(cli, 'dist') });
     write(join(cli, 'src/index.ts'), "setImmediate(async () => { const { policy } = await import('@/daemon/policy'); console.log(policy); });");
+    write(join(cli, 'src/cli/readStartedByArg.mjs'), readFileSync(join(repoRoot, 'apps/cli/src/cli/readStartedByArg.mjs'), 'utf8'));
     write(join(cli, 'src/daemon/policy.ts'), "export { removedPolicy as policy } from '@happier-dev/protocol/actions/invocationAuthority';");
     write(join(protocol, 'src/actions/invocationAuthority.ts'), "export const removedPolicy = 'before';");
     write(join(cli, 'src/mcp/bridges/happierMcpStdioBridge.ts'), "console.log('bridge-current');");
@@ -54,7 +55,7 @@ it('prepares current daemon source after a Protocol export is removed without lo
     const run = (entry = 'index.mjs') => promisify(execFile)(process.execPath, entry === 'index.mjs'
       ? ['--no-warnings', '--no-deprecation', join(cli, 'bin/happier-dev.mjs')]
       : [probe, cli, entry], {
-      cwd: root, env: { ...process.env, NODE_OPTIONS: '', TSX_TSCONFIG_PATH: '' },
+      cwd: root, env: { ...process.env, NODE_OPTIONS: '', TSX_TSCONFIG_PATH: '', TMPDIR: root, TEMP: root, TMP: root },
     });
     expect((await run()).stdout.trim()).toBe('before');
     write(join(protocol, 'src/actions/invocationAuthority.ts'), "export const currentPolicy = 'after';");

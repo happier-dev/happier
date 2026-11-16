@@ -1,4 +1,4 @@
-import { DeploymentReceiptResultV1Schema } from '@happier-dev/protocol';
+import { DeploymentReceiptResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { SignedRootActionId } from '@happier-dev/protocol';
 import { getActionSpec, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';

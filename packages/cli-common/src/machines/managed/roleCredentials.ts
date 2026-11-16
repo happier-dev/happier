@@ -1,6 +1,6 @@
-import { sameQualifiedConnectedAccountRef,
-    type QualifiedConnectedAccountPurposeV1, type QualifiedConnectedAccountPurposeBindingsV1,
-    type QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import type { QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
+import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import type { PluginContributionRef } from '../../plugins/registration/contracts.js';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachinePresetPreparationBindingV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';

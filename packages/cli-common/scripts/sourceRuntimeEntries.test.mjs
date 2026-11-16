@@ -70,6 +70,7 @@ describe('CLI source entry ownership', () => {
       for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'sourceRuntimeDependencies.mjs', 'packageExportMatch.cjs', 'cliRuntimeSidecars.mjs', 'cliSourceLoader.mjs']) {
         await cp(join(repoDir, 'packages/cli-common', name), join(common, name));
       }
+      await cp(join(repoDir, 'apps/cli/src/cli/readStartedByArg.mjs'), join(cli, 'src/cli/readStartedByArg.mjs'));
       await symlink(join(repoDir, 'node_modules'), join(fixture, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
       await writeFile(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
       await writeFile(join(cli, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
@@ -103,7 +104,7 @@ finally { await loader.unregister(); }`);
         for (const entry of [join(cli, 'src/index.ts'), generator, join(ui, 'sources/index.ts'), prebuild]) {
           const { stdout } = await promisify(execFile)(process.execPath, [
             '--experimental-strip-types', '--import', join(common, 'registerSourceRuntime.mjs'), entry,
-          ], { cwd, env: { ...process.env, NODE_OPTIONS: '', TSX_TSCONFIG_PATH: '' } });
+          ], { cwd, env: { ...process.env, NODE_OPTIONS: '', TSX_TSCONFIG_PATH: '', TMPDIR: fixture, TEMP: fixture, TMP: fixture } });
           const expected = entry === join(cli, 'src/index.ts') ? '42 42 true'
             : entry === join(ui, 'sources/index.ts') ? '43' : entry === prebuild ? '42\n43' : '42';
           expect(stdout.trim()).toBe(expected);
@@ -289,6 +290,70 @@ console.log(JSON.stringify([esm.Value.answer, cjs.Value.answer]));
       ], { env: { ...process.env, NODE_OPTIONS: '', TSX_DISABLE_CACHE: '', TMPDIR: fixture, TEMP: fixture, TMP: fixture } });
       expect(JSON.parse(stdout)).toEqual([42, 43]);
       expect(existsSync(marker), 'source-tool bootstrap must not retain the shared cache directory index').toBe(false);
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('reuses finite CLI source transforms while observing source edits and leaving daemon roles uncached', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'happier-finite-source-cache-'));
+    const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+    try {
+      const common = join(fixture, 'packages/cli-common');
+      const cli = join(fixture, 'apps/cli/src');
+      await mkdir(common, { recursive: true });
+      await mkdir(join(cli, 'cli'), { recursive: true });
+      for (const name of ['registerSourceRuntime.mjs', 'sourceRuntimeEntries.mjs', 'sourceRuntimeDependencies.mjs',
+        'packageExportMatch.cjs', 'cliRuntimeSidecars.mjs']) {
+        await cp(join(repoDir, 'packages/cli-common', name), join(common, name));
+      }
+      await cp(join(repoDir, 'apps/cli/src/cli/readStartedByArg.mjs'), join(cli, 'cli/readStartedByArg.mjs'));
+      await symlink(join(repoDir, 'node_modules'), join(fixture, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+      await writeFile(join(fixture, 'package.json'), JSON.stringify({ type: 'module' }));
+      const indexed = join(fixture, 'cache-indexed');
+      const reused = join(fixture, 'cache-read');
+      const observer = join(fixture, 'observe-cache.mjs');
+      // Observe tsx's real cache IO; transforms and source resolution stay real.
+      await writeFile(observer, `
+import fs from 'node:fs';
+import { basename, dirname } from 'node:path';
+import { syncBuiltinESMExports } from 'node:module';
+const readdirSync = fs.readdirSync;
+fs.readdirSync = function(path, ...args) {
+  if (basename(String(path)).startsWith('tsx-')) fs.writeFileSync(${JSON.stringify(indexed)}, 'indexed');
+  return readdirSync.call(this, path, ...args);
+};
+const readFileSync = fs.readFileSync;
+fs.readFileSync = function(path, ...args) {
+  if (basename(dirname(String(path))).startsWith('tsx-')) fs.writeFileSync(${JSON.stringify(reused)}, 'read');
+  return readFileSync.call(this, path, ...args);
+};
+syncBuiltinESMExports();
+`);
+      const entry = join(cli, 'index.mjs');
+      const value = join(cli, 'value.mts');
+      await writeFile(entry, `await import(${JSON.stringify(pathToFileURL(join(common, 'registerSourceRuntime.mjs')).href)});
+console.log((await import('./value.mts')).Value.answer);`);
+      await writeFile(value, 'export enum Value { answer = 42 }');
+      const run = async (args = ['actions', 'invoke', 'inbox.get']) => {
+        const { stdout } = await promisify(execFile)(process.execPath, ['--import', observer, entry, ...args], {
+          env: { ...process.env, NODE_OPTIONS: '', TSX_DISABLE_CACHE: '1', TMPDIR: fixture, TEMP: fixture, TMP: fixture },
+        });
+        return stdout.trim();
+      };
+      expect(await run()).toBe('42');
+      expect(existsSync(indexed), 'finite CLI must reuse tsx-owned disk transforms').toBe(true);
+      await rm(reused, { force: true });
+      expect(await run()).toBe('42');
+      expect(existsSync(reused), 'a subsequent finite invocation must read the existing transform').toBe(true);
+      await writeFile(value, 'export enum Value { answer = 43 }');
+      expect(await run()).toBe('43');
+      for (const args of [['daemon', 'start-sync'], ['daemon', 'background-service-worker'],
+        ['codex', '--started-by', 'daemon'], ['codex', '--started-by=daemon']]) {
+        await rm(indexed, { force: true });
+        expect(await run(args)).toBe('43');
+        expect(existsSync(indexed), 'daemon-hosted roles must not retain the shared index').toBe(false);
+      }
     } finally {
       await rm(fixture, { recursive: true, force: true });
     }

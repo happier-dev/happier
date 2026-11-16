@@ -1,6 +1,6 @@
 import { constants, enableCompileCache } from 'node:module';
 
-import { readStartedByArg } from './readStartedByArg';
+import { isDaemonHostedCliInvocation } from './readStartedByArg';
 import { isNode } from '../utils/runtime';
 import { resolveCliHappyHomeDir } from '../configuration/resolveCliHappyHomeDir';
 import { resolveCliHomeStoragePaths } from '../configuration/homeStoragePaths';
@@ -15,8 +15,7 @@ import { resolveCliHomeStoragePaths } from '../configuration/homeStoragePaths';
  */
 export function enableShortLivedCliCompileCache(args: readonly string[]): void {
   if (!isNode()) return;
-  if (args[0] === 'daemon' && (args[1] === 'start-sync' || args[1] === 'background-service-worker')) return;
-  if (readStartedByArg(args).value === 'daemon') return;
+  if (isDaemonHostedCliInvocation(args)) return;
   const directory = process.env.NODE_COMPILE_CACHE?.trim()
     || resolveCliHomeStoragePaths(resolveCliHappyHomeDir(process.env)).compileCacheDir;
   const result = enableCompileCache(directory);

@@ -4,11 +4,19 @@ import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { initialize, resolve } from './sourceRuntimeEntries.mjs';
 
-// Source-tool controllers are long-lived and numerous. tsx indexes the entire
-// shared disk cache in each process (and loader thread), retaining every entry.
-// Keep transforms cached within the process without importing that global index.
-process.env.TSX_DISABLE_CACHE = '1';
 const repoDir = realpathSync(fileURLToPath(new URL('../../', import.meta.url)));
+const entrypoint = process.argv[1] && existsSync(process.argv[1]) ? realpathSync(process.argv[1]) : null;
+const cliDir = join(repoDir, 'apps', 'cli');
+const isCliEntrypoint = ['src/index.ts', 'src/index.mjs', 'bin/happier.mjs', 'bin/happier-dev.mjs']
+  .some(entry => entrypoint === join(cliDir, entry));
+const cacheTransforms = isCliEntrypoint && !(await import(
+  new URL('../../apps/cli/src/cli/readStartedByArg.mjs', import.meta.url)
+)).isDaemonHostedCliInvocation(process.argv.slice(2));
+// Controllers retain tsx's entire shared disk index for their lifetime. Keep
+// them process-local; finite CLI invocations reuse tsx's content-keyed transforms
+// under the same lifetime decision as the CLI's V8 compile cache.
+if (cacheTransforms) delete process.env.TSX_DISABLE_CACHE;
+else process.env.TSX_DISABLE_CACHE = '1';
 let tsconfig = process.env.TSX_TSCONFIG_PATH || undefined;
 if (!tsconfig && process.argv[1] && existsSync(process.argv[1])) {
   // Source entries belong to their package even when Stack or a test prebuild
