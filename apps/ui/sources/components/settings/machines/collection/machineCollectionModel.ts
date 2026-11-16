@@ -16,6 +16,7 @@ import type { MachinesDoor } from '@/components/machines/page/machinesDoor';
 import { isMachineSubPageId } from '@/components/machines/page/machineSubPages';
 import { MACHINES_COLLECTION_ROOT, MACHINES_RAIL_ROOT, machinesIndexHref, machinePageHref } from '@/components/machines/page/machinePageHref';
 import type { MachineAddRoutePath } from '@/components/machines/add/machineAddPaths';
+import { projectHostMachineSandboxCounts, readHostMachineSandboxCount } from '../managed/hostMachineSandboxes';
 export { MACHINES_COLLECTION_ROOT, MACHINES_RAIL_ROOT, machinesIndexHref, machinePageHref, type MachinePageTarget } from '@/components/machines/page/machinePageHref';
 
 export const MACHINES_THIS_COMPUTER_ROUTE = '/settings/machines/this-computer';
@@ -73,6 +74,8 @@ type MachineCollectionRowPresentation = Readonly<{
     ownership: string | null;
     /** Whose machine it is, when someone shared it with you (their display name). */
     ownerName: string | null;
+    /** Nonarchived resource-bound sandboxes hosted by this exact Machine installation. */
+    sandboxCount?: number;
 }>;
 
 export type MachineCollectionRow = MachineCollectionRowPresentation & (
@@ -168,16 +171,30 @@ export function buildMachineCollection(input: Readonly<{
     const query = input.query?.trim().toLocaleLowerCase() ?? '';
     const nowMs = input.nowMs ?? Date.now();
     let count = 0;
-    const machineCount = countMachineFleet(input.groups);
-    const sections = input.groups.flatMap((group): MachineCollectionSection[] => {
+    let machineCount = 0;
+    const sections = input.groups.flatMap((sourceGroup): MachineCollectionSection[] => {
+        const inventory = input.managedByServerId?.[sourceGroup.serverId] ?? [];
+        const sandboxCounts = projectHostMachineSandboxCounts(inventory);
+        const visibleManaged: ManagedMachineV1[] = [];
+        const sandboxEnrollments = new Set<string>();
+        for (const machine of inventory) {
+            // Admitted resource-bound sandboxes belong to their host, including kept and archived records.
+            // Historical enrolled Computer creations without this provenance stay in the fleet.
+            if (machine.acquisitionMode === 'resource-bound' || machine.creationScopeRetention) {
+                if (machine.enrolledMachineId) sandboxEnrollments.add(machine.enrolledMachineId);
+            } else visibleManaged.push(machine);
+        }
+        const group = sandboxEnrollments.size > 0 ? { ...sourceGroup,
+            machines: sourceGroup.machines.filter(machine => !sandboxEnrollments.has(machine.id)) } : sourceGroup;
+        machineCount += countMachineFleet([group]);
         const enrolledIds = new Set(group.machines.map(machine => machine.id));
-        const managedByMachineId = new Map((input.managedByServerId?.[group.serverId] ?? [])
+        const managedByMachineId = new Map(visibleManaged
             .flatMap(machine => machine.archivedAt === undefined && machine.enrolledMachineId ? [[machine.enrolledMachineId, machine] as const] : []));
         // An ended created machine is listed once, by its record in Archive; its former Machine is not a live row.
-        const endedMachineIds = new Set((input.managedByServerId?.[group.serverId] ?? []).flatMap(machine =>
+        const endedMachineIds = new Set(visibleManaged.flatMap(machine =>
             machine.enrolledMachineId && isManagedMachineListArchived(machine) ? [machine.enrolledMachineId] : []));
         for (const machineId of endedMachineIds) managedByMachineId.delete(machineId);
-        const managedMachines = (input.managedByServerId?.[group.serverId] ?? [])
+        const managedMachines = visibleManaged
             .filter(machine => isManagedMachineListArchived(machine) || !machine.enrolledMachineId || !enrolledIds.has(machine.enrolledMachineId));
         const names = resolveMachineDisplayNameParts([
             ...group.machines.filter(machine => !endedMachineIds.has(machine.id)).map(machine => ({ ...machine,
@@ -202,7 +219,7 @@ export function buildMachineCollection(input: Readonly<{
             ...ownership.filter(ownershipGroup => ownershipGroup.key.startsWith('shared:')),
             ...created('managedArchived'),
         ];
-        return ownershipGroups.map((ownershipGroup) => {
+        return ownershipGroups.map((ownershipGroup): MachineCollectionSection => {
             const rows = ownershipGroup.machines
                 .map((machine): MachineCollectionRow => {
                 const host = machine.metadata?.host?.trim() || null;
@@ -246,6 +263,8 @@ export function buildMachineCollection(input: Readonly<{
                     reason: describeMachineLockedReason(machine),
                     ownership: describeMachineSharedOwnership(machine),
                     ownerName: machine.isShared ? machine.access?.custodian?.displayName ?? null : null,
+                    ...(machine.installationId ? { sandboxCount: readHostMachineSandboxCount(sandboxCounts,
+                        { machineId: machine.id, installationId: machine.installationId }) } : {}),
                 };
                 })
                 .filter((row) => !query

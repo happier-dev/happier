@@ -61,6 +61,40 @@ it('keeps an explicit Home when the cloud entry opens outside the Machines colle
 });
 
 describe('machine collection rail partition', () => {
+    it('keeps policy sandboxes under their host rather than in the fleet regardless of retention or enrollment', () => {
+        const sandbox = { ...managed('kept-sandbox'), acquisitionMode: 'resource-bound' as const };
+        const scoped = { ...managed('session-sandbox', { creationScopeRetention: { effect: 'delete' }, enrolledMachineId: 'session-enrollment' }),
+            acquisitionMode: 'resource-bound' as const };
+        const enrolled = managed('enrolled-sandbox', { acquisitionMode: 'resource-bound', enrolledMachineId: 'sandbox-enrollment' });
+        const archived = managed('archived-sandbox', { acquisitionMode: 'resource-bound', enrolledMachineId: 'archived-enrollment', archivedAt: 1 });
+        const collection = buildMachineCollection({ groups: [group('a', [
+            machine('controller', { displayName: 'Workstation', installationId: 'installation' }), machine('session-enrollment'),
+            machine('sandbox-enrollment'), machine('archived-enrollment'),
+        ])],
+            groupedByHome: false, managedByServerId: { a: [sandbox, scoped, enrolled, archived, managed('created')] } });
+        expect(collection.sections.flatMap(section => section.rows).map(row => row.managedId ?? row.machineId).sort())
+            .toEqual(['controller', 'created']);
+        expect(collection.count).toBe(2);
+        expect(collection.machineCount).toBe(1);
+    });
+    it('publishes nonarchived sandbox counts for the exact host installation without fleet sandbox rows', () => {
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const sandbox = (id: string, overrides: Partial<ManagedMachinePublicFullV1> = {}) => managed(id, {
+            acquisitionMode: 'resource-bound', controller, ...overrides,
+        });
+        const collection = buildMachineCollection({ groups: [group('a', [
+            machine('controller', { installationId: 'installation' }), machine('other', { installationId: 'other-installation' }),
+        ])], groupedByHome: false, managedByServerId: { a: [
+            sandbox('kept'), sandbox('session', { creationScopeRetention: { effect: 'delete' } }),
+            sandbox('archived', { archivedAt: 1 }), sandbox('replaced-host', { controller: { ...controller, installationId: 'previous' } }),
+            sandbox('other-host', { controller: { machineId: 'other', installationId: 'other-installation' } }),
+            managed('regular-computer'),
+        ] } });
+        const rows = collection.sections.flatMap(section => section.rows);
+        expect(rows.find(row => row.machineId === 'controller')).toMatchObject({ sandboxCount: 2 });
+        expect(rows.find(row => row.machineId === 'other')).toMatchObject({ sandboxCount: 1 });
+        expect(rows.map(row => row.managedId).filter(Boolean)).toEqual(['regular-computer']);
+    });
     it('counts the current Home fleet even when a managed record is archived', () => {
         const roster = [machine('offline'), machine('shared', { isShared: true }),
             machine('guest'), machine('archived-enrollment'),
