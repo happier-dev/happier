@@ -53,12 +53,9 @@ describe("accountRoutes (direct-route auth authority) (integration)", () => {
         await harness.close();
     });
 
-    it('requires present-user authority for SSH resource packets while retaining terminal host metadata CRUD', async () => {
+    it.each(['promotion', 'entity-row'] as const)('allows terminal SSH resource packets through %s', async path => {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain', settingsVersion: 0 } });
-        const [presentToken, terminalToken] = await Promise.all([
-            auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' }),
-            auth.createToken(account.id, { session: 'ssh-authority-terminal' }, { kind: 'terminal', authority: 'account_automation' }),
-        ]);
+        const terminalToken = await auth.createToken(account.id, { session: 'ssh-authority-terminal' }, { kind: 'terminal', authority: 'account_automation' });
         const app = createTestApp();
         await app.ready();
         // The terminal calls stand for an agent-originated invocation: the daemon attributes
@@ -82,22 +79,15 @@ describe("accountRoutes (direct-route auth authority) (integration)", () => {
                     content: { t: 'plain', v: { v: 1, hosts: [host] } } } } });
             expect(metadata.statusCode).toBe(200);
             expect(metadata.json()).toMatchObject({ status: 'updated', revision: 0 });
-            const incumbent = await app.inject({ method: 'POST', url: homeDomainActionPathForMethod('secrets.shared.promote', 'POST'),
-                headers: headers(terminalToken), payload: { ...resource, nextSettings: null, profileMutations: [], referenceCensus,
-                    remoteHostMutation: mutation } });
-            expect({ status: incumbent.statusCode, body: incumbent.json() })
-                .toEqual({ status: 403, body: { error: 'present_user_required' } });
-            const automation = await app.inject({ method: 'POST', url: route, headers: headers(terminalToken),
-                payload: { mutation, savedSecretResources: [resource], referenceCensus } });
-            expect({ status: automation.statusCode, body: automation.json() })
-                .toEqual({ status: 403, body: { error: 'present_user_required' } });
-            expect(await db.savedSecretResource.count({ where: { ownerAccountId: account.id } })).toBe(0);
+            const response = path === 'promotion'
+                ? await app.inject({ method: 'POST', url: homeDomainActionPathForMethod('secrets.shared.promote', 'POST'),
+                    headers: headers(terminalToken), payload: { ...resource, nextSettings: null, profileMutations: [], referenceCensus,
+                        remoteHostMutation: mutation } })
+                : await app.inject({ method: 'POST', url: route, headers: headers(terminalToken),
+                    payload: { mutation, savedSecretResources: [resource], referenceCensus } });
+            expect(response.statusCode, response.body).toBe(200);
             expect((await app.inject({ method: 'GET', url: route, headers: headers(terminalToken) })).json())
-                .toEqual({ status: 'present', revision: 0, content: { t: 'plain', v: { v: 1, hosts: [host] } } });
-            const interactive = await app.inject({ method: 'POST', url: route, headers: headers(presentToken),
-                payload: { mutation, savedSecretResources: [resource], referenceCensus } });
-            expect(interactive.statusCode).toBe(200);
-            expect(interactive.json()).toMatchObject({ status: 'updated', revision: 1 });
+                .toEqual({ status: 'present', revision: 1, content: mutation.content });
             expect(await db.savedSecretResource.count({ where: { ownerAccountId: account.id } })).toBe(1);
             expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).settingsVersion).toBe(0);
             expect(await db.accountSettingsSnapshot.count({ where: { accountId: account.id } })).toBe(0);

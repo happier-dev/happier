@@ -200,7 +200,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
         const input = await fixture();
         const session = await db.session.create({ data: { accountId: input.actor.id, tag: randomUUID(),
             metadata: '{}', encryptionMode: 'plain', currentStorageState: 'hosted', active: false,
-            teamGrants: { create: { teamId: input.team.id, accessLevel: 'view', effectiveAt: new Date() } } } });
+            grants: { create: { principalKind: 'team', teamId: input.team.id, accessLevel: 'view', effectiveAt: new Date() } } } });
         const scope = new AsyncLocalStorage<'delete' | 'restore'>();
         const deletionReady = deferred<number>();
         const releaseDeletion = deferred<void>();
