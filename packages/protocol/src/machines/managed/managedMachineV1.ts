@@ -14,6 +14,7 @@ import { DevcontainerChildProjectionV1Schema, deriveManagedDevcontainerChildProj
 import { MachineSetupV1Schema } from './machineSetupV1.js';
 import { MachineSetupSourceFactsMapV1Schema } from '../setup/machineSetupSourceFactsV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
+import { GuestCliIdentityV1Schema } from '../../features/payload/capabilities/guestCliIdentityV1.js';
 import { MachineInstallationPublicKeySchema } from '../identity/installationKeySchemas.js';
 import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
 export { ManagedMachineEnrollmentIdentityV1Schema, resolveManagedMachineEnrollmentAdminAccessV1, matchesManagedMachineEnrollmentAdminAccessV1,
@@ -147,6 +148,8 @@ export function createManagedMachineV1BaseShape<Launch extends z.core.$ZodType, 
   return {
     id: id(), homeId: id(), custodianAccountId: id(),
     enrollmentAccountId: z.optional(id()),
+    /** Original enrollment pins; explicit Update retains its own root input instead. */
+    guestCli: z.optional(GuestCliIdentityV1Schema),
     /** Installed-controller admission provenance for a local Session sandbox. */
     acquisitionMode: z.optional(z.literal('resource-bound')),
     /** Captured author mode for a preset snapshot; readers must not use their own Account mode. */

@@ -4,6 +4,18 @@ import { z } from 'zod/mini';
 import { CapabilitiesSchema } from './capabilitiesSchema.js';
 
 describe('CapabilitiesSchema (server capabilities)', () => {
+  it('retains exact source export target and archive pins while refusing executable descriptor drift', () => {
+    const payload = { target: { os: 'linux', arch: 'x64' }, sha256: 'a'.repeat(64),
+      url: '/v1/runtime/guest-cli/payloads/linux/x64' };
+    const guestCli = { source: 'home-payload', line: '0.3', channel: 'stable', payloads: [payload] };
+    expect(CapabilitiesSchema.parse({ guestCli })).toHaveProperty('guestCli', guestCli);
+    for (const invalid of [
+      { ...guestCli, source: 'public-release' },
+      { ...guestCli, payloads: [{ ...payload, sha256: 'A'.repeat(64) }] },
+      { ...guestCli, payloads: [{ ...payload, target: { os: 'windows', arch: 'x64' } }] },
+      { ...guestCli, payloads: [{ ...payload, url: 'file:///tmp/cli.tar.gz' }] },
+    ]) expect(CapabilitiesSchema.parse({ guestCli: invalid }).guestCli).toBeUndefined();
+  });
   it('reads the Home guest CLI artifact identity independently of release diagnostics', () => {
     for (const source of ['home-payload', 'public-release']) {
       for (const channel of ['stable', 'preview', 'publicdev']) {

@@ -16,6 +16,18 @@ import {
 import { isManagedOpaquePresetMachineV1, ManagedMachineFullV1Schema, ManagedMachineV1Schema, ManagedOpaquePresetMachineV1Schema } from './managedMachineV1.js';
 
 describe('managed acquire opaque admission', () => {
+  it('retains source archive pins in existing admission and structural recovery rows', () => {
+    const guestCli = { source: 'home-payload', line: '0.3', channel: 'stable', payloads: [{
+      target: { os: 'linux', arch: 'arm64' }, sha256: 'a'.repeat(64),
+      url: '/v1/runtime/guest-cli/payloads/linux/arm64',
+    }] };
+    const input = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 0 } };
+    expect(ManagedAdmissionInputV1Schema.parse({ input, requestId: 'start', continuationPresent: false, guestCli }))
+      .toHaveProperty('guestCli', guestCli);
+    expect(ManagedAcquireInputV1Schema.safeParse({ ...input, guestCli }).success).toBe(false);
+    expect(ManagedAdmissionOutputV1Schema.parse({ machine: { ...row, guestCli }, presetContent, replayed: true }))
+      .toHaveProperty('machine.guestCli', guestCli);
+  });
   it('carries native local placement admission without accepting it as a public acquire choice', () => {
     const input = { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 0 } };
     expect(ManagedAcquireInputV1Schema.safeParse({ ...input, acquisitionMode: 'resource-bound', reuseIdle: true }).success).toBe(false);

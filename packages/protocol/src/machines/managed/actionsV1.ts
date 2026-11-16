@@ -1,4 +1,5 @@
 import { z } from '../../zodRuntimePolicy.js';
+import { GuestCliIdentityV1Schema } from '../../features/payload/capabilities/guestCliIdentityV1.js';
 export * from './managedInstallationV1.js';
 export { waitForMachineSetupOperationV1 } from '../setup/waitForMachineSetupOperationV1.js';
 import * as mini from '../../zodRuntimePolicy.js';
@@ -429,6 +430,11 @@ export const ManagedGetInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ homeId: id(), creationRequestId: id() }),
 ]));
 export const ManagedMutationInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision() }));
+export const ManagedBootstrapRetryInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...ManagedMutationInputV1Schema.shape,
+  /** Captured once by this Update/Retry root; never overwrites the Create pin. */
+  guestCli: z.optional(GuestCliIdentityV1Schema),
+}));
 export const ManagedRebuildInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), ...DevcontainerRebuildIntentV1Schema.def.shape }));
 /** A preset resize carries its private requested size in an existing sealed-content override. */
 export const ManagedOpaquePresetResizeInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -614,6 +620,8 @@ export const ManagedAdmissionComputeInputV1Schema = lazyZodSchema(() => z.union(
   z.omit(ManagedAcquireInputV1Schema._zod.def.options[1], { agentStart: true }),
 ]));
 export const ManagedAdmissionInputV1Schema = lazyZodSchema(() => z.strictObject({ input: ManagedAdmissionComputeInputV1Schema, requestId: id(), continuationPresent: mini.boolean(),
+  /** Home source export target list and exact archive hashes, retained with this admission. */
+  guestCli: z.optional(GuestCliIdentityV1Schema),
   /** Installed controller attestation after its admitted local placement decision. */
   acquisitionMode: z.optional(z.literal('resource-bound')),
   reuseIdle: z.optional(z.literal(true)),
@@ -698,7 +706,7 @@ export const ManagedMachineActionInputSchemasV1 = {
   'machines.managed.birth.get': ManagedResourceTargetV1Schema,
   'machines.managed.references.get': ManagedResourceTargetV1Schema,
   'machines.managed.inspect': ManagedInspectInputV1Schema,
-  'machines.managed.bootstrap.retry': ManagedMutationInputV1Schema,
+  'machines.managed.bootstrap.retry': ManagedBootstrapRetryInputV1Schema,
   'machines.managed.setup.skip': ManagedMutationInputV1Schema,
   'machines.setup.plan': lazyZodSchema(() => z.union([MachineSetupPlanInputV1Schema, MachineSetupCombinedPlanInputV1Schema])),
   'machines.setup.apply': MachineSetupApplyInputV1Schema,
