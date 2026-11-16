@@ -131,3 +131,5 @@ export {
     parseExternalSessionActivityPosition,
 } from './activityPage.js';
 export type { ExternalSessionActivityPosition } from './activityPage.js';
+
+export { projectExternalSessionCandidateTitle } from '../external.js';

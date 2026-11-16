@@ -31,6 +31,7 @@ import {
   pageExternalSessionCandidatesByActivity,
   parseExternalSessionActivityPosition,
   type ExternalSessionActivityPosition,
+  projectExternalSessionCandidateTitle,
   readSessionInputPromptUserTextV1,
   isAgentExternalSessionsResultWithinByteBudget,
 } from '@happier-dev/plugin-sdk/sessions/external';
@@ -165,7 +166,8 @@ const PI_CANDIDATE_INSPECTION_MAX_BYTES = 1_048_576;
  */
 function formatPiCandidateTitle(value: string | null): string | null {
   if (typeof value !== 'string') return null;
-  const normalized = readSessionInputPromptUserTextV1(value).replace(/\s+/g, ' ').trim();
+  const normalized = projectExternalSessionCandidateTitle(
+    readSessionInputPromptUserTextV1(value), { source: 'prompt' });
   if (!normalized) return null;
   return normalized.length <= PI_CANDIDATE_TITLE_MAX_CHARS
     ? normalized

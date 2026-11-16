@@ -19,3 +19,5 @@ export const deriveExternalSessionActivity: (
         nowMs?: number;
     }>,
 ) => 'running' | 'active_recently' | 'idle' | 'unknown' = deriveAgentsExternalSessionActivity;
+
+export { projectExternalSessionCandidateTitle } from '@happier-dev/protocol/sessions/external/daemonRpcV1';

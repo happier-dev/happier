@@ -13,6 +13,7 @@ import {
   ExternalSessionActivityPageBudgetError,
   pageExternalSessionCandidatesByActivity,
   parseExternalSessionActivityPosition,
+  projectExternalSessionCandidateTitle,
   readSessionInputPromptUserTextV1,
   type ExternalSessionActivityPosition,
 } from '@happier-dev/plugin-sdk/sessions/external';
@@ -97,7 +98,9 @@ function normalizeOhMyPiCandidateTitle(value: string | null): string | null {
  * evidence is the first user message the bounded session scan already returned.
  */
 export function formatOhMyPiCandidateTitle(value: string | null): string | null {
-  return normalizeOhMyPiCandidateTitle(typeof value === 'string' ? readSessionInputPromptUserTextV1(value) : null);
+  return normalizeOhMyPiCandidateTitle(typeof value === 'string'
+    ? projectExternalSessionCandidateTitle(readSessionInputPromptUserTextV1(value), { source: 'prompt' })
+    : null);
 }
 
 export class OhMyPiCandidateInvalidCursorError extends Error {

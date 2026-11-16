@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { buildPromptPlanV1, renderSessionInputPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import {
   HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
   HAPPIER_BASE_SYSTEM_PROMPT_SESSION_TITLE_INITIAL_V1,
@@ -368,5 +370,25 @@ describe('listOhMyPiSessionCandidates', () => {
     const long = formatOhMyPiCandidateTitle('a'.repeat(400));
     expect(long).toHaveLength(120);
     expect(long?.endsWith('...')).toBe(true);
+  });
+
+  it('derives Browse titles from the user request after native delivery frames', async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), 'happier-ohmypi-framed-title-'));
+    tempDirs.add(agentDir);
+    const sessionRoot = join(agentDir, 'sessions', '-repo');
+    await mkdir(sessionRoot, { recursive: true });
+    const frame = renderSessionInputContextPromptV1({
+      inputProvenance: { v: 1, kind: 'host', producer: 'sessionAction' },
+      transformedUserText: 'Fix the login redirect',
+    });
+    const plan = renderSessionInputPromptPlanV1(buildPromptPlanV1({ modality: 'coding', blocks: [
+      { id: 'resource', scope: 'session', text: 'Resource context\nwith repeated   spaces' },
+    ] }));
+    await writeFile(join(sessionRoot, '2026-07-23T10-00-00-000Z_framed.jsonl'),
+      jsonlLine({ type: 'session', version: 3, id: 'framed', timestamp: '2026-07-23T10:00:00.000Z', cwd: '/repo' })
+      + jsonlLine({ type: 'message', id: 'user', parentId: null, timestamp: '2026-07-23T10:00:01.000Z',
+        message: { role: 'user', content: [{ type: 'text', text: `${plan}\n\n${frame}` }] } }), 'utf8');
+    const page = await listOhMyPiSessionCandidates({ source: { kind: 'ohMyPiAgentDir', agentDir }, env: {}, limit: 10 });
+    expect(page.candidates.map((candidate) => candidate.title)).toEqual(['Fix the login redirect']);
   });
 });

@@ -3066,6 +3066,7 @@
 | `./sessions/external` | `isAgentExternalSessionsResultWithinByteBudget` | value | daemon |
 | `./sessions/external` | `pageExternalSessionCandidatesByActivity` | value | daemon |
 | `./sessions/external` | `parseExternalSessionActivityPosition` | value | daemon |
+| `./sessions/external` | `projectExternalSessionCandidateTitle` | value | daemon |
 | `./sessions/external` | `readSessionInputPromptUserTextV1` | value | daemon |
 | `./sessions/external` | `resolveExternalSessionCandidateIdentityKey` | value | daemon |
 | `./sessions/external` | `runWithSessionInputPromptUserTextReader` | value | daemon |

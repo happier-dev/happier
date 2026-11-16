@@ -24,6 +24,8 @@ import {
   TranscriptRawRecordV1Schema,
 } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
+import { buildPromptPlanV1, renderSessionInputPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 
 import { buildPiRpcArgs } from '../runtime/rpc/args.js';
 import { resolvePiSessionIdFromResumeReference } from '../sessionFiles.js';
@@ -745,6 +747,23 @@ describe('Pi pure External Sessions contribution leaf', () => {
     expect(longTitle.endsWith('...')).toBe(true);
     expect(byId.get('pi-untitled-title-preamble')?.title).toBe('real prompt');
     expect(byId.get('pi-untitled-options-preamble')?.title).toBe('real prompt');
+  });
+
+  it('derives Browse titles from the user request after native delivery frames', async () => {
+    const { agentDir, sessionRoot } = await createAgentDir();
+    const frame = renderSessionInputContextPromptV1({
+      inputProvenance: { v: 1, kind: 'host', producer: 'sessionAction' },
+      transformedUserText: 'Fix the login redirect',
+    });
+    const plan = renderSessionInputPromptPlanV1(buildPromptPlanV1({ modality: 'coding', blocks: [
+      { id: 'resource', scope: 'session', text: 'Resource context\nwith repeated   spaces' },
+    ] }));
+    await createUntitledSessionFile({ sessionRoot, sessionId: 'pi-framed',
+      createdAt: '2026-07-20T10:00:00.000Z', firstUserText: `${plan}\n\n${frame}` });
+    const page = await createPiExternalSessionsContribution({ env: { PI_CODING_AGENT_DIR: agentDir } })
+      .listCandidates({ ...invocation(), source: { kind: 'piAgentDir' }, maxItems: 10 });
+    if (!page.ok) throw new Error('Pi candidate page unexpectedly failed');
+    expect(page.value.candidates.map((candidate) => candidate.title)).toEqual(['Fix the login redirect']);
   });
 
   it('starts a fresh bounded scan after EOF so an unchanged source can be paged again', async () => {
