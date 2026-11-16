@@ -433,6 +433,49 @@ describe('sync AccountChange catch-up projection', () => {
             recipientEnvelope: newEnvelope?.envelope ?? null }, readPolicy: { kind: 'team-resource' } })).toBe('Saved before join');
     });
 
+    // A Saved Secret shared with a Team before someone joined owes that member an envelope only its
+    // custodian can write. The membership-change wake is when the custodian learns of it, so it asks
+    // the owed census there too, not only when the custodian happens to open Saved Secrets.
+    it.each(['e2ee', 'plain'] as const)('asks the Saved Secret owed census and the owned Task inventory on the membership-change wake (%s)', async mode => {
+        const owedReads: string[] = [];
+        const taskListReads: string[] = [];
+        const credentials = mode === 'e2ee'
+            ? { token: ACCOUNT_TOKEN, secret: encodeBase64(new Uint8Array(32).fill(73), 'base64url') }
+            : { token: ACCOUNT_TOKEN };
+        await restoreTestAccount({ credentials, accountMode: mode, physicalRequest: (url, init) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/account/encryption/currentness' && 'secret' in credentials) {
+                return Promise.resolve(jsonResponse(createAccountEncryptionCurrentnessFixtureForCredentials(credentials)));
+            }
+            if (path === '/v2/teams/label-envelopes') return Promise.resolve(jsonResponse({ teams: [] }));
+            if (path === '/v1/tasks') {
+                taskListReads.push(init?.method ?? 'GET');
+                return Promise.resolve(jsonResponse({ tasks: [] }));
+            }
+            if (path !== '/v1/account/saved-secrets/resources/envelope-census/owed') return undefined;
+            owedReads.push(init?.method ?? 'GET');
+            return Promise.resolve(jsonResponse({ resources: [] }));
+        } });
+        const runtime = syncRuntime as unknown as SyncAccountChangeCatchUpHarness;
+        const { getActiveServerAccountScope } = await import('./domains/scope/activeServerAccountScope');
+        await waitForHomeGovernance(() => expect(getActiveServerAccountScope()).not.toBeNull());
+        owedReads.length = 0;
+        taskListReads.length = 0;
+        changesResponse.mockResolvedValueOnce({ changes: [{ cursor: 1, changedAt: 1, kind: 'account',
+            entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: null }], nextCursor: 1 });
+        await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });
+        if (mode === 'e2ee') await waitForHomeGovernance(() => {
+            expect(owedReads).toEqual(['GET']);
+            expect(taskListReads).toEqual(['GET']);
+        });
+        else {
+            // A Plain Account holds no content key: it custodies no E2EE envelope and asks nothing.
+            await new Promise(resolve => setTimeout(resolve, 50));
+            expect(owedReads).toEqual([]);
+            expect(taskListReads).toEqual([]);
+        }
+    });
+
     it('FLOWBUDGET foregrounds an acquired 1000-Session list and applies one changed Session', async () => {
         const rows = Array.from({ length: 1_000 }, (_, index) =>
             createPlainSessionCurrentProjectionRecordFixture({ id: `flowbudget-session-${index}` }));

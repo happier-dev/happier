@@ -141,7 +141,7 @@ export function createTaskResourceClientV1(options: TaskResourceClientOptionsV1)
     if (result.ownerAccountId !== address.ownerAccountId || result.taskId !== address.taskId) fail('task_content_invalid');
     return result;
   };
-  const prepareOpened = (current: OpenedTaskResourceV1) => runResourceRecipientKeyPreparationV1({
+  const prepareOpened = (current: Pick<OpenedTaskResourceV1, 'resource' | 'dataKey'>) => runResourceRecipientKeyPreparationV1({
     dataKey: current.dataKey, openedDataEncryptionKey: current.resource.encryptedDataKey,
     randomBytes: options.crypto.randomBytes, readCensus: () => census(current.resource),
     validateIdentity: () => {}, signal: options.signal,
@@ -179,7 +179,27 @@ export function createTaskResourceClientV1(options: TaskResourceClientOptionsV1)
       throw new TaskResourceClientErrorV1(error instanceof TaskResourceClientErrorV1 ? error.code : 'task_storage_unavailable', 'uncertain');
     }
   };
-  return { read, list, save, grants, census, share, unshare, prepare: async (address: TaskResourceAddressV1) => prepareOpened(await read(address)) };
+  /**
+   * The owner's later-member repair, run on the membership-change wake: one Task inventory, then the census of each
+   * owned Task that already has a resource key. Only envelopes the census owes are sealed; content is never opened.
+   */
+  const prepareOwnedShared = async () => {
+    const result = TaskResourcesListResponseV1Schema.parse(await request('GET', '/v1/tasks'));
+    let firstFailure: unknown = null;
+    for (const resource of result.tasks) {
+      if (resource.ownerAccountId !== options.accountId || resource.encryptionMode !== 'e2ee' || resource.content.t !== 'encrypted'
+        || !('k' in resource.content) || !resource.encryptedDataKey) continue;
+      const dataKey = await options.crypto.openKey(resource.encryptedDataKey).catch(() => null);
+      if (dataKey?.length !== ENCRYPTED_DATA_KEY_V1_BYTES) continue;
+      // One Task's refusal does not hold back the others; the first failure still reaches the wake.
+      try { await prepareOpened({ resource, dataKey }); }
+      catch (error) { firstFailure ??= error; }
+      finally { dataKey.fill(0); }
+    }
+    if (firstFailure) throw firstFailure;
+  };
+  return { read, list, save, grants, census, share, unshare, prepareOwnedShared,
+    prepare: async (address: TaskResourceAddressV1) => prepareOpened(await read(address)) };
 }
 export type TaskResourceClientV1 = ReturnType<typeof createTaskResourceClientV1>;
 

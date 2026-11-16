@@ -1,13 +1,13 @@
 import type { AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
 import { ENCRYPTED_DATA_KEY_V1_BYTES } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import type { PrincipalRefV1 } from '../../teams/principal.js';
-import { prepareResourceRecipientKeyEnvelopesV1 } from '../../teams/resourceRecipientKeyPreparationV1.js';
+import { prepareResourceRecipientKeyEnvelopesV1, runResourceRecipientKeyPreparationV1 } from '../../teams/resourceRecipientKeyPreparationV1.js';
 import { decodePluginCollectionLogicalRowV1, encodePluginCollectionLogicalValueV1,
   type PluginCollectionLogicalValueV1 } from './collectionLogicalCodecV1.js';
 import { PluginCollectionRowIdV1Schema, type NormalizedPluginAccountCollectionContractV1 } from './collectionsV1.js';
 import {
   PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 as paths,
-  PluginCollectionSharingCensusResponseV1Schema, PluginCollectionSharingErrorV1Schema,
+  PluginCollectionSharingCensusResponseV1Schema, PluginCollectionSharingCommitKeysResponseV1Schema, PluginCollectionSharingErrorV1Schema,
   PluginCollectionSharingGrantsResponseV1Schema, PluginCollectionSharingListResponseV1Schema,
   PluginCollectionSharingMutationResponseV1Schema, PluginCollectionSharingResourceV1Schema,
   type PluginCollectionSharingAddressV1, type PluginCollectionSharingResourceV1,
@@ -101,6 +101,26 @@ export function createPluginCollectionSharingClientV1<TValue extends PluginColle
     return { resource, dataKey, logical: { ownerAccountId: resource.ownerAccountId, access: resource.access,
       rowId: decoded.rowId, revision: decoded.revision, value: decoded.value } };
   };
+  /**
+   * Keyholder-read repair (the Artifact pattern): an editor who holds the row key seals it for every
+   * recipient the live census still owes, such as a member who joined the Team after the share.
+   * View-only readers cannot commit keys, so they skip it. A failed repair never fails the read.
+   */
+  const prepareRecipients = async (opened: Awaited<ReturnType<typeof open>>) => {
+    const { resource, dataKey } = opened;
+    if (!dataKey || resource.encryptionMode !== 'e2ee' || resource.access === 'view') return;
+    const target = address(resource.ownerAccountId, resource.rowId);
+    try {
+      await runResourceRecipientKeyPreparationV1({ dataKey, openedDataEncryptionKey: resource.encryptedDataKey,
+        randomBytes: options.crypto.randomBytes,
+        readCensus: async () => parse(PluginCollectionSharingCensusResponseV1Schema, await request(paths.census, target)),
+        validateIdentity: census => validateIdentity(census, target),
+        dataKeyChangedError: () => error('collection_revision_conflict'),
+        commit: async body => parse(PluginCollectionSharingCommitKeysResponseV1Schema,
+          await request(paths.commitKeys, { ...target, ...body }, 'mutation'), 'mutation'),
+      });
+    } catch { /* Retried on the next keyholder read. */ }
+  };
   const read = async (input: Readonly<{ ownerAccountId: string; rowId: string }>) => {
     const resource = parse(PluginCollectionSharingResourceV1Schema,
       await request(paths.get, { ...address(input.ownerAccountId, input.rowId), readerContext: contractRef }));
@@ -115,7 +135,11 @@ export function createPluginCollectionSharingClientV1<TValue extends PluginColle
     return encoded;
   };
   return {
-    get: async (input: Readonly<{ ownerAccountId: string; rowId: string }>) => (await read(input)).logical,
+    get: async (input: Readonly<{ ownerAccountId: string; rowId: string }>) => {
+      const opened = await read(input);
+      await prepareRecipients(opened);
+      return opened.logical;
+    },
     put: async (input: Readonly<{ ownerAccountId: string; value: TValue; expectedRevision: number }>) => {
       const rowId = parse(PluginCollectionRowIdV1Schema, input.value[contract.rowIdField]);
       const target = address(input.ownerAccountId, rowId);
@@ -130,7 +154,11 @@ export function createPluginCollectionSharingClientV1<TValue extends PluginColle
       const result = parse(PluginCollectionSharingListResponseV1Schema,
         await request(paths.sharedWithMe, { ...identity, readerContext: contractRef,
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }), ...(input.limit === undefined ? {} : { limit: input.limit }) }));
-      const rows = await Promise.all(result.resources.map(async resource => (await open(resource)).logical));
+      const rows = await Promise.all(result.resources.map(async resource => {
+        const opened = await open(resource);
+        await prepareRecipients(opened);
+        return opened.logical;
+      }));
       return { rows, ...(result.nextCursor === null ? {} : { nextCursor: result.nextCursor }) };
     },
     listGrants: async (rowId: string) => {

@@ -1873,6 +1873,77 @@ describe("plugin collection UI query route", () => {
         });
     });
 
+    it.each(["get", "sharedWithMe"] as const)("a keyholder %s read seals the row key for a later Team member, never for an outsider or a removed member", async readKind => {
+        const owner = `collection-later-owner-${readKind}`, early = `collection-later-early-${readKind}`;
+        const removed = `collection-later-removed-${readKind}`, later = `collection-later-joined-${readKind}`, outsider = `collection-later-outsider-${readKind}`;
+        const material = { type: "legacy" as const, secret: randomBytes(32) };
+        const initial = { id: `later-row-${readKind}`, status: "open" as const, title: "Shared before join", privateNote: "Team private note" };
+        await seedCurrentCollectionAccount({ accountId: owner, mode: "e2ee", rows: [{ rowId: initial.id, revision: 1, status: initial.status,
+            title: initial.title, contentEnvelope: { t: "encrypted" as const,
+                c: sealPluginCollectionPrivatePayloadV1({ material, payload: { privateNote: initial.privateNote }, randomBytes }) } }] });
+        const secretByAccount = new Map<string, Uint8Array>();
+        for (const accountId of [owner, early, removed, later, outsider]) {
+            if (accountId !== owner) await createAccount({ id: accountId, mode: "e2ee", seq: 1 });
+            const signing = tweetnacl.sign.keyPair(), content = tweetnacl.box.keyPair();
+            secretByAccount.set(accountId, content.secretKey);
+            await db.account.update({ where: { id: accountId }, data: { publicKey: Buffer.from(signing.publicKey).toString("hex"),
+                contentPublicKey: copyBytes(content.publicKey), contentPublicKeySig: copyBytes(signAccountContentKeyBindingV1({
+                    accountSigningSecretKey: signing.secretKey, contentPublicKey: content.publicKey })) } });
+        }
+        const team = await db.team.create({ data: { name: `Later members ${readKind}` } });
+        for (const [accountId, role] of [[owner, "owner"], [early, "member"], [removed, "member"]] as const) {
+            await db.teamMembership.create({ data: { teamId: team.id, accountId, role } });
+        }
+        const contract = normalizePluginAccountCollectionContractV1({ pluginId: PLUGIN_ID,
+            contribution: PluginAccountCollectionContributionV1Schema.parse(COLLECTION_MANIFEST.contributes.accountCollections[0]) });
+        type Value = { id: string; status: "open" | "closed"; title: string; privateNote: string };
+        const valid = (value: unknown): value is Value => value !== null && typeof value === "object" && "id" in value && typeof value.id === "string"
+            && "status" in value && (value.status === "open" || value.status === "closed") && "title" in value && typeof value.title === "string"
+            && "privateNote" in value && typeof value.privateNote === "string";
+        await withPluginDataApp(async app => {
+            const client = (accountId: string) => createPluginCollectionSharingClientV1<Value>({ accountId, contract, isValidLogicalValue: valid,
+                parseStoredLogicalValue: (value: unknown) => valid(value) ? value : null, requireCurrent: () => {},
+                crypto: { accountMaterial: accountId === owner ? material : null, randomBytes,
+                    openKey: async (envelope: string) => openEncryptedDataKeyEnvelopeV1({ envelope: decodeBase64(envelope),
+                        recipientSecretKeyOrSeed: secretByAccount.get(accountId)! }) },
+                request: async (path: string, body: unknown) => {
+                    const response = await app.inject({ method: "POST", url: path,
+                        headers: { ...V3_HEADERS, "x-test-user-id": accountId, "content-type": "application/json" }, payload: JSON.stringify(body) });
+                    return { status: response.statusCode, body: response.json() as unknown };
+                } });
+            const address = { ownerAccountId: owner, rowId: initial.id };
+            await client(owner).setGrant(initial.id, { principal: { kind: "team", teamId: team.id }, accessLevel: "edit", expectedRevision: 1 });
+            expect((await client(early).get(address)).value).toEqual(initial);
+            await db.teamMembership.delete({ where: { teamId_accountId: { teamId: team.id, accountId: removed } } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: later, role: "member" } });
+            await expect(client(later).get(address)).rejects.toMatchObject({ code: "collection_content_unavailable" });
+
+            // The current keyholder's ordinary read is the repair point.
+            if (readKind === "get") await client(early).get(address);
+            else expect((await client(early).sharedWithMe({})).rows).toHaveLength(1);
+
+            expect((await client(later).get(address)).value).toEqual(initial);
+            await expect(client(outsider).get(address)).rejects.toMatchObject({ code: "collection_unavailable" });
+            await expect(client(removed).get(address)).rejects.toMatchObject({ code: "collection_unavailable" });
+            const row = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: owner, rowId: initial.id } });
+            const recipients = (await db.pluginCollectionKeyEnvelope.findMany({ where: { rowDbId: row.id }, select: { recipientAccountId: true } }))
+                .map(envelope => envelope.recipientAccountId).sort();
+            // The removed member keeps the wrap it already had (nothing is retracted); the outsider never gets one.
+            expect(recipients).toEqual([early, later, owner, removed].sort());
+            // Nothing owed: a second keyholder read commits nothing.
+            const commits: unknown[] = [];
+            const restore = observeSqliteRequests({ before: request => {
+                if (request.model === "PluginCollectionKeyEnvelope" && request.action !== "findMany" && request.action !== "findUnique") commits.push(request.action);
+            } });
+            try {
+                if (readKind === "get") await client(early).get(address);
+                else await client(early).sharedWithMe({});
+            } finally { restore(); }
+            expect(commits).toEqual([]);
+            expect(await db.pluginCollectionKeyEnvelope.count({ where: { rowDbId: row.id } })).toBe(4);
+        });
+    });
+
     it("reads content-free retained collection presence without claiming a writer or scanning rows", async () => {
         const accountId = "account-collection-presence";
         await seedCurrentCollectionAccount({ accountId, seq: 77, rows: [

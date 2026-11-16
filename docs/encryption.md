@@ -567,6 +567,13 @@ resource revision and does not change that revision. A repair failure does not
 undo or repeat an acknowledged creation. Plain resources need no recipient
 envelopes or fabricated Account encryption material.
 
+A Team or Group grant follows live membership, so a member who joins later is
+owed an envelope only the custodian can write. The custodian's app asks the
+custodian-only owed census (`GET .../envelope-census/owed`) when Saved Secrets
+opens and on the same Team-change wake and reconnect that repair Team labels.
+An Account without a content key asks nothing. Until a custodian client is
+online, the member sees "Preparing encrypted access".
+
 `Account.encryptionMode` governs Saved Secret writes too (0.3 development
 source). `savedSecretResourceService.ts` is the one writer. On an E2EE Account
 it accepts a Plain write only when the update carries the owner's confirmed
@@ -1104,8 +1111,13 @@ grant follows live membership. Plain-owner sharing adds grants without rewriting
 content or requiring Account keys. An E2EE owner instead promotes the row with a
 client-generated task data key: client reseal, owner/recipient key envelopes,
 version CAS and the grant commit together. The server never receives that key
-or task plaintext. A keyless Plain recipient cannot open an E2EE owner's task;
-new eligible members may need an authorized holder to prepare their envelope.
+or task plaintext. A keyless Plain recipient cannot open an E2EE owner's task.
+A member who joins after the share gets their envelope from the owner's app on
+the Team-change wake and reconnect that also repair Team labels. That pass lists
+Tasks once and runs the existing recipient census for each owned Task that has a
+resource key. It seals only what the census owes, so outsiders and removed members
+get nothing new. Until the owner's app is online, the member sees the Task as
+`recipient_key_pending`. `tasks.internal.prepare` remains the explicit repair.
 
 The existing Account-KV classifier recognizes `{ t: 'encrypted', k: 'task', c }`
 as `current_resource_encrypted`. Ordinary raw KV reads and writes refuse it;
@@ -1139,8 +1151,12 @@ materialization and candidate migration retain that layout and key. The existing
 Account encryption transition carries recipient wraps when converting shared rows
 to E2EE and removes them when converting to Plain. Recipient key readiness uses
 the same signed Account content-key binding as other shared resources. An E2EE
-item remains unavailable to a keyless Plain recipient; a newly eligible member
-may need a holder to prepare an envelope.
+item remains unavailable to a keyless Plain recipient. A member who becomes
+eligible later, for example by joining a granted Team, gets an envelope the next
+time an owner or editor who holds the row key reads it through the sharing
+client (`get` or `sharedWithMe`). That read runs the existing census and
+`commit-keys`, sealing only what the census owes, so outsiders and removed
+members get nothing new. View-only readers cannot commit keys and skip this step.
 
 Grantees receive the complete logical item, including its declared server-readable
 projection. Those declared fields were already plaintext and indexable to the

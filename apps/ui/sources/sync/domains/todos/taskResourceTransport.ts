@@ -1,7 +1,7 @@
 import { createTaskResourceClientV1, TaskResourceClientErrorV1, type TaskResourceClientOptionsV1 } from '@happier-dev/protocol/todos/todoActionOperationsV1';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createUiTaskResourceCrypto } from '@/sync/encryption/taskResourceCrypto';
-import type { ServerFetch } from '@/sync/http/client';
+import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { resolveTodoAccountStorageContext } from './todoOps';
 import { createUiAccountKvCipher } from '@/sync/encryption/accountKvCipher';
@@ -43,4 +43,21 @@ export function createUiTaskResourceOptions(args: Readonly<{
 }
 export function createUiTaskResourceClient(args: Parameters<typeof createUiTaskResourceOptions>[0]) {
   return createTaskResourceClientV1(createUiTaskResourceOptions(args));
+}
+
+/**
+ * The owner's later-member Task key repair on the membership-change wake. A Home without Task
+ * resources has nothing to repair; every other failure reaches the wake's own error path.
+ */
+export async function prepareOwnedSharedTaskKeys(args: Readonly<{
+  credentials: AuthCredentials; accountId: string; serverId: string; isCurrent: () => boolean;
+}>): Promise<void> {
+  const request = createServerFetchForActiveServer(undefined, { credentials: args.credentials, isCurrent: args.isCurrent });
+  const requireCurrent = () => { if (!args.isCurrent()) throw new TaskResourceClientErrorV1('account_currentness_unavailable', 'failed'); };
+  try {
+    await createUiTaskResourceClient({ credentials: args.credentials, accountId: args.accountId, serverId: args.serverId,
+      request, requireCurrent }).prepareOwnedShared();
+  } catch (error) {
+    if (!(error instanceof TaskResourceClientErrorV1) || error.code !== 'task_resource_unsupported') throw error;
+  }
 }

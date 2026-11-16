@@ -1835,6 +1835,23 @@ class Sync {
             this.teamLabelEnvelopeSync = new InvalidateSync(async () => {
                 const target = this.getAppliedTransportTarget();
                 if (!target || !this.credentials || this.embedSessionScope) return;
+                // A Saved Secret shared with a Team owes its later members an envelope only the
+                // custodian can write; this wake is when the custodian learns of them. Only an
+                // Account holding a content key custodies E2EE resources; Plain Accounts skip it.
+                const scope = getActiveServerAccountScope();
+                const encryption = this.encryption;
+                if (scope && encryption && areServerProfileIdentifiersEquivalent(scope.serverId, target.serverId)) {
+                    const { repairCustodiedSavedSecretResourceEnvelopesBestEffort } = await import('./ops/settings/savedSecretResourceOperations');
+                    await repairCustodiedSavedSecretResourceEnvelopesBestEffort({ scope,
+                        decryptDataKeyEnvelope: (encryptedDataKey) => encryption.decryptEncryptionKey(encryptedDataKey, scope),
+                    }).catch((error: unknown) => log.log(`Saved Secret envelope repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
+                    // Owned Tasks shared with a Team owe later members the same kind of key.
+                    const credentials = this.credentials;
+                    const { prepareOwnedSharedTaskKeys } = await import('./domains/todos/taskResourceTransport');
+                    await prepareOwnedSharedTaskKeys({ credentials, accountId: scope.accountId, serverId: scope.serverId,
+                        isCurrent: () => this.credentials === credentials && areServerAccountScopesEqual(getActiveServerAccountScope(), scope),
+                    }).catch((error: unknown) => log.log(`Task key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
+                }
                 await repairTeamLabelEnvelopes(target.serverId);
             }, { pause, backoff, shouldRetry,
                 onError: (error) => log.log(`Team label envelope repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`) });
