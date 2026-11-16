@@ -1632,6 +1632,8 @@ type UsageQueryResourceStore = Omit<PluginUiResourceStore, 'getEntry'> & Readonl
     getEntry(reference: Parameters<PluginUiResourceStore['getEntry']>[0], callerContext?: ActionExecutorContext): UsageQueryResourceEntry;
 }>;
 
+const usagePresentationReady = () => true;
+
 /** Explicit recovery replaces this entry's read; ordinary push wakes stay coalesced. */
 function withExplicitAllowanceRefresh(store: PluginUiResourceStore,
     withCaller: <T>(callerContext: ActionExecutorContext | undefined, admitted: boolean, acquire: () => T) => T,
@@ -2384,8 +2386,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // continuity hint without materializing transport bytes.
                     const content = projectionOnly === true && event.kind === 'invalidated'
                         ? owner.store.getEntry(reference).getSnapshot().value : undefined;
-                    const notification = content && event.kind === 'invalidated'
-                        ? { kind: 'invalidated' as const, contentIdentity: decodedValues.get(content)?.value } : event;
+                    // A reconnect recovers an interrupted transport, so it cannot
+                    // wait behind the pre-reconnect read it is meant to replace.
+                    const notification = typeof change === 'object' && change.source === 'connected'
+                        ? { kind: 'invalidated' as const, supersede: true as const }
+                        : content && event.kind === 'invalidated'
+                            ? { kind: 'invalidated' as const, contentIdentity: decodedValues.get(content)?.value } : event;
                     if (!accountModeChanged && typeof change === 'object' && change.usageAccountingChange) {
                         // Committed facts in one synchronous burst invalidate now,
                         // then admit their one replacement together. Starting a read
@@ -2485,7 +2491,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             }
         }, reference => [...listeners.values()].some(watched => resourceKey(watched.reference) === resourceKey(reference)
             && watched.isAllowanceReadPending()), (reference, entry) => {
-            if (typeof reference === 'string' || !('hostRead' in reference) || reference.hostRead !== 'usage.query') return () => true;
+            if (typeof reference === 'string' || !('hostRead' in reference) || reference.hostRead !== 'usage.query') return usagePresentationReady;
             const queries = normalizeUsageQueryBatchInput(reference.input).queries;
             const { readInputs, reusable } = readUsageAdmission(reference, queries);
             const initial = entry.getSnapshot();
@@ -2505,6 +2511,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 return admittedAccounting?.answers.has(getUsageAccountingReadKey(
                     demand.request, demand.includeContributions, demand.includeSessionIds, demand.workOnly)) === true;
             }));
+            // A warm facade needs only the settled readiness fact. Returning a
+            // shared probe releases its initial content and decoded admission.
+            if (ready) return usagePresentationReady;
             return () => {
                 if (ready) return true;
                 const snapshot = entry.getSnapshot();

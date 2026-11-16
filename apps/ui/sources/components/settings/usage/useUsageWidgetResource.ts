@@ -85,22 +85,30 @@ export function useUsageWidgetResource(input: Readonly<{
             return acquired.subscribe(listener, live);
         } });
     }, [context, input.plan.batchKey, input.callerContext, input.callerQuery]);
-    const admitted = React.useRef(new Set<() => void>());
+    const admitted = React.useRef(new Map<UsageWidgetQueryPlan['batchKey'], () => void>());
     React.useLayoutEffect(() => () => {
-        for (const release of admitted.current) release();
+        for (const release of admitted.current.values()) release();
         admitted.current.clear();
     }, [context, presented]);
     React.useLayoutEffect(() => {
         if (!entry || !input.retainPendingDemand || !presented) return;
         let retired = false;
         let unsubscribe = () => {};
-        const release = () => { unsubscribe(); admitted.current.delete(release); };
+        const key = input.plan.batchKey;
+        const release = () => {
+            unsubscribe();
+            if (admitted.current.get(key) === release) admitted.current.delete(key);
+        };
         const settle = () => { if (retired && entry.getSnapshot().pending === 'idle') release(); };
         // Retain admitted work across visible widget changes; leaving releases page demand.
         unsubscribe = entry.subscribe(settle, false);
-        admitted.current.add(release);
+        const previous = admitted.current.get(key);
+        admitted.current.set(key, release);
+        // Transfer this page's demand after subscribing, so revisiting a pending
+        // Resource cannot cancel its admitted read or retain another borrower.
+        previous?.();
         return () => { retired = true; settle(); };
-    }, [entry, input.retainPendingDemand, presented]);
+    }, [entry, input.retainPendingDemand, input.plan.batchKey, presented]);
     return React.useMemo(() => ({ entry, lifetime: context?.accountLifetime ?? null, plan: input.plan }),
         [entry, context, input.plan]);
 }

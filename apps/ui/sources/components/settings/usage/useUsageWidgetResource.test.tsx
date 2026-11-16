@@ -183,12 +183,16 @@ describe('Usage widget shared Resource selection', () => {
         const settings = storage.getState().settings;
         const screen = await renderMountedCurrentUiContext(<CurrentUiContextCommandsProvider authority={authority}><Page /></CurrentUiContextCommandsProvider>);
         const posts = () => home!.requests.filter(request => request.path === '/v2/usage/query').length;
-        const invoke = async (id: string, surface: 'agent' | 'ui' = 'agent') => {
+        const invoke = async (id: string, surface: 'agent' | 'ui' = 'agent', input?: { bucket?: number; mode?: string; row?: string }) => {
+            const execute = () => createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: id, input },
+                surface === 'agent' ? { surface, authority: 'account_automation' }
+                    : { surface, authority: 'present_user', actionCaller: { kind: 'host' } });
+            let result: Awaited<ReturnType<typeof execute>> | undefined;
             await act(async () => {
-                expect(await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: id },
-                    surface === 'agent' ? { surface, authority: 'account_automation' }
-                        : { surface, authority: 'present_user', actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
+                result = await execute();
+                expect(result).toMatchObject({ ok: true });
             });
+            return result;
         };
         try {
             await expect.poll(() => mounted.model?.slice?.accounting).toBeDefined();
@@ -200,15 +204,24 @@ describe('Usage widget shared Resource selection', () => {
             await act(async () => { chart!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 640, height: 240 } } }); });
             const codex = usageAgentTitle('codex');
             const claude = usageAgentTitle('claude');
-            const bucket = mounted.reader!.readCurrentUiContext()!.commands.find(row => row.title.includes(codex) && row.title.includes(claude));
-            expect(bucket, 'real Daily bucket publishes its exact value lens').toBeDefined();
-            await invoke(bucket!.id);
-            const row = mounted.reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.page.drillFilterTo', { name: codex }));
-            expect(row, 'held Daily Agent row publishes the existing drill choice').toBeDefined();
+            const values = mounted.reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.charts.commandValues'));
+            expect(values, 'real Daily chart publishes its structured value lens').toBeDefined();
+            const selected = await invoke(values!.id, 'agent', { bucket: 0, mode: 'select' });
+            expect(selected).toMatchObject({ ok: true, result: { buckets: [{ rows: expect.arrayContaining([
+                expect.objectContaining({ label: codex, selectable: true }), expect.objectContaining({ label: claude, selectable: true }),
+            ]) }] } });
+            const result = selected?.ok ? selected.result : null;
+            if (!result || typeof result !== 'object' || Array.isArray(result) || !('buckets' in result) || !Array.isArray(result.buckets)) throw new Error('Missing Daily bucket values');
+            const bucket = result.buckets[0];
+            if (!bucket || typeof bucket !== 'object' || Array.isArray(bucket) || !Array.isArray(bucket.rows)) throw new Error('Missing Daily bucket rows');
+            const row = bucket.rows.find(candidate => candidate && typeof candidate === 'object' && !Array.isArray(candidate) && candidate.label === codex);
+            if (!row || typeof row !== 'object' || Array.isArray(row) || typeof row.id !== 'string') throw new Error('Missing Codex lens row');
+            const choose = mounted.reader!.readCurrentUiContext()!.commands.find(command => command.title === t('usage.board.charts.commandChoose'));
+            expect(choose, 'held Daily chart publishes its structured drill choice').toBeDefined();
             storage.setState({ settings: { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
                 actions: { [ACTION_ID_FAMILIES_V1.usage[0]]: { disabledSurfaces: ['agent'] } } }) } });
             const beforeChoice = posts();
-            await invoke(row!.id);
+            await invoke(choose!.id, 'agent', { row: row.id });
             await expect.poll(() => mounted.model?.pending).toBe(false);
             expect(mounted.model?.requestedQuery?.query.agents).toEqual(['codex']);
             expect.soft(mounted.model?.error?.code).toBe('action_disabled');
@@ -508,6 +521,83 @@ describe('Usage widget shared Resource selection', () => {
             expect.soft(model?.error?.code, 'all selected-period reads retain the agent admission').toBe('action_disabled');
             expect.soft(home!.requests.filter(request => request.path === '/v2/usage/query'), 'no inventory or child query can escape under UI authority').toHaveLength(posts);
         } finally { held.resolve(); storage.setState({ settings }); await screen.unmount(); }
+    });
+    it('shares pending page demand per Resource across twenty two-scope round trips', async () => {
+        const { Session: InspectorSession } = await import('node:inspector');
+        const usageResources = await import('@/sync/api/account/usageQueryResource');
+        const held = createDeferred<void>();
+        const signals: (AbortSignal | null | undefined)[] = [];
+        const credentials = await mountHome(async request => {
+            if (request.path !== '/v2/usage/query') return undefined;
+            signals.push(request.signal);
+            await held.promise;
+            return Response.json(accounting);
+        });
+        const plans = ['7days', '30days'].map(relative => plan(normalizeUsageQuery({ period: { relative }, includeQuota: false,
+            includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeComparison: false })));
+        const getStore = usageResources.getUsageQueryResourceStore;
+        const staticListeners: { reference: WeakRef<object>; released: boolean }[] = [];
+        // Observe the actual listener functions passed to the real store, not
+        // its subscriber counter. No subscription or read logic is replaced.
+        const observation = vi.spyOn(usageResources, 'getUsageQueryResourceStore').mockImplementation((...args) => {
+            const store = getStore(...args);
+            return { ...store, getEntry(...entryArgs) {
+                const entry = store.getEntry(...entryArgs);
+                return { ...entry, subscribe(listener: () => void, live: boolean) {
+                    const observed = { reference: new WeakRef(listener), released: false };
+                    if (!live) staticListeners.push(observed);
+                    const unsubscribe = entry.subscribe(listener, live);
+                    return () => { unsubscribe(); observed.released = true; };
+                } };
+            } };
+        });
+        const hook = await renderHook(({ queryPlan }) => {
+            const resource = useUsageWidgetResource({ credentials, enabled: true, plan: queryPlan, retainPendingDemand: true });
+            useUsageWidgetBodyModel(resource, 'first');
+            return resource;
+        }, { initialProps: { queryPlan: plans[0]! }, flushOptions: { cycles: 20 } });
+        const context = captureUiUsageQueryAccountContext(credentials)!;
+        const store = getStore(context);
+        const entries = plans.map(queryPlan => store.getEntry({ hostRead: 'usage.query',
+            input: projectNativeJsonValueForTransport(queryPlan.input) }));
+        const inspector = new InspectorSession();
+        inspector.connect();
+        const liveListeners = async () => {
+            observation.mockClear();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+            // React's alternate Fiber may retain a released effect until the
+            // next commit. Count only functions still subscribed to the store.
+            return new Set(staticListeners.flatMap(row => {
+                const listener = !row.released && row.reference.deref();
+                return listener ? [listener] : [];
+            })).size;
+        };
+        try {
+            await expect.poll(() => signals.length).toBeGreaterThan(0);
+            for (let round = 0; round < 20; round++) for (const queryPlan of [plans[1]!, plans[0]!]) {
+                await hook.rerender({ queryPlan });
+                expect(hook.getCurrent().entry!.getSnapshot().pending).not.toBe('idle');
+                publishHomeAccountChange(context.accountLifetime.scope.serverId, [], { changeKinds: ['account'],
+                    usageQueryAffects: true, usageAccountingChange: { sessionId: null } });
+                await flushHookEffects({ cycles: 5 });
+            }
+            expect(signals.every(signal => signal?.aborted === false), 'revisiting a scope preserves its original admitted work').toBe(true);
+            expect(await liveListeners(), 'pending work retains one real static listener per scope, not per visit').toBe(2);
+            held.resolve();
+            await expect.poll(async () => {
+                await flushHookEffects({ cycles: 20 });
+                return entries.every(entry => entry.getSnapshot().pending === 'idle');
+            }).toBe(true);
+            expect(await liveListeners(), 'settling releases the retired scope borrower').toBe(1);
+            await hook.unmount();
+            expect(await liveListeners(), 'leaving releases the current page borrower').toBe(0);
+        } finally {
+            held.resolve();
+            await hook.unmount();
+            observation.mockRestore();
+            inspector.disconnect();
+        }
     });
     it('cancels the pending read and withdraws a queued live replacement on hide', async () => {
         let amount = 1;

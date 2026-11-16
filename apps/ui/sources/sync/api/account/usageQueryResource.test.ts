@@ -4570,6 +4570,151 @@ describe('usage query captured Resource adapter', () => {
     } finally { inspector.disconnect(); }
   });
 
+  it('releases retired rich quota generations across twenty settled two-scope round trips', async () => {
+    const { Session: InspectorSession } = await import('node:inspector');
+    const { encodeBase64 } = await import('@/encryption/base64');
+    const { sealProviderAccountUsageSnapshot } = await import('@happier-dev/protocol/connect/accountUsage');
+    const { buildProviderAccountUsagePageProjectionV1 } = await import('@happier-dev/protocol/connect/providerAccountUsagePageProjection');
+    const { sealProviderAccountUsagePageProjectionV1 } = await import('@happier-dev/protocol/connect/providerAccountUsagePageProjectionCrypto');
+    const { bundledUsageModelPriceCatalog } = await import('@happier-dev/protocol/usage/usageModelPriceCatalog');
+    const now = Date.UTC(2026, 10, 6, 12);
+    const day = 86_400_000;
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const secret = new Uint8Array(32).fill(7);
+    const material = { type: 'legacy' as const, secret };
+    const credentials = { token: createServedHomeAccountToken('account-a'), secret: encodeBase64(secret, 'base64url') };
+    const ref = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'quota-retention' };
+    const source = { bindingKind: 'account' as const, ref };
+    const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+      providerId: 'codex', accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs: now, fetchedAtMs: now,
+      staleAfterMs: day, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      meters: [{ meterId: 'weekly', label: 'Weekly', used: 60, limit: 100, utilizationPct: 60, unit: 'requests',
+        status: 'ok', resetsAt: now + day, resetAtMs: now + day, windowDurationMs: 7 * day, details: {} }] });
+    const sealed = sealProviderAccountUsageSnapshot({ snapshot, material, randomBytes: length => new Uint8Array(length).fill(9) });
+    let generation = 1;
+    let projectionReads = 0;
+    const captured = await context(request => {
+      if (request.path === CONNECTED_PRESENTATION_ROWS_ROUTE_V1) return Response.json(ConnectedPresentationRowReadResponseV1Schema.parse({ status: 'deleted', revision: 1 }));
+      if (request.path === CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1) return Response.json(ConnectedAcknowledgementsRowReadResponseV1Schema.parse({ status: 'deleted', revision: 1 }));
+      if (request.path === '/v2/usage/query') return Response.json({ ...value,
+        totals: { ...value.totals, eventCount: generation }, priceCatalog: { ...bundledUsageModelPriceCatalog,
+          provenance: { ...bundledUsageModelPriceCatalog.provenance, asOfMs: now + generation } } });
+      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') return Response.json({ source,
+        recordId: snapshot.recordId, providerAccountId: ref.accountId, fetchedAt: now, staleAfterMs: day });
+      if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({
+        content: { t: 'encrypted', c: sealed.ciphertext, recoveryCreditDetails: sealed.recoveryCreditDetails },
+        metadata: { fetchedAt: now, staleAfterMs: day, status: 'ok' }, sources: [source] });
+      if (request.path === '/v4/connect/qualified/provider-account-usage/day-summaries') return Response.json({ summaries: [], missingDays: [] });
+      if (request.path === '/v4/connect/qualified/provider-account-usage/history') {
+        const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
+          request.url.searchParams.get('query'));
+        if (!('projection' in query)) throw new Error('Expected the real Resource projection read');
+        projectionReads++;
+        const range = query.projection.range;
+        // Stable old observations plus an append-only live frontier. Each
+        // protected HTTP generation is admitted through the real decoder.
+        const observations = [now - 2 * day, now - day, ...Array.from({ length: generation }, (_, index) => now - 100 + index)];
+        const entries = observations.filter(at => at >= range.startAtMs && at < range.endAtMs).map(at => ({
+          id: `observation-${at}`, observedAtMs: at, snapshot: { ...snapshot, observedAtMs: at, fetchedAtMs: at } }));
+        const projection = buildProviderAccountUsagePageProjectionV1({ recordId: snapshot.recordId, range,
+          history: { entries, nextCursor: null } });
+        const frontier = entries.at(-1)!;
+        return Response.json({ projection: { recordId: snapshot.recordId, demand: { range, resolution: 'accepted_observations' },
+          observationCount: entries.length, frontier: { id: frontier.id, observedAtMs: frontier.observedAtMs },
+          content: sealProviderAccountUsagePageProjectionV1({ projection, accountMode: 'e2ee', material,
+            randomBytes: length => new Uint8Array(length).fill(9) }) }, complete: true },
+        { headers: { etag: `"quota-generation-${generation}"` } });
+      }
+      if (request.path === '/v2/pending/reset-starts/read') return Response.json({ entries: [] });
+      return undefined;
+    }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] },
+    undefined, { credentials, accountMode: 'e2ee',
+      encryptionCurrentness: () => createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
+    const queries = ['7days', '30days'].map(relative => normalizeUsageQuery({ metric: 'cost', period: { relative }, includeQuota: true,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false }));
+    const store = getUsageQueryResourceStore(captured);
+    const entries = queries.map(query => store.getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [query] }) }));
+    type Quota = NonNullable<ReturnType<typeof decodeUsageQueryResource>['results'][number]['quota']>[number];
+    const families = (quota: Quota) => {
+      const dayFact = quota.pageFacts!.dayQuotaHistory!.find(fact => fact.dayStartAtMs === Date.UTC(2026, 10, 4))!;
+      expect(dayFact).toBeDefined();
+      const window = dayFact.windows[0]!;
+      expect(window.lastSnapshot.observedAtMs).toBe(now - 2 * day);
+      return { quota, dayFact, window, historicalSnapshot: window.lastSnapshot };
+    };
+    const references: Record<keyof ReturnType<typeof families>, WeakRef<object>[]> = {
+      quota: [], dayFact: [], window: [], historicalSnapshot: [],
+    };
+    const control: { quota?: Quota; catalog?: object } = {};
+    const catalogs: WeakRef<object>[] = [];
+    const retainedFacades: ReturnType<typeof store.getEntry>[] = [];
+    const live = (rows: WeakRef<object>[]) => new Set(rows.flatMap(row => { const value = row.deref(); return value ? [value] : []; }));
+    const inspector = new InspectorSession();
+    inspector.connect();
+    const collect = async () => {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+    };
+    const quotaFor = (entry: typeof entries[number]) => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.quota![0]!;
+    const catalogFor = (entry: typeof entries[number]) => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!.priceCatalog!;
+    const assertRetained = (withControl: boolean) => {
+      const counts: Record<string, number> = {};
+      for (const name of Object.keys(references) as (keyof typeof references)[]) {
+        const expected = new Set<object>(entries.map(entry => families(quotaFor(entry))[name]));
+        if (withControl) expected.add(families(control.quota!)[name]);
+        const actual = live(references[name]);
+        counts[name] = actual.size;
+        expect(actual.size, `${name}: unique retained generations`).toBe(expected.size);
+        expect([...actual].every(object => expected.has(object)), `${name}: only current scopes and explicit control remain`).toBe(true);
+      }
+      const expected = new Set<object>(entries.map(catalogFor));
+      if (withControl) expected.add(control.catalog!);
+      const actual = live(catalogs);
+      counts.catalogs = actual.size;
+      expect(actual.size, 'catalogs: unique retained generations').toBe(expected.size);
+      expect([...actual].every(object => expected.has(object)), 'only current catalogs and explicit control remain').toBe(true);
+      return counts;
+    };
+    try {
+      for (let round = 0; round < 20; round++) for (let index = 0; index < entries.length; index++, generation++) {
+        const entry = entries[index]!;
+        await entry.refresh();
+        expect(entry.getSnapshot().pending).toBe('idle');
+        expect(entry.getSnapshot().error).toBeUndefined();
+        const slice = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+        expect(slice.key).toBe(getUsageQueryKey(queries[index]!));
+        expect(slice.pending).toBe(false);
+        const quota = quotaFor(entry);
+        expect(catalogFor(entry).provenance.asOfMs).toBe(now + generation);
+        catalogs.push(new WeakRef(catalogFor(entry)));
+        const facade = store.getEntry({ hostRead: 'usage.query',
+          input: projectNativeJsonValueForTransport({ queries: [queries[index]!] }) });
+        expect(facade.isPresentationReady()).toBe(true);
+        retainedFacades.push(facade);
+        expect(quota.pageFacts?.historyStatus).toBe('complete');
+        expect(quota.pageFacts?.resetWitness?.id).toBe(`observation-${now - 101 + generation}`);
+        if (generation === 1) { control.quota = quota; control.catalog = catalogFor(entry); }
+        for (const [name, object] of Object.entries(families(quota))) references[name as keyof typeof references].push(new WeakRef(object));
+      }
+      expect(projectionReads).toBeGreaterThanOrEqual(40);
+      await collect();
+      // Return from the assertion frame before collecting again: its temporary
+      // expected/actual Sets are themselves strong retaining roots.
+      const withControl = assertRetained(true);
+      expect(references.quota[0]!.deref()).toBe(control.quota);
+      expect(entries.every(entry => quotaFor(entry) !== control.quota)).toBe(true);
+      delete control.quota;
+      delete control.catalog;
+      await collect();
+      const current = assertRetained(false);
+      expect(retainedFacades).toHaveLength(40);
+      expect(retainedFacades.every(facade => facade.isPresentationReady())).toBe(true);
+      console.info('usage-retained-generation-counts', { withControl, current });
+    } finally { inspector.disconnect(); }
+  });
+
   it('releases progress observers when cancelled finite reads keep their admitted projections', async () => {
     const { Session: InspectorSession } = await import('node:inspector');
     const captured = await context(request => request.path === '/v2/usage/query' ? Response.json(value) : undefined);
