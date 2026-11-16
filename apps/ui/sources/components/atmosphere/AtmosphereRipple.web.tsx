@@ -2,6 +2,7 @@ import * as React from 'react';
 import { atmosphereDigitLattice, atmosphereRipple, type AtmosphereGlyphAtlas } from '@happier-dev/brand/atmosphere';
 import { backdropGlyphAtlas } from './backdropGlyphAtlas.web';
 import { snapCanvasBox } from './planetCanvasScene';
+import { useCanvasBackingStoreRelease } from '@/components/ui/media/canvasBackingStore';
 import type { AtmosphereRippleHandle, AtmosphereRippleProps, AtmosphereRippleRing } from './atmosphereRipple.types';
 
 export const ATMOSPHERE_RIPPLE_RING = true;
@@ -29,6 +30,7 @@ export const AtmosphereRipple = React.forwardRef<AtmosphereRippleHandle, Atmosph
     const ref = React.useRef<HTMLCanvasElement>(null);
     const dpr = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
     const box = snapCanvasBox(props.width, props.height, dpr);
+    useCanvasBackingStoreRelease(ref, box.pixelWidth, box.pixelHeight);
     const atlas = React.useRef<AtmosphereGlyphAtlas | null>(null);
     const latest = React.useRef<AtmosphereRippleRing>(null);
     const { theme, page } = props;

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { BotFaceRasterImage } from './botFaceRaster';
+import { useCanvasBackingStoreRelease } from '@/components/ui/media/canvasBackingStore';
 
 /** Paints a raster face (device pixels) into one canvas at its logical size. */
 export function BotFaceRasterView(
@@ -7,6 +8,7 @@ export function BotFaceRasterView(
 ) {
   const ref = React.useRef<HTMLCanvasElement>(null);
   const { image } = props;
+  useCanvasBackingStoreRelease(ref, image.width, image.height);
   React.useLayoutEffect(() => {
     const context = ref.current?.getContext('2d');
     if (!context) return;

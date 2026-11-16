@@ -66,3 +66,47 @@ it('draws the static body once per real input change and only retypes digits on 
     await screen.unmount();
     expect(vi.getTimerCount()).toBe(0);
 });
+
+it('keeps one drawing layer per planet and frees its pixel buffers while hidden and when it unmounts', async () => {
+    // WebKit keeps a dropped canvas's pixel surface until a GC the JS heap has no pressure to run, so
+    // each Home visit grew the desktop app by the planet's full-size buffers (P03-DESKTOP-LONG).
+    vi.stubGlobal('document', { documentElement: {}, fonts: { check: () => true } });
+    vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
+    const drawImage = vi.fn();
+    const context = { setTransform() {}, clearRect() {}, beginPath() {}, arc() {}, fill() {}, drawImage, fillText() {},
+        measureText: () => ({ actualBoundingBoxAscent: 12, actualBoundingBoxDescent: 12 }) };
+    // The physical drawing surfaces are the system boundary: count their pixels, not the drawing.
+    const surfaces: { width: number; height: number }[] = [];
+    const surface = (width = 0, height = 0) => {
+        const canvas = { width, height, getContext: () => context };
+        surfaces.push(canvas);
+        return canvas;
+    };
+    const pixels = () => surfaces.reduce((sum, canvas) => sum + canvas.width * canvas.height, 0);
+    let layers = 0;
+    Object.assign(document, { createElement: () => { layers += 1; return surface(); } });
+    const pane = { width: 280, height: 240 };
+    const options = homePlanetSceneOptions(homePlanetGeometry('corner', pane), pane,
+        { theme: 'dark', style: 'balanced', digits: true });
+    const Scene = ({ mode = 'visible', theme = 'dark' }: { mode?: 'visible' | 'hidden'; theme?: 'dark' | 'light' }) =>
+        <React.Activity mode={mode}><PlanetCanvas {...pane} options={{ ...options, theme }} /></React.Activity>;
+    const screen = await renderScreen(<Scene />,
+        { createNodeMock: element => {
+            const { width, height } = element.props;
+            return element.type === 'canvas' && typeof width === 'number' && typeof height === 'number' ? surface(width, height) : null;
+        } });
+    await screen.update(<Scene theme="light" />);
+    await screen.update(<Scene />);
+    expect(layers).toBe(1);
+    const shown = pixels();
+    expect(shown).toBeGreaterThan(0);
+    await screen.update(<Scene mode="hidden" />);
+    expect(pixels()).toBe(0);
+    drawImage.mockClear();
+    await screen.update(<Scene />);
+    expect(pixels()).toBe(shown);
+    expect(drawImage).toHaveBeenCalled();
+    expect(layers).toBe(1);
+    await screen.unmount();
+    expect(pixels()).toBe(0);
+});

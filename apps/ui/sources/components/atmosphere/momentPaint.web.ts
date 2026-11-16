@@ -11,6 +11,7 @@ import {
 } from '@/constants/Typography';
 import { paintPlanetScene } from './planetCanvasPaint.web';
 import { planetCanvasFonts } from './PlanetCanvas.web';
+import { releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingStore';
 
 /**
  * The web interpreter of the brand moments' paint data (`planet-moments.mjs`). It owns no choreography:
@@ -96,7 +97,7 @@ function paintPlanet(
     layer = { key, canvas };
     // A moment draws at most a few planets per frame (a hand-off interpolates one); keep the recent ones.
     planetLayers.unshift(layer);
-    if (planetLayers.length > 24) planetLayers.pop();
+    if (planetLayers.length > 24) releaseCanvasBackingStore(planetLayers.pop()?.canvas);
   }
   context.save();
   context.globalAlpha *= alpha;

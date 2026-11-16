@@ -4,6 +4,7 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { orderedFadeMask } from './orderedFadeMask';
 import { orderedDissolve } from './orderedDissolve';
 import type { AtmosphereDissolveProps } from './atmosphereDissolve.types';
+import { releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingStore';
 
 function maskUrl(mask: ReturnType<typeof orderedFadeMask>): string {
   const canvas = document.createElement('canvas');
@@ -12,7 +13,9 @@ function maskUrl(mask: ReturnType<typeof orderedFadeMask>): string {
   canvas
     .getContext('2d')
     ?.putImageData(new ImageData(mask.rgba, mask.width, mask.height), 0, 0);
-  return `url(${canvas.toDataURL('image/png')})`;
+  const url = `url(${canvas.toDataURL('image/png')})`;
+  releaseCanvasBackingStore(canvas);
+  return url;
 }
 
 /**

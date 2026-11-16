@@ -3,6 +3,7 @@ import { drawPlanetMarkFrame } from '@happier-dev/brand/planet';
 import { useAnimatedReaction } from 'react-native-reanimated';
 
 import type { VoiceMarkCanvasProps } from './voiceMarkCanvasTypes';
+import { useCanvasBackingStoreRelease } from '@/components/ui/media/canvasBackingStore';
 
 /**
  * Web renderer for the Voice mark.
@@ -18,6 +19,7 @@ export const VoiceMarkCanvas = React.memo(function VoiceMarkCanvas(props: VoiceM
     const width = to.maxX - to.minX;
     const height = to.maxY - to.minY;
     const ratio = typeof window === 'undefined' ? 2 : Math.min(3, Math.max(2, window.devicePixelRatio || 1));
+    useCanvasBackingStoreRelease(canvasRef, Math.ceil(width * ratio), Math.ceil(height * ratio));
 
     const paint = React.useCallback((m: number, p: number, e: number, f: number, g: number, l: number) => {
         const canvas = canvasRef.current;

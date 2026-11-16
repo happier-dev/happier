@@ -6,6 +6,7 @@ import { paintPlanetScene } from './planetCanvasPaint.web';
 import { orderedFade } from '@happier-dev/brand/atmosphere';
 import type { PlanetCanvasProps } from './planetCanvas.types';
 import { usePlanetDigits } from './usePlanetDigits';
+import { releaseCanvasBackingStore, useCanvasBackingStoreRelease } from '@/components/ui/media/canvasBackingStore';
 
 // Canvas text does not resolve CSS var() itself, so read the typography owner's variable.
 export function planetCanvasFonts() {
@@ -32,6 +33,10 @@ function PlanetDigits(input: PlanetCanvasProps) {
     const body = resolveScene(props, dpr, 'body');
     const digits = resolveScene(props, dpr, 'digits');
     const underlay = React.useRef<Promise<HTMLCanvasElement | null>>(Promise.resolve(null));
+    // One drawing layer per planet, repainted in place; both buffers are freed with the planet.
+    const layerRef = React.useRef<HTMLCanvasElement | null>(null);
+    useCanvasBackingStoreRelease(ref, box.pixelWidth, box.pixelHeight);
+    React.useLayoutEffect(() => () => releaseCanvasBackingStore(layerRef.current), []);
     const fadeFrom = props.fade?.from, fadeTo = props.fade?.to;
     const scale = props.mark ? props.width / (props.mark.size ?? 24) : 1;
     const ink = props.mark?.ink ?? props.ink;
@@ -55,7 +60,8 @@ function PlanetDigits(input: PlanetCanvasProps) {
             const faces = [`12px ${fonts.regular}`, `600 12px ${fonts.semiBold}`];
             if ((body.cells.length || digits.cells.length) && !faces.every(face => document.fonts.check(face))) await Promise.all(faces.map(face => document.fonts.load(face)));
             if (cancelled) return null;
-            const layer = document.createElement('canvas');
+            const layer = layerRef.current ?? (layerRef.current = document.createElement('canvas'));
+            // Assigning the size also clears the previous drawing.
             layer.width = box.pixelWidth; layer.height = box.pixelHeight;
             const layerContext = layer.getContext('2d');
             const context = ref.current?.getContext('2d');

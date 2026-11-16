@@ -5,6 +5,7 @@ import { getMonoFont } from '@/constants/Typography';
 import { planetCanvasFonts } from '../PlanetCanvas.web';
 import { snapCanvasBox } from '../planetCanvasScene';
 import type { PlanetMomentCanvasProps } from './planetMomentCanvas.types';
+import { useCanvasBackingStoreRelease } from '@/components/ui/media/canvasBackingStore';
 
 /**
  * The assembly's canvas painter, ported from the lab's `drawAssembly` (`mo-r4.js`): the body dots the
@@ -15,6 +16,7 @@ export const PlanetMomentCanvas = React.memo(function PlanetMomentCanvas(props: 
     const ref = React.useRef<HTMLCanvasElement>(null);
     const box = snapCanvasBox(props.width, props.height, props.dpr);
     const fonts = React.useMemo(planetCanvasFonts, []);
+    useCanvasBackingStoreRelease(ref, box.pixelWidth, box.pixelHeight);
     React.useLayoutEffect(() => {
         const context = ref.current?.getContext('2d');
         if (!context) return;

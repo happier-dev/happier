@@ -39,9 +39,13 @@ it.each([
   };
   vi.stubGlobal('document', { documentElement: {},
     createElement: () => {
-      // The physical canvas adapter composites its static body from a separate layer.
+      // The physical canvas adapter composites its static body from a separate layer. Like a real
+      // canvas, assigning a size clears its drawing.
       const context = { ...layerContext, arcs: [] as number[][] };
-      return { getContext: () => context };
+      const size = { width: 0, height: 0 };
+      return { getContext: () => context,
+        get width() { return size.width; }, set width(value: number) { size.width = value; context.arcs = []; },
+        get height() { return size.height; }, set height(value: number) { size.height = value; context.arcs = []; } };
     }, fonts: {
     check: () => !holdFonts, load: () => fonts,
   } });
