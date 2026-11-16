@@ -1299,7 +1299,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const providerTeardown = scenario.startsWith('provider teardown');
@@ -1411,7 +1411,7 @@ describe('installed deployment storage and target composition', () => {
             // SCM materialization consumes the real daemon-applied registry owner.
             ...(scenario === 'upload source' ? { controller: pluginReloadController } : {}),
             runtimeOptions: { resolveCurrentMachineId: () => 'machine-a', connectedAccounts,
-                ...(scenario === 'build logs' || runtimeLogs || variableScenario || domainScenario ? { deploymentAccountExecution: { credentials, serverUrl: sdkHomeUrl,
+                ...(scenario === 'build logs' || runtimeLogs || variableScenario || domainScenario || providerTeardown ? { deploymentAccountExecution: { credentials, serverUrl: sdkHomeUrl,
                     serverId: 'home', serverIdentityId: 'home', machineId: 'machine-a', isCurrent: async () => true } } : {}),
                 ...(rootApproval ? { readDaemonRequesterWorkAttribution: () => projectDaemonRequesterWorkAttribution({
                     serverId: 'profile-home', custodianAccountId: 'owner', machineId: 'machine-a', installationId: 'installation-a' }, rootApprovalHomeUnavailable ? null : 'home') } : {}),
@@ -1487,7 +1487,7 @@ describe('installed deployment storage and target composition', () => {
                 });` : ''}
                 ${roles.filter(role => !vercelActiveDomainAdd || role !== 'domains.add').map(role => `api.actions.register('${role === 'uploadDeploy' ? 'upload-deploy' : role === 'logs.build' ? 'build-logs-read' : role === 'logs.runtime' ? 'runtime-logs-read' : role === 'variables.read' ? 'variables-read' : role === 'variables.sync' ? 'variables-sync' : role === 'domains.verify' ? 'domains-verify' : role === 'domains.remove' ? 'domains-remove' : role === 'domains.add' ? 'domains-add' : role}', async (input, context) => {
                     ${providerTeardown && (role === 'teardown' || role === 'observe') ? `if (input.providerIdentity.providerResourceId !== 'project' || input.providerIdentity.providerAccountId !== 'provider-account' || input.providerIdentity.providerEnvironment !== 'production' || input.operation !== 'teardown') throw new Error('Wrong exact resource');
-                    observationCount++; return { v: 1, state: '${scenario === 'provider teardown ambiguous unverified' ? 'running_unverified' : 'succeeded'}', observedAtMs: 1, ${scenario.startsWith('provider teardown ambiguous') ? '' : 'providerResourceAbsent: true'} };` : ''}
+                    observationCount++; return { v: 1, ${scenario === 'provider teardown Vercel absence' ? "providerDeploymentId: 'dpl_retained'," : ''} state: '${scenario === 'provider teardown ambiguous unverified' ? 'running_unverified' : 'succeeded'}', observedAtMs: 1, ${scenario.startsWith('provider teardown ambiguous') ? '' : 'providerResourceAbsent: true'} };` : ''}
                     ${role === 'domains.remove' ? `return { v: 1, hostname: input.domain.hostname, state: 'removed', dns: [] };` : ''}
                     ${role === 'domains.verify' || role === 'domains.add' ? `return { v: 1, hostname: input.domain.hostname, state: 'pending', dns: [{ type: 'TXT', name: '_verification.example.test', value: 'private-dns-token' }] };` : ''}
                     ${role === 'variables.read' ? `observationCount++; return { v: 1, variables: [{ key: 'MODE', providerId: 'provider-mode', present: true, secret: false, owned: true, drift: 'current', providerRevision: '10' }] };` : ''}
@@ -1755,6 +1755,14 @@ describe('installed deployment storage and target composition', () => {
                     if (path.endsWith('/transitions')) {
                         const transition = DeploymentTransitionInputV1Schema.parse(request.data);
                         states.push(transition.state);
+                        if (transition.state === 'succeeded') {
+                            // The real Home transition refuses successful teardown without this proof.
+                            expect(transition.teardownProof).toMatchObject({
+                                targetLinkRevision: row.targetLink.revision,
+                                machines: [{ machineId: 'machine-a', installationId: 'installation-a' }],
+                                workloadAbsent: true, retainedProviderResource: false,
+                            });
+                        }
                         if (scenario.startsWith('provider teardown ambiguous')) {
                             const body = transition.contentUpdate?.body;
                             if (typeof body !== 'string') throw new Error('Expected retained failure content');

@@ -4,7 +4,7 @@ import { buildDeploymentTeardownInputV1, DeploymentDeployInputV1Schema, Deployme
 import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecuteFailureError, ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1,
+import { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1,
     type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1,
     type DeploymentReceiptFailureV1 } from '@happier-dev/deployment-protocol';
 import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
@@ -302,7 +302,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
 
     async function writeObservation(receipt: DeploymentReceiptDetailV1, content: ContributedReceiptContent,
         observation: ReturnType<typeof DeploymentTargetRoleResultV1Schema.parse>, context: ActionExecutorContext,
-        environmentRevision: number) {
+        environmentRevision: number,
+        controller: NonNullable<DeploymentReceiptDetailV1['deployment']['acceptedExecution']>['controller']) {
         const absenceFailure = receipt.deployment.operation === 'teardown' ? readProviderTeardownAbsenceFailure(observation) : null;
         if (absenceFailure) {
             await host.writeTransition({ environmentId: receipt.deployment.environmentId, deploymentId: receipt.deployment.id,
@@ -320,6 +321,11 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         const written = await host.writeTransition({ environmentId: receipt.deployment.environmentId,
             deploymentId: receipt.deployment.id, receiptHeader: receipt.deployment,
             expectedRevision: receipt.deployment.revision, state: observation.state,
+            ...(receipt.deployment.operation === 'teardown' && observation.state === 'succeeded' ? { teardownProof: {
+                targetLinkRevision: content.platform.targetLinkRevision,
+                machines: [controller], workloadAbsent: true, retainedProviderResource: false,
+                steps: [...DEPLOYMENT_TEARDOWN_STEPS_V1],
+            } } : {}),
             content: observed, context });
         return written.ok ? written : { ...failure('outcome_unknown'), effectAttempted: true };
     }
@@ -372,7 +378,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                             if (!observation.success || receipt.deployment.operation !== 'teardown'
                                 && observation.data.providerDeploymentId !== content.platform.observation.providerDeploymentId)
                                 return failure('outcome_unknown');
-                            const written = await writeObservation(receipt, content, observation.data, context, environment.environment.revision);
+                            const written = await writeObservation(receipt, content, observation.data, context, environment.environment.revision,
+                                accepted.controller);
                             return written.ok ? { ok: true, result: written } : written;
                         } catch (error) { return projectDeploymentException(error, { signal: context.signal }); }
                     } };
@@ -472,7 +479,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 providerEffectObserved = true;
                 effectContent = observedReceiptContent(content, observation.data);
                 transitionAttempted = true;
-                return writeObservation(receipt!, content, observation.data, request.context, environment.environment.revision);
+                return writeObservation(receipt!, content, observation.data, request.context, environment.environment.revision,
+                    accepted.controller);
             });
         } catch (error) {
             if (providerEffectObserved) {
