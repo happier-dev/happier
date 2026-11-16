@@ -198,7 +198,7 @@ export const PLUGIN = definePlugin({
       inputSchema: ROLE_SCHEMAS.resourceInput, resultSchema: MachineProvisionerObservationV1Schema,
       async run(input, context) { try { const result = await (await accountRuntime(context)).inspect(input.resource);
         return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: result.kind === 'unavailable' ? 'unknown' : result.kind,
-          ...(result.kind === 'present' ? { power: result.power, storage: 'retained' as const, billing } : {}),
+          ...(result.kind === 'present' ? { power: result.power, storage: 'retained' as const, billing, ...(result.size ? { size: result.size } : {}) } : {}),
           ...(result.kind === 'unavailable' ? { reason: result.reason === 'cleanup-unconfirmed' ? 'native_cleanup_incomplete' : result.reason,
             ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) } : {}) });
         } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'provider_unavailable' })); } },

@@ -16,6 +16,7 @@ const number = defineProtocolNumber();
 
 const sessionSchema = defineProtocolObject({
   id: text, sourceSandboxName: text, projectId: text, createdAt: number, networkPolicy: defineProtocolJsonValue().optional(),
+  vcpus: defineProtocolNumber({ integer: true, minimum: 0 }).optional(), memory: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
 }, open);
 const namedIdentityFields = { name: text, createdAt: number, tags: defineProtocolObject({ 'happier-managed-id': text }, open) };
 const namedIdentityResponse = defineProtocolObject({ sandbox: defineProtocolObject(namedIdentityFields, open) }, open);
@@ -239,9 +240,13 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     if (result.kind !== 'present') return observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: result.code,
       ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) });
     const stored = await storage(result.value);
+    const session = result.value.session;
+    const size = { ...(session.vcpus !== undefined && session.vcpus > 0 ? { cpuCores: session.vcpus } : {}),
+      ...(session.memory !== undefined && session.memory > 0 ? { memoryBytes: session.memory * 1024 ** 2 } : {}) };
     return observeMachineProvisionerNativeRead(observedAt, { kind: 'present',
       power: result.value.sandbox.status === 'stopping' ? 'unknown' : result.value.sandbox.status,
       storage: stored.kind === 'retained' || stored.kind === 'lost' ? stored.kind : 'unknown', billing: BILLING,
+      ...(Object.keys(size).length ? { size } : {}),
       ...('code' in stored ? { reason: stored.code, ...(stored.nativeCause ? { nativeCause: stored.nativeCause } : {}) } : {}),
       ...(result.value.sandbox.expiresAt === undefined ? {} : { nativeExpiry: result.value.sandbox.expiresAt }) });
   }

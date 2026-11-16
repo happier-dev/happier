@@ -13,6 +13,7 @@ const publicNetworkSchema = mini.object({ ipv4: mini.nullable(ip), ipv6: mini.nu
 const serverSchema = mini.object({
   id: nativeId(), status: text(), labels: mini.record(mini.string(), mini.string()),
   public_net: publicNetworkSchema,
+  server_type: mini.optional(mini.object({ cores: nativeId(), memory: mini.number().check(mini.positive()), disk: mini.number().check(mini.nonnegative()) })),
 });
 const actionSchema = mini.object({ id: nativeId(), status: mini.enum(['running', 'success', 'error']) });
 const paginationSchema = mini.object({ pagination: mini.object({ next_page: mini.nullable(nativeId()) }) });
@@ -165,7 +166,9 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
     if (reply.kind === 'absent') return { kind: 'absent' as const };
     const { server } = decode(mini.object({ server: serverSchema }), reply);
     if (server.id !== resource.serverId) throw new HetznerNativeError('native_identity_mismatch');
-    return { kind: 'present' as const, power: powerFact(server.status), billing, server };
+    return { kind: 'present' as const, power: powerFact(server.status), billing, server,
+      ...(server.server_type ? { size: { cpuCores: server.server_type.cores, memoryBytes: server.server_type.memory * 1024 ** 3,
+        ...(server.server_type.disk > 0 ? { diskBytes: server.server_type.disk * 1000 ** 3 } : {}) } } : {}) };
   }
   async function inspect(rawResource: unknown) {
     const resource = parseHetznerValue(HetznerResourceV1Schema, rawResource);

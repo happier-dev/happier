@@ -382,6 +382,7 @@ export function createDevcontainerProvider(input: Readonly<{
         const size = MachineProvisionerSizeV1Schema.safeParse({ ...(cpuCores === undefined ? {} : { cpuCores }),
           ...(typeof host.Memory === 'number' && host.Memory > 0 ? { memoryBytes: host.Memory } : {}) });
         return { observedAt: input.observedAt, availability: 'present' as const, power: paused ? 'suspended' as const : running ? 'running' as const : 'stopped' as const,
+          storage: 'retained' as const,
           ...(size.success ? { size: size.data } : {}),
           billing: { location: 'local' as const, stoppedBilling: 'not-billed' as const } };
       } catch (error) { return { observedAt: input.observedAt, availability: code(error) === 'native_resource_absent' ? 'absent' as const : 'unavailable' as const,

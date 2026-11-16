@@ -1,6 +1,6 @@
 import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as z from 'zod/mini';
-import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { MachineProvisionerNativeCauseV1, MachineProvisionerSizeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { FLY_DEFAULT_IMAGE, FLY_ROLE_SCHEMAS, FlyAcquireOperationV1Schema, FlyAcquireRequestSchema, FlyExecRequestSchema, FlyExecResponseSchema, FlyGuestBootSchema, FlyLaunchV1Schema, FlyMachineSchema, FlyProcessConfigurationSchema, FlyPutFileOptionsSchema, FlyResourceV1Schema, FlyVolumeSchema, type FlyAcquireOperationV1, type FlyAcquireRequest, type FlyExecRequest, type FlyGuestBoot, type FlyLaunchV1, type FlyPutFileRequest, type FlyResourceV1 } from './schemas.js';
 
 // REST v1; fly-go v0.9.4 characterizes identity/rootfs. The current official
@@ -42,6 +42,7 @@ type HttpResult = Readonly<{ kind: 'ok'; value: unknown }> | Readonly<{ kind: 'a
 export type FlyInspection = Readonly<{
   kind: 'present'; machineId: string; state: string;
   storage: 'retained' | 'lost' | 'unknown';
+  size?: MachineProvisionerSizeV1;
   volumeMountPath?: string;
   autonomousPower: boolean;
 }> | Readonly<{ kind: 'absent' }> | Failure;
@@ -271,6 +272,8 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
     return {
       kind: 'present', machineId: machine.data.id,
       state: machine.data.state, storage,
+      ...(machine.data.config.guest ? { size: { cpuCores: machine.data.config.guest.cpus,
+        memoryBytes: machine.data.config.guest.memory_mb * 1024 ** 2 } } : {}),
       ...(volumeMountPath ? { volumeMountPath } : {}),
       autonomousPower: machine.data.config.services.some(service => service.autostart === true || service.autostop === true || service.autostop === 'stop' || service.autostop === 'suspend'),
     };

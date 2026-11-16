@@ -284,7 +284,7 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
           const result = await runtime(context).inspect(input.resource);
           if (result.kind === 'absent') return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'absent', power: 'unknown', deletionNotices: [] });
           if (result.kind === 'failed') return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: 'native_resource_failed' });
-          if (result.kind === 'unknown') return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', power: 'unknown',
+          if (result.kind === 'unknown') return observeMachineProvisionerNativeRead(context.invokedAtMs, { ...result,
             reason: 'reason' in result ? result.reason : 'native_resource_unavailable' });
           return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'present', power: result.power,
             ...('reason' in result ? { reason: result.reason } : {}),

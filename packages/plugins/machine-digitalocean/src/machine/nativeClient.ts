@@ -1,6 +1,6 @@
 import * as z from 'zod/mini';
 import { createDigitalOceanTransport, type Unavailable } from './transport.js';
-import type { MachineProvisionerNativeCauseV1, MachineProvisionerSnapshotResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import type { MachineProvisionerNativeCauseV1, MachineProvisionerSnapshotResultV1, MachineProvisionerSizeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { buildMachineProvisionerCloudInit, MACHINE_PROVISIONER_CLOUD_SSH_USER, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
   dropletAcquireInputSchema, dropletPowerIntentSchema, dropletResourceSchema,
@@ -22,7 +22,7 @@ type ResourceUnavailable = Unavailable & Readonly<{ resource: DropletResourceV1 
 type SshAddress = Readonly<{ address: string; user: typeof MACHINE_PROVISIONER_CLOUD_SSH_USER }>;
 type Inspection = ResourceUnavailable | Readonly<{ kind: 'absent'; resource: DropletResourceV1 }> | Readonly<{
   kind: 'present'; resource: DropletResourceV1; power: 'running' | 'stopped' | 'unknown'; stoppedBilling: 'billed';
-  ready: boolean; ssh?: SshAddress;
+  ready: boolean; ssh?: SshAddress; size?: MachineProvisionerSizeV1;
 }>;
 type Binding = Readonly<{ kind: 'bound'; resource: DropletResourceV1 }>;
 type NativePrice = Readonly<{ amount: string; currency: 'USD'; unit: 'hour' | 'month'; source: string; observedAt: number }>;
@@ -52,7 +52,11 @@ export function createDigitalOceanNativeClient(options: { token: string; fetch?:
     if (!['new', 'active', 'off'].includes(droplet.status)) return { kind: 'unavailable', reason: 'invalid-response', resource };
     const address = [...(droplet.networks?.v4 ?? []), ...(droplet.networks?.v6 ?? [])].find(item => item.type === 'public')?.ip_address;
     const ready = droplet.status === 'active' && address !== undefined;
-    return { kind: 'present', resource, power: droplet.status === 'active' ? 'running' : droplet.status === 'off' ? 'stopped' : 'unknown', stoppedBilling: 'billed', ready, ...(ready && address ? { ssh: { address, user: MACHINE_PROVISIONER_CLOUD_SSH_USER } } : {}) };
+    const size = { ...(droplet.vcpus === undefined ? {} : { cpuCores: droplet.vcpus }),
+      ...(droplet.memory === undefined ? {} : { memoryBytes: droplet.memory * 1024 ** 2 }),
+      ...(droplet.disk !== undefined && droplet.disk > 0 ? { diskBytes: droplet.disk * 1000 ** 3 } : {}) };
+    return { kind: 'present', resource, power: droplet.status === 'active' ? 'running' : droplet.status === 'off' ? 'stopped' : 'unknown', stoppedBilling: 'billed', ready,
+      ...(Object.keys(size).length ? { size } : {}), ...(ready && address ? { ssh: { address, user: MACHINE_PROVISIONER_CLOUD_SSH_USER } } : {}) };
   }
   async function inspect(input: DropletResourceV1): Promise<Inspection> {
     const observed = await inspectDroplet(input);

@@ -281,7 +281,8 @@ export const PLUGIN = definePlugin({
             ...(observed.nativeCause ? { nativeCause: observed.nativeCause } : {}) } : {}),
           ...(observed.kind === 'present' ? { power: observed.state === 'started' ? 'running' as const
             : observed.state === 'stopped' ? 'stopped' as const : observed.state === 'suspended' ? 'suspended' as const : 'unknown' as const,
-            storage: observed.storage, billing, ...(observed.autonomousPower ? { reason: 'native_autonomous_power' } : {}) } : {}) });
+            storage: observed.storage, billing, ...(observed.size ? { size: observed.size } : {}),
+            ...(observed.autonomousPower ? { reason: 'native_autonomous_power' } : {}) } : {}) });
       },
     },
     power: { ...defaults, title: 'Change Fly Machine power', dangerLevel: 'destructive',

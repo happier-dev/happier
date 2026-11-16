@@ -1,5 +1,5 @@
 import { E2bNativeError, projectE2bNativeFailure } from './nativeFailure.js';
-import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { assertMachineProvisionerGuestCommandSucceeded, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, type E2bLaunch, type E2bResource, type E2bOperation } from './schemas.js';
 import { executeEnvd, type EnvdSession } from './envd.js';
@@ -14,6 +14,9 @@ const listedSchema = defineProtocolObject({ sandboxID: text,
   metadata: defineProtocolObject({ 'happier-managed-id': text.optional() }, open).optional(),
 }, open);
 const detailSchema = defineProtocolObject({ sandboxID: text,
+  cpuCount: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
+  memoryMB: defineProtocolNumber({ integer: true, minimum: 128 }).optional(),
+  diskSizeMB: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
   state: defineProtocolUnion([defineProtocolLiteral('running'), defineProtocolLiteral('paused')]),
   endAt: text, envdAccessToken: text.optional(),
   metadata: defineProtocolObject({ 'happier-managed-id': text.optional() }, open).optional(),
@@ -91,8 +94,11 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
   async function inspect(resource: E2bResource): Promise<MachineProvisionerObservationV1> {
     try {
       const native = await read(resource);
+      const size = { ...(native !== null && native.cpuCount !== undefined && native.cpuCount > 0 ? { cpuCores: native.cpuCount } : {}),
+        ...(native !== null && native.memoryMB !== undefined ? { memoryBytes: native.memoryMB * 1024 ** 2 } : {}),
+        ...(native !== null && native.diskSizeMB !== undefined && native.diskSizeMB > 0 ? { diskBytes: native.diskSizeMB * 1024 ** 2 } : {}) };
       return native ? { observedAt, availability: 'present', power: native.state === 'paused' ? 'suspended' : 'running',
-        storage: 'retained', billing: BILLING, nativeExpiry: Date.parse(native.endAt) }
+        storage: 'retained', billing: BILLING, nativeExpiry: Date.parse(native.endAt), ...(Object.keys(size).length ? { size } : {}) }
         : { observedAt, availability: 'absent', storage: 'lost', billing: BILLING };
     } catch (error) { return projectE2bNativeFailure(error, () => observeMachineProvisionerNativeRead(observedAt, { kind: 'unknown', reason: safeCode(error) })); }
   }

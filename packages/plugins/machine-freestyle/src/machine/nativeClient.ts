@@ -11,6 +11,8 @@ export function isFreestyleVmList(value: unknown): value is Readonly<{ vms: unkn
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
 const dtoSchema = defineProtocolObject({ id: text, slug: text, state: text,
+  resources: defineProtocolObject({ cpu: defineProtocolNumber({ integer: true, minimum: 0 }),
+    memory: defineProtocolNumber({ integer: true, minimum: 0 }), storage: defineProtocolNumber({ integer: true, minimum: 0 }) }, open).optional(),
   metadata: defineProtocolObject({ 'happier-managed-id': text }, open),
   createdAt: text, autoDeleteSeconds: defineProtocolNumber({ integer: true, minimum: 0 }).nullable().optional(),
   ttlSeconds: defineProtocolNumber({ integer: true, minimum: 0 }).nullable().optional(),
@@ -95,9 +97,13 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
       const native = await read(value);
       const createdAt = Date.parse(native.createdAt);
       const expiry = native.ttlSeconds == null || !Number.isFinite(createdAt) ? undefined : createdAt + native.ttlSeconds * 1000;
+      const size = { ...(native.resources !== undefined && native.resources.cpu > 0 ? { cpuCores: native.resources.cpu } : {}),
+        ...(native.resources !== undefined && native.resources.memory > 0 ? { memoryBytes: native.resources.memory * 1024 ** 2 } : {}),
+        ...(native.resources !== undefined && native.resources.storage > 0 ? { diskBytes: native.resources.storage * 1024 ** 2 } : {}) };
       return { observedAt, availability: 'present', power: native.state === 'running' ? 'running'
         : native.state === 'stopped' ? 'stopped' : native.state === 'paused' ? 'suspended' : 'unknown',
         storage: ['running', 'stopped', 'paused'].includes(native.state) ? 'retained' : 'unknown', billing: BILLING,
+        ...(Object.keys(size).length ? { size } : {}),
         deletionNotices: native.autoDeleteSeconds != null
           ? [{ kind: 'stopped-storage', rule: { kind: 'after-stop', afterMs: native.autoDeleteSeconds * 1000 }, consequence: 'disk-deleted' }] : [],
         ...(expiry !== undefined && expiry >= 0 ? { nativeExpiry: expiry } : {}) };

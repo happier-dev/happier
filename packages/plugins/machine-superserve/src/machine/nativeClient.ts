@@ -8,6 +8,9 @@ import { createSuperserveHttp, NativeError } from './transport.js';
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
 const dtoSchema = defineProtocolObject({ id: text, name: text, status: text,
+  vcpu_count: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
+  memory_mib: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
+  memory_current_mib: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
   metadata: defineProtocolObject({ 'happier-managed-id': text }, open),
   access_token: text.optional(), routing_hint: text.optional(), auto_delete_at: text.optional(), auto_delete_seconds: defineProtocolNumber({ integer: true, minimum: 0 }).optional(),
 }, open);
@@ -78,8 +81,12 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
       if (native.status === 'deleted') return observeMachineProvisionerNativeRead(observedAt, { kind: 'absent' });
       const expiry = native.auto_delete_at === undefined ? undefined : Date.parse(native.auto_delete_at);
       const nativeExpiry = expiry !== undefined && Number.isFinite(expiry) && expiry >= 0 ? expiry : undefined;
+      const memoryMiB = native.memory_current_mib ?? native.memory_mib;
+      const size = { ...(native.vcpu_count !== undefined && native.vcpu_count > 0 ? { cpuCores: native.vcpu_count } : {}),
+        ...(memoryMiB !== undefined && memoryMiB > 0 ? { memoryBytes: memoryMiB * 1024 ** 2 } : {}) };
       return { observedAt, availability: 'present', power: native.status === 'active' ? 'running' : native.status === 'paused' ? 'suspended' : 'unknown',
         storage: ['active', 'paused'].includes(native.status) ? 'retained' : 'unknown', billing: BILLING,
+        ...(Object.keys(size).length ? { size } : {}),
         ...(nativeExpiry === undefined ? {} : { nativeExpiry }),
         ...(nativeExpiry !== undefined && native.auto_delete_seconds !== undefined && native.auto_delete_seconds > 0 ? {
           deletionNotices: [{ kind: 'stopped-storage' as const, at: nativeExpiry, rule: { kind: 'after-stop' as const, afterMs: native.auto_delete_seconds * 1000 }, consequence: 'disk-deleted' as const }],

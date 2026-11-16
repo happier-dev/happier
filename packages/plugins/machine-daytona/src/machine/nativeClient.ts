@@ -7,6 +7,8 @@ export const DAYTONA_API = 'https://app.daytona.io/api';
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
 const dtoSchema = defineProtocolObject({ id: text, name: text, organizationId: text, state: text,
+  cpu: defineProtocolNumber({ minimum: 0 }).optional(), memory: defineProtocolNumber({ minimum: 0 }).optional(),
+  disk: defineProtocolNumber({ minimum: 0 }).optional(),
   toolboxProxyUrl: text, labels: defineProtocolObject({ 'happier-managed-id': text }, open),
   autoDestroyAt: text.optional(), autoDeleteInterval: defineProtocolNumber().optional(),
 }, open);
@@ -86,9 +88,13 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
       const native = await read(value);
       if (native.state === 'destroyed') return observeMachineProvisionerNativeRead(observedAt, { kind: 'absent' });
       const expiry = native.autoDestroyAt === undefined ? undefined : Date.parse(native.autoDestroyAt);
+      const size = { ...(native.cpu !== undefined && native.cpu > 0 ? { cpuCores: native.cpu } : {}),
+        ...(native.memory !== undefined && native.memory > 0 ? { memoryBytes: native.memory * 1024 ** 3 } : {}),
+        ...(native.disk !== undefined && native.disk > 0 ? { diskBytes: native.disk * 1024 ** 3 } : {}) };
       return { observedAt, availability: 'present', power: native.state === 'started' ? 'running'
         : native.state === 'stopped' || native.state === 'archived' ? 'stopped' : native.state === 'paused' ? 'suspended' : 'unknown',
         storage: ['started', 'stopped', 'archived', 'paused'].includes(native.state) ? 'retained' : 'unknown', billing: BILLING,
+        ...(Object.keys(size).length ? { size } : {}),
         ...(expiry !== undefined && Number.isFinite(expiry) && expiry >= 0 ? { nativeExpiry: expiry } : {}) };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
       return observeMachineProvisionerNativeRead(observedAt, error instanceof NativeError && error.status === 404
