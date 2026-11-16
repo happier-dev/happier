@@ -796,6 +796,19 @@ describe('built-ins through accepted materialization and native leaf adapters', 
       sessionId === 'origin' && request.instructions === 'Review the changes made in this session.')).toBe(true);
     expect(String(h.launches.find(({ request }) => request.intent === 'agent')?.request.instructions)).toContain('A material finding');
   });
+  it.each([{ engines: ['codex'] }, { engines: [engine, otherEngine] }])('supplies the complete requested engine set to Check for a zero-finding panel: $engines', async ({ engines }) => {
+    const h = harness();
+    await h.run(builtin('review-and-converge'), { engines, maxRounds: 1 });
+    const check = h.store.list().find(row => row.blockId === 'check');
+    // READY227 supplied completed/materialized outcomes and no commentIds,
+    // but omitted the requested engines, so Check could not establish coverage.
+    expect(check?.input?.input).toContainEqual(engines);
+    expect(check?.input?.input).toContainEqual(expect.arrayContaining(engines.map(key => expect.objectContaining({
+      status: 'completed', results: { review: expect.objectContaining({ commentIds: [],
+        perEngineOutcome: [expect.objectContaining({ key, outcome: 'completed', materialization: { kind: 'complete' } })],
+      }) },
+    }))));
+  });
   it('reports once without fixing or another panel, with Judge off', async () => {
     const h = harness({ checks: [{ verdict: 'continue' }], session: (id, input) => {
       expect(id).toBe('report'); expect(input.text).toContain(REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1);
