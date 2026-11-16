@@ -219,6 +219,11 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
   surfaceBindings: z.optional(ActionSpecSurfaceBindingsSchema),
   sessionTarget: z.optional(ActionSessionTargetDeclarationV1Schema),
   outputSchema: z.optional(ZodSchemaLike),
+  /** Explicit domain refusal branches; other negative observations remain successful data. */
+  outputFailures: z.optional(z.readonly(z.array(z.discriminatedUnion('discriminant', [
+    z.strictObject({ discriminant: z.literal('ok'), value: z.literal(false), codeField: z.enum(['code', 'reason', 'errorCode']) }),
+    z.strictObject({ discriminant: z.literal('status'), value: z.literal('error'), codeField: z.literal('errorCode') }),
+  ])))),
   /** The deciding person's reduced operands; never an approval policy. */
   approvalNarrowing: z.optional(z.strictObject({
     narrow: z.custom<ApprovalNarrowing['narrow']>((value) => typeof value === 'function'),
@@ -581,6 +586,7 @@ export type ActionSpecWithoutApproval = Readonly<{
   bindings?: ParsedActionSpec['bindings'];
   surfaceBindings?: ParsedActionSpec['surfaceBindings'];
   outputSchema?: ParsedActionSpec['outputSchema'];
+  outputFailures?: ParsedActionSpec['outputFailures'];
   completion?: ParsedActionSpec['completion'];
   projectObservationInput?: ParsedActionSpec['projectObservationInput'];
   approvalPresentation?: ParsedActionSpec['approvalPresentation'];

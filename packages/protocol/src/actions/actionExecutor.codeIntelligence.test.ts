@@ -194,7 +194,9 @@ describe('search-backed code Actions', () => {
       { status: 'error', errorCode: 'unsaved_editor_changes', diskHash: fileHash },
       { status: 'error', errorCode: 'symbol_not_found', candidates: ['Other'] }]) {
       response = outcome;
-      expect(await executor.execute(id, input, { surface: 'mcp' })).toEqual({ ok: true, result: outcome });
+      expect(await executor.execute(id, input, { surface: 'mcp' })).toMatchObject(outcome.status === 'error'
+        ? { ok: false, errorCode: 'errorCode' in outcome ? outcome.errorCode : undefined, details: outcome }
+        : { ok: true, result: outcome });
     }
   });
 
@@ -228,7 +230,7 @@ describe('search-backed code Actions', () => {
       result: { status: 'unavailable', reason: 'root_not_found' } });
     expect(getActionSpec(id).inputSchema.safeParse({ ...input, symbol: undefined, character: 0 }).success).toBe(true);
     expect(await executor.execute(id, { ...input, symbol: undefined }, { surface: 'agent' }))
-      .toEqual({ ok: true, result: { status: 'error', errorCode: 'invalid_position' } });
+      .toMatchObject({ ok: false, errorCode: 'invalid_position', details: { status: 'error', errorCode: 'invalid_position' } });
     expect(await executor.execute(id, { ...input, symbol: undefined, character: 0 }, { surface: 'agent' }))
       .toEqual({ ok: true, result: { status: 'unavailable', reason: 'no_capable_server' } });
   });

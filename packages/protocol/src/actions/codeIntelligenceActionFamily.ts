@@ -105,6 +105,10 @@ function mutationRpcBinding(kind: 'rename' | 'fileRename' | 'codeAction' | 'form
   };
 }
 const shared = {
+  outputFailures: [
+    { discriminant: 'status', value: 'error', codeField: 'errorCode' },
+    { discriminant: 'ok', value: false, codeField: 'code' },
+  ],
   executionPlacement: 'machine',
   approval: { result: 'required' }, safety: 'safe', sideEffectClass: 'read', placements: [],
   contextualDefaults: { rootPath: 'current_session_root' },

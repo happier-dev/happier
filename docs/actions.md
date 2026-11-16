@@ -2033,6 +2033,7 @@ the same projection; composed refusal/cancellation validation remains in progres
 |---|---|
 | The Action registry: every row, its schemas, surfaces, safety and approval | `packages/protocol/src/actions/actionSpecs.ts` |
 | Canonical Action input/result contracts | Runtime schemas reached by `packages/protocol/src/actions/actionSpecs.ts` |
+| Declared domain refusal branches (0.3 development) | Action spec `outputFailures`; `settleActionOutput` validates the declared output before `readActionFailureEnvelope` projects a matching branch |
 | Generated validator-neutral SDK Action DTOs | `packages/plugin-sdk/scripts/generateActionTypeMap.mjs`; SDK family modules and the aggregate are outputs |
 | Explicit schema/DTO type and catalog correspondence gate | `packages/protocol/src/actions/pluginActionDtoCorrespondence.ts` |
 | Portable SDK Action declarations and publication currentness | `packages/plugin-sdk/scripts/generateActionTypeMap.mjs` |
@@ -2443,6 +2444,14 @@ without requiring a separate Tool declaration. Named Tools still use their
 admitted catalog snapshot and contributor-occurrence fence. Both paths retain
 the shared enabled/surface/approval owners; the external API `action.invoke`
 admission and fixed API approval replay contract are unchanged.
+
+In 0.3 development, built-in Action specs may declare `outputFailures` to name a
+refusal discriminant and its code field. Terminal settlement maps only a matching
+declared branch after output-schema validation. Capability preview/get/set declare
+`ok: false`; language-intelligence Actions declare `status: 'error'` and rejected
+edit results. Other negative answers, including loading/unavailable observations,
+remain successful Action data unless their owner declares otherwise. Projection
+retains the typed refusal details and only producer-supplied effect/cause evidence.
 
 ## SDK Action declarations (0.3 development source)
 

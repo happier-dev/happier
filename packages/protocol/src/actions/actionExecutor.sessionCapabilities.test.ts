@@ -69,7 +69,7 @@ describe('session capability Actions at the metadata CAS owner', () => {
       ok: true, skills: { items: [{ id: 'seeded', selected: true }, { id: 'excluded', selected: false }, { id: 'explicit', selected: true }] },
     } });
     expect(await executor.execute('sessions.spawn.capabilities.preview', { ...input, profileId: 'missing' }, presentUser))
-      .toEqual({ ok: true, result: { ok: false, reason: 'invalid_input' } });
+      .toMatchObject({ ok: false, errorCode: 'invalid_input', details: { ok: false, reason: 'invalid_input' } });
   });
   it('resolves exact identities before names and refuses ambiguous name matches', () => {
     const items = [{ id: 'lint-id', name: 'lint' }, { id: 'lint', name: 'other' }, { id: 'second', name: 'lint' }];
@@ -102,7 +102,7 @@ describe('session capability Actions at the metadata CAS owner', () => {
   it('refuses a running no-resume change before any metadata write, but saves stopped edits', async () => {
     const f = fixture({ vendorResume: 'unsupported', liveReload: 'unsupported' });
     expect(await f.executor.execute('session.capabilities.set', { sessionId: 's', kind: 'mcp_server', id: 'linear', state: 'on' }, presentUser))
-      .toEqual({ ok: true, result: { ok: false, code: 'applies_to_new_sessions_only' } });
+      .toMatchObject({ ok: false, errorCode: 'applies_to_new_sessions_only', details: { ok: false, code: 'applies_to_new_sessions_only' } });
     expect(f.writes()).toBe(0);
     const stopped = fixture({ stopped: true, vendorResume: 'unsupported' });
     expect(await stopped.executor.execute('session.capabilities.set', { sessionId: 's', kind: 'skill', id: 'lint', state: 'off' }, presentUser))
@@ -113,20 +113,20 @@ describe('session capability Actions at the metadata CAS owner', () => {
     const f = fixture({ conflict: true });
     for (const [id, code] of [['missing', 'not_found'], ['linear', 'conflict']]) {
       expect(await f.executor.execute('session.capabilities.set', { sessionId: 's', kind: 'mcp_server', id, state: 'on' }, presentUser))
-        .toEqual({ ok: true, result: { ok: false, code, ...(code === 'not_found' ? { diagnostic: { reason: 'capability_identity_unresolved' } } : {}) } });
+        .toMatchObject({ ok: false, errorCode: code, details: { ok: false, code, ...(code === 'not_found' ? { diagnostic: { reason: 'capability_identity_unresolved' } } : {}) } });
     }
     expect(f.writes()).toBe(0);
   });
   it('distinguishes an absent Session from an unresolved capability identity', async () => {
     const f = fixture({ absent: true });
     expect(await f.executor.execute('session.capabilities.set', { sessionId: 's', kind: 'skill', id: 'lint', state: 'on' }, presentUser))
-      .toEqual({ ok: true, result: { ok: false, code: 'not_found', diagnostic: { reason: 'session_absent' } } });
+      .toMatchObject({ ok: false, errorCode: 'not_found', details: { ok: false, code: 'not_found', diagnostic: { reason: 'session_absent' } } });
     expect(f.writes()).toBe(0);
   });
   it('reports unavailable read authority as a typed refusal before a write', async () => {
     const f = fixture({ readFailure: true });
     expect(await f.executor.execute('session.capabilities.set', { sessionId: 's', kind: 'skill', id: 'lint', state: 'on' }, presentUser))
-      .toEqual({ ok: true, result: { ok: false, code: 'session_unavailable' } });
+      .toMatchObject({ ok: false, errorCode: 'session_unavailable', details: { ok: false, code: 'session_unavailable' } });
     expect(f.writes()).toBe(0);
   });
   it.each([

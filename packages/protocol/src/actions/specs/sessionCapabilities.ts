@@ -82,6 +82,7 @@ function createSessionCapabilitiesActionSpecsV1() {
       voiceClientToolName: 'previewSpawnCapabilities' },
     examples: { voice: { argsExample: '{"machineId":"{{machineId}}","agentId":"codex","directory":"{{path}}"}' } },
     inputSchema: SpawnCapabilitiesPreviewInputV1Schema, outputSchema: SpawnCapabilitiesPreviewOutputV1Schema,
+    outputFailures: [{ discriminant: 'ok', value: false, codeField: 'reason' }],
     inputHints: { fields: [{ path: 'machineId', title: 'Machine', widget: 'text', required: true },
       { path: 'agentId', title: 'Agent', widget: 'text', required: true }, { path: 'directory', title: 'Directory', widget: 'text' }] },
     cli: { commands: [{ path: ['session', 'preview'], visibility: 'canonical' }],
@@ -92,6 +93,7 @@ function createSessionCapabilitiesActionSpecsV1() {
     contextualDefaults: { sessionId: 'current_session' },
     bindings: { mcpToolName: 'session_capabilities_get', rpcMethod: 'session.capabilities.get' },
     inputSchema: SessionCapabilitiesGetInputV1Schema, outputSchema: SessionCapabilitiesGetOutputV1Schema,
+    outputFailures: [{ discriminant: 'ok', value: false, codeField: 'code' }],
     inputHints: { fields: [{ path: 'sessionId', title: 'Session', widget: 'text', required: true }] },
     cli: { commands: [{ path: ['session', 'capabilities'], positionals: ['sessionId'], visibility: 'canonical' },
       { path: ['session', 'capabilities', 'list'], positionalsBeforeLastSegment: ['sessionId'], visibility: 'canonical' }] },
@@ -102,6 +104,7 @@ function createSessionCapabilitiesActionSpecsV1() {
     approvalPolicy: { uiConfirmation: 'direct' },
     bindings: { mcpToolName: 'session_capabilities_set', rpcMethod: 'session.capabilities.set' },
     inputSchema: SessionCapabilitiesSetInputV1Schema, outputSchema: SessionCapabilitiesSetOutputV1Schema,
+    outputFailures: [{ discriminant: 'ok', value: false, codeField: 'code' }],
     inputHints: { fields: [{ path: 'sessionId', title: 'Session', widget: 'text', required: true },
       { path: 'kind', title: 'Capability', widget: 'select', required: true, options: [
         { value: 'skill', label: 'Library skill' }, { value: 'mcp_server', label: 'MCP server' }, { value: 'native_skill', label: 'Native skill' },

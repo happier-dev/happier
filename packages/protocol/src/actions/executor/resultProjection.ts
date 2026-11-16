@@ -85,7 +85,10 @@ export function settleActionOutput(actionId: ActionId, result: ActionExecuteResu
     invalidActionOutputFailure(error, `action.output:${actionId}`, thrown);
   try {
     const output = outputSchema.safeParse(result.result);
-    return withCredentialUses(output.success ? { ok: true, result: output.data } : invalidOutput(output.error));
+    return withCredentialUses(output.success
+      ? (spec.outputFailures ? readActionFailureEnvelope(output.data, { declaredFailures: spec.outputFailures }) : null)
+        ?? { ok: true, result: output.data }
+      : invalidOutput(output.error));
   } catch (error) {
     return withCredentialUses(invalidOutput(undefined, error));
   }

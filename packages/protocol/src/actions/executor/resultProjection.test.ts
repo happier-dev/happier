@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { z } from '../../zodRuntimePolicy.js';
+import { CODE_INTELLIGENCE_ACTION_IDS } from '../codeIntelligenceActionIdsV1.js';
 import { RpcError } from '../../rpc/errors.js';
 import { createActionExecuteFailureError } from '../actionExecutionResult.js';
-import { completeSpawnActionResult, normalizeActionExecutorThrownError, settleActionOutput } from './resultProjection.js';
+import { completeActionResult, completeSpawnActionResult, normalizeActionExecutorThrownError, settleActionOutput } from './resultProjection.js';
 
 describe('Session spawn Action settlement', () => {
   it.each([undefined, false, true])('settles a typed spawn refusal as failure and retains producer effect evidence (%s)', effectAttempted => {
@@ -49,5 +51,48 @@ describe('Action thrown-error classification', () => {
     expect(normalizeActionExecutorThrownError(new RpcError('Role cannot be changed', 'role_read_only')))
       .toMatchObject({ errorCode: 'role_read_only', error: 'Role cannot be changed',
         failureCause: { errorClass: 'RpcError', errorCode: 'role_read_only' } });
+  });
+});
+
+describe('declared typed Action failures', () => {
+  it.each([
+    ['sessions.spawn.capabilities.preview', { ok: false, reason: 'machine_unreachable' }, 'machine_unreachable'],
+    ['session.capabilities.get', { ok: false, code: 'preview_timeout' }, 'preview_timeout'],
+    ['session.capabilities.set', { ok: false, code: 'conflict' }, 'conflict'],
+    ['code.restart', { status: 'error', errorCode: 'request_failed' }, 'request_failed'],
+    ['code.rename.apply', { ok: false, code: 'invalid_request' }, 'invalid_request'],
+  ] as const)('projects %s refusal once and retains its typed details', (actionId, refusal, errorCode) => {
+    const settled = settleActionOutput(actionId, completeActionResult(refusal));
+    expect(settled).toMatchObject({ ok: false, errorCode, details: refusal });
+    expect(settled).not.toHaveProperty('effectAttempted');
+    expect(settled).not.toHaveProperty('failureCause');
+  });
+
+  it.each(CODE_INTELLIGENCE_ACTION_IDS)('projects the declared error branch of %s', actionId => {
+    const refusal = { status: 'error', errorCode: 'request_failed' };
+    expect(settleActionOutput(actionId, completeActionResult(refusal)))
+      .toMatchObject({ ok: false, errorCode: 'request_failed', details: refusal });
+  });
+
+  it.each(['execution.run.wait', 'code.restart'] as const)('does not apply the legacy fallback to undeclared or unmatched %s output', actionId => {
+    // The effective public output schema is an existing settlement boundary port.
+    // This negative observation is valid data even though it resembles a legacy refusal.
+    const observation = { type: 'error', errorCode: 'spawn_failed' };
+    const outputSchema = z.strictObject({ type: z.literal('error'), errorCode: z.literal('spawn_failed') });
+    expect(settleActionOutput(actionId, { ok: true, result: observation }, undefined, outputSchema))
+      .toEqual({ ok: true, result: observation });
+    const negative = { ok: false, errorCode: 'probe_unavailable' };
+    const negativeSchema = z.strictObject({ ok: z.literal(false), errorCode: z.literal('probe_unavailable') });
+    expect(settleActionOutput(actionId, { ok: true, result: negative }, undefined, negativeSchema))
+      .toEqual({ ok: true, result: negative });
+  });
+
+  it('retains undeclared negative data and unavailable/loading answers as successful data', () => {
+    const negative = { ok: false, code: 'cancelled' };
+    expect(settleActionOutput('execution.run.wait', completeActionResult(negative)))
+      .toEqual({ ok: true, result: negative });
+    for (const result of [{ status: 'loading' }, { status: 'unavailable', reason: 'server_missing' }]) {
+      expect(settleActionOutput('code.restart', completeActionResult(result))).toEqual({ ok: true, result });
+    }
   });
 });

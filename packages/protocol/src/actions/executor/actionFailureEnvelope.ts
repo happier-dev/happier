@@ -1,3 +1,4 @@
+import type { ParsedActionSpec } from '../specs/definition.js';
 import { normalizeSpawnSessionErrorDetail, SpawnSessionErrorCodeSchema } from '../../sessions/spawnSession.js';
 import { SessionGoalControlFailureV1Schema } from '../../sessions/work/state/sessionWorkStateRpc.js';
 import type { ActionExecuteFailure } from './types.js';
@@ -71,14 +72,18 @@ export function readFailureEnvelopeDetails(record: Readonly<Record<string, unkno
 /** The executor's canonical returned-failure classifier, shared by typed adapters. */
 export function readActionFailureEnvelope(
   result: unknown,
-  options: Readonly<{ treatReturnedErrorEnvelopeAsFailure?: boolean }> = {},
+  options: Readonly<{ treatReturnedErrorEnvelopeAsFailure?: boolean; declaredFailures?: ParsedActionSpec['outputFailures'] }> = {},
 ): ActionExecuteFailure | null {
   if (!result || typeof result !== 'object') return null;
   const record = result as Readonly<Record<string, unknown>>;
-  if (typeof record.errorCode !== 'string') return null;
-  const errorCode = record.errorCode.trim();
+  const declared = options.declaredFailures?.find(branch => record[branch.discriminant] === branch.value);
+  // This mode is used only after validating an explicitly declared output contract.
+  if (options.declaredFailures !== undefined && !declared) return null;
+  const rawCode = declared ? record[declared.codeField] : record.errorCode;
+  if (typeof rawCode !== 'string') return null;
+  const errorCode = rawCode.trim();
   if (!errorCode) return null;
-  if (record.ok !== false) {
+  if (!declared && record.ok !== false) {
     if (options.treatReturnedErrorEnvelopeAsFailure !== true
       && (record.type !== 'error' || !SpawnSessionErrorCodeSchema.safeParse(errorCode).success)) return null;
   }
@@ -87,7 +92,7 @@ export function readActionFailureEnvelope(
     ? record.errorMessage.trim()
     : typeof record.message === 'string' && record.message.trim().length > 0 ? record.message.trim() : '';
   const error = rawError && rawError !== errorCode ? rawError : rawFallbackMessage || rawError || errorCode;
-  const details = readFailureEnvelopeDetails(record);
+  const details = declared ? record : readFailureEnvelopeDetails(record);
   const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(record.goalControlFailure);
   const failureCause = record.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause);
   return carryActionFailureDiagnostic({ ok: false as const, errorCode, error, ...(details !== undefined ? { details } : {}),
