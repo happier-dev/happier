@@ -1337,7 +1337,15 @@ its Anthropic environment and custom protocol settings still emit Chat payloads.
 Its native Anthropic account purpose therefore remains undeclared. Kimi's external
 Anthropic/OpenAI routes require authoritative model context metadata before native
 configuration can be written. Qwen's first Connected Account route requires an
-explicit model; its exact native history-path proof remains unavailable, so
+explicit model. Its static fallback contains only the native `default` sentinel,
+not a vendor model inventory. Model discovery runs the native preparation hook;
+the declared freeform selector accepts an explicit model ID for the selected key.
+The default sentinel cannot start this route;
+account preparation returns `model_selection_required` before acquiring
+credentials. Native selection validation retains a non-retryable `client_start`
+cause through the spawn result: `model_selection_invalid` for rejected model
+selections and `session_configuration_invalid` for mode or option overrides.
+Its exact native history-path proof remains unavailable, so
 connected-account resume verification returns an explicit unsupported result.
 Native inventories and generated single-model overlays do not establish account
 entitlement. Frozen native model overlays use the same shared next-prompt

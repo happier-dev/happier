@@ -4225,6 +4225,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "vendorStateTransfer": "unsupported"
     },
     "id": "qwen",
+    "nativeSandbox": {
+      "off": true
+    },
     "resume": {
       "vendorResume": "supported",
       "vendorResumeIdField": "qwenSessionId"
@@ -4282,8 +4285,9 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
       "default"
     ],
     "defaultMode": "default",
-    "dynamicProbe": "static-only",
+    "dynamicProbe": "auto",
     "nonAcpApplyScope": "next_prompt",
+    "supportsFreeform": true,
     "supportsSelection": true
   },
   "sessionModeDescriptor": {

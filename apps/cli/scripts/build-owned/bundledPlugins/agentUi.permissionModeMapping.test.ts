@@ -14,6 +14,7 @@ import { DROID_UI_DESCRIPTOR } from '../../../../../packages/plugins/droid/src/u
 import { PLUGIN_MANIFEST as CLAUDE_PLUGIN_MANIFEST } from '../../../../../packages/plugins/claude/src/manifest';
 import { CLAUDE_UI_DESCRIPTOR } from '../../../../../packages/plugins/claude/src/ui/descriptor';
 import { PLUGIN_MANIFEST as QWEN_PLUGIN_MANIFEST } from '../../../../../packages/plugins/qwen/src/manifest';
+import { QWEN_UI_DESCRIPTOR } from '../../../../../packages/plugins/qwen/src/ui/descriptor';
 import { QWEN_ACP_RUNTIME_DEFINITION } from '../../../../../packages/plugins/qwen/src/agent/acp/definition';
 import { PLUGIN_MANIFEST as CODEBUDDY_PLUGIN_MANIFEST } from '../../../../../packages/plugins/codebuddy/src/manifest';
 import { CODEBUDDY_UI_DESCRIPTOR } from '../../../../../packages/plugins/codebuddy/src/ui/descriptor';
@@ -66,7 +67,7 @@ describe('bundled Agent permission mapping projection', () => {
             { agentId: 'devin', manifest: DEVIN_PLUGIN_MANIFEST, descriptor: DEVIN_UI_DESCRIPTOR },
             { agentId: 'droid', manifest: DROID_PLUGIN_MANIFEST, descriptor: DROID_UI_DESCRIPTOR },
             { agentId: 'claude', manifest: CLAUDE_PLUGIN_MANIFEST, descriptor: CLAUDE_UI_DESCRIPTOR },
-            { agentId: 'qwen', manifest: QWEN_PLUGIN_MANIFEST },
+            { agentId: 'qwen', manifest: QWEN_PLUGIN_MANIFEST, descriptor: QWEN_UI_DESCRIPTOR },
         ] as const;
         const pluginPackages: readonly BundledPluginPackage[] = inputs.map((input) => {
             const parsed = ingestPluginManifestV2(input.manifest);

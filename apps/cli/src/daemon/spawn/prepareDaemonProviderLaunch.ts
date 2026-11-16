@@ -106,7 +106,8 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
             result: {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                errorMessage: 'Agent-native selection is invalid.',
+                errorMessage: nativePreflight.launchError.message,
+                errorDetail: nativePreflight.launchError,
             },
         };
     }

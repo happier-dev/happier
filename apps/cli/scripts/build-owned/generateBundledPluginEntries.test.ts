@@ -296,11 +296,9 @@ describe('generated output ownership', () => {
 
   it('publishes core and session-mode facts for every catalog Agent despite an unavailable executable manifest', async () => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-complete-agent-facts-');
-    const locators = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter((entry) => {
-      const ingestion = ingestPluginManifestV2(readBundledPluginManifest(entry));
-      if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
-      return ingestion.manifest.contributes.agents?.length;
-    });
+    const agentPluginIds = new Set(Object.values(BUNDLED_AGENT_CONTRIBUTION_IDENTITIES)
+      .map(identity => identity.pluginId));
+    const locators = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.filter(entry => agentPluginIds.has(entry.pluginId));
     writeCliBundledHostPackage({ happyCliDir, bundledDependencies: locators.map((entry) => entry.sourceSpec.locator) });
     const projectionPath = join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
     mkdirSync(dirname(projectionPath), { recursive: true });
@@ -315,7 +313,11 @@ describe('generated output ownership', () => {
       const agentId = AGENT_IDS.find((id) => BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[id].pluginId === locator.pluginId);
       if (!agentId) throw new Error(`Missing catalog identity for ${locator.pluginId}`);
       mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
-      writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify(BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId])};`);
+      writeFileSync(join(packageRoot, 'src/agent/definition.ts'),
+        `export const AGENT_DEFINITION = ${JSON.stringify(BUNDLED_AGENT_DEFINITIONS_BY_ID[agentId])};`
+        + (agentId === 'codex'
+          ? `export const AGENT_STATE_SHARING_DESCRIPTOR = ${JSON.stringify(codexDefinition.AGENT_STATE_SHARING_DESCRIPTOR)};`
+          : ''));
       writeFileSync(join(packageRoot, 'src/manifest.ts'), agentId === 'opencode'
         ? 'throw new Error("OpenCode executable manifest unavailable");'
         : `export const PLUGIN_MANIFEST = ${JSON.stringify(manifest)};`);
@@ -367,24 +369,38 @@ describe('generated output ownership', () => {
     mkdirSync(join(packageRoot, 'src/ui'), { recursive: true });
     writeFileSync(join(packageRoot, 'src/ui/descriptor.ts'), 'throw new Error("UI is not an early Agent-facts input");');
     writeFileSync(join(unrelatedRoot, 'src/manifest.ts'), 'throw new Error("Non-Agent manifest is not an early Agent-facts input");');
+    const unrelatedManifest = { schemaVersion: 2, id: 'happier.unrelated', version: '0.0.0',
+      displayName: 'Unrelated', runtime: { apiVersion: 1 },
+      contributes: { agents: [], machineProvisioners: [{ id: 'stale-provisioner-contract' }] } };
+    expect(ingestPluginManifestV2(unrelatedManifest).ok).toBe(false);
+    writeFileSync(join(happyCliDir, 'assets/bundled-plugin-manifests/unrelated.json'), JSON.stringify(unrelatedManifest));
     const outPath = join(repoRoot, 'packages/agents/src/generated/bundledAgentDefinitions.ts');
     try {
-      await withWorkspaceBundleLock(async (lease) => {
-        await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
-      }, { lockPath: join(repoRoot, 'publication.lock') });
+      await main(['--root', repoRoot, '--mode', 'write', '--agent-definitions']);
       const first = readFileSync(outPath, 'utf8');
       expect(first).toContain('Current authored Agent');
       expect(first).toContain('CLAUDE_CONFIG_DIR');
       writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify({ ...claudeDefinition.AGENT_DEFINITION, core: { ...claudeDefinition.AGENT_DEFINITION.core, cliSubcommand: 'updated-claude' } })}; export const AGENT_STATE_SHARING_DESCRIPTOR = ${JSON.stringify(claudeDefinition.AGENT_STATE_SHARING_DESCRIPTOR)};`);
-      await withWorkspaceBundleLock(async (lease) => {
-        await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
-      }, { lockPath: join(repoRoot, 'publication.lock') });
+      await main(['--root', repoRoot, '--mode', 'write', '--agent-definitions']);
       expect(readFileSync(outPath, 'utf8')).toContain('updated-claude');
       const published = readFileSync(outPath, 'utf8');
+      for (const invalidManifest of [
+        { ...manifest, displayName: 42 },
+        { ...manifest, contributes: { ...manifest.contributes, agents: 'invalid' } },
+      ]) {
+        writeFileSync(manifestPath, JSON.stringify(invalidManifest));
+        await expect(main(['--root', repoRoot, '--mode', 'write', '--agent-definitions']))
+          .rejects.toThrow(/Invalid PLUGIN_MANIFEST/u);
+        expect(readFileSync(outPath, 'utf8')).toBe(published);
+      }
+      writeFileSync(manifestPath, JSON.stringify(manifest));
       writeFileSync(join(packageRoot, 'src/agent/definition.ts'), 'throw new Error("Required Agent definition failed");');
-      await expect(withWorkspaceBundleLock(async (lease) => {
-        await runRuntimeConsumedAgentFactsPrivatePhase(repoRoot, lease);
-      }, { lockPath: join(repoRoot, 'publication.lock') })).rejects.toThrow(/Required Agent definition failed/u);
+      await expect(main(['--root', repoRoot, '--mode', 'write', '--agent-definitions']))
+        .rejects.toThrow(/Required Agent definition failed/u);
+      expect(readFileSync(outPath, 'utf8')).toBe(published);
+      rmSync(join(packageRoot, 'src/agent/definition.ts'));
+      await expect(main(['--root', repoRoot, '--mode', 'write', '--agent-definitions']))
+        .rejects.toThrow(/Missing required agent definition/u);
       expect(readFileSync(outPath, 'utf8')).toBe(published);
     } finally { cleanup(); }
   }, 30_000);

@@ -14,6 +14,7 @@ import { renderBundledAgentDeclarationTypeTs, renderBundledAgentDeclarationsTs, 
 import { CLAUDE_UI_DESCRIPTOR } from '../../../../../packages/plugins/claude/src/ui/descriptor';
 import { PLUGIN_MANIFEST as CLAUDE_MANIFEST } from '../../../../../packages/plugins/claude/src/manifest';
 import { MUSE_UI_DESCRIPTOR } from '../../../../../packages/plugins/muse/src/ui/descriptor';
+import { QWEN_UI_DESCRIPTOR } from '../../../../../packages/plugins/qwen/src/ui/descriptor';
 import { PLUGIN_MANIFEST as MUSE_MANIFEST } from '../../../../../packages/plugins/muse/src/manifest';
 import { renderCliBundledPluginEntriesTs, renderCliBundledPluginManifestEntriesTs } from './registry.ts';
 import { renderAgentIdsTs } from './agentFacts.ts';
@@ -260,6 +261,7 @@ describe('bundled Agent exclusion projections', () => {
         const pluginPackages: readonly BundledPluginPackage[] = [{
             pluginPackageId: 'qwen', pluginId: manifest.id, packageName: '@happier-dev/plugins-qwen',
             packageVersion: '0.0.0', agentId: 'qwen', manifest,
+            agentUiDescriptor: QWEN_UI_DESCRIPTOR,
         }];
         const ui = renderUiBundledPluginEntriesTs({ packageNames: pluginPackages.map(entry => entry.packageName), pluginPackages });
         expect(emittedMapKeys(ui, 'BUNDLED_CANONICAL_AGENT_DECLARATIONS')).toEqual(['qwen']);
@@ -353,6 +355,7 @@ describe('bundled Agent exclusion projections', () => {
             pluginPackageId: 'qwen', pluginId: parsed.manifest.id,
             packageName: '@happier-dev/plugins-qwen', packageVersion: '0.0.0',
             agentId: 'qwen', manifest: parsed.manifest,
+            agentUiDescriptor: QWEN_UI_DESCRIPTOR,
         }];
         const recoveredUi = renderUiBundledPluginEntriesTs({ packageNames: recoveredPackages.map((entry) => entry.packageName), pluginPackages: recoveredPackages });
         expect(emittedMapKeys(recoveredUi, 'BUNDLED_CANONICAL_AGENTS_CORE')).toEqual(['qwen']);

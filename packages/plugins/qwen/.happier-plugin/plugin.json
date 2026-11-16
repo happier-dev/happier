@@ -6,6 +6,9 @@
     "agents": [
       {
         "capabilities": {
+          "nativeSandbox": {
+            "off": true
+          },
           "sessions": {
             "cancel": true,
             "configuration": true,
@@ -98,56 +101,107 @@
             }
           }
         },
-        "id": "qwen",
-        "primary": "sessions",
-        "runtime": {
-          "definition": {
-            "mcp": {
-              "policy": "pass_through"
-            },
-            "modelConfigOptionId": "model",
-            "permissionModeArgv": {
-              "flag": "--approval-mode",
-              "map": {
-                "default": null,
-                "plan": "plan",
-                "read-only": "plan",
-                "safe-yolo": "auto-edit",
-                "yolo": "yolo"
-              }
-            },
-            "permissionModeMapping": {
-              "default": null,
-              "plan": "plan",
-              "read-only": "plan",
-              "safe-yolo": "auto-edit",
-              "yolo": "yolo"
-            },
-            "skills": {
-              "sessionDelivery": {
-                "directoriesKeyPath": [
-                  "skills",
-                  "directories"
-                ],
-                "disabledKeyPath": [
-                  "skills",
-                  "disabled"
-                ],
-                "envKey": "QWEN_CODE_SYSTEM_DEFAULTS_PATH",
-                "kind": "defaults_file_env"
-              }
+        "connectedAccounts": [
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "anthropic-api-key",
+            "service": {
+              "localId": "anthropic",
+              "pluginId": "happier.agent.claude"
             }
           },
-          "kind": "acp",
-          "transport": {
-            "args": [
-              "--acp"
+          {
+            "credentialKinds": [
+              "token"
             ],
-            "executable": {
-              "id": "qwen-cli",
-              "kind": "systemTool"
-            },
-            "kind": "stdio"
+            "materializationKinds": [
+              "environment"
+            ],
+            "purpose": "openai-api-key",
+            "service": {
+              "localId": "openai",
+              "pluginId": "happier.voice.openai"
+            }
+          },
+          {
+            "credentialKinds": [
+              "token"
+            ],
+            "materializationKinds": [
+              "environment",
+              "files"
+            ],
+            "purpose": "google-model",
+            "service": {
+              "localId": "gemini-account",
+              "pluginId": "happier.agent.gemini"
+            }
+          }
+        ],
+        "id": "qwen",
+        "primary": "sessions",
+        "providerRequirements": {
+          "acceptsProtocols": [
+            "openai-chat",
+            "openai-responses"
+          ],
+          "applyPolicy": "restart_session",
+          "authIsolation": {
+            "ownedEnvKeys": [
+              "HAPPIER_QWEN_PROVIDER_API_KEY",
+              "QWEN_CODE_SYSTEM_SETTINGS_PATH"
+            ],
+            "suppressConnectedServiceIds": []
+          },
+          "credentialSupport": {
+            "apiKeyTransports": [
+              {
+                "destination": {
+                  "formats": [
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": [
+                    "authorization"
+                  ]
+                },
+                "protocol": "openai-chat"
+              },
+              {
+                "destination": {
+                  "formats": [
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": [
+                    "authorization"
+                  ]
+                },
+                "protocol": "openai-responses"
+              }
+            ],
+            "supportsNoAuth": false
+          },
+          "materialization": "configFile",
+          "required": {
+            "streaming": true,
+            "toolRoundTrips": true
+          },
+          "supportsFreeformModelIds": true
+        },
+        "runtime": {
+          "kind": "custom",
+          "permissionModeMapping": {
+            "default": null,
+            "plan": "plan",
+            "read-only": "plan",
+            "safe-yolo": "auto-edit",
+            "yolo": "yolo"
           }
         },
         "sessionModeDescriptor": {
@@ -226,6 +280,7 @@
     "languageServers": [],
     "machineProvisioners": [],
     "machineRecipes": [],
+    "machineRoles": [],
     "machineSetupPresets": [],
     "managedDependencies": [],
     "mcp": {
@@ -278,7 +333,7 @@
   },
   "displayName": "Qwen Code",
   "entrypoints": {
-    "daemon": "./.happier-plugin/daemon.js"
+    "daemon": "./.happier-plugin-build/daemon.js"
   },
   "hostAccess": {
     "optional": [],
@@ -303,6 +358,22 @@
         "id": "qwen-process",
         "reason": "Run the declared Qwen CLI executable.",
         "scope": {
+          "envKeys": [
+            "QWEN_CODE_SYSTEM_SETTINGS_PATH",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_BASE_URL",
+            "OPENAI_API_KEY",
+            "HAPPIER_CONNECTED_OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
+            "OPENAI_MODEL",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GOOGLE_GENAI_USE_VERTEXAI",
+            "GOOGLE_CLOUD_PROJECT",
+            "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "HAPPIER_QWEN_PROVIDER_API_KEY"
+          ],
           "executables": [
             {
               "id": "qwen-cli",
@@ -315,6 +386,19 @@
   },
   "id": "happier.agent.qwen",
   "runtime": {
+    "agentFactories": [
+      {
+        "loadMode": "immutable-js",
+        "localAgentId": "qwen",
+        "locator": {
+          "export": "createQwenAgentRuntime",
+          "externalSessionsExport": "qwenExternalSessionsContribution",
+          "module": "./agent/factory",
+          "runtimeApiVersion": 1
+        },
+        "normalizedModulePath": ".happier-plugin-build/agent/factory.js"
+      }
+    ],
     "apiVersion": 1
   },
   "schemaVersion": 2,

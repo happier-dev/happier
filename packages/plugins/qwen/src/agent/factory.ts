@@ -23,9 +23,11 @@ async function prepare(request: Pick<AgentSessionOpenRequest, 'configuration' | 
     })()
     : undefined;
   const providerArgs = providerBinding ? qwenProviderLaunchArgs(providerBinding) : [];
+  const nativeSandbox = request.configuration?.nativeSandbox;
   const options: AgentAcpRuntimeOptions = { transport: { kind: 'stdio',
     executable: { kind: 'systemTool', id: QWEN_ACP_COMMAND.toolId }, args: [...QWEN_ACP_COMMAND.args, ...providerArgs, ...(account?.args ?? [])],
-    ...(account || providerEnv ? { env: { ...(account?.env ?? {}), ...(providerEnv ?? {}) } } : {}) },
+    ...(account || providerEnv || nativeSandbox !== undefined ? { env: { ...(account?.env ?? {}), ...(providerEnv ?? {}),
+      ...(nativeSandbox === undefined ? {} : { QWEN_SANDBOX: nativeSandbox === 'on' ? 'true' : 'false' }) } } : {}) },
   definition: { ...QWEN_ACP_RUNTIME_DEFINITION, ...(account?.models ? { models: account.models } : {}), ...(providerBinding ? { models: qwenProviderModelControls(providerBinding) } : {}) } };
   return { options, dispose: () => account?.dispose() };
 }

@@ -14,11 +14,21 @@ import { anthropicConnectedAccountRuntime } from '../../../claude/src/connectedA
 import { openAiConnectedAccountRuntime } from '../../../openai/src/auth/connectedAccountRuntime.js';
 import { geminiConnectedAccountRuntime } from '../../../gemini/src/connectedAccounts/runtime.js';
 import { QWEN_ACCOUNT_SOURCES, prepareQwenConnectedAccount } from './connectedAccount.js';
+import { isFreeformModelIdAllowed } from '@happier-dev/agents';
+import { isDynamicModelProbeEnabled } from '../../../../../apps/cli/src/providers/probe/nativeCatalogCredential.js';
+import { AGENT_DEFINITION } from './definition.js';
 import { QWEN_ACP_COMMAND } from './acp/preflight.js';
 import { QWEN_ACP_RUNTIME_DEFINITION } from './acp/definition.js';
 import { projectAgentConnectedAccountLaunchCatalogEntry } from '../../../../../apps/cli/src/plugins/projection/registry/agentCatalogEntryHooks.js';
 
 describe('Qwen native account launch', () => {
+  it('allows the captured connected-key model through the picker selection policy', () => {
+    // QA-WAVE-B-1115F: the captured explicit choice was gpt-4.1-nano.
+    expect(isFreeformModelIdAllowed(AGENT_DEFINITION.modelConfig, 'gpt-4.1-nano')).toBe(true);
+  });
+  it('runs connected-key preparation instead of returning the static default catalog', () => {
+    expect(isDynamicModelProbeEnabled({ modelConfig: AGENT_DEFINITION.modelConfig, accountSettings: null, environment: {} })).toBe(true);
+  });
   it.each(['session', 'preflight'] as const)('delivers selected OpenAI settings to the native child through the public ACP composer (%s)', async entry => {
     const source = QWEN_ACCOUNT_SOURCES.find(row => row.purpose === 'openai-api-key')!;
     const account = { service: source.service, accountId: 'selected' };
@@ -43,13 +53,13 @@ describe('Qwen native account launch', () => {
       if (!declaration) throw new Error('Missing Qwen Agent');
       fixture = createAcpMcpPolicyFixture({ agent: declaration, pluginId: plugin.PLUGIN_MANIFEST.id, toolWireFormat: 'underscore',
         ...(entry === 'session' ? { models: { currentModelId: 'native-default', availableModels: [
-          { modelId: 'selected-model(openai)', name: 'Selected' }, { modelId: 'native-default', name: 'Native default' },
+          { modelId: 'gpt-4.1-nano(openai)', name: 'Selected' }, { modelId: 'native-default', name: 'Native default' },
         ] } } : {}),
         async factory(context) {
           const native = await agent.factory!(context);
           return { ...native, sessions: { ...native.sessions, open(request, host) {
             if (entry === 'preflight') return (async () => {
-              const input = { modelId: 'selected-model', environment: { OPENAI_API_KEY: 'ambient' },
+              const input = { modelId: 'gpt-4.1-nano', environment: { OPENAI_API_KEY: 'ambient' },
                 connectedAccounts: { ...accounts, watch() { return { dispose() {} }; } }, signal: materializationContext.signal };
               const prepared = await agent.preflightSessionControls!.prepareLaunchEnvironment!(input);
               if (!prepared) throw new Error('Expected prepared native launch');
@@ -67,18 +77,19 @@ describe('Qwen native account launch', () => {
       });
       await fixture.fixtureServer.prepare({ cwd });
       session = await fixture.openSession({ kind: 'create', sessionId: 'account', cwd, configuration: {
-        model: { value: 'selected-model', updatedAtMs: 1, selectionSource: 'explicit' }, mode: { value: null, updatedAtMs: 0 },
-        permissionIntent: { value: 'default', updatedAtMs: 0 }, options: {},
+        model: { value: 'gpt-4.1-nano', updatedAtMs: 1, selectionSource: 'explicit' }, mode: { value: null, updatedAtMs: 0 },
+        permissionIntent: { value: 'default', updatedAtMs: 0 }, ...(entry === 'session' ? { nativeSandbox: 'off' as const } : {}), options: {},
       } });
       const launch = fixture.observeLaunch();
+      if (entry === 'session') expect(launch.env.QWEN_SANDBOX).toBe('false');
       expect(launch.env[OPENAI_SELECTED_API_KEY_ENV]).toBe('fake-native-openai');
       expect(launch.env.OPENAI_API_KEY).toBe('');
       const settings = JSON.parse(readFileSync(launch.env.QWEN_CODE_SYSTEM_SETTINGS_PATH!, 'utf8'));
-      expect(settings.modelProviders.openai).toEqual([{ id: 'selected-model', envKey: OPENAI_SELECTED_API_KEY_ENV,
+      expect(settings.modelProviders.openai).toEqual([{ id: 'gpt-4.1-nano', envKey: OPENAI_SELECTED_API_KEY_ENV,
         baseUrl: 'https://api.openai.com/v1' }]);
       expect(JSON.stringify(settings)).not.toContain('fake-native-openai');
       expect(launch.argv.join(' ')).not.toContain('fake-native-openai');
-      expect(launch.argv).toContain('selected-model');
+      expect(launch.argv).toContain('gpt-4.1-nano');
     } finally {
       try { await session?.dispose(); } finally {
         try { await disposePreflight?.(); await fixture?.fixtureServer.dispose(); } finally { await activation.dispose(); await rm(cwd, { recursive: true, force: true }); }
@@ -132,22 +143,22 @@ describe('Qwen native account launch', () => {
         return { async dispose() {}, async send() { return { status: 'admitted' }; }, watch() { return { dispose() {} }; } };
       } } } } as unknown as AgentRuntimeContext;
       const session = await runtime.sessions!.open({ kind: 'create', cwd: '/fixture', configuration: {
-        model: { value: 'selected-model', updatedAtMs: 1, selectionSource: 'explicit' }, mode: { value: null, updatedAtMs: 0 },
+        model: { value: 'gpt-4.1-nano', updatedAtMs: 1, selectionSource: 'explicit' }, mode: { value: null, updatedAtMs: 0 },
         permissionIntent: { value: null, updatedAtMs: 0 }, options: {},
       } }, context);
       const env = options!.transport.env!;
       const settingsPath = env.QWEN_CODE_SYSTEM_SETTINGS_PATH;
       const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(settings.modelProviders[row.protocol]).toEqual([expect.objectContaining({ id: 'selected-model' })]);
+      expect(settings.modelProviders[row.protocol]).toEqual([expect.objectContaining({ id: 'gpt-4.1-nano' })]);
       expect(options!.transport.args).toContain(row.protocol);
-      const nativeModelId = `selected-model(${row.protocol})`;
+      const nativeModelId = `gpt-4.1-nano(${row.protocol})`;
       const controls = options!.definition!.models!;
       const projected = controls.projectModel({ modelId: nativeModelId, name: 'Selected' }, { id: nativeModelId, name: 'Selected' });
       expect(projected.id).toBe(nativeModelId);
       expect(controls.projectModelState!({ normalizedModelState: {
         currentModelId: nativeModelId, availableModels: [projected, { id: 'unrelated-native-model', name: 'Native' }],
-      } })).toEqual({ currentModelId: 'selected-model', availableModels: [{ ...projected, id: 'selected-model' }] });
-      expect(controls.resolveModelUpdate!({ modelId: 'selected-model', modelState: null })).toMatchObject({ modelId: nativeModelId });
+      } })).toEqual({ currentModelId: 'gpt-4.1-nano', availableModels: [{ ...projected, id: 'gpt-4.1-nano' }] });
+      expect(controls.resolveModelUpdate!({ modelId: 'gpt-4.1-nano', modelState: null })).toMatchObject({ modelId: nativeModelId });
       expect(JSON.stringify(settings)).not.toContain('fake-selected');
       if (row.envKey) expect(env[row.envKey]).toBe('fake-selected');
       else {

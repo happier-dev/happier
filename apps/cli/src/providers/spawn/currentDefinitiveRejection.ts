@@ -2,6 +2,7 @@ import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
 import type { ProviderBoundModelRef, ProviderModelDescriptorV1 } from '@happier-dev/protocol';
+import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import {
   getAgentModelConfig,
   getAgentSessionModeDescriptor,
@@ -39,7 +40,23 @@ type CurrentProviderSpawnDefinitiveRejectionDeps = Readonly<{
 
 export type AgentNativeSpawnDefinitiveRejectionResult =
   | Readonly<{ ok: true }>
-  | Readonly<{ ok: false }>;
+  | Readonly<{ ok: false; launchError: SessionSpawnLaunchErrorV1 }>;
+
+function rejectNativeSelection(
+  reason: 'model_not_selectable' | 'session_mode_not_selectable' | 'session_config_invalid',
+): Extract<AgentNativeSpawnDefinitiveRejectionResult, { ok: false }> {
+  const model = reason === 'model_not_selectable';
+  const code = model ? 'agent_startup_model_reconciliation_failed' : 'agent_startup_invalid_state';
+  const message = model
+    ? 'Choose a model offered by this Agent, or enter an explicit model ID when its model selector allows it.'
+    : reason === 'session_mode_not_selectable'
+      ? 'Choose a session mode supported by this Agent, or clear the selected mode.'
+      : 'Clear the invalid session configuration overrides and choose the options again.';
+  return { ok: false, launchError: { kind: 'launch_error', code, message,
+    failureCause: { code, phase: 'client_start', retryable: false,
+      failureReason: model ? 'model_selection_invalid' : 'session_configuration_invalid',
+      providerErrorCode: reason } } };
+}
 
 /**
  * The side-effect-free native half of spawn authorization. It rejects only
@@ -56,7 +73,7 @@ export function resolveAgentNativeSpawnDefinitiveRejection(input: Readonly<{
     sessionConfigOptionOverrides !== undefined
     && !AcpConfigOptionOverridesV1Schema.safeParse(sessionConfigOptionOverrides).success
   ) {
-    return { ok: false };
+    return rejectNativeSelection('session_config_invalid');
   }
 
   const acpSessionModeId = input.selection.acpSessionModeId;
@@ -64,7 +81,7 @@ export function resolveAgentNativeSpawnDefinitiveRejection(input: Readonly<{
     acpSessionModeId != null
     && (typeof acpSessionModeId !== 'string' || acpSessionModeId.trim().length === 0)
   ) {
-    return { ok: false };
+    return rejectNativeSelection('session_mode_not_selectable');
   }
 
   // Provider-bound models are validated by the existing Provider catalog
@@ -79,27 +96,28 @@ export function resolveAgentNativeSpawnDefinitiveRejection(input: Readonly<{
     && sessionModeDescriptor != null
     && (sessionModeDescriptor.source === 'none' || sessionModeDescriptor.semantics === 'none')
   ) {
-    return { ok: false };
+    return rejectNativeSelection('session_mode_not_selectable');
   }
 
   const modelId = input.selection.modelId;
   if (input.sourceModel !== undefined) {
     const sourceModel = ProviderModelDescriptorV1Schema.safeParse(input.sourceModel);
-    return { ok: sourceModel.success && sourceModel.data.id === modelId };
+    return sourceModel.success && sourceModel.data.id === modelId
+      ? { ok: true } : rejectNativeSelection('model_not_selectable');
   }
   if (modelId === undefined || modelId === 'default') return { ok: true };
-  if (typeof modelId !== 'string' || modelId.trim().length === 0) return { ok: false };
+  if (typeof modelId !== 'string' || modelId.trim().length === 0) return rejectNativeSelection('model_not_selectable');
 
   const modelConfig = getAgentModelConfig(input.agentId);
   if (modelConfig == null) return { ok: true };
-  if (modelConfig.supportsSelection !== true) return { ok: false };
+  if (modelConfig.supportsSelection !== true) return rejectNativeSelection('model_not_selectable');
   if (getAgentStaticModels(input.agentId).some((model) =>
     model.id === modelId || model.extendedContextModelId === modelId,
   )) {
     return { ok: true };
   }
   if (modelConfig.dynamicProbe !== 'static-only') return { ok: true };
-  return isFreeformModelIdAllowed(modelConfig, modelId) ? { ok: true } : { ok: false };
+  return isFreeformModelIdAllowed(modelConfig, modelId) ? { ok: true } : rejectNativeSelection('model_not_selectable');
 }
 
 /**
@@ -118,7 +136,7 @@ export async function resolveCurrentProviderSpawnDefinitiveRejection(input: Read
     agentId: input.agentId,
     selection: input.selection,
   });
-  if (!native.ok) return native;
+  if (!native.ok) return { ok: false };
 
   const modelId = input.selection.modelId;
   const providerConnectionId = input.selection.providerConnectionId;

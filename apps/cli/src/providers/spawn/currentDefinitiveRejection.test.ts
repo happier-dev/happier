@@ -82,12 +82,13 @@ describe('resolveCurrentProviderSpawnDefinitiveRejection', () => {
     const native = { ...input, sourceModel: undefined };
     const differentSourceModel = { ...input, sourceModel: { id: 'a-different-model', name: 'Different model' } };
     expect(resolveAgentNativeSpawnDefinitiveRejection(input)).toEqual({ ok: true });
-    expect(resolveAgentNativeSpawnDefinitiveRejection(native)).toEqual({ ok: false });
-    expect(resolveAgentNativeSpawnDefinitiveRejection(differentSourceModel)).toEqual({ ok: false });
+    // Qwen's connected-key route accepts explicit IDs through its declared freeform policy.
+    expect(resolveAgentNativeSpawnDefinitiveRejection(native)).toEqual({ ok: true });
+    expect(resolveAgentNativeSpawnDefinitiveRejection(differentSourceModel)).toMatchObject({ ok: false });
     expect(resolveAgentNativeSpawnDefinitiveRejection({ ...input, selection: { ...input.selection,
-      sessionConfigOptionOverrides: { v: 0 } } })).toEqual({ ok: false });
+      sessionConfigOptionOverrides: { v: 0 } } })).toMatchObject({ ok: false });
     expect(resolveAgentNativeSpawnDefinitiveRejection({ ...input, agentId: 'gemini',
-      selection: { ...input.selection, acpSessionModeId: 'plan' } })).toEqual({ ok: false });
+      selection: { ...input.selection, acpSessionModeId: 'plan' } })).toMatchObject({ ok: false });
   });
 
   it('rejects a missing admitted connection without rejecting a valid route or an unavailable catalog', async () => {
@@ -130,7 +131,7 @@ describe('resolveCurrentProviderSpawnDefinitiveRejection', () => {
     }
   });
   it.each([
-    ['a static-only native model outside its catalog', 'qwen', { modelId: 'not-a-qwen' }],
+    ['an empty native model selection', 'qwen', { modelId: '' }],
     ['a mode for an Agent with no mode surface', 'gemini', { acpSessionModeId: 'plan' }],
     ['a malformed config-option override shape', 'codex', { sessionConfigOptionOverrides: { v: 0 } }],
   ] as const)('rejects %s without reading the Account or acquiring a plugin lease', async (_label, agentId, selection) => {

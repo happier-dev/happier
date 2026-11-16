@@ -2853,9 +2853,14 @@ async function readBundledSourceAgentDefinitionProjection(
       const packageRoot = resolve(repoRoot, 'packages/plugins', pluginPackageId);
       const definitionPath = resolve(packageRoot, 'src/agent/definition.ts');
       const manifestPath = resolve(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(pluginPackageId));
-      const manifest = prepared?.manifest ?? (existsSync(manifestPath)
-        ? normalizePluginManifest(readFileSync(manifestPath), manifestPath, parser)
+      const manifestSource = prepared?.manifest ?? (existsSync(manifestPath)
+        ? readJsonSerializableValue(readJson(manifestPath), manifestPath)
         : undefined);
+      const declaredAgents = manifestSource === undefined ? undefined
+        : readJsonObjectProperty(manifestSource, 'contributes')?.agents;
+      if (Array.isArray(declaredAgents) && declaredAgents.length === 0) continue;
+      const manifest = prepared?.manifest ?? (manifestSource === undefined ? undefined
+        : normalizePluginManifest(manifestSource, manifestPath, parser));
       if (manifest && readManifestContributionArray(manifest, 'agents').length === 0) continue;
       if (!existsSync(definitionPath)) {
         if (manifest && readManifestContributionArray(manifest, 'agents').length > 0) {

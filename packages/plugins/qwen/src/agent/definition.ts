@@ -13,6 +13,7 @@ export const AGENT_DEFINITION = Object.freeze({
     connectedServices: null,
     resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'qwenSessionId' },
     sessionStorage: { direct: false, persisted: true },
+    nativeSandbox: { off: true as const },
     sessionCapabilities: {
       sessionListing: 'supported',
       sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
@@ -25,9 +26,10 @@ export const AGENT_DEFINITION = Object.freeze({
   sessionModesKind: 'acpAgentModes',
   modelConfig: {
     supportsSelection: true,
+    supportsFreeform: true,
     nonAcpApplyScope: 'next_prompt',
     acpModelConfigOptionId: 'model',
-    dynamicProbe: 'static-only',
+    dynamicProbe: 'auto',
     defaultMode: 'default',
     allowedModes: ['default'],
   },
