@@ -40,6 +40,8 @@ export const MachineWorkSummarySection = React.memo(
   function MachineWorkSummarySection(
     props: Readonly<{
       machineName: string;
+      /** Native lifecycle wording from the shared Machine presence presenter. */
+      nativeWord?: string | null;
       state: MachineWorkSummaryState;
       onRetry?: () => void;
       testID: string;
@@ -74,8 +76,9 @@ export const MachineWorkSummarySection = React.memo(
         {state.kind === 'summary' && state.summary.kind === 'current' && state.stale ? (
           <SurfaceFreshnessLine testID={`${props.testID}.stale`} asOf={state.asOf}
             busy={state.stale === 'loading'}
-            reason={t(state.stale === 'loading' ? 'machineWork.loading' : state.stale === 'offline'
-              ? 'machineWork.offline' : 'machineWork.refreshFailed', { machine })}
+            reason={state.stale === 'offline' && props.nativeWord ? props.nativeWord
+              : t(state.stale === 'loading' ? 'machineWork.loading' : state.stale === 'offline'
+                ? 'machineWork.offline' : 'machineWork.refreshFailed', { machine })}
             action={props.onRetry && state.stale !== 'loading'
               ? { label: t('common.retry'), onPress: props.onRetry } : undefined} />
         ) : null}
@@ -85,7 +88,8 @@ export const MachineWorkSummarySection = React.memo(
             title={t('machineWork.loading', { machine })} />
         ) : state.kind === 'offline' ? (
           <SurfaceStateCard testID={`${props.testID}.offline`} kind="unavailable" size="line"
-            title={t('machineWork.offline', { machine })} />
+            title={props.nativeWord ?? t('machineWork.offline', { machine })}
+            reason={props.nativeWord ? t('machineWork.unavailable', { machine }) : undefined} />
         ) : state.kind === 'denied' ? (
           <SurfaceStateCard testID={`${props.testID}.denied`} kind="denied" size="line"
             title={t('machineWork.denied')} />

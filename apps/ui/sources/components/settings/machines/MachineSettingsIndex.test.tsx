@@ -705,7 +705,7 @@ describe('All machines (the Settings door index)', () => {
     expect(routerPushSpy.mock.calls.at(-1)?.[0]).toContain('volumeId=v');
   });
 
-  it('counts the current fleet before an archived creation removes its Machine from the display collection', async () => {
+  it('counts the listed collection after an archived creation removes its Machine from display', async () => {
     const text = await import('@/text');
     vi.spyOn(text, 't').mockImplementation((key: string, params?: unknown) => key === 'allMachines.machinesCount'
       ? `${typeof params === 'object' && params !== null && 'count' in params ? params.count : ''} Machines` : key);
@@ -723,7 +723,7 @@ describe('All machines (the Settings door index)', () => {
     const tree = await renderPage();
     const count = tree.findHostByTestId('machines.index.header:count');
     expect(count).not.toBeNull();
-    expect(findAllHostTestInstances(count!, () => true).flatMap(node => node.children.filter(child => typeof child === 'string')).join('')).toContain('2 Machines');
+    expect(findAllHostTestInstances(count!, () => true).flatMap(node => node.children.filter(child => typeof child === 'string')).join('')).toContain('1 Machines');
     expect(tree.findAll(node => node.props.testID === 'machines.index.row.machine:srv_a:still-current')).toHaveLength(0);
   });
 

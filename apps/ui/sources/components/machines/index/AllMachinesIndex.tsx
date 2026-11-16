@@ -1,4 +1,3 @@
-import { countMachineFleet } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import * as React from 'react';
 import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
@@ -199,9 +198,8 @@ function AllMachinesIndexBody() {
     const holding = answerPending && !answered;
     const items = useMachineCollectionPresenceRows(holding ? NO_ITEMS : answeredItems);
     const presence = React.useMemo(() => partitionMachineCollectionRailRows(items, true), [items]);
-    // Archive/display ownership does not withdraw a current Machine from its Home's fleet.
-    // Only membership contributes to this total, so heartbeats need no second subscription here.
-    const fleetCount = countMachineFleet(viewModel.visibleMachineGroups);
+    // The headline counts the same non-archived collection the page renders.
+    const fleetCount = items.length;
     const searchable = items.length > SEARCH_THRESHOLD;
     const normalizedQuery = searchable && !besideList ? query.trim().toLocaleLowerCase() : '';
     // A long fleet keeps its offline machines out of the table until asked for, as the list column folds them

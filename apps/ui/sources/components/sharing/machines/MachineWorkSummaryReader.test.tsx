@@ -25,6 +25,35 @@ const createActionExecutor = (ports: Partial<ActionExecutorDeps>) =>
     createProtocolActionExecutor(createActionExecutorBoundaryFixture(ports));
 
 describe('MachineWorkSummaryReader', () => {
+    it('uses the shared native presence word for an asleep Machine instead of calling it offline', async () => {
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { MachineWorkSummaryReader } = await import('./MachineWorkSummaryReader');
+        const { describeMachinePresenceSummary } = await import('@/utils/sessions/machinePresenceLine');
+        const previousState = storage.getState();
+        const serverId = 'work-asleep-home';
+        const machine = createMachineFixture({ id: 'sleeping', active: false, activeAt: 0,
+            managedInputRuntime: { nativeReady: false, wakeState: null, state: 'asleep' } });
+        const read = vi.fn(async () => ({ kind: 'current', requesters: [] }));
+        const executor = createActionExecutor({ machineWorkSummaryGet: read });
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            storage.setState(state => ({ ...state, machines: { sleeping: machine },
+                machineListByServerId: { ...state.machineListByServerId, [serverId]: [machine] },
+                machineListStatusByServerId: { ...state.machineListStatusByServerId, [serverId]: 'idle' },
+            }));
+            screen = await renderScreen(<MachineWorkSummaryReader machineId="sleeping" machineName="Lima"
+                scope={{ serverId, accountId: 'alice' }} online={false} execute={executor.execute} />);
+            const expected = describeMachinePresenceSummary({ name: 'Lima', homeDir: null,
+                reachability: 'unreachable', nativeState: 'asleep' }).nativeWord;
+            expect(expected).toBeTruthy();
+            expect(screen.getTextContent()).toContain(expected);
+            expect(screen.getTextContent()).not.toContain('Lima is offline');
+            expect(read).not.toHaveBeenCalled();
+        } finally {
+            await screen?.unmount();
+            storage.setState(previousState);
+        }
+    });
     it('shares exact Machine demand across mounted consumers and follows only its work changes', async () => {
         const { MachineWorkSummaryReader } = await import('./MachineWorkSummaryReader');
         const { publishMachineWorkSummaryChanged } = await import('@/sync/store/domains/machines');
