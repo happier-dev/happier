@@ -35,7 +35,7 @@ const ACCOUNT = {
 function createHarness(input: Readonly<{
   base?: string;
   credentials?: Readonly<Record<string, string>>;
-  response?: Readonly<{ status: number; body: unknown }>;
+  response?: Readonly<{ status: number; body: unknown }> | Error;
 }> = {}) {
   const stored = new Map<string, string>(Object.entries(input.credentials ?? {}));
   const requests: Array<Readonly<{ url: string; headers: Readonly<Record<string, string>> }>> = [];
@@ -56,6 +56,7 @@ function createHarness(input: Readonly<{
       }>) {
         requests.push(request);
         const response = input.response ?? { status: 200, body: CONNECTION_DATA };
+        if (response instanceof Error) throw response;
         return {
           status: response.status,
           headers: { 'content-type': 'application/json' },
@@ -96,6 +97,13 @@ function manualMode() {
 }
 
 describe('Azure DevOps connected-account runtime', () => {
+  it.each([403, 429, 503, 'network'] as const)('keeps a failed identity probe recoverable (%s)', async (failure) => {
+    const harness = createHarness({ base: SERVICES_BASE, credentials: { token: TOKEN }, response: failure === 'network' ? new Error('Network unavailable') : { status: failure, body: {} } });
+    await expect(azureDevopsConnectedAccountRuntime.status(harness.readContext as never)).resolves.toMatchObject({ status: 'unavailable' });
+    await expect(azureDevopsConnectedAccountRuntime.refresh(harness.readContext as never)).resolves.toMatchObject({ status: 'unavailable' });
+    expect(harness.stored.get('token')).toBe(TOKEN);
+  });
+
   it('confirms the provider identity before persisting the attempted PAT', async () => {
     const harness = createHarness({ base: SERVICES_BASE });
 

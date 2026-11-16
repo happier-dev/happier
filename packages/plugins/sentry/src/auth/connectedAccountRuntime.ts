@@ -196,15 +196,6 @@ async function confirmSentryIdentity(
         ),
       };
     }
-    if (response.status === 403) {
-      return {
-        status: 'rejected',
-        diagnostic: diagnostic(
-          SENTRY_FAILURE_CODES.insufficientPermission,
-          'This Sentry token is missing the org:read capability.',
-        ),
-      };
-    }
     if (response.status === 429) {
       const retryNotBeforeMs = resolveSentryRetryNotBeforeMs(
         readSentryRateLimitSnapshot(response.headers),
@@ -220,7 +211,8 @@ async function confirmSentryIdentity(
         ...(retryNotBeforeMs === null ? {} : { retryNotBeforeMs }),
       };
     }
-    if (response.status === 404 || response.status >= 500) {
+    // A 403 alone does not establish that the credential is invalid or missing a scope.
+    if (response.status === 403 || response.status === 404 || response.status >= 500) {
       return {
         status: 'unavailable',
         diagnostic: diagnostic(
@@ -253,7 +245,7 @@ async function confirmSentryIdentity(
         };
       case 'unparseable':
         return {
-          status: 'rejected',
+          status: 'unavailable',
           diagnostic: diagnostic(
             SENTRY_FAILURE_CODES.responseUnparseable,
             'Sentry returned an organization list this connection could not read.',

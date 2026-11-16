@@ -156,15 +156,6 @@ async function confirmBitbucketAccount(
       ),
     };
   }
-  if (response.status === 403) {
-    return {
-      status: 'rejected',
-      diagnostic: diagnostic(
-        BITBUCKET_ACCOUNT_FAILURE_CODES.insufficientPermission,
-        'This Bitbucket API token cannot read its own account.',
-      ),
-    };
-  }
   if (response.status === 429) {
     return {
       status: 'unavailable',
@@ -174,7 +165,8 @@ async function confirmBitbucketAccount(
       ),
     };
   }
-  if (response.status === 404 || response.status >= 500) {
+  // A 403 alone does not establish that the credential is invalid or missing a scope.
+  if (response.status === 403 || response.status === 404 || response.status >= 500) {
     return {
       status: 'unavailable',
       diagnostic: diagnostic(

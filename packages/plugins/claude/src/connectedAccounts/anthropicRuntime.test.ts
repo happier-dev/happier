@@ -1,9 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
+import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 import { activate } from '../activate.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 import { anthropicConnectedAccountRuntime } from './anthropicRuntime.js';
+
+const testkits: PluginTestkit[] = [];
+afterEach(async () => {
+  await Promise.all(testkits.splice(0).map(testkit => testkit.dispose()));
+});
+
+async function activateAccounts() {
+  const testkit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+  testkits.push(testkit);
+  return testkit;
+}
 
 function manualMode() {
   const mode = anthropicConnectedAccountRuntime.authentication.modes['api-key'];
@@ -49,7 +62,7 @@ describe('Anthropic API-key Connected Account', () => {
     expect(h.request).not.toHaveBeenCalled();
   });
 
-  it.each([401, 403])('does not stage a valid-shaped key rejected by Anthropic (%s)', async (status) => {
+  it.each([401])('does not stage a valid-shaped key rejected by Anthropic (%s)', async (status) => {
     const h = authenticationContext(status);
     await expect(manualMode().complete({ fields: { token: 'sk-ant-qa-fake' } }, h.context)).resolves.toMatchObject({
       status: 'rejected', diagnostic: { code: 'anthropic_api_key_rejected' },
@@ -57,7 +70,7 @@ describe('Anthropic API-key Connected Account', () => {
     expect(h.credentials.values.size).toBe(0);
   });
 
-  it.each([429, 503])('keeps an unverified key unstored when verification is unavailable (%s)', async (status) => {
+  it.each([403, 429, 503])('keeps an unverified key unstored when verification is unavailable (%s)', async (status) => {
     const h = authenticationContext(status);
     await expect(manualMode().complete({ fields: { token: 'sk-ant-qa-fake' } }, h.context)).resolves.toMatchObject({ status: 'unavailable' });
     expect(h.credentials.values.size).toBe(0);
@@ -97,35 +110,18 @@ describe('Anthropic API-key Connected Account', () => {
     expect(h.request).not.toHaveBeenCalled();
   });
 
-  it('registers both Claude-owned Connected Account descriptor runtimes', () => {
-    const registrations: Array<Readonly<{ id: string; runtime: PluginConnectedAccountRuntime }>> = [];
-    activate({
-      agents: {
-        register() { return { dispose() {} }; },
-        registerExternalSessions() { return { dispose() {} }; },
-        registerExternalSessionTakeover() { return { dispose() {} }; },
-        registerExternalSessionHooks() { return { dispose() {} }; },
-        registerExternalSessionObservation() { return { dispose() {} }; },
-      },
-      hooks: { register() { return { dispose() {} }; } },
-      mcp: { registerDiscoverySource() { return { dispose() {} }; } },
-      actions: { register() { return { dispose() {} }; } },
-      connectedAccounts: {
-        register(id: string, runtime: PluginConnectedAccountRuntime) {
-          registrations.push({ id, runtime });
-          return { dispose() {} };
-        },
-      },
-    } as Parameters<typeof activate>[0]);
+  it('registers both Claude-owned Connected Account descriptor runtimes', async () => {
+    const testkit = await activateAccounts();
+    const registrations = testkit.registrations().filter(({ family }) => family === 'connectedAccountDescriptors');
 
     // Descriptor registration order is the manifest's record order and is not a
     // public semantic, so this asserts the exact registered id set and each
     // runtime's authentication shape by id rather than by position.
-    expect([...registrations].map(({ id }) => id).sort()).toEqual([
+    expect([...registrations].map(({ localId }) => localId).sort()).toEqual([
       'anthropic',
       'claude-subscription',
     ]);
-    const runtimeById = new Map(registrations.map(({ id, runtime }) => [id, runtime]));
+    const runtimeById = new Map(registrations.map(({ localId }) => [localId, testkit.registration('connectedAccountDescriptors', localId)]));
     expect(runtimeById.get('anthropic')).toMatchObject({
       authentication: {
         modes: { 'api-key': { kind: 'manual' } },
@@ -142,29 +138,8 @@ describe('Anthropic API-key Connected Account', () => {
   });
 
   it('preserves canonical reconnect identity and materializes exact Anthropic access', async () => {
-    const registrations: Array<Readonly<{
-      id: string;
-      runtime: PluginConnectedAccountRuntime;
-    }>> = [];
-    activate({
-      agents: {
-        register() { return { dispose() {} }; },
-        registerExternalSessions() { return { dispose() {} }; },
-        registerExternalSessionTakeover() { return { dispose() {} }; },
-        registerExternalSessionHooks() { return { dispose() {} }; },
-        registerExternalSessionObservation() { return { dispose() {} }; },
-      },
-      hooks: { register() { return { dispose() {} }; } },
-      mcp: { registerDiscoverySource() { return { dispose() {} }; } },
-      actions: { register() { return { dispose() {} }; } },
-      connectedAccounts: {
-        register(id: string, runtime: PluginConnectedAccountRuntime) {
-          registrations.push({ id, runtime });
-          return { dispose() {} };
-        },
-      },
-    } as Parameters<typeof activate>[0]);
-    const runtime = registrations.find(({ id }) => id === 'anthropic')?.runtime;
+    const testkit = await activateAccounts();
+    const runtime = testkit.registration('connectedAccountDescriptors', 'anthropic');
     const mode = runtime?.authentication.modes['api-key'];
     if (!runtime || !mode || mode.kind !== 'manual') throw new Error('Anthropic API-key mode is unavailable');
 

@@ -227,6 +227,17 @@ describe('Sentry connected-account runtime — Cloud region choice', () => {
 });
 
 describe('Sentry connected-account runtime — confirmation outcomes', () => {
+  it.each([401, 403, 429, 503, 'network'] as const)('requires reconnection only for an explicit identity rejection (%s)', async (failure) => {
+    const harness = createHarness({ modeId: SENTRY_CLOUD_MODE_ID, values: { region: 'us' },
+      credentials: { [SENTRY_TOKEN_CREDENTIAL_KEY]: 'sentry-test-token', [SENTRY_CONFIRMED_ORIGIN_CREDENTIAL_KEY]: SENTRY_CLOUD_REGION_ORIGINS.us },
+      responses: [jsonResponse(failure === 'network' ? 200 : failure, {})] });
+    if (failure === 'network') harness.request.mockRejectedValue(new Error('Network unavailable'));
+    const status = failure === 401 ? 'reconnectRequired' : 'unavailable';
+    await expect(sentryConnectedAccountRuntime.status(harness.readContext as never)).resolves.toMatchObject({ status });
+    await expect(sentryConnectedAccountRuntime.refresh(harness.readContext as never)).resolves.toMatchObject({ status });
+    expect(harness.stored.get(SENTRY_TOKEN_CREDENTIAL_KEY)).toBe('sentry-test-token');
+  });
+
   it('reports only normalized generic rate-limit evidence from a valid Reset header', async () => {
     const harness = createHarness({
       modeId: SENTRY_CLOUD_MODE_ID,
@@ -263,9 +274,13 @@ describe('Sentry connected-account runtime — confirmation outcomes', () => {
     const result = await completeConnection(harness);
 
     expect(result).toMatchObject({
-      status: 'rejected',
+      status: 'unavailable',
       diagnostic: { code: SENTRY_FAILURE_CODES.responseUnparseable },
     });
+    expect(harness.stored.size).toBe(0);
+    harness.stored.set(SENTRY_TOKEN_CREDENTIAL_KEY, 'sentry-test-token');
+    harness.stored.set(SENTRY_CONFIRMED_ORIGIN_CREDENTIAL_KEY, SENTRY_CLOUD_REGION_ORIGINS.us);
+    await expect(sentryConnectedAccountRuntime.status(harness.readContext as never)).resolves.toMatchObject({ status: 'unavailable' });
   });
 
   it('reports a 200 array whose rows carry no usable id as unparseable', async () => {
@@ -278,7 +293,7 @@ describe('Sentry connected-account runtime — confirmation outcomes', () => {
     const result = await completeConnection(harness);
 
     expect(result).toMatchObject({
-      status: 'rejected',
+      status: 'unavailable',
       diagnostic: { code: SENTRY_FAILURE_CODES.responseUnparseable },
     });
   });

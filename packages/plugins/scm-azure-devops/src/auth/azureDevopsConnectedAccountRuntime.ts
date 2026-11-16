@@ -122,15 +122,6 @@ async function confirmAzureDevOpsIdentity(
         ),
       };
     }
-    if (failure.class === 'forbidden') {
-      return {
-        status: 'rejected',
-        diagnostic: diagnostic(
-          'azure_devops_manual_credentials_insufficient',
-          'This Azure DevOps personal access token cannot read the configured deployment.',
-        ),
-      };
-    }
     if (failure.class === 'restVersionUnsupported') {
       return {
         status: 'rejected',

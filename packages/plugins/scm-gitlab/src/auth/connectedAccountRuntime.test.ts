@@ -57,6 +57,18 @@ async function complete(modeId: string, baseUrl: string) {
 }
 
 describe('GitLab connected-account deployment modes', () => {
+  it.each([401, 403, 429, 503, 'network'] as const)('requires reconnection only for an explicit identity rejection (%s)', async (failure) => {
+    const fixture = harness(GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID, 'https://gitlab.com');
+    fixture.stored.set(GITLAB_TOKEN_CREDENTIAL_KEY, 'gitlab-test-token');
+    if (failure === 'network') fixture.request.mockRejectedValue(new Error('Network unavailable'));
+    else fixture.request.mockResolvedValue({ status: failure, finalUrl: 'https://gitlab.com/api/v4/user', headers: {}, body: new Uint8Array() });
+    const readContext = { ...fixture.context, account: ACCOUNT, credentials: fixture.context.attemptCredentials };
+    const status = failure === 401 ? 'reconnectRequired' : 'unavailable';
+    await expect(gitlabConnectedAccountRuntime.status(readContext as never)).resolves.toMatchObject({ status });
+    await expect(gitlabConnectedAccountRuntime.refresh(readContext as never)).resolves.toMatchObject({ status });
+    expect(fixture.stored.get(GITLAB_TOKEN_CREDENTIAL_KEY)).toBe('gitlab-test-token');
+  });
+
   it('confirms GitLab.com through the fixed-origin mode', async () => {
     const result = await complete(GITLAB_PERSONAL_ACCESS_TOKEN_MODE_ID, 'https://gitlab.com');
     expect(result.result).toMatchObject({ status: 'connected', displayName: '@octocat · gitlab.com' });

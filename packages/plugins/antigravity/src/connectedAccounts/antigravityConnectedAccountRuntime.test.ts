@@ -388,7 +388,7 @@ describe('Antigravity qualified Connected Account', () => {
 
 
 describe('Antigravity explicit native import', () => {
-  it.each([[200, 'rejected'], [503, 'outcomeUnknown']] as const)('does not refresh valid native access or stage unverified grants after tokeninfo HTTP %s', async (status, expected) => {
+  it.each([[200, 'rejected'], [401, 'rejected'], [403, 'unavailable'], [429, 'unavailable'], [503, 'unavailable'], ['network', 'unavailable']] as const)('does not refresh valid native access or stage unverified grants after tokeninfo HTTP %s', async (status, expected) => {
     const home = await mkdtemp(join(tmpdir(), 'agy-native-import-grants-'));
     vi.stubEnv('GEMINI_HOME', home); vi.stubEnv('AGY_ACP_FORCE_FILE_STORAGE', '1');
     try {
@@ -400,7 +400,7 @@ describe('Antigravity explicit native import', () => {
       const attempted = store();
       const requests: string[] = [];
       const context = { attempt: { kind: 'connect', attemptId: 'native-unverified' }, service, attemptCredentials: attempted, signal: new AbortController().signal,
-        services: { http: { async request(request: { url: string }) { requests.push(request.url); return response(status, { azp: '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com', expires_in: '3600' }, request.url); } } },
+        services: { http: { async request(request: { url: string }) { requests.push(request.url); if (status === 'network') throw new Error('Network unavailable'); return response(status, { azp: '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com', expires_in: '3600' }, request.url); } } },
       } as Parameters<typeof mode.complete>[1];
       await expect(mode.complete({ fields: { source: 'acp' } }, context)).resolves.toMatchObject({ status: expected });
       expect(requests).toHaveLength(1);

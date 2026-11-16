@@ -134,10 +134,10 @@ async function importNativeCredentials(readNativeCredential: typeof readAgyNativ
     response = await context.services.http.request({ url: `https://oauth2.googleapis.com/tokeninfo?${new URLSearchParams({ access_token: accessToken })}`, method: 'GET', redirect: 'error' }, { signal });
   } catch (error) {
     if (signal.aborted) throw error;
-    return { status: 'outcomeUnknown' as const, diagnostic: diagnostic('antigravity_native_validation_unavailable', 'Google did not return a conclusive Antigravity login validation.') };
+    return { status: 'unavailable' as const, diagnostic: diagnostic('antigravity_native_validation_unavailable', 'Google did not return a conclusive Antigravity login validation.') };
   }
-  if (response.status >= 400 && response.status < 500 && response.status !== 429) return { status: 'rejected' as const, diagnostic: diagnostic('antigravity_native_reauthorization_required', 'Sign in to Antigravity again before importing this login.') };
-  if (response.status < 200 || response.status >= 300) return { status: 'outcomeUnknown' as const, diagnostic: diagnostic('antigravity_native_validation_unavailable', 'Google did not return a conclusive Antigravity login validation.') };
+  if (response.status >= 400 && response.status < 500 && response.status !== 403 && response.status !== 429) return { status: 'rejected' as const, diagnostic: diagnostic('antigravity_native_reauthorization_required', 'Sign in to Antigravity again before importing this login.') };
+  if (response.status < 200 || response.status >= 300) return { status: 'unavailable' as const, diagnostic: diagnostic('antigravity_native_validation_unavailable', 'Google did not return a conclusive Antigravity login validation.') };
   const facts = parseBody(response.body);
   const grantedScopes = parseScopes(facts?.scope);
   const expiresIn = typeof facts?.expires_in === 'string' || typeof facts?.expires_in === 'number' ? Number(facts.expires_in) : NaN;

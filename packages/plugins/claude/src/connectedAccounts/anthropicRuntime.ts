@@ -79,7 +79,7 @@ const anthropicConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime 
             ) };
           }
           signal.throwIfAborted();
-          if (response.status === 401 || response.status === 403) {
+          if (response.status === 401) {
             return { status: 'rejected', diagnostic: diagnostic(
               'anthropic_api_key_rejected',
               'Anthropic rejected this key. Retry with an active API key.',

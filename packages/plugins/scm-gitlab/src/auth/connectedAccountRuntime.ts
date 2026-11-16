@@ -157,15 +157,6 @@ async function confirmGitlabIdentity(
       ),
     };
   }
-  if (response.status === 403) {
-    return {
-      status: 'rejected',
-      diagnostic: diagnostic(
-        GITLAB_ACCOUNT_FAILURE_CODES.insufficientPermission,
-        'This GitLab token is missing the read_api capability.',
-      ),
-    };
-  }
   if (response.status === 429) {
     return {
       status: 'unavailable',
@@ -175,7 +166,8 @@ async function confirmGitlabIdentity(
       ),
     };
   }
-  if (response.status === 404 || response.status >= 500) {
+  // A 403 alone does not establish that the credential is invalid or missing a scope.
+  if (response.status === 403 || response.status === 404 || response.status >= 500) {
     return {
       status: 'unavailable',
       diagnostic: diagnostic(

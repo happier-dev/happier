@@ -170,6 +170,15 @@ describe('Bitbucket Connected Account mode contract', () => {
     expect(health).toMatchObject({ status: 'reconnectRequired' });
   });
 
+  it.each([403, 429, 503, 'network'] as const)('keeps a failed identity probe recoverable (%s)', async (failure) => {
+    const stored = new Map([['identity', 'account@example.com'], ['token', 'token-secret']]);
+    const { http } = createHttpStub(failure === 'network' ? new Error('Network unavailable') : { status: failure });
+    const context = { signal: new AbortController().signal, services: { http }, credentials: { async get(key: string) { return stored.get(key) ?? null; } } };
+    await expect(bitbucketConnectedAccountRuntime.status(context as never)).resolves.toMatchObject({ status: 'unavailable' });
+    await expect(bitbucketConnectedAccountRuntime.refresh(context as never)).resolves.toMatchObject({ status: 'unavailable' });
+    expect(stored.get('token')).toBe('token-secret');
+  });
+
   it('keeps the canonical account id immutable while reporting mutable provider identity', async () => {
     const authentication = bitbucketConnectedAccountRuntime.authentication.modes.manual;
     if (!authentication || authentication.kind !== 'manual') return;
