@@ -274,12 +274,12 @@ const domainProjectOf = (item: AccountDomainItem) => item.projectSourceName ? it
 function domainProjectBands<Item extends AccountDomainItem>(items: readonly Item[]) {
   const { named, unnamed } = groupDeploymentRowsByProject(items.map((item) => ({
     projectSourceId: item.environment.projectSourceId, projectName: item.projectSourceName })));
-  const band = (key: string, title: string, count: number) => ({ key, title, section: SERVICES_ONE_SHEET,
-    description: t('projects.deployments.editors.domainsCount', { count }) });
+  // The list draws each group's count beside its title (F3), so a band says nothing more.
+  const band = (key: string, title: string) => ({ key, title, section: SERVICES_ONE_SHEET });
   return {
     axis: [
-      ...named.map((group) => band(group.key, group.title, group.rows.length)),
-      ...(unnamed.length > 0 ? [band(OTHER_DOMAIN_PROJECT, t('projects.deployments.allOtherProject'), unnamed.length)] : []),
+      ...named.map((group) => band(group.key, group.title)),
+      ...(unnamed.length > 0 ? [band(OTHER_DOMAIN_PROJECT, t('projects.deployments.allOtherProject'))] : []),
     ],
     groupOf: domainProjectOf,
   };
@@ -399,18 +399,17 @@ export function ServicesDomainsView(
           <EmptyState testID="services.domains.pageEmpty" layout="line" title={t('projects.deployments.services.pageEmpty')} />
         </ItemGroup>
       ) : (
-        <ItemGroup surface="none">
-          <DeploymentDomainsList
-            testID="services.domains"
-            items={items}
-            groups={bands}
-            environmentTitle={domainEnvironmentTitle}
-            accountId={props.accountId}
-            serverId={props.serverId}
-            demand={props.demand}
-            disabled={false}
-          />
-        </ItemGroup>
+        // The page's flat list (ServicesPageList), like Databases: inside an ItemGroup it would keep a section's sheet.
+        <DeploymentDomainsList
+          testID="services.domains"
+          items={items}
+          groups={bands}
+          environmentTitle={domainEnvironmentTitle}
+          accountId={props.accountId}
+          serverId={props.serverId}
+          demand={props.demand}
+          disabled={false}
+        />
       )}
       <ServicesPaging testID="services.domains.paging" page={page} onNewer={read.previousPage} onOlder={read.nextPage} />
     </>
