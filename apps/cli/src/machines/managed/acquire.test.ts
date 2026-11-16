@@ -1403,7 +1403,8 @@ function retainTeamMemberReviewedSnapshot(carrier: ReturnType<typeof createTeamM
 }
 
 describe('opaque managed preset admission', () => {
-    it.each(['warm', 'stale'] as const)('selects the %s prepared execution once and resumes its exact retained acquisition after restart', async freshness => {
+    it.each([['warm', 'resource-bound'], ['stale', 'resource-bound'], ['warm', 'enrolled'], ['stale', 'enrolled']] as const)(
+        'selects the %s prepared execution once at admitted %s creation', async (freshness, acquisitionMode) => {
         const { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, defineMachineProvisionerPreparationSchemas } = await import('@happier-dev/protocol/plugins/contributions/machineProvisioners');
         const { defineProtocolObject, defineProtocolString } = await import('@happier-dev/protocol/plugins/actions/protocol-composable-schema');
         const { createManagedMachinePresetPreparationBindingV1 } = await import('@happier-dev/cli-common/machines/managed');
@@ -1450,7 +1451,8 @@ describe('opaque managed preset admission', () => {
             cliBinaryPath: '/opt/happier/cli/current/happier', bakedSetup: { items: setup.items } } };
         let retainedContent = { t: 'plain' as const, v: content };
         let retained = ManagedMachineV1Schema.parse({ ...carrier.admission.machine,
-            preset: { ...carrier.admission.machine.preset, contentEncryptionMode: 'plain' }, machineSetup: { state: 'pending' }, acquisitionMode: 'resource-bound' });
+            preset: { ...carrier.admission.machine.preset, contentEncryptionMode: 'plain' }, machineSetup: { state: 'pending' },
+            ...(acquisitionMode === 'resource-bound' ? { acquisitionMode } : {}) });
         const roles: string[] = [], acquired: unknown[] = [], reconciled: unknown[] = [];
         const nativeOperationRef = { contributionRef: launch.provider, schemaVersion: 1, value: { requestId: 'native-request' } };
         const resource = { contributionRef: launch.provider, schemaVersion: 1, value: {} };
@@ -1507,7 +1509,7 @@ describe('opaque managed preset admission', () => {
             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }), originalActionEnvelope, externalActionExecutionAuthorization: projectedAuthorization, externalActionTarget: authorization.binding.target,
             operationAcceptance: { operationId: 'warm-operation', accept() {} }, operationOwnerUpdate: { update() {} } };
         const first = await createManagedMachineAcquisitionDriver(connection).execute('machines.managed.acquire', acquisition,
-            { requestId: 'warm-create', acquisitionMode: 'resource-bound', context }).catch((error: unknown) => error);
+            { requestId: 'warm-create', acquisitionMode, context }).catch((error: unknown) => error);
         if (!(first instanceof Error) || !('code' in first) || first.code !== 'native_acquisition_unconfirmed') throw first;
         const physical = freshness === 'warm' ? { image: 'owned-artifact' } : launch.choices;
         expect(acquired).toEqual([expect.objectContaining({ launch: physical })]);
@@ -1517,6 +1519,19 @@ describe('opaque managed preset admission', () => {
             launch: { ...normalizedLaunch, choices: physical }, binaryPath: content.prepared.cliBinaryPath, deferredSetup: { scripts: setup.scripts } });
         else expect(retainedContent.v).not.toHaveProperty('preparationExecution');
         const readsBeforeRestart = reads.length;
+        if (acquisitionMode === 'enrolled') {
+            // Reopen the actual Home-retained carrier under a fresh custodian
+            // hydrator; no provider options or CLI freshness discovery runs.
+            const reopened = await openManagedPresetAdmission({ input: connection, acquisition,
+                admission: ManagedAdmissionOutputV1Schema.parse({ machine: retained, replayed: true,
+                    presetContent: { content: retainedContent, recipients: [] } }) });
+            expect(reopened.launch.choices).toEqual(physical);
+            expect(reopened.machineSetup?.setup).toEqual(freshness === 'warm' ? { scripts: setup.scripts } : setup);
+            expect(roles.filter(role => role === 'options')).toHaveLength(1);
+            expect(roles.filter(role => role === 'acquire')).toHaveLength(1);
+            expect(reads).toHaveLength(readsBeforeRestart);
+            return;
+        }
         const retryInput = { homeId, managedId: retained.id, expectedIntentRevision: 0 };
         const retryEnvelope = { ...originalActionEnvelope, requestId: 'warm-retry', input: retryInput };
         const retryAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization: {

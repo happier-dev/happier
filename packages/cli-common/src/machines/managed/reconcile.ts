@@ -73,7 +73,8 @@ export type ManagedMachineReconciliation = Readonly<{
     /** The host maps role names using that selected authority, never raw caller review facts. */
     createNative(readMachine: () => ManagedMachineFullV1, readCredentialRevision: () => number | undefined): ManagedReconciliationNative;
     /** Select and seal private execution choices at the existing submit boundary. */
-    prepareAcquire?(machine: ManagedMachineFullV1, configuration: Awaited<ReturnType<typeof captureManagedAcquireConfiguration>>): Promise<Readonly<{
+    prepareAcquire?(machine: ManagedMachineFullV1, configuration: Awaited<ReturnType<typeof captureManagedAcquireConfiguration>>,
+        captureConfiguration: () => ReturnType<typeof captureManagedAcquireConfiguration>): Promise<Readonly<{
         machine: ManagedMachineFullV1; presetContent?: ManagedControllerPresetContentV1;
     }>>;
     bootstrap: Readonly<{
@@ -311,9 +312,10 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     if (machine.allocation === 'unsubmitted') {
         if (input.acquisitionMode !== 'resource-bound') await input.bootstrap.preflight();
         await native.prepareRoles();
-        const configuration = input.acquisitionMode === 'resource-bound'
+        let configuration = input.acquisitionMode === 'resource-bound'
             ? await captureManagedAcquireConfiguration(machine, provisioner, native) : undefined;
-        const preparedAcquire = await input.prepareAcquire?.(machine, configuration);
+        const preparedAcquire = await input.prepareAcquire?.(machine, configuration, async () =>
+            configuration ??= await captureManagedAcquireConfiguration(machine, provisioner, native));
         if (preparedAcquire) machine = preparedAcquire.machine;
         let bootstrapPublicKey: string | undefined;
         let guestHostPublicKey: string | undefined;

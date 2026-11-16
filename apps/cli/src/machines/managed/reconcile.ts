@@ -595,11 +595,13 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
         acquisitionMode: params.machine.acquisitionMode ?? params.options.acquisitionMode,
         observationOnly: params.action === 'machines.managed.inspect' && params.options.policyPurpose !== undefined,
         provisioner: retainedProvisioner?.definition,
-        prepareAcquire: async (machine, configuration) => {
+        prepareAcquire: async (machine, configuration, captureConfiguration) => {
             const hydrator = params.hydrator;
-            if (!hydrator?.isOpaque(machine) || !configuration || !retainedProvisioner) return { machine };
+            if (!hydrator?.isOpaque(machine) || !retainedProvisioner) return { machine };
             const content = hydrator.readPresetDefinition(machine);
             if (!content?.launch || !machine.preset) throw new ManagedMachineControllerError('credential_unavailable');
+            if (!configuration && content.preparation?.enabled) configuration = await captureConfiguration();
+            if (!configuration) return { machine };
             let launch = machine.launch;
             let preparationExecution: import('@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1').ManagedMachinePresetPreparationExecutionV1 | undefined;
             if (content.preparation?.enabled) {
