@@ -1,6 +1,7 @@
 import { cmd, renderHelpPage } from '@happier-dev/cli-common/output';
 import { resolveInvokerName } from '@/cli/runtime/resolveInvokerName';
 import { pluginSettingsHelpRows } from './pluginSettingsHelp';
+import { PluginScaffoldTemplateSchema } from '@happier-dev/protocol/actions/actionSpecs';
 
 export function renderPluginHelp(scaffoldUiModes: readonly string[]): string {
   const invoker = resolveInvokerName() ?? 'happier';
@@ -17,7 +18,7 @@ export function renderPluginHelp(scaffoldUiModes: readonly string[]): string {
       { label: `${pluginCommand} rollback <pluginId> [--json]`, description: 'Restore the retained prior plugin version through the active daemon' },
       { label: `${pluginCommand} enable|disable <pluginId> [--json]`, description: 'Change plugin admission through the active daemon' },
       { label: `${pluginCommand} uninstall <pluginId> [--delete-data --yes] [--json]`, description: 'Remove a local installed plugin; preserve its data unless --delete-data --yes is supplied' },
-      { label: `${pluginCommand} create <name> [--id <plugin.id>] [--name <display name>] [--template session-agent] [--ui ${scaffoldUiModes.join('|')}] [--json]`, description: 'Create a minimal TypeScript plugin with a declarative UI surface by default, or from a first-party starting template' },
+      { label: `${pluginCommand} create <name> [--id <plugin.id>] [--name <display name>] [--template ${PluginScaffoldTemplateSchema.options.join('|')}] [--themes-file <export.json>]… [--ui ${scaffoldUiModes.join('|')}] [--json]`, description: 'Create a plugin project; themes accepts exported theme files and creates a data-only manifest' },
       { label: `${pluginCommand} dev [path] [--sdk-registry <origin>] [--json]`, description: 'Register a trusted source with the daemon and show its canonical development status' },
       { label: `${pluginCommand} dev unregister <path> [--json]`, description: 'Stop observing an exact explicit source and forget its remembered registration' },
       { label: `${pluginCommand} status [--json]`, description: 'Show daemon-owned development roots, phases, current occurrences, and diagnostics' },

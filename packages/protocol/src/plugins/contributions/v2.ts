@@ -147,6 +147,7 @@ import { PluginRoleDeclarationV1Schema } from './roles.js';
 import { PluginWorkflowContributionV1Schema } from './workflowDeclarationV1.js';
 import { PluginInputTypeContributionV1Schema } from './inputTypes.js';
 import { PluginAtmospherePictureContributionV1Schema } from './atmospherePictures.js';
+import { PluginThemeContributionV1Schema } from './themes.js';
 import { PluginRegistrySourceContributionV1Schema } from './registrySources.js';
 import { PluginLanguageServerContributionV1Schema } from './languageServers.js';
 import { PluginSkillContributionV1Schema } from './skills.js';
@@ -155,6 +156,7 @@ export { PluginBotTemplateContributionV1Schema, type PluginBotTemplateContributi
 export { PluginSkillContributionV1Schema, type PluginSkillContributionV1, projectPluginSkillDeclarationV1 } from './skills.js';
 export { PluginInputTypeContributionV1Schema, type PluginInputTypeContributionV1 } from './inputTypes.js';
 export { PluginAtmospherePictureContributionV1Schema, type PluginAtmospherePictureContributionV1 } from './atmospherePictures.js';
+export { PluginThemeContributionV1Schema, type PluginThemeContributionV1 } from './themes.js';
 export { PluginRegistrySourceContributionV1Schema, type PluginRegistrySourceContributionV1 } from './registrySources.js';
 export { PluginLanguageServerContributionV1Schema, type PluginLanguageServerContributionV1 } from './languageServers.js';
 import { PluginDragSourceContributionV1Schema, PluginDropTargetContributionV1Schema } from './entityDragDrop.js';
@@ -939,6 +941,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2 = [
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.resources, schema: PluginResourceContributionV2Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.inputTypes, schema: PluginInputTypeContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.atmospherePictures, schema: PluginAtmospherePictureContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.themes, schema: PluginThemeContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.registrySources, schema: PluginRegistrySourceContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.backupDestinations, schema: BackupDestinationContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.languageServers, schema: PluginLanguageServerContributionV1Schema }),

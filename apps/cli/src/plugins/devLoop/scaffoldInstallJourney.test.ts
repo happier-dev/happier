@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { executePluginDevLoopAction } from './actions';
 import { buildPluginInstallApprovalPreview } from './installApprovalPreview';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
+import * as tar from 'tar';
+import { PluginManifestV2Schema } from '@happier-dev/protocol';
 
 const daemonBoundary = vi.hoisted(() => ({
   ensureRunning: vi.fn(async () => undefined),
@@ -37,6 +39,32 @@ vi.mock('@/daemon/controlClient', async (importOriginal) => ({
  * The only substituted boundary is the daemon transport itself.
  */
 describe('scaffold → install authoring journey', () => {
+  it('shares a theme batch through scaffold and pack without installing or publishing it', async () => {
+    const workspaceRoot = await mkdtemp(join(tmpdir(), 'happier-theme-share-'));
+    daemonBoundary.requestChange.mockReset();
+    daemonBoundary.development.mockReset();
+    try {
+      const targetDir = join(workspaceRoot, 'themes');
+      const theme = { schemaVersion: 1, id: 'shared', name: 'Shared theme', createdAt: '2026-11-16', updatedAt: '2026-11-16',
+        base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} }, css: '[data-surface="session"] { color: red; }' };
+      const scaffold = await executePluginDevLoopAction({ actionId: 'plugins.scaffold',
+        input: { template: 'themes', themes: [theme], targetDir, id: 'acme.shared-themes', name: 'Shared themes' }, workspaceRoot });
+      expect(scaffold).toMatchObject({ ok: true, createdPaths: { targetDir } });
+      const outPath = join(workspaceRoot, 'shared.tgz');
+      const packed = await executePluginDevLoopAction({ actionId: 'plugins.pack', input: { locator: targetDir, outPath }, workspaceRoot });
+      expect(packed, JSON.stringify(packed)).toMatchObject({ ok: true, package: { archivePath: outPath, archiveDigest: expect.any(String) } });
+      const contents: string[] = [];
+      await tar.t({ file: outPath, onReadEntry: entry => { contents.push(entry.path); } });
+      expect(contents).toContain('package/.happier-plugin/plugin.json');
+      const extracted = join(workspaceRoot, 'extracted');
+      await mkdir(extracted);
+      await tar.x({ file: outPath, cwd: extracted });
+      expect(PluginManifestV2Schema.parse(JSON.parse(await readFile(join(extracted, 'package/.happier-plugin/plugin.json'), 'utf8')))
+        .contributes.themes).toEqual([{ id: 'theme-1', theme }]);
+      expect(daemonBoundary.requestChange).not.toHaveBeenCalled();
+      expect(daemonBoundary.development).not.toHaveBeenCalled();
+    } finally { await rm(workspaceRoot, { recursive: true, force: true }); }
+  });
   it('previews and registers a pristine code-defined scaffold through the daemon development-root owner', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-install-'));
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-home-'));

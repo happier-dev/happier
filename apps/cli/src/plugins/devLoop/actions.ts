@@ -431,6 +431,7 @@ export async function executePluginDevLoopAction(
       pluginId: readString(input, 'id'),
       displayName: readString(input, 'name'),
       invokerName: resolveInvokerName() ?? 'happier',
+      ...(input.themes !== undefined ? { themes: input.themes } : {}),
       ...(() => {
         // One vocabulary: the scaffold UI mode is resolved through the schema
         // the `plugins.scaffold` action input already validates against.

@@ -1,5 +1,5 @@
 import { renderPluginHelp } from './pluginsHelp';
-import { realpath } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 
 import { cmd, createOutputBuilder, dim, errorFrame, fail, neutral, ok, renderHelpPage, sectionTitle } from '@happier-dev/cli-common/output';
@@ -83,6 +83,7 @@ import {
 import type { PluginChangePendingReviewResult } from '@happier-dev/protocol/marketplace/internal';
 import { PluginScaffoldTemplateSchema, PluginScaffoldUiModeSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import type { PluginScaffoldUiMode } from '@happier-dev/protocol';
+import { parseThemeProfileFile } from '@happier-dev/protocol/account/settings/themeProfileFile';
 
 type PluginsCommandDeps = Readonly<{
   actionExecutionDeps?: Partial<ActionCliExecutionDeps>;
@@ -748,7 +749,7 @@ async function runPluginsCreateCommand(args: readonly string[]): Promise<void> {
   }
   const targetDir = readCommandPositionals(args, {
     startIndex: 1,
-    valueFlags: ['--id', '--name', '--ui', '--template'],
+    valueFlags: ['--id', '--name', '--ui', '--template', '--themes-file'],
   })[0] ?? null;
   if (!targetDir || targetDir === 'help' || targetDir === '--help' || targetDir === '-h') {
     console.log(usage());
@@ -802,6 +803,29 @@ async function runPluginsCreateCommand(args: readonly string[]): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  let themes: unknown[] | undefined;
+  try {
+    const files = readRepeatedFlagValues(args, '--themes-file', { valueName: 'theme export file' });
+    if (files.length > 0) {
+      themes = [];
+      for (const file of files) {
+        const path = resolveAbsolutePathFromWorkingDirectory(file);
+        if (!path) throw new Error('Invalid theme export path');
+        const parsed = parseThemeProfileFile(JSON.parse(await readFile(path, 'utf8')));
+        if (!parsed.ok) throw new Error(`Invalid theme export: ${parsed.error}`);
+        themes.push(parsed.document.raw);
+      }
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Cannot read theme export';
+    if (wantsJson(args)) {
+      await printJsonEnvelope({ ok: false, kind: 'plugins_create', error: { code: 'invalid_option', message } }, { exitCode: 1 });
+    } else {
+      console.error(errorFrame('Error:', [message]));
+      process.exitCode = 1;
+    }
+    return;
+  }
   const result = await scaffoldLocalPlugin({
     targetDir,
     pluginId: readFlagValue(args, '--id') ?? `local.${slug}`,
@@ -809,6 +833,7 @@ async function runPluginsCreateCommand(args: readonly string[]): Promise<void> {
     invokerName: resolveInvokerName() ?? 'happier',
     ...(ui ? { ui: ui as PluginScaffoldUiMode } : {}),
     ...(parsedTemplate?.success ? { template: parsedTemplate.data } : {}),
+    ...(themes ? { themes } : {}),
   });
 
   if (!result.ok) {

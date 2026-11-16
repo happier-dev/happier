@@ -1,7 +1,7 @@
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import { DEFAULT_PLUGIN_SCAFFOLD_UI_MODE, PluginScaffoldTemplateSchema, PluginScaffoldUiModeSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { DEFAULT_PLUGIN_SCAFFOLD_UI_MODE, PluginScaffoldActionInputSchema, PluginScaffoldTemplateSchema, PluginScaffoldUiModeSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import type { PluginScaffoldTemplate, PluginScaffoldUiMode } from '@happier-dev/protocol';
 import { PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 } from '@happier-dev/plugin-sdk/ui/build';
@@ -15,6 +15,7 @@ import {
   createSessionAgentRunnerSource,
   createSessionAgentTestSource,
 } from './sessionAgentTemplate';
+import { createThemePluginSource } from './themeTemplate';
 
 export type PluginScaffoldDiagnostic = Readonly<{
   code: 'plugin_scaffold_invalid_input' | 'plugin_scaffold_target_exists' | 'plugin_scaffold_failed';
@@ -850,6 +851,7 @@ export async function scaffoldLocalPlugin(params: Readonly<{
   invokerName?: string;
   ui?: PluginScaffoldUiMode;
   template?: PluginScaffoldTemplate;
+  themes?: unknown;
 }>): Promise<ScaffoldLocalPluginResult> {
   const rawTargetDir = params.targetDir.trim();
   const pluginId = params.pluginId.trim();
@@ -862,7 +864,7 @@ export async function scaffoldLocalPlugin(params: Readonly<{
    * visible rather than an action-only package. `session-agent` is a different
    * starting shape that deliberately contributes no surface, so it keeps none.
    */
-  const ui = params.ui ?? (template === 'session-agent' ? undefined : DEFAULT_PLUGIN_SCAFFOLD_UI_MODE);
+  const ui = params.ui ?? (template !== undefined ? undefined : DEFAULT_PLUGIN_SCAFFOLD_UI_MODE);
   const invokerName = params.invokerName?.trim() || 'happier';
 
   if (!rawTargetDir) {
@@ -899,7 +901,7 @@ export async function scaffoldLocalPlugin(params: Readonly<{
   if (template !== undefined && !PluginScaffoldTemplateSchema.safeParse(template).success) {
     return {
       ok: false,
-      diagnostics: [createDiagnostic('plugin_scaffold_invalid_input', 'Only --template session-agent is supported for plugin scaffolds')],
+      diagnostics: [createDiagnostic('plugin_scaffold_invalid_input', `--template requires one of: ${PluginScaffoldTemplateSchema.options.join(', ')}`)],
     };
   }
   if (template === 'session-agent' && params.ui !== undefined) {
@@ -907,6 +909,11 @@ export async function scaffoldLocalPlugin(params: Readonly<{
       ok: false,
       diagnostics: [createDiagnostic('plugin_scaffold_invalid_input', 'The session-agent template does not include a UI surface; omit --ui')],
     };
+  }
+  const admitted = PluginScaffoldActionInputSchema.safeParse({ targetDir: rawTargetDir, id: pluginId,
+    name: displayName, template, ui: params.ui, themes: params.themes });
+  if (!admitted.success) {
+    return { ok: false, diagnostics: [createDiagnostic('plugin_scaffold_invalid_input', admitted.error.message)] };
   }
 
   const targetDir = resolve(expandHomeDirPath(rawTargetDir));
@@ -942,6 +949,19 @@ export async function scaffoldLocalPlugin(params: Readonly<{
     : undefined;
 
   try {
+    if (template === 'themes') {
+      const manifestPath = join(targetDir, '.happier-plugin', 'plugin.json');
+      await mkdir(join(targetDir, '.happier-plugin'), { recursive: true });
+      await writeFile(packageJsonPath, `${JSON.stringify({
+        name: sanitizePackageName(pluginId), version: DEFAULT_PLUGIN_VERSION, type: 'module',
+        description: `${displayName} Happier themes.`, keywords: ['happier-plugin'],
+        happier: { manifest: '.happier-plugin/plugin.json' }, files: ['.happier-plugin/plugin.json'],
+      }, null, 2)}\n`, 'utf8');
+      await writeFile(manifestPath, createThemePluginSource({ pluginId, displayName,
+        version: DEFAULT_PLUGIN_VERSION, themes: admitted.data.themes! }), 'utf8');
+      return { ok: true, pluginId, title: displayName, version: DEFAULT_PLUGIN_VERSION,
+        targetDir, packageJsonPath, sourceEntryPath: manifestPath };
+    }
     await mkdir(join(targetDir, 'src'), { recursive: true });
     await mkdir(join(targetDir, 'test'), { recursive: true });
     await mkdir(join(targetDir, ...PLUGIN_AUTHORING_SKILL_DIRECTORY), { recursive: true });

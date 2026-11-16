@@ -271,6 +271,7 @@ async function invokePluginDevelopmentAction(
             invokerName: resolveInvokerName() ?? 'happier',
             ...(ui ? { ui: ui.data } : {}),
             ...(template ? { template: template.data } : {}),
+            ...(params?.themes !== undefined ? { themes: params.themes } : {}),
         });
         if (!result.ok) {
             return {

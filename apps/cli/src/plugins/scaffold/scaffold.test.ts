@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 } from '@happier-dev/plugin-sdk/ui/build';
@@ -13,6 +13,31 @@ async function readJsonFile<T>(path: string): Promise<T> {
 
 describe('scaffoldLocalPlugin',
   () => {
+  it('creates a manifest-only theme pack preserving every selected portable theme', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-theme-scaffold-'));
+    try {
+      const themes = [1, 2].map((id) => ({
+        schemaVersion: 1 as const, id: `theme_${id}`, name: `Theme ${id}`,
+        createdAt: '2026-11-16T00:00:00Z', updatedAt: '2026-11-16T00:00:00Z',
+        base: { light: 'light' as const, dark: 'dark' as const },
+        overrides: { light: {}, dark: {} }, style: { radius: 'round' as const, fontFamily: 'system' },
+        css: '[data-surface="session"] {\n color: red;\n}',
+      }));
+      const result = await scaffoldLocalPlugin({ targetDir: join(root, 'themes'), pluginId: 'acme.themes', displayName: 'Themes', template: 'themes', themes });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const manifest = await readJsonFile<{ entrypoints?: unknown; contributes: { themes: { id: string; theme: unknown }[] } }>(result.sourceEntryPath);
+      expect(manifest.contributes.themes).toEqual(themes.map((theme, index) => ({ id: `theme-${index + 1}`, theme })));
+      expect(manifest.entrypoints).toBeUndefined();
+      expect(await readdir(result.targetDir)).not.toContain('src');
+      expect(await readJsonFile(result.packageJsonPath)).toMatchObject({ files: ['.happier-plugin/plugin.json'] });
+      expect(await scaffoldLocalPlugin({ targetDir: result.targetDir, pluginId: 'acme.themes', displayName: 'Themes', template: 'themes', themes })).toMatchObject({ ok: false, diagnostics: [{ code: 'plugin_scaffold_target_exists' }] });
+      const unsupported = await scaffoldLocalPlugin({ targetDir: join(root, 'unsupported'), pluginId: 'acme.themes',
+        displayName: 'Themes', template: 'themes', themes: [{ ...themes[0], futurePresentation: { ink: 1 } }] });
+      expect(unsupported).toMatchObject({ ok: false, diagnostics: [{ code: 'plugin_scaffold_invalid_input' }] });
+      expect(await readdir(root)).toEqual(['themes']);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
   it('packages locale JSON Resources for generated UI translations', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-plugin-scaffold-i18n-'));
     try {

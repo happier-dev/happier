@@ -18,6 +18,36 @@ import { PUBLIC_TOOLCHAIN_SCAFFOLD_BINDINGS_V1 } from '@happier-dev/plugin-sdk/u
 import * as ts from 'typescript';
 import { resolveNativeTypeScriptBin, runPluginAuthorToolchain } from '../authoring/toolchain';
 
+it.each([1, 2])('packs %i selected themes without an executable entry or installation', async count => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-theme-pack-'));
+  try {
+    const themes = Array.from({ length: count }, (_, index) => ({ schemaVersion: 1 as const,
+      id: `theme_${index}`, name: `Theme ${index}`, createdAt: '2026-11-16', updatedAt: '2026-11-16',
+      base: { light: 'light' as const, dark: 'dark' as const }, overrides: { light: {}, dark: {} },
+      seeds: { canvas: '#121212', accent: '#aabbcc' }, style: { radius: 'sharp' as const, fontFamily: 'system' },
+      css: '[data-surface="session"] {\n content: "quoted";\n }',
+    }));
+    const scaffold = await scaffoldLocalPlugin({ targetDir: join(root, 'project'), pluginId: 'acme.theme-pack',
+      displayName: 'Theme pack', template: 'themes', themes });
+    expect(scaffold.ok).toBe(true);
+    if (!scaffold.ok) return;
+    const outPath = join(root, 'themes.tgz');
+    const packed = await packLocalPlugin({ locator: scaffold.targetDir, outPath });
+    expect(packed.ok).toBe(true);
+    if (!packed.ok) throw new Error(packed.diagnostics.map(row => row.message).join('\n'));
+    const extracted = join(root, 'extracted');
+    await mkdir(extracted);
+    await tar.x({ file: packed.archivePath, cwd: extracted });
+    const manifest = PluginManifestV2Schema.parse(await readJsonFile(join(extracted, 'package/.happier-plugin/plugin.json')));
+    expect(manifest.contributes.themes).toEqual(themes.map((theme, index) => ({ id: `theme-${index + 1}`, theme })));
+    expect(manifest.entrypoints?.daemon).toBeUndefined();
+    expect(await readFile(packed.digestPath, 'utf8')).toContain(packed.archiveDigest);
+    const retry = await packLocalPlugin({ locator: scaffold.targetDir, outPath });
+    expect(retry).toMatchObject({ ok: false, diagnostics: [{ code: 'plugin_manifest_invalid' }] });
+    expect(await readJsonFile(scaffold.sourceEntryPath)).toMatchObject({ contributes: { themes: expect.any(Array) } });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 async function readJsonFile<T>(path: string): Promise<T> {
   return JSON.parse(await readFile(path,
   'utf8')) as T;

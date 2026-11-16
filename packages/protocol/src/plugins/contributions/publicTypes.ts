@@ -113,3 +113,5 @@ export const PluginAvailabilityDescriptorV2Schema = lazyZodSchema(() => z.union(
   z.strictObject({ when: z.optional(PluginPolicyExpressionV2Schema), disabledWhen: PluginPolicyExpressionV2Schema, disabledReason: PluginLocalizedStringV2Schema }),
 ]));
 export type PluginAvailabilityDescriptorV2 = z.infer<typeof PluginAvailabilityDescriptorV2Schema>;
+
+export type { PluginThemeContributionV1 } from './themes.js';

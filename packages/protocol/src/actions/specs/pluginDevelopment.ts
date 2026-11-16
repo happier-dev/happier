@@ -5,6 +5,7 @@ import { PluginUpdatePolicyV1Schema } from '../../marketplace/pluginUpdatePolicy
 import { ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
 import { PluginInvocationLogReadQueryV1Schema } from '../../daemon/pluginInvocationLogs.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { ThemeProfileV1Schema } from '../../account/settings/themeProfiles.js';
 import { type ActionCliBindContext } from '../actionCliProjection.js';
 import { type PluginDevLoopActionIdV1 } from '../actionIds.js';
 import { PluginPublishInspectActionInputSchema, PluginPublishPrepareActionInputSchema, PluginPublishActionInputSchema,
@@ -34,7 +35,7 @@ export type PluginScaffoldUiMode = z.infer<typeof PluginScaffoldUiModeSchema>;
 export const DEFAULT_PLUGIN_SCAFFOLD_UI_MODE: PluginScaffoldUiMode = 'declarative';
 
 /** Optional first-party starting shape; omission retains the generic scaffold. */
-export const PluginScaffoldTemplateSchema = lazyZodSchema(() => z.enum(['session-agent']));
+export const PluginScaffoldTemplateSchema = lazyZodSchema(() => z.enum(['session-agent', 'themes']));
 export type PluginScaffoldTemplate = z.infer<typeof PluginScaffoldTemplateSchema>;
 
 export const PluginScaffoldActionInputSchema = lazyZodSchema(() => z.strictObject({
@@ -44,7 +45,10 @@ export const PluginScaffoldActionInputSchema = lazyZodSchema(() => z.strictObjec
   name: z.string().check(z.trim(), z.minLength(1)),
   ui: z.optional(PluginScaffoldUiModeSchema),
   template: z.optional(PluginScaffoldTemplateSchema),
-}));
+  themes: z.optional(z.array(ThemeProfileV1Schema)),
+}).check(z.refine((input) => input.template === 'themes'
+  ? input.themes !== undefined && input.themes.length > 0 && input.ui === undefined
+  : input.themes === undefined)));
 
 export const PluginLocalInstallActionInputSchema = lazyZodSchema(() => z.strictObject({
   path: z.string().check(z.trim(), z.minLength(1)),
