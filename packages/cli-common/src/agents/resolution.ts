@@ -1,5 +1,5 @@
 import { accessSync, closeSync, constants as fsConstants, existsSync, openSync, readSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
 
 import {
   BUNDLED_AGENT_CONTRIBUTION_IDENTITIES,
@@ -18,7 +18,7 @@ import { buildBackendTargetKey } from '@happier-dev/protocol/backends/targets/ba
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { expandHomeDirPath, resolveHomeDirFromEnvironment } from '../path/expandHomeDirPath.js';
-import { resolveExecutableCommand, resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
+import { resolveExecutableCommand, resolveWindowsCommandPath } from '../process/index.js';
 import {
   resolveExplicitJavaScriptRuntimeCommand,
   resolveJavaScriptRuntimeCommand,
@@ -222,14 +222,12 @@ function agentCliCandidatePathExists(runtimeSpec: AgentCliRuntimeDescriptor, can
   }
 }
 
-function resolveAgentCliOverride(runtimeSpec: AgentCliRuntimeDescriptor, processEnv: NodeJS.ProcessEnv): string | null {
+function resolveAgentCliOverride(runtimeSpec: AgentCliRuntimeDescriptor, processEnv: NodeJS.ProcessEnv, runtimeOptions: RuntimeResolutionOptions): string | null {
   const override = readAgentCliOverrideForRuntime(runtimeSpec, processEnv);
   if (!override) return null;
   if (process.platform === 'win32') {
-    const normalizedOverride =
-      (override.includes('/') || override.includes('\\') || override.includes(':'))
-        ? resolveWindowsCommandPath(override, processEnv)
-        : resolveWindowsCommandOnPath(override, processEnv);
+    if (!win32.isAbsolute(override)) return resolveExecutableCommand(override, { env: processEnv, cwd: runtimeOptions.cwd });
+    const normalizedOverride = resolveWindowsCommandPath(override, processEnv);
     if (normalizedOverride) return normalizedOverride;
   }
   if (!isAbsolute(override)) return null;
@@ -344,10 +342,10 @@ export function agentCliPathRequiresJavaScriptRuntime(candidatePath: string): bo
 
 function resolveBunRuntimeCommand(
   commandPath: string,
-  processEnv: NodeJS.ProcessEnv,
+  processEnv: Readonly<Record<string, string | undefined>>,
   runtimeOptions: RuntimeResolutionOptions,
 ): string | null {
-  const explicitRuntime = resolveExplicitJavaScriptRuntimeCommand(processEnv);
+  const explicitRuntime = resolveExplicitJavaScriptRuntimeCommand(processEnv, runtimeOptions.cwd);
   if (explicitRuntime) {
     const normalized = process.platform === 'win32'
       ? explicitRuntime.toLowerCase()
@@ -406,7 +404,7 @@ function resolveBunRuntimeCommand(
 
 export function resolveAgentCliJavaScriptRuntimeCommand(
   commandPath: string,
-  processEnv: NodeJS.ProcessEnv,
+  processEnv: Readonly<Record<string, string | undefined>>,
   runtimeOptions: RuntimeResolutionOptions,
 ): string | null {
   const runtimeKind = resolveAgentCliJavaScriptRuntimeKind(commandPath);
@@ -418,6 +416,7 @@ export function resolveAgentCliJavaScriptRuntimeCommand(
     isBunRuntime: runtimeOptions.isBunRuntime ?? (typeof process.versions.bun === 'string'),
     processEnv,
     currentExecPath: runtimeOptions.currentExecPath,
+    cwd: runtimeOptions.cwd,
   });
 }
 
@@ -564,7 +563,7 @@ export function resolveAgentCliCommandForRuntime(
 
   const rawOverride = readAgentCliOverrideForRuntime(runtimeSpec, processEnv);
   if (rawOverride) {
-    const override = resolveAgentCliOverride(runtimeSpec, processEnv);
+    const override = resolveAgentCliOverride(runtimeSpec, processEnv, opts);
     if (!override) return null;
     if (!isAgentCliPathRunnable(override, processEnv, opts)) return null;
     return { source: 'override', command: override };

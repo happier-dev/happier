@@ -3,9 +3,11 @@ import type { CapabilitiesDetectContext } from '../service';
 import type { CapabilityDetectRequest } from '../types';
 import { detectCliSnapshotOnDaemonPath } from '../snapshots/cliSnapshot';
 import type { AgentSessionFactorySource } from '@/agent/catalog/runtimeEntry';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 export const buildDetectContext = async (requests: CapabilityDetectRequest[], factorySource?: AgentSessionFactorySource,
-    resolution?: DetectCliRequest['resolution']): Promise<CapabilitiesDetectContext> => {
+    resolution?: DetectCliRequest['resolution'], environment: NodeJS.ProcessEnv = sessionProcessEnvironment(),
+    cwd: string = sessionWorkingDirectory()): Promise<CapabilitiesDetectContext> => {
     // Execution Run protocol/catalog facts come from contributions, not local
     // executable discovery. Control preflight must not scan every Agent CLI.
     const wantsCliOrTmux = requests.some((r) =>
@@ -36,7 +38,7 @@ export const buildDetectContext = async (requests: CapabilityDetectRequest[], fa
                 : request.id === 'tool.windowsTerminal' ? ['windowsTerminal' as const] : []),
             ...(bypassCache ? { bypassCache: true } : {}),
             ...(verifyVersion ? { verifyVersion: true } : {}),
-        }, factorySource)
+        }, factorySource, environment, cwd)
         : null;
 
     return { cliSnapshot };

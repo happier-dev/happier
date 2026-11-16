@@ -9,6 +9,7 @@ export async function detectNativeAgentCliAuthStatus(params: Readonly<{
     resolvedPath: string;
     authSpec?: CliAuthSpec | null;
     processEnv?: NodeJS.ProcessEnv;
+    cwd?: string;
     nativeExecution?: CliAuthNativeExecution;
     timeoutMs?: number;
 }>): Promise<CliAuthStatus | null> {
@@ -20,8 +21,9 @@ export async function detectNativeAgentCliAuthStatus(params: Readonly<{
                 await spec.detectAuthStatus({
                     resolvedPath: params.resolvedPath,
                     processEnv: params.processEnv,
+                    cwd: params.cwd,
                     nativeExecution: params.nativeExecution,
-                    timeoutMs: params.timeoutMs ?? resolveCliSnapshotProbeTimeoutMs(true),
+                    timeoutMs: params.timeoutMs ?? resolveCliSnapshotProbeTimeoutMs(true, params.processEnv),
                 }),
             );
             return draft ? { checkedAt, ...draft } : null;

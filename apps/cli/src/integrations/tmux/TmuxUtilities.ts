@@ -29,6 +29,7 @@ import {
   type TmuxWindowOperation,
 } from './types';
 import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 function logTmuxDebug(message: string, ...args: unknown[]): void {
   void import('@/ui/logger')
@@ -102,6 +103,8 @@ export class TmuxUtilities {
   public readonly sessionName: string;
   private readonly tmuxCommandEnv?: Record<string, string>;
   private readonly tmuxSocketPath?: string;
+  private readonly processEnvironment = sessionProcessEnvironment();
+  private readonly workingDirectory = sessionWorkingDirectory();
 
   /**
    * Build the leading argv for every tmux client this class spawns.
@@ -147,7 +150,7 @@ export class TmuxUtilities {
    * Detect tmux environment from TMUX environment variable
    */
   detectTmuxEnvironment(): TmuxEnvironment | null {
-    const tmuxEnv = process.env.TMUX;
+    const tmuxEnv = this.processEnvironment.TMUX;
     if (!tmuxEnv) {
       return null;
     }
@@ -161,7 +164,7 @@ export class TmuxUtilities {
       const socketPath = parts[0]?.trim();
       const serverPidStr = parts[1]?.trim();
       // Prefer TMUX_PANE (pane id like %0). Fallback to TMUX env var third component (often pane index).
-      const pane = (process.env.TMUX_PANE ?? parts[2])?.trim();
+      const pane = (this.processEnvironment.TMUX_PANE ?? parts[2])?.trim();
 
       if (!socketPath || !serverPidStr || !pane) return null;
       if (!/^\d+$/.test(serverPidStr)) return null;
@@ -288,7 +291,7 @@ export class TmuxUtilities {
     return new Promise((resolve, reject) => {
       const { stdin, timeoutMs, ...spawnOptions } = options;
       const mergedEnv = {
-        ...process.env,
+        ...this.processEnvironment,
         ...(this.tmuxCommandEnv ?? {}),
         ...(spawnOptions.env ?? {}),
       };
@@ -303,7 +306,7 @@ export class TmuxUtilities {
         delete (mergedEnv as Record<string, unknown>).TMUX_PANE;
       }
 
-      const commandTimeoutMs = timeoutMs ?? resolveTmuxCommandTimeoutMs();
+      const commandTimeoutMs = timeoutMs ?? resolveTmuxCommandTimeoutMs(this.processEnvironment);
       logTmuxDebug('[TMUX] Command starting', {
         operation: TmuxUtilities.operationName(args),
         timeoutMs: commandTimeoutMs,
@@ -312,6 +315,7 @@ export class TmuxUtilities {
       const child = spawn(args[0], args.slice(1), {
         stdio: stdin !== undefined ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
         shell: false,
+        cwd: this.workingDirectory,
         ...spawnOptions,
                 windowsHide: true,
         env: mergedEnv,
@@ -707,8 +711,8 @@ export class TmuxUtilities {
       // session starts robust.
       const maxAttempts = requireNewSession
         ? 1
-        : readPositiveIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_MAX_ATTEMPTS', 3);
-      const retryDelayMs = readNonNegativeIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS', 25);
+        : readPositiveIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_MAX_ATTEMPTS', 3, this.processEnvironment);
+      const retryDelayMs = readNonNegativeIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS', 25, this.processEnvironment);
 
       const withExplicitTargetWindowIndex = (args: string[], target: string): string[] => {
         const copy = [...args];

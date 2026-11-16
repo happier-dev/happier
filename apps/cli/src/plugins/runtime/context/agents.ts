@@ -4,19 +4,21 @@ import { stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { probeResolvedAgentCliVersion, type RunResolvedAgentCliVersionCommand } from '@/capabilities/snapshots/cliSnapshot';
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import type { AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 
-type VersionProbeOptions = Readonly<{
-    runVersionCommand: RunResolvedAgentCliVersionCommand;
+type ReadinessOptionsForHost = Readonly<{
+    processEnv?: Readonly<NodeJS.ProcessEnv>;
+    runVersionCommand?: RunResolvedAgentCliVersionCommand;
     environment?: Readonly<Record<string, string>>;
 }>;
 
 export type PluginAgentCliReadinessServiceForHost = Readonly<{
     checkReadiness(
         request: Parameters<PluginAgentCliReadinessService['checkReadiness']>[0],
-        options?: VersionProbeOptions,
+        options?: ReadinessOptionsForHost,
     ): ReturnType<PluginAgentCliReadinessService['checkReadiness']>;
 }>;
 
@@ -59,7 +61,7 @@ function resolveCurrentLaunchableAgentCli(agentId: string, processEnv: NodeJS.Pr
 }
 
 async function readVersionObservationIdentity(launch: AgentCliLaunchSpec, processEnv: NodeJS.ProcessEnv,
-    environment: VersionProbeOptions['environment']) {
+    environment: ReadinessOptionsForHost['environment']) {
     try {
         const paths = [...new Set([launch.resolvedPath, launch.command, ...launch.args.filter(isAbsolute)])];
         const files = await Promise.all(paths.map(async path => {
@@ -79,7 +81,6 @@ async function readVersionObservationIdentity(launch: AgentCliLaunchSpec, proces
 export function createPluginAgentCliReadinessService(
     params: CreatePluginAgentCliReadinessServiceParams = {},
 ): PluginAgentCliReadinessServiceForHost {
-    const processEnv = params.processEnv ?? process.env;
     // One observation per Agent for this registry lifetime, not an automatic
     // probe loop. Resolve/stat on every demand so replacement or env changes
     // invalidate the observation. Failures and incomplete probes are not retained.
@@ -87,9 +88,10 @@ export function createPluginAgentCliReadinessService(
     return Object.freeze({
         async checkReadiness(
             request: Parameters<PluginAgentCliReadinessService['checkReadiness']>[0],
-            options?: VersionProbeOptions,
+            options?: ReadinessOptionsForHost,
         ) {
             assertNotAborted(request.signal);
+            const processEnv = params.processEnv ?? options?.processEnv ?? sessionProcessEnvironment();
             const launchable: Array<Readonly<{ agentId: string; version?: string }>> = [];
             for (const agentId of uniqueCandidates(request.candidates)) {
                 assertNotAborted(request.signal);

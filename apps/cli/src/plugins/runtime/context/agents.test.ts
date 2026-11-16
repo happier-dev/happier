@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createStablePluginExecService } from '../invocation/services/exec';
 import { createAgentCliSystemToolService } from '../exec/system/tools/agentCliBinding';
 import { createPluginExecSystemToolResolver } from '../exec/system/tools/resolveGrant';
@@ -92,6 +93,37 @@ afterEach(async () => {
 });
 
 describe('createPluginAgentCliReadinessService', () => {
+    it('resolves a shared readiness service from each invoking Session environment', async () => {
+        await createIsolatedEnv();
+        const root = process.env.HAPPIER_HOME_DIR!;
+        const executable = await writeExecutable(root, 'session-claude');
+        const service = createPluginAgentCliReadinessService();
+        const explicitService = createPluginAgentCliReadinessService({ processEnv: { ...process.env } });
+        const environments = [
+            { ...process.env, HAPPIER_CLAUDE_PATH: executable },
+            { ...process.env, HAPPIER_CLAUDE_PATH: join(root, 'missing-claude') },
+        ];
+
+        const results = await Promise.all(environments.map((environment) => runAddedHostedSession({
+            environment, workingDirectory: root, end() {},
+        }, async () => {
+            await Promise.resolve();
+            const request = { candidates: ['claude'], requirement: 'any' } as const;
+            return { scoped: await service.checkReadiness(request), explicit: await explicitService.checkReadiness(request) };
+        })));
+
+        expect(results).toEqual([
+            { scoped: { launchable: [{ agentId: 'claude' }] }, explicit: { launchable: [{ agentId: 'claude' }] } },
+            { scoped: { launchable: [] }, explicit: { launchable: [{ agentId: 'claude' }] } },
+        ]);
+        const invokingServices = environments.map((environment) => runAddedHostedSession({
+            environment, workingDirectory: root, end() {},
+        }, () => authorizedReadiness({ env: environment, readiness: service })));
+        expect(await Promise.all(invokingServices.map((invoking) => invoking.checkReadiness({
+            candidates: ['claude'], requirement: 'any',
+        })))).toEqual([{ launchable: [{ agentId: 'claude' }] }, { launchable: [] }]);
+    });
+
     it('reuses an unchanged CLI version and observes an updated executable without a refresh timer', async () => {
         await createIsolatedEnv();
         const root = process.env.HAPPIER_HOME_DIR!;

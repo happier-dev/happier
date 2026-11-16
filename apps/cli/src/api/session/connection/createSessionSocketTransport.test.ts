@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TransportDisconnectEvent } from '@happier-dev/connection-supervisor';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import axios from 'axios';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createAccountSessionClientTransport } from '@/api/client/createAccountSessionClientTransport';
+import { getHttpsProxyAgent } from '@/utils/proxy/agents';
 import { HttpStatusError } from '@/api/client/httpStatusError';
 import {
     bindApiSessionSocketMock,
@@ -21,6 +24,26 @@ vi.mock('socket.io-client', () => ({
 }));
 
 describe('createSessionSocketTransport', () => {
+    it('retains the Account transport Session proxy when a callback creates its socket outside scope', async () => {
+        bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
+        const transports = await Promise.all(['http://proxy-a.test:8080', 'http://proxy-b.test:8080'].map((proxy, index) =>
+            runInHostedSessionScope({ environment: { NODE_ENV: 'test', HTTPS_PROXY: proxy,
+                HAPPIER_SESSION_SOCKET_CONNECT_TIMEOUT_MS: String(1200 + index),
+                HAPPIER_SOCKET_FORCE_WEBSOCKET: index === 0 ? '1' : '0',
+            } }, async () => {
+                await Promise.resolve();
+                return createAccountSessionClientTransport('token');
+            })));
+        for (const [index, transport] of transports.entries()) {
+            transport.createSessionSocketTransport({ sessionId: `s${index}` });
+        }
+        const options = mockIo.mock.calls.slice(-2).map(([, opts]) => opts as Record<string, unknown>);
+        expect(options.map(opts => opts.agent)).toEqual([
+            getHttpsProxyAgent('http://proxy-a.test:8080'), getHttpsProxyAgent('http://proxy-b.test:8080'),
+        ]);
+        expect(options.map(opts => opts.timeout)).toEqual([1200, 1201]);
+        expect(options.map(opts => opts.transports)).toEqual([['websocket'], ['polling', 'websocket']]);
+    });
     it('creates a non-reconnecting socket transport and reports manual disconnects as intentional', async () => {
         const socket = createApiSessionSocketStub({ disconnectReason: 'io client disconnect' });
         bindApiSessionSocketMock(mockIo, socket);

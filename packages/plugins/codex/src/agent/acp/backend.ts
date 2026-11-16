@@ -4,11 +4,12 @@ import type {
   AgentExecutionRunOpenRequest,
   AgentSessionOpenRequest,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { resolveCodexApiKeyAuthMethodId } from '../cli/auth/environment.js';
 import { buildCodexExecutionRunBaseEnv } from '../executionRuns/environment.js';
-import { buildCodexAcpEnvOverrides } from './env.js';
+import { buildCodexAcpEnvOverrides, CODEX_ACP_TIMEOUT_ENV_KEYS } from './env.js';
 import { resolveCodexAcpSpawnWithOptions } from './command.js';
 import { resolveCodexConnectedServiceRefreshSelectionFromEnv } from '../auth/services/runtime/auth/generationRequest.js';
 import { CODEX_NATIVE_UPSTREAM_CONFIG_ENV } from '../providerBinding/runtimeConfig.js';
@@ -19,6 +20,7 @@ import {
 
 export function buildCodexNativeAcpRuntimeOptions(
   request: AgentSessionOpenRequest | AgentExecutionRunOpenRequest,
+  exec?: Pick<ExecService, 'readEnvironment'>,
 ): AgentAcpRuntimeOptions {
   if (Object.keys(request.mcpToolPolicy ?? {}).length > 0) {
     throw new PluginError({ code: 'codex_mcp_tool_policy_unsupported_transport',
@@ -32,8 +34,9 @@ export function buildCodexNativeAcpRuntimeOptions(
     });
   }
   const env = buildCodexExecutionRunBaseEnv({
-    processEnv: process.env,
+    exec,
     isolationEnv: request.launchEnvironment?.values,
+    unset: request.launchEnvironment?.unset,
   }) ?? {};
   if (resolveCodexConnectedServiceRefreshSelectionFromEnv(env)) {
     throw new PluginError({
@@ -92,12 +95,12 @@ export function resolveCodexAcpBackendTimeouts(params: Readonly<{
 }> {
   const env = params.env ?? process.env;
   const npxSpecific = params.command === 'npx'
-    ? readPositiveIntEnv(env, 'HAPPIER_CODEX_ACP_NPX_INIT_TIMEOUT_MS')
+    ? readPositiveIntEnv(env, CODEX_ACP_TIMEOUT_ENV_KEYS.npxInitialize)
     : null;
-  const base = readPositiveIntEnv(env, 'HAPPIER_CODEX_ACP_INIT_TIMEOUT_MS');
+  const base = readPositiveIntEnv(env, CODEX_ACP_TIMEOUT_ENV_KEYS.initialize);
   return {
     initMs: npxSpecific ?? base ?? 180_000,
-    preToolCallIdleMs: readPositiveIntEnv(env, 'HAPPIER_CODEX_ACP_PRE_TOOL_IDLE_TIMEOUT_MS') ?? 1_000,
+    preToolCallIdleMs: readPositiveIntEnv(env, CODEX_ACP_TIMEOUT_ENV_KEYS.preToolCallIdle) ?? 1_000,
   };
 }
 

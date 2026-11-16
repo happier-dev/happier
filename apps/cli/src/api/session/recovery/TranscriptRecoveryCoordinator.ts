@@ -2,6 +2,7 @@ import type { ManagedConnectionSupervisor } from '@happier-dev/connection-superv
 
 import { readAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
 import { configuration } from '@/configuration';
+import { readHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { TranscriptLookupOutcome, TranscriptMessageLookupResult } from '../transcriptMessageLookup';
 import {
   createKeyedSingleFlightScheduler,
@@ -84,10 +85,14 @@ export class TranscriptRecoveryCoordinator {
   }
 
   public static forServer(serverUrl: string, options?: TranscriptRecoveryCoordinatorOptions): TranscriptRecoveryCoordinator {
-    const existing = this.instancesByServerUrl.get(serverUrl);
+    const scope = readHostedSessionScope();
+    const instances = scope
+      ? scope.transcriptRecoveryCoordinators ??= new Map<string, TranscriptRecoveryCoordinator>()
+      : this.instancesByServerUrl;
+    const existing = instances.get(serverUrl);
     if (existing) return existing;
     const instance = new TranscriptRecoveryCoordinator(options);
-    this.instancesByServerUrl.set(serverUrl, instance);
+    instances.set(serverUrl, instance);
     return instance;
   }
 

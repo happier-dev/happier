@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { randomUUID } from 'node:crypto';
 import { projectUsageSessionMessageTimingV1, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
@@ -244,6 +245,7 @@ async function settleSessionInputAdmissionFailure(
 }
 
 export type SessionClientTranscriptApiDeps = Readonly<{
+    env?: NodeJS.ProcessEnv;
     token: string;
     serverUrl?: string;
     serverId?: string;
@@ -412,6 +414,7 @@ export type SessionClientTranscriptApi = Readonly<{
 export function createSessionClientTranscriptApi(
     deps: SessionClientTranscriptApiDeps,
 ): SessionClientTranscriptApi {
+    const env = deps.env ?? sessionProcessEnvironment();
     const serverUrl = deps.serverUrl ?? resolveServerHttpBaseUrl();
     let latestSessionPresence: SessionPresenceSnapshot | null = null;
     let hasPublishedSessionPresence = false;
@@ -1016,7 +1019,7 @@ export function createSessionClientTranscriptApi(
         },
 
         keepAlive(thinking, mode) {
-            if (process.env.DEBUG) {
+            if (env.DEBUG) {
                 logger.debug(`[API] Sending keep alive message: ${thinking}`);
             }
             latestSessionPresence = { thinking, mode };

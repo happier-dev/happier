@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import {
   DEFAULT_CONNECTED_SERVICES_SERVER_API_TIMEOUT_MS,
@@ -6,6 +7,18 @@ import {
 } from './connectedServicesServerApiTimeout';
 
 describe('resolveConnectedServicesServerApiTimeoutMs', () => {
+  it('reads each hosted Session source while explicit environments retain precedence', async () => {
+    const read = (timeout: string) => runInHostedSessionScope({ environment: {
+      NODE_ENV: 'test',
+      HAPPIER_CONNECTED_SERVICES_API_TIMEOUT_MS: timeout,
+    } }, async () => {
+      await Promise.resolve();
+      return [resolveConnectedServicesServerApiTimeoutMs(), resolveConnectedServicesServerApiTimeoutMs({
+        HAPPIER_CONNECTED_SERVICES_API_TIMEOUT_MS: '4321',
+      })];
+    });
+    expect(await Promise.all([read('1234'), read('5678')])).toEqual([[1234, 4321], [5678, 4321]]);
+  });
   it('uses the default connected-services server API timeout when no override is set', () => {
     expect(resolveConnectedServicesServerApiTimeoutMs({})).toBe(DEFAULT_CONNECTED_SERVICES_SERVER_API_TIMEOUT_MS);
   });

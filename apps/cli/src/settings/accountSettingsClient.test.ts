@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { logger } from '@/ui/logger';
 
 import {
   decodeBase64,
@@ -12,6 +14,23 @@ import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import { decryptAccountSettingsCiphertext } from './accountSettingsClient';
 
 describe('accountSettingsClient', () => {
+  it('uses the hosted Session diagnostic preference without changing host logging', async () => {
+    vi.stubEnv('HAPPIER_DEBUG_ACCOUNT_SETTINGS', '0');
+    const debug = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+    const secret = new Uint8Array(32).fill(7);
+    const ciphertext = sealAccountScopedBlobCiphertext({ kind: 'account_settings', material: { type: 'legacy', secret },
+      payload: { themePreference: 'dark' }, randomBytes: () => new Uint8Array(24).fill(1) });
+    try {
+      await runAddedHostedSession({ environment: { NODE_ENV: 'test', HAPPIER_DEBUG_ACCOUNT_SETTINGS: '1' },
+        workingDirectory: '/session/settings-debug', end() {} }, async () => {
+        expect(await decryptAccountSettingsCiphertext({ credentials: { token: 't', encryption: { type: 'legacy', secret } },
+          ciphertext })).toEqual({ themePreference: 'dark' });
+      });
+      expect(debug).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ keyCount: 1 }));
+      expect(process.env.HAPPIER_DEBUG_ACCOUNT_SETTINGS).toBe('0');
+    } finally { debug.mockRestore(); vi.unstubAllEnvs(); }
+  });
+
   it('decrypts protocol account-scoped v1 ciphertext for legacy credentials', async () => {
     const secret = new Uint8Array(32).fill(7);
     const settings = { codexBackendMode: 'acp', claudeRemoteAgentSdkEnabled: true };

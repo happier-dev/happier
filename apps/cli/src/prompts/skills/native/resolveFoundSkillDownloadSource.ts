@@ -1,12 +1,12 @@
 import { realpath } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
 import { FoundSkillBundleV1Schema, type FoundSkillBundleV1, type FoundSkillDownloadRequestV1 } from '@happier-dev/protocol/prompts/library/skills/foundSkillTransferV1';
 import type { DownloadTransferSource } from '@happier-dev/transfers/node';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveAgentFoundSkillSources } from '@/agent/skills/resolveAgentSkillsCapability';
 import { buildPromptBundleBodyFromDirectory } from '@/prompts/assets/shared/promptBundleDirectory';
-import { canonicalAbsolutePathsEqual, expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
+import { canonicalAbsolutePathsEqual, expandHomeDirPath, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { scanNativeSkillRoots, type FoundNativeSkillScanInput } from './scanNativeSkillRoots';
 import { writeFoundSkillTransferPayload } from './foundSkillTransferPayload';
 
@@ -15,8 +15,9 @@ export type FoundSkillReadOptions = Readonly<{ home?: string; agents?: FoundNati
 /** Native-root discovery is the only authority for Found byte reads on this machine. */
 export async function readFoundSkillBundle(input: FoundSkillReadOptions & Readonly<{ request: FoundSkillDownloadRequestV1 }>): Promise<FoundSkillBundleV1> {
   input.signal?.throwIfAborted();
-  const home = input.home ?? homedir();
-  const path = expandHomeDirPath(input.request.path, { ...process.env, HOME: home, USERPROFILE: home });
+  const environment = sessionProcessEnvironment();
+  const home = input.home ?? resolveHomeDirFromEnvironment(environment);
+  const path = expandHomeDirPath(input.request.path, { ...environment, HOME: home, USERPROFILE: home });
   if (!isAbsolute(path) || input.request.path.split(/[\\/]/u).includes('..')) {
     throw Object.assign(new Error('not_found'), { code: 'not_found' });
   }

@@ -12,6 +12,7 @@ export { projectNativeAgentCliRuntimeDescriptor } from './agentCliRuntimeDescrip
 export { readDeclaredAgentTitle } from '@happier-dev/agents/declaredAgentTitle';
 
 import type { CliAuthSpec, CliAuthStatusDraft } from '@/capabilities/cliAuth/types';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readJsonFileSafe } from '@/capabilities/cliAuth/shared';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { readAgentExecutionRunCapabilities, readAgentSessionCapabilities } from './agentContributionDefinition';
@@ -74,7 +75,7 @@ export function createNativeAgentCliAuthStaticProbe(
         ? { state: 'unknown', reason: 'unsupported' }
         : { state: 'logged_out', reason: 'missing_credentials' };
     return Object.freeze({
-        readPresentCredential: (processEnv = process.env): CliAuthStatusDraft | null => {
+        readPresentCredential: (processEnv = sessionProcessEnvironment()): CliAuthStatusDraft | null => {
             if (hasEnvironmentCredential(environmentVariables, processEnv)) {
                 return { state: 'logged_in', method: 'api_key_env', source: 'env' };
             }

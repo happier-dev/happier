@@ -1,3 +1,5 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+
 export const CLI_API_TOKEN_ENV = 'HAPPIER_TOKEN';
 /** One-shot handoff for a selected --api-token across Happier's tmux re-exec. */
 export const CLI_API_TOKEN_HANDOFF_ENV = 'HAPPIER_CLI_API_TOKEN_HANDOFF_V1';
@@ -36,12 +38,12 @@ export function stripCliApiTokenEnvironment(
 
 /**
  * Takes the selected continuation token (if any) ahead of the ambient token,
- * then clears both variables from the current process so generic descendants
+ * then clears both variables from the selected environment so generic descendants
  * cannot inherit either spelling. Validation stays at dispatch so a valid
  * explicit flag still wins over malformed ambient input.
  */
 export function takeCliApiTokenEnvironment(
-  environment: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): Readonly<{ token: string; source: typeof CLI_API_TOKEN_ENV }> | null {
   const handoff = getEnvironmentValueCaseInsensitive(environment, CLI_API_TOKEN_HANDOFF_ENV);
   const ambient = getEnvironmentValueCaseInsensitive(environment, CLI_API_TOKEN_ENV);

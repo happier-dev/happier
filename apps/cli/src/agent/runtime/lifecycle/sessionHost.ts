@@ -89,11 +89,14 @@ export async function startSessionHost(params: Readonly<{
       endWhenIdle();
     };
     const launch = request.launch ?? {};
-    void runAddedHostedSession({ environment: { ...request.env }, workingDirectory: request.cwd, end,
-      ...(launch.runnerBootstrap ? { runnerBootstrap: launch.runnerBootstrap } : {}) }, async () => {
-      session.scope = readHostedSessionScope() ?? null;
-      await params.runSessionCommand(request.argv, launch);
-    }).then(() => end(0), (error: unknown) => {
+    // Admission can throw while parsing policy, before the async command starts.
+    void (async () => {
+      await runAddedHostedSession({ environment: { ...request.env }, workingDirectory: request.cwd, end,
+        ...(launch.runnerBootstrap ? { runnerBootstrap: launch.runnerBootstrap } : {}) }, async () => {
+        session.scope = readHostedSessionScope() ?? null;
+        await params.runSessionCommand(request.argv, launch);
+      });
+    })().then(() => end(0), (error: unknown) => {
       logger.warn('[session-host] Session command failed', {
         error: error instanceof Error ? error.message : String(error),
       });

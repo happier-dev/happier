@@ -9,9 +9,21 @@ import { scanNativeSkillRoots } from './scanNativeSkillRoots';
 import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
 import { FoundSkillBundleV1Schema } from '@happier-dev/protocol/prompts/library/skills/foundSkillTransferV1';
 import { readFoundSkillBundle } from './resolveFoundSkillDownloadSource';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const homes: string[] = [];
 afterEach(async () => { for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true }); });
+
+it('reads a local Found bundle from the invoking hosted Session home', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'happier-found-session-')); homes.push(home);
+  const path = join(home, '.skills', 'session-skill');
+  await mkdir(path, { recursive: true });
+  await writeFile(join(path, 'SKILL.md'), '---\nname: session-skill\n---\nSession body');
+  const bundle = await runAddedHostedSession({ environment: { NODE_ENV: 'test', HOME: home, USERPROFILE: home },
+    workingDirectory: home, end() {} }, () => readFoundSkillBundle({ request: { path: '~/.skills/session-skill' },
+      agents: [{ agentId: 'reader', nativeRoots: { user: [['.skills']] } }] }));
+  expect(bundle).toMatchObject({ name: 'session-skill', path, agents: ['reader'] });
+});
 
 it('rejects malformed bytes and unsafe file paths at the strict transfer consumer', () => {
   const payload = { name: 'fixture', path: '/root/fixture', agents: ['test.skill-reader'], pluginOwned: null,

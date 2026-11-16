@@ -1,4 +1,5 @@
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -17,6 +18,28 @@ function makeExecutableFile(path: string, content: string): void {
 }
 
 describe('managedJavaScriptRuntime binary-safe selection', () => {
+    it('resolves explicit relative runtimes from the admitted working directory', () => {
+        const cwd = realpathSync(mkdtempSync(join(tmpdir(), 'happier-runtime-directory-')));
+        try {
+            const runtimeDirectory = join(cwd, 'runtime');
+            mkdirSync(runtimeDirectory);
+            const runtimeName = process.platform === 'win32' ? 'node.exe' : 'node';
+            const executable = join(runtimeDirectory, runtimeName);
+            if (process.platform === 'win32') copyFileSync(process.execPath, executable);
+            else symlinkSync(process.execPath, executable);
+            const script = join(cwd, 'probe.cjs');
+            writeFileSync(script, 'process.stdout.write(process.cwd());');
+            const env = { ...process.env, HAPPIER_JS_RUNTIME_PATH: `./runtime/${runtimeName}` };
+            const runtime = resolveJavaScriptRuntimeCommand({
+                isBunRuntime: false, processEnv: env, currentExecPath: process.execPath, cwd,
+            });
+            expect(runtime).toBe(executable);
+            if (runtime) expect(execFileSync(runtime, [script], { cwd, env, encoding: 'utf8' })).toBe(cwd);
+        } finally {
+            rmSync(cwd, { recursive: true, force: true });
+        }
+    });
+
     it('does not treat node on PATH as a runtime fallback for stale bun bundles', () => {
         const root = join(tmpdir(), `happier-cli-common-js-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`);
         const binDir = join(root, 'bin');

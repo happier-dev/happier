@@ -8,6 +8,7 @@ import { scanNativeSkillRoots } from './scanNativeSkillRoots';
 import { buildPromptBundleBodyFromDirectory } from '@/prompts/assets/shared/promptBundleDirectory';
 import { computePromptBundleDigestV1 } from '@happier-dev/protocol/prompts/library/promptLibraryDigests';
 import { SkillFoundListInputV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 async function createSkill(root: string, name: string) {
   const directory = join(root, name);
@@ -21,6 +22,20 @@ const releaseReads: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const release of releaseReads.splice(0)) await release();
   for (const home of homes.splice(0)) await rm(home, { recursive: true, force: true });
+});
+it('discovers the hosted Session home and relative project roots independently', async () => {
+  await Promise.all(['first', 'second'].map(async name => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-native-session-')); homes.push(home);
+    const cwd = join(home, 'workspace');
+    await createSkill(join(home, '.native'), `${name}-user`);
+    await createSkill(join(cwd, 'extra', '.project'), `${name}-project`);
+    const result = await runAddedHostedSession({
+      environment: { NODE_ENV: 'test', HOME: home, USERPROFILE: home }, workingDirectory: cwd, end() {},
+    }, () => scanNativeSkillRoots({ nativeRoots: { user: [['.native']], project: [['.project']] },
+      additionalProjectDirectories: ['extra'] }));
+    expect(result.status).toBe('ok');
+    expect(result.names.map(item => item.name).sort()).toEqual([`${name}-project`, `${name}-user`]);
+  }));
 });
 it.skipIf(process.platform === 'win32')('reports a FIFO entry as unknown without blocking preparation or Found', async () => {
   const home = await mkdtemp(join(tmpdir(), 'happier-native-fifo-')); homes.push(home);

@@ -8,6 +8,7 @@ import {
   resolveTurnHardCapTimeoutMs,
   resolveTurnInactivityTimeoutMs,
 } from './acpBackendTimeouts';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 const envScope = createEnvKeyScope([
@@ -24,6 +25,18 @@ const envScope = createEnvKeyScope([
 describe('ACP backend timeout resolution', () => {
   afterEach(() => {
     envScope.restore();
+  });
+
+  it('uses each hosted Session timeout settings across asynchronous work', async () => {
+    envScope.patch({ HAPPIER_ACP_TURN_HARD_CAP_TIMEOUT_MS: '999', HAPPIER_ACP_TURN_INACTIVITY_TIMEOUT_MS: '998' });
+    await Promise.all([1500, 2500].map(async timeout => {
+      await runAddedHostedSession({ environment: { NODE_ENV: 'test', HAPPIER_ACP_TURN_HARD_CAP_TIMEOUT_MS: String(timeout), HAPPIER_ACP_TURN_INACTIVITY_TIMEOUT_MS: String(timeout + 1) }, workingDirectory: '/session', end() {} }, async () => {
+        await Promise.resolve();
+        expect(resolveTurnHardCapTimeoutMs()).toBe(timeout);
+        expect(resolveTurnInactivityTimeoutMs()).toBe(timeout + 1);
+      });
+    }));
+    expect(resolveTurnHardCapTimeoutMs()).toBe(999);
   });
 
   it('defaults provider liveness watchdogs to disabled', () => {

@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { Socket } from 'socket.io-client';
 import { createHappierSocket } from '@happier-dev/sync-client';
 
@@ -30,7 +31,7 @@ export function createSessionSocketTransport(params: Readonly<{
         ? normalizeServerHttpBaseUrl(params.serverUrl)
         : resolveServerHttpBaseUrl();
     const transports = params.transports ?? configuration.socketIoTransports;
-    const env = params.env ?? process.env;
+    const env = params.env ?? sessionProcessEnvironment();
 
     const { socket: sharedSocket, transport: socketTransport } = createHappierSocket({
         endpoint: serverUrl,

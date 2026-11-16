@@ -546,8 +546,8 @@ export const CODEX_PLUGIN = definePlugin({
     discoverySources: {
       config: {
         declaration: { title: 'Codex MCP configuration', loadedInHappierSessions: false, metadata: { agentId: 'codex' } },
-        discover: async (input) => {
-          const detected = await readCodexMcpConfigServers({ directory: input?.directory });
+        discover: async (input, context) => {
+          const detected = await readCodexMcpConfigServers({ directory: input?.directory, exec: context.services.exec });
           return {
             items: [],
             detectedServers: detected.servers,

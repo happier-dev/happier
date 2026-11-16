@@ -1,5 +1,5 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -10,6 +10,7 @@ import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionSc
 import { createSessionHooksService } from '@/plugins/runtime/hooks/session/service';
 
 import { resolveJavaScriptRuntimeExecutable } from './resolveJavaScriptRuntimeExecutable';
+import { requireJavaScriptRuntimeExecutable } from './requireJavaScriptRuntimeExecutable';
 
 const envKeys = [
   'HAPPIER_MANAGED_NODE_BIN',
@@ -32,7 +33,7 @@ describe('resolveJavaScriptRuntimeExecutable', () => {
     tempDirs.clear();
   });
 
-  it('resolves hook forwarders from each interleaved Session runtime environment', async () => {
+  it('resolves hook forwarders and required scripts from each interleaved Session runtime environment', async () => {
     const roots = ['a', 'b'].map(id => {
       const root = createTempDirSync(`happier-js-session-${id}-`);
       tempDirs.add(root);
@@ -42,18 +43,22 @@ describe('resolveJavaScriptRuntimeExecutable', () => {
       return { root, executable };
     });
     const values = await Promise.all(roots.map(({ root, executable }) => runAddedHostedSession({
-      environment: { HAPPIER_MANAGED_NODE_BIN: executable }, workingDirectory: root, end() {},
+      environment: { NODE_ENV: 'test', HAPPIER_MANAGED_NODE_BIN: `./${basename(executable)}` }, workingDirectory: root, end() {},
     }, async () => {
       await Promise.resolve();
       const hooks = createSessionHooksService({ happyHomeDir: root, hasCapability: () => true,
         addDisposable: disposable => disposable });
       const assets = await hooks.resolveForwarderAssets();
       expect(resolveJavaScriptRuntimeExecutable({ isBunRuntime: false, processEnv: {
+        NODE_ENV: 'test',
         HAPPIER_MANAGED_NODE_BIN: process.execPath,
       } })).toBe(process.execPath);
-      return assets.nodeExecutable;
+      const requiredExecutable = await requireJavaScriptRuntimeExecutable({ isBunRuntime: false, targetLabel: 'Session script' });
+      expect(await requireJavaScriptRuntimeExecutable({ isBunRuntime: false, targetLabel: 'Explicit script',
+        processEnv: { NODE_ENV: 'test', HAPPIER_MANAGED_NODE_BIN: process.execPath } })).toBe(process.execPath);
+      return [assets.nodeExecutable, requiredExecutable];
     })));
-    expect(values).toEqual(roots.map(({ executable }) => executable));
+    expect(values).toEqual(roots.map(({ executable }) => [executable, executable]));
   });
 
   it('prefers an explicit managed node override', () => {

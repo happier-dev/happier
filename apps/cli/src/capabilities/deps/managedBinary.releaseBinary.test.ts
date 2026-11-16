@@ -66,6 +66,24 @@ afterEach(async () => {
 });
 
 describe('codexAcp release-binary installer', () => {
+  it.skipIf(process.platform === 'win32')('recognizes a legacy managed launch using the Session relative JavaScript runtime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'managed-legacy-session-runtime-'));
+    tempDirs.add(root);
+    const cwd = join(root, 'session');
+    const env = { NODE_ENV: 'test' as const, HOME: root, USERPROFILE: root,
+      HAPPIER_HOME_DIR: join(root, 'home'), HAPPIER_JS_RUNTIME_PATH: 'bin/node', PATH: '' };
+    const { managedBinaryInstallDir, getManagedBinaryDepStatus } = await import('./managedBinary');
+    const { runAddedHostedSession } = await import('@/agent/runtime/lifecycle/hostedSessionScope');
+    const legacy = join(managedBinaryInstallDir(CODEX_ACP_INSTALLABLE_DESCRIPTOR, env), 'node_modules', '.bin', 'codex-acp');
+    for (const path of [legacy, join(cwd, 'bin', 'node')]) {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, '#!/bin/sh\nexit 0\n'); await chmod(path, 0o755);
+    }
+    const status = await runAddedHostedSession({ environment: env, workingDirectory: cwd, end() {} },
+      () => getManagedBinaryDepStatus(CODEX_ACP_INSTALLABLE_DESCRIPTOR, { env }));
+    expect(status).toMatchObject({ installed: true, binPath: legacy });
+  });
+
   it('installs the latest release asset into the managed current/bin path', async () => {
     if (!ORIGINAL_PLATFORM_DESCRIPTOR || !ORIGINAL_ARCH_DESCRIPTOR) {
       throw new Error('Expected process.platform/process.arch to be configurable for this test');

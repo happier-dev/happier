@@ -29,6 +29,7 @@ import {
 import { buildTerminalControlCapture } from '@/integrations/terminalHost/controlCapture';
 import { TERMINAL_SHIFT_TAB_SEQUENCE } from '@/integrations/terminalHost/controlTypes';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { Disposable, PtyProcess, PtyProvider } from './provider';
 import { createNodePtyProvider } from './provider';
 import { delay } from '@/utils/time';
@@ -130,7 +131,8 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
   promptSubmitVerification?: TerminalPromptSubmitVerificationPolicy;
   now?: () => number;
 }>): TerminalHostAdapter {
-  const ptyProvider = params?.ptyProvider ?? createNodePtyProvider();
+  const environment = sessionProcessEnvironment();
+  const ptyProvider = params?.ptyProvider ?? createNodePtyProvider({ env: environment });
   const cols = Math.max(2, Math.trunc(params?.cols ?? DEFAULT_COLS));
   const rows = Math.max(2, Math.trunc(params?.rows ?? DEFAULT_ROWS));
   const inputStabilityDelayMs = Math.max(0, Math.trunc(params?.inputStabilityDelayMs ?? INPUT_STABILITY_DELAY_MS));
@@ -294,7 +296,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       if (!command) {
         throw new Error('PTY terminal host requires a command to spawn');
       }
-      const inheritedEnv = opts.isolatedEnv ? {} : process.env;
+      const inheritedEnv = opts.isolatedEnv ? {} : environment;
       const spawnEnv = buildScopedProcessEnv({
         baseEnv: inheritedEnv,
         explicitEnv: opts.spawnEnv,

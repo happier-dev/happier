@@ -1,3 +1,4 @@
+import { resolveSessionIdPrefixScanMaxPages } from '@/session/query/sessionIdPrefixScanBudget';
 import { SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { resolveExternalHistoryImportV1FromMetadata, readNonAuthoritativeLinkedExternalSessionV1FromMetadata, resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import type { ExternalSessionsAgentId, ExternalSessionsSource, PluginAgentExternalSessionLinkData, RuntimeDescriptorV1, SessionOwnerMetadataV1, SessionSharedMetadataV1, AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol';
@@ -41,12 +42,6 @@ import { buildExternalSessionMetadata, refreshExistingExternalSessionMetadataIfN
 import { publishLinkedSessionProject } from './projectPublication';
 export { buildExternalSessionMetadata } from './linkedMetadata';
 
-function resolveMaxScanPages(): number {
-  const maxPagesRaw = (process.env.HAPPIER_SESSION_ID_PREFIX_SCAN_MAX_PAGES ?? '').trim();
-  const maxPagesParsed = maxPagesRaw ? Number.parseInt(maxPagesRaw, 10) : NaN;
-  const maxPages = Number.isFinite(maxPagesParsed) && maxPagesParsed > 0 ? Math.min(50, maxPagesParsed) : 10;
-  return Math.max(1, maxPages);
-}
 
 function createExistingSessionTagLookup(params: Readonly<{
   credentials: StoredCredentials;
@@ -75,7 +70,7 @@ function createExistingSessionTagLookup(params: Readonly<{
     currentStorageState: RawSessionListRow['currentStorageState'];
     currentStorageStateWasOmitted: boolean;
   }> | null> => {
-    const maxPages = resolveMaxScanPages();
+    const maxPages = resolveSessionIdPrefixScanMaxPages();
     const scan = async (archivedOnly: boolean): Promise<Readonly<{
       sessionId: string;
       persistedTag: string;

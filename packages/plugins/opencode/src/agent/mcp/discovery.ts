@@ -1,8 +1,12 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import JSON5 from 'json5';
 import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import type { DetectedMcpServerV1, DiscoveryWarning as McpDiscoveryWarningV1 } from '@happier-dev/plugin-sdk/mcp';
+
+const OPENCODE_MCP_CONFIG_ENV_KEYS = ['HOME', 'USERPROFILE', 'XDG_CONFIG_HOME', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR'] as const;
 
 export type ReadOpenCodeMcpConfigServersResult = Readonly<{
     servers: ReadonlyArray<DetectedMcpServerV1>;
@@ -14,9 +18,16 @@ function record(value: unknown): Readonly<Record<string, unknown>> {
 }
 
 export async function readOpenCodeMcpConfigServers(
-    params: Readonly<{ directory?: string | null; env?: NodeJS.ProcessEnv }>,
+    params: Readonly<{
+        directory?: string | null;
+        env?: NodeJS.ProcessEnv;
+        exec?: Pick<ExecService, 'readEnvironment'>;
+    }>,
 ): Promise<ReadOpenCodeMcpConfigServersResult> {
-    const env = params.env ?? process.env;
+    if (params.env === undefined && params.exec && !params.exec.readEnvironment) {
+        throw new PluginError({ code: 'plugin_service_unavailable', message: 'Inherited invocation environment is unavailable.' });
+    }
+    const env = params.env ?? params.exec?.readEnvironment?.(OPENCODE_MCP_CONFIG_ENV_KEYS) ?? process.env;
     const home = resolveHomeDirFromEnvironment(env);
     const configRoot = env.XDG_CONFIG_HOME?.trim() ? expandHomePath(env.XDG_CONFIG_HOME, home) : join(home, '.config');
     const candidates: Array<DetectedMcpServerV1['source']> = [];

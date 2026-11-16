@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { EventEmitter } from 'node:events';
 import { writeFileSync } from 'node:fs';
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import type { ChildProcessWithoutNullStreams, SpawnOptions } from 'node:child_process';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { PtyProcess } from './provider';
@@ -145,10 +145,53 @@ afterEach(() => {
   vi.resetModules();
   vi.unmock('node:module');
   vi.unmock('node:fs');
+  vi.unmock('node:child_process');
   vi.unmock('./nodeRelay');
 });
 
 describe('createNodePtyProvider', () => {
+  it('selects each concurrent Session managed Windows relay and retains its environment after registration', async () => {
+    vi.resetModules();
+    const children: EventEmitter[] = [];
+    const spawnRelay = vi.fn((_command: string, _args: readonly string[], _options: SpawnOptions) => {
+      const child = Object.assign(new EventEmitter(), {
+        pid: 4321,
+        stdin: Object.assign(new EventEmitter(), { write: vi.fn(), end: vi.fn() }),
+        stdout: new EventEmitter(), stderr: new EventEmitter(), kill: vi.fn(),
+      });
+      children.push(child);
+      return child;
+    });
+    // Only the native module loader, executable filesystem check and OS spawn are replaced.
+    vi.doMock('node:module', () => ({ createRequire: () => () => { throw new Error('native PTY unavailable'); } }));
+    vi.doMock('node:fs', async importOriginal => {
+      const original = await importOriginal<typeof import('node:fs')>();
+      return { ...original, accessSync: (path: Parameters<typeof original.accessSync>[0], mode?: number) => {
+        if (String(path).startsWith('/session-')) return;
+        return original.accessSync(path, mode);
+      } };
+    });
+    vi.doMock('node:child_process', async importOriginal => ({
+      ...await importOriginal<typeof import('node:child_process')>(), spawn: spawnRelay,
+    }));
+    const { createNodePtyProvider } = await import('./provider');
+    const { runAddedHostedSession } = await import('@/agent/runtime/lifecycle/hostedSessionScope');
+    const providers = await Promise.all(['alpha', 'beta'].map(name => runAddedHostedSession({
+      environment: { NODE_ENV: 'test', HAPPIER_JS_RUNTIME_PATH: `/session-${name}/node`, SESSION_VALUE: name },
+      workingDirectory: `/session-${name}`,
+      end: () => {},
+    }, async () => {
+      await Promise.resolve();
+      return createNodePtyProvider({ platform: 'win32', currentExecPath: 'C:\\happier\\happier.exe' });
+    })));
+
+    for (const provider of providers) provider.spawn({ file: 'cmd.exe', args: [], options: {} });
+
+    expect(spawnRelay.mock.calls.map(call => call[0])).toEqual(['/session-alpha/node', '/session-beta/node']);
+    expect(spawnRelay.mock.calls.map(call => call[2].env?.SESSION_VALUE)).toEqual(['alpha', 'beta']);
+    for (const child of children) child.emit('exit', 0);
+  });
+
   it.each(['linux', 'darwin', 'win32'] as const)('keeps %s native bindings unloaded until spawn demand', async platform => {
     const { provider, requireCalls } = await loadProviderWithModules({
       'node-pty': { spawn: () => createFakeProcess() },

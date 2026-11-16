@@ -15,6 +15,7 @@ import { withWindowsFiniteCustody, withWindowsInteractiveCustody } from './windo
 import { SpawnFailureError, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 import { buildCgroupProcessLaunchSpec, prepareCgroupProcessLaunchScope, type LinuxProcessLaunchScope } from '@/daemon/platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import { createHappierLinuxScopeName } from '@/daemon/platform/linux/systemdUserResourceGovernor';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 export type Disposable = Readonly<{ dispose: () => void }>;
 
@@ -348,6 +349,7 @@ export function createNodePtyProvider(params?: Readonly<{
   readSpawnFailureLimits?: SpawnFailureLimitsReader;
 }>): PtyProvider {
   const platform = params?.platform ?? process.platform;
+  const environment = params?.env ?? sessionProcessEnvironment();
   const readSpawnFailureLimits = params?.readSpawnFailureLimits;
   const currentExecPath = params?.currentExecPath ?? process.execPath;
   const argv = params?.argv;
@@ -360,7 +362,7 @@ export function createNodePtyProvider(params?: Readonly<{
   const defaultNodeRelayProvider = hasFallbackProviderOverride
     ? null
     : createNodePtyRelayProvider({
-      env: params?.env ?? process.env,
+      env: environment,
       platform,
       currentExecPath,
     });
@@ -368,7 +370,7 @@ export function createNodePtyProvider(params?: Readonly<{
     ?? (hasFallbackProviderOverride
       ? null
       : createPythonPtyRelayProvider({
-        env: params?.env ?? process.env,
+        env: environment,
         platform,
       }));
   const fallbackProvider = hasFallbackProviderOverride
@@ -389,7 +391,7 @@ export function createNodePtyProvider(params?: Readonly<{
   let linuxScope: LinuxProcessLaunchScope | null = null;
   let preparation: Promise<void> | null = null;
   const prepare = (): Promise<void> => preparation ??= platform === 'linux'
-    ? prepareCgroupProcessLaunchScope({ environment: params?.env ?? process.env }).then(scope => { linuxScope = scope; })
+    ? prepareCgroupProcessLaunchScope({ environment }).then(scope => { linuxScope = scope; })
     : Promise.resolve();
 
   const provider = withWindowsFiniteCustody({

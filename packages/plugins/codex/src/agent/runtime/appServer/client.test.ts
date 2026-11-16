@@ -121,6 +121,7 @@ function createCapturingExec(
         },
         exec: {
             withSpawnAdmission: admitTestExecSpawn,
+            readEnvironment: () => ({}),
             run: vi.fn(async (request: Parameters<ExecService['run']>[0]) => {
                 if (featureListResult instanceof Error) throw featureListResult;
                 if (request.args.includes('--version')) return processResult('codex-cli 0.162.1');

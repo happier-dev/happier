@@ -103,17 +103,17 @@ type CodexAccountUsageSourceContext = Awaited<
 
 type CodexAppServerLaunchRequest = AgentSessionOpenRequest | AgentExecutionRunOpenRequest;
 
-function readLaunchEnvironment(request: CodexAppServerLaunchRequest): Record<string, string> {
+function readLaunchEnvironment(
+  request: CodexAppServerLaunchRequest,
+  exec: AgentSessionRuntimeContext['services']['exec'],
+): Record<string, string> {
   const values: Record<string, string> = {};
   for (const [key, value] of Object.entries(buildCodexExecutionRunBaseEnv({
-    processEnv: process.env,
+    exec,
     isolationEnv: request.launchEnvironment?.values,
+    unset: request.launchEnvironment?.unset,
   }) ?? {})) {
     if (typeof value === 'string') values[key] = value;
-  }
-  const unsetNames = new Set((request.launchEnvironment?.unset ?? []).map((name) => name.toUpperCase()));
-  for (const key of Object.keys(values)) {
-    if (unsetNames.has(key.toUpperCase())) delete values[key];
   }
   return values;
 }
@@ -1025,7 +1025,7 @@ export async function openCodexNativeAppServerSession(
   goalProjection?: CodexGoalProjection,
   bindSessionCatalog?: CodexSessionCatalogBinder,
 ): Promise<AgentSessionRuntime> {
-  const processEnv = readLaunchEnvironment(request);
+  const processEnv = readLaunchEnvironment(request, context.services.exec);
   const initialProviderBinding = parseCodexProviderBindingEngineConfigV1(
     Object.prototype.hasOwnProperty.call(request, 'providerBinding')
       ? (request as unknown as Readonly<Record<string, unknown>>).providerBinding
@@ -1240,7 +1240,7 @@ export async function openCodexNativeAppServerExecutionRunConversation(
   request: AgentExecutionRunOpenRequest,
   context: AgentExecutionRunRuntimeContextV1,
 ): Promise<AgentExecutionRunConversationRuntimeV1> {
-  const processEnv = readLaunchEnvironment(request);
+  const processEnv = readLaunchEnvironment(request, context.services.exec);
   const initialProviderBinding = parseCodexProviderBindingEngineConfigV1(
     Object.prototype.hasOwnProperty.call(request, 'providerBinding')
       ? (request as unknown as Readonly<Record<string, unknown>>).providerBinding

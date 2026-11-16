@@ -2,9 +2,19 @@ import { describe, expect, it } from 'vitest';
 
 import { cmd, fail, info, ok, warn } from '@happier-dev/cli-common/output';
 
-import { bold, code, glyph, muted, statusGlyph, subLineArrow, success, warning } from './styles';
+import { bold, code, compactHomePath, glyph, muted, statusGlyph, subLineArrow, success, warning } from './styles';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 describe('styles palette', () => {
+  it('compacts resume paths against each interleaved Session home', async () => {
+    const paths = await Promise.all(['first', 'second'].map(id => runAddedHostedSession({
+      environment: { NODE_ENV: 'test', HOME: `/session-home/${id}` }, workingDirectory: `/session-home/${id}`, end: () => {},
+    }, async () => {
+      await Promise.resolve();
+      return [compactHomePath(`/session-home/${id}/workspace`), compactHomePath(`/session-home/${id}-other/workspace`)];
+    })));
+    expect(paths).toEqual([['~/workspace', '/session-home/first-other/workspace'], ['~/workspace', '/session-home/second-other/workspace']]);
+  });
   it('muted wraps text', () => {
     expect(muted('abc')).toContain('abc');
   });

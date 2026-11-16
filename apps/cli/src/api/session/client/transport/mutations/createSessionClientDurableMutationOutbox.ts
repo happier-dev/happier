@@ -1,4 +1,5 @@
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { logger } from '@/ui/logger';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import {
@@ -491,6 +492,7 @@ function recordFailedSessionClientDurableMutationAttempt(
     mutation: QueuedSessionClientDurableMutation,
     reason: SessionClientDurableMutationAttemptReason,
     attemptedAt: number,
+    env: NodeJS.ProcessEnv,
 ): QueuedSessionClientDurableMutation {
     const attempts = mutation.attempts + 1;
     return {
@@ -498,7 +500,7 @@ function recordFailedSessionClientDurableMutationAttempt(
         attempts,
         firstFailedAt: mutation.firstFailedAt ?? attemptedAt,
         lastAttempt: { v: 1, reason, attemptedAt },
-        nextAttemptAt: Date.now() + resolveSessionClientDurableMutationRetryDelayMs(attempts),
+        nextAttemptAt: Date.now() + resolveSessionClientDurableMutationRetryDelayMs(attempts, env),
     } as QueuedSessionClientDurableMutation;
 }
 
@@ -672,13 +674,13 @@ function clearPausedMutation(
     return rest as QueuedSessionClientDurableMutation;
 }
 
-function createSessionAuthPause(error: unknown): SessionClientDurableMutationPause {
+function createSessionAuthPause(error: unknown, env: NodeJS.ProcessEnv): SessionClientDurableMutationPause {
     const now = Date.now();
     const status = readAuthenticationStatus(error);
     return {
         reason: 'session_auth_recovery',
         pausedAt: now,
-        resumeAtMs: now + resolveSessionClientDurableMutationRetryDelayMs(0),
+        resumeAtMs: now + resolveSessionClientDurableMutationRetryDelayMs(0, env),
         ...(status ? { diagnostic: { status } } : {}),
     };
 }
@@ -1080,6 +1082,7 @@ export type RuntimeSessionClientDurableMutationOutbox = Readonly<{
 }>;
 
 export function createRuntimeSessionClientDurableMutationOutbox(params: Readonly<{
+    env?: NodeJS.ProcessEnv;
     signal?: AbortSignal;
     token: string;
     serverUrl?: string;
@@ -1117,6 +1120,7 @@ export function createRuntimeSessionClientDurableMutationOutbox(params: Readonly
     const persistenceContext = createSessionClientDurableMutationPersistenceContext({
         activeServerDir: configuration.activeServerDir,
         custody: 'runtime',
+        env: params.env,
         sessionId: params.sessionId,
         parseQueuedMutation: parseRuntimeSessionClientDurableMutation,
     });
@@ -1219,6 +1223,7 @@ export type DaemonSessionClientDurableMutationOutbox = Readonly<{
 }>;
 
 export function createDaemonSessionClientDurableMutationOutbox(params: Readonly<{
+    env?: NodeJS.ProcessEnv;
     signal?: AbortSignal;
     token: string;
     serverUrl?: string;
@@ -1240,6 +1245,7 @@ export function createDaemonSessionClientDurableMutationOutbox(params: Readonly<
     const persistenceContext = createSessionClientDurableMutationPersistenceContext({
         activeServerDir: configuration.activeServerDir,
         custody: 'daemon',
+        env: params.env,
         sessionId: params.sessionId,
         parseQueuedMutation: parseDaemonSessionClientDurableMutation,
     });
@@ -1319,6 +1325,7 @@ export function createDaemonSessionClientDurableMutationOutbox(params: Readonly<
 function createGenericSessionClientDurableMutationOutboxInstance(
     params: CreateGenericSessionClientDurableMutationOutboxParams,
 ): GenericSessionClientDurableMutationOutboxInstance {
+    const env = params.persistenceContext?.env ?? sessionProcessEnvironment();
     const serverUrl = params.serverUrl ?? resolveServerHttpBaseUrl();
     let closed = false;
     /**
@@ -1435,7 +1442,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
         // registered session-state fields such as `runtime.usageLimitRecovery`.
         if (shouldDeadLetterSessionClientDurableMutation(mutation)) return;
         if (blockedMutations.length === 0) return;
-        if (mutation.attempts < resolveSessionClientDurableMutationMaxAttempts()) return;
+        if (mutation.attempts < resolveSessionClientDurableMutationMaxAttempts(env)) return;
         if (reportedPersistentlyBlockingMutationIds.has(mutation.mutationId)) return;
         reportedPersistentlyBlockingMutationIds.add(mutation.mutationId);
 
@@ -1695,7 +1702,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
         const result = pruneDurableFailedMutationReasons({
             reasons: durableFailedMutationReasons,
             queued: mergeQueuedSessionClientDurableMutations(inFlightMutations, mutations),
-            maxRetainedPrerequisites: resolveSessionClientDurableMutationReferencedPrerequisiteMaxEntries(),
+            maxRetainedPrerequisites: resolveSessionClientDurableMutationReferencedPrerequisiteMaxEntries(env),
         });
         durableFailedMutationReasons = result.reasons;
         if (result.prunedFailedReasonCount === 0 && result.failedReasonOverflowCount === 0) return;
@@ -2353,7 +2360,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                         ...mutation,
                         nextAttemptAt: Math.max(
                             mutation.nextAttemptAt,
-                            Date.now() + resolveSessionClientDurableMutationRetryDelayMs(0),
+                            Date.now() + resolveSessionClientDurableMutationRetryDelayMs(0, env),
                         ),
                     } as QueuedSessionClientDurableMutation;
                     remaining.push(blockedMutation);
@@ -2366,7 +2373,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                         ...mutation,
                         nextAttemptAt: Math.max(
                             mutation.nextAttemptAt,
-                            Date.now() + resolveSessionClientDurableMutationRetryDelayMs(0),
+                            Date.now() + resolveSessionClientDurableMutationRetryDelayMs(0, env),
                         ),
                     } as QueuedSessionClientDurableMutation;
                     remaining.push(blockedMutation);
@@ -2467,7 +2474,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     if (isAuthenticationError(error)) {
                         outcome = {
                             delivered: false,
-                            paused: createSessionAuthPause(error),
+                            paused: createSessionAuthPause(error, env),
                         };
                     } else if (mutation.kind === 'registered_session_state_field'
                         && error !== null && typeof error === 'object'
@@ -2512,7 +2519,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     capabilityBlockedKeys.add(readCapabilityBlockKey(mutation));
                     remaining.push({
                         ...mutation,
-                        nextAttemptAt: Date.now() + resolveSessionClientDurableMutationRetryDelayMs(0),
+                        nextAttemptAt: Date.now() + resolveSessionClientDurableMutationRetryDelayMs(0, env),
                     } as QueuedSessionClientDurableMutation);
                     refreshInFlightMutations(index + 1);
                     didChange = true;
@@ -2524,6 +2531,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                         mutation,
                         outcome.terminalFailureReason,
                         attemptedAt || Date.now(),
+                        env,
                     );
                     deadLetteredMutationsPendingDurableCut.push(failedMutation);
                     deadLetters.push(createSessionClientDurableMutationDeadLetterEntry({
@@ -2544,6 +2552,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                         mutation,
                         attemptFailureReason,
                         attemptedAt || Date.now(),
+                        env,
                     ));
                     refreshInFlightMutations(index + 1);
                     didChange = true;
@@ -2554,9 +2563,10 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                     mutation,
                     attemptFailureReason,
                     attemptedAt || Date.now(),
+                    env,
                 );
                 if (
-                    failedMutation.attempts >= resolveSessionClientDurableMutationMaxAttempts()
+                    failedMutation.attempts >= resolveSessionClientDurableMutationMaxAttempts(env)
                     && shouldDeadLetterSessionClientDurableMutation(failedMutation)
                 ) {
                     deadLetteredMutationsPendingDurableCut.push(failedMutation);
@@ -2636,6 +2646,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                                 ...mutation,
                                 nextAttemptAt: now + resolveSessionClientDurableMutationRetryDelayMs(
                                     Math.max(1, mutation.attempts),
+                                    env,
                                 ),
                             } as QueuedSessionClientDurableMutation;
                         }),

@@ -1,5 +1,11 @@
 type CodexAppServerTimeoutEnv = Readonly<Record<string, string | undefined>>;
 
+export const CODEX_APP_SERVER_TIMEOUT_ENV_KEYS = {
+    rpc: 'HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS',
+    startup: 'HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS',
+    resumeRecovery: 'HAPPIER_CODEX_APP_SERVER_RESUME_RECOVERY_TIMEOUT_MS',
+} as const;
+
 const STARTUP_RPC_METHODS = new Set(['initialize']);
 const LONG_RUNNING_RPC_METHODS = new Set([
     // Starting a thread is side-effecting admission. A timeout cannot establish whether Codex
@@ -32,7 +38,7 @@ function clampRpcTimeoutMs(rawValue: unknown, fallbackMs: number, maxMs: number)
 
 export function readCodexAppServerRpcTimeoutMs(env?: CodexAppServerTimeoutEnv): number {
     return clampRpcTimeoutMs(
-        env?.HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS,
+        env?.[CODEX_APP_SERVER_TIMEOUT_ENV_KEYS.rpc],
         DEFAULT_RPC_TIMEOUT_MS,
         MAX_RPC_TIMEOUT_MS,
     );
@@ -44,7 +50,7 @@ export function readCodexAppServerStartupRpcTimeoutMs(
 ): number {
     const base = baseTimeoutMs ?? readCodexAppServerRpcTimeoutMs(env);
     const configured = clampRpcTimeoutMs(
-        env?.HAPPIER_CODEX_APP_SERVER_STARTUP_RPC_TIMEOUT_MS,
+        env?.[CODEX_APP_SERVER_TIMEOUT_ENV_KEYS.startup],
         DEFAULT_STARTUP_RPC_TIMEOUT_MS,
         120_000,
     );
@@ -54,7 +60,7 @@ export function readCodexAppServerStartupRpcTimeoutMs(
 export function readCodexAppServerResumeRecoveryTimeoutMs(env?: CodexAppServerTimeoutEnv): number {
     const startupTimeoutMs = readCodexAppServerStartupRpcTimeoutMs(env);
     const configured = clampRpcTimeoutMs(
-        env?.HAPPIER_CODEX_APP_SERVER_RESUME_RECOVERY_TIMEOUT_MS,
+        env?.[CODEX_APP_SERVER_TIMEOUT_ENV_KEYS.resumeRecovery],
         120_000,
         10 * 60_000,
     );

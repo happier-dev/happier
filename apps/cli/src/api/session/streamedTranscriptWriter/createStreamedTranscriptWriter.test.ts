@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { logger } from '@/ui/logger';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import { createStreamedTranscriptWriter } from './createStreamedTranscriptWriter';
 
@@ -64,6 +65,36 @@ async function settleCommittedSnapshot() {
 }
 
 describe('createStreamedTranscriptWriter', () => {
+  it('retains each Session live publication cadence after leaving its scope', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    const entries = await Promise.all(['10', '100'].map(interval => runInHostedSessionScope({ environment: {
+      NODE_ENV: 'test',
+      HAPPIER_STREAM_LIVE_INTERVAL_MS: interval,
+      HAPPIER_STREAM_LIVE_DELTAS: '0',
+    } }, async () => {
+      await Promise.resolve();
+      const stub = createSessionStub();
+      return { ...stub, writer: createStreamedTranscriptWriter({ provider: 'opencode', session: stub.session,
+        durableCommitsRequireExplicitEnable: true }) };
+    })));
+    try {
+      for (const entry of entries) {
+        entry.writer.appendAssistantDelta('a');
+        await settleCommittedSnapshot();
+        entry.writer.appendAssistantDelta('b');
+      }
+      await vi.advanceTimersByTimeAsync(10);
+      expect(entries.map(entry => entry.liveCalls.length)).toEqual([2, 1]);
+      await vi.advanceTimersByTimeAsync(90);
+      expect(entries.map(entry => entry.liveCalls.at(-1)?.body)).toEqual([
+        { type: 'message', message: 'ab' }, { type: 'message', message: 'ab' },
+      ]);
+    } finally {
+      for (const entry of entries) entry.writer.discard();
+      vi.useRealTimers();
+    }
+  });
   it('defers durable checkpoints until durable commits are explicitly enabled', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));

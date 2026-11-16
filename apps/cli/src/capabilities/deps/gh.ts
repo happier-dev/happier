@@ -12,6 +12,7 @@ import {
   type GhCommandDeps,
 } from '@happier-dev/cli-common/agents';
 import { configuration } from '@/configuration';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readRuntimeInstallableLastCheckAtMs } from '@/packagedRuntime/installables/updateState';
 
 export type { GhNativeTokenResult } from '@happier-dev/cli-common/agents';
@@ -125,12 +126,14 @@ async function readGhLocalStatus(params: Readonly<{
   deps: GhStatusDeps;
   env?: NodeJS.ProcessEnv;
   hostname?: string;
+  cwd?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }>): Promise<Pick<GhDepData, 'binPath' | 'resolvedSource' | 'installedVersion' | 'authenticated' | 'authStatus' | 'remediationReason'>> {
   params.signal?.throwIfAborted();
   const commandOptions = {
     binPath: params.binPath,
+    cwd: params.cwd,
     ...(params.env ? { env: params.env } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.timeoutMs !== undefined ? { timeoutMs: params.timeoutMs } : {}),
@@ -170,16 +173,18 @@ function createGhStatusDeps(env: NodeJS.ProcessEnv | undefined, depsOverrides: P
 }
 
 export async function getGhDepStatus(
-  opts: Readonly<{ includeLatestVersion?: boolean; onlyIfInstalled?: boolean; env?: NodeJS.ProcessEnv; hostname?: string; signal?: AbortSignal }> = {},
+  opts: Readonly<{ includeLatestVersion?: boolean; onlyIfInstalled?: boolean; env?: NodeJS.ProcessEnv; cwd?: string; hostname?: string; signal?: AbortSignal }> = {},
   depsOverrides: Partial<GhStatusDeps> = {},
 ): Promise<GhDepData> {
-  const deps = createGhStatusDeps(opts.env, depsOverrides);
+  const environment = opts.env ?? { ...sessionProcessEnvironment(), HAPPIER_HOME_DIR: configuration.happyHomeDir };
+  const scopedOpts = { ...opts, env: environment, cwd: opts.cwd ?? sessionWorkingDirectory() };
+  const deps = createGhStatusDeps(environment, depsOverrides);
   const [state, { selected, managedBinPath }, lastBackgroundUpdateCheckAtMs] = await Promise.all([
-    deps.readState(opts.env),
+    deps.readState(environment),
     resolveGhSelection({
-      ...opts,
+      ...scopedOpts,
       deps,
-      probe: (binPath, source) => readGhLocalStatus({ ...opts, deps, binPath, source, timeoutMs: 2_000 }),
+      probe: (binPath, source) => readGhLocalStatus({ ...scopedOpts, deps, binPath, source, timeoutMs: 2_000 }),
       isUsable: (result) => result.authenticated === true,
     }),
     deps.readLastBackgroundUpdateCheckAtMs(),
@@ -189,13 +194,13 @@ export async function getGhDepStatus(
   const includeLatestVersion = opts.includeLatestVersion === true;
   const onlyIfInstalled = opts.onlyIfInstalled === true;
   const latestVersionCheck = includeLatestVersion && (!onlyIfInstalled || installed)
-    ? await detectLatestVersionCheck(opts.env)
+    ? await detectLatestVersionCheck(environment)
     : undefined;
 
   return {
     installed,
     capabilityId: GH_DEP_ID,
-    installDir: ghInstallDir(opts.env),
+    installDir: ghInstallDir(environment),
     binPath: selected?.binPath ?? null,
     managedBinPath,
     installedVersion: selected?.installedVersion ?? state.installedVersion,

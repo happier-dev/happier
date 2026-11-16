@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { AcpBackend } from '@/agent/acp/AcpBackend';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
 import type { AgentFactoryOptions } from '@/agent/catalog/factoryOptions';
@@ -25,7 +26,7 @@ export async function createConfiguredAcpBackend(
   const launch = await resolveAcpLaunch({
     accountId: options.accountId,
     definition: { id: options.backend.backendId, title: options.backend.title, launch: options.backend.launch },
-    platform: process.platform, arch: process.arch, env: { ...process.env, ...options.env },
+    platform: process.platform, arch: process.arch, env: { ...sessionProcessEnvironment(), ...options.env },
     launchEnv: options.launchEnv,
     cwd: options.cwd,
   });

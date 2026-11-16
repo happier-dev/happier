@@ -6,6 +6,7 @@ import type { Disposable, PtyExitEvent, PtyProcess, PtyProvider, PtySpawnParams 
 import { TERMINAL_SHIFT_TAB_SEQUENCE } from '@/integrations/terminalHost/controlTypes';
 import { createPtyTerminalHostAdapter } from './hostAdapter';
 import { createVirtualTerminalScreen } from './virtualTerminalScreen';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 class FakePtyProcess implements PtyProcess {
   readonly pid = 4321;
@@ -97,6 +98,39 @@ describe('createVirtualTerminalScreen', () => {
 });
 
 describe('createPtyTerminalHostAdapter', () => {
+  it('retains each registering Session environment when Windows host launches run outside its scope', async () => {
+    const fixtures = await Promise.all(['alpha', 'beta'].map(async (name) => {
+      const fake = createFakeProvider();
+      const adapter = await runAddedHostedSession({
+        environment: { NODE_ENV: 'test', SESSION_VALUE: name, TERM: `${name}-term`, REMOVE_ME: name },
+        workingDirectory: `C:\\${name}`,
+        end: () => {},
+      }, async () => {
+        await Promise.resolve();
+        return createPtyTerminalHostAdapter({ ptyProvider: fake.provider });
+      });
+      return { name, fake, adapter };
+    }));
+
+    await Promise.all(fixtures.map(({ name, adapter }) => adapter.createOrAttachHost({
+      sessionName: name,
+      workingDirectory: `C:\\${name}`,
+      spawnArgv: ['cmd.exe'],
+      spawnEnv: { EXPLICIT_VALUE: name, TERM: 'explicit-term' },
+      isolatedEnv: false,
+      unsetEnvKeys: ['remove_me'],
+    })));
+
+    for (const { name, fake } of fixtures) {
+      expect(fake.spawnCalls[0]?.options.cwd).toBe(`C:\\${name}`);
+      const env = fake.spawnCalls[0]?.options.env;
+      expect(env?.SESSION_VALUE).toBe(name);
+      expect(env?.EXPLICIT_VALUE).toBe(name);
+      expect(env?.TERM).toBe('explicit-term');
+      expect(Object.keys(env ?? {}).sort()).toEqual(['EXPLICIT_VALUE', 'NODE_ENV', 'SESSION_VALUE', 'TERM']);
+    }
+  });
+
   it('spawns a PTY process and captures the virtual terminal screen', async () => {
     const fake = createFakeProvider();
     const adapter = createPtyTerminalHostAdapter({

@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 import axios from '@/api/client/credentialAxios';
@@ -151,6 +152,7 @@ function loadExpoSdk(): Promise<typeof import('expo-server-sdk')> {
 }
 
 export class PushNotificationClient {
+    private readonly environment = sessionProcessEnvironment()
     private readonly token: string
     private readonly baseUrl: string
     private readonly notificationServerUrl: string
@@ -188,7 +190,7 @@ export class PushNotificationClient {
      * Fetch all push tokens for the authenticated user
      */
     async fetchPushTokens(options?: Pick<PushNotificationDeliveryOptions, 'suppressIfComputerFocused'>): Promise<PushToken[]> {
-        const debugPush = isPushDebugEnabled()
+        const debugPush = isPushDebugEnabled(this.environment)
         const nowMs = Date.now()
         if (this.pushTokenFetchFailureCooldownUntilMs > nowMs) {
             if (!this.didLogPushTokenFetchCooldown) {
@@ -208,7 +210,7 @@ export class PushNotificationClient {
                         'Authorization': `Bearer ${this.token}`,
                         'Content-Type': 'application/json'
                     },
-                    timeout: readPushFetchTokensTimeoutMs(),
+                    timeout: readPushFetchTokensTimeoutMs(this.environment),
                 }
             )
 
@@ -226,7 +228,7 @@ export class PushNotificationClient {
             
             return response.data.tokens
         } catch (error) {
-            const cooldownMs = readPushFetchTokensFailureCooldownMs()
+            const cooldownMs = readPushFetchTokensFailureCooldownMs(this.environment)
             this.pushTokenFetchFailureCooldownUntilMs = cooldownMs > 0 ? Date.now() + cooldownMs : 0
             this.didLogPushTokenFetchCooldown = false
             logger.debug('[PUSH] [ERROR] Failed to fetch push tokens:', serializeAxiosErrorForLog(error))
@@ -283,7 +285,7 @@ export class PushNotificationClient {
         const uniqueTokens = [...new Set(tokens.filter((token): token is string => typeof token === 'string' && token.trim().length > 0))]
         if (uniqueTokens.length === 0) return
 
-        const debugPush = isPushDebugEnabled()
+        const debugPush = isPushDebugEnabled(this.environment)
         const results = await Promise.allSettled(uniqueTokens.map((token) => this.deletePushToken(token)))
         for (const [index, result] of results.entries()) {
             if (result.status === 'fulfilled') continue
@@ -301,7 +303,7 @@ export class PushNotificationClient {
      * @param messages - Array of push messages to send
      */
     async sendPushNotifications(messages: ExpoPushMessage[]): Promise<Readonly<{ acceptedCount: number; failedCount: number; invalidTokens: ReadonlyArray<string>; invalidCredentials: boolean }>> {
-        const debugPush = isPushDebugEnabled()
+        const debugPush = isPushDebugEnabled(this.environment)
         if (debugPush) logger.debug(`Sending ${messages.length} push notifications`)
         const invalidTokens = new Set<string>()
         let invalidCredentials = false
@@ -475,7 +477,7 @@ export class PushNotificationClient {
         data?: Record<string, unknown>,
         options?: PushNotificationDeliveryOptions,
     ): Promise<boolean> {
-        const debugPush = isPushDebugEnabled()
+        const debugPush = isPushDebugEnabled(this.environment)
         if (debugPush) {
             logger.debug('[PUSH] sendToAllDevicesAsync called', {
                 titleLength: title.length,

@@ -19,6 +19,8 @@ import { AGENT_STATE_SHARING_DESCRIPTOR as CODEX_STATE_SHARING } from '../../../
 import { AGENT_STATE_SHARING_DESCRIPTOR as CLAUDE_STATE_SHARING } from '../../../../../packages/plugins/claude/src/agent/definition';
 import { geminiConnectedServiceStateSharingDescriptor as GEMINI_STATE_SHARING } from '../../../../../packages/plugins/gemini/src/agent/connectedServices/descriptor';
 import { KIMI_CONNECTED_ACCOUNT_LAUNCH } from '../../../../../packages/plugins/kimi/src/agent/connectedAccount';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 import {
   composeProviderBindingMaterialization,
@@ -27,6 +29,49 @@ import {
 } from './compose';
 
 describe('provider binding host materialization', () => {
+  it('uses each concurrent Session native home and directory while preserving explicit source environments', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'happier-provider-session-scope-'));
+    const envScope = createEnvKeyScope(['HOME', 'USERPROFILE', 'CODEX_HOME', 'CODEX_SQLITE_HOME']);
+    const cases = ['session', 'explicit'].map(id => ({ id, source: join(base, id, '.codex'), cwd: join(base, id) }));
+    try {
+      const hostHome = join(base, 'host');
+      const hostSource = join(hostHome, '.codex');
+      await mkdir(hostSource, { recursive: true });
+      envScope.patch({ HOME: hostHome, USERPROFILE: hostHome, CODEX_HOME: hostSource, CODEX_SQLITE_HOME: 'host-state' });
+      for (const entry of cases) {
+        await mkdir(entry.source, { recursive: true });
+        await writeFile(join(entry.source, 'config.toml'), `model = "${entry.id}"\n`);
+      }
+      const values = await Promise.all(cases.map(entry => runAddedHostedSession({
+        environment: { NODE_ENV: 'test', HOME: entry.cwd, USERPROFILE: entry.cwd, CODEX_HOME: undefined, CODEX_SQLITE_HOME: 'session-state' },
+        workingDirectory: entry.cwd, end() {},
+      }, async () => {
+        await Promise.resolve();
+        const result = await composeProviderBindingMaterialization({
+          materialization: { v: 1, kind: 'configFile', nativeHome: true, env: [],
+            files: [{ relativePath: 'provider.json', utf8: '{}' }] },
+          nativeHome: { descriptor: { providerId: 'codex', ...CODEX_STATE_SHARING },
+            ...(entry.id === 'explicit' ? { sourceEnvironment: { CODEX_HOME: entry.source }, homeDir: base } : {}) },
+          materializationBaseDir: join(base, entry.id, 'materialized'),
+        });
+        try {
+          if (result.launchMaterialization.kind !== 'configFile') throw new Error('Expected native home');
+          return {
+            config: await readFile(join(result.launchMaterialization.rootPath, 'config.toml'), 'utf8'),
+            stateRoot: result.providerEnvironmentOverlay.find(value => value.name === 'CODEX_SQLITE_HOME')?.value,
+          };
+        } finally { result.cleanup?.(); }
+      })));
+      expect(values).toEqual(cases.map(entry => ({
+        config: expect.stringContaining(`model = "${entry.id}"`),
+        stateRoot: entry.id === 'explicit' ? entry.source : join(entry.cwd, 'session-state'),
+      })));
+    } finally {
+      envScope.restore();
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
   it('retains a first Kimi session index across Stop and resume without truncating it', async () => {
     const base = await mkdtemp(join(tmpdir(), 'happier-kimi-provider-resume-'));
     const compose = () => composeProviderBindingMaterialization({

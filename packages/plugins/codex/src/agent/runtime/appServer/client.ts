@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/plugin-sdk/fs';
 
 import { readCodexAppServerRequestTimeoutMs, readCodexAppServerRpcTimeoutMs } from './client/timeout.js';
+import { readJsonLineMaxChars } from './client/framing.js';
 import {
     buildCodexAppServerBaseArgs,
     codexProcessExitedSuccessfully,
@@ -105,10 +106,6 @@ export function isCodexAppServerOversizedJsonFrameError(error: unknown): boolean
         && record.message.includes('JSON-RPC frame exceeded the configured size limit');
 }
 
-// A resume response can carry the complete Codex thread. Preserve the established
-// 0.2 app-server boundary instead of introducing a lower plugin-only rejection cap.
-const DEFAULT_JSON_LINE_MAX_CHARS = 128 * 1024 * 1024;
-
 const CODEX_APP_SERVER_BINARY_OVERRIDE_ENV_KEYS = [
     'HAPPIER_CODEX_APP_SERVER_BIN',
     'HAPPIER_CODEX_TUI_BIN',
@@ -126,15 +123,6 @@ const CODEX_APP_SERVER_RUNTIME_ONLY_ENV_KEYS = new Set([
     'HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON',
     'HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON',
 ]);
-
-function readPositiveInteger(value: unknown, fallback: number): number {
-    const parsed = Number.parseInt(String(value ?? ''), 10);
-    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : fallback;
-}
-
-function readJsonLineMaxChars(env: CodexAppServerEnv): number {
-    return readPositiveInteger(env.HAPPIER_CODEX_APP_SERVER_MAX_JSON_LINE_CHARS, DEFAULT_JSON_LINE_MAX_CHARS);
-}
 
 function expandHomeDirPath(value: string, env: CodexAppServerEnv): string {
     return expandHomePath(value, resolveHomeDirFromEnvironment(env));

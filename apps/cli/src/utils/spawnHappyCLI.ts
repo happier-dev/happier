@@ -50,6 +50,7 @@
  */
 
 import { spawn, SpawnOptions, type ChildProcess } from 'child_process';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { observeProcessLaunch } from '@/processes/launchNotification';
 import type { ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCustody';
 import {
@@ -64,7 +65,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHash } from 'node:crypto';
 import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
@@ -110,7 +111,7 @@ const PINNED_RUNNER_NO_WORKSPACE_RUNTIME_SHA256 = createHash('sha256')
   .update('happier:pinned-runner:no-workspace-runtime:v1')
   .digest('hex');
 
-function getSubprocessRuntime(env: NodeJS.ProcessEnv = process.env): 'node' | 'bun' {
+function getSubprocessRuntime(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): 'node' | 'bun' {
   const override = env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
   if (override === 'node' || override === 'bun') return override;
   return isBun() ? 'bun' : 'node';
@@ -140,7 +141,7 @@ export function toNodeImportSpecifier(importPath: string, platform: NodeJS.Platf
   return importPath;
 }
 
-function resolveSubprocessEntrypoint(env: NodeJS.ProcessEnv = process.env): string {
+function resolveSubprocessEntrypoint(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): string {
   const override = env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT;
   if (typeof override === 'string' && override.trim().length > 0) {
     return override.trim();
@@ -183,7 +184,7 @@ export function resolveCliTsxTsconfigPath(): string {
   return join(projectPath(), 'tsconfig.runtime.json');
 }
 
-function shouldAllowDevTsxFallback(env: NodeJS.ProcessEnv = process.env): boolean {
+function shouldAllowDevTsxFallback(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): boolean {
   const explicit = parseOptionalBooleanEnv(env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK);
   if (explicit !== null) return explicit;
   const isDevVariant = env.HAPPIER_VARIANT === 'dev';
@@ -193,7 +194,7 @@ function shouldAllowDevTsxFallback(env: NodeJS.ProcessEnv = process.env): boolea
   return true;
 }
 
-function hasStackSubprocessContext(env: NodeJS.ProcessEnv = process.env): boolean {
+function hasStackSubprocessContext(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): boolean {
   return Boolean(
     env.HAPPIER_STACK_REPO_DIR ||
       env.HAPPIER_STACK_CLI_ROOT_DIR ||
@@ -201,7 +202,7 @@ function hasStackSubprocessContext(env: NodeJS.ProcessEnv = process.env): boolea
   );
 }
 
-function shouldPreferDevTsxSubprocess(env: NodeJS.ProcessEnv = process.env): boolean {
+function shouldPreferDevTsxSubprocess(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): boolean {
   if (typeof env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT === 'string' && env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim().length > 0) {
     return false;
   }
@@ -220,6 +221,7 @@ export type HappyCliSubprocessLaunchOptions = Readonly<{
   runtimeDecision?: HappyCliSubprocessRuntimeDecision;
   liveRunnerSnapshotFingerprints?: LiveRunnerSnapshotFingerprints | null;
   environment?: NodeJS.ProcessEnv;
+  cwd?: string;
 }>;
 
 export type HappyCliSubprocessRuntimeDecision = Readonly<{
@@ -302,10 +304,10 @@ function resolveSiblingWindowsPackagedBinary(entrypoint: string): string | null 
   return existsSync(binaryPath) ? binaryPath : null;
 }
 
-function shouldPreferWindowsPackagedBinary(options: HappyCliSubprocessLaunchOptions | undefined): boolean {
+function shouldPreferWindowsPackagedBinary(options: HappyCliSubprocessLaunchOptions | undefined, environment: NodeJS.ProcessEnv): boolean {
   if (!options?.preferWindowsPackagedBinary) return false;
   if (process.platform !== 'win32') return false;
-  const enabled = parseOptionalBooleanEnv(process.env.HAPPIER_WINDOWS_SESSION_RUNNER_BINARY);
+  const enabled = parseOptionalBooleanEnv(environment.HAPPIER_WINDOWS_SESSION_RUNNER_BINARY);
   return enabled !== false;
 }
 
@@ -313,8 +315,9 @@ function buildWindowsPackagedBinaryInvocation(
   args: string[],
   entrypoint: string,
   options: HappyCliSubprocessLaunchOptions | undefined,
+  environment: NodeJS.ProcessEnv,
 ): HappyCliSubprocessInvocation | null {
-  if (!shouldPreferWindowsPackagedBinary(options)) return null;
+  if (!shouldPreferWindowsPackagedBinary(options, environment)) return null;
   const binaryPath = resolveSiblingWindowsPackagedBinary(entrypoint);
   if (!binaryPath) return null;
   return {
@@ -349,7 +352,8 @@ function buildCurrentProcessBundledBunFallbackInvocation(
 
 function resolveSubprocessRuntimeExecutable(
   runtime: Exclude<HappyCliSubprocessRuntime, 'binary'>,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = sessionProcessEnvironment(),
+  cwd?: string,
 ): string {
   // Prefer the currently-running runtime binary when possible. This avoids PATH
   // issues on Windows (and GUI-launched shells) where `node`/`bun` may not resolve.
@@ -357,6 +361,7 @@ function resolveSubprocessRuntimeExecutable(
     const javaScriptRuntime = resolveJavaScriptRuntimeExecutable({
       isBunRuntime: isBun(),
       processEnv: environment,
+      cwd,
     });
     if (!javaScriptRuntime) {
       throw new ReferenceError(buildMissingJavaScriptRuntimeMessage('Happier CLI subprocess'));
@@ -382,12 +387,12 @@ function readInheritedNodeLaunchFlags(): string[] {
   return [...inherited];
 }
 
-function readNonEmptyEnv(name: string, env: NodeJS.ProcessEnv = process.env): string | null {
+function readNonEmptyEnv(name: string, env: NodeJS.ProcessEnv = sessionProcessEnvironment()): string | null {
   const value = String(env[name] ?? '').trim();
   return value ? value : null;
 }
 
-export function isRuntimeBackedHappyCliSubprocess(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isRuntimeBackedHappyCliSubprocess(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): boolean {
   return parseOptionalBooleanEnv(env[RUNTIME_BACKED_SUBPROCESS_ENV]) === true;
 }
 
@@ -409,7 +414,7 @@ function describeImmutableClosureRefusal(summary: string, refusal: string | null
   return refusal ? `${summary}\nThe admitted closure was refused because ${refusal}` : summary;
 }
 
-function resolveStackRuntimeStatePath(env: NodeJS.ProcessEnv = process.env): string | null {
+function resolveStackRuntimeStatePath(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): string | null {
   const explicit = readNonEmptyEnv(STACK_RUNTIME_STATE_PATH_ENV, env);
   if (explicit) return explicit;
 
@@ -428,7 +433,7 @@ function resolveStackRuntimeStatePath(env: NodeJS.ProcessEnv = process.env): str
   return null;
 }
 
-function readRuntimeStateDistClosureFingerprint(env: NodeJS.ProcessEnv = process.env): string | null {
+function readRuntimeStateDistClosureFingerprint(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): string | null {
   const runtimeStatePath = resolveStackRuntimeStatePath(env);
   if (!runtimeStatePath) return null;
   try {
@@ -442,7 +447,7 @@ function readRuntimeStateDistClosureFingerprint(env: NodeJS.ProcessEnv = process
   }
 }
 
-function resolveStackDistEntrypoint(defaultEntrypoint: string, env: NodeJS.ProcessEnv = process.env): string {
+function resolveStackDistEntrypoint(defaultEntrypoint: string, env: NodeJS.ProcessEnv = sessionProcessEnvironment()): string {
   return readNonEmptyEnv(STACK_DIST_ENTRYPOINT_ENV, env) ?? defaultEntrypoint;
 }
 
@@ -582,7 +587,7 @@ function resolvePinnedRunnerSnapshotsDir(
 function readReadyPinnedSnapshotLocations(
   entrypoint: string,
   fingerprint: string | null = null,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): ReadonlyArray<Readonly<{ location: PinnedRunnerSnapshotLocation; mtimeMs: number }>> {
   const snapshotsDir = resolvePinnedRunnerSnapshotsDir(entrypoint, env);
   if (!snapshotsDir) return [];
@@ -592,7 +597,7 @@ function readReadyPinnedSnapshotLocations(
 function resolveCurrentPinnedSnapshotLocation(
   entrypoint: string,
   fingerprint: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
   workspaceRuntimeIdentityOverride = '',
 ): PreparedPinnedRunnerSnapshotLocation | null {
   const manifest = cliDistBuildManifest.readCliDistBuildManifest(entrypoint);
@@ -621,7 +626,7 @@ function resolveCurrentPinnedSnapshotLocation(
 function resolveReadyPinnedSnapshotLocation(
   entrypoint: string,
   fingerprint: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): PinnedRunnerSnapshotLocation | null {
   if (!/^[a-f0-9]{16}$/u.test(fingerprint)) return null;
   const currentManifest = cliDistBuildManifest.readCliDistBuildManifest(entrypoint);
@@ -636,7 +641,7 @@ function resolveReadyPinnedSnapshotLocation(
 
 function resolveNewestReadyPinnedSnapshotLocation(
   entrypoint: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): PinnedRunnerSnapshotLocation | null {
   const snapshotsDir = resolvePinnedRunnerSnapshotsDir(entrypoint, env);
   if (!snapshotsDir) return null;
@@ -693,7 +698,7 @@ function prunePinnedRunnerSnapshots(
  */
 export function pruneHappyCliRunnerSnapshots(
   live: LiveRunnerSnapshotFingerprints,
-  environment: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): void {
   const daemonFingerprint = readNonEmptyEnv(DAEMON_DIST_CLOSURE_FINGERPRINT_ENV, environment);
   if (!daemonFingerprint) return;
@@ -874,7 +879,7 @@ function buildCurrentStackDistSubprocessInvocation(
   defaultEntrypoint: string,
   live: LiveRunnerSnapshotFingerprints | null | undefined,
   allowAdmittedDaemonStartupClosure: boolean,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): StackDistInvocationOutcome {
   if (!hasStackSubprocessContext(env)) return NO_STACK_DIST_INVOCATION;
   const runtimeBacked = isRuntimeBackedHappyCliSubprocess(env);
@@ -1052,7 +1057,7 @@ function readInheritedNodeSourceRuntimeFlags(): string[] {
 
 export function buildCurrentProcessSourceInvocation(
   args: string[],
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): HappyCliSubprocessInvocation | null {
   if (typeof env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT === 'string' && env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim().length > 0) {
     return null;
@@ -1101,7 +1106,7 @@ export function buildHappyCliSubprocessInvocation(
     };
   }
 
-  const environment = options?.environment ?? process.env;
+  const environment = options?.environment ?? sessionProcessEnvironment();
   const runtime = getSubprocessRuntime(environment);
   const runtimeBacked = isRuntimeBackedHappyCliSubprocess(environment);
   if (runtime === 'node' && !runtimeBacked) {
@@ -1162,7 +1167,7 @@ export function buildHappyCliSubprocessInvocation(
   }
 
   if (runtime === 'node') {
-    const windowsBinaryInvocation = buildWindowsPackagedBinaryInvocation(args, entrypoint, options);
+    const windowsBinaryInvocation = buildWindowsPackagedBinaryInvocation(args, entrypoint, options, environment);
     if (windowsBinaryInvocation) return windowsBinaryInvocation;
   }
 
@@ -1214,9 +1219,9 @@ export function buildHappyCliSubprocessInvocation(
 export function resolveHappyCliSubprocessRuntimeDecision(
   options?: Omit<HappyCliSubprocessLaunchOptions, 'runtimeDecision'>,
 ): HappyCliSubprocessRuntimeDecision | null {
-  const environment = options?.environment ?? process.env;
+  const environment = options?.environment ?? sessionProcessEnvironment();
   if (!isRuntimeBackedHappyCliSubprocess(environment)) return null;
-  const invocation = buildHappyCliSubprocessInvocation([], options);
+  const invocation = buildHappyCliSubprocessInvocation([], { ...options, environment });
   if (invocation.runtime !== 'node') {
     throw new HappyCliImmutableRuntimeClosureError(
       'Runtime-backed Happier CLI runner did not resolve to the admitted Node.js closure.',
@@ -1233,7 +1238,8 @@ export function buildHappyCliSubprocessLaunchSpec(
   args: string[],
   options?: HappyCliSubprocessLaunchOptions,
 ): HappyCliSubprocessLaunchSpec {
-  const invocation = buildHappyCliSubprocessInvocation(args, options);
+  const environment = options?.environment ?? sessionProcessEnvironment();
+  const invocation = buildHappyCliSubprocessInvocation(args, { ...options, environment });
   if (invocation.runtime === 'binary') {
     return {
       runtime: invocation.runtime,
@@ -1244,7 +1250,7 @@ export function buildHappyCliSubprocessLaunchSpec(
   }
   return {
     runtime: invocation.runtime,
-    filePath: resolveSubprocessRuntimeExecutable(invocation.runtime, options?.environment),
+    filePath: resolveSubprocessRuntimeExecutable(invocation.runtime, environment, options?.cwd),
     args: invocation.argv,
     env: invocation.env,
   };
@@ -1266,12 +1272,9 @@ export function spawnHappyCLI(
   options: SpawnOptions = {},
   launchOptions?: HappyCliSubprocessLaunchOptions,
 ): ChildProcess {
-  let directory: string | URL | undefined;
-  if ('cwd' in options) {
-    directory = options.cwd
-  } else {
-    directory = process.cwd()
-  }
+  const environment = sessionProcessEnvironment();
+  const directory = 'cwd' in options ? options.cwd : sessionWorkingDirectory();
+  const runtimeDirectory = directory instanceof URL ? fileURLToPath(directory) : directory ?? process.cwd();
   // Note: We're actually executing 'node' with the calculated entrypoint path below,
   // bypassing the 'happier' wrapper that would normally be found in the shell's PATH.
   // However, we log it as 'happier' here because other engineers are typically looking
@@ -1280,11 +1283,14 @@ export function spawnHappyCLI(
   const fullCommand = `happier ${args.join(' ')}`;
   logger.debug(`[SPAWN HAPPIER CLI] Spawning: ${fullCommand} in ${directory}`);
 
-  const launchSpec = buildHappyCliSubprocessLaunchSpec(args, launchOptions);
+  const launchSpec = buildHappyCliSubprocessLaunchSpec(args, {
+    ...launchOptions, environment: launchOptions?.environment ?? environment, cwd: runtimeDirectory,
+  });
   const spawnOptions: SpawnOptions = {
     ...options,
+    cwd: directory,
     env: stripCliApiTokenEnvironment({
-      ...(options.env ?? process.env),
+      ...(options.env ?? environment),
       ...(launchSpec.env ?? {}),
     }),
   };

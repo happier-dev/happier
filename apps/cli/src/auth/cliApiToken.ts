@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { parseAccountApiTokenBearerV1, parseAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 
@@ -55,13 +56,13 @@ function resolveInvocationCredential(env: NodeJS.ProcessEnv): string | null {
 }
 
 /** Generic credential readers and HTTP transports receive only the bearer. */
-export function resolveCliApiToken(env: NodeJS.ProcessEnv = process.env): string | null {
+export function resolveCliApiToken(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): string | null {
   const credential = resolveInvocationCredential(env);
   return credential === null ? null : parseAccountApiTokenCredentialV1(credential)?.bearer ?? credential;
 }
 
 /** Only the in-process SDK may consume the matching invocation's local secret. */
-export function resolveCliApiTokenForSdk(bearer: string, env: NodeJS.ProcessEnv = process.env): string {
+export function resolveCliApiTokenForSdk(bearer: string, env: NodeJS.ProcessEnv = sessionProcessEnvironment()): string {
   const credential = resolveInvocationCredential(env);
   return credential !== null && parseAccountApiTokenCredentialV1(credential)?.bearer === bearer
     ? credential
@@ -75,7 +76,7 @@ export function resolveCliApiTokenForSdk(bearer: string, env: NodeJS.ProcessEnv 
  * their local wrapping secret never crosses a child boundary.
  */
 export function buildCliApiTokenContinuationEnvironment(
-  environment: NodeJS.ProcessEnv = process.env,
+  environment: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): Record<string, string> {
   const credential = resolveInvocationCredential(environment);
   if (credential === null) return {};

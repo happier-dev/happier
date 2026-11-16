@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import {
   PluginConnectedAccountDescriptorContributionV2Schema,
@@ -26,6 +30,30 @@ import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedSer
 import { readCurrentHostingProviderRuntimeServices, runWithHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 
 type RuntimeServicesInput = Parameters<typeof createHostScmHostingProviderRuntimeServices>[0];
+
+it.skipIf(process.platform !== 'linux')('resolves hosting-provider tools from each invoking hosted Session rather than registry construction', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'happier-hosting-session-'));
+  try {
+    const input = createRuntimeInput();
+    const registration = [...input.scmHostingProvidersById.values()][0]!;
+    const services = createHostScmHostingProviderRuntimeServices({ ...input,
+      contributes: { ...input.contributes, systemTools: [{ pluginId: registration.pluginId,
+        provenance: 'external', source: { kind: 'path' }, definition: { id: 'session-forge', title: 'Session forge',
+          executableNames: ['session-forge'], platforms: ['linux'] } }] } });
+    for (const value of ['first', 'second']) {
+      const bin = join(directory, value);
+      await mkdir(bin);
+      await writeFile(join(bin, 'session-forge'), `#!/bin/sh\nprintf '%s' '${value}'\n`, { mode: 0o755 });
+      const result = await runAddedHostedSession({ environment: { ...process.env,
+        PATH: [bin, process.env.PATH].join(delimiter) },
+        workingDirectory: directory, end() {} }, () => runWithHostingProviderExecutionAuthority({
+          pluginId: registration.pluginId, contributionId: registration.registration.id,
+          occurrenceId: registration.occurrenceId,
+        }, () => services.executeCommand!({ executable: { kind: 'systemTool', id: 'session-forge' }, args: [], timeoutMs: 2_000 })));
+      expect(result).toMatchObject({ ok: true, stdout: value });
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 it('refuses an unmapped Azure Team selection before native effects while preserving personal operations', async () => {
   const descriptor = (AZURE_PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0]!;

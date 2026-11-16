@@ -7,6 +7,7 @@ import { readRuntimeInstallableLastCheckAtMs } from '@/packagedRuntime/installab
 import { fetchGitHubLatestRelease } from '@/capabilities/cliUpdate/githubReleaseLookup';
 import { resolveManagedToolsRoot, selectManagedDependencyReleaseAsset } from '@happier-dev/cli-common/agents';
 import type { InstallableDependencyDescriptor } from '@happier-dev/protocol';
+import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 type ManagedBinaryState = Readonly<{
   installedVersion: string | null;
@@ -30,7 +31,7 @@ export function managedBinaryBinPath(descriptor: InstallableDependencyDescriptor
 }
 
 /** Only the selected contribution declares historical install paths and prerequisites. */
-export function resolveExistingManagedBinaryPath(descriptor: InstallableDependencyDescriptor, env?: NodeJS.ProcessEnv): string | null {
+export function resolveExistingManagedBinaryPath(descriptor: InstallableDependencyDescriptor, env?: NodeJS.ProcessEnv, cwd: string = sessionWorkingDirectory()): string | null {
   const launch = descriptor.source.kind === 'github_release_binary' ? descriptor.source.launch : undefined;
   const candidates = [
     { path: managedBinaryBinPath(descriptor, env), requiresManagedJavaScriptRuntime: false },
@@ -44,7 +45,7 @@ export function resolveExistingManagedBinaryPath(descriptor: InstallableDependen
   for (const candidate of candidates) {
     try {
       accessSync(candidate.path, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
-      if (candidate.requiresManagedJavaScriptRuntime && !resolveExistingManagedJavaScriptRuntimeCommand(env ?? process.env)) continue;
+      if (candidate.requiresManagedJavaScriptRuntime && !resolveExistingManagedJavaScriptRuntimeCommand(env ?? process.env, cwd)) continue;
       return candidate.path;
     } catch {
       // Continue through the selected dependency's declared compatibility candidates.
@@ -121,9 +122,10 @@ export async function getManagedBinaryDepStatus(descriptor: InstallableDependenc
   includeLatestVersion?: boolean;
   onlyIfInstalled?: boolean;
 }): Promise<ManagedBinaryDepData> {
+  const cwd = sessionWorkingDirectory();
   const installDir = managedBinaryInstallDir(descriptor, opts?.env);
   const state = await readManagedBinaryState(descriptor, opts?.env);
-  const binPath = resolveExistingManagedBinaryPath(descriptor, opts?.env);
+  const binPath = resolveExistingManagedBinaryPath(descriptor, opts?.env, cwd);
   const latestVersionCheck = opts?.includeLatestVersion === true && (opts.onlyIfInstalled !== true || binPath !== null)
     ? await detectLatestVersionCheck(descriptor, opts?.env)
     : undefined;

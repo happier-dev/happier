@@ -1,9 +1,6 @@
-import { constants as fsConstants } from 'node:fs';
-import { access } from 'node:fs/promises';
-import { delimiter, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
+import { resolveExecutableCommand } from '@happier-dev/cli-common/process';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import type { RuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
@@ -18,22 +15,6 @@ import type {
     ManagedDependencySourceModelDependency,
     ManagedDependencySourceModelEntry,
 } from './managedDependencySourceModel';
-
-async function resolveCommandOnPath(command: string, env: NodeJS.ProcessEnv): Promise<string | null> {
-    if (process.platform === 'win32') return await resolveWindowsCommandOnPath(command, env);
-    const path = env.PATH;
-    if (!path) return null;
-    for (const directory of path.split(delimiter).map((entry) => entry.trim()).filter(Boolean)) {
-        const candidate = join(directory, command);
-        try {
-            await access(candidate, fsConstants.X_OK);
-            return candidate;
-        } catch {
-            // Continue through the bounded PATH entries.
-        }
-    }
-    return null;
-}
 
 function fail(code: string, message: string): never {
     throw new PluginError({ code, message });
@@ -77,6 +58,7 @@ export async function createProductionManagedDependencySourceAdapter(input: Read
     source: ManagedDependencySourceModelEntry;
     sourceInstallable?: InstallableDependencyDescriptor;
     env?: NodeJS.ProcessEnv;
+    cwd?: string;
     platform?: NodeJS.Platform;
     architecture?: string;
 }>): Promise<RuntimeInstallableAdapter> {
@@ -214,7 +196,7 @@ export async function createProductionManagedDependencySourceAdapter(input: Read
     const defaultEnv = input.env ?? process.env;
     const resolve = async (env: NodeJS.ProcessEnv = defaultEnv): Promise<string | null> => {
         for (const executableName of executableNames) {
-            const command = await resolveCommandOnPath(executableName, env);
+            const command = resolveExecutableCommand(executableName, { env, cwd: input.cwd });
             if (command) return command;
         }
         return null;
@@ -231,6 +213,7 @@ export async function createProductionManagedDependencySourceAdapter(input: Read
             // selection; failed probes never qualify a version from their output.
             const result = await runCliCommandBestEffort({
                 resolvedPath: command, args: [...versionArguments], processEnv: env,
+                cwd: input.cwd,
             });
             return { version: result.ok ? parseInstalledVersionFromOutput(
                 input.dependency.definition.executable ?? executableNames[0]!, result.stdout,

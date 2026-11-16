@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import type { InitializeRequest, InitializeResponse } from '@agentclientprotocol/sdk';
 
 import { logger } from '@/ui/logger';
+import { hashStableJsonIdentity } from '@/utils/stableJsonIdentity';
 import type { TransportHandler } from '@/agent/transport';
 import { nodeToWebStreams } from '@/agent/acp/nodeToWebStreams';
 import { createAcpFilteredStdoutReadable } from '@/agent/acp/createAcpFilteredStdoutReadable';
@@ -29,13 +30,15 @@ function buildAcpProbeCacheKey(params: {
     cwd: string;
     timeoutMs: number | null;
     agentName: string;
+    env: Readonly<Record<string, string | undefined>>;
 }): string {
     const command = String(params.command ?? '').trim();
     const cwd = String(params.cwd ?? '').trim();
     const agentName = String(params.agentName ?? '').trim();
     const timeoutMs = params.timeoutMs === null ? 'untimed' : Number.isFinite(params.timeoutMs) ? String(params.timeoutMs) : '';
     const args = Array.isArray(params.args) ? params.args.map((a) => String(a ?? '')).join('\u0000') : '';
-    return `${agentName}:${timeoutMs}:${command}:${cwd}:${args}`;
+    // Reuse probe facts only for the same child environment without retaining its secrets in the key.
+    return `${agentName}:${timeoutMs}:${command}:${cwd}:${args}:${hashStableJsonIdentity(params.env)}`;
 }
 
 export async function probeAcpAgentCapabilities(params: {
@@ -48,6 +51,7 @@ export async function probeAcpAgentCapabilities(params: {
     timeoutMs?: number | null;
     signal?: AbortSignal;
 }): Promise<AcpProbeResult> {
+    const env = { ...params.env };
     const timeoutMs = params.timeoutMs === null ? null : typeof params.timeoutMs === 'number' ? params.timeoutMs : 2500;
     const cacheKey = buildAcpProbeCacheKey({
         command: params.command,
@@ -55,6 +59,7 @@ export async function probeAcpAgentCapabilities(params: {
         cwd: params.cwd,
         timeoutMs,
         agentName: params.transport.agentName,
+        env,
     });
     const cached = acpProbeCache.get(cacheKey);
     if (!params.signal?.aborted && cached?.kind === 'success' && acpProbeCache.isFresh(cached)) return cached.value;
@@ -77,7 +82,6 @@ export async function probeAcpAgentCapabilities(params: {
             import('@agentclientprotocol/sdk'),
             import('@/agent/acp/connection/createAcpClientConnection'),
         ]);
-        const env = { ...process.env, ...params.env };
         const invocation = resolveWindowsCommandInvocation({
             command: params.command,
             args: params.args,
@@ -88,7 +92,8 @@ export async function probeAcpAgentCapabilities(params: {
         params.signal?.throwIfAborted();
         child = spawn(invocation.command, invocation.args, {
             cwd: params.cwd,
-            env,
+            // OS environments may be sparse despite ambient ProcessEnv fields required by UI types.
+            env: env as NodeJS.ProcessEnv,
             stdio: ['pipe', 'pipe', 'pipe'],
             ...(process.platform === 'win32'
                 ? { windowsHide: true, windowsVerbatimArguments: invocation.windowsVerbatimArguments }

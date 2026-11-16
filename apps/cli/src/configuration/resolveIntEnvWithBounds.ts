@@ -1,8 +1,9 @@
 export function resolveIntEnvWithBounds(
   envVar: string,
   opts: Readonly<{ min?: number; max?: number; default: number }>,
+  env: NodeJS.ProcessEnv = process.env,
 ): number {
-  const raw = String(process.env[envVar] ?? '').trim();
+  const raw = String(env[envVar] ?? '').trim();
   const parsed = Number.parseInt(raw, 10);
   const min = opts.min ?? 1;
   if (!Number.isFinite(parsed) || parsed < min) return opts.default;

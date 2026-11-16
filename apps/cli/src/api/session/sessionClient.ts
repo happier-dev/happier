@@ -665,7 +665,6 @@ export class ApiSessionClient extends EventEmitter {
     private readonly startupMessageCatchUpExplicitAfterSeq: number | null;
     private readonly environment = sessionProcessEnvironment();
     private readonly startedByDaemonProcess: boolean;
-    private readonly transcriptStorage: 'persisted' | 'direct';
     private readonly usageObservationPublisher: ReturnType<typeof createSessionClientUsageObservationPublisher>;
     private readonly transcriptApi: SessionClientTranscriptApi;
     readonly turnAssistantTextSnapshotStore: TurnAssistantTextSnapshotStore;
@@ -1264,12 +1263,6 @@ export class ApiSessionClient extends EventEmitter {
             this.turnAssistantTextSnapshotStore = createTurnAssistantTextSnapshotStore({
                 maxTextChars: configuration.readyNotificationAssistantTextMaxChars,
             });
-	        this.transcriptStorage = (() => {
-	            const raw = typeof process.env.HAPPIER_TRANSCRIPT_STORAGE === 'string'
-	                ? process.env.HAPPIER_TRANSCRIPT_STORAGE.trim().toLowerCase()
-	                : '';
-	            return raw === 'direct' ? 'direct' : 'persisted';
-	        })();
             this.startupMessageCatchUpExplicitAfterSeq =
                 typeof session.initialTranscriptAfterSeq === 'number'
                 && Number.isFinite(session.initialTranscriptAfterSeq)
@@ -1354,6 +1347,7 @@ export class ApiSessionClient extends EventEmitter {
         });
         this.recoveryRuntime = createSessionClientRecoveryRuntime({
             ...this.storedContentCrypto,
+            env: this.environment,
             token: this.token,
             serverUrl: this.transport.serverUrl,
             accountChangesEnabled: this.hasOwnerMetadataAuthority(),
@@ -1379,6 +1373,7 @@ export class ApiSessionClient extends EventEmitter {
             installationIdentityPath: configuration.installationIdentityFile,
         };
         this.durableMutationOutbox = createRuntimeSessionClientDurableMutationOutbox({
+            env: this.environment,
             signal: this.socketAckAbortController.signal,
             serverUrl: this.transport.serverUrl,
             token: this.token,
@@ -1513,6 +1508,7 @@ export class ApiSessionClient extends EventEmitter {
             });
         };
         this.transcriptApi = createSessionClientTranscriptApi({
+            env: this.environment,
             serverUrl: this.transport.serverUrl,
             serverId: this.serverBinding.serverId,
             token: this.token,

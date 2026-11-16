@@ -20,6 +20,7 @@ import {
 import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { createStableManagedExecutableResolver } from '@/plugins/runtime/invocation/services/managedExecutableResolver';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { StablePluginManagedDependenciesHost } from '@/plugins/runtime/invocation/services/managedDependencies';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
@@ -411,34 +412,6 @@ export function createHostScmHostingProviderRuntimeServices(
         // validates origin, and expectedAccount pins its exact selected identity.
         return { kind: 'account' as const, account: binding.account };
     }
-    const systemToolContext = createDaemonSpawnToolResolutionContext({ processEnv: process.env });
-    const executableResolver = createStableManagedExecutableResolver({
-        systemTools: input.contributes.systemTools ?? [],
-        managedDependencies: input.managedDependencies ?? {
-            async resolveExecutable() {
-                throw new PluginError({
-                    code: 'plugin_managed_dependency_unavailable',
-                    message: 'Managed dependency execution is unavailable in the SCM hosting host',
-                });
-            },
-        },
-        async resolveSystemTool(request) {
-            const resolved = await systemToolContext.resolveSystemTool({
-                toolId: request.toolId,
-                lookupNames: request.executableNames,
-                reason: 'Execute the declared SCM hosting-provider command',
-            });
-            if (!resolved.ok) {
-                throw new PluginError({ code: 'plugin_system_tool_unavailable', message: 'System tool is unavailable' });
-            }
-            return {
-                toolId: request.toolId,
-                command: resolved.command,
-                args: resolved.args,
-            };
-        },
-    });
-
     const services: ScmHostingProviderRuntimeServices = {
         async resolveScmHostingTokenMaterialization(
             request: ScmHostingProviderRuntimeTokenMaterializationRequest,
@@ -570,7 +543,32 @@ export function createHostScmHostingProviderRuntimeServices(
                     throw new Error('SCM hosting command execution was aborted');
                 }
                 const signal = options?.signal ?? new AbortController().signal;
+                const inheritedEnvironment = sessionProcessEnvironment();
+                const systemToolContext = createDaemonSpawnToolResolutionContext({ processEnv: inheritedEnvironment, signal });
+                const executableResolver = createStableManagedExecutableResolver({
+                    systemTools: input.contributes.systemTools ?? [],
+                    managedDependencies: input.managedDependencies ?? {
+                        async resolveExecutable() {
+                            throw new PluginError({
+                                code: 'plugin_managed_dependency_unavailable',
+                                message: 'Managed dependency execution is unavailable in the SCM hosting host',
+                            });
+                        },
+                    },
+                    async resolveSystemTool(request) {
+                        const resolved = await systemToolContext.resolveSystemTool({
+                            toolId: request.toolId,
+                            lookupNames: request.executableNames,
+                            reason: 'Execute the declared SCM hosting-provider command',
+                        });
+                        if (!resolved.ok) {
+                            throw new PluginError({ code: 'plugin_system_tool_unavailable', message: 'System tool is unavailable' });
+                        }
+                        return { toolId: request.toolId, command: resolved.command, args: resolved.args };
+                    },
+                });
                 const service = createStablePluginExecService({
+                    inheritedEnvironment,
                     signal,
                     isOccurrenceCurrent: () => {
                         const latest = input.scmHostingProvidersById.get(qualifiedId);

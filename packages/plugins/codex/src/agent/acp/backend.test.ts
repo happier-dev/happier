@@ -8,6 +8,31 @@ import {
 } from './backend';
 
 describe('buildCodexNativeAcpRuntimeOptions', () => {
+  it('uses each invocation baseline and honors explicit launch unsets without restoring host PATH', () => {
+    vi.stubEnv('PATH', '/host-bin');
+    vi.stubEnv('HAPPIER_CODEX_APP_SERVER_BIN', '/host-codex');
+    try {
+      for (const id of ['first', 'second']) {
+        const scoped = { PATH: `/${id}-bin`, HAPPIER_CODEX_APP_SERVER_BIN: `/${id}-codex`, OPENAI_API_KEY: `${id}-fixture-key`, HAPPIER_CODEX_ACP_INIT_TIMEOUT_MS: '4321' };
+        const exec = { readEnvironment: (keys: readonly string[]) => Object.fromEntries(
+          Object.entries(scoped).filter(([key]) => keys.includes(key)),
+        ) };
+        const request = { kind: 'create' as const, sessionId: id, cwd: `/workspace/${id}` };
+        const options = buildCodexNativeAcpRuntimeOptions(request, exec);
+        expect(options.transport.env?.HAPPIER_CODEX_APP_SERVER_BIN).toBe(`/${id}-codex`);
+        expect(options.definition?.auth?.methodId).toBe('openai-api-key');
+        expect(options.transport.timeouts?.initializeMs).toBe(4321);
+        const shims = resolve(request.cwd, 'scripts', 'shims');
+        expect(options.transport.env?.PATH).toBe(`${shims}${delimiter}${scoped.PATH}`);
+        const overridden = buildCodexNativeAcpRuntimeOptions({ ...request,
+          launchEnvironment: { values: { HAPPIER_CODEX_APP_SERVER_BIN: `/${id}-launch` }, unset: ['path'] },
+        }, exec);
+        expect(overridden.transport.env?.HAPPIER_CODEX_APP_SERVER_BIN).toBe(`/${id}-launch`);
+        expect(overridden.transport.env?.PATH).toBe(shims);
+      }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('preserves each admitted Session PATH, including an explicitly empty value', () => {
     vi.stubEnv('PATH', '/ambient-host-bin');
     try {

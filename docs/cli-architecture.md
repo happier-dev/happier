@@ -7583,6 +7583,18 @@ termination registration, so signals still reach every Session and the process
 ends with its last registration. The host ends when its last Session has ended;
 the next add starts a new host.
 
+Each hosted scope captures its runtime Configuration policy from the admitted
+Session environment once. The pure `SessionRuntimeConfiguration` parser owns
+the existing policy defaults; direct `configuration` reads select that scope's
+policy, including connection/recovery timing, replay, Files/media budgets and
+the client encryption requirement. Home, credential paths, installation identity
+and daemon lifecycle policy remain owned by the host. Admitting or reading a
+Session policy does not initialize host storage. Explicit Configuration reload
+retains its Home/server refresh and refreshes only the current Session's policy;
+other admitted Sessions retain theirs. Transcript recovery coordinators belong
+to the Session scope, so Sessions sharing one Home retain independent recovery
+policy and request scheduling.
+
 On the daemon side a hosted Session is tracked with `pid` = the host's pid and a
 `hostedSession` handle. Its end is observed for that Session only
 (`ChildExit.trackingKey`); Stop asks the host to end it and waits for that

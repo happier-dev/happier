@@ -29,8 +29,9 @@ export async function runCliCommandBestEffort(params: Readonly<{
   /** Null keeps the probe pending under caller cancellation instead of the auth diagnostic default. */
   timeoutMs?: number | null;
   signal?: AbortSignal;
+  cwd?: string;
   env?: Readonly<Record<string, string>>;
-  processEnv?: NodeJS.ProcessEnv;
+  processEnv?: Readonly<Record<string, string | undefined>>;
 }>): Promise<Readonly<{ ok: boolean; stdout: string; stderr: string; exitCode: number | null }>> {
   const timeoutMs = params.timeoutMs === null ? undefined : typeof params.timeoutMs === 'number' ? params.timeoutMs : 1_000;
   const isWindows = process.platform === 'win32';
@@ -41,13 +42,16 @@ export async function runCliCommandBestEffort(params: Readonly<{
     timeout: timeoutMs,
     signal: params.signal,
     terminateOnAbort: terminateProcessTree,
-    env: execEnv,
+    // Native process environments can be sparse despite required ambient UI fields.
+    env: execEnv as NodeJS.ProcessEnv,
+    cwd: params.cwd,
     windowsHide: true,
   };
   const needsJavaScriptRuntime = agentCliPathRequiresJavaScriptRuntime(params.resolvedPath);
   const runtimeExecutable = resolveAgentCliJavaScriptRuntimeCommand(params.resolvedPath, execEnv, {
     isBunRuntime: typeof process.versions.bun === 'string',
     currentExecPath: process.execPath,
+    cwd: params.cwd,
   });
 
   const asString = (value: unknown): string => {

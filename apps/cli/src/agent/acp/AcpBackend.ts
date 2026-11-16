@@ -764,7 +764,7 @@ export class AcpBackend implements CatalogAcpBackend {
   private buildSpawnEnv(): NodeJS.ProcessEnv {
     const environment = finalizeSessionChildEnvironment({
       environment: buildScopedProcessEnv({
-        baseEnv: this.options.hostFinalizedLaunch ? {} : process.env,
+        baseEnv: this.options.hostFinalizedLaunch ? {} : sessionProcessEnvironment(),
         explicitEnv: this.options.env,
         unsetEnvKeys: this.options.unsetEnv,
       }),
@@ -1023,12 +1023,12 @@ export class AcpBackend implements CatalogAcpBackend {
     const transport = this.transport;
 
     const droppedStdoutCapture = (() => {
-      if (!parseBooleanEnv(process.env.HAPPIER_ACP_CAPTURE_IO, false)) return null;
+      if (!parseBooleanEnv(sessionProcessEnvironment().HAPPIER_ACP_CAPTURE_IO, false)) return null;
       const traceFile = (sessionProcessEnvironment().HAPPIER_STACK_TOOL_TRACE_FILE ?? '').toString().trim();
       const baseDir = traceFile ? dirname(resolve(sessionWorkingDirectory(), traceFile)) : null;
       if (!baseDir) return null;
 
-      const maxBytesRaw = (process.env.HAPPIER_ACP_CAPTURE_DROPPED_MAX_BYTES ?? '').toString().trim();
+      const maxBytesRaw = (sessionProcessEnvironment().HAPPIER_ACP_CAPTURE_DROPPED_MAX_BYTES ?? '').toString().trim();
       const maxBytes = (() => {
         const n = Number(maxBytesRaw);
         return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 2_000_000;
@@ -1066,7 +1066,7 @@ export class AcpBackend implements CatalogAcpBackend {
       }
     })();
 
-    const maxMultilineBytesRaw = (process.env.HAPPIER_ACP_MULTILINE_JSON_MAX_BYTES ?? '').toString().trim();
+    const maxMultilineBytesRaw = (sessionProcessEnvironment().HAPPIER_ACP_MULTILINE_JSON_MAX_BYTES ?? '').toString().trim();
     const maxMultilineBytes = (() => {
       const n = Number(maxMultilineBytesRaw);
       return Number.isFinite(n) && n > 0 ? Math.trunc(n) : undefined;

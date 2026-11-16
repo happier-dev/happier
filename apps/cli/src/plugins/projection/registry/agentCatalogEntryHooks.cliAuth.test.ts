@@ -9,10 +9,68 @@ import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { projectAgentCliAuthCatalogEntry } from './agentCatalogEntryHooks';
 import { createNativeAgentCliAuthSpec } from './agentCliMetadata';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { detectNativeAgentCliAuthStatus } from '@/capabilities/cliAuth/detectNativeAgentCliAuthStatus';
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe('Agent CLI auth command environment custody', () => {
+  it('runs implicit auth status commands in each invoking Session environment and directory', async () => {
+    const dir = createTempDirSync('happier-session-auth-command-');
+    try {
+      vi.stubEnv('HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS', '1');
+      const script = join(dir, 'auth.cjs');
+      writeFileSync(script, "process.stdout.write(process.env.AUTH_SESSION_MARKER && process.cwd() === process.env.AUTH_SESSION_DIRECTORY ? 'logged_in' : 'logged_out');");
+      const tool = writeExecutableShimSync({
+        dir, fileName: process.platform === 'win32' ? 'auth-fixture.cmd' : 'auth-fixture',
+        contents: process.platform === 'win32'
+          ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+          : `#!/bin/sh\nexec '${process.execPath.replace(/'/g, `'\\''`)}' '${script.replace(/'/g, `'\\''`)}' "$@"\n`,
+      });
+      const projected = projectAgentCliAuthCatalogEntry({
+        agentId: 'codex', pluginId: 'acme.auth', isCurrent: () => true,
+        cli: {
+          executable: { binaryName: 'auth-fixture', sourcePreference: 'system-first' },
+          install: { managed: null, manual: { kind: 'none' } },
+          auth: { support: 'status_only', nonInteractiveStatusProbe: true, loginLaunches: [] },
+        },
+        systemTools: [{ id: 'auth-fixture', title: 'Auth fixture', executableNames: [tool] }],
+        hostAccess: { required: [{ id: 'auth-fixture-process', capability: 'process', reason: 'Read native auth status.',
+          scope: { executables: [{ kind: 'systemTool', id: 'auth-fixture' }] } }], optional: [] },
+        cliAuth: { detectAuthStatus: async (context) => {
+          const output = await context.runDeclaredSystemToolCommand({ toolId: 'auth-fixture', args: [] });
+          expect(output.ok).toBe(true);
+          return { state: output.stdout === 'logged_in' ? 'logged_in' : 'logged_out' };
+        } },
+      });
+      const spec = await projected.getCliAuthSpec?.();
+      const results = await Promise.all(['session-a', 'session-b'].map((marker) => {
+        const cwd = join(dir, marker);
+        mkdirSync(cwd);
+        return runAddedHostedSession({
+          environment: { ...process.env, AUTH_SESSION_MARKER: marker, AUTH_SESSION_DIRECTORY: cwd },
+          workingDirectory: cwd, end() {},
+        }, async () => {
+          await Promise.resolve();
+          return spec?.detectAuthStatus?.({ resolvedPath: tool });
+        });
+      }));
+      const explicitCwd = join(dir, 'explicit');
+      mkdirSync(explicitCwd);
+      const explicit = await detectNativeAgentCliAuthStatus({
+        agentId: 'codex', resolvedPath: tool, authSpec: spec,
+        cwd: explicitCwd,
+        processEnv: { ...process.env, AUTH_SESSION_MARKER: 'explicit', AUTH_SESSION_DIRECTORY: explicitCwd,
+          HAPPIER_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS: '5000' },
+      });
+      expect({ scoped: results, explicit: explicit?.state }).toEqual({
+        scoped: [{ state: 'logged_in' }, { state: 'logged_in' }], explicit: 'logged_in',
+      });
+    } finally {
+      removeTempDirSync(dir);
+    }
+  });
+
   it('admits Claude isolated connected-account credentials without borrowing native-home credentials', async () => {
     const dir = createTempDirSync('happier-claude-auth-home-');
     let activation: Awaited<ReturnType<typeof createPluginTestkit>> | undefined;

@@ -290,8 +290,9 @@ export const OPENCODE_PLUGIN = definePlugin({
     discoverySources: {
       config: {
         declaration: { title: 'OpenCode MCP configuration', loadedInHappierSessions: true, metadata: { agentId: 'opencode' } },
-        discover: async (input) => {
+        discover: async (input, context) => {
           const detected = await readOpenCodeMcpConfigServers({
+            exec: context.services.exec,
             directory: input?.directory ?? null,
           });
           return {

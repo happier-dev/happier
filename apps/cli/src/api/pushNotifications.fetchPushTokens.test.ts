@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import { PushNotificationClient } from './pushNotifications';
 import { readAccountSessionDeliveryMutedScopes } from './sessionDeliveryMuteTransport';
@@ -19,6 +20,25 @@ vi.mock('axios', () => {
 });
 
 describe('PushNotificationClient.fetchPushTokens', () => {
+  it('retains each Session timeout and failure cooldown when invoked outside its scope', async () => {
+    vi.useFakeTimers();
+    const clients = await Promise.all(['0', '500'].map((cooldown, index) => runInHostedSessionScope({ environment: {
+      NODE_ENV: 'test',
+      HAPPIER_PUSH_FETCH_TOKENS_TIMEOUT_MS: String(1200 + index),
+      HAPPIER_PUSH_FETCH_TOKENS_FAILURE_COOLDOWN_MS: cooldown,
+    } }, async () => {
+      await Promise.resolve();
+      return new PushNotificationClient('t', `https://session-${index}.example.test`);
+    })));
+    vi.mocked(axios.get).mockRejectedValue(new Error('unavailable'));
+    await Promise.all(clients.map(client => expect(client.fetchPushTokens()).rejects.toThrow('unavailable')));
+    expect(vi.mocked(axios.get).mock.calls.map(([, config]) => config?.timeout)).toEqual([1200, 1201]);
+    vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [] } });
+    await expect(clients[0].fetchPushTokens()).resolves.toEqual([]);
+    await expect(clients[1].fetchPushTokens()).rejects.toThrow('cooldown');
+    await vi.advanceTimersByTimeAsync(500);
+    await expect(clients[1].fetchPushTokens()).resolves.toEqual([]);
+  });
   beforeEach(() => {
     vi.useRealTimers();
     (axios as any).get.mockReset();

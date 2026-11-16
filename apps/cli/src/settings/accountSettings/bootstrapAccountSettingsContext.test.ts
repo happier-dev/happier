@@ -83,6 +83,49 @@ describe('bootstrapAccountSettingsContext', () => {
     resetInMemoryAccountSettingsContextForTests();
   });
 
+  it('uses each hosted Session bootstrap mode instead of the host mode', async () => {
+    vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
+    const fetchFromServer = vi.fn(async () => ({ settingsContent: { t: 'plain' as const, v: { themePreference: 'dark' } }, settingsVersion: 1 }));
+    const observe = (mode: 'auto' | 'never') => runAddedHostedSession({
+      environment: { NODE_ENV: 'test', HAPPIER_ACCOUNT_SETTINGS_MODE: mode }, workingDirectory: `/session/${mode}`, end() {},
+    }, async () => {
+      await Promise.resolve();
+      return bootstrapAccountSettingsContext({ credentials: createTokenOnlyCredentialsStub(), publication: 'invocation',
+        refresh: 'force', deps: { resolveCachePath: () => '/tmp/hosted-settings-mode.cache',
+          readCache: async () => null, writeCache: async () => {}, fetchFromServer } });
+    });
+    try {
+      const [automatic, disabled] = await Promise.all([observe('auto'), observe('never')]);
+      expect(automatic.source).toBe('network');
+      expect(automatic.settings.themePreference).toBe('dark');
+      expect(disabled.source).toBe('none');
+      expect(fetchFromServer).toHaveBeenCalledTimes(1);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it('uses each hosted Session cache freshness policy', async () => {
+    vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
+    vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_TTL_MS', '0');
+    const credentials = createCredentialsStub();
+    const settingsContent = { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'account_settings',
+      material: { type: 'legacy', secret: new Uint8Array(32).fill(1) }, payload: {},
+      randomBytes: length => new Uint8Array(length).fill(1) }) };
+    const observe = (ttlMs: number) => runAddedHostedSession({ environment: {
+      NODE_ENV: 'test', HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto', HAPPIER_ACCOUNT_SETTINGS_TTL_MS: String(ttlMs),
+    }, workingDirectory: `/session/ttl-${ttlMs}`, end() {} }, async () => {
+      await Promise.resolve();
+      return bootstrapAccountSettingsContext({ credentials, publication: 'invocation', nowMs: 2_000,
+        deps: { resolveCachePath: () => '/tmp/hosted-settings-ttl.cache',
+          readCache: async () => ({ version: 2 as const, cachedAt: 1_000, settingsContent, settingsVersion: 1 }),
+          writeCache: async () => {}, fetchFromServer: async () => ({ settingsContent, settingsVersion: 1 }) } });
+    });
+    try {
+      const [fresh, stale] = await Promise.all([observe(5_000), observe(100)]);
+      expect(fresh.source).toBe('cache');
+      expect(stale.source).toBe('network');
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('projects refreshed Account defaults into each hosted Session while preserving explicit overrides and host defaults', async () => {
     const keys = ['HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY', 'HAPPIER_ACTIONS_SETTINGS_V1',
       'HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON'] as const;

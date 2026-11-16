@@ -5,11 +5,11 @@ import { absolutePathFromWorkingDirectory } from '../path/absolutePathFromWorkin
 
 import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from './windows/resolveWindowsCommandInvocation.js';
 
-type ExecutableCommandOptions = Readonly<{ env?: NodeJS.ProcessEnv; cwd?: string }>;
+type ExecutableCommandOptions = Readonly<{ env?: Readonly<Record<string, string | undefined>>; cwd?: string }>;
 
 /** Match child_process search semantics when a selected environment omits PATH. */
 export function resolveExecutableSearchPath(
-  env: NodeJS.ProcessEnv = process.env,
+  env: Readonly<Record<string, string | undefined>> = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string {
   if (platform !== 'win32') return env.PATH ?? '/usr/bin:/bin';

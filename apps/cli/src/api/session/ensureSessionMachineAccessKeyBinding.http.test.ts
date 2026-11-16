@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ensureSessionMachineAccessKeyBinding } from './ensureSessionMachineAccessKeyBinding';
@@ -9,9 +10,31 @@ import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExi
 import { logger } from '@/ui/logger';
 import { ConnectedServiceCredentialHttpClient } from '@/api/client/connectedServiceCredentialApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 describe('access-key bootstrap Home failure seam', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('retains each concurrent Session timeout while reusing an established machine binding', async () => {
+    let releaseResponse!: () => void;
+    const responseGate = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    const responsePromise = responseGate.then(() => ({ status: 200, data: { accessKey: { data: 'existing' } } }));
+    // Axios is the network boundary; exercise the actual binding caches and request policy.
+    const getSpy = vi.spyOn(axios, 'get').mockReturnValue(responsePromise as ReturnType<typeof axios.get>);
+    const bindWithTimeout = (timeout: string) => runInHostedSessionScope({
+      environment: { NODE_ENV: 'test', HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS: timeout },
+    }, () => ensureSessionMachineAccessKeyBinding({ serverUrl: 'http://binding-policy.example.test',
+      token: 'token', sessionId: 'shared-target-session', machineId: 'shared-machine' }));
+    const bindings = [bindWithTimeout('1100'), bindWithTimeout('2200'), bindWithTimeout('1100')];
+    try {
+      expect(getSpy.mock.calls.map(([, options]) => options?.timeout)).toEqual([1100, 2200]);
+    } finally {
+      releaseResponse();
+    }
+    await expect(Promise.all(bindings)).resolves.toEqual([undefined, undefined, undefined]);
+    await bindWithTimeout('3300');
+    expect(getSpy).toHaveBeenCalledTimes(2);
+  });
 
   it('classifies a lost committed binding receipt without fatal reporting and rejoins its exact tuple', async () => {
     let bound = false;

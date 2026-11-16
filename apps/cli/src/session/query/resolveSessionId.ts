@@ -1,5 +1,5 @@
 import { SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2 } from '@happier-dev/protocol/sessions/control/contract';
-import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { resolveSessionIdPrefixScanMaxPages } from './sessionIdPrefixScanBudget';
 
 import type { StoredCredentials } from '@/persistence';
 import type { SessionSnapshotRefreshReason } from '@/api/session/sessionSnapshotRefreshReason';
@@ -45,9 +45,7 @@ export async function resolveSessionIdOrPrefixFromSessionList(params: Readonly<{
   if (!input) return { ok: false, code: 'session_not_found' };
   if (isFullSessionId(input)) return { ok: true, sessionId: input };
 
-  const maxPagesRaw = (sessionProcessEnvironment().HAPPIER_SESSION_ID_PREFIX_SCAN_MAX_PAGES ?? '').trim();
-  const maxPagesParsed = maxPagesRaw ? Number.parseInt(maxPagesRaw, 10) : NaN;
-  const maxPages = Number.isFinite(maxPagesParsed) && maxPagesParsed > 0 ? Math.min(50, maxPagesParsed) : 10;
+  const maxPages = resolveSessionIdPrefixScanMaxPages();
   const prefixMatches = new Set<string>();
   const tagMatches = new Set<string>();
 
@@ -161,9 +159,7 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   }
   if (indexedTagLookup?.state === 'unavailable') return { ok: false, code: 'unsupported' };
 
-  const maxPagesRaw = (sessionProcessEnvironment().HAPPIER_SESSION_ID_PREFIX_SCAN_MAX_PAGES ?? '').trim();
-  const maxPagesParsed = maxPagesRaw ? Number.parseInt(maxPagesRaw, 10) : NaN;
-  const maxPages = Number.isFinite(maxPagesParsed) && maxPagesParsed > 0 ? Math.min(50, maxPagesParsed) : 10;
+  const maxPages = resolveSessionIdPrefixScanMaxPages();
 
   let cursor: string | undefined;
   const prefixMatches = new Set<string>();

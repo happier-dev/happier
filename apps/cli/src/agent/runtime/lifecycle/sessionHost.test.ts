@@ -86,6 +86,23 @@ describe('session host', () => {
 
   const add = (trackingKey: string) => host!.addSession({ trackingKey, argv: [trackingKey], env: {}, cwd: testHome });
 
+  it('ends a Session whose admitted policy is invalid without stranding the host or its healthy sibling', async () => {
+    const turn = deferred();
+    const running = await startHost(async () => { await turn.promise; });
+    const healthy = add('healthy-policy');
+    try {
+      await expect(Promise.resolve().then(() => running.addSession({
+        trackingKey: 'invalid-policy', argv: ['invalid'],
+        env: { HAPPIER_ENCRYPTION_REQUIREMENT: 'invalid' }, cwd: testHome,
+      }))).resolves.toEqual({ exitCode: 1 });
+      expect(await settledWithin(healthy, 50)).toBe('pending');
+    } finally {
+      turn.resolve();
+      await healthy;
+    }
+    expect(await settledWithin(running.whenEnded)).toBeUndefined();
+  });
+
   it('preserves the failing Session cause over its local endpoint without borrowing another Session stderr', async () => {
     const failureCause = { code: 'RUNNER_AGENT_SESSION_RUNTIME_SOURCE_MISSING', phase: 'client_start' as const,
       failureReason: 'unknown' as const };

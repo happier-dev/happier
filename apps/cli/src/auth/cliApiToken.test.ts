@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { formatAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
@@ -9,6 +10,7 @@ import {
   resolveCliApiTokenForSdk,
   stripCliApiTokenEnvironment,
   takePrefixCliApiTokenFlag,
+  takeCliApiTokenEnvironment,
   withCliApiToken,
 } from './cliApiToken';
 
@@ -22,6 +24,25 @@ const credential = formatAccountApiTokenCredentialV1({
 });
 
 describe('CLI encryption-capable credential custody', () => {
+  it('keeps ambient credentials and continuation handoffs in each concurrent hosted Session', async () => {
+    const secondBearer = bearer.replace('123e4567', '223e4567');
+    vi.stubEnv('HAPPIER_TOKEN', 'host-token-must-not-be-read');
+    const observe = (token: string) => runAddedHostedSession({ environment: { NODE_ENV: 'test', HAPPIER_TOKEN: token },
+      workingDirectory: '/session/token', end() {} }, async () => {
+      await Promise.resolve();
+      expect(resolveCliApiToken()).toBe(token);
+      expect(buildCliApiTokenContinuationEnvironment()).toEqual({ [CLI_API_TOKEN_HANDOFF_ENV]: token });
+    });
+    try {
+      await Promise.all([observe(bearer), observe(secondBearer)]);
+      await runAddedHostedSession({ environment: { NODE_ENV: 'test', HAPPIER_TOKEN: credential },
+        workingDirectory: '/session/sdk', end() {} }, async () => {
+        expect(resolveCliApiTokenForSdk(bearer)).toBe(credential);
+      });
+      expect(process.env.HAPPIER_TOKEN).toBe('host-token-must-not-be-read');
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('keeps the compound credential local to the SDK and refuses child continuation without disclosing it', async () => {
     const selected = takePrefixCliApiTokenFlag(['--api-token', credential, 'actions']);
     expect(selected?.rest).toEqual(['actions']);
@@ -44,6 +65,22 @@ describe('CLI encryption-capable credential custody', () => {
     });
     expect(resolveCliApiToken({})).toBeNull();
     expect(resolveCliApiTokenForSdk(bearer, {})).toBe(bearer);
+  });
+
+  it('consumes only the admitted Session token while preserving host credentials', async () => {
+    vi.stubEnv('HAPPIER_TOKEN', 'host-token-must-not-be-consumed');
+    const observe = (token: string) => {
+      const environment = { NODE_ENV: 'test' as const, HAPPIER_TOKEN: token, [CLI_API_TOKEN_HANDOFF_ENV]: token };
+      return runAddedHostedSession({ environment, workingDirectory: '/session/consume', end() {} }, async () => {
+        await Promise.resolve();
+        expect(takeCliApiTokenEnvironment()).toEqual({ token, source: 'HAPPIER_TOKEN' });
+        expect(environment).toEqual({ NODE_ENV: 'test' });
+      });
+    };
+    try {
+      await Promise.all([observe(bearer), observe(bearer.replace('123e4567', '223e4567'))]);
+      expect(process.env.HAPPIER_TOKEN).toBe('host-token-must-not-be-consumed');
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it('preserves the existing one-shot tmux handoff for an ordinary bearer', async () => {

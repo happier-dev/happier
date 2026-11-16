@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 import { createManifestAgentCatalogEntry, createNativeAgentCliAuthSpec } from './agentCliMetadata';
 import { resolveAgentSkillsCapability } from '@/agent/skills/resolveAgentSkillsCapability';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 function metadata(params: Readonly<{
   environmentVariables?: readonly string[];
@@ -40,6 +41,25 @@ afterEach(() => {
 });
 
 describe('native Agent CLI auth metadata', () => {
+  it('reads implicit credentials from each invoking Session while preserving explicit environments', async () => {
+    vi.stubEnv('HAPPIER_AUTH_METADATA_KEY', 'host-key');
+    const spec = createNativeAgentCliAuthSpec(metadata({ environmentVariables: ['HAPPIER_AUTH_METADATA_KEY'] }));
+    const results = await Promise.all([true, false].map((present) => runAddedHostedSession({
+      environment: present ? { NODE_ENV: 'test', HAPPIER_AUTH_METADATA_KEY: 'session-key' } : { NODE_ENV: 'test' },
+      workingDirectory: process.cwd(), end() {},
+    }, async () => {
+      await Promise.resolve();
+      return {
+        scoped: await spec.detectAuthStatus?.({ resolvedPath: '/unused' }),
+        explicit: await spec.detectAuthStatus?.({ resolvedPath: '/unused', processEnv: { NODE_ENV: 'test' } }),
+      };
+    })));
+    expect(results).toEqual([
+      { scoped: { state: 'logged_in', method: 'api_key_env', source: 'env' }, explicit: { state: 'logged_out', reason: 'missing_credentials' } },
+      { scoped: { state: 'logged_out', reason: 'missing_credentials' }, explicit: { state: 'logged_out', reason: 'missing_credentials' } },
+    ]);
+  });
+
   it('projects the exact manifest skill delivery facts into the current Agent catalog', () => {
     const skills = { delivery: 'none', nativeDisable: 'unsupported', liveReload: 'unsupported',
       usageEvidence: 'none', nativeRoots: { user: [['.agents', 'skills']] } } as const;

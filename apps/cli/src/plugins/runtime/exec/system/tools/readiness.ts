@@ -110,6 +110,8 @@ async function probeCandidate(params: Readonly<{
         runCliCommandBestEffort({
             resolvedPath: params.command,
             args: [...params.readiness.commandSurfaceArgs],
+            processEnv: params.env,
+            cwd: params.cwd,
             timeoutMs: null,
             signal: params.signal,
         }),

@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {
     isServerRoutedTransferOverSizeLimit,
     resolveServerRoutedTransferMaxBytesFromEnv,
@@ -5,7 +6,7 @@ import {
 
 export const SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR = 'File exceeds the server-routed transfer size limit';
 
-export function resolveServerRoutedTransferMaxBytes(env: NodeJS.ProcessEnv = process.env): number | null {
+export function resolveServerRoutedTransferMaxBytes(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): number | null {
     return resolveServerRoutedTransferMaxBytesFromEnv(env);
 }
 

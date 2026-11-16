@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {
   createSpawnHappyCliEnvScope,
   withTempHappyCliEntrypoint,
@@ -29,6 +30,41 @@ describe('spawnHappyCLI runtime executable selection', () => {
     if (originalPlatformDescriptor) {
       Object.defineProperty(process, 'platform', originalPlatformDescriptor);
     }
+  });
+
+  it('runs a relative runtime from the explicit child directory inside a Session', async () => {
+    await withTempDir('happier-child-runtime-directory-', async (root) => {
+      await withTempHappyCliEntrypoint(async (entrypoint) => {
+        const directory = join(root, 'child');
+        const runtimeDirectory = join(directory, 'runtime');
+        mkdirSync(runtimeDirectory, { recursive: true });
+        const runtimeName = process.platform === 'win32' ? 'node.exe' : 'node';
+        const runtime = join(runtimeDirectory, runtimeName);
+        if (process.platform === 'win32') copyFileSync(process.execPath, runtime);
+        else symlinkSync(process.execPath, runtime);
+        writeFileSync(entrypoint, 'process.stdout.write(process.cwd());');
+        const mod = await import('@/utils/spawnHappyCLI');
+        const child = runAddedHostedSession({
+          environment: { ...process.env,
+            HAPPIER_CLI_SUBPROCESS_RUNTIME: 'node', HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
+            HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0', HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '0',
+            HAPPIER_VARIANT: undefined, HAPPIER_STACK_REPO_DIR: undefined,
+            HAPPIER_STACK_CLI_ROOT_DIR: undefined, HAPPIER_STACK_STACK: undefined,
+            HAPPIER_JS_RUNTIME_PATH: `./runtime/${runtimeName}`,
+            HAPPIER_MANAGED_NODE_BIN: undefined, HAPPIER_NODE_PATH: undefined },
+          workingDirectory: root, end() {},
+        }, () => mod.spawnHappyCLI([], { cwd: directory, stdio: ['ignore', 'pipe', 'pipe'] }));
+        const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+          let stdout = '';
+          let stderr = '';
+          child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+          child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+          child.once('error', reject);
+          child.once('close', code => resolve({ code, stdout, stderr }));
+        });
+        expect(result).toEqual({ code: 0, stdout: directory, stderr: '' });
+      });
+    });
   });
 
   it('spawns Node using process.execPath when subprocess runtime is node', async () => {

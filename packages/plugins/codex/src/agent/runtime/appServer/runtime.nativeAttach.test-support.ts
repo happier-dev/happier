@@ -354,6 +354,9 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   });
   // Substitute the native executable with a byte relay; host framing and RPC remain real.
   const exec = {
+    readEnvironment: (keys: readonly string[]) => Object.fromEntries(
+      Object.entries(options.processEnv ?? {}).filter(([key, value]) => keys.includes(key) && typeof value === 'string'),
+    ),
     withSpawnAdmission: admitTestExecSpawn,
     clients: { spawn: connectClient, connectJsonRpc: (request: { endpoint: { socketPath: string }; maxFrameBytes?: number; requestTimeoutMs?: number }, options?: { signal?: AbortSignal }) => connectManagedJsonRpcTestClient({ cwd: root, socketPath: request.endpoint.socketPath, maxFrameBytes: request.maxFrameBytes, requestTimeoutMs: request.requestTimeoutMs, signal: options?.signal }) },
     systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' }, executablePath: '/fixture/codex' }) },

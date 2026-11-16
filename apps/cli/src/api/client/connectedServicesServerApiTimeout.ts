@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 export const CONNECTED_SERVICES_SERVER_API_TIMEOUT_ENV_KEY = 'HAPPIER_CONNECTED_SERVICES_API_TIMEOUT_MS';
 export const DEFAULT_CONNECTED_SERVICES_SERVER_API_TIMEOUT_MS = 30_000;
 
@@ -7,7 +8,7 @@ const MAX_CONNECTED_SERVICES_SERVER_API_TIMEOUT_MS = 120_000;
 type TimeoutEnv = Readonly<Record<string, string | undefined>>;
 
 export function resolveConnectedServicesServerApiTimeoutMs(
-  env: TimeoutEnv = process.env,
+  env: TimeoutEnv = sessionProcessEnvironment(),
 ): number {
   const raw = env[CONNECTED_SERVICES_SERVER_API_TIMEOUT_ENV_KEY]?.trim();
   if (!raw) return DEFAULT_CONNECTED_SERVICES_SERVER_API_TIMEOUT_MS;

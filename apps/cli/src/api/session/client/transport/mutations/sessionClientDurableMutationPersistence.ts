@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import * as z from 'zod/mini';
 import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { ApprovalProfileIdV1Schema } from '@happier-dev/protocol/actions';
@@ -69,6 +70,7 @@ export type SessionClientDurableMutationJournalPaths = Readonly<{
 }>;
 
 export type SessionClientDurableMutationPersistenceContext = Readonly<{
+    env?: NodeJS.ProcessEnv;
     custody: SessionClientDurableMutationJournalCustody;
     sessionId: string;
     paths: SessionClientDurableMutationJournalPaths;
@@ -210,12 +212,14 @@ export async function discoverDaemonSessionClientDurableMutationJournalSessionId
 }
 
 export function createSessionClientDurableMutationPersistenceContext(params: Readonly<{
+    env?: NodeJS.ProcessEnv;
     activeServerDir: string;
     sessionId: string;
     custody: SessionClientDurableMutationJournalCustody;
     parseQueuedMutation(value: unknown, expectedSessionId: string, stored?: boolean): ParseQueuedResult;
 }>): SessionClientDurableMutationPersistenceContext {
     return {
+        env: params.env ?? sessionProcessEnvironment(),
         custody: params.custody,
         sessionId: params.sessionId,
         paths: resolveSessionClientDurableMutationJournalPaths(params),
@@ -227,12 +231,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readBoundedIntEnv(name: string, fallback: number): number {
-    const parsed = Number.parseInt(String(process.env[name] ?? '').trim(), 10);
+function readBoundedIntEnv(name: string, fallback: number, env: NodeJS.ProcessEnv): number {
+    const parsed = Number.parseInt(String(env[name] ?? '').trim(), 10);
     return Number.isSafeInteger(parsed) && parsed > 0 ? Math.trunc(parsed) : fallback;
 }
 
-function resolveDeadLetterMaxEntries(): number {
+function resolveDeadLetterMaxEntries(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): number {
     return Math.min(
         MAX_DEAD_LETTER_MAX_ENTRIES,
         Math.max(
@@ -240,12 +244,13 @@ function resolveDeadLetterMaxEntries(): number {
             readBoundedIntEnv(
                 'HAPPIER_SESSION_MUTATION_OUTBOX_DEAD_LETTER_MAX_ENTRIES',
                 DEFAULT_DEAD_LETTER_MAX_ENTRIES,
+                env,
             ),
         ),
     );
 }
 
-export function resolveSessionClientDurableMutationReferencedPrerequisiteMaxEntries(): number {
+export function resolveSessionClientDurableMutationReferencedPrerequisiteMaxEntries(env: NodeJS.ProcessEnv = sessionProcessEnvironment()): number {
     return Math.min(
         MAX_REFERENCED_PREREQUISITE_MAX_ENTRIES,
         Math.max(
@@ -253,6 +258,7 @@ export function resolveSessionClientDurableMutationReferencedPrerequisiteMaxEntr
             readBoundedIntEnv(
                 'HAPPIER_SESSION_MUTATION_OUTBOX_REFERENCED_PREREQUISITE_MAX_ENTRIES',
                 DEFAULT_REFERENCED_PREREQUISITE_MAX_ENTRIES,
+                env,
             ),
         ),
     );
@@ -293,7 +299,7 @@ async function loadReferencedPrerequisiteMutationIds(
     sessionId: string,
     context?: SessionClientDurableMutationPersistenceContext,
 ): Promise<Readonly<{ mutationIds: ReadonlySet<string>; overflowCount: number }>> {
-    const maxEntries = resolveSessionClientDurableMutationReferencedPrerequisiteMaxEntries();
+    const maxEntries = resolveSessionClientDurableMutationReferencedPrerequisiteMaxEntries(context?.env);
     const mutationIds = new Set<string>();
     let overflowCount = 0;
     const add = (mutationId: string): void => {
@@ -1506,7 +1512,7 @@ export async function loadSessionClientDurableMutationDeadLetters(
     const retained = retainDeadLettersForQueuedPrerequisites({
         entries,
         referencedPrerequisiteMutationIds: referencedPrerequisites.mutationIds,
-        ordinaryCap: resolveDeadLetterMaxEntries(),
+        ordinaryCap: resolveDeadLetterMaxEntries(context?.env),
         referencedOverflowCount: referencedPrerequisites.overflowCount,
     });
     return [...retained.entries];
@@ -1540,7 +1546,7 @@ export async function appendSessionClientDurableMutationDeadLetters(
         seenIdentities.add(identity);
         return true;
     });
-    const maxEntries = resolveDeadLetterMaxEntries();
+    const maxEntries = resolveDeadLetterMaxEntries(context?.env);
     const referencedPrerequisites = await loadReferencedPrerequisiteMutationIds(sessionId, context);
     const retained = retainDeadLettersForQueuedPrerequisites({
         entries: mergedEntries,

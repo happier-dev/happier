@@ -1,11 +1,38 @@
-import { describe, expect, it } from 'vitest';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { describe, expect, it, vi } from 'vitest';
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { createConfiguredAcpBackend } from './createConfiguredAcpBackend';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 describe('createConfiguredAcpBackend', () => {
+  it.runIf(process.platform !== 'win32')('resolves a configured package runner from the hosted Session PATH', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-acp-session-runner-'));
+    try {
+      const bin = join(root, 'bin');
+      await mkdir(bin);
+      const runner = join(bin, 'npx');
+      await writeFile(runner, `#!${process.execPath}\nrequire('node:readline').createInterface({ input: process.stdin }).on('line', line => {
+        const request = JSON.parse(line);
+        const result = request.method === 'initialize' ? { protocolVersion: 1, authMethods: [] } : { sessionId: 'session-path-runner' };
+        if (request.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
+      });\n`);
+      await chmod(runner, 0o755);
+      const environment = { ...process.env, PATH: bin };
+      vi.stubEnv('PATH', '');
+      await runAddedHostedSession({ environment, workingDirectory: root, end() {} }, async () => {
+        const backend = await createConfiguredAcpBackend({ cwd: root,
+          backend: { backendId: 'session-runner', source: { kind: 'account_configured' }, name: 'session-runner', title: 'Session runner',
+            launch: { kind: 'command', command: 'npx', args: [] }, env: {},
+            capabilities: { supportsLoadSession: false, supportsModes: 'unknown', supportsModels: 'unknown', supportsConfigOptions: 'unknown', promptImageSupport: 'unknown' },
+          }, launchEnv: {}, env: { NODE_ENV: 'test', HAPPIER_HOME_DIR: root },
+        });
+        try { await expect(backend.startSession()).resolves.toMatchObject({ sessionId: 'session-path-runner' }); }
+        finally { await backend.dispose(); }
+      });
+    } finally { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); }
+  });
   it.runIf(process.platform !== 'win32')('starts the exact configured relative command with its args, env and session cwd', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-acp-package-runner-'));
     try {

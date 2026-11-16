@@ -1,3 +1,5 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+
 const DEFAULT_INITIAL_CHECKPOINT_DELAY_MS = 500;
 const DEFAULT_CHECKPOINT_INTERVAL_MS = 2_000;
 const DEFAULT_CHECKPOINT_MIN_CHARS = 256;
@@ -15,35 +17,35 @@ function resolveNonNegativeIntEnv(input: unknown, fallback: number): number {
 
 export function resolveInitialCheckpointDelayMs(input: unknown): number {
   return resolveNonNegativeIntEnv(
-    input ?? process.env.HAPPIER_STREAM_INITIAL_CHECKPOINT_MS,
+    input ?? sessionProcessEnvironment().HAPPIER_STREAM_INITIAL_CHECKPOINT_MS,
     DEFAULT_INITIAL_CHECKPOINT_DELAY_MS,
   );
 }
 
 export function resolveCheckpointIntervalMs(input: unknown): number {
   return resolveNonNegativeIntEnv(
-    input ?? process.env.HAPPIER_STREAM_CHECKPOINT_MS,
+    input ?? sessionProcessEnvironment().HAPPIER_STREAM_CHECKPOINT_MS,
     DEFAULT_CHECKPOINT_INTERVAL_MS,
   );
 }
 
 export function resolveCheckpointMinChars(input: unknown): number {
   return resolveNonNegativeIntEnv(
-    input ?? process.env.HAPPIER_STREAM_CHECKPOINT_MIN_CHARS,
+    input ?? sessionProcessEnvironment().HAPPIER_STREAM_CHECKPOINT_MIN_CHARS,
     DEFAULT_CHECKPOINT_MIN_CHARS,
   );
 }
 
 export function resolveLiveSnapshotIntervalMs(input: unknown): number {
   return resolveNonNegativeIntEnv(
-    input ?? process.env.HAPPIER_STREAM_LIVE_INTERVAL_MS,
+    input ?? sessionProcessEnvironment().HAPPIER_STREAM_LIVE_INTERVAL_MS,
     DEFAULT_LIVE_SNAPSHOT_INTERVAL_MS,
   );
 }
 
 export function resolveLiveSnapshotMinChars(input: unknown): number {
   return resolveNonNegativeIntEnv(
-    input ?? process.env.HAPPIER_STREAM_LIVE_MIN_CHARS,
+    input ?? sessionProcessEnvironment().HAPPIER_STREAM_LIVE_MIN_CHARS,
     DEFAULT_LIVE_SNAPSHOT_MIN_CHARS,
   );
 }
@@ -57,6 +59,6 @@ export function resolveLiveSnapshotMinChars(input: unknown): number {
  */
 export function resolveLiveDeltasEnabled(input: unknown): boolean {
   if (typeof input === 'boolean') return input;
-  const raw = (process.env.HAPPIER_STREAM_LIVE_DELTAS ?? '').toString().trim().toLowerCase();
+  const raw = (sessionProcessEnvironment().HAPPIER_STREAM_LIVE_DELTAS ?? '').toString().trim().toLowerCase();
   return raw !== '0' && raw !== 'false';
 }

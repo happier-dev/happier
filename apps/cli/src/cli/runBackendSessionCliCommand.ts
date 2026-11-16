@@ -1027,7 +1027,7 @@ Provider CLI Options:
         ? presentProviderCliRefusal(error.providerError)
         : [error instanceof Error ? error.message : 'Unknown error'];
       console.error(errorFrame('Error:', rawLines));
-      if (process.env.DEBUG) {
+      if (sessionEnvironment.DEBUG) {
         const rawDiagnostic = error instanceof Error
           ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ''}`
           : String(error);

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import axios from '@/api/client/credentialAxios';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/session/input/sessionProviderInputConsumer';
 import { prepareSessionEventMessageViaPort } from '../../transcript/sendMessages';
@@ -59,6 +60,45 @@ function createDeferred<T = void>() {
 }
 
 describe('runtime session client durable mutation outbox', () => {
+    it('retains each Session retry delay when delivery activates outside its scope', async () => {
+        vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+        const now = Date.now();
+        vi.stubEnv('HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS', '700');
+        vi.stubEnv('HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS', '0');
+        const post = vi.spyOn(axios, 'post').mockRejectedValue({ response: { status: 503 } });
+        const outboxes: Array<ReturnType<typeof createRuntimeSessionClientDurableMutationOutbox>> = [];
+        try {
+            outboxes.push(...await Promise.all(['100', '200'].map((base, index) => runInHostedSessionScope({ environment: {
+                NODE_ENV: 'test',
+                HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS: base,
+                HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS: '0',
+            } }, async () => {
+                await Promise.resolve();
+                const sessionId = `hosted-retry-${index}`;
+                const outbox = createRuntimeSessionClientDurableMutationOutbox({ token: 'token', sessionId,
+                    initiallyActive: false, flushOnReady: false, getSocket: () => null, requestReconnect: () => {} });
+                await outbox.awaitReady();
+                await outbox.setSessionSyncPendingInputServerContract(serverContract('session_sync_v2_pending_input_v1'));
+                await outbox.enqueueSessionTurnMutation({ v: 1, sessionId, mutationId: `turn-${index}`,
+                    action: 'begin', turnId: `turn-${index}`, observedAt: now });
+                return outbox;
+            }))));
+            await Promise.all(outboxes.map(outbox => outbox.activateDelivery()));
+            const nextAttempts = await Promise.all(outboxes.map(async (_, index) => {
+                const paths = resolveSessionClientDurableMutationJournalPaths({ activeServerDir: configurationMock.activeServerDir,
+                    custody: 'runtime', sessionId: `hosted-retry-${index}` });
+                const journal: { mutations: Array<{ attempts: number; nextAttemptAt: number }> } = JSON.parse(await readFile(paths.queuePath, 'utf8'));
+                const mutation = journal.mutations[0];
+                return (mutation.nextAttemptAt - now) / (2 ** mutation.attempts);
+            }));
+            expect(nextAttempts).toEqual([100, 200]);
+        } finally {
+            await Promise.all(outboxes.map(outbox => outbox.close()));
+            post.mockRestore();
+            vi.unstubAllEnvs();
+            vi.useRealTimers();
+        }
+    });
     it('separates durable admission and socket ACK phases without releasing the exact receipt early', async () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
         const sink = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);

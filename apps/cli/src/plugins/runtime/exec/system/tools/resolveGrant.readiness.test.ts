@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, chmod, appendFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, chmod, appendFile, mkdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join, delimiter, resolve } from 'node:path';
@@ -6,6 +6,8 @@ import { join, delimiter, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { isPluginError } from '@happier-dev/plugin-sdk';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 
 import { createPluginExecSystemToolResolver } from './resolveGrant';
 import type { PluginExecSystemToolDefinition } from './definitions';
@@ -113,6 +115,7 @@ async function writeKimiFixture(params: Readonly<{
     acpDelayMs?: number;
     surfaceDelayMs?: number;
     processLog?: string;
+    contextLog?: string;
 }>): Promise<string> {
     const filePath = join(params.dir, params.name ?? 'kimi');
     const caps = JSON.stringify(params.capabilities ?? CURRENT_CAPABILITIES);
@@ -120,6 +123,8 @@ async function writeKimiFixture(params: Readonly<{
 const fs = require('node:fs');
 const logFile = ${JSON.stringify(params.invocationLog)};
 const argv = process.argv.slice(2);
+const contextLog = ${JSON.stringify(params.contextLog ?? null)};
+if (contextLog) fs.appendFileSync(contextLog, JSON.stringify({ command: argv[0], cwd: process.cwd(), marker: process.env.READINESS_SESSION_MARKER }) + String.fromCharCode(10));
 try { fs.appendFileSync(logFile, JSON.stringify(argv) + '\\n'); } catch {}
 const MODE = ${JSON.stringify(params.acpMode)};
 const processLog = ${JSON.stringify(params.processLog ?? null)};
@@ -217,6 +222,59 @@ function invocationsIncludeVersionProbe(lines: readonly (readonly string[])[]): 
 }
 
 describe('system tool readiness (capability fingerprint, never semver)', () => {
+    it('runs both readiness probes in the invoking Session or explicitly admitted context', async () => {
+        if (process.platform === 'win32') return;
+        const root = await makeRoot();
+        const contextLog = join(root, 'contexts.log');
+        const executable = await writeKimiFixture({
+            dir: root, acpMode: 'current', surface: 'supported', version: '0.1.1',
+            invocationLog: join(root, 'invocations.log'), contextLog,
+        });
+        const resolver = createPluginExecSystemToolResolver({ definitions: [kimiDefinition()], registerGrant() {} });
+        const admittedResolver = createPluginExecSystemToolResolver({
+            definitions: [kimiDefinition()], baseEnv: { PATH: root, READINESS_SESSION_MARKER: 'admitted' }, registerGrant() {},
+        });
+        const contexts = await Promise.all(['session-a', 'session-b', 'admitted'].map(async (marker) => {
+            const cwd = join(root, marker);
+            await mkdir(cwd);
+            await runAddedHostedSession({
+                environment: { NODE_ENV: 'test', PATH: root, READINESS_SESSION_MARKER: marker === 'admitted' ? 'session-c' : marker },
+                workingDirectory: marker === 'admitted' ? root : cwd,
+                end() {},
+            }, async () => {
+                const owner = marker === 'admitted' ? admittedResolver : resolver;
+                const grant = await owner.resolve({ toolId: 'kimi-cli', purpose: 'test', preferredPath: executable, ...(marker === 'admitted' ? { cwd } : {}) });
+                expect(grant.executablePath).toBe(executable);
+            });
+            return { marker, cwd };
+        }));
+        const deferredCwd = join(root, 'deferred');
+        await mkdir(deferredCwd);
+        const deferred = runAddedHostedSession({
+            environment: { NODE_ENV: 'test', PATH: root, READINESS_SESSION_MARKER: 'deferred' },
+            workingDirectory: deferredCwd, end() {},
+        }, () => createStablePluginExecService({
+            defaultCwd: deferredCwd,
+            signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+            systemTools: createPluginExecSystemToolResolver({
+                definitions: [kimiDefinition()],
+                baseEnv: { PATH: root, READINESS_SESSION_MARKER: 'deferred' }, registerGrant() {},
+            }),
+            async resolveExecutable() { throw new Error('Resolution does not launch a child'); },
+            async resolvePath() { throw new Error('The admitted default directory is already absolute'); },
+        }));
+        await deferred.systemTools.resolve({ toolId: 'kimi-cli', purpose: 'test', preferredPath: executable });
+        contexts.push({ marker: 'deferred', cwd: deferredCwd });
+        const observations = (await readFile(contextLog, 'utf8')).trim().split('\n')
+            .map((line) => JSON.parse(line) as { command: string; cwd: string; marker?: string });
+        for (const context of contexts) {
+            expect(observations.filter((entry) => entry.marker === context.marker)).toEqual(expect.arrayContaining([
+                { command: 'acp', ...context }, { command: 'migrate', ...context },
+            ]));
+        }
+    }, 20_000);
+
     it('waits for current ACP readiness beyond the diagnostic probe budget', async () => {
         if (process.platform === 'win32') return;
         const root = await makeRoot();

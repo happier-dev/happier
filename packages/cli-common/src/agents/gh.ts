@@ -1,9 +1,9 @@
 import { access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
-import { join, delimiter as PATH_DELIMITER } from 'node:path';
+import { join } from 'node:path';
 import { GH_BINARY_NAME } from '@happier-dev/protocol/installables/definitions/gh';
 import { INSTALLABLE_KEYS } from '@happier-dev/protocol/installables/keys';
-import { execFileWithDeadline, resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '../process/index.js';
+import { execFileWithDeadline, resolveWindowsCommandInvocation, resolveExecutableCommand } from '../process/index.js';
 import { resolveManagedToolsRoot } from './managedToolsRoot.js';
 
 export type GhCommandResult = Readonly<{
@@ -19,10 +19,11 @@ export type GhCommandParams = Readonly<{
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   signal?: AbortSignal;
+  cwd?: string;
 }>;
 
 export type GhCommandDeps = Readonly<{
-  resolveSystemGhBinPath: (env?: Record<string, string | undefined>) => Promise<string | null>;
+  resolveSystemGhBinPath: (env?: Record<string, string | undefined>, cwd?: string) => Promise<string | null>;
   resolveManagedGhBinPath: (env?: Record<string, string | undefined>) => Promise<string | null>;
   runGhCommand: (params: GhCommandParams) => Promise<GhCommandResult>;
 }>;
@@ -32,7 +33,7 @@ export type GhNativeTokenResult =
   | Readonly<{ ok: false; reason: 'unavailable'; remediation: 'sign in with gh CLI' }>;
 
 export async function resolveGhNativeToken(
-  opts: Readonly<{ hostname?: string; env?: Record<string, string | undefined>; signal?: AbortSignal }> = {},
+  opts: Readonly<{ hostname?: string; env?: Record<string, string | undefined>; signal?: AbortSignal; cwd?: string }> = {},
   depsOverrides: Partial<GhCommandDeps> = {},
 ): Promise<GhNativeTokenResult> {
   const unavailable = { ok: false, reason: 'unavailable', remediation: 'sign in with gh CLI' } as const;
@@ -50,6 +51,7 @@ export async function resolveGhNativeToken(
           args: ['auth', 'token', '--hostname', opts.hostname ?? 'github.com'],
           ...(opts.env ? { env: opts.env } : {}),
           ...(opts.signal ? { signal: opts.signal } : {}),
+          ...(opts.cwd ? { cwd: opts.cwd } : {}),
         });
         return result.ok ? result.stdout.trim() : '';
       },
@@ -71,33 +73,8 @@ export const ghBinPath = (env?: Record<string, string | undefined>) => {
   return join(ghInstallDir(env), 'current', 'bin', binaryName);
 };
 
-async function resolveCommandOnPath(command: string, env: Record<string, string | undefined> = process.env): Promise<string | null> {
-  const pathRaw = typeof env.PATH === 'string' ? env.PATH.trim() : '';
-  if (!pathRaw) return null;
-
-  if (process.platform === 'win32') {
-    return resolveWindowsCommandOnPath(command, env);
-  }
-
-  const segments = pathRaw
-    .split(PATH_DELIMITER)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-
-  for (const dir of segments) {
-    const candidate = join(dir, command);
-    try {
-      await access(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      // continue
-    }
-  }
-  return null;
-}
-
-export async function resolveSystemGhBinPath(env: Record<string, string | undefined> = process.env): Promise<string | null> {
-  return resolveCommandOnPath(GH_BINARY_NAME, env);
+export async function resolveSystemGhBinPath(env: Record<string, string | undefined> = process.env, cwd?: string): Promise<string | null> {
+  return resolveExecutableCommand(GH_BINARY_NAME, { env, cwd });
 }
 
 export async function resolveManagedGhBinPath(env?: Record<string, string | undefined>): Promise<string | null> {
@@ -120,6 +97,7 @@ export async function runGhCommand(params: GhCommandParams): Promise<GhCommandRe
     const { stdout, stderr } = await execFileWithDeadline(invocation.command, invocation.args, {
       encoding: 'utf8',
       env: params.env ?? process.env,
+      cwd: params.cwd,
       windowsHide: true,
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
       ...(params.timeoutMs !== undefined ? { timeout: params.timeoutMs } : {}),
@@ -143,12 +121,13 @@ export async function resolveGhSelection<T>(params: Readonly<{
   deps: GhCommandDeps;
   env?: Record<string, string | undefined>;
   signal?: AbortSignal;
+  cwd?: string;
   probe: (binPath: string, source: 'system' | 'managed') => Promise<T>;
   isUsable: (result: T) => boolean;
 }>) {
   params.signal?.throwIfAborted();
   const [systemBinPath, managedBinPath] = await Promise.all([
-    params.deps.resolveSystemGhBinPath(params.env ?? process.env),
+    params.deps.resolveSystemGhBinPath(params.env ?? process.env, params.cwd),
     params.deps.resolveManagedGhBinPath(params.env),
   ]);
   params.signal?.throwIfAborted();

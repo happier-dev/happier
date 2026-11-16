@@ -1,3 +1,5 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+
 /**
  * Read a positive integer from an environment variable.
  *
@@ -8,7 +10,8 @@
 export function readPositiveIntEnv(name: string, fallback: number): number;
 export function readPositiveIntEnv(name: string): number | null;
 export function readPositiveIntEnv(name: string, fallback?: number): number | null {
-  const raw = typeof process.env[name] === 'string' ? process.env[name]!.trim() : '';
+  const value = sessionProcessEnvironment()[name];
+  const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw) return fallback ?? null;
   const n = Number(raw);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return fallback ?? null;

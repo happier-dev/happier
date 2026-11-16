@@ -255,6 +255,25 @@ describe('resolveAgentCliCommand', () => {
     }
   });
 
+  it('resolves Windows relative override commands against the supplied working directory', () => {
+    if (!originalPlatformDescriptor) throw new Error('Expected configurable process.platform');
+    const root = mkdtempSync(join(tmpdir(), 'agent-windows-relative-override-'));
+    const cwd = join(root, 'session');
+    const bin = join(cwd, 'bin');
+    mkdirSync(bin, { recursive: true });
+    const executable = join(bin, 'codex.cmd');
+    writeFileSync(executable, '@echo off\r\n');
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
+    try {
+      for (const override of ['bin/codex', 'codex']) {
+        const resolved = resolveAgentCliCommand('codex', { cwd, processEnv: {
+          NODE_ENV: 'test', HOME: root, USERPROFILE: root, PATH: 'bin', PATHEXT: '.CMD', HAPPIER_CODEX_PATH: override,
+        } });
+        expect.soft(resolved).toEqual({ source: 'override', command: executable });
+      }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   it('expands ~ and resolves agent CLI override shims on Windows', () => {
     if (!originalPlatformDescriptor) {
       throw new Error('Expected process.platform to be configurable for this test');

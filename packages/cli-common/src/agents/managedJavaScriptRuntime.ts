@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'node:path';
 
 import { withWorkspaceBundleLock } from '../../workspaceBundleLock.mjs';
 import { expandHomeDirPath } from '../path/expandHomeDirPath.js';
-import { execFileWithDeadline, resolveWindowsCommandInvocation, resolveWindowsCommandOnPath, resolveWindowsCommandPath } from '../process/index.js';
+import { execFileWithDeadline, resolveExecutableCommand, resolveWindowsCommandInvocation } from '../process/index.js';
 import { createManagedToolScratchDir } from './createManagedToolScratchDir.js';
 import { removeHappierTempDirAsync } from '../tempDirs/createHappierTempDir.js';
 import { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
@@ -18,11 +18,11 @@ function resolveManagedJavaScriptRuntimeBinaryName(): string {
   return process.platform === 'win32' ? 'happier-js-runtime.cmd' : 'happier-js-runtime';
 }
 
-export function managedJavaScriptRuntimeInstallDir(processEnv: NodeJS.ProcessEnv = process.env): string {
+export function managedJavaScriptRuntimeInstallDir(processEnv: Readonly<Record<string, string | undefined>> = process.env): string {
   return join(resolveManagedToolsRoot(processEnv), 'js-runtime');
 }
 
-export function managedJavaScriptRuntimeBinPath(processEnv: NodeJS.ProcessEnv = process.env): string {
+export function managedJavaScriptRuntimeBinPath(processEnv: Readonly<Record<string, string | undefined>> = process.env): string {
   return join(managedJavaScriptRuntimeInstallDir(processEnv), 'current', 'bin', resolveManagedJavaScriptRuntimeBinaryName());
 }
 
@@ -30,7 +30,7 @@ function resolveNextManagedJavaScriptRuntimeBinPath(processEnv: NodeJS.ProcessEn
   return join(managedJavaScriptRuntimeInstallDir(processEnv), 'next', 'bin', resolveManagedJavaScriptRuntimeBinaryName());
 }
 
-function resolveManagedNodeBinaryPath(processEnv: NodeJS.ProcessEnv): string {
+function resolveManagedNodeBinaryPath(processEnv: Readonly<Record<string, string | undefined>>): string {
   return process.platform === 'win32'
     ? join(managedJavaScriptRuntimeInstallDir(processEnv), 'current', 'runtime', 'node.exe')
     : join(managedJavaScriptRuntimeInstallDir(processEnv), 'current', 'runtime', 'bin', 'node');
@@ -81,28 +81,15 @@ function resolveNextManagedNodeBinaryPath(processEnv: NodeJS.ProcessEnv, binaryR
   return join(managedJavaScriptRuntimeInstallDir(processEnv), 'next', 'runtime', binaryRelativePath);
 }
 
-export function resolveExplicitJavaScriptRuntimeCommand(processEnv: NodeJS.ProcessEnv = process.env): string | null {
+export function resolveExplicitJavaScriptRuntimeCommand(
+  processEnv: Readonly<Record<string, string | undefined>> = process.env,
+  cwd?: string,
+): string | null {
   const override = readExplicitJavaScriptRuntimeCommand(processEnv);
-  if (override) {
-    if (process.platform === 'win32') {
-      const normalizedOverride =
-        (override.includes('/') || override.includes('\\') || override.includes(':'))
-          ? resolveWindowsCommandPath(override, processEnv)
-          : resolveWindowsCommandOnPath(override, processEnv);
-      if (normalizedOverride) return normalizedOverride;
-    }
-    try {
-      accessSync(override, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
-      return override;
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
+  return override ? resolveExecutableCommand(override, { env: processEnv, cwd }) : null;
 }
 
-export function readExplicitJavaScriptRuntimeCommand(processEnv: NodeJS.ProcessEnv = process.env): string | null {
+export function readExplicitJavaScriptRuntimeCommand(processEnv: Readonly<Record<string, string | undefined>> = process.env): string | null {
   const override = [
     processEnv.HAPPIER_JS_RUNTIME_PATH,
     processEnv.HAPPIER_MANAGED_NODE_BIN,
@@ -113,9 +100,12 @@ export function readExplicitJavaScriptRuntimeCommand(processEnv: NodeJS.ProcessE
   return override ?? null;
 }
 
-export function resolveExistingManagedJavaScriptRuntimeCommand(processEnv: NodeJS.ProcessEnv = process.env): string | null {
+export function resolveExistingManagedJavaScriptRuntimeCommand(
+  processEnv: Readonly<Record<string, string | undefined>> = process.env,
+  cwd?: string,
+): string | null {
   const rawOverride = readExplicitJavaScriptRuntimeCommand(processEnv);
-  const override = resolveExplicitJavaScriptRuntimeCommand(processEnv);
+  const override = resolveExplicitJavaScriptRuntimeCommand(processEnv, cwd);
   if (rawOverride && !override) return null;
   if (override) return override;
 
@@ -166,8 +156,9 @@ function isRunnableExecutablePath(pathLike: string | null | undefined): boolean 
 
 export function resolveJavaScriptRuntimeCommand(params: Readonly<{
   isBunRuntime: boolean;
-  processEnv?: NodeJS.ProcessEnv;
+  processEnv?: Readonly<Record<string, string | undefined>>;
   currentExecPath?: string | null;
+  cwd?: string;
 }>): string | null {
   const processEnv = params.processEnv ?? process.env;
   const currentExecPath =
@@ -175,7 +166,7 @@ export function resolveJavaScriptRuntimeCommand(params: Readonly<{
       ? params.currentExecPath.trim()
       : process.execPath;
   const rawOverride = readExplicitJavaScriptRuntimeCommand(processEnv);
-  const override = resolveExplicitJavaScriptRuntimeCommand(processEnv);
+  const override = resolveExplicitJavaScriptRuntimeCommand(processEnv, params.cwd);
 
   if (rawOverride && !override) return null;
   if (override) return override;
@@ -186,7 +177,7 @@ export function resolveJavaScriptRuntimeCommand(params: Readonly<{
     ) {
       return currentExecPath;
     }
-    return resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
+    return resolveExistingManagedJavaScriptRuntimeCommand(processEnv, params.cwd);
   }
   if (
     isRunnableExecutablePath(currentExecPath)
@@ -195,7 +186,7 @@ export function resolveJavaScriptRuntimeCommand(params: Readonly<{
     return currentExecPath;
   }
   if (isDirectBunExecutablePath(currentExecPath)) return currentExecPath;
-  return resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
+  return resolveExistingManagedJavaScriptRuntimeCommand(processEnv, params.cwd);
 }
 
 /**
@@ -208,8 +199,9 @@ export function resolveJavaScriptRuntimeCommand(params: Readonly<{
  */
 export function resolveHappierScriptRuntimeCommand(params: Readonly<{
   isBunRuntime: boolean;
-  processEnv?: NodeJS.ProcessEnv;
+  processEnv?: Readonly<Record<string, string | undefined>>;
   currentExecPath?: string | null;
+  cwd?: string;
 }>): string | null {
   const processEnv = params.processEnv ?? process.env;
   const currentExecPath = String(params.currentExecPath ?? '').trim() || process.execPath;
@@ -282,20 +274,20 @@ function resolveManagedJavaScriptRuntimeBootstrapLockPath(processEnv: NodeJS.Pro
 export async function ensureManagedJavaScriptRuntimeCommand(
   processEnv: NodeJS.ProcessEnv = process.env,
   deps: EnsureManagedJavaScriptRuntimeDeps = {},
-  options: Readonly<{ signal?: AbortSignal; onProgress?: AgentInstallProgressCallback }> = {},
+  options: Readonly<{ signal?: AbortSignal; onProgress?: AgentInstallProgressCallback; cwd?: string }> = {},
 ): Promise<string | null> {
   const { signal } = options;
   signal?.throwIfAborted();
   const rawOverride = readExplicitJavaScriptRuntimeCommand(processEnv);
   if (rawOverride) {
-    return resolveExplicitJavaScriptRuntimeCommand(processEnv);
+    return resolveExplicitJavaScriptRuntimeCommand(processEnv, options.cwd);
   }
 
   const qualify = async (command: string): Promise<string> => {
     const invocation = resolveWindowsCommandInvocation({ command, args: ['--version'], env: processEnv });
     try {
       await (deps.execFileWithDeadline ?? execFileWithDeadline)(invocation.command, invocation.args, {
-        env: processEnv, encoding: 'utf8', windowsHide: true,
+        env: processEnv, cwd: options.cwd, encoding: 'utf8', windowsHide: true,
         windowsVerbatimArguments: invocation.windowsVerbatimArguments, signal,
       });
     } catch (error) {
@@ -309,7 +301,7 @@ export async function ensureManagedJavaScriptRuntimeCommand(
     }
     return command;
   };
-  const existing = resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
+  const existing = resolveExistingManagedJavaScriptRuntimeCommand(processEnv, options.cwd);
   if (existing) return qualify(existing);
 
   const installDir = managedJavaScriptRuntimeInstallDir(processEnv);
@@ -323,7 +315,7 @@ export async function ensureManagedJavaScriptRuntimeCommand(
   try {
     return await withWorkspaceBundleLock(async () => {
       signal?.throwIfAborted();
-      const managedAfterLock = resolveExistingManagedJavaScriptRuntimeCommand(processEnv);
+      const managedAfterLock = resolveExistingManagedJavaScriptRuntimeCommand(processEnv, options.cwd);
       if (managedAfterLock) {
         return qualify(managedAfterLock);
       }

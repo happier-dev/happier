@@ -53,25 +53,28 @@ export async function ensureSessionMachineAccessKeyBinding(params: Readonly<{
     if (typeof cachedSuccessExpiresAt === 'number' && cachedSuccessExpiresAt > now) return;
     if (typeof cachedSuccessExpiresAt === 'number') accessKeyBindingSuccessExpiresAt.delete(cacheKey);
 
-    const existingInFlight = accessKeyBindingInFlight.get(cacheKey);
+    const timeoutMs = configuration.sessionControlHttpTimeoutMs;
+    const inFlightKey = `${cacheKey}\0${timeoutMs}`;
+    const existingInFlight = accessKeyBindingInFlight.get(inFlightKey);
     if (existingInFlight) return await existingInFlight;
 
-    const bindingPromise = ensureSessionMachineAccessKeyBindingUncached({ ...params, serverUrl, machineId: params.machineId })
+    const bindingPromise = ensureSessionMachineAccessKeyBindingUncached({ ...params, serverUrl, machineId: params.machineId, timeoutMs })
         .then(() => {
             const completedAt = Date.now();
             accessKeyBindingSuccessExpiresAt.set(cacheKey, completedAt + ACCESS_KEY_BINDING_CACHE_TTL_MS);
             pruneAccessKeyBindingSuccessCache(completedAt);
         })
         .finally(() => {
-            if (accessKeyBindingInFlight.get(cacheKey) === bindingPromise) accessKeyBindingInFlight.delete(cacheKey);
+            if (accessKeyBindingInFlight.get(inFlightKey) === bindingPromise) accessKeyBindingInFlight.delete(inFlightKey);
         });
-    accessKeyBindingInFlight.set(cacheKey, bindingPromise);
+    accessKeyBindingInFlight.set(inFlightKey, bindingPromise);
     await bindingPromise;
 }
 
 async function ensureSessionMachineAccessKeyBindingUncached(params: Parameters<typeof ensureSessionMachineAccessKeyBinding>[0] & Readonly<{
     serverUrl: string;
     machineId: string;
+    timeoutMs: number;
 }>): Promise<void> {
     const path = `/v1/access-keys/${encodeURIComponent(params.sessionId)}/${encodeURIComponent(params.machineId)}`;
     const requestConfig = (method: 'GET' | 'POST', body?: unknown) => ({
@@ -81,7 +84,7 @@ async function ensureSessionMachineAccessKeyBindingUncached(params: Parameters<t
             ...(params.authorizeRequest ? params.authorizeRequest({ method, path, ...(body !== undefined ? { body } : {}) })
                 : { Authorization: `Bearer ${params.token}` }),
         },
-        timeout: configuration.sessionControlHttpTimeoutMs,
+        timeout: params.timeoutMs,
         validateStatus: () => true,
     });
     const accessKeyUrl = `${params.serverUrl}${path}`;

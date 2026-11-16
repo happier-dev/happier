@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import { logger } from '@/ui/logger';
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
@@ -25,6 +26,7 @@ export type SessionClientRecoveryRuntime = Readonly<{
 export function createSessionClientRecoveryRuntime(
     params: Readonly<{
         token: string;
+        env?: NodeJS.ProcessEnv;
         serverUrl?: string;
         accountChangesEnabled?: boolean;
         sessionId: string;
@@ -40,6 +42,7 @@ export function createSessionClientRecoveryRuntime(
         onSessionFollowInvalidated?: () => void;
     }> & SessionStoredContentCryptoContext,
 ): SessionClientRecoveryRuntime {
+    const env = params.env ?? sessionProcessEnvironment();
     const serverUrl = params.serverUrl ?? resolveServerHttpBaseUrl();
     let accountIdPromise: Promise<string> | null = null;
     let changesSyncInFlight: Promise<void> | null = null;
@@ -137,7 +140,7 @@ export function createSessionClientRecoveryRuntime(
     };
 
     const syncChangesOnConnect = async (opts: { reason: 'connect' | 'reconnect' | 'live' }): Promise<void> => {
-        if (params.accountChangesEnabled !== false && !isV2ChangesSyncEnabled(process.env.HAPPY_ENABLE_V2_CHANGES)) {
+        if (params.accountChangesEnabled !== false && !isV2ChangesSyncEnabled(env.HAPPY_ENABLE_V2_CHANGES)) {
             if (opts.reason === 'live' && !params.getClosed()) {
                 params.onSessionFollowInvalidated?.();
                 await params.refreshDemandedAccountCatalogs?.();

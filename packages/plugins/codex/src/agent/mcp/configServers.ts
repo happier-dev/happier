@@ -1,9 +1,13 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 
 import type { DetectedMcpServerV1, DiscoveryWarning as McpDiscoveryWarningV1 } from '@happier-dev/plugin-sdk/mcp';
+
+export const CODEX_MCP_CONFIG_ENV_KEYS = ['HOME', 'USERPROFILE', 'CODEX_HOME'] as const;
 
 export type ReadCodexMcpConfigServersResult = Readonly<{
     servers: ReadonlyArray<DetectedMcpServerV1>;
@@ -46,9 +50,16 @@ export function readCodexMcpServerKeysFromConfigToml(env: Readonly<Record<string
 }
 
 export async function readCodexMcpConfigServers(
-    params: Readonly<{ env?: Readonly<Record<string, string | undefined>>; directory?: string | null }>,
+    params: Readonly<{
+        env?: Readonly<Record<string, string | undefined>>;
+        exec?: Pick<ExecService, 'readEnvironment'>;
+        directory?: string | null;
+    }>,
 ): Promise<ReadCodexMcpConfigServersResult> {
-    const env = params.env ?? process.env;
+    if (params.env === undefined && params.exec && !params.exec.readEnvironment) {
+        throw new PluginError({ code: 'plugin_service_unavailable', message: 'Inherited invocation environment is unavailable.' });
+    }
+    const env = params.env ?? params.exec?.readEnvironment?.(CODEX_MCP_CONFIG_ENV_KEYS) ?? process.env;
     const directory = params.directory?.trim() ? expandHomePath(params.directory, resolveHomeDirFromEnvironment(env)) : null;
     const candidates = [{ kind: 'user' as const, parsed: readCodexMcpConfig(env) },
         ...(directory ? [{ kind: 'project' as const, parsed: readCodexMcpConfig(env, join(directory, '.codex', 'config.toml')) }] : [])];

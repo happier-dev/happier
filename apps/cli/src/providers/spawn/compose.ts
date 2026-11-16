@@ -18,7 +18,6 @@ import {
   relative,
   resolve,
 } from 'node:path';
-import { homedir } from 'node:os';
 
 import { cleanupRetainedProviderNativeHome, retainProviderNativeHome } from './nativeHomeLifetime';
 
@@ -27,6 +26,8 @@ import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protoc
 import type { AgentProviderBindingLaunchMaterializationV1, AgentProviderBindingMaterializationV1, SessionEnvOverlayV1 } from '@happier-dev/protocol';
 import type { ConnectedServiceStateSharingDescriptor } from '@/agent/catalog/types';
 import { applyConnectedServiceStateSharingDescriptor, resolveConnectedServiceNativeHomeRoot } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 
 export type ProviderBindingNativeHomeContext = Readonly<{
   descriptor: ConnectedServiceStateSharingDescriptor;
@@ -201,9 +202,9 @@ export async function composeProviderBindingMaterialization(input: Readonly<{
       const context = input.nativeHome;
       const declaration = context?.descriptor.nativeHome;
       if (!context || !declaration) throw new Error('Provider binding native-home descriptor is unavailable');
-      const sourceEnvironment = context.sourceEnvironment ?? process.env;
+      const sourceEnvironment = context.sourceEnvironment ?? sessionProcessEnvironment();
       const sourceRoot = resolveConnectedServiceNativeHomeRoot({ nativeHome: declaration,
-        sourceEnvironment, homeDir: context.homeDir ?? homedir() });
+        sourceEnvironment, homeDir: context.homeDir ?? resolveHomeDirFromEnvironment(sourceEnvironment) });
       if (input.sessionId && context.descriptor.state.entries.some(entry => entry.requiresRealDirectory)) {
         nativeHomeRoot = retainProviderNativeHome({
           generationRoot: rootPath, materializationBaseDir: input.materializationBaseDir,
@@ -217,7 +218,7 @@ export async function composeProviderBindingMaterialization(input: Readonly<{
         nativeSourceContext: { sourceRoot, sourceEnv: Object.fromEntries(Object.entries(sourceEnvironment).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) },
         target: { targetMaterializedRoot: nativeHomeRoot, targetMaterializedEnv: { [declaration.environmentKey]: nativeHomeRoot } },
         configMode: context.descriptor.config.supported ? 'copied' : 'isolated',
-        requestedStateMode: 'shared', effectiveStateMode: 'shared', cwd: process.cwd(),
+        requestedStateMode: 'shared', effectiveStateMode: 'shared', cwd: sessionWorkingDirectory(),
         // Real directories already retained here are the native authority.
         // Import the user's history once; never overwrite later native writes
         // from an older source-home snapshot on replacement or resume.

@@ -188,7 +188,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
   const getSessionManager = (): TerminalBridgeSessionManager => {
     if (sessionManager) return sessionManager;
     sessionManager = createTerminalPtySessionManager({
-      ptyProvider: createNodePtyProvider({ readSpawnFailureLimits: params.deps?.readSpawnFailureLimits }),
+      ptyProvider: createNodePtyProvider({ env, readSpawnFailureLimits: params.deps?.readSpawnFailureLimits }),
       readSpawnFailureLimits: params.deps?.readSpawnFailureLimits,
       ownerRemainder: params.deps?.ownerRemainder,
       config: config.sessionManager,

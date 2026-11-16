@@ -386,7 +386,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     const context = {
       signal: controller.signal,
       services: {
-        exec: {},
+        exec: { readEnvironment: () => ({}) },
         logger: { debug: vi.fn() },
         sessions: { current: { media: { registerSourceRoot: vi.fn() } } },
         connectedAccounts: createConnectedAccountsFixture(),
@@ -470,7 +470,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     const context = {
       signal: new AbortController().signal,
       services: {
-        logger: { debug: vi.fn() },
+        logger: { debug: vi.fn(), warn: vi.fn() },
         sessions: { current: { media: { registerSourceRoot: vi.fn() } } },
         connectedAccounts: createConnectedAccountsFixture(),
       },
@@ -486,7 +486,7 @@ describe('createCodexNativeAppServerSessionRuntime', () => {
     }
 
     expect(rejection).toBeInstanceOf(Error);
-    expect(rejection).toMatchObject({ code: 'agent_startup_failed' });
+    expect(rejection).toMatchObject({ code: 'agent_startup_transport_failed' });
     expect((rejection as Error).stack ?? '').not.toContain(request.startupInstructions.instructions);
     expect((rejection as Error).stack ?? '').not.toContain(providerCauseSentinel);
     expect(rejection).not.toHaveProperty('cause');

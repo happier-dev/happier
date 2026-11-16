@@ -1,3 +1,5 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+
 const DEFAULT_TURN_DIFF_FILE_BUDGET_BYTES = 256 * 1024;
 const DEFAULT_TURN_DIFF_TURN_BUDGET_BYTES = 1024 * 1024;
 
@@ -12,14 +14,14 @@ function resolveNonNegativeInt(input: unknown, fallback: number): number {
 
 export function resolveTurnDiffFileBudgetBytes(input?: unknown): number {
     return resolveNonNegativeInt(
-        input ?? process.env.HAPPIER_TURN_DIFF_FILE_BUDGET_BYTES,
+        input ?? sessionProcessEnvironment().HAPPIER_TURN_DIFF_FILE_BUDGET_BYTES,
         DEFAULT_TURN_DIFF_FILE_BUDGET_BYTES,
     );
 }
 
 export function resolveTurnDiffTurnBudgetBytes(input?: unknown): number {
     return resolveNonNegativeInt(
-        input ?? process.env.HAPPIER_TURN_DIFF_TURN_BUDGET_BYTES,
+        input ?? sessionProcessEnvironment().HAPPIER_TURN_DIFF_TURN_BUDGET_BYTES,
         DEFAULT_TURN_DIFF_TURN_BUDGET_BYTES,
     );
 }

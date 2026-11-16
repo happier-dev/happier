@@ -72,7 +72,7 @@ function isolateTestExecutables(root) {
   mkdirSync(bin, { recursive: true });
   const hostPath = String(process.env.PATH ?? '').split(delimiter).filter(Boolean);
   const tools = ['node', 'git', 'sh', 'bash', 'env', 'ps', 'stat', 'date', 'sed', 'awk', 'grep',
-    'cat', 'readlink', 'realpath', 'sleep', 'mkdir', 'rm', 'chmod', 'dirname', 'basename',
+    'cat', 'readlink', 'realpath', 'sleep', 'mkdir', 'mkfifo', 'rm', 'chmod', 'dirname', 'basename',
     'head', 'tail', 'tr', 'cut', 'sort', 'uniq', 'find', 'xargs', 'wc', 'cp', 'mv', 'tar', 'gzip', 'which', 'id', 'uname', 'getent'];
   for (const name of tools) {
     const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat'] : [''];

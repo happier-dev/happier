@@ -5,6 +5,7 @@ import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
 import { removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
 import { logger } from '@/ui/logger';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createPreflightCatalogCleanupScope, type PreflightCatalogCleanupScope } from '@/capabilities/probes/preflightCatalogCleanupScope';
 
 import type { ManagedServiceSpec, ManagedServices } from '@happier-dev/plugin-sdk/managed-services';
@@ -661,7 +662,7 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
             ],
             isSafeForBackgroundChecks: isPluginAgentCliAuthBackgroundCheckSafe(params.cli),
             ...(params.cliAuth.signInState ? { signInState: params.cliAuth.signInState } : {}),
-            detectAuthStatus: async ({ processEnv = process.env, timeoutMs: probeTimeoutMs, nativeExecution }): Promise<CliAuthStatusDraft> => {
+            detectAuthStatus: async ({ processEnv = sessionProcessEnvironment(), cwd, timeoutMs: probeTimeoutMs, nativeExecution }): Promise<CliAuthStatusDraft> => {
                 if (!params.isCurrent()) {
                     return { state: 'unknown', reason: 'probe_failed' };
                 }
@@ -680,7 +681,7 @@ export function projectAgentCliAuthCatalogEntry(params: Readonly<{
                 const systemToolExec = createProviderScopedStableExecService({
                     ...((nativeExecution?.agentIsolation ?? params.agentIsolation)
                         ? { agentIsolation: nativeExecution?.agentIsolation ?? params.agentIsolation } : {}),
-                    cwd: nativeExecution?.cwd ?? process.cwd(),
+                    cwd: nativeExecution?.cwd ?? cwd ?? sessionWorkingDirectory(),
                     environment: executableEnvironment,
                     systemTools: admittedSystemTools,
                     agentId: params.agentId,
@@ -1808,6 +1809,7 @@ function createProviderScopedStableExecService(params: Readonly<{
     const systemTools = createProviderScopedSystemToolResolver(params);
     return createStablePluginExecService({
         ...(params.agentIsolation ? { agentIsolation: params.agentIsolation } : {}),
+        defaultCwd: params.cwd,
         environment: Object.freeze({}),
         signal: params.signal ?? new AbortController().signal,
         isOccurrenceCurrent: params.isOccurrenceCurrent ?? (() => true),

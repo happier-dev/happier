@@ -66,6 +66,7 @@ import { createV2ManagedDependencySourceModel } from '@/plugins/runtime/invocati
 import { createProductionManagedDependencySourceAdapter } from '@/plugins/runtime/invocation/services/managedDependencySourceAdapters';
 import { getRuntimeInstallableAdapter } from '@/packagedRuntime/installables/registry';
 import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
+import { bindToHostedSessionScope, sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 /** Installed inventory served to the Plugins UI; omit daemon-only catalog detail. */
 function projectInstalledPluginCapabilityEntry(entry: PluginCatalogEntry): InstalledPluginCapabilityEntryV1 {
@@ -461,6 +462,8 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
     resolveNativeCatalogTarget?: CliProbeDependencies['resolveNativeCatalogTarget'];
     hasSessionAgentTransition?: () => boolean;
 }> = {}): Promise<ReturnType<typeof createCapabilitiesService>> {
+    const environment = sessionProcessEnvironment();
+    const cwd = sessionWorkingDirectory();
     // The applied runtime already owns Account and Machine enablement. Consume
     // its admitted declarations, as the roster does, without another Home read.
     // Standalone callers without an applied runtime resolve their own snapshot.
@@ -482,6 +485,7 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
     const cliCapabilities = await Promise.all(
         resolvedContributionRegistry.agents.map(async (entry) =>
             withAgentCliUpdateFacts(await createGenericCliCapability(entry.id, cliProbeDependencies), entry.id, {
+                env: environment,
                 resolveRuntimeSpec: () => {
                     if (!entry.runtimeSpec) throw new Error('Agent CLI runtime is unavailable.');
                     return entry.runtimeSpec;
@@ -521,6 +525,7 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
     // Standalone Sessions have a resolved catalog but no applied daemon runtime.
     // Use the same source-selection owner for their read-only status snapshot.
     const standaloneDependencies = registryLease ? null : createStablePluginManagedDependenciesHost({
+        env: environment,
         installablesRegistry,
         sourceModel: createV2ManagedDependencySourceModel({
             platform: process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux',
@@ -528,7 +533,7 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
         }),
         isCurrent: cliProbeDependencies.isAgentRegistryCurrent,
         getSettings: () => ({}), resolveAdapter: getRuntimeInstallableAdapter,
-        resolveSourceAdapter: createProductionManagedDependencySourceAdapter,
+        resolveSourceAdapter: input => createProductionManagedDependencySourceAdapter({ ...input, env: environment, cwd }),
         async removeManagedInstall() { throw new Error('Capability status does not remove managed dependencies'); },
     });
     const installableCapabilities = await createInstallableCapabilities({
@@ -548,7 +553,7 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
         },
     });
 
-    return createCapabilitiesService({
+    const service = createCapabilitiesService({
         capabilities: [
             ...cliCapabilities,
             ...installableCapabilities,
@@ -562,7 +567,7 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
             const context = await buildDetectContext(requests, factorySource ?? dependencies.sessionFactorySource,
                 dependencies.agentInstallExecutionScope === 'member' ? { sourcePolicy: 'member',
                     ...(dependencies.agentSharedManagedToolsRoot ? { memberSharedManagedToolsRoot: dependencies.agentSharedManagedToolsRoot } : {}),
-                } : undefined);
+                } : undefined, environment, cwd);
             if (context.cliSnapshot && dependencies.observeCliSnapshot) {
                 const observedAgentIds = requests.filter(request => request.id.startsWith('cli.')).map(request => request.id.slice(4));
                 if (observedAgentIds.length) await dependencies.observeCliSnapshot({
@@ -573,6 +578,7 @@ export async function createCliCapabilitiesService(dependencies: Readonly<{
                 ? { agentInstallExecutionScope: dependencies.agentInstallExecutionScope } : {}) };
         },
     });
+    return { ...service, detect: bindToHostedSessionScope(service.detect), invoke: bindToHostedSessionScope(service.invoke) };
 }
 
 export function registerCapabilitiesHandlers(

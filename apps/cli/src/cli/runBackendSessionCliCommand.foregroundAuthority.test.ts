@@ -13,6 +13,8 @@ import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/cata
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { StoredSessionOwnerMetadataEnvelopeV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { formatAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -40,6 +42,8 @@ import { OH_MY_PI_PLUGIN } from '@happier-dev/plugins-ohmypi/manifest';
 import { resolveSessionFileStoreDirsSync } from '@happier-dev/plugin-sdk/sessions/file-stores';
 import { PI_SESSION_FILE_STORE_DESCRIPTOR_V1 } from '../../../../packages/plugins/pi/src/agent/sessionFileStoreDescriptor';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { bindProcessLogger, Logger } from '@/ui/logger';
+import { CliApiTokenChildContinuationError } from '@/auth/cliApiToken';
 
 afterEach(() => { vi.restoreAllMocks(); reloadConfiguration(); });
 
@@ -48,6 +52,7 @@ type ForegroundAuthorityCase = Readonly<{
   disabled?: boolean; explicitProfile?: boolean; fileStoreAgent?: 'pi' | 'ohmypi'; hostedScope?: string;
   providerConnectionId?: string;
   modelSelection?: 'native' | 'provider';
+  diagnosticDebug?: Readonly<{ host: string | undefined; session: string | undefined }>;
 }>;
 
 describe('foreground CLI runner authority scope', () => {
@@ -64,24 +69,34 @@ describe('foreground CLI runner authority scope', () => {
     { prior: undefined, definitionId: 'profile-choice', missingCli: false, profileRouting: true },
     { prior: undefined, definitionId: 'profile-disabled', missingCli: false, profileRouting: true, disabled: true },
     { prior: undefined, definitionId: 'profile-explicit', missingCli: false, profileRouting: true, explicitProfile: true },
+    { prior: undefined, definitionId: undefined, missingCli: false, profileRouting: true,
+      diagnosticDebug: { host: undefined, session: '1' } },
+    { prior: undefined, definitionId: undefined, missingCli: false, profileRouting: true,
+      diagnosticDebug: { host: '1', session: undefined } },
     ...(['pi', 'ohmypi'] as const).flatMap(fileStoreAgent => ['first', 'second'].map(hostedScope => ({
       prior: undefined, definitionId: undefined, missingCli: false, fileStoreAgent, hostedScope,
     }))),
-  ])('exposes foreground admission through the CLI sink and restores prior paths (%o)', async ({ prior, definitionId, missingCli, profileRouting, disabled, explicitProfile, fileStoreAgent, hostedScope, providerConnectionId, modelSelection }) => {
+  ])('exposes foreground admission through the CLI sink and restores prior paths (%o)', async ({ prior, definitionId, missingCli, profileRouting, disabled, explicitProfile, fileStoreAgent, hostedScope, providerConnectionId, modelSelection, diagnosticDebug }) => {
     const home = await mkdtemp(join(tmpdir(), 'happier-foreground-cli-authority-'));
     const fileStorePlugin = fileStoreAgent === 'pi' ? PI_PLUGIN : OH_MY_PI_PLUGIN;
     const fileStoreTestkit = fileStoreAgent ? await createPluginTestkit({
       manifest: fileStorePlugin.manifest, module: fileStorePlugin,
     }) : null;
-    const implicitLocalTui = profileRouting && definitionId === undefined;
+    const implicitLocalTui = profileRouting && definitionId === undefined && !diagnosticDebug;
     const restoreTty = implicitLocalTui ? setStdioTtyForTest({ stdin: true, stdout: true }) : () => {};
     const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_LOCAL_SERVER_URL',
       'HAPPIER_PUBLIC_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SESSION_AUTOSTART_DAEMON',
-      HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY, HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]);
+      HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY, HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
+      'DEBUG', 'HAPPIER_LOG_LEVEL']);
     const previous = { [HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]: prior && `${prior}.bootstrap`,
       [HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]: prior && `${prior}.authority` };
     env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'foreground-fixture',
-      HAPPIER_SESSION_AUTOSTART_DAEMON: implicitLocalTui ? undefined : '0', ...previous });
+      HAPPIER_SESSION_AUTOSTART_DAEMON: implicitLocalTui ? undefined : '0', ...previous,
+      ...(diagnosticDebug ? { DEBUG: diagnosticDebug.host, HAPPIER_LOG_LEVEL: 'debug' } : {}) });
+    const diagnosticLogPath = join(home, 'command-diagnostics.log');
+    const diagnosticLogger = diagnosticDebug ? new Logger({ logFilePath: diagnosticLogPath,
+      pruneCurrentProcessLogs: false, allowDangerousRemoteLogging: false }) : null;
+    const restoreLogger = diagnosticLogger ? bindProcessLogger(diagnosticLogger) : null;
     let agentId = 'acme.foreground/fixture';
     const agentTarget = definitionId === undefined ? undefined : {
       kind: 'agent' as const, identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId,
@@ -246,18 +261,44 @@ describe('foreground CLI runner authority scope', () => {
         expect(process.env[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]).toBe(previous[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]);
         throw new Error('foreground-command-exit');
       }) as never);
-      const invoke = () => explicitProfile ? handleConfiguredAcpCatalogCliCommand({ args: ['acp-catalog', '--backend', definitionId!, '--profile', 'ignored-profile', '--profile', profile.id], rawArgv: [], terminalRuntime: null }) : profileRouting ? dispatchCli({ args: ['--profile', 'ignored-profile', '--profile', profile.id], rawArgv: [], terminalRuntime: null }) : runBackendSessionCliCommand({ resolveSessionRuntimePreferences: null, context: { args: agentTarget || modelSelection ? ['--model', 'fixture-native-model', ...(providerConnectionId ? ['--provider-connection', providerConnectionId] : [])] : [], rawArgv: [], terminalRuntime: null },
+      const invoke = () => explicitProfile ? handleConfiguredAcpCatalogCliCommand({ args: ['acp-catalog', '--backend', definitionId!, '--profile', 'ignored-profile', '--profile', profile.id], rawArgv: [], terminalRuntime: null }) : profileRouting ? dispatchCli({ args: ['--profile', 'ignored-profile', '--profile', profile.id], rawArgv: diagnosticDebug ? ['happier', '--api-token', 'foreground-fixture-token', 'session-diagnostic-fixture'] : [], terminalRuntime: null }) : runBackendSessionCliCommand({ resolveSessionRuntimePreferences: null, context: { args: agentTarget || modelSelection ? ['--model', 'fixture-native-model', ...(providerConnectionId ? ['--provider-connection', providerConnectionId] : [])] : [], rawArgv: [], terminalRuntime: null },
         backendIdForSessionRuntime: agentId, runtimeAuthorityAgentId: agentId,
         ...(fileStoreAgent ? { agentIdForAccountSettings: agentId } : {}),
         ...(agentTarget ? { resolveExtraOptions: () => ({ agentTarget,
           runtimeDescriptorV1: { v: 1 as const, agentId, agent: { definitionId: agentTarget.definitionId } } }) } : {}),
       });
       const endCodes: number[] = [];
-      const run = fileStoreAgent ? runAddedHostedSession({ environment: { ...process.env },
+      const hosted = Boolean(fileStoreAgent || diagnosticDebug);
+      const run = hosted ? runAddedHostedSession({ environment: { ...process.env, NODE_ENV: 'test',
+        ...(diagnosticDebug ? { DEBUG: diagnosticDebug.session } : {}) },
         workingDirectory: directory, end: code => { endCodes.push(code); } }, invoke) : invoke();
-      if (fileStoreAgent) await run;
+      if (hosted) await run;
       else await expect(run).rejects.toThrow('foreground-command-exit');
       expect(boundaryErrors).toEqual([]);
+      if (diagnosticDebug) {
+        const hasRawStack = vi.mocked(console.error).mock.calls.some(call =>
+          call.some(value => typeof value === 'string' && /\n\s+at /.test(value)));
+        expect.soft(hasRawStack).toBe(Boolean(diagnosticDebug.session));
+        diagnosticLogger!.flushSync();
+        const diagnosticLog = readFileSync(diagnosticLogPath, 'utf8');
+        expect.soft(diagnosticLog.includes('session-diagnostic-fixture')).toBe(Boolean(diagnosticDebug.session));
+        expect(diagnosticLog).not.toContain('foreground-fixture-token');
+        vi.mocked(console.error).mockClear();
+        const credential = formatAccountApiTokenCredentialV1({
+          bearer: `hap_v1_22222222-2222-4222-a222-222222222222_${encodeBase64(new Uint8Array(32).fill(11), 'base64url')}`,
+          wrappingSecret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
+          serverIdentityId: 'srv_foreground_diagnostics', accountId: 'foreground-diagnostics',
+          contentPublicKey: encodeBase64(new Uint8Array(32).fill(9)),
+        });
+        // The real credential owner refuses continuation before tmux can spawn.
+        await expect(runAddedHostedSession({ environment: { ...process.env, NODE_ENV: 'test', DEBUG: diagnosticDebug.session },
+          workingDirectory: directory, end: () => {} }, () => dispatchCli({
+          args: ['--api-token', credential, 'claude', '--tmux'],
+          rawArgv: ['happier', '--api-token', credential, 'claude', '--tmux'], terminalRuntime: null,
+        }))).rejects.toThrow('foreground-command-exit');
+        expect.soft(vi.mocked(console.error).mock.calls.some(call =>
+          call.some(value => value instanceof CliApiTokenChildContinuationError))).toBe(Boolean(diagnosticDebug.session));
+      }
       if (disabled) {
         expect(vi.mocked(console.error).mock.calls.flat().join(' ')).toContain('disabled');
         expect(requests).not.toContain(FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH);
@@ -276,12 +317,12 @@ describe('foreground CLI runner authority scope', () => {
       }
       expect(requests, vi.mocked(console.error).mock.calls.map(call => call.join(' ')).join('\n')).toContain('/v1/sessions');
       expect(authorizations).toHaveLength(1);
+      if (hosted) expect(endCodes).toEqual([1]);
       if (fileStoreAgent) {
-        expect(endCodes).toEqual([1]);
         expect(fileStoreEnvironment).toMatchObject({ PI_CODING_AGENT_DIR: join(directory, 'agent-data') });
         expect(resolveSessionFileStoreDirsSync({ product: PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
           env: { PI_CODING_AGENT_DIR: 'agent-data' } }).agentDir).toBe(join(process.cwd(), 'agent-data'));
-      } else {
+      } else if (!hosted) {
         expect(sessionCreateEnvironment).toEqual(authorizations[0]!.childEnv);
         expect(sessionCreateBootstrapAgent).toBe(agentId);
       }
@@ -308,10 +349,11 @@ describe('foreground CLI runner authority scope', () => {
         expect(authorizations[0]!.authorization.descriptor.backendId).toBe(agentId);
       }
       expect(releaseObserved).toBe(true);
-      if (!fileStoreAgent) expect(processExit).toHaveBeenCalledWith(1);
+      if (!hosted) expect(processExit).toHaveBeenCalledWith(1);
       expect(process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]).toBe(previous[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]);
       expect(process.env[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]).toBe(previous[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]);
     } finally {
+      restoreLogger?.();
       resetActiveAccountSettingsSnapshotForTests();
       for (const authorization of authorizations) await authorization.cleanupBootstrapFiles();
       await fixture?.dispose();

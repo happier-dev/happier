@@ -29,6 +29,38 @@ const runScmCommand: typeof runCanonicalScmCommand = input => runWithScmCommandR
 const probeScmExecutableAvailable: typeof probeCanonicalScmExecutableAvailable = input => runWithScmCommandRunner(runner, () => probeCanonicalScmExecutableAvailable(input));
 
 describe('runScmCommand output limits', () => {
+    it('pushes with the invoking hosted Session global Git configuration', async () => {
+        const root = mkdtempSync(join(tmpdir(), 'happier-scm-session-push-'));
+        const workspace = join(root, 'workspace');
+        const destination = join(root, 'destination.git');
+        try {
+            execFileSync('git', ['init', '-q', workspace]);
+            initRepo(workspace);
+            execFileSync('git', ['init', '--bare', '-q', destination]);
+            execFileSync('git', ['remote', 'add', 'origin', 'session-global:'], { cwd: workspace });
+            const config = join(root, 'session.gitconfig');
+            writeFileSync(config, `[url "${destination.replaceAll('\\', '/')}"]\n\tinsteadOf = session-global:\n`);
+            const result = await runAddedHostedSession({ environment: { ...process.env, GIT_CONFIG_GLOBAL: config },
+                workingDirectory: workspace, end() {} }, () => runScmCommand({ bin: 'git', cwd: workspace,
+                args: ['push', 'origin', 'HEAD:refs/heads/session'] }));
+            expect(result, JSON.stringify(result)).toMatchObject({ success: true });
+            expect(execFileSync('git', ['rev-parse', 'refs/heads/session'], { cwd: destination, encoding: 'utf8' }))
+                .toBe(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workspace, encoding: 'utf8' }));
+        } finally { rmSync(root, { recursive: true, force: true }); }
+    });
+
+    it('uses the hosted Session output budget and lets explicit command limits win', async () => {
+        await runAddedHostedSession({
+            environment: { ...process.env, HAPPIER_SCM_MAX_OUTPUT_BYTES: '8' },
+            workingDirectory: tmpdir(), end() {},
+        }, async () => {
+            const limited = await runScmCommand({ bin: 'git', cwd: tmpdir(), args: ['--version'] });
+            expect(limited).toMatchObject({ success: false, outputLimitExceeded: true });
+            const explicit = await runScmCommand({ bin: 'git', cwd: tmpdir(), args: ['--version'], maxOutputBytes: 1024 });
+            expect(explicit.success).toBe(true);
+        });
+    });
+
     it('inherits each hosted Session environment and home path while preserving command overrides', async () => {
         const homes = ['first', 'second'].map(name => mkdtempSync(join(tmpdir(), 'happier-scm-' + name + '-')));
         try {

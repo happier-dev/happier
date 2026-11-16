@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { TurnChangeSet } from '@happier-dev/protocol';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import { buildTurnChangeSetDiffInput } from './buildTurnChangeSetDiffInput';
 
@@ -17,6 +18,46 @@ function makeTurnChangeSet(file: TurnChangeSet['files'][number]): TurnChangeSet 
 }
 
 describe('buildTurnChangeSetDiffInput', () => {
+    it.each(['file', 'turn'] as const)('keeps concurrent hosted Session %s budgets independent of the host', async limitingBudget => {
+        const keys = ['HAPPIER_TURN_DIFF_FILE_BUDGET_BYTES', 'HAPPIER_TURN_DIFF_TURN_BUDGET_BYTES'] as const;
+        const previous = keys.map(key => process.env[key]);
+        for (const key of keys) process.env[key] = '8192';
+        const diff = 'changed line\n'.repeat(100);
+        const params = {
+            turnChangeSet: makeTurnChangeSet({ filePath: 'src/large.ts', changeKind: 'modified',
+                unifiedDiff: diff, source: 'provider_tool', confidence: 'exact', provider: 'codex' }),
+            source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            rawToolName: 'apply_patch',
+        } as const;
+        try {
+            const inputs = await Promise.all([true, false].map(limited => runAddedHostedSession({
+                environment: {
+                    NODE_ENV: 'test',
+                    HAPPIER_TURN_DIFF_FILE_BUDGET_BYTES: limited && limitingBudget === 'file' ? '16' : '16384',
+                    HAPPIER_TURN_DIFF_TURN_BUDGET_BYTES: limited && limitingBudget === 'turn' ? '16' : '32768',
+                },
+                workingDirectory: limited ? '/limited' : '/preserved', end: () => {},
+            }, async () => {
+                await Promise.resolve();
+                const scoped = buildTurnChangeSetDiffInput(params);
+                const explicit = buildTurnChangeSetDiffInput({ ...params, fileBudgetBytes: 8192, turnBudgetBytes: 8192 });
+                return { scoped, explicit };
+            })));
+            expect(inputs[0]?.scoped).toMatchObject({ files: [{ truncated: true }],
+                _happier: { turnDiffTruncatedFileCount: 1 } });
+            expect(inputs[0]?.scoped.files).not.toEqual([expect.objectContaining({ unified_diff: diff })]);
+            expect(inputs[1]?.scoped.files).toEqual([expect.objectContaining({ unified_diff: diff, confidence: 'exact' })]);
+            for (const input of inputs) {
+                expect(input.explicit.files).toEqual([expect.objectContaining({ unified_diff: diff, confidence: 'exact' })]);
+            }
+        } finally {
+            keys.forEach((key, index) => {
+                if (previous[index] === undefined) delete process.env[key];
+                else process.env[key] = previous[index];
+            });
+        }
+    });
+
     it('bounds oversized file payloads and keeps metadata for on-demand retrieval', () => {
         const input = buildTurnChangeSetDiffInput({
             turnChangeSet: makeTurnChangeSet({

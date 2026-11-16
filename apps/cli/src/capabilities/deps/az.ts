@@ -1,11 +1,8 @@
-import { access } from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
-import { delimiter as PATH_DELIMITER, join } from 'node:path';
-
 import { AZ_BINARY_NAME, AZ_CLI_SETUP_URL, AZ_DEP_ID } from '@happier-dev/protocol/installables/definitions/az';
-import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
+import { resolveExecutableCommand } from '@happier-dev/cli-common/process';
 
 import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 type AzCommandResult = Readonly<{
   ok: boolean;
@@ -15,8 +12,8 @@ type AzCommandResult = Readonly<{
 }>;
 
 type AzStatusDeps = Readonly<{
-  resolveSystemAzBinPath: (env?: NodeJS.ProcessEnv) => Promise<string | null>;
-  runAzCommand: (params: Readonly<{ binPath: string; args: readonly string[]; timeoutMs?: number }>) => Promise<AzCommandResult>;
+  resolveSystemAzBinPath: (env?: NodeJS.ProcessEnv, cwd?: string) => Promise<string | null>;
+  runAzCommand: (params: Readonly<{ binPath: string; args: readonly string[]; timeoutMs?: number; processEnv?: NodeJS.ProcessEnv; cwd?: string }>) => Promise<AzCommandResult>;
 }>;
 
 export type AzDepData = Readonly<{
@@ -63,35 +60,17 @@ function parseAccountMetadata(stdout: string): Readonly<{ accountName: string | 
   }
 }
 
-async function resolveCommandOnPath(command: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
-  const pathRaw = typeof env.PATH === 'string' ? env.PATH.trim() : '';
-  if (!pathRaw) return null;
-
-  if (process.platform === 'win32') {
-    return resolveWindowsCommandOnPath(command, env);
-  }
-
-  for (const dir of pathRaw.split(PATH_DELIMITER).map((entry) => entry.trim()).filter(Boolean)) {
-    const candidate = join(dir, command);
-    try {
-      await access(candidate, fsConstants.X_OK);
-      return candidate;
-    } catch {
-      // continue searching PATH
-    }
-  }
-  return null;
+async function resolveSystemAzBinPath(env: NodeJS.ProcessEnv = process.env, cwd?: string): Promise<string | null> {
+  return resolveExecutableCommand(AZ_BINARY_NAME, { env, cwd });
 }
 
-async function resolveSystemAzBinPath(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
-  return resolveCommandOnPath(AZ_BINARY_NAME, env);
-}
-
-async function runAzCommand(params: Readonly<{ binPath: string; args: readonly string[]; timeoutMs?: number }>): Promise<AzCommandResult> {
+async function runAzCommand(params: Readonly<{ binPath: string; args: readonly string[]; timeoutMs?: number; processEnv?: NodeJS.ProcessEnv; cwd?: string }>): Promise<AzCommandResult> {
   return runCliCommandBestEffort({
     resolvedPath: params.binPath,
     args: [...params.args],
     timeoutMs: params.timeoutMs ?? 2_000,
+    processEnv: params.processEnv,
+    cwd: params.cwd,
     env: {
       AZURE_CORE_NO_COLOR: '1',
       AZURE_CORE_ONLY_SHOW_ERRORS: '1',
@@ -100,15 +79,17 @@ async function runAzCommand(params: Readonly<{ binPath: string; args: readonly s
 }
 
 export async function getAzDepStatus(
-  _opts: Readonly<{ includeLatestVersion?: boolean; onlyIfInstalled?: boolean }> = {},
+  opts: Readonly<{ includeLatestVersion?: boolean; onlyIfInstalled?: boolean; env?: NodeJS.ProcessEnv; cwd?: string }> = {},
   depsOverrides: Partial<AzStatusDeps> = {},
 ): Promise<AzDepData> {
+  const environment = opts.env ?? sessionProcessEnvironment();
+  const cwd = opts.cwd ?? sessionWorkingDirectory();
   const deps: AzStatusDeps = {
     resolveSystemAzBinPath: depsOverrides.resolveSystemAzBinPath ?? resolveSystemAzBinPath,
     runAzCommand: depsOverrides.runAzCommand ?? runAzCommand,
   };
 
-  const binPath = await deps.resolveSystemAzBinPath(process.env);
+  const binPath = await deps.resolveSystemAzBinPath(environment, cwd);
   if (!binPath) {
     return {
       installed: false,
@@ -132,8 +113,8 @@ export async function getAzDepStatus(
   }
 
   const [versionResult, accountResult] = await Promise.all([
-    deps.runAzCommand({ binPath, args: ['--version'] }),
-    deps.runAzCommand({ binPath, args: ['account', 'show', '--output', 'json'] }),
+    deps.runAzCommand({ binPath, args: ['--version'], processEnv: environment, cwd }),
+    deps.runAzCommand({ binPath, args: ['account', 'show', '--output', 'json'], processEnv: environment, cwd }),
   ]);
   // `az account show` answers only when it exits. A probe the deadline killed — or one that never
   // launched — comes back `ok: false` with `exitCode: null`, and reading that as "signed out"

@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { cmd, fail, info, ok, warn } from '@happier-dev/cli-common/output';
+import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 
 /**
  * Shared CLI text style palette for doctor-repair rendering.
@@ -127,7 +128,7 @@ export function friendlyServerId(serverId: string): string {
 export function compactHomePath(absolutePath: string | null | undefined): string {
   const p = String(absolutePath ?? '').trim();
   if (!p) return p;
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  const home = resolveHomeDirFromEnvironment();
   if (home && p.startsWith(home + '/')) return `~${p.slice(home.length)}`;
   if (home && p === home) return '~';
   return p;

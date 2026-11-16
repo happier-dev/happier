@@ -122,7 +122,7 @@ export class BufferedFileAppender {
                     if (!retried && reportsWriteErrors) this.reportWriteError(error);
                 }
                 // No other write of this appender is pending here, so a synchronous trim cannot drop one.
-                if (this.noteAppended(chunk)) this.trimToTailWindow();
+                if (this.noteAppended(chunk)) this.trimToTailWindow(reportsWriteErrors);
             }
         } finally {
             this.flushInFlight = false;
@@ -145,7 +145,7 @@ export class BufferedFileAppender {
         return this.fileBytes >= this.tailWindowBytes * 2;
     }
 
-    private trimToTailWindow(): void {
+    private trimToTailWindow(reportsWriteErrors: boolean): void {
         const windowBytes = this.tailWindowBytes;
         if (windowBytes === null) return;
         let descriptor: number | null = null;
@@ -171,7 +171,7 @@ export class BufferedFileAppender {
         } catch (error) {
             // Retry only after another window of writes, not on every flush.
             if (this.fileBytes !== null) this.fileBytes -= windowBytes;
-            this.reportWriteError(error);
+            if (reportsWriteErrors) this.reportWriteError(error);
         } finally {
             if (descriptor !== null) {
                 try { closeSync(descriptor); } catch { /* already reported or harmless */ }

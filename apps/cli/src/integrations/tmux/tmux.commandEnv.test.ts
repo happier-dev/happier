@@ -18,6 +18,42 @@ vi.mock('child_process', () => ({
 }));
 
 describe('TmuxUtilities tmux subprocess environment', () => {
+    it('retains concurrent Session environments, cwd and tmux context outside their registering scopes', async () => {
+        vi.resetModules();
+        const { TmuxUtilities } = await import('./TmuxUtilities');
+        const { runAddedHostedSession } = await import('@/agent/runtime/lifecycle/hostedSessionScope');
+        const calls: TmuxSpawnCall[] = [];
+        spawnMock.mockImplementation((command: string, args: readonly string[], options: SpawnOptions) => {
+            calls.push({ command, args: [...args], options });
+            return createTmuxMockChildProcess();
+        });
+        const fixtures = await Promise.all(['alpha', 'beta'].map(async (name) => {
+            const utils = await runAddedHostedSession({
+                environment: { NODE_ENV: 'test', SESSION_VALUE: name, TMUX: `/tmp/${name},123,0`, TMUX_PANE: `%${name}` },
+                workingDirectory: `/work/${name}`,
+                end: () => {},
+            }, async () => {
+                await Promise.resolve();
+                return new TmuxUtilities(name, { EXPLICIT_VALUE: name });
+            });
+            return { name, utils };
+        }));
+
+        await Promise.all(fixtures.map(({ utils }) => utils.executeTmuxCommand(['list-sessions'])));
+
+        for (const { name, utils } of fixtures) {
+            const call = calls.find(call => call.options.env?.SESSION_VALUE === name);
+            expect(call?.options.cwd).toBe(`/work/${name}`);
+            const env = call?.options.env;
+            expect(env?.SESSION_VALUE).toBe(name);
+            expect(env?.EXPLICIT_VALUE).toBe(name);
+            expect(env?.TMUX).toBe(`/tmp/${name},123,0`);
+            expect(env?.TMUX_PANE).toBe(`%${name}`);
+            expect(Object.keys(env ?? {}).sort()).toEqual(['EXPLICIT_VALUE', 'NODE_ENV', 'SESSION_VALUE', 'TMUX', 'TMUX_PANE']);
+            expect(utils.detectTmuxEnvironment()).toEqual({ socket_path: `/tmp/${name}`, server_pid: 123, pane: `%${name}` });
+        }
+    });
+
     it('hides captured tmux control commands at process creation', async () => {
         vi.resetModules();
         const { TmuxUtilities } = await import('@/integrations/tmux');

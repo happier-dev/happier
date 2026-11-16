@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { admitAgentIsolationLaunchForHost, type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createHappierTempDir, removeHappierTempDir } from '@happier-dev/cli-common/tempDirs';
 import type { ScmCommandInput, ScmCommandRunner, ScmExecResult } from './runtime';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const PUSH_DATA_CONFIG = /^(?:remote\..+\.(?:url|pushurl|push|fetch|mirror)|branch\..+\.(?:remote|pushremote|merge)|push\.(?:default|followtags|autosetupremote|pushoption))$/i;
 
@@ -83,7 +84,8 @@ export function isHostGitPush(input: ScmCommandInput): boolean {
  */
 export async function runHostGitPush(input: ScmCommandInput, runHost: ScmCommandRunner,
     context?: HostAgentIsolationLaunchContext, runWorkspace?: ScmCommandRunner): Promise<ScmExecResult | undefined> {
-    const clearedGitEnvironment = Object.fromEntries(Object.keys(process.env)
+    const environment = sessionProcessEnvironment();
+    const clearedGitEnvironment = Object.fromEntries(Object.keys(environment)
         .filter(key => key.startsWith('GIT_') || key === 'SSH_ASKPASS')
         .map(key => [key, undefined]));
     const inspectionEnvironment: Record<string, string | undefined> = { ...clearedGitEnvironment,
@@ -98,10 +100,10 @@ export async function runHostGitPush(input: ScmCommandInput, runHost: ScmCommand
         inspect(['symbolic-ref', '-q', 'HEAD']), inspect(['rev-parse', '--verify', 'HEAD']),
         inspect(['config', '--local', '--includes', '--null', '--list']),
         inspect(['config', '--global', '--includes', '--show-origin', '--null', '--list'], {
-            ...inspectionEnvironment, GIT_CONFIG_GLOBAL: process.env.GIT_CONFIG_GLOBAL,
+            ...inspectionEnvironment, GIT_CONFIG_GLOBAL: environment.GIT_CONFIG_GLOBAL,
         }),
         inspect(['config', '--system', '--includes', '--show-origin', '--null', '--list'], {
-            ...inspectionEnvironment, GIT_CONFIG_NOSYSTEM: '0', GIT_CONFIG_SYSTEM: process.env.GIT_CONFIG_SYSTEM,
+            ...inspectionEnvironment, GIT_CONFIG_NOSYSTEM: '0', GIT_CONFIG_SYSTEM: environment.GIT_CONFIG_SYSTEM,
         }),
     ]);
     for (const result of [objects, refs, head, local]) if (!result.success) return result;

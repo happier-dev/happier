@@ -10,6 +10,7 @@ import { createRunnerManagedProviderBindingLaunchEnvironmentTransformer } from '
 import type { AgentAcpProviderTurnSourceHost } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { AcpBackend } from '../AcpBackend';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
 
 function writeEnvCaptureAcpAgentScript(params: { dir: string; captureEnvKeys?: readonly string[] }): string {
@@ -105,6 +106,26 @@ function writeRejectedInitializeAcpAgentScript(params: { dir: string; secret: st
 }
 
 describe('AcpBackend spawn environment', () => {
+  it('inherits the environment of each hosted Session when spawning its ACP process', async () => {
+    vi.stubEnv('SOURCE_INHERITED', 'physical-host');
+    try {
+      await Promise.all(['first', 'second'].map(sessionId => withTempDir('acp-hosted-spawn-', async dir => {
+        const capturePath = join(dir, 'env.json');
+        const script = writeEnvCaptureAcpAgentScript({ dir, captureEnvKeys: ['SOURCE_INHERITED'] });
+        await runAddedHostedSession({ environment: { ...process.env, SOURCE_INHERITED: sessionId },
+          workingDirectory: dir, end() {},
+        }, async () => {
+          const backend = new AcpBackend({ agentName: 'fixture', cwd: dir, command: process.execPath, args: [script],
+            env: { NODE_ENV: 'test', HAPPIER_TEST_ENV_CAPTURE: capturePath }, transportHandler: createAcpTestTransportHandler(),
+          });
+          try {
+            await backend.startSession();
+            expect(JSON.parse(readFileSync(capturePath, 'utf8'))).toMatchObject({ SOURCE_INHERITED: sessionId });
+          } finally { await backend.dispose(); }
+        });
+      })));
+    } finally { vi.unstubAllEnvs(); }
+  });
   it('restores host ownership after provider environment replacement', async () => {
     const hostTag = 'v1.0123456789ab.session.session-host';
     vi.stubEnv('HAPPIER_PROCESS_OWNER', hostTag);

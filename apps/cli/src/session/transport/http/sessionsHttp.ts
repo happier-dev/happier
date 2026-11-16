@@ -318,6 +318,7 @@ function buildSessionByIdInFlightKey(params: Readonly<{
   encodedSessionId: string;
   requestPurpose: string;
   accessProjectionVersion?: 1;
+  timeoutMs: number;
 }>): string {
   return [
     params.serverUrl,
@@ -325,6 +326,7 @@ function buildSessionByIdInFlightKey(params: Readonly<{
     params.encodedSessionId,
     params.requestPurpose,
     String(params.accessProjectionVersion ?? ''),
+    String(params.timeoutMs),
   ].join('\u0000');
 }
 
@@ -387,12 +389,14 @@ async function getSessionByIdResponse(params: Readonly<{
       validateStatus: () => true,
     });
   }
+  const timeoutMs = configuration.sessionControlHttpTimeoutMs;
   const key = buildSessionByIdInFlightKey({
     serverUrl,
     token: params.token,
     encodedSessionId,
     requestPurpose: resolveSessionSnapshotRequestPurpose(resolveSessionSnapshotRequestCoalescingReason(params.reason)),
     accessProjectionVersion,
+    timeoutMs,
   });
   const existing = sessionByIdInFlightRequests.get(key);
   if (existing) return await existing;
@@ -404,7 +408,7 @@ async function getSessionByIdResponse(params: Readonly<{
       'Content-Type': 'application/json',
       'X-Happier-Request-Purpose': requestPurpose,
     },
-    timeout: configuration.sessionControlHttpTimeoutMs,
+    timeout: timeoutMs,
     validateStatus: () => true,
   });
   sessionByIdInFlightRequests.set(key, promise);

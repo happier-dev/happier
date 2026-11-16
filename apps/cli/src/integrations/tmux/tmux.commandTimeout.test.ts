@@ -1,8 +1,26 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { resolveTmuxCommandTimeoutMs } from './index';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { resolveTmuxPromptSubmitDelayMs, resolveTmuxSendKeysChunkSize } from './env';
 
 describe('resolveTmuxCommandTimeoutMs', () => {
+  it('reads independent tmux settings from concurrent Sessions', async () => {
+    const values = await Promise.all(['17', '29'].map(value => runAddedHostedSession({
+      environment: {
+        NODE_ENV: 'test',
+        HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS: value,
+        HAPPIER_CLI_TMUX_PROMPT_SUBMIT_DELAY_MS: value,
+        HAPPIER_CLI_TMUX_SEND_KEYS_CHUNK_SIZE: value,
+      },
+      workingDirectory: '/workspace', end: () => {},
+    }, async () => {
+      await Promise.resolve();
+      return [resolveTmuxCommandTimeoutMs(), resolveTmuxPromptSubmitDelayMs(), resolveTmuxSendKeysChunkSize()];
+    })));
+    expect(values).toEqual([[17, 17, 17], [29, 29, 29]]);
+  });
+
   const original = process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS;
 
   afterEach(() => {

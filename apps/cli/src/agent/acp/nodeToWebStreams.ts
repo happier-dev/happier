@@ -30,7 +30,7 @@ export function nodeToWebStreams(
     };
 
     const capture = (() => {
-        if (!parseBooleanEnv(process.env.HAPPIER_ACP_CAPTURE_IO, false)) return null;
+        if (!parseBooleanEnv(sessionProcessEnvironment().HAPPIER_ACP_CAPTURE_IO, false)) return null;
         const traceFile = (sessionProcessEnvironment().HAPPIER_STACK_TOOL_TRACE_FILE ?? '').toString().trim();
         const baseDir = traceFile ? dirname(resolve(sessionWorkingDirectory(), traceFile)) : sessionWorkingDirectory();
         const withCaptureErrorHandler = (stream: WriteStream, streamLabel: 'stdin' | 'stdout'): WriteStream => {

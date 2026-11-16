@@ -24,6 +24,7 @@ import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLo
 import type { Credentials, StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { decryptAccountSettingsCiphertext } from '@/settings/accountSettingsClient';
 import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
 import { applyAccountSettingsToProcessEnv } from '@/settings/applyAccountSettingsToProcessEnv';
@@ -444,17 +445,17 @@ const requesterSettingsReads = new Map<string, {
   readers: number;
 }>();
 
-function readAccountSettingsModeFromEnv(): 'auto' | 'never' {
-  const raw = typeof process.env.HAPPIER_ACCOUNT_SETTINGS_MODE === 'string'
-    ? process.env.HAPPIER_ACCOUNT_SETTINGS_MODE.trim().toLowerCase()
+function readAccountSettingsModeFromEnv(environment: NodeJS.ProcessEnv): 'auto' | 'never' {
+  const raw = typeof environment.HAPPIER_ACCOUNT_SETTINGS_MODE === 'string'
+    ? environment.HAPPIER_ACCOUNT_SETTINGS_MODE.trim().toLowerCase()
     : '';
   if (raw === 'never') return 'never';
   return 'auto';
 }
 
-function readTtlMsFromEnvOrDefault(): number {
-  const raw = typeof process.env.HAPPIER_ACCOUNT_SETTINGS_TTL_MS === 'string'
-    ? process.env.HAPPIER_ACCOUNT_SETTINGS_TTL_MS.trim()
+function readTtlMsFromEnvOrDefault(environment: NodeJS.ProcessEnv): number {
+  const raw = typeof environment.HAPPIER_ACCOUNT_SETTINGS_TTL_MS === 'string'
+    ? environment.HAPPIER_ACCOUNT_SETTINGS_TTL_MS.trim()
     : '';
   const parsed = raw ? Number(raw) : NaN;
   if (Number.isFinite(parsed) && parsed >= 0) return Math.floor(parsed);
@@ -552,8 +553,10 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   ttlMs?: number;
   deps?: Partial<BootstrapDeps>;
 }>): Promise<AccountSettingsContext> {
+  const environment = sessionProcessEnvironment();
   const nowMs = typeof params.nowMs === 'number' ? params.nowMs : Date.now();
-  const ttlMs = typeof params.ttlMs === 'number' ? params.ttlMs : readTtlMsFromEnvOrDefault();
+  const ttlMs = typeof params.ttlMs === 'number' ? params.ttlMs : readTtlMsFromEnvOrDefault(environment);
+  const modeFromEnv = params.honorAccountSettingsModeEnv !== false ? readAccountSettingsModeFromEnv(environment) : 'auto';
   const refresh = params.refresh ?? 'auto';
   const mode = params.mode ?? 'blocking';
   const minSettingsVersion = normalizeAccountSettingsVersionHint(params.minSettingsVersion);
@@ -756,8 +759,6 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     });
   };
 
-  const honorModeEnv = params.honorAccountSettingsModeEnv !== false;
-  const modeFromEnv = honorModeEnv ? readAccountSettingsModeFromEnv() : 'auto';
   if (modeFromEnv === 'never') {
     if (minSettingsVersion !== null && minSettingsVersion > 0) {
       throw new AccountSettingsStaleError();

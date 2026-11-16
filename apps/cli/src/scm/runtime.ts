@@ -43,7 +43,7 @@ const SCM_INSTALLABLE_KEYS = {
 function resolveScmMaxOutputBytes(inputMaxOutputBytes: number | undefined): number {
     return resolveBackendCommandMaxOutputBytes({
         inputMaxOutputBytes,
-        envValue: process.env.HAPPIER_SCM_MAX_OUTPUT_BYTES,
+        envValue: sessionProcessEnvironment().HAPPIER_SCM_MAX_OUTPUT_BYTES,
     });
 }
 

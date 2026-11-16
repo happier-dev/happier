@@ -1,7 +1,9 @@
 import type { ManagedConnectionState, ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
+import { createManagedConnectionSupervisor, DEFAULT_MANAGED_CONNECTION_POLICY } from '@happier-dev/connection-supervisor';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { HttpStatusError } from '@/api/client/httpStatusError';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { TranscriptLookupOutcome, TranscriptMessageLookupResult } from '../transcriptMessageLookup';
 import { TranscriptRecoveryCoordinator } from './TranscriptRecoveryCoordinator';
 
@@ -58,6 +60,42 @@ describe('TranscriptRecoveryCoordinator', () => {
     const second = TranscriptRecoveryCoordinator.forServer('http://server.test');
 
     expect(second).toBe(first);
+  });
+
+  it('schedules concurrent hosted Sessions using their own recovery policy on the same server', async () => {
+    vi.useFakeTimers();
+    // Only the network transport boundary is supplied; supervisor and scheduler stay real.
+    const supervisor = createManagedConnectionSupervisor({
+      ...DEFAULT_MANAGED_CONNECTION_POLICY,
+      createTransport: () => ({
+        connect: async () => {}, disconnect: async () => {}, destroy: async () => {},
+        isConnected: () => true,
+        onConnected: () => () => {}, onDisconnected: () => () => {}, onError: () => () => {},
+      }),
+      probeReadiness: async () => ({ status: 'ready' }),
+    });
+    await supervisor.start();
+    const started: string[] = [];
+    const schedule = (sessionId: string, delay: string) => runInHostedSessionScope({ environment: {
+      NODE_ENV: 'test',
+      HAPPIER_TRANSCRIPT_RECOVERY_DELAY_MS: delay,
+    } }, () => TranscriptRecoveryCoordinator.forServer('http://shared.test').scheduleByLocalId({
+      sessionId,
+      localId: 'local-1',
+      supervisor,
+      runRequest: async () => { started.push(sessionId); return { type: 'not_found' }; },
+    }));
+    try {
+      const a = schedule('a', '40');
+      const b = schedule('b', '80');
+      await vi.advanceTimersByTimeAsync(40);
+      expect(started).toEqual(['a']);
+      await vi.advanceTimersByTimeAsync(40);
+      expect(started).toEqual(['a', 'b']);
+      await expect(Promise.all([a, b])).resolves.toEqual([{ type: 'not_found' }, { type: 'not_found' }]);
+    } finally {
+      await supervisor.stop();
+    }
   });
 
   it('defers offline supervisors before running network work', async () => {

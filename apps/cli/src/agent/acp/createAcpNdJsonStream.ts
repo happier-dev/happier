@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { AnyMessage, Stream } from '@agentclientprotocol/sdk';
 import { createWriteStream, type WriteStream } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,7 +33,7 @@ export function createAcpNdJsonStream(
   const textEncoder = new TextEncoder();
   const textDecoder = new TextDecoder();
   const messageCapture: WriteStream | null =
-    process.env.HAPPIER_ACP_CAPTURE_IO === '1'
+    sessionProcessEnvironment().HAPPIER_ACP_CAPTURE_IO === '1'
       ? createWriteStream(join(tmpdir(), 'acp.client.messages.raw'), { flags: 'a' })
       : null;
 

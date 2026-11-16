@@ -1,4 +1,5 @@
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { resolvePublishedMachineEncryptionContext, MachineContentKeyUnavailableError } from './machine/machineDataEncryptionKey';
 import { readPublishedMachineRow } from './machine/readPublishedMachineRow';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
@@ -528,6 +529,7 @@ export class ApiClient {
     creationAuthorizationToken?: string,
     signal?: AbortSignal,
   }): Promise<SessionCreateOrLoadResult | null> {
+    const environment = sessionProcessEnvironment();
     opts.signal?.throwIfAborted();
     const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(opts.metadata.sessionCreationCorrespondenceV1);
     const managedCreation = correspondence.success ? correspondence.data.recipe.managedCreation : undefined;
@@ -628,9 +630,9 @@ export class ApiClient {
       return Math.min(bounds.max, Math.max(bounds.min, Math.trunc(parsed)));
     };
 
-    const retryMaxAttempts = resolvePositiveIntEnv(process.env.HAPPIER_API_CREATE_SESSION_RETRY_MAX_ATTEMPTS, 10, { min: 1, max: 50 });
-    const retryBaseDelayMs = resolvePositiveIntEnv(process.env.HAPPIER_API_CREATE_SESSION_RETRY_BASE_DELAY_MS, 250, { min: 0, max: 30_000 });
-    const retryMaxDelayMs = resolvePositiveIntEnv(process.env.HAPPIER_API_CREATE_SESSION_RETRY_MAX_DELAY_MS, 2_000, { min: 0, max: 30_000 });
+    const retryMaxAttempts = resolvePositiveIntEnv(environment.HAPPIER_API_CREATE_SESSION_RETRY_MAX_ATTEMPTS, 10, { min: 1, max: 50 });
+    const retryBaseDelayMs = resolvePositiveIntEnv(environment.HAPPIER_API_CREATE_SESSION_RETRY_BASE_DELAY_MS, 250, { min: 0, max: 30_000 });
+    const retryMaxDelayMs = resolvePositiveIntEnv(environment.HAPPIER_API_CREATE_SESSION_RETRY_MAX_DELAY_MS, 2_000, { min: 0, max: 30_000 });
 
     const sleep = async (ms: number): Promise<void> => {
       if (ms <= 0) return;
@@ -652,7 +654,7 @@ export class ApiClient {
     };
 
     const e2eCreateSessionDelayMs = resolvePositiveIntEnv(
-      process.env.HAPPIER_E2E_DELAY_CREATE_SESSION_MS,
+      environment.HAPPIER_E2E_DELAY_CREATE_SESSION_MS,
       0,
       { min: 0, max: 30_000 },
     );

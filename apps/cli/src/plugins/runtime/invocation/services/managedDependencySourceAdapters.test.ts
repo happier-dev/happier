@@ -1,4 +1,7 @@
-import { basename, dirname } from 'node:path';
+import { execFile } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
 import { resolveInstallablesRegistry } from '@happier-dev/protocol/installables';
 
@@ -8,6 +11,8 @@ import { resolveExecutableManagedDependenciesRegistry } from '@/plugins/projecti
 import { createProductionManagedDependencySourceAdapter } from './managedDependencySourceAdapters';
 import { createV2ManagedDependencySourceModel } from './managedDependencySourceModel';
 import { createStablePluginManagedDependenciesHost } from './managedDependencies';
+import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
+import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 
 const processBoundary = vi.hoisted(() => ({ execFile: vi.fn() }));
 // The operating-system process is the boundary; parsing, source resolution,
@@ -158,6 +163,54 @@ const PINNED_IDENTITY = Object.freeze({
 });
 
 describe('createProductionManagedDependencySourceAdapter', () => {
+    it('resolves system tools and probes their version in the captured source directory', async () => {
+        const root = createTempDirSync('happier-source-directory-');
+        const nativeExecFile = promisify(execFile);
+        processBoundary.execFile.mockReset().mockImplementation((command, args, options) => nativeExecFile(command, args, options));
+        try {
+            const contribution = {
+                ...antigravityContribution(),
+                definition: { id: 'system-tool', title: 'System tool', executable: 'cwd-tool',
+                    sources: [{ kind: 'system' as const, executableNames: ['cwd-tool'], versionArguments: ['--version'] }],
+                },
+            };
+            const model = createV2ManagedDependencySourceModel({
+                platform: process.platform === 'win32' ? 'win32' : process.platform === 'darwin' ? 'darwin' : 'linux',
+                architecture: process.arch, contributions: [contribution],
+            });
+            const pluginId = contribution.pluginId;
+            if (!pluginId) throw new Error('Expected qualified system-tool contribution');
+            const dependency = model.resolve({ pluginId, localId: 'system-tool' });
+            const results = await Promise.all(['source-a', 'source-b'].map(async (name) => {
+                const cwd = join(root, name);
+                const bin = join(cwd, 'bin');
+                mkdirSync(bin, { recursive: true });
+                const script = join(cwd, 'version.cjs');
+                writeFileSync(script, "if(process.cwd()!==process.env.SOURCE_DIRECTORY)process.exit(7);process.stdout.write('cwd-tool 1.2.3');");
+                const executable = writeExecutableShimSync({
+                    dir: bin, fileName: process.platform === 'win32' ? 'cwd-tool.cmd' : 'cwd-tool',
+                    contents: process.platform === 'win32'
+                        ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+                        : `#!/bin/sh\nexec '${process.execPath.replace(/'/g, `'\\''`)}' '${script.replace(/'/g, `'\\''`)}' "$@"\n`,
+                });
+                return await Promise.all(['bin', bin].map(async (path) => {
+                    const adapter = await createProductionManagedDependencySourceAdapter({
+                        dependency, source: dependency.sources[0]!, cwd,
+                        env: { NODE_ENV: 'test', PATH: path, PATHEXT: '.EXE;.CMD;.BAT', SOURCE_DIRECTORY: cwd },
+                    });
+                    if (!adapter.detectCapabilityStatus) throw new Error('Expected system source capability probe');
+                    return { launch: await adapter.resolveLaunchCommand?.(),
+                        status: await adapter.detectCapabilityStatus(), executable };
+                }));
+            }));
+            expect(results).toMatchObject(results.map((group) => group.map(({ executable }) => ({
+                launch: { ok: true, command: executable }, status: { version: '1.2.3' },
+            }))));
+        } finally {
+            removeTempDirSync(root);
+        }
+    });
+
     it('publishes the qualified system version from declared native version arguments', async () => {
         processBoundary.execFile.mockReset().mockResolvedValue({ stdout: 'Version: v0.46.0\nCommit: 991967\n', stderr: '' });
         expect(await systemHost(['version']).status('system-tool')).toMatchObject({ state: 'ready', version: '0.46.0' });

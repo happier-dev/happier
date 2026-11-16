@@ -3,6 +3,20 @@ import { describe, expect, it } from 'vitest';
 import { buildCodexExecutionRunBaseEnv } from './environment.js';
 
 describe('buildCodexExecutionRunBaseEnv', () => {
+  it('retains each invocation\'s native AppServer controls without a launch overlay', () => {
+    for (const id of ['first', 'second']) {
+      const scoped = {
+        HOME: `/homes/${id}`,
+        CODEX_HOME: `/homes/${id}/codex`,
+        HAPPIER_CODEX_APP_SERVER_RESUME_RECOVERY_TIMEOUT_MS: id === 'first' ? '123000' : '124000',
+        HAPPIER_CODEX_APP_SERVER_MAX_JSON_LINE_CHARS: id === 'first' ? '1000000' : '2000000',
+      };
+      expect(buildCodexExecutionRunBaseEnv({ exec: {
+        readEnvironment: keys => Object.fromEntries(Object.entries(scoped).filter(([key]) => keys.includes(key))),
+      } })).toEqual(scoped);
+    }
+  });
+
   it('inherits the parent process environment when execution-run isolation is absent', () => {
     const processEnv = {
       PATH: 'C:\\Users\\alice\\AppData\\Roaming\\npm;C:\\Windows\\System32',

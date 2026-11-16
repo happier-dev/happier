@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { ClientToServerEvents, ServerToClientEvents } from '../types';
 import type { Socket } from 'socket.io-client';
 import type { ManagedConnectionTransport } from '@happier-dev/connection-supervisor';
@@ -27,7 +28,7 @@ export function createSessionScopedSocketConnection(opts: { token: string; sessi
         },
         ...(transports ? { transports } : null),
         withCredentials: true,
-        engineOptions: getSocketIoProxyOptions({ targetUrl: serverUrl, env: process.env }),
+        engineOptions: getSocketIoProxyOptions({ targetUrl: serverUrl, env: sessionProcessEnvironment() }),
         ...(opts.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: opts.connectTimeoutMs }),
     }) as SessionSocketConnection;
 }
@@ -50,7 +51,7 @@ export function createUserScopedSocketConnection(opts: { token: string; serverUr
         },
         ...(transports ? { transports } : null),
         withCredentials: true,
-        engineOptions: getSocketIoProxyOptions({ targetUrl: serverUrl, env: process.env }),
+        engineOptions: getSocketIoProxyOptions({ targetUrl: serverUrl, env: sessionProcessEnvironment() }),
         ...(opts.connectTimeoutMs === undefined ? {} : { connectTimeoutMs: opts.connectTimeoutMs }),
     }) as SessionSocketConnection;
 }

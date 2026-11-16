@@ -1479,9 +1479,10 @@ export function createStablePluginExecService(params: Readonly<{
             if (params.agentCli === undefined) {
                 fail('plugin_exec_agent_cli_readiness_unavailable', 'Agent CLI readiness is unavailable in this invocation host');
             }
-            const result = await params.agentCli.checkReadiness(request, request.includeVersion === true ? {
+            const result = await params.agentCli.checkReadiness(request, {
+                processEnv: inheritedEnvironment,
                 ...(params.environment ? { environment: params.environment } : {}),
-                async runVersionCommand(input) {
+                runVersionCommand: request.includeVersion === true ? async (input) => {
                     const { findCatalogEntry } = await import('@/agent/catalog/registry');
                     guard(input.signal);
                     const toolId = findCatalogEntry(input.agentId)?.agentCliSystemTool?.toolId;
@@ -1510,8 +1511,8 @@ export function createStablePluginExecService(params: Readonly<{
                         stdout: Buffer.from(processResult.stdout).toString('utf8'),
                         stderr: Buffer.from(processResult.stderr).toString('utf8'),
                     };
-                },
-            } : undefined);
+                } : undefined,
+            });
             guard(request.signal);
             return Object.freeze({ launchable: Object.freeze([...result.launchable]) });
         },
@@ -1528,7 +1529,9 @@ export function createStablePluginExecService(params: Readonly<{
                 if (params.systemTools === undefined) {
                     fail('plugin_exec_system_tool_resolution_unavailable', 'System-tool resolution is unavailable in this invocation host');
                 }
-                const resolved = await params.systemTools.resolve(request);
+                const resolved = await params.systemTools.resolve(request.cwd === undefined && params.defaultCwd
+                    ? { ...request, cwd: params.defaultCwd }
+                    : request);
                 guard(request.signal);
                 preResolvedSystemTools.set(executable, Object.freeze({
                     launch: Object.freeze({

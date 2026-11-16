@@ -5,6 +5,7 @@ import { basename, isAbsolute } from 'node:path';
 
 import { PluginError, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
 import { resolveExecutableSearchPath } from '@happier-dev/cli-common/process';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import type {
     SystemToolDiagnosticV1,
@@ -122,7 +123,7 @@ async function isReadableJavaScriptFile(path: string): Promise<boolean> {
 function resolveCanonicalAgentCliJavaScriptLaunch(
     executablePath: string,
     defaultArgs: readonly string[] | undefined,
-    processEnv: NodeJS.ProcessEnv = process.env,
+    processEnv: Readonly<Record<string, string | undefined>>,
 ): Readonly<{ executablePath: string; args: readonly string[] }> | null {
     const runtimeCommand = resolveAgentCliJavaScriptRuntimeCommand(executablePath, processEnv, {
         isBunRuntime: typeof process.versions.bun === 'string',
@@ -215,10 +216,9 @@ function readCaseInsensitiveEnvValue(
  * pins every lookup to the default extension list instead of the user's.
  */
 function buildSystemToolLookupEnv(
-    baseEnv: Readonly<Record<string, string>> | undefined,
+    env: Readonly<Record<string, string | undefined>>,
     platform: NodeJS.Platform,
 ): Readonly<Record<string, string>> {
-    const env = baseEnv ?? process.env;
     const pathext = readCaseInsensitiveEnvValue(env, 'PATHEXT');
     return Object.freeze({
         PATH: resolveExecutableSearchPath(env, platform),
@@ -355,7 +355,8 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
             assertSystemToolSupportedOnHost(definition);
 
             const lookupPlatform = params.platform ?? process.platform;
-            const env = buildSystemToolLookupEnv(params.baseEnv, lookupPlatform);
+            const processEnv = params.baseEnv ?? sessionProcessEnvironment();
+            const env = buildSystemToolLookupEnv(processEnv, lookupPlatform);
             const invalidPreferredPath = typeof request.preferredPath === 'string'
                 && request.preferredPath.trim().length > 0
                 && !isAbsolute(request.preferredPath.trim());
@@ -396,7 +397,7 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
                     ? resolveCanonicalAgentCliJavaScriptLaunch(
                         candidate,
                         tool.defaultArgs,
-                        params.baseEnv,
+                        processEnv,
                     )
                     : Object.freeze({
                         executablePath: candidate,
@@ -457,8 +458,8 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
                     candidates: runnable,
                     explicitCandidate: explicit,
                     legacyCandidates: runnableLegacy,
-                    cwd: request.cwd ?? process.cwd(),
-                    env: { ...process.env },
+                    cwd: request.cwd ?? sessionWorkingDirectory(),
+                    env: { ...processEnv },
                     signal: request.signal,
                 });
                 assertNotAborted(request.signal);

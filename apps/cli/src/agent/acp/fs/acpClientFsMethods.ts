@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -24,7 +25,7 @@ export function isAcpFsEnabled(): boolean {
   // Default ON: ACP agents that support the `fs` capability will route file reads/writes
   // through the client (Happier), so host-mediated operations can apply workspace policy.
   // This does not sandbox an Agent process that can access the filesystem directly.
-  const raw = process.env.HAPPIER_ACP_FS;
+  const raw = sessionProcessEnvironment().HAPPIER_ACP_FS;
   if (raw === undefined) return true;
   return isTruthyEnv(raw);
 }

@@ -1,10 +1,12 @@
 import type { Credentials } from '@/persistence';
 import { logger } from '@/ui/logger';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 
 function isAccountSettingsDebugEnabled(): boolean {
-  const raw = typeof process.env.HAPPIER_DEBUG_ACCOUNT_SETTINGS === 'string'
-    ? process.env.HAPPIER_DEBUG_ACCOUNT_SETTINGS.trim().toLowerCase()
+  const environment = sessionProcessEnvironment();
+  const raw = typeof environment.HAPPIER_DEBUG_ACCOUNT_SETTINGS === 'string'
+    ? environment.HAPPIER_DEBUG_ACCOUNT_SETTINGS.trim().toLowerCase()
     : '';
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
 }

@@ -9,15 +9,16 @@ import { isTmuxAvailable, selectPreferredTmuxSessionName, TmuxUtilities } from '
 import { resolveHeadlessTmuxAgentLaunchConfig } from './resolveHeadlessTmuxAgentLaunchConfig';
 import { createTerminalAttachmentId } from '@/terminal/attachment/terminalAttachmentInfo';
 import { fail } from '@happier-dev/cli-common/output';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 function removeFlag(argv: string[], flag: string): string[] {
   return argv.filter((arg) => arg !== flag);
 }
 
-function buildWindowEnv(): Record<string, string> {
+function buildWindowEnv(environment: NodeJS.ProcessEnv): Record<string, string> {
   const excludedKeys = new Set(['TMUX', 'TMUX_PANE']);
   return stripCliApiTokenEnvironment(Object.fromEntries(
-    Object.entries(process.env).filter(
+    Object.entries(environment).filter(
       ([key, value]) => typeof value === 'string' && !excludedKeys.has(key),
     ),
   ) as Record<string, string>);
@@ -42,6 +43,7 @@ export async function startHappyHeadlessInTmux(
   argv: string[],
   options: Readonly<{ output?: 'human' | 'silent' }> = {},
 ): Promise<void> {
+  const environment = sessionProcessEnvironment();
   // Resolve custody before any tmux/session preparation. Compound credentials
   // are invocation-local and must never be reduced to a bearer for a child.
   const apiTokenContinuationEnvironment = buildCliApiTokenContinuationEnvironment();
@@ -56,7 +58,7 @@ export async function startHappyHeadlessInTmux(
     process.exit(1);
   }
 
-  const insideTmux = Boolean(process.env.TMUX);
+  const insideTmux = Boolean(environment.TMUX);
   const requestedSessionName = insideTmux ? '' : TmuxUtilities.DEFAULT_SESSION_NAME;
   const resolvedSessionName = await resolveTmuxSessionName({ requestedSessionName });
 
@@ -84,11 +86,11 @@ export async function startHappyHeadlessInTmux(
     {
       sessionName: resolvedSessionName,
       windowName,
-      cwd: process.cwd(),
+      cwd: sessionWorkingDirectory(),
     },
     {
       ...stripCliApiTokenEnvironment({
-        ...buildWindowEnv(),
+        ...buildWindowEnv(environment),
         ...(launchSpec.env ?? {}),
       }),
       ...apiTokenContinuationEnvironment,

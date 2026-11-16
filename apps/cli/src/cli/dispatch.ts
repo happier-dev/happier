@@ -98,7 +98,7 @@ function hasEphemeralServerSelectionPrefixArgs(args: readonly string[]): boolean
 }
 
 function debugCliStart(rawArgv: readonly string[]): void {
-  if (!process.env.DEBUG) return;
+  if (!sessionProcessEnvironment().DEBUG) return;
   void import('@/ui/logger')
     .then(({ logger }) => {
       logger.debug('Starting happy CLI with args: ', rawArgv);
@@ -266,7 +266,7 @@ async function launchCommandInTmux(
       return;
     }
     console.error(errorFrame(message));
-    if (process.env.DEBUG) {
+    if (sessionProcessEnvironment().DEBUG) {
       console.error(error);
     }
     process.exit(1);

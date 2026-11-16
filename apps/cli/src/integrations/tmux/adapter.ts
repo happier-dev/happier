@@ -16,7 +16,7 @@ import {
 } from '../terminalHost/promptSubmitVerification';
 
 import { createTmuxTerminalControlPort } from './control';
-import { resolveTmuxPromptSubmitDelayMs } from './env';
+import { resolveTmuxPromptSubmitDelayMs, resolveTmuxSendKeysChunkSize } from './env';
 import { evaluateTmuxPaneLiveness } from './paneLiveness';
 import { TmuxUtilities, type TmuxSpawnOptions, type TmuxSpawnResult } from './TmuxUtilities';
 import { TerminalHostCreationError } from '../terminal/host/errors';
@@ -24,6 +24,7 @@ import { pasteTextViaTmuxBuffer } from './typeText';
 import type { TmuxCommandResult, TmuxControlSequence } from './types';
 import { createTmuxTerminalHostHandle } from './hostHandle';
 import { formatTmuxSessionIdentifier } from './identifiers';
+import { bindToHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {
   normalizeCapturedScreen,
 } from '../terminalHost/controlCapture';
@@ -138,13 +139,14 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
   wait?: (delayMs: number) => Promise<void>;
   promptSubmitVerification?: TerminalPromptSubmitVerificationPolicy;
 }>): TerminalHostAdapter {
+  const environment = sessionProcessEnvironment();
   const tmux = params?.tmux ?? new TmuxUtilities();
   const now = params?.now ?? Date.now;
   const wait = params?.wait ?? ((delayMs: number) => (delayMs <= 0 ? Promise.resolve() : new Promise<void>((resolve) => setTimeout(resolve, delayMs))));
-  const tmuxForEnvironment = (environment: Record<string, string> | undefined): TmuxTerminalHostUtility => {
+  const tmuxForEnvironment = bindToHostedSessionScope((environment: Record<string, string> | undefined): TmuxTerminalHostUtility => {
     if (params?.tmux) return params.tmux;
     return environment ? new TmuxUtilities(undefined, environment) : tmux;
-  };
+  });
   const tmuxForHandle = (handle: TerminalHostHandle): TmuxTerminalHostUtility =>
     tmuxForEnvironment(resolveTmuxCommandEnvironmentForHostHandle(handle));
 
@@ -290,8 +292,8 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
         signal: input.signal,
         resolveDeliveryState: input.resolveDeliveryState,
         bufferName: createTmuxPromptBufferName(),
-        submitDelayMs: resolveTmuxPromptSubmitDelayMs(),
-        postSubmitSettleMs: resolveTmuxPromptSubmitDelayMs(),
+        submitDelayMs: resolveTmuxPromptSubmitDelayMs(environment),
+        postSubmitSettleMs: resolveTmuxPromptSubmitDelayMs(environment),
         timeoutMs: input.scheduling.timeoutMs ?? resolveTerminalPromptWriteTimeoutMs(input.text),
         wait,
         ...(params?.promptSubmitVerification?.shouldVerifyAfterSubmit(input.text)
@@ -354,6 +356,7 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
     createControlPort(handle) {
       const handleTmux = tmuxForHandle(handle);
       return createTmuxTerminalControlPort({
+        chunkSize: resolveTmuxSendKeysChunkSize(environment),
         target: targetFromHandle(handle),
         executor: (args, options) => handleTmux.executeTmuxCommand(
           [...args],

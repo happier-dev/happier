@@ -4,10 +4,10 @@ import type { NativeSkillScanV1 } from '@happier-dev/protocol/prompts/library/sk
 import { readSkillFrontmatterV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { computePromptBundleDigestV1 } from '@happier-dev/protocol/prompts/library/promptLibraryDigests';
 import { lstat, readFile, readdir, realpath, stat } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { buildPromptBundleBodyFromDirectory } from '@/prompts/assets/shared/promptBundleDirectory';
-import { expandHomeDirPath, isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { expandHomeDirPath, isCanonicalAbsolutePathInsideRoot, resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
+import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 type NativeRoots = PluginAgentSkillsCapabilityV2['nativeRoots'];
 type MaskingScanInput = Readonly<{ purpose?: 'masking'; nativeRoots: NativeRoots; directory?: string | null; home?: string;
@@ -95,7 +95,11 @@ export function scanNativeSkillRoots(input: MaskingScanInput): Promise<NativeSki
 export function scanNativeSkillRoots(input: FoundNativeSkillScanInput): Promise<FoundNativeSkillScan>;
 export async function scanNativeSkillRoots(input: MaskingScanInput | FoundNativeSkillScanInput): Promise<NativeSkillScanV1 | FoundNativeSkillScan> {
   const agents = input.purpose === 'found' ? input.agents : [{ agentId: '', nativeRoots: input.nativeRoots }];
-  const home = input.home ?? homedir();
+  const environment = sessionProcessEnvironment();
+  const workingDirectory = sessionWorkingDirectory();
+  const home = input.home ?? resolveHomeDirFromEnvironment(environment);
+  const pathEnvironment = { ...environment, HOME: home, USERPROFILE: home };
+  const projectDirectory = input.directory ? resolve(workingDirectory, expandHomeDirPath(input.directory, pathEnvironment)) : workingDirectory;
   const roots = new Map<string, ScanRoot>();
   function addRoot(path: string, scope: ScanRoot['scope'], agentIds: readonly string[], options?: Partial<Pick<ScanRoot, 'status' | 'pluginName' | 'confinementRoot' | 'layout'>>) {
     const key = resolve(path);
@@ -108,13 +112,12 @@ export async function scanNativeSkillRoots(input: MaskingScanInput | FoundNative
   }
   for (const agent of agents) for (const segments of agent.nativeRoots?.user ?? []) addRoot(join(home, ...segments), 'user', [agent.agentId]);
   if (input.purpose !== 'found') for (const extra of input.additionalProjectDirectories ?? []) {
-    const directory = resolve(input.directory ? expandHomeDirPath(input.directory, { ...process.env, HOME: home, USERPROFILE: home }) : process.cwd(),
-      expandHomeDirPath(extra, { ...process.env, HOME: home, USERPROFILE: home }));
+    const directory = resolve(projectDirectory, expandHomeDirPath(extra, pathEnvironment));
     for (const segments of input.nativeRoots?.project ?? []) addRoot(join(directory, ...segments), 'project', []);
   }
   const failed: string[] = [];
   if (input.directory) {
-    let directory = resolve(expandHomeDirPath(input.directory, { ...process.env, HOME: home, USERPROFILE: home }));
+    let directory = projectDirectory;
     while (true) {
       for (const agent of agents) for (const segments of agent.nativeRoots?.project ?? []) addRoot(join(directory, ...segments), 'project', [agent.agentId]);
       try { await lstat(join(directory, '.git')); break; }

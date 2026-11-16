@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -78,6 +79,19 @@ describe('BufferedFileAppender', () => {
 
         expect(readFileSync(filePath, 'utf8')).toBe('fatal threshold\n');
         expect(appendFileState.appendFileMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps silent writes silent when deferred tail trimming fails', async () => {
+        const onWriteError = vi.fn();
+        const truncate = vi.spyOn(fs, 'ftruncateSync').mockImplementation(() => {
+            throw Object.assign(new Error('trim refused'), { code: 'EPERM' });
+        });
+        const appender = new BufferedFileAppender({ filePath, maxBufferedBytes: 1, tailWindowBytes: 4, onWriteError });
+        try {
+            appender.append('old\nnew\n', { silent: true });
+            await waitFor(() => truncate.mock.calls.length > 0);
+            expect(onWriteError).not.toHaveBeenCalled();
+        } finally { truncate.mockRestore(); appender.flushSync(); }
     });
 
     it.each([false, true])('keeps the newest whole lines within twice the tail window when writing far past it (open elsewhere on Windows: %s)', async (openElsewhere) => {

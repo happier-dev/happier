@@ -1,4 +1,4 @@
-import { chmod, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -65,6 +65,23 @@ describe('runCliCommandBestEffort', () => {
     });
     expect(result).toMatchObject({ ok: true, stdout: 'logged_in', exitCode: 0 });
     expect(process.env.HAPPIER_PNPM_BIN).toBe('ambient-only');
+  });
+
+  it('resolves an explicit relative JavaScript runtime from the admitted command directory', async () => {
+    const dir = await createTempDir('happier-cli-auth-runtime-cwd-');
+    tempDirs.push(dir);
+    const runtimeDirectory = join(dir, 'runtime');
+    await mkdir(runtimeDirectory);
+    const runtimeName = process.platform === 'win32' ? 'node.exe' : 'node';
+    if (process.platform === 'win32') await copyFile(process.execPath, join(runtimeDirectory, runtimeName));
+    else await symlink(process.execPath, join(runtimeDirectory, runtimeName));
+    const scriptPath = join(dir, 'auth.cjs');
+    await writeFile(scriptPath, "process.stdout.write(process.cwd());\n");
+    const result = await runCliCommandBestEffort({
+      resolvedPath: scriptPath, args: [], cwd: dir, timeoutMs: 2_000,
+      processEnv: { NODE_ENV: 'test', HAPPIER_JS_RUNTIME_PATH: `./runtime/${runtimeName}` },
+    });
+    expect(result).toMatchObject({ ok: true, stdout: dir, exitCode: 0 });
   });
 
   it('executes JavaScript CLIs through the current runtime when PATH does not contain node', async () => {

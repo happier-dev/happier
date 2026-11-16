@@ -63,7 +63,7 @@ async function openCodexExecutionRun(
   if (readCodexBackendMode(request) === 'acp') {
     return await context.protocols.acp.openExecutionRunV1(
       request,
-      buildCodexNativeAcpRuntimeOptions(request),
+      buildCodexNativeAcpRuntimeOptions(request, context.services.exec),
     );
   }
   return await createExecutionRunHostBackendFromConversationRuntime({
@@ -92,7 +92,7 @@ async function openCodexExecutionRunConversation(
         message: 'This host does not support retained detached ACP conversations.' });
     }
     return await context.protocols.acp.openExecutionRunConversationV1(
-      request, buildCodexNativeAcpRuntimeOptions(request),
+      request, buildCodexNativeAcpRuntimeOptions(request, context.services.exec),
     );
   }
   return await openCodexNativeAppServerExecutionRunConversation(request, context);
@@ -128,7 +128,7 @@ async function openCodexSession(
   const session = backendMode === 'acp'
     ? await context.protocols.acp.open(
         request,
-        buildCodexNativeAcpRuntimeOptions(request),
+        buildCodexNativeAcpRuntimeOptions(request, context.services.exec),
       )
     : await openCodexNativeAppServerSession(request, context, goalProjection, bindSessionCatalog);
   return {

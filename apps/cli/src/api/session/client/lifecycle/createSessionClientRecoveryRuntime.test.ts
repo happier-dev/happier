@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HttpStatusError } from '@/api/client/httpStatusError';
 import type { Update } from '@/api/types';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createSessionClientRecoveryRuntime } from './createSessionClientRecoveryRuntime';
 
 const axiosGetMock = vi.hoisted(() => vi.fn());
@@ -21,6 +22,21 @@ vi.mock('axios', async (importOriginal) => {
 });
 
 describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => {
+  it('keeps each Session changes opt-in when reconnect runs outside its scope', async () => {
+    vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', '0');
+    const runtimes = await Promise.all(['1', '0'].map(value => runInHostedSessionScope({ environment: {
+      NODE_ENV: 'test',
+      HAPPY_ENABLE_V2_CHANGES: value,
+    } }, async () => {
+      await Promise.resolve();
+      return createRuntime();
+    })));
+    axiosGetMock.mockImplementation(async (url: string) => ({ status: 200, data:
+      new URL(url).pathname === '/v1/account/profile' ? { id: 'account-1' } : { changes: [], nextCursor: 0 },
+    }));
+    await Promise.all(runtimes.map(runtime => runtime.syncChangesOnConnect({ reason: 'reconnect' })));
+    expect(axiosGetMock.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v2/changes')).toHaveLength(1);
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     axiosGetMock.mockReset();
