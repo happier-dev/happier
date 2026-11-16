@@ -14,6 +14,7 @@ const transport = defineProtocolUnion([defineProtocolLiteral('direct'), definePr
 const resourceShape = { namespace: nativeNamespace, nativeInstanceId: nativeString.optional(), transport };
 const leaseId = defineProtocolString({ pattern: '^cbx_[0-9a-f]{12}$' });
 const localRuntime = defineProtocolUnion([defineProtocolLiteral('docker'), defineProtocolLiteral('podman')]);
+const nativeCheckpointId = defineProtocolString({ minLength: 1 });
 
 export const CrabboxResourceV1Schema = defineProtocolUnion([
   defineProtocolObject({ ...resourceShape, backendId: cloudBackend, leaseId }, closed),
@@ -30,9 +31,9 @@ const launchShape = {
   idleTimeoutSeconds: defineProtocolNumber({ integer: true, minimum: 1 }),
 };
 export const CrabboxLaunchV1Schema = defineProtocolUnion([
-  defineProtocolObject({ ...launchShape, backendId: defineProtocolLiteral('aws'),
+  defineProtocolObject({ ...launchShape, backendId: defineProtocolLiteral('aws'), nativeCheckpointId: nativeCheckpointId.optional(),
     target: defineProtocolUnion([defineProtocolLiteral('linux'), defineProtocolLiteral('macos')]) }, closed),
-  defineProtocolObject({ ...launchShape, backendId: defineProtocolLiteral('gcp'), target: defineProtocolLiteral('linux'),
+  defineProtocolObject({ ...launchShape, backendId: defineProtocolLiteral('gcp'), nativeCheckpointId: nativeCheckpointId.optional(), target: defineProtocolLiteral('linux'),
     gcpProject: nativeString, gcpZone: nativeString }, closed),
   defineProtocolObject({ ...launchShape, backendId: defineProtocolLiteral('hetzner'), target: defineProtocolLiteral('linux'), location: nativeString }, closed),
   defineProtocolObject({ namespace: nativeNamespace, nativeImageId: nativeString,
@@ -45,6 +46,14 @@ export const CrabboxLaunchV1Schema = defineProtocolUnion([
     transport: defineProtocolLiteral('direct'), target: defineProtocolLiteral('linux') }, closed),
 ]);
 export type CrabboxLaunchV1 = ProtocolSchemaOutput<typeof CrabboxLaunchV1Schema>;
+
+/** The clean native source is explicitly requested as amd64, independent of
+ * the controller hosting the build Action. */
+export function crabboxCloudPreparationGuest(launch: CrabboxLaunchV1) {
+  return launch.transport === 'coordinator' && (launch.backendId === 'aws' || launch.backendId === 'gcp')
+    ? { target: { os: launch.target === 'macos' ? 'darwin' as const : 'linux' as const, arch: 'x64' as const }, remoteHomeDir: '/opt/happier' }
+    : undefined;
+}
 
 export const CRABBOX_RECONCILIATION = defineMachineProvisionerReconciliationSchemas({ launch: CrabboxLaunchV1Schema,
   resource: CrabboxResourceV1Schema, nativeOperation: CrabboxResourceV1Schema });

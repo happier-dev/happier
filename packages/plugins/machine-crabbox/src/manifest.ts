@@ -1,11 +1,11 @@
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
+import { machinePresentationLabel } from './ui/translations.js';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import {
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
-  MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
+  MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, defineMachineProvisionerPreparationSchemas,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerAuthorDefinitionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { CRABBOX_PLUGIN_ID, CRABBOX_PROVISIONER_ID, CRABBOX_COORDINATOR_PROVISIONER_ID, CRABBOX_CONNECTION_PURPOSE, CRABBOX_CONNECTION_SERVICE, CRABBOX_DEPENDENCY_ID } from './machine/constants.js';
@@ -13,7 +13,21 @@ import { CrabboxLaunchV1Schema, CrabboxResourceV1Schema, CrabboxOptionsInputV1Sc
   CRABBOX_RECONCILIATION as reconciliation, CRABBOX_ROLE_SCHEMAS, type CrabboxResourceV1, type CrabboxLaunchV1 } from './machine/schemas.js';
 import { CRABBOX_OPTIONS_INPUT_HINTS } from './machine/configuration.js';
 import { CRABBOX_COORDINATOR_ACTIONS } from './machine/account.js';
+import { CrabboxPreparationInputSchema, CrabboxPreparedArtifactSchema,
+  CrabboxPreparationOperationSchema, createCrabboxPreparation, crabboxPreparationGuest } from './machine/preparation.js';
+import { CRABBOX_CLOUD_PREPARATION, CrabboxCloudPreparationInputSchema, CrabboxCloudPreparedArtifactSchema,
+  CrabboxCloudPreparationOperationSchema, createCrabboxCloudPreparation } from './machine/cloudPreparation.js';
+import { prepareCrabboxConnection } from './machine/connection.js';
 
+const localReference = { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_PROVISIONER_ID };
+const preparedArtifact = defineProtocolUnion([CrabboxPreparedArtifactSchema, CrabboxCloudPreparedArtifactSchema]);
+const preparationOperation = defineProtocolUnion([CrabboxPreparationOperationSchema, CrabboxCloudPreparationOperationSchema]);
+const CRABBOX_PREPARATION = defineMachineProvisionerPreparationSchemas({ input: CrabboxPreparationInputSchema,
+  launch: CrabboxLaunchV1Schema, artifact: preparedArtifact, nativeOperation: preparationOperation });
+async function cloudPreparation(context: PluginInvocationContext, local = false) {
+  const prepared = await prepareCrabboxConnection(context.services.connectedAccounts, context.services.http, context.signal);
+  return createCrabboxCloudPreparation(context, prepared, local ? localReference : undefined);
+}
 
 export { CRABBOX_ROLE_SCHEMAS } from './machine/schemas.js';
 const networkAccess = 'crabbox-native-http';
@@ -36,7 +50,7 @@ async function nativeProvider(selection: CrabboxLaunchV1 | CrabboxResourceV1, co
   return selection.transport === 'direct' ? directProvider(context) : inspectedProvider(context);
 }
 
-export const CRABBOX_MACHINE_PROVISIONER = {
+const CRABBOX_BASE_PROVISIONER = {
   title: 'Crabbox', icon: 'hard-drives', resourceKind: 'crabbox-lease', schemaVersion: 1,
   enrollmentRole: 'sandbox',
   kindTitle: machinePresentationLabel('kind'), description: machinePresentationLabel('description'),
@@ -50,15 +64,33 @@ export const CRABBOX_MACHINE_PROVISIONER = {
   reconciliation: { action: 'reconcile', nativeOperationSchema: CrabboxResourceV1Schema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
+export const CRABBOX_MACHINE_PROVISIONER = {
+  ...CRABBOX_BASE_PROVISIONER,
+  preparation: { inputSchema: CrabboxPreparationInputSchema.jsonSchema, artifactSchema: preparedArtifact.jsonSchema,
+    nativeOperationSchema: preparationOperation.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
+  // The same launch schema also admits explicit remote routes. Only direct
+  // local containers qualify for this controller's Isolation configuration.
+  sessionPlacement: { kind: 'controller-local', supportsAgentNativeSandbox: false,
+    when: { op: 'and', all: [
+      { op: 'eq', path: 'transport', value: 'direct' },
+      { op: 'eq', path: 'backendId', value: 'local-container' },
+    ] },
+  },
+} satisfies MachineProvisionerAuthorDefinitionV1;
+
 /** Existing native refs stay native; new Account leases retain their own role binding. */
 export const CRABBOX_COORDINATOR_PROVISIONER = {
-  ...CRABBOX_MACHINE_PROVISIONER,
+  ...CRABBOX_BASE_PROVISIONER,
   title: 'Crabbox coordinator', bootstrapCredential: { kind: 'ssh' }, description: machinePresentationLabel('coordinatorDescription'),
   enrollmentRole: 'server', billing: { location: 'cloud', stoppedBilling: 'unknown' },
   credentialPurposeRequirements: [],
   actions: { check: 'coordinator-check', options: 'coordinator-options', acquire: 'coordinator-acquire',
     bootstrap: 'coordinator-bootstrap', inspect: 'coordinator-inspect', destroy: 'coordinator-destroy' },
   reconciliation: { action: 'coordinator-reconcile', nativeOperationSchema: CrabboxResourceV1Schema.jsonSchema },
+  preparation: { inputSchema: CrabboxCloudPreparationInputSchema.jsonSchema, artifactSchema: CrabboxCloudPreparedArtifactSchema.jsonSchema,
+    nativeOperationSchema: CrabboxCloudPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    actions: { build: 'coordinator-prepare-build', inspect: 'coordinator-prepare-inspect', destroy: 'coordinator-prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const CRABBOX_PLUGIN = definePlugin({
@@ -82,14 +114,20 @@ export const CRABBOX_PLUGIN = definePlugin({
   }, entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: processAccess, capability: 'process', reason: 'Operate the exact native retained lease from private non-repository staging.',
-      scope: { executables: [{ kind: 'managedDependency', id: CRABBOX_DEPENDENCY_ID }, { kind: 'systemTool', id: 'ssh-keyscan' }],
-        envKeys: ['PATH', 'Path', 'SystemRoot', 'XDG_STATE_HOME', 'CRABBOX_CONFIG', 'GIT_CEILING_DIRECTORIES'] } },
+      scope: { executables: [{ kind: 'managedDependency', id: CRABBOX_DEPENDENCY_ID },
+        { kind: 'managedDependency', id: 'docker' }, { kind: 'managedDependency', id: 'podman' }, { kind: 'systemTool', id: 'ssh-keyscan' }],
+        envKeys: ['PATH', 'Path', 'SystemRoot', 'XDG_STATE_HOME', 'CRABBOX_CONFIG', 'GIT_CEILING_DIRECTORIES',
+          'CRABBOX_COORDINATOR', 'CRABBOX_COORDINATOR_TOKEN', 'CRABBOX_COORDINATOR_MODE', 'CRABBOX_ORG',
+          'CRABBOX_AWS_AMI', 'CRABBOX_GCP_IMAGE', 'CRABBOX_GCP_PROJECT', 'CRABBOX_GCP_ZONE'] } },
     { id: CRABBOX_CONNECTION_PURPOSE, capability: 'connectedAccounts', reason: 'Use the reviewed Crabbox coordinator connection.',
       scope: { serviceRefs: [CRABBOX_CONNECTION_SERVICE.localId], operations: ['select', 'use'], materializationKinds: ['environment'] } },
     { id: networkAccess, capability: 'network', reason: 'Inspect the exact native lease on the selected coordinator.',
-      scope: { targets: [{ kind: 'connectedAccountOrigin', service: CRABBOX_CONNECTION_SERVICE.localId }], methods: ['GET', 'PUT', 'POST'] } },
+      scope: { targets: [{ kind: 'connectedAccountOrigin', service: CRABBOX_CONNECTION_SERVICE.localId }], methods: ['GET', 'PUT', 'POST', 'DELETE'] } },
   ], optional: [] },
-  managedDependencies: { [CRABBOX_DEPENDENCY_ID]: { id: CRABBOX_DEPENDENCY_ID, title: 'Crabbox', executable: 'crabbox',
+  managedDependencies: {
+    docker: { id: 'docker', title: 'Docker', executable: 'docker', sources: [{ kind: 'system', executableNames: ['docker'], versionArguments: ['--version'] }] },
+    podman: { id: 'podman', title: 'Podman', executable: 'podman', sources: [{ kind: 'system', executableNames: ['podman'], versionArguments: ['--version'] }] },
+    [CRABBOX_DEPENDENCY_ID]: { id: CRABBOX_DEPENDENCY_ID, title: 'Crabbox', executable: 'crabbox',
     platforms: ['macos', 'linux', 'windows'], architectures: ['x64', 'arm64'],
     sources: [{ kind: 'system', executableNames: ['crabbox'], versionArguments: ['--version'] }, {
       // v0.72.0 release API digests and .goreleaser.yaml: retain the complete
@@ -145,6 +183,39 @@ export const CRABBOX_PLUGIN = definePlugin({
     [CRABBOX_COORDINATOR_PROVISIONER_ID]: CRABBOX_COORDINATOR_PROVISIONER },
   actions: {
     ...CRABBOX_COORDINATOR_ACTIONS,
+    'prepare-build': { ...defaults, title: 'Prepare Crabbox image', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this prepared Crabbox image?', body: 'Run the reviewed CLI installation and Setup on a clean native builder. Cloud routes incur provider charges.' },
+      inputSchema: CRABBOX_PREPARATION.buildInput, resultSchema: CRABBOX_PREPARATION.buildResult,
+      async run(input, context) { return input.input.launch.choices.transport === 'coordinator'
+        ? (await cloudPreparation(context, true)).build(input.operationId, input.input)
+        : createCrabboxPreparation(context).build(input.operationId, input.input); } },
+    'prepare-inspect': { ...defaults, title: 'Inspect prepared Crabbox image', dangerLevel: 'safe',
+      inputSchema: CRABBOX_PREPARATION.inspectInput, resultSchema: CRABBOX_PREPARATION.inspectResult,
+      async run(input, context) {
+        const operation = 'nativeOperation' in input ? input.nativeOperation.value : { operationId: input.operationId, launch: input.launch };
+        return operation.launch.transport === 'coordinator'
+          ? (await cloudPreparation(context, true)).inspect(operation) : createCrabboxPreparation(context).inspect(operation);
+      } },
+    'prepare-destroy': { ...defaults, title: 'Delete owned prepared Crabbox image', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this prepared Crabbox image?' },
+      inputSchema: CRABBOX_PREPARATION.destroyInput, resultSchema: CRABBOX_PREPARATION.destroyResult,
+      async run(input, context) {
+        const operation = (input.artifact ?? input.nativeOperation!).value;
+        return operation.launch.transport === 'coordinator'
+          ? (await cloudPreparation(context, true)).destroy(operation) : createCrabboxPreparation(context).destroy(operation);
+      } },
+    'coordinator-prepare-build': { ...defaults, title: 'Prepare Crabbox cloud image', dangerLevel: 'writesRemote',
+      confirmation: { title: 'Build this prepared Crabbox cloud image?', body: 'Create a clean native builder and reusable image. Provider charges apply.' },
+      inputSchema: CRABBOX_CLOUD_PREPARATION.buildInput, resultSchema: CRABBOX_CLOUD_PREPARATION.buildResult,
+      async run(input, context) { return (await cloudPreparation(context)).build(input.operationId, input.input); } },
+    'coordinator-prepare-inspect': { ...defaults, title: 'Inspect prepared Crabbox cloud image', dangerLevel: 'safe',
+      inputSchema: CRABBOX_CLOUD_PREPARATION.inspectInput, resultSchema: CRABBOX_CLOUD_PREPARATION.inspectResult,
+      async run(input, context) { return (await cloudPreparation(context)).inspect('nativeOperation' in input
+        ? input.nativeOperation.value : { operationId: input.operationId, launch: input.launch }); } },
+    'coordinator-prepare-destroy': { ...defaults, title: 'Delete owned prepared Crabbox cloud image', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this prepared Crabbox cloud image?' },
+      inputSchema: CRABBOX_CLOUD_PREPARATION.destroyInput, resultSchema: CRABBOX_CLOUD_PREPARATION.destroyResult,
+      async run(input, context) { return (await cloudPreparation(context)).destroy((input.artifact ?? input.nativeOperation!).value); } },
     install: { scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], execution: { target: 'daemon' }, title: 'Install Crabbox', dangerLevel: 'writesLocal',
       confirmation: { title: 'Install Crabbox on this computer?', body: 'Download the complete verified Crabbox distribution for this computer.', confirmLabel: 'Install' },
       inputSchema: CRABBOX_ROLE_SCHEMAS.checkInput, resultSchema: defineProtocolLiteral(null),
@@ -157,27 +228,22 @@ export const CRABBOX_PLUGIN = definePlugin({
       async run(input, context) {
         return (await import('./machine/roles.js')).reconcileCrabbox(input, context, nativeProvider);
       } },
-    check: { ...defaults, hostAccess: [processAccess, CRABBOX_CONNECTION_PURPOSE], title: 'Check Crabbox availability', dangerLevel: 'safe',
+    check: { ...defaults, hostAccess: [processAccess], title: 'Check Crabbox availability', dangerLevel: 'safe',
       inputSchema: CRABBOX_ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) {
-        const coordinator = await (await import('./machine/roles.js')).checkCrabboxCoordinator(context);
-        if (coordinator.available) return coordinator;
-        try { await directProvider(context); return machineCheckPresentation({ available: true }); }
-        catch (error) {
-          const { CrabboxDependencyUnavailable } = await import('./machine/provider.js');
-          if (!(error instanceof CrabboxDependencyUnavailable)) throw error;
-          return machineCheckPresentation({ available: false, code: error.code, prerequisites: [{
-            requirement: { kind: 'managedDependency', id: { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_DEPENDENCY_ID } },
-            status: 'unavailable',
-            repairAction: { action: { pluginId: CRABBOX_PLUGIN_ID, localId: 'install' }, input: {} },
-          }] });
-        }
+        return (await import('./machine/roles.js')).checkCrabboxDirect(() => directProvider(context));
       } },
     options: { ...defaults, title: 'List Crabbox native routes', dangerLevel: 'safe',
       inputSchema: CrabboxOptionsInputV1Schema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: CRABBOX_OPTIONS_INPUT_HINTS,
       async run(input, context) {
-        return (await import('./machine/roles.js')).crabboxOptions(input, context, () => directProvider(context));
+        const result = await (await import('./machine/roles.js')).crabboxOptions(input, context, () => directProvider(context));
+        const guest = crabboxPreparationGuest();
+        if (result.base && input.backendId === 'local-container' && input.transport === 'direct' && guest) {
+          return { ...result, base: { ...result.base, nativeFacts: { ...result.base.nativeFacts,
+            preparationGuest: guest } } };
+        }
+        return result;
       } },
     acquire: { ...defaults, ...effectConfirmation, title: 'Acquire Crabbox lease', dangerLevel: 'writesRemote',
       inputSchema: CRABBOX_ROLE_SCHEMAS.acquireInput, resultSchema: CRABBOX_ROLE_SCHEMAS.acquireResult,

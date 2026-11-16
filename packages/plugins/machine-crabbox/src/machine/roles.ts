@@ -3,10 +3,10 @@ import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { machineCheckPresentation, machinePresentationLabel } from '../ui/translations.js';
 import { prepareCrabboxConnection } from './connection.js';
 import { crabboxLeaseId, createCrabboxProvider, CrabboxDependencyUnavailable } from './provider.js';
-import { projectMachineProvisionerActionFailure, observeMachineProvisionerNativeRead, type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, observeMachineProvisionerNativeRead, type MachineProvisionerCheckResultV1, type MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
-import { CRABBOX_PLUGIN_ID, CRABBOX_PROVISIONER_ID } from './constants.js';
-import { CrabboxOptionsInputV1Schema, CrabboxResourceV1Schema, resolveCrabboxLaunchQueryCandidate } from './schemas.js';
+import { CRABBOX_DEPENDENCY_ID, CRABBOX_PLUGIN_ID, CRABBOX_PROVISIONER_ID } from './constants.js';
+import { CrabboxOptionsInputV1Schema, CrabboxResourceV1Schema, resolveCrabboxLaunchQueryCandidate, crabboxCloudPreparationGuest } from './schemas.js';
 import type { CRABBOX_ROLE_SCHEMAS, CRABBOX_RECONCILIATION, CrabboxLaunchV1, CrabboxResourceV1 } from './schemas.js';
 
 export type CoordinatorContext = Readonly<{
@@ -83,6 +83,19 @@ export async function checkCrabboxCoordinator(context: CoordinatorContext) {
   catch (error) { return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: 'credential_unavailable' })); }
 }
 
+/** Local readiness belongs to the native dependency, independently of cloud sign-in. */
+export async function checkCrabboxDirect(direct: () => Promise<unknown>): Promise<MachineProvisionerCheckResultV1> {
+  try { await direct(); return machineCheckPresentation({ available: true }); }
+  catch (error) {
+    if (!(error instanceof CrabboxDependencyUnavailable)) throw error;
+    return machineCheckPresentation({ available: false, code: error.code, prerequisites: [{
+      requirement: { kind: 'managedDependency', id: { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_DEPENDENCY_ID } },
+      status: 'unavailable',
+      repairAction: { action: { pluginId: CRABBOX_PLUGIN_ID, localId: 'install' }, input: {} },
+    }] });
+  }
+}
+
 /** Only a selected direct route demands its native host adapter. Coordinator
  * checks/options never discover or probe the local executable. */
 export async function crabboxOptions(input: ProtocolSchemaOutput<typeof CrabboxOptionsInputV1Schema>, context: CoordinatorContext,
@@ -92,13 +105,15 @@ export async function crabboxOptions(input: ProtocolSchemaOutput<typeof CrabboxO
   if (!selected.success) return { dimensions };
   const launch = selected.data;
   let available = false;
+  let prerequisites: MachineProvisionerCheckResultV1['prerequisites'];
   try {
     if (launch.transport === 'coordinator') {
       const selectedConnection = await prepareCrabboxConnection(context.services.connectedAccounts, context.services.http, context.signal);
       available = launch.namespace === selectedConnection.connection.namespace;
     } else if (launch.backendId === 'local-container' && direct) {
-      await direct();
-      available = true;
+      const readiness = await checkCrabboxDirect(direct);
+      available = readiness.available;
+      prerequisites = readiness.prerequisites;
     }
   } catch (error) {
     projectMachineProvisionerActionFailure(error, () => {
@@ -106,7 +121,10 @@ export async function crabboxOptions(input: ProtocolSchemaOutput<typeof CrabboxO
       // Preserve the reviewed launch while exposing the selected route's refusal.
     });
   }
+  const preparationGuest = crabboxCloudPreparationGuest(launch);
   return { dimensions, base: { launch,
+    ...(prerequisites ? { prerequisites } : {}),
+    ...(preparationGuest ? { nativeFacts: { preparationGuest } } : {}),
     guestPlatform: launch.target === 'macos' ? 'darwin' as const : 'linux' as const,
     enrollmentRole: launch.backendId === 'local-container' ? 'sandbox' as const : 'server' as const, available,
     ...(!available && launch.transport === 'direct' ? { unavailableReason: {

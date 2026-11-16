@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { CrabboxCoordinatorClient, type CrabboxHttp } from './nativeClient.js';
-import { CrabboxResourceV1Schema, type CrabboxLaunchV1, type CrabboxResourceV1 } from './schemas.js';
+import { CrabboxLaunchV1Schema, CrabboxResourceV1Schema, type CrabboxLaunchV1, type CrabboxResourceV1 } from './schemas.js';
 import { createCrabboxProvider } from './provider.js';
 import { MachineProvisionerDestroyResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 
@@ -11,6 +11,32 @@ const publicKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExample host-owned';
 const lease = { id: resource.leaseId, provider: 'aws', org: resource.namespace, state: 'active', keep: true, cloudID: 'i-exact', host: '10.0.0.4', sshHostKey: 'ssh-ed25519 host-key', sshUser: 'crabbox', sshPort: '22', expiresAt: '2026-10-08T12:00:00Z', idleTimeoutSeconds: 1800 };
 
 describe('Crabbox v0.71.0 retained native lease', () => {
+    it.each(['aws', 'gcp'] as const)('launches an owned prepared %s checkpoint through checkpoint authorization', async backendId => {
+        const checkpointID = 'chk_' + 'a'.repeat(32);
+        const prepared = CrabboxLaunchV1Schema.parse({ ...launch, backendId, target: 'linux', nativeCheckpointId: checkpointID,
+            ...(backendId === 'gcp' ? { gcpProject: 'selected-project', gcpZone: 'selected-zone' } : {}) });
+        let existing = false;
+        let claims = 0;
+        const client = new CrabboxCoordinatorClient(connection, async (url, init) => {
+            if (init.method === 'GET') return existing ? Response.json({ lease: { ...lease, provider: backendId, checkpointID } }) : new Response('', { status: 404 });
+            const body = JSON.parse(String(init.body));
+            if (url.endsWith('/use')) {
+                expect(body).toEqual({ action: 'begin' }); claims++;
+                return Response.json({ claim: 'private-native-use-token', checkpoint: { id: checkpointID, provider: backendId,
+                    image: { id: prepared.nativeImageId, kind: backendId === 'aws' ? 'aws-ami' : 'gcp-machine-image' } } });
+            }
+            expect(url).toMatch(/\/from-checkpoint$/u);
+            expect(body).toMatchObject({ checkpointID, checkpointUseClaim: 'private-native-use-token',
+                [backendId === 'aws' ? 'awsAMI' : 'gcpMachineImage']: prepared.nativeImageId });
+            expect(body).not.toHaveProperty('gcpImage');
+            existing = true;
+            // Native creation completed but its acknowledgement was lost.
+            throw new Error('reply dropped');
+        });
+        expect(await client.acquire(prepared, { ...resource, backendId }, publicKey)).toMatchObject({ status: 'unknown' });
+        expect(await client.acquire(prepared, { ...resource, backendId }, publicKey)).toMatchObject({ status: 'allocated' });
+        expect(claims).toBe(1);
+    });
     it('distinguishes accepted coordinator cleanup from unknown native delivery and observes its completion', async () => {
         let complete = false;
         const calls: string[] = [];

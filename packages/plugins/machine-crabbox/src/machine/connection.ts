@@ -68,7 +68,7 @@ export async function prepareCrabboxConnection(accounts: Pick<ConnectedAccountsS
   const nativeHttp: CrabboxHttp = async (url, init) => {
     signal.throwIfAborted();
     const method = init.method;
-    if (method !== 'GET' && method !== 'PUT' && method !== 'POST') throw unavailable();
+    if (method !== 'GET' && method !== 'PUT' && method !== 'POST' && method !== 'DELETE') throw unavailable();
     const headers = Object.fromEntries(new Headers(init.headers).entries());
     headers.authorization = `Bearer ${selected.token}`;
     const reply = await http.request({ url, method, headers, redirect: 'error',

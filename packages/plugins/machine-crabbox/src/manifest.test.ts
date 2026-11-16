@@ -46,7 +46,22 @@ async function coordinatorRoles(putResponse?: { status: number; body: unknown })
 }
 
 describe('Crabbox lazy family authoring', () => {
-  it.each([['inspect', 'GET'], ['reconcile', 'GET'], ['check', 'GET'], ['options', 'GET'],
+  it('qualifies only the controller-local launch variant and leaves coordinator Machines remote', () => {
+    const provisioners = CRABBOX_PLUGIN.manifest.contributes.machineProvisioners ?? [];
+    const local = provisioners.find(value => value.id === 'crabbox');
+    expect(local).toMatchObject({ sessionPlacement: {
+      kind: 'controller-local', supportsAgentNativeSandbox: false,
+      when: { op: 'and', all: [
+        { op: 'eq', path: 'transport', value: 'direct' },
+        { op: 'eq', path: 'backendId', value: 'local-container' },
+      ] },
+    } });
+    const coordinator = provisioners.find(value => value.id !== 'crabbox');
+    expect(coordinator).toBeDefined();
+    expect(coordinator).not.toHaveProperty('sessionPlacement');
+  });
+
+  it.each([['inspect', 'GET'], ['reconcile', 'GET'], ['options', 'GET'],
     ['acquire', 'PUT'], ['destroy', 'GET'], ['destroy', 'POST']] as const)('preserves a typed %s refusal from %s', async (role, method) => {
     const runtime = await coordinatorRoles();
     const refusal = new PluginError({ code: 'plugin_fetch_interceptor_failed', message: 'Interceptor activation failed',
@@ -59,7 +74,7 @@ describe('Crabbox lazy family authoring', () => {
         return runtime.context.services.http.request(...args);
       } },
       connectedAccounts: { ...runtime.context.services.connectedAccounts,
-        ...(role === 'check' || role === 'options' ? { materialize: async () => { throw refusal; } } : {}),
+        ...(role === 'options' ? { materialize: async () => { throw refusal; } } : {}),
       },
     } };
     const resource = { backendId: 'aws', namespace: 'test-org', transport: 'coordinator',
@@ -150,7 +165,7 @@ describe('Crabbox lazy family authoring', () => {
     } };
     expect(await runtime.handlers.get('options')!({}, context)).toMatchObject({ dimensions: {} });
     expect(runtime.admissions).toEqual({ bindings: 0, materializations: 0 });
-    expect(await runtime.handlers.get('check')!({}, context)).toMatchObject({ available: true });
+    expect(await checkCrabboxCoordinator(context)).toMatchObject({ available: true });
     const launch = { backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',
       nativeImageId: 'ami-reviewed', nativeSizeId: 'm7i.large', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
     expect(await runtime.handlers.get('options')!(launch, context)).toMatchObject({ base: { available: true, launch } });
@@ -190,6 +205,35 @@ describe('Crabbox lazy family authoring', () => {
     }
     expect(dependencyReads).toEqual(['crabbox-cli']);
     expect(runtime.admissions.materializations).toBe(0);
+    expect(runtime.requests).toEqual([]);
+  });
+
+  it('keeps local setup unavailable despite connected cloud credentials, repairs once, and rechecks the selected configuration', async () => {
+    const runtime = await coordinatorRoles();
+    let installed = false;
+    let installs = 0;
+    const context = { ...runtime.context, services: { ...runtime.context.services,
+      managedServices: { dependencies: {
+        status: async () => installed
+          ? { state: 'ready', executable: { kind: 'managedDependency', id: 'crabbox-cli' } }
+          : { state: 'missing', supported: true },
+        ensure: async () => { installs++; installed = true; },
+      } },
+    } } as unknown as PluginInvocationContext;
+    const launch = { backendId: 'local-container', transport: 'direct', namespace: 'test-org', target: 'linux',
+      nativeImageId: 'ubuntu:24.04', ttlSeconds: 5400, idleTimeoutSeconds: 1800 };
+    const check = MachineProvisionerCheckResultV1Schema.parse(await runtime.handlers.get('check')!({}, context));
+    expect(check.available).toBe(false);
+    const options = MachineProvisionerOptionsResultV1Schema.parse(await runtime.handlers.get('options')!(launch, context));
+    expect(options.base?.prerequisites).toEqual(check.prerequisites);
+    expect(check.prerequisites?.[0].repairAction).toBeDefined();
+    expect(installs).toBe(0);
+    const repair = check.prerequisites![0].repairAction!;
+    await runtime.handlers.get(repair.action.localId)!(repair.input, context);
+    expect(installs).toBe(1);
+    expect(await runtime.handlers.get('check')!({}, context)).toMatchObject({ available: true });
+    expect(await runtime.handlers.get('options')!(launch, context)).toMatchObject({ base: { available: true, launch } });
+    expect(runtime.admissions).toEqual({ bindings: 0, materializations: 0 });
     expect(runtime.requests).toEqual([]);
   });
 
@@ -445,7 +489,7 @@ describe('Crabbox lazy family authoring', () => {
 
   it('recovers a submitted coordinator lease read-only and uses the same private SSH reference and exact cleanup', async () => {
     const runtime = await coordinatorRoles();
-    expect(await runtime.handlers.get('check')!({}, runtime.context)).toMatchObject({ available: true,
+    expect(await checkCrabboxCoordinator(runtime.context)).toMatchObject({ available: true,
       status: { key: 'machineCrabbox.presentation.ready' } });
     expect(runtime.requests).toHaveLength(0);
     const acquired = await runtime.handlers.get('acquire')!({ launch: { backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',

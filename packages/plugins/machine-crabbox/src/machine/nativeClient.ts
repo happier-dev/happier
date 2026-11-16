@@ -35,6 +35,7 @@ const CoordinatorLeaseSchema = z.object({
     keep: z.optional(z.boolean()), cloudID: z.optional(z.string()), serverID: z.optional(z.number()),
     host: z.optional(z.string()), sshUser: z.optional(z.string()), sshPort: z.optional(z.string()),
     sshHostKey: z.optional(z.string()), providerAccessExpiresAt: z.optional(z.string()),
+    checkpointID: z.optional(z.string()),
     tailscale: z.optional(z.unknown()), expiresAt: z.optional(z.string()),
     idleTimeoutSeconds: z.optional(z.int().check(z.nonnegative())),
     cleanupStatus: z.optional(z.string()), cleanupCompletedAt: z.optional(z.string()),
@@ -96,13 +97,41 @@ export class CrabboxCoordinatorClient {
             : launch.backendId === 'gcp' ? { gcpImage: launch.nativeImageId, gcpProject: launch.gcpProject, gcpZone: launch.gcpZone }
                 : { image: launch.nativeImageId, location: launch.location };
         try {
+            let checkpointUseClaim: string | undefined;
+            const checkpointID = 'nativeCheckpointId' in launch ? launch.nativeCheckpointId : undefined;
+            if (checkpointID) {
+                // Fixed-id recovery reads first. It must not open another use
+                // claim after a lost native allocation acknowledgement.
+                const existing = await this.request(resource, 'GET', undefined, signal, '', true);
+                if (existing === undefined) return { status: 'unknown', resource, code: 'native_transport_unknown' };
+                if (existing) {
+                    if (existing.checkpointID !== checkpointID) throw new CrabboxNativeError('native_identity_mismatch');
+                    if (existing.state === 'released') return { status: 'refused', resource, code: 'native_lease_ended' };
+                    if (existing.keep !== true) return { status: 'unknown', resource, code: 'native_retention_unconfirmed' };
+                    const observation = observe(resource, existing);
+                    return { status: 'allocated', resource: observation.resource, observation };
+                }
+                const response = await this.send(resource, 'POST', `/v1/checkpoints/${encodeURIComponent(checkpointID)}/use`, { action: 'begin' }, signal);
+                if (!response?.ok) throw new CrabboxNativeError('native_transport_unknown');
+                const claim = z.object({ claim: z.string(), checkpoint: z.object({ id: z.string(), provider: z.string(),
+                    image: z.object({ id: z.string(), kind: z.string() }) }) }).safeParse(await response.json());
+                if (!claim.success || !claim.data.claim || claim.data.checkpoint.id !== checkpointID
+                    || claim.data.checkpoint.provider !== launch.backendId || claim.data.checkpoint.image.id !== launch.nativeImageId
+                    || claim.data.checkpoint.image.kind !== (launch.backendId === 'aws' ? 'aws-ami' : 'gcp-machine-image'))
+                    throw new CrabboxNativeError('native_identity_mismatch');
+                checkpointUseClaim = claim.data.claim;
+            }
+            const selectedImage = checkpointID ? launch.backendId === 'aws' ? { awsAMI: launch.nativeImageId }
+                : { gcpMachineImage: launch.nativeImageId, ...('gcpProject' in launch ? { gcpProject: launch.gcpProject, gcpZone: launch.gcpZone } : {}) } : imageFields;
             const lease = await this.request(resource, 'PUT', {
                 leaseID: resource.leaseId, provider: resource.backendId, target: launch.target,
-                ...imageFields, serverType: launch.nativeSizeId, serverTypeExplicit: true,
+                ...selectedImage, serverType: launch.nativeSizeId, serverTypeExplicit: true,
+                ...(checkpointID ? { checkpointID, checkpointUseClaim } : {}),
                 ttlSeconds: launch.ttlSeconds, idleTimeoutSeconds: launch.idleTimeoutSeconds,
                 sshPublicKey, keep: true,
-            }, signal);
+            }, signal, checkpointID ? '/from-checkpoint' : '');
             if (!lease) return { status: 'unknown', resource, code: 'native_transport_unknown' };
+            if (checkpointID && lease.checkpointID !== checkpointID) throw new CrabboxNativeError('native_identity_mismatch');
             if (lease.state === 'released') return { status: 'refused', resource, code: 'native_lease_ended', nativeCause: { localCause: 'native_lease_ended' } };
             if (lease.keep !== true) return { status: 'unknown', resource, code: 'native_retention_unconfirmed' };
             const observation = observe(resource, lease);
@@ -148,22 +177,29 @@ export class CrabboxCoordinatorClient {
         if (resource.transport !== 'coordinator' || resource.namespace !== this.connection.namespace) throw new CrabboxNativeError('native_identity_mismatch');
     }
 
-    private async request(resource: CrabboxResourceV1, method: 'GET' | 'PUT' | 'POST', body: unknown, signal: AbortSignal | undefined): Promise<CoordinatorLease | undefined> {
+    private async send(resource: CrabboxResourceV1, method: 'GET' | 'PUT' | 'POST', path: string,
+        body: unknown, signal: AbortSignal | undefined): Promise<Response | undefined> {
         this.assertResource(resource);
         if (signal?.aborted) return undefined;
-        const path = `/v1/leases/${encodeURIComponent(resource.leaseId)}${method === 'POST' ? '/release' : ''}`;
-        let response: Response;
         try {
-            response = await this.http(this.endpoint.toString().replace(/\/+$/, '') + path, {
+            return await this.http(this.endpoint.toString().replace(/\/+$/, '') + path, {
                 method, signal, redirect: 'error',
                 headers: { Authorization: `Bearer ${this.connection.token}`, 'X-Crabbox-Org': resource.namespace, 'Content-Type': 'application/json',
                     ...(method === 'PUT' ? { Prefer: 'respond-async' } : {}) },
                 ...(body === undefined ? {} : { body: JSON.stringify(body) }),
             });
         } catch (error) {
-          const transportFailure = (): CoordinatorLease | undefined => { return undefined; };
+          const transportFailure = (): Response | undefined => { return undefined; };
           return projectMachineProvisionerActionFailure(error, transportFailure);
         }
+    }
+
+    private async request(resource: CrabboxResourceV1, method: 'GET' | 'PUT' | 'POST', body: unknown,
+        signal: AbortSignal | undefined, suffix = '', missingOkay = false): Promise<CoordinatorLease | null | undefined> {
+        const path = `/v1/leases/${encodeURIComponent(resource.leaseId)}${method === 'POST' ? '/release' : suffix}`;
+        const response = await this.send(resource, method, path, body, signal);
+        if (!response) return undefined;
+        if (missingOkay && response.status === 404) return null;
         if (!response.ok) {
             if (method === 'PUT' && response.status === 409) {
                 const rejection = z.object({ error: z.string() }).safeParse(await response.json().catch(() => undefined));

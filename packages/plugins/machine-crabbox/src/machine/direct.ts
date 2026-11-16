@@ -1,4 +1,3 @@
-import { posix, win32 } from 'node:path';
 import * as z from 'zod/mini';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -9,9 +8,10 @@ import type {
   MachineProvisionerObservationV1, MachineProvisionerPowerResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
-import { CRABBOX_PLUGIN_ID, CRABBOX_PROVISIONER_ID, CRABBOX_DEPENDENCY_ID } from './constants.js';
+import { CRABBOX_PLUGIN_ID, CRABBOX_PROVISIONER_ID } from './constants.js';
 import { CrabboxLaunchV1Schema, CrabboxResourceV1Schema, type CrabboxLaunchV1, type CrabboxResourceV1 } from './schemas.js';
-import { crabboxLeaseId, crabboxErrorCode, CrabboxDependencyUnavailable } from './provider.js';
+import { crabboxLeaseId, crabboxErrorCode } from './provider.js';
+import { createCrabboxNativeExecution } from './nativeExecution.js';
 
 const contributionRef = { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_PROVISIONER_ID };
 const statusSchema = z.object({ id: z.string(), provider: z.string(), target: z.string(), state: z.string(), serverId: z.string(),
@@ -34,30 +34,9 @@ function completed(result: PluginProcessResult) {
 // native intent without run's repository sync/hydration. Native claims remain
 // the sole retry/delete authority; CD8 temporarily delivers only the host key.
 export async function createCrabboxDirectProvider(context: PluginInvocationContext) {
-  const dependency = await context.services.managedServices.dependencies.status(CRABBOX_DEPENDENCY_ID, { signal: context.signal });
-  if ((dependency.state !== 'ready' && dependency.state !== 'updateAvailable') || !dependency.executable) throw new CrabboxDependencyUnavailable();
-  const executable = dependency.executable;
-
+  const execute = await createCrabboxNativeExecution(context);
   async function withNative<T>(resource: DirectResource, effect: (run: (args: readonly string[]) => Promise<PluginProcessResult>) => Promise<T>) {
-    const relativePath = `native/crabbox/testboxes/${resource.leaseId}/id_ed25519`;
-    return context.services.machineProvisioners.withBootstrapCredentialFile({ relativePath }, async credential => {
-      const paths = win32.isAbsolute(credential.path) && !posix.isAbsolute(credential.path) ? win32 : posix;
-      const stateRoot = paths.dirname(paths.dirname(paths.dirname(paths.dirname(credential.path))));
-      // Do not derive a second file tree from an unexpected host delivery.
-      if (!paths.isAbsolute(credential.path) || credential.path !== paths.join(stateRoot, 'crabbox', 'testboxes', resource.leaseId, 'id_ed25519')) {
-        throw failure('credential_unavailable');
-      }
-      // The public Exec owner replaces the environment. Native runtime/tool
-      // discovery needs the OS executable search path (and Windows system
-      // directory), not daemon Crabbox configuration or cloud credentials.
-      const toolEnvironment = Object.fromEntries(['PATH', 'Path', 'SystemRoot'].flatMap(key => {
-        const value = process.env[key];
-        return value === undefined ? [] : [[key, value]];
-      }));
-      const env = { ...toolEnvironment, XDG_STATE_HOME: stateRoot, CRABBOX_CONFIG: paths.join(stateRoot, 'happier-isolated.yaml'),
-        GIT_CEILING_DIRECTORIES: paths.dirname(stateRoot) };
-      return effect(args => context.services.exec.run({ executable, args, cwd: stateRoot, env }, { signal: context.signal }));
-    });
+    return execute(resource.leaseId, effect);
   }
 
   function identity(raw: CrabboxResourceV1): DirectResource {
@@ -139,7 +118,7 @@ export async function createCrabboxDirectProvider(context: PluginInvocationConte
         const resource = identity(raw);
         const status = await withNative(resource, run => observe(resource, run));
         const expiry = status.expiresAt ? Date.parse(status.expiresAt) : NaN;
-        return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'present', power: status.state === 'ready' ? 'running' : 'unknown',
+        return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'present', power: status.state === 'ready' || status.state === 'running' ? 'running' : 'unknown',
           storage: 'unknown', billing: { location: 'local', stoppedBilling: 'unknown' },
           ...(Number.isFinite(expiry) ? { nativeExpiry: expiry } : {}) });
       } catch (error) { return projectMachineProvisionerActionFailure(error, () => observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: crabboxErrorCode(error) })); }
