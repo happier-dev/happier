@@ -479,7 +479,7 @@ export function projectPluginMachineMaterializationReportFactsV1(
  */
 export function isExactPluginMachineMaterializationReleaseCorrespondenceV1(
   materialization: PluginMachineMaterializationV1,
-  release: PluginReleaseFactsV1,
+  release: Pick<PluginReleaseFactsV1, 'ref' | 'archiveDigestSha256' | 'uiSlots'>,
 ): boolean {
   if (
     !materialization.portableRelease

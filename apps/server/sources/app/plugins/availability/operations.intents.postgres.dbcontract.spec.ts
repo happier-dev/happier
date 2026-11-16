@@ -9,6 +9,7 @@ import { resolveCurrentPluginDeclarationsTx, readStoredPluginManifestV2 } from "
 import { createReleaseLessDeclarationV1, mergeReleaseLessDeclarationV2 } from "./currentDeclaration";
 import { PluginManifestV2Schema } from "@happier-dev/protocol/plugins/manifest/v2";
 import historicalUiGraphPublication from "./historicalUiGraphPublication.fixture.json";
+import { acquireAccountChangePublicationLocksInTx } from "@/app/changes/markAccountChanged";
 
 const operations = createPluginAvailabilityOperations({ resolveHostingCapability: () => ({ enabled: false }) });
 
@@ -48,7 +49,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
             engines: { happier: "^1.0.0" }, contributes: {},
             metadata: { measuredBody: marker + "x".repeat(128 * 1024) },
         }));
-        // Retained Account census: 490 Machine envelopes in a single intent.
+        // Stress fixture: 490 Machine envelopes in a single intent.
         const stored = { schemaVersion: 2, machines: Array.from({ length: 490 }, (_, index) => ({
             machineId: index === 489 ? machineId : `machine-${index}`, machineInstallationId: `installation-${index}`, declaration,
         })), legacyDeclaration: null };
@@ -107,6 +108,22 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
             for (const result of results) expect([...result.values()][0]?.manifest).toEqual(declaration.manifest);
             console.info("CURRENT_DECLARATION_TRANSFER", JSON.stringify({ copies, bytes }));
             expect(copies).toEqual([1, 1]);
+            const admittedDeclaration = [...results[0]!.values()][0]!;
+            const revalidate = () => inTx(async tx => {
+                await acquireAccountChangePublicationLocksInTx(tx, [account.id], { includeSingleAccount: true, intent: "serializing" });
+                return resolveCurrentPluginDeclarationsTx({ tx, accountId: account.id,
+                    refs: [{ pluginId, version: "1.0.0", machineId, machineInstallationId: "installation-489", admittedDeclaration }] });
+            });
+            expect([...(await revalidate()).values()][0]).toBe(admittedDeclaration);
+            expect(copies.at(-1)).toBe(0);
+            const wrongInstallation = await inTx(tx => resolveCurrentPluginDeclarationsTx({ tx, accountId: account.id,
+                refs: [{ pluginId, version: "1.0.0", machineId, machineInstallationId: "other-installation", admittedDeclaration }] }));
+            expect(wrongInstallation.size).toBe(0);
+            await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId } },
+                data: { enabled: false } });
+            expect((await revalidate()).size).toBe(0);
+            await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId: account.id, pluginId } },
+                data: { enabled: true } });
             const readDigests = () => inTx(async tx => {
                 const exact = await resolveCurrentClaimablePluginMachineMaterializationTx({ tx, accountId: account.id,
                     serverIdentityId: "srv_declaration_transfer_test", machineId, machineInstallationId: "installation-489",
@@ -125,6 +142,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 data: { releaseLessDeclaration: { ...stored, machines: [...stored.machines.slice(0, -1),
                     { ...stored.machines[489]!, declaration: next }] } } });
             expect((await read()).size).toBe(0);
+            expect((await revalidate()).size).toBe(0);
             const changedDigests = await readDigests();
             expect(changedDigests.exact.kind).toBe("notCurrent");
             expect(changedDigests.batch).toHaveLength(0);
@@ -137,11 +155,44 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
             // READ COMMITTED may see a new body at the selected path. Never stamp it with the old digest.
             expect((await read()).size).toBe(0);
             expect([...((await read()).values())][0]?.declarationDigestSha256).toBe(replacement.manifestDigestSha256);
+            expect((await revalidate()).size).toBe(0);
+            expect(copies.at(-1)).toBe(0);
         } finally { db.$transaction = original; }
     });
 
+    it("revalidates an admitted portable declaration without fetching its manifest", async () => {
+        const { accountId, pluginIds: [pluginId] } = await fixture(1);
+        const ref = { pluginId: pluginId!, version: "1.0.0" };
+        const admittedDeclaration = [...(await inTx(tx => resolveCurrentPluginDeclarationsTx({ tx, accountId, refs: [ref] }))).values()][0]!;
+        const read = () => inTx(async tx => {
+            await acquireAccountChangePublicationLocksInTx(tx, [accountId], { includeSingleAccount: true, intent: "serializing" });
+            const originalFind = tx.accountPluginRelease.findMany;
+            const find = originalFind.bind(tx.accountPluginRelease);
+            let bodyReads = 0;
+            tx.accountPluginRelease.findMany = (async (args: Parameters<typeof find>[0]) => {
+                const rows = await find(args);
+                bodyReads += rows.filter(row => "normalizedManifest" in row).length;
+                return rows;
+            }) as typeof tx.accountPluginRelease.findMany;
+            try {
+                const result = await resolveCurrentPluginDeclarationsTx({ tx, accountId, refs: [{ ...ref, admittedDeclaration }] });
+                expect(bodyReads).toBe(0);
+                return result;
+            } finally {
+                tx.accountPluginRelease.findMany = originalFind;
+            }
+        });
+        expect([...(await read()).values()][0]).toBe(admittedDeclaration);
+        await db.accountPluginRelease.update({ where: { accountId_pluginId_version: { accountId, ...ref } },
+            data: { archiveDigestSha256: `sha256:${"c".repeat(64)}` } });
+        expect((await read()).size).toBe(0);
+        await db.accountPluginIntent.update({ where: { accountId_pluginId: { accountId, pluginId: ref.pluginId } },
+            data: { desiredVersion: "2.0.0" } });
+        expect((await read()).size).toBe(0);
+    });
+
     it("fetches one consumed declaration body for a 490-Machine list, with set reads and fresh divergent claims", async () => {
-        // The retained busy Account had 490 envelopes and about 65 MB of declarations.
+        // Stress fixture: 490 envelopes and about 65 MB of declarations.
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const pluginId = "com.acme.wide-intent";
         const bodyMarker = "intent-page-consumed-body";
@@ -492,5 +543,76 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
             await db.machine.update({ where: { id: machine.id }, data: { installationId: machine.installationId, revokedAt: new Date() } });
             await expect(operations.readIntent({ accountId, input })).rejects.toMatchObject(refused);
         } finally { vi.unstubAllEnvs(); }
+    });
+
+    it("checks portable materialization correspondence using release identity columns only", async () => {
+        const { accountId, pluginIds: [pluginId] } = await fixture(1);
+        const stranger = await fixture(0);
+        const ref = { pluginId: pluginId!, version: "1.0.0" };
+        const slot = { contributionId: "hosted", artifactId: "hosted", tier: "hostedWeb", platform: "web",
+            artifactDigest: `sha256:${"d".repeat(64)}`, hostUiApiRange: "^1.0.0" };
+        const releaseKey = { accountId_pluginId_version: { accountId, ...ref } };
+        await db.accountPluginRelease.update({ where: releaseKey, data: { uiSlots: [slot] } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId, metadata: "{}",
+            installationId: "portable-identity-installation", pluginMaterializationRevision: 1n } });
+        const target = { accountId, serverIdentityId: "srv_portableIdentity", machineId: machine.id,
+            machineInstallationId: machine.installationId!, materializationId: "portable-installation", ...ref };
+        await db.pluginMachineMaterialization.create({ data: { accountId, serverIdentityId: target.serverIdentityId,
+            machineId: machine.id, materializationId: target.materializationId, ...ref, sourceClass: "registryPackage",
+            portableRelease: true, archiveDigestSha256: `sha256:${"a".repeat(64)}`, uiArtifacts: [slot],
+            enabled: true, trustState: "trusted", observedAt: new Date() } });
+        const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+        const releaseSelects: string[] = [];
+        client.$on("query", (event: Prisma.QueryEvent) => {
+            if (/^\s*SELECT\b/i.test(event.query) && event.query.includes('"AccountPluginRelease"')) {
+                releaseSelects.push(event.query);
+            }
+        });
+        const transaction = db.$transaction;
+        await client.$connect();
+        // Observe SQL at the genuine PostgreSQL boundary; both currentness owners stay real.
+        db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args: unknown[]) {
+            return Reflect.apply(client.$transaction, client, args);
+        } });
+        const read = () => inTx(async tx => {
+            await acquireAccountChangePublicationLocksInTx(tx, [accountId], { includeSingleAccount: true, intent: "serializing" });
+            return {
+                exact: await resolveCurrentClaimablePluginMachineMaterializationTx({ tx, ...target }),
+                batch: await resolveCurrentClaimablePluginMachineMaterializationsTx({ tx, ...target }),
+            };
+        });
+        const expectCurrent = (value: Awaited<ReturnType<typeof read>>) => {
+            expect(value.exact).toMatchObject({ kind: "current", declarationDigestSha256: `sha256:${"a".repeat(64)}` });
+            expect(value.batch).toHaveLength(1);
+        };
+        const expectNotCurrent = (value: Awaited<ReturnType<typeof read>>) => {
+            expect(value.exact).toEqual({ kind: "notCurrent" });
+            expect(value.batch).toEqual([]);
+        };
+        try {
+            expectCurrent(await read());
+            expect(releaseSelects).toHaveLength(2);
+            expect(releaseSelects.filter(sql => /"(?:normalizedManifest|collectionContracts|packageAssetArchive)"/.test(sql)),
+                "Currentness must not transfer immutable release bodies under Account serialization").toEqual([]);
+            await db.accountPluginRelease.update({ where: releaseKey, data: { archiveDigestSha256: `sha256:${"c".repeat(64)}` } });
+            expectNotCurrent(await read());
+            await db.accountPluginRelease.update({ where: releaseKey, data: { archiveDigestSha256: `sha256:${"a".repeat(64)}`,
+                uiSlots: [{ ...slot, hostUiApiRange: "^2.0.0" }] } });
+            expectNotCurrent(await read());
+            await db.accountPluginRelease.update({ where: releaseKey, data: { uiSlots: [{ ...slot, artifactDigest: "invalid" }] } });
+            expectNotCurrent(await read());
+            await db.accountPluginRelease.update({ where: releaseKey, data: { uiSlots: [slot], normalizedManifest: {},
+                collectionContracts: {}, packageAssetArchive: Prisma.DbNull } });
+            // Immutable content was admitted by its writer; only correspondence facts decide currentness.
+            expectCurrent(await read());
+            expectNotCurrent(await inTx(async tx => {
+                const isolated = { ...target, accountId: stranger.accountId };
+                return { exact: await resolveCurrentClaimablePluginMachineMaterializationTx({ tx, ...isolated }),
+                    batch: await resolveCurrentClaimablePluginMachineMaterializationsTx({ tx, ...isolated }) };
+            }));
+        } finally {
+            db.$transaction = transaction;
+            await client.$disconnect();
+        }
     });
 });

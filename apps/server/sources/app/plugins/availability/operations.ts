@@ -1274,6 +1274,26 @@ function reconcileMaterializationReplacement(input: Readonly<{
     };
 }
 
+const releaseCorrespondenceSelect = {
+    pluginId: true,
+    version: true,
+    archiveDigestSha256: true,
+    uiSlots: true,
+} as const;
+
+function releaseCorrespondenceFactsFromRow(
+    row: Pick<StoredReleaseRow, keyof typeof releaseCorrespondenceSelect>,
+): Parameters<typeof isExactPluginMachineMaterializationReleaseCorrespondenceV1>[1] {
+    if (!Array.isArray(row.uiSlots)) {
+        throw new PluginAvailabilityOperationError("plugin_release_content_conflict");
+    }
+    return {
+        ref: { pluginId: row.pluginId, version: row.version },
+        archiveDigestSha256: PluginUiArtifactDigestV1Schema.parse(row.archiveDigestSha256),
+        uiSlots: row.uiSlots.map(slot => PluginUiReleaseSlotV1Schema.parse(slot)),
+    };
+}
+
 /**
  * Availability keeps immutable release facts at the Account release owner.
  * A portable machine report becomes claimable only when its exact installed
@@ -1287,19 +1307,21 @@ async function hasExactAccountReleaseCorrespondenceTx(input: Readonly<{
     if (!input.materialization.portableRelease) {
         return false;
     }
-    const release = await resolveReleaseTx(
-        input.tx,
-        input.accountId,
-        {
-            pluginId: input.materialization.pluginId,
-            version: input.materialization.version,
+    const release = await input.tx.accountPluginRelease.findUnique({
+        where: {
+            accountId_pluginId_version: {
+                accountId: input.accountId,
+                pluginId: input.materialization.pluginId,
+                version: input.materialization.version,
+            },
         },
-    );
+        select: releaseCorrespondenceSelect,
+    });
     if (!release) return false;
     try {
         return isExactPluginMachineMaterializationReleaseCorrespondenceV1(
             input.materialization,
-            releaseFactsFromRow(release),
+            releaseCorrespondenceFactsFromRow(release),
         );
     } catch {
         return false;
@@ -1462,17 +1484,7 @@ export async function resolveCurrentClaimablePluginMachineMaterializationsTx(par
             accountId: params.accountId,
             OR: refs.map((row) => ({ pluginId: row.pluginId, version: row.version })),
         },
-        select: {
-            id: true,
-            accountId: true,
-            pluginId: true,
-            version: true,
-            archiveDigestSha256: true,
-            normalizedManifest: true,
-            collectionContracts: true,
-            uiSlots: true,
-            packageAssetArchive: true,
-        },
+        select: releaseCorrespondenceSelect,
         }));
     }
     const releasesByRef = new Map(
@@ -1491,7 +1503,7 @@ export async function resolveCurrentClaimablePluginMachineMaterializationsTx(par
             return release
                 && isExactPluginMachineMaterializationReleaseCorrespondenceV1(
                     materialization,
-                    releaseFactsFromRow(release),
+                    releaseCorrespondenceFactsFromRow(release),
                 )
                 ? [materialization]
                 : [];
