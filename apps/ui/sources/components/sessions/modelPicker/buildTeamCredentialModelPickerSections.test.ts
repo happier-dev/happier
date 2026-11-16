@@ -32,6 +32,16 @@ describe('Team resource refusals without model projections', () => {
         expect(option?.accessibilityLabel).toContain(t('teams.credentials.errors.brokerUnavailable'));
     });
 
+    it('names an unreadable resource by its source, never by the word Unavailable', () => {
+        const unnamed = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...resource,
+            sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } } });
+        const option = buildTeamCredentialModelPickerSections({
+            ...input, teamCredentialResources: [unnamed], teamCredentialDisplayNames: {},
+        })[0]?.options[0];
+        expect(option?.label).toBe(t('teams.credentials.source.connectedAccount'));
+        expect(option?.label).not.toBe(t('common.unavailable'));
+    });
+
     it('opens recovery for the actual resource when the consumer provides it', () => {
         const recovered: typeof resource[] = [];
         const option = buildTeamCredentialModelPickerSections({

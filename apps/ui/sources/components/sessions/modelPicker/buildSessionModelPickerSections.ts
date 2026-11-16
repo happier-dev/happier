@@ -18,7 +18,7 @@ import {
     teamCredentialRecoveryLabel,
     teamCredentialRecoveryPresentation,
 } from '@/components/settings/teams/credentials/teamCredentialPresentation';
-import { buildTeamCredentialModelPickerSections, createTeamCredentialModelEligibility, teamCredentialDeliveryLabel, teamCredentialUnavailableReason } from './buildTeamCredentialModelPickerSections';
+import { buildTeamCredentialModelPickerSections, createTeamCredentialModelEligibility, teamCredentialDeliveryLabel, presentTeamCredentialPickerName, teamCredentialUnavailableReason } from './buildTeamCredentialModelPickerSections';
 import {
     isTeamCredentialProviderModelPickerValue,
     sessionModelSelectionKey,
@@ -351,11 +351,11 @@ export function buildSessionModelPickerSections(input: Readonly<{
                 label,
             ].filter((value): value is string => Boolean(value)).join(', ')
             : teamResource
-                ? [teamName, homeName, input.teamCredentialDisplayNames?.[teamResource.id] ?? t('common.unavailable'), label, teamDelivery, teamUnavailableReason, teamRecovery]
+                ? [teamName, homeName, presentTeamCredentialPickerName(teamResource, input.teamCredentialDisplayNames), label, teamDelivery, teamUnavailableReason, teamRecovery]
                     .filter((value): value is string => Boolean(value)).join(', ')
                 : undefined;
         const teamDescription = teamResource
-            ? [input.teamCredentialDisplayNames?.[teamResource.id] ?? t('common.unavailable'), teamName, homeName, teamDelivery, teamUnavailableReason, teamRecovery]
+            ? [presentTeamCredentialPickerName(teamResource, input.teamCredentialDisplayNames), teamName, homeName, teamDelivery, teamUnavailableReason, teamRecovery]
                 .filter((value): value is string => Boolean(value)).join(' · ')
             : null;
         sections.unshift({

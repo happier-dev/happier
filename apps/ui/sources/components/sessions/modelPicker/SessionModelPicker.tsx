@@ -571,15 +571,20 @@ function SessionModelPickerPane(props: SessionModelPickerProps & Readonly<{
     const browsing = props.scope !== undefined;
     const labeledSections = React.useMemo((): ReadonlyArray<SessionModelPickerSection> => {
         // What can run reads first; every model that can't sits in one "Unavailable (n)" group last, each
-        // row naming its source and a few words of why (the full reason stays its accessible label).
+        // row naming its source and a few words of why (the full reason stays its accessible label). A reason
+        // several rows share ("Broker offline") heads their own group instead, said once.
         const folded = foldUnavailableRows<SessionModelPickerOption, SessionModelPickerSection>({
             sections,
             isUnavailable: (option) => option.availability === 'unavailable',
-            group: (options, title): SessionModelPickerSection => ({ id: 'unavailable', title, options }),
+            reason: (option) => option.unavailableReason,
+            group: (options, title, reason): SessionModelPickerSection => ({
+                id: reason === null ? 'unavailable' : `unavailable:${reason}`, title, options }),
             title: t('common.unavailable'),
-            present: (option) => ({
+            present: (option, _section, sharedReason) => ({
                 ...option,
-                description: joinHappierFacts(option.source?.label, option.unavailableReason) || option.description,
+                description: sharedReason
+                    ? option.source?.label
+                    : joinHappierFacts(option.source?.label, option.unavailableReason) || option.description,
                 descriptionLines: undefined,
                 ...(option.source ? { source: { ...option.source, inDescription: true } } : {}),
             }),

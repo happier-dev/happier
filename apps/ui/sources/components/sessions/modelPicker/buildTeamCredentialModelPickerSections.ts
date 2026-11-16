@@ -14,7 +14,7 @@ export { teamCredentialDeliveryLabel };
 import { resourceShortUnavailableLabel, resourceStateLabel } from '@/components/settings/teams/credentials/readinessPresentation';
 import { teamCredentialCatalogConfidenceLabel } from '@/components/settings/teams/credentials/catalogConfidencePresentation';
 import { describeDirectDeliveryVisibility, readDirectDeliveryVisibility } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
-import { formatLimitResetUtc, limitMetricLabel, teamCredentialRecoveryLabel, teamCredentialRecoveryPresentation } from '@/components/settings/teams/credentials/teamCredentialPresentation';
+import { formatLimitResetUtc, limitMetricLabel, sourceKindLabel, teamCredentialRecoveryLabel, teamCredentialRecoveryPresentation } from '@/components/settings/teams/credentials/teamCredentialPresentation';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import type { buildSessionModelPickerSections, SessionModelPickerOption, SessionModelPickerSection } from './buildSessionModelPickerSections';
 import { sessionModelSelectionKey } from './sessionModelSelectionKey';
@@ -83,6 +83,18 @@ export function createTeamCredentialModelEligibility(
     ));
 }
 
+/**
+ * A shared credential's name in a picker. Its label is private and may not be readable here; then it is named by
+ * what it shares ("Connected account"), never by the word "Unavailable", which would read as its state.
+ */
+export function presentTeamCredentialPickerName(
+    resource: Pick<TeamCredentialResourceCatalogEntryV1, 'id' | 'sourcePresentation'>,
+    displayNames: Readonly<Record<string, string | null>> | undefined,
+): string {
+    return displayNames?.[resource.id]?.trim()
+        || (resource.sourcePresentation ? sourceKindLabel(resource.sourcePresentation) : t('teams.credentials.title'));
+}
+
 export function buildTeamCredentialModelPickerSections(
     input: Parameters<typeof buildSessionModelPickerSections>[0],
     modelEligible = createTeamCredentialModelEligibility(input),
@@ -90,7 +102,7 @@ export function buildTeamCredentialModelPickerSections(
     if (!input.teamCredentialResources?.length) return [];
     return input.teamCredentialResources.flatMap((resource): SessionModelPickerSection[] => {
         // Filtering every model must not create a generic refusal placeholder for another Agent.
-        const displayName = input.teamCredentialDisplayNames?.[resource.id] ?? t('common.unavailable');
+        const displayName = presentTeamCredentialPickerName(resource, input.teamCredentialDisplayNames);
         const eligibleModels = resource.providerModels.filter(modelEligible);
         if (resource.providerModels.length > 0 && eligibleModels.length === 0) return [];
         const options = eligibleModels.flatMap((row): SessionModelPickerOption[] => {
