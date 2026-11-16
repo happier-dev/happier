@@ -282,6 +282,12 @@ Local convenience (auto-provision Docker DB):
 - `pnpm run test:e2e:core:mysql:docker`
 - `pnpm run test:extended-db:docker` (Postgres + MySQL, includes db contract suite)
 
+For selected browser flows with the same disposable PostgreSQL lifecycle, run
+`./apps/stack/bin/hstack-exec -- env HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT=1 node packages/tests/scripts/run-extended-db-docker.mjs --db postgres --mode ui --ui-file suites/ui-e2e/automations.authoring.feat.automations.spec.ts --ui-grep P04`.
+The runner passes its database to the existing Playwright owner and removes only
+the container it created. Source mode uses the existing workspace source loader;
+this command never uses the retained development database.
+
 Core e2e across *all* supported DBs (embedded + docker):
 
 - `pnpm run test:e2e:core:all-db`

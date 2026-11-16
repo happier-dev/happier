@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, '../../..');
@@ -103,12 +103,13 @@ export function buildDatabaseUrlForContainer({ db, host, port }) {
   throw new Error(`Unsupported db: ${String(db)}`);
 }
 
-export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile = undefined, containerId = undefined }) {
+export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile = undefined, uiFile = undefined, uiGrep = undefined, containerId = undefined, env = process.env }) {
   if (db !== 'postgres' && db !== 'mysql') {
     throw new Error(`Unsupported db: ${String(db)}`);
   }
   if (
     mode !== 'e2e'
+    && mode !== 'ui'
     && mode !== 'contract'
     && mode !== 'extended'
     && mode !== 'session-system-record-upgrade'
@@ -120,6 +121,12 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
   }
   if (contractFile !== undefined && (mode === 'e2e' || typeof contractFile !== 'string' || !contractFile.trim() || contractFile.startsWith('-'))) {
     throw new Error('A contract file filter requires contract or extended mode and a test file path');
+  }
+  if (uiFile !== undefined && (mode !== 'ui' || typeof uiFile !== 'string' || !uiFile.trim() || uiFile.startsWith('-'))) {
+    throw new Error('A UI file filter requires ui mode and a test file path');
+  }
+  if (uiGrep !== undefined && (mode !== 'ui' || typeof uiGrep !== 'string' || !uiGrep.trim())) {
+    throw new Error('A UI grep filter requires ui mode and a test name pattern');
   }
 
   /** @type {Array<{kind: string, command: string, args: string[], env: Record<string, string>}>} */
@@ -147,6 +154,23 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
       HAPPIER_E2E_DB_PROVIDER: db,
       DATABASE_URL: String(databaseUrl),
     },
+  };
+
+  const sourceEntrypoint = String(env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT
+    ?? env.HAPPY_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ?? '').trim().toLowerCase();
+  const usesSourceEntrypoint = ['1', 'true', 'yes', 'y'].includes(sourceEntrypoint);
+  const uiStep = {
+    kind: 'ui',
+    command: 'pnpm',
+    args: ['--filter', '@happier-dev/tests', 'exec', 'node', 'scripts/run-playwright-with-heartbeat.mjs',
+      '--config', 'playwright.ui.config.mjs', ...(uiFile === undefined ? [] : [uiFile]),
+      ...(uiGrep === undefined ? [] : ['--grep', uiGrep])],
+    env: { ...e2eStep.env, ...(usesSourceEntrypoint ? {
+      // Playwright imports the suite before its fixtures run. Apply the same
+      // workspace source loader used by the real CLI/server fixture processes.
+      NODE_OPTIONS: [env.NODE_OPTIONS, '--import',
+        pathToFileURL(resolve(REPO_ROOT, 'packages/cli-common/registerSourceRuntime.mjs')).href].filter(Boolean).join(' '),
+    } : {}) },
   };
 
   const providerEnv = {
@@ -235,6 +259,7 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
     ];
   }
 
+  if (mode === 'ui') return usesSourceEntrypoint ? [uiStep] : [prebuildCliSharedStep, prebuildCliStep, uiStep];
   if (mode === 'e2e') return [prebuildCliSharedStep, prebuildCliStep, e2eStep];
   if (mode === 'contract') {
     return db === 'mysql'

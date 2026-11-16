@@ -17,7 +17,7 @@ function usage() {
 Run Happier extended DB tests with an auto-provisioned Docker database.
 
 Usage:
-  node packages/tests/scripts/run-extended-db-docker.mjs --db postgres|mysql [--mode e2e|contract|extended|session-system-record-upgrade] [--contract-file <server-relative-test-file>] [--keep]
+  node packages/tests/scripts/run-extended-db-docker.mjs --db postgres|mysql [--mode e2e|ui|contract|extended|session-system-record-upgrade] [--contract-file <server-relative-test-file>] [--ui-file <tests-relative-browser-file>] [--ui-grep <test-name-pattern>] [--keep]
 
 Examples:
   node packages/tests/scripts/run-extended-db-docker.mjs --db postgres --mode e2e
@@ -121,7 +121,7 @@ export function parseArgs(argv) {
       out.keep = true;
       continue;
     }
-    if (a === '--db' || a === '--mode' || a === '--name' || a === '--contract-file') {
+    if (a === '--db' || a === '--mode' || a === '--name' || a === '--contract-file' || a === '--ui-file' || a === '--ui-grep') {
       const v = args[++i];
       if (!v) throw new Error(`Missing value for ${a}`);
       out[a.slice(2)] = v;
@@ -156,11 +156,12 @@ export async function main(argv = process.argv) {
   }
   if (
     mode !== 'e2e'
+    && mode !== 'ui'
     && mode !== 'contract'
     && mode !== 'extended'
     && mode !== 'session-system-record-upgrade'
   ) {
-    console.error(`Invalid --mode. Expected e2e|contract|extended|session-system-record-upgrade, got: ${String(mode)}`);
+    console.error(`Invalid --mode. Expected e2e|ui|contract|extended|session-system-record-upgrade, got: ${String(mode)}`);
     usage();
     return 2;
   }
@@ -237,7 +238,7 @@ export async function main(argv = process.argv) {
     const { host, port } = parseDockerPortLine(portLine);
     const databaseUrl = buildDatabaseUrlForContainer({ db, host, port });
 
-    const steps = buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile: parsed['contract-file'], containerId });
+    const steps = buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile: parsed['contract-file'], uiFile: parsed['ui-file'], uiGrep: parsed['ui-grep'], containerId });
     for (const step of steps) {
       const invocation = resolveExtendedDbPnpmInvocation(step.args);
       const env = { ...process.env, ...step.env };

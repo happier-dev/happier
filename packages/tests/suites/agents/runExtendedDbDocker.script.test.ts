@@ -51,9 +51,35 @@ describe('extended-db container ownership', () => {
     expect(vi.mocked(spawnSync).mock.calls.filter(([command, args]) => command === 'docker' && args?.[0] === 'rm')
       .map(([, args]) => args)).toEqual([]);
   });
+  it('runs selected browser flows with disposable PostgreSQL through the existing Playwright owner', async () => {
+    const id = 'c'.repeat(64);
+    const file = 'suites/ui-e2e/automations.authoring.feat.automations.spec.ts';
+    vi.mocked(spawnSync).mockImplementation((command, args) => ({
+      status: 0, signal: null, pid: 1, output: [], stderr: '',
+      stdout: command !== 'docker' ? '' : args?.[0] === 'run' ? id
+        : args?.[0] === 'inspect' ? 'healthy' : args?.[0] === 'port' ? '127.0.0.1:54321' : '',
+    }));
+    await runExtendedDbDockerScript.main(['node', 'runner', '--db', 'postgres', '--mode', 'ui',
+      '--ui-file', file, '--ui-grep', 'P04\\.']);
+    const browser = vi.mocked(spawnSync).mock.calls.find(([, args]) => args?.includes(file));
+    expect(browser?.[1]).toEqual(['--filter', '@happier-dev/tests', 'exec', 'node',
+      'scripts/run-playwright-with-heartbeat.mjs', '--config', 'playwright.ui.config.mjs', file, '--grep', 'P04\\.']);
+    expect(browser?.[2]?.env).toMatchObject({ HAPPIER_E2E_DB_PROVIDER: 'postgres',
+      DATABASE_URL: 'postgresql://happier:happier@127.0.0.1:54321/happier?sslmode=disable' });
+    expect(vi.mocked(spawnSync).mock.calls.filter(([command, args]) => command === 'docker' && args?.[0] === 'rm')
+      .map(([, args]) => args)).toEqual([['rm', '-f', '-v', id]]);
+  });
 });
 
 describe('extended-db docker script args', () => {
+  it('loads selected browser suites from workspace source before their fixtures start', () => {
+    const steps = buildExtendedDbCommandPlan({ db: 'postgres', mode: 'ui', databaseUrl: 'postgresql://fixture',
+      uiFile: 'suites/ui-e2e/automations.authoring.feat.automations.spec.ts', uiGrep: 'P04\\.',
+      env: { HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', NODE_OPTIONS: '--enable-source-maps' } });
+    expect(steps.map(step => step.kind)).toEqual(['ui']);
+    expect(steps[0].env.NODE_OPTIONS).toMatch(/^--enable-source-maps --import file:.*\/packages\/cli-common\/registerSourceRuntime\.mjs$/);
+  });
+
   it('parses valid args', () => {
     const parsed = parseArgs([
       'node',
