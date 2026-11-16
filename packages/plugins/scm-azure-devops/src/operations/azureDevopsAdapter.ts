@@ -16,6 +16,7 @@ import type {
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositoryPublishTarget,
   ScmHostingRepositorySummary,
+  ScmHostingRepositoryVisibility,
   ScmPullRequestState,
   ScmPullRequestSummary,
 } from '@happier-dev/plugin-sdk/scm';
@@ -27,14 +28,18 @@ import {
 } from '../auth/azureDevopsAuth.js';
 import {
   parseAzurePullRequestNumberFromUrl,
+  readAzureDevopsOrganizationCoordinates,
+  readAzureDevopsRepositoryPublicationCoordinates,
   readAzureDevopsRepositoryCoordinates,
 } from '../parsing/azureDevopsCoordinates.js';
 import {
   createAzureAuthRequiredError,
   createAzureCommandFailedError,
   createAzureDuplicatePullRequestError,
+  createAzureInvalidRequestError,
   createAzureNotFoundError,
 } from './errors.js';
+import { decodeAzureProjectRow, readAzureCollectionRows, readRecord } from '../triage/decode.js';
 
 const AZURE_CLI_EXECUTABLE = Object.freeze({ kind: 'systemTool' as const, id: 'azure-cli' });
 import {
@@ -157,25 +162,6 @@ function baseArgs(provider: ScmHostingProviderRef): readonly string[] {
   ];
 }
 
-function targetOwner(input: Readonly<{
-  provider: ScmHostingProviderRef;
-  owner?: string;
-}>): Readonly<{
-  owner: string;
-  project: string;
-}> {
-  const coordinates = readAzureDevopsRepositoryCoordinates(input.provider);
-  const owner = input.owner?.trim() || `${coordinates.organization}/${coordinates.project}`;
-  const parts = owner.split('/').map((part) => part.trim());
-  if (parts.length === 1 && parts[0] === coordinates.project) {
-    return { owner: `${coordinates.organization}/${coordinates.project}`, project: coordinates.project };
-  }
-  if (parts.length === 2 && parts[0] === coordinates.organization && parts[1] === coordinates.project) {
-    return { owner: `${coordinates.organization}/${coordinates.project}`, project: coordinates.project };
-  }
-  throw createAzureCommandFailedError('Azure DevOps repository owner must be organization/project');
-}
-
 function authSummary(
   detection?: AzureDevopsCliAuthDetectionResult,
 ): ScmHostingRepositoryAuthSummary {
@@ -216,20 +202,30 @@ function authSummary(
 
 function publishTarget(input: Readonly<{
   provider: ScmHostingProviderRef;
+  owner: string;
+  supportedVisibilities: readonly ScmHostingRepositoryVisibility[];
+  isDefault: boolean;
   auth?: ScmHostingRepositoryAuthSummary;
 }>): ScmHostingRepositoryPublishTarget {
   const provider = input.provider;
-  const coordinates = readAzureDevopsRepositoryCoordinates(provider);
   return {
     provider,
-    owner: `${coordinates.organization}/${coordinates.project}`,
+    owner: input.owner,
     ownerKind: 'org',
-    label: `${coordinates.organization}/${coordinates.project}`,
-    isDefault: true,
-    supportedVisibilities: ['private', 'public'],
+    label: input.owner,
+    isDefault: input.isDefault,
+    supportedVisibilities: [...input.supportedVisibilities],
     supportedRemoteUrlKinds: ['https', 'ssh'],
     auth: input.auth ?? authSummary(),
   };
+}
+
+function readProjectVisibility(raw: unknown): 'private' | 'public' {
+  const visibility = readRecord(raw)?.visibility;
+  if (visibility !== 'private' && visibility !== 'public') {
+    throw createAzureCommandFailedError('Azure CLI returned an unreadable project visibility');
+  }
+  return visibility;
 }
 
 function readReferenceNumber(input: ScmHostingProviderPullRequestGetInput): number | null {
@@ -437,6 +433,8 @@ export function createAzureDevopsOperationsAdapter(): AzureDevopsOperationsAdapt
       }
     },
     async describePublishTargets(input: ScmHostingProviderRepositoryDescribePublishTargetsInput) {
+      const current = input.provider.nameWithOwner ? readAzureDevopsRepositoryCoordinates(input.provider) : null;
+      const coordinates = current ?? readAzureDevopsOrganizationCoordinates(input.provider);
       const detection = await detectAzureDevopsCliAuth({
         provider: input.provider,
         ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
@@ -445,17 +443,47 @@ export function createAzureDevopsOperationsAdapter(): AzureDevopsOperationsAdapt
       // sign-in instruction the user cannot act on.
       if (detection.kind === 'undetermined') throw createAzureCommandFailedError(detection.message);
       const auth = authSummary(detection);
-      return {
-        auth,
-        targets: [publishTarget({ provider: input.provider, auth })],
-      };
+      if (detection.kind !== 'authenticated') {
+        return { auth, targets: current ? [publishTarget({ provider: input.provider, auth,
+          owner: `${current.organization}/${current.project}`, isDefault: true,
+          supportedVisibilities: ['private', 'public'] })] : [] };
+      }
+      const targets: ScmHostingRepositoryPublishTarget[] = [];
+      let continuationToken: string | null = null;
+      do {
+        // Azure CLI's projects response publishes its own continuationToken. No local
+        // project ceiling or guessed offset may hide an organization project.
+        const raw = await runAzJson({ args: ['devops', 'project', 'list', '--organization', coordinates.organizationUrl,
+          '--state-filter', 'wellFormed', ...(continuationToken ? ['--continuation-token', continuationToken] : []),
+          '--output', 'json'], runtimeServices: input.runtimeServices });
+        const rows = readAzureCollectionRows(raw);
+        if (!rows) throw createAzureCommandFailedError('Azure CLI returned an invalid project list');
+        for (const row of rows) {
+          const project = decodeAzureProjectRow(row);
+          if (!project) throw createAzureCommandFailedError('Azure CLI returned an invalid project');
+          targets.push(publishTarget({ provider: input.provider, auth, owner: `${coordinates.organization}/${project.name}`,
+            isDefault: current ? current.project === project.name : targets.length === 0,
+            supportedVisibilities: [readProjectVisibility(row)] }));
+        }
+        const token = readRecord(raw)?.continuationToken;
+        if (token !== undefined && token !== null && typeof token !== 'string') {
+          throw createAzureCommandFailedError('Azure CLI returned an invalid project continuation');
+        }
+        continuationToken = typeof token === 'string' && token.length > 0 ? token : null;
+      } while (continuationToken);
+      return { auth, targets };
     },
     async createRepository(input: ScmHostingProviderRepositoryCreateInput) {
-      const coordinates = readAzureDevopsRepositoryCoordinates(input.provider);
-      const owner = targetOwner({
-        provider: input.provider,
-        owner: input.owner,
+      const coordinates = readAzureDevopsRepositoryPublicationCoordinates(input);
+      const project = await runAzJson({
+        args: ['devops', 'project', 'show', '--organization', coordinates.organizationUrl,
+          '--project', coordinates.project, '--output', 'json'],
+        ...(input.runtimeServices ? { runtimeServices: input.runtimeServices } : {}),
       });
+      const visibility = readProjectVisibility(project);
+      if (visibility !== input.visibility) {
+        throw createAzureInvalidRequestError('Repository visibility must match its Azure DevOps project');
+      }
       const raw = await runAzJson({
         args: [
           'repos',
@@ -463,7 +491,7 @@ export function createAzureDevopsOperationsAdapter(): AzureDevopsOperationsAdapt
           '--organization',
           coordinates.organizationUrl,
           '--project',
-          owner.project,
+          coordinates.project,
           '--name',
           input.repositoryName,
           '--output',
@@ -473,19 +501,16 @@ export function createAzureDevopsOperationsAdapter(): AzureDevopsOperationsAdapt
       });
       const mapped = mapAzureRepositorySummary({
         provider: input.provider,
+        coordinates,
         raw,
         repositoryName: input.repositoryName,
-        visibility: input.visibility,
+        visibility,
       });
       if (!mapped) throw createAzureCommandFailedError('Azure CLI returned an invalid repository payload');
       return mapped;
     },
     async getRepository(input: ScmHostingProviderRepositoryGetInput) {
-      const coordinates = readAzureDevopsRepositoryCoordinates(input.provider);
-      const owner = targetOwner({
-        provider: input.provider,
-        owner: input.owner,
-      });
+      const coordinates = readAzureDevopsRepositoryPublicationCoordinates(input);
       const raw = await runAzJson({
         args: [
           'repos',
@@ -493,7 +518,7 @@ export function createAzureDevopsOperationsAdapter(): AzureDevopsOperationsAdapt
           '--organization',
           coordinates.organizationUrl,
           '--project',
-          owner.project,
+          coordinates.project,
           '--repository',
           input.repositoryName,
           '--output',
@@ -511,6 +536,7 @@ export function createAzureDevopsOperationsAdapter(): AzureDevopsOperationsAdapt
       if (!raw) return null;
       const mapped = mapAzureRepositorySummary({
         provider: input.provider,
+        coordinates,
         raw,
         repositoryName: input.repositoryName,
       });

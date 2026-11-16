@@ -1,8 +1,7 @@
 import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 
-import { AZURE_DEVOPS_SCM_HOSTING_PROVIDER_ID } from '../detection/adapter.js';
+import { AZURE_DEVOPS_SCM_HOSTING_PROVIDER_ID, readAzureDevopsProviderBaseContext } from '../detection/adapter.js';
 import { createAzureInvalidRequestError } from '../operations/errors.js';
-import { readVisualStudioOrganization } from './visualStudioOrganization.js';
 
 export type AzureDevopsRepositoryCoordinates = Readonly<{
   organization: string;
@@ -21,69 +20,61 @@ function isSafeSegment(value: string): boolean {
     && !value.includes('#');
 }
 
-export function readAzureDevopsRepositoryCoordinates(
+export function readAzureDevopsOrganizationCoordinates(
   provider: ScmHostingProviderRef,
-): AzureDevopsRepositoryCoordinates {
+): Pick<AzureDevopsRepositoryCoordinates, 'organization' | 'organizationUrl' | 'webOrigin'> {
   if (
     provider.id !== AZURE_DEVOPS_SCM_HOSTING_PROVIDER_ID
     || provider.kind !== 'azure-devops'
-    || !provider.nameWithOwner
   ) {
     throw createAzureInvalidRequestError('Azure DevOps provider coordinates are required');
   }
 
-  let parsed: URL;
-  try {
-    parsed = new URL(provider.baseUrl);
-  } catch {
-    throw createAzureInvalidRequestError('Azure DevOps provider baseUrl is invalid');
-  }
-  if (parsed.protocol !== 'https:' || parsed.port || parsed.search || parsed.hash) {
+  const context = readAzureDevopsProviderBaseContext(provider.baseUrl);
+  if (!context) {
     throw createAzureInvalidRequestError('Azure DevOps provider baseUrl must be a safe HTTPS organization URL');
   }
+  return { organization: context.organization, organizationUrl: context.baseUrl, webOrigin: context.webOrigin };
+}
 
-  const host = parsed.hostname.toLowerCase();
-  const pathSegments = parsed.pathname.split('/').filter(Boolean);
-  let organization: string | null = null;
-  let organizationUrl: string | null = null;
-  let webOrigin: string | null = null;
-
-  if (host === 'dev.azure.com') {
-    if (pathSegments.length !== 1 || !isSafeSegment(pathSegments[0])) {
-      throw createAzureInvalidRequestError('Azure DevOps provider baseUrl must include exactly one organization path');
-    }
-    organization = pathSegments[0];
-    organizationUrl = `https://dev.azure.com/${organization}`;
-    webOrigin = 'https://dev.azure.com';
-  } else {
-    if (pathSegments.length !== 0) {
-      throw createAzureInvalidRequestError('Azure DevOps legacy organization baseUrl must not include a path');
-    }
-    organization = readVisualStudioOrganization(host);
-    if (!organization) {
-      throw createAzureInvalidRequestError('Azure DevOps provider host is unsupported');
-    }
-    organizationUrl = `https://${host}`;
-    webOrigin = organizationUrl;
-  }
-
+export function readAzureDevopsRepositoryCoordinates(
+  provider: ScmHostingProviderRef,
+): AzureDevopsRepositoryCoordinates {
+  const coordinates = readAzureDevopsOrganizationCoordinates(provider);
+  if (!provider.nameWithOwner) throw createAzureInvalidRequestError('Azure DevOps repository coordinates are required');
   const parts = provider.nameWithOwner.split('/').map((part) => part.trim());
   if (parts.length !== 3 || !parts.every(isSafeSegment)) {
     throw createAzureInvalidRequestError('Azure DevOps repository coordinates must be organization/project/repository');
   }
   const [owner, project, repository] = parts;
-  if (owner !== organization) {
+  if (owner !== coordinates.organization) {
     throw createAzureInvalidRequestError('Azure DevOps repository organization must match provider baseUrl');
   }
 
   return {
-    organization,
+    ...coordinates,
     project,
     repository,
-    organizationUrl,
-    webOrigin,
-    nameWithOwner: `${organization}/${project}/${repository}`,
+    nameWithOwner: `${coordinates.organization}/${project}/${repository}`,
   };
+}
+
+export function readAzureDevopsRepositoryPublicationCoordinates(input: Readonly<{
+  provider: ScmHostingProviderRef;
+  owner: string;
+  repositoryName: string;
+}>): AzureDevopsRepositoryCoordinates {
+  const coordinates = readAzureDevopsOrganizationCoordinates(input.provider);
+  const parts = input.owner.trim().split('/').map((part) => part.trim());
+  const currentProject = parts.length === 1 && input.provider.nameWithOwner
+    ? readAzureDevopsRepositoryCoordinates(input.provider).project : undefined;
+  const project = parts.length === 2 && parts[0] === coordinates.organization ? parts[1]
+    : parts.length === 1 && parts[0] === currentProject ? currentProject : undefined;
+  if (!project || !isSafeSegment(project) || !isSafeSegment(input.repositoryName) || input.repositoryName.includes('/')) {
+    throw createAzureInvalidRequestError('Azure DevOps repository owner must be organization/project');
+  }
+  return { ...coordinates, project, repository: input.repositoryName,
+    nameWithOwner: `${coordinates.organization}/${project}/${input.repositoryName}` };
 }
 
 export function parseAzurePullRequestNumberFromUrl(

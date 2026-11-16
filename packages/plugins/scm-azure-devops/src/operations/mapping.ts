@@ -12,6 +12,7 @@ import {
   buildAzureRepositoryWebUrl,
   readAzureDevopsRepositoryCoordinates,
   stripAzureBranchRef,
+  type AzureDevopsRepositoryCoordinates,
 } from '../parsing/azureDevopsCoordinates.js';
 
 function readPositiveInt(value: unknown): number | null {
@@ -156,12 +157,13 @@ function normalizeDefaultBranch(value: unknown): string | null {
 
 export function mapAzureRepositorySummary(input: Readonly<{
   provider: ScmHostingProviderRef;
+  coordinates: AzureDevopsRepositoryCoordinates;
   raw: unknown;
   repositoryName: string;
   visibility?: ScmHostingRepositoryVisibility;
 }>): ScmHostingRepositorySummary | null {
   if (!isRecord(input.raw)) return null;
-  const baseCoordinates = readAzureDevopsRepositoryCoordinates(input.provider);
+  const baseCoordinates = input.coordinates;
   const repository = readString(input.raw.name) ?? input.repositoryName;
   const coordinates = {
     ...baseCoordinates,
@@ -176,6 +178,9 @@ export function mapAzureRepositorySummary(input: Readonly<{
   const sshUrl = readString(input.raw.sshUrl);
   const defaultBranch = normalizeDefaultBranch(input.raw.defaultBranch);
 
+  const projectVisibility = readNestedString(input.raw, 'project', 'visibility');
+  const visibility = projectVisibility === 'public' || projectVisibility === 'private' ? projectVisibility : input.visibility;
+  if (!visibility) return null;
   return {
     provider: {
       ...input.provider,
@@ -185,7 +190,7 @@ export function mapAzureRepositorySummary(input: Readonly<{
     webUrl,
     ...(cloneUrl ? { cloneUrl } : {}),
     ...(sshUrl ? { sshUrl } : {}),
-    visibility: input.visibility ?? 'private',
+    visibility,
     defaultBranch,
   };
 }

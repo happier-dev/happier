@@ -8,6 +8,7 @@ import type { HostingProviderRuntimeServices as ScmHostingProviderRuntimeService
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAzureDevopsOperationsAdapter } from './azureDevopsAdapter.js';
+import { createAzureDevopsCommandRuntime } from '../../testkit/azureDevopsRuntime.js';
 import { mapAzurePullRequest } from './mapping.js';
 
 const provider: ScmHostingProviderRef = {
@@ -24,27 +25,7 @@ const provider: ScmHostingProviderRef = {
 };
 
 function createRuntimeServices(stdoutByCommand: Readonly<Record<string, unknown>>): ScmHostingProviderRuntimeServices {
-  return {
-    executeCommand: vi.fn(async ({ executable, args }) => {
-      expect(executable).toEqual({ kind: 'systemTool', id: 'azure-cli' });
-      const key = args.join(' ');
-      const value = stdoutByCommand[key];
-      if (value instanceof Error) {
-        return {
-          ok: false,
-          stdout: '',
-          stderr: value.message,
-          exitCode: 1,
-        };
-      }
-      return {
-        ok: true,
-        stdout: JSON.stringify(value ?? {}),
-        stderr: '',
-        exitCode: 0,
-      };
-    }),
-  };
+  return createAzureDevopsCommandRuntime((args) => stdoutByCommand[args.join(' ')]);
 }
 
 function createAzurePullRequest(overrides?: Readonly<Record<string, unknown>>): Record<string, unknown> {
@@ -370,8 +351,16 @@ describe('Azure DevOps operations adapter', () => {
 
   it('describes Azure repository publish targets and creates repositories inside the provider project', async () => {
     const runtimeServices = createRuntimeServices({
+      'devops project list --organization https://dev.azure.com/happier-dev --state-filter wellFormed --output json': {
+        continuationToken: null,
+        value: [{ id: '11111111-1111-4111-8111-111111111111', name: 'platform', state: 'wellFormed', visibility: 'private' }],
+      },
+      'devops project show --organization https://dev.azure.com/happier-dev --project platform --output json': {
+        name: 'platform', visibility: 'private',
+      },
       'repos create --organization https://dev.azure.com/happier-dev --project platform --name next-repo --output json': {
         name: 'next-repo',
+        project: { name: 'platform', visibility: 'private' },
         webUrl: 'https://dev.azure.com/happier-dev/platform/_git/next-repo',
         remoteUrl: 'https://happier-dev@dev.azure.com/happier-dev/platform/_git/next-repo',
         sshUrl: 'git@ssh.dev.azure.com:v3/happier-dev/platform/next-repo',

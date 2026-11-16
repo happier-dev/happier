@@ -1,4 +1,4 @@
-import type { ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
+import type { HostingProviderRoutingCapability, ScmHostingProviderRef } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import {
   AZURE_DEVOPS_PLUGIN_ID,
@@ -30,7 +30,7 @@ export type ScmHostingProviderCompareUrlInput = Readonly<{
   head: string;
 }>;
 
-export type AzureDevopsScmHostingProviderAdapter = Readonly<{
+export type AzureDevopsScmHostingProviderAdapter = HostingProviderRoutingCapability & Readonly<{
   detectRemote(input: ScmHostingProviderDetectionInput): ScmHostingProviderRef | null;
   buildCompareUrl(input: ScmHostingProviderCompareUrlInput): string | null;
 }>;
@@ -46,6 +46,7 @@ type AzureRemoteProject = Readonly<{
 type AzureProviderBaseContext = Readonly<{
   organization: string;
   baseUrl: string;
+  webOrigin: string;
 }>;
 
 function readCurrentHttpsProject(host: string, segments: readonly string[]): AzureRemoteProject | null {
@@ -155,7 +156,7 @@ function isSafeNameWithOwnerSegment(value: string): boolean {
     && !value.includes('#');
 }
 
-function readProviderBaseContext(baseUrl: string): AzureProviderBaseContext | null {
+export function readAzureDevopsProviderBaseContext(baseUrl: string): AzureProviderBaseContext | null {
   let parsed: URL;
   try {
     parsed = new URL(baseUrl);
@@ -168,10 +169,11 @@ function readProviderBaseContext(baseUrl: string): AzureProviderBaseContext | nu
   const host = parsed.hostname.toLowerCase();
   const segments = parsed.pathname.split('/').filter(Boolean);
   if (host === 'dev.azure.com') {
-    if (segments.length !== 1) return null;
+    if (segments.length !== 1 || !isSafeNameWithOwnerSegment(segments[0])) return null;
     return {
       organization: segments[0],
       baseUrl: `https://dev.azure.com/${segments[0]}`,
+      webOrigin: parsed.origin,
     };
   }
 
@@ -180,6 +182,7 @@ function readProviderBaseContext(baseUrl: string): AzureProviderBaseContext | nu
     return {
       organization,
       baseUrl: `https://${host}`,
+      webOrigin: parsed.origin,
     };
   }
 
@@ -194,10 +197,30 @@ function readProviderBaseContext(baseUrl: string): AzureProviderBaseContext | nu
   return {
     organization: serverCollection,
     baseUrl: `${parsed.origin}${stripTrailingSlash(parsed.pathname)}`,
+    webOrigin: parsed.origin,
   };
 }
 
 export const azureDevopsHostingProviderAdapter: AzureDevopsScmHostingProviderAdapter = Object.freeze({
+  listDeployments({ connectedAccountBases }) {
+    const deployments = new Map<string, ScmHostingProviderRef>();
+    for (const base of connectedAccountBases ?? []) {
+      const context = readAzureDevopsProviderBaseContext(base);
+      if (!context || deployments.has(context.baseUrl)) continue;
+      deployments.set(context.baseUrl, {
+        id: AZURE_DEVOPS_SCM_HOSTING_PROVIDER_ID,
+        kind: 'azure-devops',
+        displayName: 'Azure DevOps',
+        baseUrl: context.baseUrl,
+        urlSafety: {
+          allowedSchemes: ['https:'],
+          allowedBaseUrls: [context.baseUrl],
+          allowedOrigins: [context.webOrigin],
+        },
+      });
+    }
+    return [...deployments.values()];
+  },
   detectRemote(input) {
     const parsed = parseScmRemoteUrl(input.remoteUrl);
     if (!parsed) return null;
@@ -231,7 +254,7 @@ export const azureDevopsHostingProviderAdapter: AzureDevopsScmHostingProviderAda
     ) {
       return null;
     }
-    const context = readProviderBaseContext(provider.baseUrl);
+    const context = readAzureDevopsProviderBaseContext(provider.baseUrl);
     if (!context) return null;
     const parts = provider.nameWithOwner.split('/');
     if (parts.length !== 3) return null;
