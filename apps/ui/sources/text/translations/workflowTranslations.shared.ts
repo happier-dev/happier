@@ -792,7 +792,7 @@ export const en = {
         importFailedInvalidJson: 'That file is not valid JSON.',
         importFailedUnsupportedVersion: 'That file uses a workflow version this app does not support.',
         importFailedInvalidDocument: 'That file is not a Happier workflow.',
-        exportPrivacyNote: 'The exported file contains prompts and settings. It never contains credentials or run results.',
+        exportPrivacyNote: 'The exported file contains prompts, settings, and any environment variable values you entered. Review these values before sharing. Run results are not included.',
     },
 
     issue: {

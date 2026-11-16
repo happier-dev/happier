@@ -88,8 +88,8 @@ function serializeValidatedWorkflowDefinition(
 
 /**
  * The authored note the caller shows before sharing an exported file. The
- * definition schema already excludes credentials, staged media and every
- * runtime-only field, so this previews a consequence rather than describing a
+ * definition includes authored environment variable values and excludes
+ * runtime results, so this previews a consequence rather than describing a
  * filter.
  */
 export const WORKFLOW_EXPORT_PRIVACY_NOTE_KEY: TranslationKeyNoParams =
