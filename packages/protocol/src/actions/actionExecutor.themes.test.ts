@@ -1,0 +1,58 @@
+import { expect, it } from 'vitest';
+import { createActionExecutor } from './actionExecutor.js';
+import { getActionSpec } from './actionSpecs.js';
+import { parseThemeProfileDocument } from '../account/settings/themeProfiles.js';
+import { THEME_ACTION_IDS, THEME_ACTION_ID_LIST, ThemeActionInputSchemas, ThemeActionOutputSchemas } from './themeActionFamily.js';
+import { actionInputValidationFailure } from './executor/actionInputValidation.js';
+import { isAgentInitiatedApprovalRequiredByDefault } from './actionApprovalPolicy.js';
+
+it('keeps destructive deletion and plugin authoring on Ask while ordinary theme changes stay Direct', () => {
+  for (const actionId of THEME_ACTION_ID_LIST) {
+    expect(isAgentInitiatedApprovalRequiredByDefault(actionId), actionId)
+      .toBe(actionId === THEME_ACTION_IDS.delete || actionId === THEME_ACTION_IDS.uninstall || actionId === THEME_ACTION_IDS.sharePlugin);
+  }
+});
+
+it('retains unknown theme presentation at strict admission and preserves document-invalid repair codes', () => {
+  const parsed = parseThemeProfileDocument({ schemaVersion: 1, id: 'theme_retained', name: 'Retained theme',
+    createdAt: '2026-11-16T00:00:00Z', updatedAt: '2026-11-16T00:00:00Z',
+    base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} }, futurePresentation: { texture: 'paper' } });
+  if (!parsed.ok) throw new Error(parsed.error);
+  const input = { document: parsed.document, mode: 'dark', origin: { kind: 'agent' } };
+  const schema = ThemeActionInputSchemas[THEME_ACTION_IDS.tryOn];
+  expect(schema.parse(input).document).toMatchObject({ raw: { futurePresentation: { texture: 'paper' } },
+    compatibility: { status: 'partial' } });
+  const invalid = schema.safeParse({ ...input,
+    document: { ...parsed.document, raw: { ...parsed.document.raw, name: 7 } },
+  });
+  expect(invalid.success).toBe(false);
+  if (invalid.success) throw new Error('Invalid known theme field was admitted');
+  expect(actionInputValidationFailure(invalid.error)).toMatchObject({ ok: false, errorCode: 'theme_document_invalid' });
+});
+
+it('admits base-theme selection and an offline local receipt without fabricating a client identity', () => {
+  expect(ThemeActionInputSchemas[THEME_ACTION_IDS.apply].safeParse({ ref: null, mode: 'light' }).success).toBe(true);
+  const output = ThemeActionOutputSchemas[THEME_ACTION_IDS.apply];
+  expect(output.safeParse({ applied: { mode: 'light' }, undoHandle: 'local-operation' }).success).toBe(true);
+  expect(output.safeParse({ applied: { mode: 'dark', clientId: 'connected-app' }, undoHandle: 'connected-operation' }).success).toBe(true);
+  expect(output.safeParse({ applied: { mode: 'dark', clientId: '' }, undoHandle: 'connected-operation' }).success).toBe(false);
+});
+
+it('admits retained theme presentation through the real Action boundary and reports malformed documents by domain code', async () => {
+  const parsed = parseThemeProfileDocument({ schemaVersion: 1, id: 'theme_action', name: 'Action theme',
+    createdAt: '2026-11-16T00:00:00Z', updatedAt: '2026-11-16T00:00:00Z',
+    base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} }, futurePresentation: { texture: 'paper' } });
+  if (!parsed.ok) throw new Error(parsed.error);
+  const id = THEME_ACTION_IDS.tryOn;
+  const input = { document: parsed.document, mode: 'dark', origin: { kind: 'agent' } };
+  const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+  const unavailable = await createActionExecutor({}).execute(id, input, context);
+  expect(unavailable).toMatchObject({ ok: false, errorCode: 'client_not_connected' });
+  expect(getActionSpec(id).inputSchema.parse(input)).toMatchObject({ document: {
+    raw: { futurePresentation: { texture: 'paper' } }, compatibility: { status: 'partial' },
+  } });
+  const invalid = await createActionExecutor({}).execute(id, { ...input,
+    document: { ...parsed.document, raw: { ...parsed.document.raw, name: 7 } },
+  }, context);
+  expect(invalid).toMatchObject({ ok: false, errorCode: 'theme_document_invalid' });
+});

@@ -97,6 +97,7 @@ import { APP_SHELL_ACTION_SPECS } from './appShellActionFamily.js';
 import { NOTIFICATION_CONFIGURATION_ACTION_SPECS, NotificationConfigurationActionInputSchemas, NotificationConfigurationActionOutputSchemas, type NotificationConfigurationActionId } from './notificationConfigurationActionFamily.js';
 import { APP_UPDATE_ACTION_SPECS, AppUpdateActionInputSchemas, AppUpdateActionOutputSchemas, type AppUpdateActionId } from './appUpdateActionFamily.js';
 import { UPDATES_ACTION_SPECS, UpdatesActionInputSchemas, UpdatesActionOutputSchemas, type UpdatesActionId } from './updatesActionFamily.js';
+import { THEME_ACTION_SPECS, ThemeActionInputSchemas, ThemeActionOutputSchemas, type ThemeActionId } from './themeActionFamily.js';
 import { CLIPBOARD_ACTION_SPECS } from './clipboardActionFamily.js';
 import { DESKTOP_WINDOWS_ACTION_SPECS } from './desktopWindowsAction.js';
 import { DESKTOP_SHELL_ACTION_SPECS } from './specs/desktopShell.js';
@@ -613,6 +614,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING: ReturnType<typeof defin
   typeof NOTIFICATION_CONFIGURATION_ACTION_SPECS,
   typeof APP_UPDATE_ACTION_SPECS,
   typeof UPDATES_ACTION_SPECS,
+  typeof THEME_ACTION_SPECS,
   typeof CLIPBOARD_ACTION_SPECS,
   typeof DESKTOP_WINDOWS_ACTION_SPECS,
   typeof DESKTOP_SHELL_ACTION_SPECS,
@@ -645,6 +647,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD_OPENING: ReturnType<typeof defin
   ...(NOTIFICATION_CONFIGURATION_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(APP_UPDATE_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(UPDATES_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
+  ...(THEME_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(CLIPBOARD_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(DESKTOP_WINDOWS_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
   ...(DESKTOP_SHELL_ACTION_SPECS satisfies readonly PreNormalizedActionSpec[]),
@@ -1247,7 +1250,7 @@ type NonRuntimeActionSpecDefinition<TSpec> = TSpec extends Readonly<{
 }>
   // These families have exact per-ID schema definitions below. Their generic
   // row factories must not reintroduce widened schema unions into the catalog.
-  ? TActionId extends RuntimeActionIdV1 | SessionTerminalActionId | SessionAgentTransitionActionId | MachineTerminalActionId | WorkspaceActionId | ProjectDefinitionActionId
+  ? TActionId extends RuntimeActionIdV1 | SessionTerminalActionId | SessionAgentTransitionActionId | ThemeActionId | MachineTerminalActionId | WorkspaceActionId | ProjectDefinitionActionId
     | WidgetInstanceActionIdV1 | WidgetDefinitionActionIdV1 | WidgetLayoutFragmentActionIdV1
     | ArtifactFolderActionIdV1 | ProfileActionIdV1 | ProviderActionIdV1 | RemoteHostActionIdV1 | HomeRuntimeActionIdV1 | ProjectActionIdV1 | WorkflowEffectActionIdV1 | UsageSourceActionId | AutomationOccurrenceActionId
     ? never
@@ -1673,6 +1676,9 @@ export type CanonicalActionSpecDefinition =
   | { [Id in UpdatesActionId]: CanonicalActionSchemaDefinition<Id,
       (typeof UpdatesActionInputSchemas)[Id], (typeof UpdatesActionOutputSchemas)[Id]>
     }[UpdatesActionId]
+  | { [Id in ThemeActionId]: CanonicalActionSchemaDefinition<Id,
+      (typeof ThemeActionInputSchemas)[Id], (typeof ThemeActionOutputSchemas)[Id], never, 'account_automation'>
+    }[ThemeActionId]
   | SessionTerminalActionSpecDefinition
   | { [Id in SessionAgentTransitionActionId]: CanonicalActionSchemaDefinition<Id,
       (typeof SESSION_AGENT_TRANSITION_ACTION_INPUT_SCHEMAS)[Id], (typeof SESSION_AGENT_TRANSITION_ACTION_OUTPUT_SCHEMAS)[Id]>

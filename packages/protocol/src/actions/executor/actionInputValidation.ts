@@ -43,6 +43,9 @@ function projectIssueMessage(issue: core.$ZodIssue): string {
 }
 
 function projectIssue(issue: core.$ZodIssue, parentPath: readonly (string | number)[] = []): ActionInputIssue[] {
+  if (issue.message === 'theme_document_invalid') {
+    return [{ code: 'theme_document_invalid', path: issue.path.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number') }];
+  }
   if (issue.message === 'invitation_token_expected') {
     return [{ code: 'invitation_token_expected', path: ['token'], message: INVITATION_TOKEN_EXPECTED_MESSAGE }];
   }
@@ -114,6 +117,9 @@ export function projectActionInputJsonSchemaIssues(
 
 /** Semantic checks use the same content-free repair envelope as schema validation. */
 export function actionInputIssueFailure(...issues: readonly ActionInputIssue[]) {
+  if (issues.some(issue => issue.code === 'theme_document_invalid')) {
+    return { ok: false, errorCode: 'theme_document_invalid', error: 'theme_document_invalid' } satisfies ActionExecuteFailure;
+  }
   if (issues.some(issue => issue.code === 'invitation_token_expected')) {
     return { ok: false, errorCode: 'invitation_token_expected', error: INVITATION_TOKEN_EXPECTED_MESSAGE } satisfies ActionExecuteFailure;
   }

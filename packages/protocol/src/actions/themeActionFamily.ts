@@ -69,7 +69,7 @@ export const ThemeSurfacePaintDescriptorSchema = lazyZodSchema(() => z.strictObj
   paintRoles: z.array(z.strictObject({ facet: z.enum(['background', 'foreground', 'border']), tokenRef: z.string() })),
 }));
 const referenceInput = lazyZodSchema(() => z.strictObject({ ref: ThemeReferenceSchema }));
-const applied = lazyZodSchema(() => z.strictObject({ clientId: identifier, mode }));
+const applied = lazyZodSchema(() => z.strictObject({ clientId: z.optional(identifier), mode }));
 const entryResult = lazyZodSchema(() => z.strictObject({ entry: ThemeLibraryEntrySchema }));
 const restoredResult = lazyZodSchema(() => z.strictObject({ restored: ThemeSelectionSchema }));
 const file = lazyZodSchema(() => z.strictObject({ name: z.string(), text: z.string() }));
@@ -85,7 +85,7 @@ export const ThemeActionInputSchemas = {
   [THEME_ACTION_IDS.keep]: z.strictObject({ previewRef: identifier }),
   [THEME_ACTION_IDS.save]: z.strictObject({ document: ThemeProfileDocumentSchema, ref: z.optional(ThemeReferenceSchema) }),
   [THEME_ACTION_IDS.duplicate]: referenceInput,
-  [THEME_ACTION_IDS.apply]: z.strictObject({ ref: ThemeReferenceSchema, mode }),
+  [THEME_ACTION_IDS.apply]: z.strictObject({ ref: z.nullable(ThemeReferenceSchema), mode }),
   [THEME_ACTION_IDS.undo]: z.strictObject({ undoHandle: identifier }),
   [THEME_ACTION_IDS.delete]: referenceInput,
   [THEME_ACTION_IDS.import]: z.strictObject({ file }),

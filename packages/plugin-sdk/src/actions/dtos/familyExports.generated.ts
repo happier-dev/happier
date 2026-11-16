@@ -148,6 +148,7 @@ export type { SettingsDeclarationsActionInputById, SettingsDeclarationsActionRes
 export type { SkillsActionInputById, SkillsActionResultById } from './skillsActionDtos.generated.js';
 export type { SubagentRegistryActionInputById, SubagentRegistryActionResultById } from './subagentRegistryActionDtos.generated.js';
 export type { TeamsActionInputById, TeamsActionResultById } from './teamsActionDtos.generated.js';
+export type { ThemesActionInputById, ThemesActionResultById } from './themesActionDtos.generated.js';
 export type { TodoSessionLinkActionInputById, TodoSessionLinkActionResultById } from './todoSessionLinkActionDtos.generated.js';
 export type { UpdatesActionInputById, UpdatesActionResultById } from './updatesActionDtos.generated.js';
 export type { UsageActionInputById, UsageActionResultById } from './usageActionDtos.generated.js';

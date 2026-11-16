@@ -169,6 +169,7 @@ import { NOTIFICATION_CONFIGURATION_ACTION_IDS, NOTIFICATION_NOTIFY_ME_ACTION_ID
 import { APP_UPDATE_ACTION_IDS } from './appUpdateActionIdsV1.js';
 import { BUG_REPORT_SUBMISSION_ACTION_IDS } from './specs/bugReportActionIdsV1.js';
 import { UPDATES_ACTION_IDS } from './updatesActionIdsV1.js';
+import { THEME_ACTION_ID_LIST } from './themeActionIdsV1.js';
 import { CLIPBOARD_ACTION_IDS } from './clipboardActionIdsV1.js';
 import { SCREEN_CAPTURE_ACTION_IDS } from './screenCaptureActionIds.js';
 import { EXTERNAL_LINK_ACTION_IDS } from './externalLinkActionIdsV1.js';
@@ -348,6 +349,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   notification_configuration: NOTIFICATION_CONFIGURATION_ACTION_IDS,
   app_updates: APP_UPDATE_ACTION_IDS,
   updates: UPDATES_ACTION_IDS,
+  themes: THEME_ACTION_ID_LIST,
   clipboard: CLIPBOARD_ACTION_IDS,
   client_files: ['files.save'],
   desktop_windows: ['desktop.windows.open'],

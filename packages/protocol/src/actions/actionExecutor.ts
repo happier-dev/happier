@@ -460,6 +460,8 @@ import { isScreenCaptureActionId } from './screenCaptureActionIds.js';
 import { isNotificationConfigurationActionId } from './notificationConfigurationActionFamily.js';
 import { BugReportSubmitInputSchema } from './specs/bugReport.js';
 import { isAppUpdateActionId } from './appUpdateActionFamily.js';
+import { isThemeActionId } from './themeActionIdsV1.js';
+import type { ThemeActionRequest } from './themeActionFamily.js';
 import { isUpdatesActionId } from './updatesActionFamily.js';
 import { ClipboardWriteInputSchema } from './clipboardActionFamily.js';
 import { AutomationOccurrenceActionIdSchema, AutomationOccurrenceInputSchemas } from '../automations/occurrenceActions.js';
@@ -5270,6 +5272,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (isAppUpdateActionId(actionId)) {
         if (!deps.appUpdateAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.appUpdateAction({ actionId, input: parsed.data, context: ctx });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+      if (isThemeActionId(actionId)) {
+        if (!deps.themeAction) return clientActionUnavailable(actionId);
+        // The canonical spec admitted this correlated id/input pair before dispatch.
+        const result = await deps.themeAction({ actionId, input: parsed.data, context: ctx } as ThemeActionRequest);
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (isUpdatesActionId(actionId)) {

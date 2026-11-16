@@ -160,6 +160,7 @@ import type { AppShellActionId } from '../appShellActionFamily.js';
 import type { ScreenCaptureActionId } from '../screenCaptureActionIds.js';
 import type { NotificationConfigurationActionId } from '../notificationConfigurationActionFamily.js';
 import type { AppUpdateActionId } from '../appUpdateActionFamily.js';
+import type { ThemeActionRequest, ThemeActionOutput } from '../themeActionFamily.js';
 import type { BugReportSubmitInput, BugReportSubmitOutput } from '../specs/bugReport.js';
 import type { UpdatesActionId } from '../updatesActionFamily.js';
 import type { ClipboardWriteResultSchema } from '../clipboardActionFamily.js';
@@ -3258,6 +3259,8 @@ export type ActionExecutorDeps = Readonly<{
   appUpdateAction?: (args: Readonly<{
     actionId: AppUpdateActionId; input: unknown; context: ActionExecutorContext;
   }>) => Promise<unknown>;
+  /** Admitted client operation; persistence, preview and opaque Undo stay with the existing theme owners. */
+  themeAction?: (args: ThemeActionRequest) => Promise<ThemeActionOutput | ActionExecuteFailure>;
   /** Current Updates selection; all effects remain with the existing update and batch owners. */
   updatesAction?: (args: Readonly<{
     actionId: UpdatesActionId; input: unknown; context: ActionExecutorContext;
