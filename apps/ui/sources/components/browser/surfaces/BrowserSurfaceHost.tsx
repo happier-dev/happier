@@ -82,7 +82,7 @@ import { BrowserSurfaceFallback, type BrowserSurfaceUnavailableReason } from './
 import { RetainedPresentationSlotBinder, useRetainedPresentationSlotVisible } from '@/components/ui/presentation/retainedPresentationSlots';
 import { useRetainedPresentationSlotGeometry } from '@/components/ui/presentation/retainedPresentationSlotGeometry';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
-import { CurrentUiContextBridge, useCurrentUiContextMountPublisher, useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 
 type BrowserSurfaceState = Readonly<{
     browserState: BrowserControlState;
@@ -281,8 +281,6 @@ type BrowserSurfaceHostProps = Readonly<{
 export function BrowserSurfaceHost(props: BrowserSurfaceHostProps): React.ReactElement {
     const accountLifetime = useSessionViewerSourceAccountLifetime();
     const viewerController = useOptionalSessionViewerController();
-    const currentUiContextReader = useOptionalCurrentUiContextReader();
-    const currentUiContextPublisher = useCurrentUiContextMountPublisher();
     // A page that already says its Machine is out of reach (a Project pane's line) keeps saying it once.
     const announcedMachine = useAnnouncedCheckoutMachine();
     const runtime = <BrowserSurfaceRuntime {...props} />;
@@ -296,11 +294,9 @@ export function BrowserSurfaceHost(props: BrowserSurfaceHostProps): React.ReactE
         >
             <SessionViewerSourceAccountScopeProvider accountLifetime={accountLifetime}>
                 <SessionViewerControllerScope controller={viewerController}>
-                    <CurrentUiContextBridge reader={currentUiContextReader} publisher={currentUiContextPublisher}>
-                        {announcedMachine
-                            ? <CheckoutReachabilityScope scope={announcedMachine}>{runtime}</CheckoutReachabilityScope>
-                            : runtime}
-                    </CurrentUiContextBridge>
+                    {announcedMachine
+                        ? <CheckoutReachabilityScope scope={announcedMachine}>{runtime}</CheckoutReachabilityScope>
+                        : runtime}
                 </SessionViewerControllerScope>
             </SessionViewerSourceAccountScopeProvider>
         </RetainedPresentationSlotBinder>

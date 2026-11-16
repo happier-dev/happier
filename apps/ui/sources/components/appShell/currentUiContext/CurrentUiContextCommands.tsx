@@ -88,6 +88,16 @@ export function useCurrentUiContextCommandBridge() {
     }, [composition, publisher, reader]);
 }
 
+/** A retained body keeps its incumbent composer, including workspace placement, rather than becoming a modal. */
+export function useRetainedCurrentUiContextNode(children: React.ReactNode): React.ReactElement {
+    const composition = React.useContext(CompositionContext);
+    const reader = useOptionalCurrentUiContextReader();
+    const publisher = useCurrentUiContextMountPublisher();
+    return React.useMemo(() => <CompositionContext.Provider value={composition}>
+        <CurrentUiContextBridge publisher={publisher} reader={reader}>{children}</CurrentUiContextBridge>
+    </CompositionContext.Provider>, [children, composition, publisher, reader]);
+}
+
 function MountedModalCommands(props: NonNullable<ModalCommandBridgeProps['modalCommands']>): React.ReactNode {
     const commands = useCurrentUiContextLocalCommands(props.commands, { foregroundOverlay: true });
     return props.render(commands.invoke);

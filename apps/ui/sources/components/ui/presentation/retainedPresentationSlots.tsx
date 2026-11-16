@@ -5,6 +5,7 @@ import { resolveFloatingFramePlacementStyle } from '@happier-dev/plugin-ui/prese
 import Animated, { useAnimatedStyle, type SharedValue } from 'react-native-reanimated';
 
 import { PluginSurfaceFocusEligibilityProvider, useLayoutPresentationActive, useRetainedPluginSurfaceFocusNode } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useRetainedCurrentUiContextNode } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useRetainedDestinationNode } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useRetainedDetailsTabNode } from '@/components/appShell/panes/details/workspace/detailsTabLifetime';
 import { RightSidebarActionsContext } from '@/components/appShell/rightSidebar/rightSidebarActions';
@@ -683,7 +684,8 @@ export function RetainedPresentationSlotBinder(props: RetainedPresentationSlotBi
         // `onLayout` x/y are parent-relative; re-measure in window coordinates for the absolute overlay.
         measure();
     }, [measure]);
-    const retainedTab = useRetainedDetailsTabNode(props.children);
+    const retainedCurrentUiContext = useRetainedCurrentUiContextNode(props.children);
+    const retainedTab = useRetainedDetailsTabNode(retainedCurrentUiContext);
     const retainedDestination = useRetainedDestinationNode(retainedTab);
     // The body's pane scope keeps its right-sidebar chooser above the router (an ended preview's
     // Go to Services opens that scope's own Services tab). The owner is a stable ref per scope.

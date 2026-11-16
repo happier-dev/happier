@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
 import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
-import { isApprovalRequiredByActionsSettings} from '@happier-dev/protocol/actions/actionApprovalPolicy';
+
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { defineUiSurface, usePluginHostApi, type PluginUiHostApi } from '@happier-dev/plugin-ui';
 import type { PluginUiSurfaceContextV1 } from '@happier-dev/protocol/plugins/ui';
@@ -25,7 +25,7 @@ import { clearBrowserRuntimeControlRegistryForTests } from '@/sync/domains/brows
 import { createBrowserViewState, openBrowserTarget } from '@/sync/domains/browser/store';
 import { createDefaultRuntimeActionExecutor } from '@/sync/ops/actions/defaultRuntimeActionExecutor';
 import { BrowserSurfaceHost } from './BrowserSurfaceHost';
-import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
@@ -33,6 +33,9 @@ import { createBrowserViewDetailsTab } from './browserSurfaceDetailsTabModel';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { DetailsTabLifetimeScope } from '@/components/appShell/panes/details/workspace/detailsTabLifetime';
 import { selectedPaneDestinationTabKey } from '@/components/appShell/panes/model/selectedPaneDestination';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { useOptionalCurrentUiContextReader, type CurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 
 // Public plugin Host API imports reach Socket consumers before route setup.
 vi.mock('socket.io-client', async importOriginal =>
@@ -170,7 +173,7 @@ async function mountRetainedBrowserForPlugin(scopeId?: string, selectedSlot = fa
         approvalWaivedSurfaces: { 'browser.automation.press': ['plugin'] } });
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
         runtimeActionExecute: createDefaultRuntimeActionExecutor(),
-        isActionApprovalRequired: (actionId, context) => isApprovalRequiredByActionsSettings(actionId, actionsSettings, context),
+        readActionsSettings: () => actionsSettings,
     }));
     const requestSurface: PluginUiSurfaceContextV1 = { pluginId: 'com.acme.fixture', contributionId: 'surface', surfaceId: 'external-preview-controls',
         sessionId: 'session-1', placement: 'sessionPane', platform: 'web', channel: 'internal', resourceScope: [], diagnostics: [] };
@@ -203,6 +206,66 @@ async function mountRetainedBrowserForPlugin(scopeId?: string, selectedSlot = fa
 }
 
 describe('retained Browser through the external plugin-UI Action API', () => {
+    it('opens and closes launchpad error diagnostics after the Details workspace hands its Browser to the retained portal', async () => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected admitted Account lifetime');
+        const view = { browserSessionId: 'unavailable-browser', viewId: 'unavailable-view' };
+        const browserTab = createBrowserViewDetailsTab({ ...view, target: {
+            kind: 'localServicePreview', targetId: 'unavailable-preview', sessionId: 'session-1', machineId: 'machine-1',
+            display: { title: 'Preview', addressLabel: 'Preview' },
+        } });
+        const store = createRetainedPresentationSlotsStore();
+        const pane: { current?: AppPaneScopeApi } = {};
+        let reader: CurrentUiContextReader | null = null;
+        const state = createBrowserViewState();
+        const renderBrowser = () => <SessionViewerSourceAccountScopeProvider accountLifetime={lifetime}>
+            <BrowserSurfaceHost {...view} platform="web" initialBrowserState={state} presentationSlotId="diagnostics-slot"
+                testID="browser-view-details-surface" launchpadRefreshStatus="error" launchpadRefreshError="request_failed"
+                visible active measuredRect={{ x: 0, y: 0, width: 640, height: 480 }} keepAliveAboveRouter
+                policy={{ browserEnabled: true, viewTargetsEnabled: true, automationEnabled: true,
+                    contextEnabled: false, diagnosticsEnabled: false, recordingEnabled: false }} />
+        </SessionViewerSourceAccountScopeProvider>;
+        function Page() {
+            reader = useOptionalCurrentUiContextReader();
+            const dispatch = useAppPaneContext(value => value.dispatch);
+            React.useLayoutEffect(() => {
+                dispatch({ type: 'activateScope', scopeId: 'session:browser-diagnostics' });
+                dispatch({ type: 'openDetailsTab', scopeId: 'session:browser-diagnostics', tab: browserTab, openAs: 'pinned' });
+            }, [dispatch]);
+            return <DetailsPresentation shown scopeId="session:browser-diagnostics" browserTab={browserTab}
+                pane={pane} renderBrowser={renderBrowser} renderSibling={() => <></>} />;
+        }
+        const screen = await renderMountedCurrentUiContext(<RetainedPresentationSlotsProvider store={store}>
+            <Page />
+        </RetainedPresentationSlotsProvider>, {
+            // The platform boundary supplies the same geometry as a laid-out Details pane.
+            createNodeMock: element => typeof element.props.testID === 'string'
+                && (element.props.testID.startsWith('browser-keepalive-placeholder-')
+                    || element.props.testID === 'browser-presentation-portal-host')
+                ? { measureInWindow: (publish: (x: number, y: number, width: number, height: number) => void) => publish(0, 0, 640, 480) }
+                : null,
+        });
+        await act(async () => {
+            invokeTestInstanceHandler(screen.findHostByTestId('browser-keepalive-placeholder-diagnostics-slot'), 'onLayout');
+        });
+        await flushHookEffects();
+        expect(store.getPortalSnapshot().map(entry => entry.slotId)).toEqual(['diagnostics-slot']);
+        expect(reader!.readCurrentUiContext()?.navigation.area).toBe('workspace');
+        const command = reader!.readCurrentUiContext()?.commands.find(command => command.title === 'Browser targets need attention: Details');
+        expect(command).toBeDefined();
+        const toggle = 'browser-view-details-surface-launchpad-error-details-toggle';
+        const code = 'browser-view-details-surface-launchpad-error-details-code';
+        await act(async () => {
+            expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+                input: { commandId: command!.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true });
+        });
+        expect(screen.findByTestId(code)?.props.children).toBe('request_failed');
+        await screen.pressByTestIdAsync(toggle);
+        await vi.waitFor(() => expect(screen.findByTestId(code)).toBeNull());
+        await screen.pressByTestIdAsync(toggle);
+        await vi.waitFor(() => expect(screen.findByTestId(code)?.props.children).toBe('request_failed'));
+    });
+
     it('retains a selected-slot Browser across route handoff and retires it when its slot is removed', async () => {
         const mounted = await mountRetainedBrowserForPlugin('session:selected-browser', true);
         try {
