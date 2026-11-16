@@ -7759,6 +7759,17 @@ test(`${entry} launcher ${signal} cancellation terminates a remote descendant th
       }
     }
     assert.equal(remoteChildPid, null, 'remote descendant survived launcher cancellation');
+    if (entry === 'native' && signal === 'SIGKILL') {
+      // SIGKILL runs no trap. The next dispatch reclaims what the killed
+      // controller created, once its recorded owner is provably retired.
+      const cache = join(stackDir, 'dev-target-command-load-native');
+      const leaked = async () => (await readdir(cache))
+        .filter(name => /^(?:remote-custody|authoritative-ssh|admission-error)\.tmp\./.test(name));
+      assert.ok((await leaked()).length > 0, 'the killed controller left its temporaries');
+      const next = spawnSync('/bin/sh', [launcher, '--', '/bin/true'], { ...spawnOptions(), encoding: 'utf8' });
+      assert.equal(next.status, 0, next.stderr);
+      assert.deepEqual(await leaked(), [], 'a later dispatch reclaims a killed controller\'s temporaries');
+    }
     if (cancelUnavailable) {
       // User contract: retain custody until cancellation succeeds or the
       // remote is proven gone, even when the lifetime pipe also closes.

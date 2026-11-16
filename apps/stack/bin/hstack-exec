@@ -1181,9 +1181,28 @@ if ! mkdir -p -- "$cache_dir" 2>/dev/null \
   fi
 fi
 
+# Temporaries name their creating controller (PID and kernel start token).
+# SIGKILL runs no trap, so a later dispatch reclaims them once that owner is
+# provably retired (reclaim_retired_controller_temporaries).
+controller_temporary_owner="$$-$(heavyweight_process_token "$$")"
 create_cache_temporary() {
   cache_destination=$1
-  (umask 077; mktemp "${cache_destination}.tmp.XXXXXX")
+  (umask 077; mktemp "${cache_destination}.tmp.${controller_temporary_owner}.XXXXXX")
+}
+
+reclaim_retired_controller_temporaries() {
+  for retired_temporary in "$cache_dir"/*.tmp.*-*.* "$cache_dir"/.*.tmp.*-*.*; do
+    [ -e "$retired_temporary" ] || continue
+    retired_owner=${retired_temporary##*.tmp.}
+    retired_owner=${retired_owner%%.*}
+    retired_pid=${retired_owner%%-*}
+    retired_token=${retired_owner#*-}
+    case "$retired_pid" in ''|*[!0-9]*) continue ;; esac
+    case "$retired_token" in ''|*[!0-9-]*) continue ;; esac
+    # Inconclusive observations retain the file (native_process_identity.sh).
+    heavyweight_process_is_provably_retired "$retired_pid" "$retired_token" || continue
+    rm -f -- "$retired_temporary" 2>/dev/null || true
+  done
 }
 
 value_for_target() {
@@ -2404,6 +2423,7 @@ cancel_remote_execution_record() {
     ssh -T -o ControlMaster=no -o ControlPath=none -o BatchMode=yes "$ssh_target" "$cancel_command" 8>&- 9>&- >/dev/null
   fi
 }
+reclaim_retired_controller_temporaries
 for orphan_reservation in "$cache_dir/$selected_name.active."*; do
   [ -f "$orphan_reservation" ] || continue
   [ "$orphan_reservation" != "$reservation_path" ] || continue
