@@ -1,5 +1,6 @@
 import type { Message } from "./messageTypes.js";
 import type { ReducerState } from "../reducer/reducer.js";
+import { ReducerMessageIdMap } from "../reducer/helpers/messageIdMap.js";
 
 type RouteLookupState = Pick<ReducerState, 'toolIdToMessageId' | 'sidechainToolIdToMessageId' | 'messageIds' | 'localIds'>;
 
@@ -55,6 +56,10 @@ function readStableLocalMessageId(message: Message): string | null {
 
 function findOriginalMessageIdForInternalId(reducerState: RouteLookupState | null | undefined, internalMessageId: string): string | null {
     if (!reducerState?.messageIds) return null;
+    // Reducers from createReducer keep the inverse; a hand-built Map (fixtures) is scanned.
+    if (reducerState.messageIds instanceof ReducerMessageIdMap) {
+        return normalizeNonEmptyString(reducerState.messageIds.originOf(internalMessageId));
+    }
     for (const [originalId, mappedInternalId] of reducerState.messageIds.entries()) {
         if (mappedInternalId === internalMessageId) {
             return normalizeNonEmptyString(originalId);

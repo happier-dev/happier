@@ -147,6 +147,7 @@ import {
 } from "../messages/transcriptObservationProvenance.js";
 import { applyTranscriptAccountActorMetadata, type TranscriptAccountActorMetadata } from "../messages/transcriptAccountActor.js";
 import {indexTranscriptRow, readTranscriptIndex, type TranscriptMetadataIndex} from './helpers/transcriptIndex.js';
+import {ReducerMessageIdMap} from './helpers/messageIdMap.js';
 import { readAuthoritativeTranscriptTarget, applyAuthoritativeTranscriptUpdate, areTranscriptSemanticValuesEqual,
     readTranscriptObservationMetadata, areTranscriptObservationMetadataEqual, type AuthoritativeTranscriptTarget } from './authoritativeTranscriptUpdates.js';
 
@@ -310,7 +311,7 @@ export function createReducer(): ReducerState {
         orphanToolResults: new Map(),
         messages: new Map(),
         localIds: new Map(),
-        messageIds: new Map(),
+        messageIds: new ReducerMessageIdMap(),
         sidechains: new Map(),
         tracerState: createTracer(),
         streamMergeCursor: null,

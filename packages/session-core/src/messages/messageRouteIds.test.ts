@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ToolCallMessage } from "./messageTypes.js";
 import {
@@ -152,5 +152,35 @@ describe('messageRouteIds', () => {
         });
 
         expect(resolved).toBe(internalMessageId);
+    });
+    it("resolves each row's server route without rescanning every id mapping of a long transcript", () => {
+        const reducerState = createReducer();
+        for (let index = 0; index < 2000; index += 1) reducerState.messageIds.set(`server-${index}`, `internal-${index}`);
+        // Call-through spy: counts full passes over the id mapping while 2,000 rows resolve.
+        const entries = vi.spyOn(Map.prototype, 'entries');
+        try {
+            const routes = Array.from({ length: 2000 }, (_, index) => buildSessionMessageRouteId({
+                messageId: `internal-${index}`, messagesById: {}, reducerState }));
+            expect(routes[1999]).toBe('server:server-1999');
+            expect(entries.mock.calls.length).toBe(1);
+        } finally {
+            entries.mockRestore();
+        }
+    });
+
+    it('keeps the first original id per internal id through appends and upserts, as a scan would', () => {
+        const reducerState = createReducer();
+        const scan = new Map<string, string>();
+        const write = (originalId: string, internalId: string) => { reducerState.messageIds.set(originalId, internalId); scan.set(originalId, internalId); };
+        const route = (messageId: string, messageIds: Map<string, string>) => buildSessionMessageRouteId({ messageId, messagesById: {}, reducerState: { ...reducerState, messageIds } });
+        write('a', 'x');
+        expect(route('x', reducerState.messageIds)).toBe('server:a');
+        write('b', 'x');
+        write('a', 'y');
+        write('c', 'z');
+        reducerState.messageIds.delete('c');
+        scan.delete('c');
+        for (const id of ['x', 'y', 'z']) expect(route(id, reducerState.messageIds)).toBe(route(id, scan));
+        expect(route('x', reducerState.messageIds)).toBe('server:b');
     });
 });
