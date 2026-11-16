@@ -1,7 +1,7 @@
 import type { HappierStorageCategoryIdV1 } from '@happier-dev/protocol/storage/storageV1';
 
 /** Pure route types: core callers do not depend on the visual tab table and its component graph. */
-export type MachinePageTabId = 'overview' | 'services' | 'processes' | 'storage' | 'guard' | 'setup' | 'security' | 'scheduled' | 'plugin';
+export type MachinePageTabId = 'overview' | 'services' | 'processes' | 'storage' | 'guard' | 'setup' | 'security' | 'sandboxes' | 'scheduled' | 'plugin';
 
 export function machinePageTabEntryKey(entry: Readonly<{ id: MachinePageTabId; key?: string }>): string {
     return entry.key ?? entry.id;
@@ -33,8 +33,10 @@ export type MachinePageTabParams =
     | Readonly<{ id: 'guard'; page?: 'activity' }>
     /** MACH-COMPOSE D1: what the Machine is set up with, or the Tools page it pushes (`page=tools`). */
     | Readonly<{ id: 'setup'; page?: 'tools' }>
-    /** MACH-COMPOSE D1: who can do what on the Machine, or a page it pushes: its Network (`page=network`) or Sharing (`page=sharing`). */
-    | Readonly<{ id: 'security'; page?: 'network' | 'sharing' }>
+    /** MACH-COMPOSE D1: who can do what on the Machine, or a page it pushes: Network, Sharing or Isolation (`page=isolation`). */
+    | Readonly<{ id: 'security'; page?: 'network' | 'sharing' | 'isolation' }>
+    /** The sandboxes this Machine hosts for its work (machine sandboxes plan r3 F6, lab machine-sandboxes-1115). */
+    | Readonly<{ id: 'sandboxes' }>
     /** pfc-redesign mSched: what runs on a schedule (MACH-SCHEDULED-READ-1112). */
     | Readonly<{ id: 'scheduled' }>
     /**
