@@ -483,6 +483,89 @@ describe("Session RPC final access admission on SQLite", () => {
         expect(effect).toHaveBeenCalledTimes(2);
     });
 
+    it.each(['skills.read', 'session.user_action.answer'] as const)('admits a member Session %s carried by the host Machine socket as the member, only for that admitted Session', async (rpcMethod) => {
+        // diag-member-skills-forbidden-1115: a Can-use member's Session runs on
+        // the owner's Machine, so its Session RPCs arrive on the owner's socket.
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+            installationId: randomUUID(), installationPublicKey: tweetnacl.sign.keyPair().publicKey,
+            metadata: encodePlainMachineStoredContent({ host: 'shared-worker', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
+        const grant = await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: machine.id,
+            accountId: member.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        // Another Can-use member's fully hosted Session stays out of reach.
+        await db.machineGrant.create({ data: { principalKind: 'account' as const, machineId: machine.id,
+            accountId: stranger.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        const createSession = (accountId: string) => db.session.create({ data: { accountId, tag: randomUUID(),
+            encryptionMode: 'plain', metadata: JSON.stringify({ t: 'plain', v: {} }) } });
+        const hosted = await createSession(member.id);
+        const sibling = await createSession(member.id);
+        const unhosted = await createSession(member.id);
+        const foreign = await createSession(stranger.id);
+        for (const session of [hosted, sibling]) {
+            await db.accessKey.create({ data: { accountId: member.id, machineId: machine.id, sessionId: session.id, data: 'opaque' } });
+        }
+        await db.accessKey.create({ data: { accountId: stranger.id, machineId: machine.id, sessionId: foreign.id, data: 'opaque' } });
+        const presence = createSessionPublisherPresence();
+        const authorities = new Map<string, unknown>();
+        for (const [accountId, session] of [[member.id, hosted], [member.id, sibling], [stranger.id, foreign]] as const) {
+            const registered = await presence.registerPublisher({ socket: {},
+                binding: { accountId, machineId: machine.id, sessionId: session.id },
+                completeActivitySnapshot: { state: 'active', activeCount: 1 } });
+            if (registered.status !== 'registered') throw new Error('Expected current Session publisher');
+            authorities.set(`session:${session.id}:${accountId}`, { v: 1, accountId, sessionId: session.id, machineId: machine.id,
+                committedFenceMs: registered.committedFence.getTime(), publisherGeneration: String(registered.publisherGeneration) });
+        }
+        const token = await createAccountTokenForTests(owner.id, { kind: 'terminal', authority: 'account_automation' });
+        const source = Object.assign(createAuthenticatedFakeSocket({ id: 'host-daemon', data: {
+            clientType: 'machine-scoped', machineId: machine.id, authTokenKind: 'terminal', authAuthority: 'account_automation',
+            verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility,
+        } }), { handshake: { auth: { token } } });
+        // The receiving Session runner is the transport boundary; rows, token,
+        // publisher presence and relay stay real.
+        const effect = vi.fn(async () => ({ sourceAdmitted: true }));
+        const target = { id: 'member-session', data: { clientType: 'session-scoped' }, timeout: () => ({ emitWithAck: effect }) };
+        const peers = async (room: string) => {
+            const authority = authorities.get(room);
+            if (authority) return [{ data: { sessionPublisherAuthority: authority } }];
+            return room === target.id || room.startsWith('rpc:') ? [target] : [];
+        };
+        registerSocketRpcHandlers({ userId: owner.id, socket: source as unknown as Socket,
+            io: createSocketRoomDiscoveryHarness(peers), sessionPublisherPresence: presence });
+        const call = (callerSessionId: string, targetSessionId: string) => callSocketRpc({ socket: { connected: true, emit: () => undefined,
+            emitWithAck: (event, payload) => new Promise((resolve, reject) => {
+                triggerSocketHandler(source, event, payload, resolve).catch(reject);
+            }) }, target: { kind: 'session', id: targetSessionId }, method: rpcMethod,
+            params: rpcMethod === 'skills.read' ? { name: 'own-skill', sessionId: targetSessionId }
+                : { id: 'question-one', answers: { branch: ['dev'] }, approved: true }, content: { mode: 'plain' },
+            authorization: { kind: 'session.action', sessionId: targetSessionId, origin: { v: 1 as const,
+                caller: { kind: 'session' as const, sessionId: callerSessionId, starterDepth: 0, turnDepth: 1 },
+                sourceTurnId: 'admitted-turn', requestId: 'member-read', callerPermissionMode: 'read-only' as const,
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'read-only' as const } } } });
+        const refused = async (callerSessionId: string, targetSessionId: string) =>
+            readRpcErrorCode(await call(callerSessionId, targetSessionId).catch((error: unknown) => error));
+
+        expect(await call(hosted.id, hosted.id)).toEqual({ sourceAdmitted: true });
+        expect(effect).toHaveBeenLastCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+            authorization: rpcMethod === 'skills.read' ? { kind: 'session.write', sessionId: hosted.id }
+                : { kind: 'session.permission.respond', sessionId: hosted.id,
+                    actor: { kind: 'accountUser', accountId: member.id, relationship: 'owner' } },
+        }));
+        // The host carries only the member's own admitted Session: never another
+        // of the member's Sessions, one not hosted here, or another Account's.
+        expect(await refused(hosted.id, sibling.id)).toBe(RPC_ERROR_CODES.FORBIDDEN);
+        expect(await refused(unhosted.id, unhosted.id)).toBe(RPC_ERROR_CODES.FORBIDDEN);
+        expect(await refused(hosted.id, foreign.id)).toBe(RPC_ERROR_CODES.FORBIDDEN);
+        expect(effect).toHaveBeenCalledTimes(1);
+        // Revoking the member's Use grant takes effect at the next request.
+        await db.machineGrant.delete({ where: { id: grant.id } });
+        expect(await refused(hosted.id, hosted.id)).toBe(RPC_ERROR_CODES.FORBIDDEN);
+        expect(effect).toHaveBeenCalledTimes(1);
+    });
+
     it('retains exact Work Session proof from Home admission through the real SCM ingress', async () => {
         const owner = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
         const machineId = `machine-${randomUUID()}`;

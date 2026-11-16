@@ -391,6 +391,15 @@ async function hasCurrentSessionActionRpcSource(params: Readonly<{
     return currentSource;
 }
 
+/**
+ * The Account of a Session Action's source Session when it differs from the
+ * Machine socket's Account. Only the source binding admits it as the actor.
+ */
+async function readHostedMemberSessionActionAccountId(userId: string, sourceSessionId: string): Promise<string | null> {
+    const source = await db.session.findUnique({ where: { id: sourceSessionId }, select: { accountId: true } });
+    return source && source.accountId !== userId ? source.accountId : null;
+}
+
 function readMachineIdPrefix(method: string): string | null {
     const separatorIndex = method.indexOf(":");
     if (separatorIndex <= 0) return null;
@@ -1457,9 +1466,19 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 // never from caller-authored socket fields.
                 sessionActionOrigin = verifiedExternalAction.binding.sessionActionOrigin;
             }
-            const actorAccountId = archiveSigner?.custodianAccountId ?? verifiedExternalAction?.principal.accountId ?? params.userId;
+            // A Machine socket also hosts Can-use members' Sessions. Its Session
+            // Action RPC acts as the source Session's Account, admitted once by
+            // the source binding below; the host's own evidence never travels.
+            const sessionActionAuthorization = !archiveSigner && !verifiedExternalAction && !workspaceSyncSourceRouting
+                ? parseSocketRpcAuthorizationContext((data as { authorization?: unknown } | undefined)?.authorization) : null;
+            const hostedMemberAccountId = sessionActionAuthorization?.kind === 'session.action'
+                ? await readHostedMemberSessionActionAccountId(params.userId, sessionActionAuthorization.origin.caller.sessionId) : null;
+            const actorAccountId = archiveSigner?.custodianAccountId ?? verifiedExternalAction?.principal.accountId
+                ?? hostedMemberAccountId ?? params.userId;
             const archiveAuthentication = archiveSigner ? readSessionAccessAuthenticationFromSocket(params.socket) : undefined;
-            const requestAuthentication = verifiedExternalAction
+            const requestAuthentication = hostedMemberAccountId
+                ? { ...readSessionAccessAuthenticationFromSocket(params.socket), authenticationEvidence: undefined }
+                : verifiedExternalAction
                 ? {
                     ...archiveAuthentication,
                     env: process.env,
@@ -1525,12 +1544,14 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         ? parsed.sessionId !== workspaceSyncSourceRouting.sourceSessionId
                         : !methodSessionAuthorization?.routeToSessionOwnerDaemon || !isSessionActionRpcMethodV1(method)
                             || parsed.sessionId !== method.slice(0, method.lastIndexOf(":")))
-                    || viewer || rawExternalActionExecution !== undefined || transferRouting) {
+                    || viewer || rawExternalActionExecution !== undefined || transferRouting
+                    // A hosted member's Session acts only on itself.
+                    || hostedMemberAccountId && parsed.sessionId !== parsed.origin.caller.sessionId) {
                     callback?.(buildForbiddenRpcResponse());
                     return;
                 }
                 const source = {
-                    accountId: params.userId, socket: params.socket, io: params.io, presence: params.sessionPublisherPresence,
+                    accountId: hostedMemberAccountId ?? params.userId, socket: params.socket, io: params.io, presence: params.sessionPublisherPresence,
                     sourceSessionId: parsed.origin.caller.sessionId, targetSessionId: parsed.sessionId,
                 };
                 const releasingSource = workspaceSyncSourceRouting?.phase === 'commit' || workspaceSyncSourceRouting?.phase === 'abort';
