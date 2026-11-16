@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createPendingSessionBirth } from './pendingSessionBirth';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1, MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, isDeploymentTargetLinkActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
@@ -518,6 +519,7 @@ export function createActionOperationRunner(deps: Readonly<{
             // Only named Project, Domain, Network, Machine setup and managed-controller producers carry these
             // validated public facts. Arbitrary executor details remain private.
             const reviewedFailure = isFiniteProjectCommand(action.actionId) || action.actionId.startsWith('machines.managed.')
+              || action.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1
               || MACHINE_REACHABILITY_ACTION_IDS_V1.some(actionId => actionId === action.actionId)
               || action.actionId === 'machines.setup.apply'
               || action.actionId === 'machines.setup.remove' || action.actionId === 'machines.setup.updates.apply'

@@ -123,6 +123,12 @@ optional provisioner `preparation` declaration and its build/inspect/destroy
 role schemas follow the same cut: older strict readers reject the declaration;
 the SDK and host publish the canonical qualified-reference contracts together.
 This contract declaration does not supply the preset operation's effect custody.
+Preparation failures and retained preparation state may carry the existing
+typed `nativeCause`. Code-only results remain valid; a later observation without
+a new cause preserves the original failure diagnostic until readiness or
+confirmed cleanup. This optional field follows the same unpublished direct cut:
+Protocol, SDK, preset owner and CLI host reload together; older strict readers
+can reject it. It introduces no new error vocabulary or persistence migration.
 The scoped clean `../0.2` frontier at
 `c680de922e4475b7dfbaeedcd63a8af7d985d3c3` has none of these declarations; reverse development
 SDK writes remain unsupported. Package SemVer and the existing author-contract

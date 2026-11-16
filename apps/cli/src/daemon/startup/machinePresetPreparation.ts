@@ -203,7 +203,13 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
                 destroy: async (body, root) => MachineProvisionerPreparationDestroyResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationDestroy', body, credentialConfigurations)),
             },
         });
-        if (result.kind !== 'ready') throw new ManagedMachineControllerError('code' in result ? result.code : result.kind === 'conflict' ? 'request_conflict' : 'cancelled');
+        if (result.kind !== 'ready') {
+            const prepared = 'prepared' in result ? result.prepared : undefined;
+            const code = 'code' in result ? result.code : prepared?.code
+                ?? (result.kind === 'conflict' ? 'request_conflict' : 'cancelled');
+            throw new ManagedMachineControllerError(code, undefined, prepared?.nativeCause
+                ? { kind: 'managedNative', nativeCause: prepared.nativeCause } : undefined);
+        }
         accept();
         return accepted;
     };
