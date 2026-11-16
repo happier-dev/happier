@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { isPluginError, isRecord, PluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, isRecord, PluginError, projectPluginFailureText, type LoggerService } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, type SecureTempDirectory } from '@happier-dev/plugin-sdk/fs';
 import {
   CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
@@ -49,7 +49,8 @@ type OpenCodeAccountLaunchRequest = Pick<AgentSessionOpenRequest, 'launchEnviron
 type OpenCodeAccountLaunchContext = Readonly<{
   signal?: AbortSignal;
   catalogObservation?: true;
-  services: Readonly<{ connectedAccounts: Pick<AgentRuntimeContext['services']['connectedAccounts'], 'getBinding' | 'materialize' | 'watch'> }>;
+  services: Readonly<{ connectedAccounts: Pick<AgentRuntimeContext['services']['connectedAccounts'], 'getBinding' | 'materialize' | 'watch'>;
+    logger?: Pick<LoggerService, 'warn'> }>;
 }>;
 
 export type PreparedOpenCodeQualifiedConnectedAccounts<
@@ -61,6 +62,7 @@ export type PreparedOpenCodeQualifiedConnectedAccounts<
   bindSession(session: AgentSessionRuntime): AgentSessionRuntime;
   bindExecutionRun(runtime: AgentExecutionRunRuntime): AgentExecutionRunRuntime;
   dispose(): Promise<void>;
+  disposeAfterFailure(): Promise<void>;
 }>;
 
 function assertExpectedBinding(
@@ -185,6 +187,7 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
       bindSession: (session) => session,
       bindExecutionRun: (runtime) => runtime,
       async dispose() {},
+      async disposeAfterFailure() {},
     });
   }
   const subscriptions: Array<Readonly<{ dispose(): void }>> = [];
@@ -203,6 +206,19 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
     const assets = requestAuthAssets;
     requestAuthAssets = undefined;
     assets?.cleanup();
+  };
+  const disposeAfterFailure = async (): Promise<void> => {
+    try {
+      await dispose();
+    } catch (error) {
+      // Catalog preflight has no diagnostic sink. Runtime cleanup uses the
+      // existing host logger without replacing the primary launch failure.
+      try {
+        context.services.logger?.warn('OpenCode account cleanup failed after a primary failure', {
+          error: projectPluginFailureText(error),
+        });
+      } catch { /* Diagnostic delivery cannot replace the primary failure. */ }
+    }
   };
   const invalidate = async (): Promise<void> => {
     invalidated = true;
@@ -434,9 +450,11 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
             retirePurposeObservations();
             try {
               await session.dispose(reason);
-            } finally {
-              await dispose();
+            } catch (error) {
+              await disposeAfterFailure();
+              throw error;
             }
+            await dispose();
           },
         };
         // Startup already passed admission; observations govern the next open.
@@ -457,17 +475,20 @@ export async function prepareOpenCodeQualifiedConnectedAccounts<Request extends 
             retirePurposeObservations();
             try {
               await runtime.dispose();
-            } finally {
-              await dispose();
+            } catch (error) {
+              await disposeAfterFailure();
+              throw error;
             }
+            await dispose();
           },
         };
         return preparedRuntime;
       },
       dispose,
+      disposeAfterFailure,
     });
   } catch (error) {
-    await dispose();
+    await disposeAfterFailure();
     throw error;
   }
 }

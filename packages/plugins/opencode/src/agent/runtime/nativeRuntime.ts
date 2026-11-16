@@ -148,7 +148,7 @@ async function openOpenCodeExecutionRun(
       : await openOpenCodeServerExecutionRun(prepared.request, context);
     return prepared.bindExecutionRun(runtime);
   } catch (error) {
-    await prepared.dispose();
+    await prepared.disposeAfterFailure();
     throw error;
   }
 }
@@ -238,7 +238,7 @@ async function openOpenCodeSession(
       },
     };
   } catch (error) {
-    await prepared.dispose();
+    await prepared.disposeAfterFailure();
     throw error;
   }
 }

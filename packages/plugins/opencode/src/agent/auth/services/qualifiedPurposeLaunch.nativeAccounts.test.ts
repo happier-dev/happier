@@ -1,10 +1,11 @@
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentExecutionRunRuntimeContextV1, AgentRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createKimiConnectedAccountRuntime } from '../../../../../kimi/src/connectedAccounts/runtime.js';
 import { xaiConnectedAccountRuntime } from '../../../../../grok/src/connectedAccounts/runtime.js';
 import { museAccountRuntimeDefinition } from '../../../../../muse/src/connectedAccounts/museAccountRuntime.js';
@@ -15,6 +16,16 @@ import { materializeGithubCredential } from '../../../../../scm-github/src/auth/
 import { prepareOpenCodeQualifiedConnectedAccounts } from './qualifiedPurposeLaunch.js';
 import { createOpenCodeAgentRuntime } from '../../runtime/nativeRuntime.js';
 import { createContextFixture } from '../../runtime/server/assembly.managedServices.testkit.js';
+
+// Genuine filesystem boundaries; account materialization and cleanup stay real.
+vi.mock('node:fs/promises', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...fs, writeFile: vi.fn(fs.writeFile) };
+});
+vi.mock('node:fs', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return { ...fs, rmSync: vi.fn(fs.rmSync) };
+});
 
 type Materialize = ConnectedAccountRuntime['materialize'];
 function producerContext(values: Record<string, string>, modeId = 'api-key'): Parameters<Materialize>[1] {
@@ -63,6 +74,69 @@ function request(provider: string, model: string) {
       OPENCODE_CONFIG_CONTENT: JSON.stringify({ enabled_providers: ['ollama'] }) } } };
 }
 describe('OpenCode selected native accounts', () => {
+  it.each(['write_failure', 'no_diagnostic_sink', 'cleanup_only', 'session_open_failure', 'run_open_failure'] as const)(
+    'preserves primary failures and keeps cleanup failures observable (%s)', async scenario => {
+    const f = launchFixture({ purpose: 'gemini', service: cases[2].service,
+      materialize: geminiConnectedAccountRuntime.materialize,
+      context: producerContext({ serviceAccountJson }, 'service-account') });
+    const primary = Object.assign(new Error('credential write failed'), { code: 'EIO' });
+    const cleanup = Object.assign(new Error('cleanup failed: Bearer sk-fixture-cleanup-secret'), { code: 'EBUSY' });
+    const warn = vi.fn();
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+    const syncFs = await vi.importActual<typeof import('node:fs')>('node:fs');
+    let directory: string | undefined;
+    vi.mocked(writeFile).mockImplementation(async (path, ...args) => {
+      if (typeof path === 'string' && basename(path) === 'google-service-account.json') {
+        directory = dirname(path);
+        if (scenario === 'write_failure' || scenario === 'no_diagnostic_sink') throw primary;
+      }
+      return fs.writeFile(path, ...args);
+    });
+    vi.mocked(rmSync).mockImplementation((path, options) => {
+      if (path === directory) throw cleanup;
+      return syncFs.rmSync(path, options);
+    });
+    try {
+      const context = { ...f.context, services: { ...f.context.services,
+        ...(scenario === 'no_diagnostic_sink' ? {} : { logger: { warn } }) } };
+      if (scenario === 'session_open_failure' || scenario === 'run_open_failure') {
+        const signal = new AbortController().signal;
+        // The native ACP process is the external boundary; launch preparation stays real.
+        const native = { ...context, signal, protocols: { acp: {
+          open: async () => { throw primary; }, openExecutionRunV1: async () => { throw primary; },
+        } } };
+        const runtime = createOpenCodeAgentRuntime({ plugin: { id: 'happier.agent.opencode', version: '0.0.0' },
+          agent: { id: 'opencode' }, signal });
+        const launch = request('google-vertex', 'gemini-2.5-pro');
+        const configuration = { ...launch, launchEnvironment: { values: {
+          ...launch.launchEnvironment.values, HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
+        } } };
+        const opened = scenario === 'session_open_failure'
+          ? runtime.sessions!.open({ ...configuration, kind: 'create', cwd: tmpdir(), sessionId: 'cleanup-failure' }, native as unknown as AgentRuntimeContext)
+          : runtime.sessions!.executionRunContextV1!.open({ ...configuration, kind: 'create', cwd: tmpdir(),
+            runId: 'cleanup-failure', profile: { pluginId: 'happier.agent.opencode', localId: 'opencode' }, input: { text: 'Work.' } },
+          native as unknown as AgentExecutionRunRuntimeContextV1);
+        await expect(opened).rejects.toBe(primary);
+      } else {
+        const preparation = prepareOpenCodeQualifiedConnectedAccounts(request('google-vertex', 'gemini-2.5-pro'), context);
+        if (scenario === 'cleanup_only') {
+          const prepared = await preparation;
+          await expect(prepared.dispose()).rejects.toBe(cleanup);
+        } else {
+          await expect(preparation).rejects.toBe(primary);
+        }
+      }
+      expect(warn).toHaveBeenCalledTimes(scenario === 'no_diagnostic_sink' || scenario === 'cleanup_only' ? 0 : 1);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('sk-fixture-cleanup-secret');
+    } finally {
+      vi.mocked(writeFile).mockImplementation(fs.writeFile);
+      vi.mocked(rmSync).mockImplementation(syncFs.rmSync);
+      if (directory) {
+        const { removeHappierTempDir } = await import('@happier-dev/cli-common/tempDirs');
+        removeHappierTempDir(directory);
+      }
+    }
+  });
   it.each(['muse-spark-1.3-contributor', 'muse-spark-1.2-contributor'])('launches %s through the managed Provider config without raw Muse auth', async model => {
     const directory = await mkdtemp(join(tmpdir(), 'OPENCODE-MANAGED-MUSE-'));
     const provider = 'happier_managed_muse';
