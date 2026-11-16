@@ -105,7 +105,8 @@ describe('SessionDetailsPanel simulator runtime wiring', () => {
         expect(initial.props.viewModel.devices.map((device: { simulatorId: string }) => device.simulatorId)).toEqual(['sim_1', 'sim_2']);
         expect(initial.props.viewModel.selectedSimulatorId).toBe('sim_1');
         expect(rpcRequests.some(request => request.method === RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT)).toBe(true);
-        await screen.pressByTestIdAsync('session-simulator:s1-preview-picker-device:sim_2');
+        // The viewer bar's device menu calls this same selection action.
+        await act(async () => screen.tree.findByType(SessionSimulatorPreviewPane).props.actions.selectDevice('sim_2'));
         expect(screen.tree.findByType(SessionSimulatorPreviewPane).props.viewModel.selectedSimulatorId).toBe('sim_2');
     });
 
@@ -138,7 +139,8 @@ describe('SessionDetailsPanel simulator runtime wiring', () => {
         const pane = screen.tree.findByType(SessionSimulatorPreviewPane);
         expect(pane.props.viewModel.viewerId).toBe('explicit-viewer');
         expect(pane.props.viewModel.selectedSimulatorId).toBe('sim_1');
-        await screen.pressByTestIdAsync('session-simulator:s1-preview-picker-device:sim_2');
+        // The viewer bar's device menu calls this same selection action.
+        await act(async () => screen.tree.findByType(SessionSimulatorPreviewPane).props.actions.selectDevice('sim_2'));
         expect(screen.tree.findByType(SessionSimulatorPreviewPane).props.viewModel.selectedSimulatorId).toBe('sim_2');
         expect(rpcRequests.filter(request => request.method === RPC_METHODS.DAEMON_SIMULATOR_PREVIEW_SNAPSHOT)).toEqual([]);
     });

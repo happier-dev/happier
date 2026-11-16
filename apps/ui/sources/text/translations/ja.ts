@@ -1,4 +1,5 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -12415,6 +12416,7 @@ deleteWarning: "このプロファイルに保存されたログイン情報と�
   },
 
   simulatorPreview: {
+      viewer: simulatorViewerTranslations['ja'],
     title: 'シミュレーター',
     picker: {
       title: 'デバイス',

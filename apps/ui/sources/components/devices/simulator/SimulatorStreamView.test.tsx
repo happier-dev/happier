@@ -83,43 +83,7 @@ describe('SimulatorStreamView', () => {
         expect(screen.findByTestId('simulator-stream-player-frame')).toBeNull();
     });
 
-    it('names the device by its display name with a status dot, not a raw platform id', async () => {
-        const mod = await import('./SimulatorStreamView').catch((error: unknown) => ({ importError: error }));
-
-        expect(mod).toHaveProperty('SimulatorStreamView');
-        if (!('SimulatorStreamView' in mod)) return;
-
-        const screen = await renderScreen(
-            <mod.SimulatorStreamView
-                resource={availableResource}
-                playerState={{
-                    phase: 'playing',
-                    selectedCodec: 'image.mjpeg',
-                    activeRenderer: 'mjpeg',
-                    lastFrameUrl: 'data:image/jpeg;base64,AQID',
-                    lastFrameAtMs: 1_000,
-                    decodedFrames: 1,
-                    droppedFrames: 0,
-                    bufferedBytes: 0,
-                }}
-                controls={{
-                    canWatch: true,
-                    canControl: true,
-                    canRequestKeyframe: false,
-                    canSetQuality: false,
-                    supportedInputKinds: ['tap'],
-                }}
-                testID="simulator-stream"
-            />,
-        );
-
-        // The device is named once, by its display name; the raw platform id ("ios") is not chrome.
-        expect(screen.findByTestId('simulator-stream-title')?.props.children).toBe('iPhone 16');
-        expect(screen.findByTestId('simulator-stream-meta')).toBeNull();
-        expect(screen.findByTestId('simulator-stream-header-dot')).toBeTruthy();
-    });
-
-    it('renders an intentional connecting skeleton while a watchable stream opens with no frame yet', async () => {
+    it('says it is connecting the screen while a watchable stream opens with no frame yet', async () => {
         const mod = await import('./SimulatorStreamView').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('SimulatorStreamView');
@@ -153,7 +117,7 @@ describe('SimulatorStreamView', () => {
         expect(screen.findByTestId('simulator-stream-player-frame')).toBeNull();
     });
 
-    it('renders a restoring skeleton while reconnecting without a preserved frame', async () => {
+    it('says it is restoring while reconnecting without a preserved frame', async () => {
         const mod = await import('./SimulatorStreamView').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('SimulatorStreamView');
@@ -186,7 +150,7 @@ describe('SimulatorStreamView', () => {
         expect(screen.findByTestId('simulator-stream-unavailable')).toBeNull();
     });
 
-    it('does not skeleton over a preserved frame while reconnecting', async () => {
+    it('keeps the preserved frame, dimmed, while reconnecting', async () => {
         const mod = await import('./SimulatorStreamView').catch((error: unknown) => ({ importError: error }));
 
         expect(mod).toHaveProperty('SimulatorStreamView');
@@ -219,6 +183,7 @@ describe('SimulatorStreamView', () => {
 
         // A good last frame must keep showing — no skeleton over hydrated content.
         expect(screen.findByTestId('simulator-stream-connecting')).toBeNull();
+        expect(screen.findByTestId('simulator-stream-held-scrim')).toBeTruthy();
         expect(screen.findByTestId('simulator-stream-player-frame')?.props.source).toEqual({
             uri: 'data:image/jpeg;base64,AQID',
         });
@@ -452,7 +417,6 @@ describe('SimulatorStreamView', () => {
 
         expect(screen.findByTestId('simulator-stream-player-webcodecs-surface')).toBeNull();
         expect(screen.findByTestId('simulator-stream-player-unavailable')).toBeTruthy();
-        expect(screen.findByTestId('simulator-stream-player-status-error')).toBeTruthy();
     });
 
     it('does not show the previous simulator frame after switching to a device with no frame yet (C-STALE)', async () => {

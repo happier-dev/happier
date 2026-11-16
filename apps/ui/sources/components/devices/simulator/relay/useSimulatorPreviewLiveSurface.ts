@@ -208,5 +208,11 @@ export function useSimulatorPreviewLiveSurface(
         bumpRuntimeFactsVersion();
     }, [nextResources, nextSelectedSimulatorId, bumpRuntimeFactsVersion]);
 
-    return runtime;
+    // The relay ingestion owns (re)opening the stream, so the preview's open action is its retry.
+    const retry = ingestion.retry;
+    const runtimeActions = runtime.actions;
+    const actions = React.useMemo(() => relayEnabled
+        ? { ...runtimeActions, openStream: async () => { retry(); } }
+        : runtimeActions, [relayEnabled, retry, runtimeActions]);
+    return React.useMemo(() => actions === runtimeActions ? runtime : { ...runtime, actions }, [actions, runtime, runtimeActions]);
 }

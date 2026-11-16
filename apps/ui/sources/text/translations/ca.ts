@@ -1,4 +1,5 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -11301,6 +11302,7 @@ deleteWarning: "Això elimina els inicis de sessió i les dades dels llocs desat
     },
 
     simulatorPreview: {
+        viewer: simulatorViewerTranslations['ca'],
         title: 'Simulador',
         picker: {
             title: 'Dispositius',

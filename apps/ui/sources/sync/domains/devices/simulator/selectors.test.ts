@@ -170,7 +170,6 @@ describe('simulator preview selectors', () => {
                 canWatch: true,
                 canControl: true,
                 canRequestKeyframe: false,
-                canRequestSnapshot: false,
                 canSetQuality: false,
                 canSetFps: false,
                 canSetScale: false,
@@ -221,7 +220,6 @@ describe('simulator preview selectors', () => {
         expect(viewModel.controls).toMatchObject({
             canWatch: true,
             canRequestKeyframe: true,
-            canRequestSnapshot: true,
             canSetQuality: true,
             canSetFps: true,
             canSetScale: true,
@@ -320,7 +318,6 @@ describe('simulator preview selectors', () => {
             canWatch: true,
             canControl: false,
             canRequestKeyframe: false,
-            canRequestSnapshot: false,
             canSetQuality: false,
             canSetFps: false,
             canSetScale: false,
@@ -364,5 +361,31 @@ describe('simulator preview selectors', () => {
         });
         expect(viewModel.stream.lastFrameUrl).toBeUndefined();
         expect(viewModel.stream.avccChunks?.map((chunk) => [...chunk])).toEqual([[1, 2, 3, 4]]);
+    });
+    it('names the platform and offers exactly the hardware buttons the producer advertises', async () => {
+        const { selectSimulatorPreviewViewModel } = await import('./selectors');
+        const select = (resource: SimulatorDeviceResourceV1) => selectSimulatorPreviewViewModel({
+            resources: [resource],
+            selectedSimulatorId: resource.simulatorId,
+            viewerId: 'viewer_1',
+            nowMs: 1_500,
+            previewStatesBySimulatorId: {},
+            playerStatesBySimulatorId: {},
+        });
+        const ios = select(availableResource);
+        expect(ios.devices[0]?.platformLabel).toBe('iOS');
+        expect(ios.controls.hardwareButtons).toEqual([]);
+
+        const android = select({ ...availableResource, platform: 'android', displayName: 'Pixel 9', supportedHardwareButtons: ['home', 'back', 'recents'] });
+        expect(android.devices[0]?.platformLabel).toBe('Android');
+        expect(android.controls.hardwareButtons).toEqual(['home', 'back', 'recents']);
+
+        const noButtonInput = select({
+            ...availableResource,
+            platform: 'android',
+            supportedHardwareButtons: ['home'],
+            capture: { ...availableResource.capture, supportedInputKinds: ['tap'] } as SimulatorDeviceResourceV1['capture'],
+        });
+        expect(noButtonInput.controls.hardwareButtons).toEqual([]);
     });
 });

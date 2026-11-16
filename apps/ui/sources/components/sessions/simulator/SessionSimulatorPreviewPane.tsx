@@ -13,7 +13,7 @@ export function SessionSimulatorPreviewPane(props: Readonly<{
 }>): React.ReactElement {
     const testID = props.testID ?? `session-simulator:${props.sessionId}`;
     return (
-        <View testID={testID}>
+        <View testID={testID} style={{ flex: 1, minHeight: 0 }}>
             <SimulatorPreviewPane
                 viewModel={props.viewModel}
                 actions={props.actions}

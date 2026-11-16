@@ -2,258 +2,170 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
 
+/**
+ * The device viewer reads like the other live-picture viewers (Computer): a bar that names the
+ * device and its state, the screen on an inset stage as the main content, the common device actions
+ * on a rail beside it, and rare tools one press away in a side panel.
+ */
 export const simulatorStreamStyles = StyleSheet.create((theme) => ({
-    root: {
-        flex: 1,
-        minHeight: 0,
-        backgroundColor: theme.colors.surface.base,
-    },
     paneRoot: {
         flex: 1,
         minHeight: 0,
         backgroundColor: theme.colors.surface.base,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
     },
-    paneContent: {
+    bar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s10,
+        minHeight: 44,
+        paddingLeft: 14,
+        paddingRight: theme.space.s6,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.border.subtle,
+    },
+    barStacked: {
+        gap: theme.space.s2,
+        paddingLeft: 14,
+        paddingRight: theme.space.s6,
+        paddingVertical: theme.space.s4,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: theme.colors.border.subtle,
+    },
+    barRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space.s10,
+        minHeight: 36,
+    },
+    barIdentity: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+    },
+    barTitle: {
+        ...Typography.variant('label', 'semiBold'),
+        flexShrink: 1,
+        color: theme.colors.text.primary,
+    },
+    barMeta: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+    },
+    barStatus: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s6,
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    barActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s4,
+    },
+    content: {
         flex: 1,
         minHeight: 0,
         flexDirection: 'row',
     },
-    paneMain: {
+    contentStacked: {
+        flexDirection: 'column',
+    },
+    stage: {
         flex: 1,
         minWidth: 0,
         minHeight: 0,
+        backgroundColor: theme.colors.surface.inset,
     },
-    streamShell: {
-        flex: 1,
-        minHeight: 0,
-    },
-    inputOverlay: {
+    fill: {
         ...StyleSheet.absoluteFillObject,
     },
-    picker: {
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s8,
-        gap: theme.space.s8,
-    },
-    pickerList: {
-        flexDirection: 'row',
-        alignItems: 'stretch',
-        gap: theme.space.s8,
-    },
-    pickerEmpty: {
-        minHeight: 44,
-        justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s8,
-    },
-    deviceOption: {
-        minWidth: 128,
-        maxWidth: 220,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s8,
-        gap: theme.space.s4,
-    },
-    deviceOptionSelected: {
-        borderColor: theme.colors.border.strong,
-        backgroundColor: theme.colors.surface.elevated,
-    },
-    statusRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s6,
-        flexWrap: 'wrap',
-    },
-    statusBadge: {
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-        paddingHorizontal: theme.space.s8,
-        paddingVertical: theme.space.s4,
-    },
-    header: {
-        gap: theme.space.s4,
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s10,
-        borderBottomWidth: 1,
-        borderBottomColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-    },
-    headerTitleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-    },
-    titleText: {
-        color: theme.colors.text.primary,
-        ...Typography.default('semiBold'),
-    },
-    metaText: {
-        color: theme.colors.text.secondary,
-        ...Typography.default(),
-    },
-    body: {
-        flex: 1,
-        minHeight: 0,
-    },
-    bodyOverlayHost: {
-        flex: 1,
-        minHeight: 0,
-        position: 'relative',
-    },
-    unavailable: {
-        flex: 1,
-        minHeight: 180,
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: theme.space.s8,
-        padding: theme.space.s20,
-        backgroundColor: theme.colors.surface.inset,
-    },
-    connecting: {
-        flex: 1,
-        minHeight: 180,
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: theme.space.s12,
-        padding: theme.space.s20,
-        backgroundColor: theme.colors.surface.inset,
-    },
-    connectingHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s8,
-    },
-    connectingSkeleton: {
-        width: '60%',
-        maxWidth: 240,
-        height: 12,
-        borderRadius: 6,
-        backgroundColor: theme.colors.surface.pressedOverlay,
-    },
-    toolbar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'flex-start',
-        flexWrap: 'wrap',
-        gap: theme.space.s8,
-        paddingHorizontal: theme.space.s12,
-        paddingVertical: theme.space.s10,
-        borderTopWidth: 1,
-        borderTopColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
-    },
-    toolbarGroup: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: theme.space.s8,
-    },
-    toolbarQualityGroup: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        flexShrink: 1,
-        alignItems: 'center',
-        gap: theme.space.s6,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: theme.space.s8,
-        paddingVertical: theme.space.s4,
-    },
-    toolbarOverflowPanel: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: theme.space.s8,
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.elevated,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s8,
-    },
-    readonlyBadge: {
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s6,
-    },
-    badgeText: {
-        color: theme.colors.text.secondary,
-        ...Typography.default('semiBold'),
+    hidden: {
+        display: 'none',
     },
     inputLayer: {
         flex: 1,
         minHeight: 0,
-        backgroundColor: theme.colors.effect.surfaceHighlight,
     },
-    sidebandPanel: {
+    // A state that is not a picture is centred while it fits and reads from its top while it does not.
+    stateStage: {
+        flex: 1,
+        minHeight: 0,
+    },
+    stateStageContent: {
+        flexGrow: 1,
+        justifyContent: 'center',
+    },
+    // The last picture stays, dimmed, while the stream reconnects: never a blank box.
+    heldScrim: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: theme.colors.overlay.scrimSoft,
+        pointerEvents: 'none',
+    },
+    showControls: {
+        position: 'absolute',
+        top: theme.space.s8,
+        right: theme.space.s8,
+    },
+    rail: {
+        alignItems: 'center',
+        gap: theme.space.s8,
+        paddingVertical: theme.space.s10,
+        paddingHorizontal: theme.space.s6,
+        borderLeftWidth: StyleSheet.hairlineWidth,
+        borderLeftColor: theme.colors.border.subtle,
+    },
+    railHorizontal: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        paddingVertical: theme.space.s6,
+        paddingHorizontal: theme.space.s10,
+        borderLeftWidth: 0,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.colors.border.subtle,
+    },
+    railDivider: {
+        alignSelf: 'stretch',
+        height: StyleSheet.hairlineWidth,
+        marginVertical: theme.space.s2,
+        backgroundColor: theme.colors.border.subtle,
+    },
+    railDividerHorizontal: {
+        width: StyleSheet.hairlineWidth,
+        height: 'auto',
+        marginVertical: 0,
+        marginHorizontal: theme.space.s2,
+    },
+    tools: {
         width: 260,
         maxWidth: 320,
         minHeight: 0,
-        borderLeftWidth: 1,
-        borderLeftColor: theme.colors.border.default,
+        borderLeftWidth: StyleSheet.hairlineWidth,
+        borderLeftColor: theme.colors.border.subtle,
         backgroundColor: theme.colors.surface.base,
-        padding: theme.space.s10,
-        gap: theme.space.s8,
     },
-    sidebandDrawer: {
-        gap: theme.space.s8,
-        minHeight: 0,
+    toolsStacked: {
+        flex: 1,
+        width: 'auto',
+        maxWidth: undefined,
+        borderLeftWidth: 0,
     },
-    sidebandSection: {
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s8,
-        gap: theme.space.s6,
-    },
-    sidebandHeader: {
+    toolsHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: theme.space.s8,
+        minHeight: 44,
+        paddingLeft: 14,
+        paddingRight: theme.space.s6,
     },
-    sidebandText: {
-        color: theme.colors.text.secondary,
-        ...Typography.default(),
-    },
-    sidebandStructuredRows: {
-        gap: theme.space.s4,
-    },
-    sidebandStructuredRow: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s8,
-    },
-    sidebandStructuredKey: {
-        minWidth: 72,
-        color: theme.colors.text.secondary,
-        ...Typography.mono(),
-    },
-    sidebandStructuredValue: {
-        flex: 1,
-        minWidth: 0,
+    toolsTitle: {
+        ...Typography.variant('label', 'semiBold'),
         color: theme.colors.text.primary,
-        ...Typography.mono(),
     },
-    diagnosticRow: {
-        borderWidth: 1,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.elevated,
-        paddingHorizontal: theme.space.s10,
-        paddingVertical: theme.space.s6,
+    toolsBody: {
+        paddingBottom: theme.space.s16,
     },
 }));

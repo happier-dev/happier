@@ -111,7 +111,6 @@ describe('useSimulatorPreview', () => {
         const sendControl = vi.fn();
         const requestKeyframe = vi.fn();
         const setQuality = vi.fn();
-        const requestSnapshot = vi.fn();
         const hook = await renderHook(() => mod.useSimulatorPreview({
             resources: [producerControlledResource],
             selectedSimulatorId: 'sim_1',
@@ -137,7 +136,6 @@ describe('useSimulatorPreview', () => {
             api: {
                 sendControl,
                 requestKeyframe,
-                requestSnapshot,
                 setQuality,
             },
         }));
@@ -150,9 +148,6 @@ describe('useSimulatorPreview', () => {
         await expect(hook.getCurrent().actions.pressHome()).resolves.toBeUndefined();
         await expect(hook.getCurrent().actions.pressBack()).resolves.toBeUndefined();
         await expect(hook.getCurrent().actions.pressRecent()).resolves.toBeUndefined();
-        await expect(hook.getCurrent().actions.pressVolumeUp()).resolves.toBeUndefined();
-        await expect(hook.getCurrent().actions.pressVolumeDown()).resolves.toBeUndefined();
-        await expect(hook.getCurrent().actions.requestSnapshot()).resolves.toBeUndefined();
 
         expect(requestKeyframe).toHaveBeenCalledWith(expect.objectContaining({
             simulatorId: 'sim_1',
@@ -166,11 +161,6 @@ describe('useSimulatorPreview', () => {
             sourceId: 'source_1',
             control: expect.objectContaining({ kind: 'set_quality' }),
         }));
-        expect(requestSnapshot).toHaveBeenCalledWith({
-            simulatorId: 'sim_1',
-            streamId: 'stream_1',
-            sourceId: 'source_1',
-        });
         expect(sendControl).toHaveBeenCalledWith({
             control: expect.objectContaining({
                 kind: 'set_quality',
@@ -195,12 +185,6 @@ describe('useSimulatorPreview', () => {
         });
         expect(sendControl).toHaveBeenCalledWith({
             control: expect.objectContaining({ kind: 'hardware_button', button: 'recents' }),
-        });
-        expect(sendControl).toHaveBeenCalledWith({
-            control: expect.objectContaining({ kind: 'hardware_button', button: 'volumeup' }),
-        });
-        expect(sendControl).toHaveBeenCalledWith({
-            control: expect.objectContaining({ kind: 'hardware_button', button: 'volumedown' }),
         });
     });
 

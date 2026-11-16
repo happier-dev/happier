@@ -1,4 +1,5 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -11969,6 +11970,7 @@ deleteWarning: "Сохранённые входы и данные сайтов �
   },
 
   simulatorPreview: {
+      viewer: simulatorViewerTranslations['ru'],
     title: 'Симулятор',
     picker: {
       title: 'Устройства',

@@ -1,4 +1,5 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -11956,6 +11957,7 @@ deleteWarning: "Les connexions et données des sites enregistrées dans ce profi
   },
 
   simulatorPreview: {
+      viewer: simulatorViewerTranslations['fr'],
     title: 'Simulateur',
     picker: {
       title: 'Appareils',

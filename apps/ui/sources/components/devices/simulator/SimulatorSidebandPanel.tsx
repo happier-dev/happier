@@ -1,11 +1,15 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { BACKED_SIMULATOR_SIDEBAND_KINDS_V1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
 import type { SimulatorSidebandKindV1, SimulatorSidebandMessageV1 } from '@happier-dev/protocol/devices/simulator/sidebandV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SidePaneInspectorSections } from '@/components/ui/lists/SidePaneInspectorSections';
 import { Text } from '@/components/ui/text/Text';
-import type { SimulatorPreviewDiagnostic } from '@/sync/domains/devices/simulator/types';
+import type { SimulatorPreviewActions } from '@/sync/domains/devices/simulator/useSimulatorPreview';
+import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator/types';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 
@@ -130,90 +134,100 @@ function SidebandRows(props: Readonly<{
 }>): React.ReactElement {
     const rows = props.message ? sidebandRows(props.message) : [];
     if (rows.length === 0) {
-        return (
-            <Text style={simulatorStreamStyles.sidebandText}>
-                {t('simulatorPreview.sidebands.empty')}
-            </Text>
-        );
+        return <Item testID={`${props.testID}-empty`} title={t('simulatorPreview.sidebands.empty')} mode="info" />;
     }
     return (
-        <View style={simulatorStreamStyles.sidebandStructuredRows}>
+        <>
             {rows.map((row) => (
-                <View
-                    key={row.key}
-                    testID={`${props.testID}-field:${row.key}`}
-                    style={simulatorStreamStyles.sidebandStructuredRow}
-                >
-                    <Text style={simulatorStreamStyles.sidebandStructuredKey}>{row.key}</Text>
-                    <Text style={simulatorStreamStyles.sidebandStructuredValue}>{row.value}</Text>
-                </View>
+                <Item key={row.key} testID={`${props.testID}-field:${row.key}`} title={row.key} detail={row.value} mode="info" />
             ))}
-        </View>
+        </>
     );
 }
 
+/**
+ * The on-demand Tools panel: rare stream presets and capture health
+ * with its diagnostics. Only what the producer backs is listed; nothing here is needed to watch or drive
+ * the device, so it stays closed until asked for.
+ */
 export function SimulatorSidebandPanel(props: Readonly<{
-    sidebands: Partial<Record<SimulatorSidebandKindV1, SimulatorSidebandMessageV1>>;
-    diagnostics: readonly SimulatorPreviewDiagnostic[];
-    onRequestSideband: (kind: SimulatorSidebandKindV1) => void;
+    viewModel: SimulatorPreviewViewModel;
+    actions: Partial<SimulatorPreviewActions>;
+    onClose: () => void;
+    /** A narrow pane: the panel takes the stage's place instead of standing beside it. */
+    stacked?: boolean;
     testID: string;
 }>): React.ReactElement {
-    const [open, setOpen] = React.useState(false);
-    const kinds = React.useMemo(() => orderedSidebandKinds(props.sidebands), [props.sidebands]);
+    const { controls, sidebands, diagnostics } = props.viewModel;
+    const kinds = React.useMemo(() => orderedSidebandKinds(sidebands), [sidebands]);
+    const streamPresets = [
+        controls.canSetQuality ? { id: 'lower-quality', title: t('simulatorPreview.toolbar.reduceBandwidth'), onPress: props.actions.lowerQuality } : null,
+        controls.canSetFps ? { id: 'set-fps', title: t('simulatorPreview.toolbar.fps'), onPress: props.actions.setFps } : null,
+        controls.canSetScale ? { id: 'set-scale', title: t('simulatorPreview.toolbar.scale'), onPress: props.actions.setScale } : null,
+    ].filter((entry) => entry !== null);
+
     return (
-        <View testID={props.testID} style={simulatorStreamStyles.sidebandPanel}>
-            <View style={simulatorStreamStyles.sidebandHeader}>
-                <Text style={simulatorStreamStyles.titleText}>{t('simulatorPreview.sidebands.title')}</Text>
+        <View testID={props.testID} style={[simulatorStreamStyles.tools, props.stacked ? simulatorStreamStyles.toolsStacked : null]}>
+            <View style={simulatorStreamStyles.toolsHeader}>
+                <Text style={simulatorStreamStyles.toolsTitle}>{t('simulatorPreview.viewer.tools')}</Text>
                 <IconButton
-                    testID={open ? `${props.testID}-close` : `${props.testID}-open`}
-                    iconName={open ? 'caret-right' : 'bug'}
-                    accessibilityLabel={open ? t('simulatorPreview.sidebands.close') : t('simulatorPreview.sidebands.open')}
-                    tooltip={open ? t('simulatorPreview.sidebands.close') : t('simulatorPreview.sidebands.open')}
-                    size={32}
-                    iconSize={16}
-                    onPress={() => setOpen((current) => !current)}
+                    testID={`${props.testID}-close`}
+                    iconName="x"
+                    variant="plain"
+                    accessibilityLabel={t('simulatorPreview.viewer.closeTools')}
+                    tooltip={t('simulatorPreview.viewer.closeTools')}
+                    onPress={props.onClose}
                 />
             </View>
-            {open ? (
-                <View testID={`${props.testID}-drawer`} style={simulatorStreamStyles.sidebandDrawer}>
-                    {props.diagnostics.map((diagnostic) => (
-                        <View
-                            key={`${diagnostic.kind ?? 'diagnostic'}:${diagnostic.reasonCode}`}
-                            style={simulatorStreamStyles.diagnosticRow}
-                            testID={`${props.testID}-diagnostic:${diagnostic.reasonCode}`}
+            <ScrollView contentContainerStyle={simulatorStreamStyles.toolsBody} testID={`${props.testID}-drawer`}>
+                <SidePaneInspectorSections>
+                {streamPresets.length > 0 ? (
+                    <ItemGroup title={t('simulatorPreview.viewer.streamSection')} description={t('simulatorPreview.viewer.streamDescription')}>
+                        {streamPresets.map((preset) => (
+                            <Item
+                                key={preset.id}
+                                testID={`${props.testID}-${preset.id}`}
+                                title={preset.title}
+                                showChevron={false}
+                                disabled={!controls.canWatch}
+                                onPress={() => { void preset.onPress?.(); }}
+                            />
+                        ))}
+                    </ItemGroup>
+                ) : null}
+                {kinds.map((kind) => {
+                    const title = sidebandTitle(kind);
+                    return (
+                        <ItemGroup
+                            key={kind}
+                            testID={`${props.testID}-${kind}`}
+                            title={title}
+                            action={(
+                                <IconButton
+                                    testID={`${props.testID}-refresh:${kind}`}
+                                    iconName="arrow-clockwise"
+                                    variant="plain"
+                                    accessibilityLabel={t('simulatorPreview.sidebands.refreshA11y', { section: title })}
+                                    tooltip={t('simulatorPreview.sidebands.refreshA11y', { section: title })}
+                                    onPress={() => { void props.actions.requestSideband?.(kind); }}
+                                />
+                            )}
                         >
-                            <Text style={simulatorStreamStyles.badgeText}>
-                                {simulatorReasonBody(diagnostic.reasonCode)}
-                            </Text>
-                        </View>
-                    ))}
-                    {kinds.map((kind) => {
-                        const message = props.sidebands[kind];
-                        const title = sidebandTitle(kind);
-                        return (
-                            <View
-                                key={kind}
-                                style={simulatorStreamStyles.sidebandSection}
-                                testID={`${props.testID}-${kind}`}
-                            >
-                                <View style={simulatorStreamStyles.sidebandHeader}>
-                                    <Text style={simulatorStreamStyles.badgeText}>{title}</Text>
-                                    <IconButton
-                                        testID={`${props.testID}-refresh:${kind}`}
-                                        iconName="arrow-clockwise"
-                                        accessibilityLabel={t('simulatorPreview.sidebands.refreshA11y', { section: title })}
-                                        tooltip={t('simulatorPreview.sidebands.refreshA11y', { section: title })}
-                                        size={28}
-                                        iconSize={14}
-                                        onPress={() => props.onRequestSideband(kind)}
-                                    />
-                                </View>
-                                <SidebandRows message={message} testID={`${props.testID}-${kind}`} />
-                            </View>
-                        );
-                    })}
-                </View>
-            ) : null}
+                            <SidebandRows message={sidebands[kind]} testID={`${props.testID}-${kind}`} />
+                            {kind === 'capture_health' ? diagnostics.map((diagnostic) => (
+                                <Item
+                                    key={`${diagnostic.kind ?? 'diagnostic'}:${diagnostic.reasonCode}`}
+                                    testID={`${props.testID}-diagnostic:${diagnostic.reasonCode}`}
+                                    title={simulatorReasonBody(diagnostic.reasonCode)}
+                                    titleLines={0}
+                                    mode="info"
+                                />
+                            )) : null}
+                        </ItemGroup>
+                    );
+                })}
+                </SidePaneInspectorSections>
+            </ScrollView>
         </View>
     );
 }

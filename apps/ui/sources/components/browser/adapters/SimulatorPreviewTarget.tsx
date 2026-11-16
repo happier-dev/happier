@@ -11,7 +11,7 @@ export function SimulatorPreviewTarget(props: Readonly<{
     testID: string;
 }>): React.ReactElement {
     return (
-        <View testID={props.testID}>
+        <View testID={props.testID} style={{ flex: 1, minHeight: 0 }}>
             <SimulatorPreviewPane
                 viewModel={props.viewModel}
                 actions={props.actions}

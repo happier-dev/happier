@@ -5,12 +5,14 @@ import type {
     MachineLiveStreamControlSidebandV1} from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
 import type {
     SimulatorDeviceResourceV1} from '@happier-dev/protocol/devices/simulator/v1';
+import type { SimulatorDeviceHardwareButtonV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
 import type {
     SimulatorSidebandKindV1,
     SimulatorSidebandMessageV1,
 } from '@happier-dev/protocol/devices/simulator/sidebandV1';
 
 import type { LiveStreamPlayerState } from '@/sync/domains/machines/peer/mediation/stream';
+import type { LiveStreamPlayerDiagnostic } from '@/sync/domains/machines/peer/mediation/stream/diagnostics';
 
 import type { SimulatorPreviewState } from './store';
 
@@ -38,11 +40,12 @@ export type SimulatorPreviewControls = Readonly<{
     canWatch: boolean;
     canControl: boolean;
     canRequestKeyframe: boolean;
-    canRequestSnapshot: boolean;
     canSetQuality: boolean;
     canSetFps: boolean;
     canSetScale: boolean;
     supportedInputKinds: readonly MachineLiveStreamControlSidebandV1['kind'][];
+    /** The hardware buttons the producer advertises for this device, when it accepts button input. */
+    hardwareButtons: readonly SimulatorDeviceHardwareButtonV1[];
 }>;
 
 export type SimulatorPreviewDiagnostic = Readonly<{
@@ -66,6 +69,8 @@ export type SimulatorPreviewStreamState = Pick<
     streamId?: string;
     avccChunks?: readonly Uint8Array[];
     onFrameDecoded?: () => void;
+    onDecoderRecoveryRequired?: () => void;
+    onDecoderFailure?: (diagnostic: LiveStreamPlayerDiagnostic) => void;
 }>;
 
 export type SimulatorPreviewViewModel = Readonly<{

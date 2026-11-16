@@ -27,7 +27,6 @@ export type SimulatorPreviewActions = Readonly<{
     sendControl: (control: MachineLiveStreamControlSidebandV1) => Promise<void>;
     requestSideband: (kind: SimulatorSidebandKindV1) => Promise<void>;
     requestKeyframe: () => Promise<void>;
-    requestSnapshot: () => Promise<void>;
     lowerQuality: () => Promise<void>;
     setFps: () => Promise<void>;
     setScale: () => Promise<void>;
@@ -35,8 +34,6 @@ export type SimulatorPreviewActions = Readonly<{
     pressHome: () => Promise<void>;
     pressBack: () => Promise<void>;
     pressRecent: () => Promise<void>;
-    pressVolumeUp: () => Promise<void>;
-    pressVolumeDown: () => Promise<void>;
 }>;
 
 export type UseSimulatorPreviewResult = Readonly<{
@@ -213,11 +210,6 @@ export function useSimulatorPreview(input: SimulatorPreviewSelectionHookInput & 
             if (control.kind !== 'request_keyframe') return;
             await input.api?.requestKeyframe?.({ ...sourceAndStream, control });
         },
-        requestSnapshot: async () => {
-            if (!viewModel.controls.canRequestSnapshot) return;
-            if (!sourceAndStream) return;
-            await input.api?.requestSnapshot?.(sourceAndStream);
-        },
         lowerQuality: async () => {
             if (!viewModel.controls.canSetQuality) return;
             const control = buildActionControl(viewModel, { kind: 'set_quality', maxFramesPerSecond: 15, maxWidth: 720 });
@@ -252,12 +244,6 @@ export function useSimulatorPreview(input: SimulatorPreviewSelectionHookInput & 
         },
         pressRecent: async () => {
             await sendBuiltControl({ api: input.api, viewModel, action: { kind: 'hardware_button', button: 'recents' } });
-        },
-        pressVolumeUp: async () => {
-            await sendBuiltControl({ api: input.api, viewModel, action: { kind: 'hardware_button', button: 'volumeup' } });
-        },
-        pressVolumeDown: async () => {
-            await sendBuiltControl({ api: input.api, viewModel, action: { kind: 'hardware_button', button: 'volumedown' } });
         },
     }), [input.api, sourceAndStream, viewModel]);
 

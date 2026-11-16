@@ -157,6 +157,20 @@ describe('useSimulatorPreviewLiveSurface', () => {
         expect(fake.listenerCount()).toBe(0);
         expect(fake.sent.some(envelope => envelope.message.kind === 'control' && envelope.message.control.kind === 'stop')).toBe(true);
     });
+    it('reopens the relay stream when the person asks to retry the preview', async () => {
+        const fake = createSocket();
+        const hook = await mount(fake.socket);
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(daemonStarts).toHaveLength(1);
+        });
+        await act(async () => { await hook.getCurrent().actions?.openStream?.(); });
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(daemonStarts).toHaveLength(2);
+        });
+        await hook.unmount();
+    });
     it('keeps the runtime additive without a relay socket', async () => {
         const hook = await mount();
         expect(hook.getCurrent().selectedSimulatorId).toBe('sim_1');

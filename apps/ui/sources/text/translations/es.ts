@@ -1,4 +1,5 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -12118,6 +12119,7 @@ deleteWarning: "Se borran los inicios de sesión y datos de sitios guardados en 
   },
 
   simulatorPreview: {
+      viewer: simulatorViewerTranslations['es'],
     title: 'Simulador',
     picker: {
       title: 'Dispositivos',

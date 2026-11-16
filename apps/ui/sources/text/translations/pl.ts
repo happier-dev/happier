@@ -1,4 +1,5 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
@@ -11947,6 +11948,7 @@ deleteWarning: "Spowoduje to usunięcie zapisanych logowań i danych witryn prof
   },
 
   simulatorPreview: {
+      viewer: simulatorViewerTranslations['pl'],
     title: 'Symulator',
     picker: {
       title: 'Urządzenia',

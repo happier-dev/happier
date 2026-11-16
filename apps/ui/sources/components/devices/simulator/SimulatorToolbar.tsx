@@ -1,226 +1,107 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/controlV1';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { IconButton, type IconButtonIconName } from '@/components/ui/buttons/IconButton';
-import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
-import {
-    MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
-    Popover,
-} from '@/components/ui/popover';
-import { Text } from '@/components/ui/text/Text';
-import { t } from '@/text';
 import type { SimulatorPreviewActions } from '@/sync/domains/devices/simulator/useSimulatorPreview';
+import type { SimulatorDeviceHardwareButtonV1 } from '@happier-dev/protocol/devices/simulator/operationsV1';
 import type { SimulatorPreviewViewModel } from '@/sync/domains/devices/simulator/types';
+import { t } from '@/text';
 
 import { simulatorStreamStyles } from './styles';
 
-function ToolbarIconButton(props: Readonly<{
+type RailButton = SimulatorDeviceHardwareButtonV1;
+
+const RAIL_BUTTONS: readonly Readonly<{
+    button: RailButton;
     iconName: IconButtonIconName;
-    label: string;
-    disabled?: boolean;
-    onPress?: () => void;
-    testID: string;
-}>): React.ReactElement {
-    const disabled = props.disabled ?? false;
-    return (
-        <IconButton
-            testID={props.testID}
-            iconName={props.iconName}
-            accessibilityLabel={props.label}
-            tooltip={props.label}
-            size={34}
-            iconSize={16}
-            disabled={disabled}
-            onPress={() => props.onPress?.()}
-        />
-    );
-}
+    label: () => string;
+    testSuffix: string;
+}>[] = [
+    { button: 'home', iconName: 'house', label: () => t('simulatorPreview.toolbar.homeButton'), testSuffix: 'button-home' },
+    { button: 'back', iconName: 'arrow-left', label: () => t('simulatorPreview.toolbar.backButton'), testSuffix: 'button-back' },
+    { button: 'recents', iconName: 'stack', label: () => t('simulatorPreview.toolbar.recentButton'), testSuffix: 'button-recent' },
+];
 
-function supportsInput(viewModel: SimulatorPreviewViewModel, kind: MachineLiveStreamControlSidebandV1['kind']): boolean {
-    return viewModel.controls.supportedInputKinds.includes(kind);
-}
-
-function leaseStatusLabel(viewModel: SimulatorPreviewViewModel): string {
-    if (viewModel.controls.canControl) {
-        return t('streamPlayer.controls.controlling');
+function pressAction(actions: Partial<SimulatorPreviewActions>, button: RailButton): (() => Promise<void>) | undefined {
+    switch (button) {
+        case 'home': return actions.pressHome;
+        case 'back': return actions.pressBack;
+        case 'recents': return actions.pressRecent;
     }
-    if (viewModel.lease.state === 'held-by-other') {
-        return viewModel.lease.holderLabel
-            ? t('simulatorPreview.toolbar.heldByOtherWithHolder', { holder: viewModel.lease.holderLabel })
-            : t('simulatorPreview.toolbar.heldByOther');
-    }
-    return t('streamPlayer.controls.readOnly');
 }
 
+/**
+ * The device's common actions beside its screen: the platform's hardware buttons, rotation when the
+ * producer backs it, and frame refresh. The rail is the same whether or not the person holds control,
+ * so nothing moves when they take it; input-only buttons stay visible and say what they need.
+ * Vertical beside the screen; a horizontal strip under it on a narrow pane.
+ */
 export function SimulatorToolbar(props: Readonly<{
     viewModel: SimulatorPreviewViewModel;
     actions: Partial<SimulatorPreviewActions>;
+    orientation?: 'vertical' | 'horizontal';
     testID: string;
-}>): React.ReactElement {
-    const canControl = props.viewModel.controls.canControl;
-    const canWatch = props.viewModel.controls.canWatch;
-    const canRefreshFrame = props.viewModel.controls.canRequestKeyframe || props.viewModel.controls.canRequestSnapshot;
-    const refreshFrame = props.viewModel.controls.canRequestKeyframe
-        ? props.actions.requestKeyframe
-        : props.actions.requestSnapshot;
-    const showAcquire = props.viewModel.lease.state === 'available';
-    const showRelease = props.viewModel.lease.state === 'held-by-me';
-    const showOrientation = canControl && supportsInput(props.viewModel, 'orientation');
-    const showHardwareButton = canControl && supportsInput(props.viewModel, 'hardware_button');
-    const showQuality = props.viewModel.controls.canSetQuality
-        || props.viewModel.controls.canSetFps
-        || props.viewModel.controls.canSetScale;
-    const showOverflow = showRelease || showOrientation || showHardwareButton;
-    const overflowAnchorRef = React.useRef<View | null>(null);
-    const [overflowOpen, setOverflowOpen] = React.useState(false);
+}>): React.ReactElement | null {
+    const { theme } = useUnistyles();
+    const { controls } = props.viewModel;
+    const horizontal = props.orientation === 'horizontal';
+    const inputReason = controls.canControl ? undefined : t('simulatorPreview.viewer.takeControlFirst');
+    const buttons = RAIL_BUTTONS.filter((entry) => controls.hardwareButtons.includes(entry.button));
+    const showRotate = controls.supportedInputKinds.includes('orientation');
+    const canRefreshFrame = controls.canRequestKeyframe;
+    const deviceGroup = buttons.length > 0 || showRotate;
+    if (!deviceGroup && !canRefreshFrame) return null;
 
+    // The rail's own gap, so stacked targets tile it without overlapping.
+    const gap = theme.space.s8;
+    const gaps = horizontal ? { interactiveTargetGapPx: gap } : { interactiveTargetVerticalGapPx: gap };
     return (
-        <View testID={props.testID} style={simulatorStreamStyles.toolbar}>
-            <View testID={`${props.testID}-lease`} style={simulatorStreamStyles.toolbarGroup}>
-                <View style={simulatorStreamStyles.readonlyBadge}>
-                    <Text style={simulatorStreamStyles.badgeText}>
-                        {leaseStatusLabel(props.viewModel)}
-                    </Text>
-                </View>
-                {showAcquire ? (
-                    <ToolbarIconButton
-                        iconName="hand"
-                        label={t('simulatorPreview.toolbar.acquireControl')}
-                        onPress={props.actions.acquireLease}
-                        testID={`${props.testID}-acquire-lease`}
-                    />
-                ) : null}
-            </View>
-            <View testID={`${props.testID}-stream`} style={simulatorStreamStyles.toolbarGroup}>
-                {canRefreshFrame ? (
-                    <ToolbarIconButton
-                        iconName="arrow-clockwise"
-                        disabled={!canWatch}
-                        label={t('simulatorPreview.toolbar.refreshFrame')}
-                        onPress={canWatch ? refreshFrame : undefined}
-                        testID={`${props.testID}-request-keyframe`}
-                    />
-                ) : null}
-                {showQuality ? (
-                    <View testID={`${props.testID}-quality`} style={simulatorStreamStyles.toolbarQualityGroup}>
-                        <Text style={simulatorStreamStyles.badgeText}>{t('simulatorPreview.toolbar.quality')}</Text>
-                        {props.viewModel.controls.canSetQuality ? (
-                            <ToolbarIconButton
-                                iconName="cell-signal-high"
-                                disabled={!canWatch}
-                                label={t('simulatorPreview.toolbar.reduceBandwidth')}
-                                onPress={canWatch ? props.actions.lowerQuality : undefined}
-                                testID={`${props.testID}-lower-quality`}
-                            />
-                        ) : null}
-                        {props.viewModel.controls.canSetFps ? (
-                            <ToolbarButton
-                                disabled={!canWatch}
-                                label={t('simulatorPreview.toolbar.fps')}
-                                onPress={canWatch ? props.actions.setFps : undefined}
-                                testID={`${props.testID}-set-fps`}
-                            />
-                        ) : null}
-                        {props.viewModel.controls.canSetScale ? (
-                            <ToolbarButton
-                                disabled={!canWatch}
-                                label={t('simulatorPreview.toolbar.scale')}
-                                onPress={canWatch ? props.actions.setScale : undefined}
-                                testID={`${props.testID}-set-scale`}
-                            />
-                        ) : null}
-                    </View>
-                ) : null}
-            </View>
-            {showOverflow ? (
-                <View ref={overflowAnchorRef} testID={`${props.testID}-overflow-anchor`}>
-                    <IconButton
-                        testID={`${props.testID}-overflow`}
-                        iconName="dots-three"
-                        accessibilityLabel={t('simulatorPreview.toolbar.moreControls')}
-                        tooltip={t('simulatorPreview.toolbar.moreControls')}
-                        size={34}
-                        iconSize={16}
-                        onPress={() => setOverflowOpen((current) => !current)}
-                    />
-                    <Popover
-                        open={overflowOpen}
-                        anchorRef={overflowAnchorRef}
-                        placement="top"
-                        onRequestClose={() => setOverflowOpen(false)}
-                        portal={MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS}
-                    >
-                        {() => (
-                            <View testID={`${props.testID}-overflow-panel`} style={simulatorStreamStyles.toolbarOverflowPanel}>
-                                {showRelease ? (
-                                    <ToolbarIconButton
-                                        iconName="lock-open"
-                                        label={t('simulatorPreview.toolbar.releaseControl')}
-                                        onPress={props.actions.releaseLease}
-                                        testID={`${props.testID}-release-lease`}
-                                    />
-                                ) : null}
-                                {showRelease ? (
-                                    <ToolbarIconButton
-                                        iconName="clock"
-                                        label={t('simulatorPreview.toolbar.renewControl')}
-                                        onPress={props.actions.renewLease}
-                                        testID={`${props.testID}-renew-lease`}
-                                    />
-                                ) : null}
-                                {showOrientation ? (
-                                    <ToolbarIconButton
-                                        iconName="device-mobile"
-                                        label={t('simulatorPreview.toolbar.rotateLeft')}
-                                        onPress={props.actions.rotateLeft}
-                                        testID={`${props.testID}-rotate-left`}
-                                    />
-                                ) : null}
-                                {showHardwareButton ? (
-                                    <ToolbarIconButton
-                                        iconName="radio-button"
-                                        label={t('simulatorPreview.toolbar.homeButton')}
-                                        onPress={props.actions.pressHome}
-                                        testID={`${props.testID}-button-home`}
-                                    />
-                                ) : null}
-                                {showHardwareButton ? (
-                                    <ToolbarIconButton
-                                        iconName="arrow-left"
-                                        label={t('simulatorPreview.toolbar.backButton')}
-                                        onPress={props.actions.pressBack}
-                                        testID={`${props.testID}-button-back`}
-                                    />
-                                ) : null}
-                                {showHardwareButton ? (
-                                    <ToolbarIconButton
-                                        iconName="stack"
-                                        label={t('simulatorPreview.toolbar.recentButton')}
-                                        onPress={props.actions.pressRecent}
-                                        testID={`${props.testID}-button-recent`}
-                                    />
-                                ) : null}
-                                {showHardwareButton ? (
-                                    <ToolbarIconButton
-                                        iconName="speaker-high"
-                                        label={t('simulatorPreview.toolbar.volumeUp')}
-                                        onPress={props.actions.pressVolumeUp}
-                                        testID={`${props.testID}-button-volume-up`}
-                                    />
-                                ) : null}
-                                {showHardwareButton ? (
-                                    <ToolbarIconButton
-                                        iconName="speaker-low"
-                                        label={t('simulatorPreview.toolbar.volumeDown')}
-                                        onPress={props.actions.pressVolumeDown}
-                                        testID={`${props.testID}-button-volume-down`}
-                                    />
-                                ) : null}
-                            </View>
-                        )}
-                    </Popover>
-                </View>
+        <View
+            testID={props.testID}
+            style={[simulatorStreamStyles.rail, horizontal ? simulatorStreamStyles.railHorizontal : null]}
+        >
+            {buttons.map((entry) => (
+                <IconButton
+                    key={entry.button}
+                    testID={`${props.testID}-${entry.testSuffix}`}
+                    iconName={entry.iconName}
+                    variant="plain"
+                    accessibilityLabel={entry.label()}
+                    tooltip={entry.label()}
+                    disabled={!controls.canControl}
+                    disabledReason={inputReason}
+                    onPress={() => { void pressAction(props.actions, entry.button)?.(); }}
+                    {...gaps}
+                />
+            ))}
+            {showRotate ? (
+                <IconButton
+                    testID={`${props.testID}-rotate-left`}
+                    iconName="arrow-counter-clockwise"
+                    variant="plain"
+                    accessibilityLabel={t('simulatorPreview.toolbar.rotateLeft')}
+                    tooltip={t('simulatorPreview.toolbar.rotateLeft')}
+                    disabled={!controls.canControl}
+                    disabledReason={inputReason}
+                    onPress={() => { void props.actions.rotateLeft?.(); }}
+                    {...gaps}
+                />
+            ) : null}
+            {deviceGroup && canRefreshFrame ? (
+                <View style={[simulatorStreamStyles.railDivider, horizontal ? simulatorStreamStyles.railDividerHorizontal : null]} />
+            ) : null}
+            {canRefreshFrame ? (
+                <IconButton
+                    testID={`${props.testID}-request-keyframe`}
+                    iconName="arrow-clockwise"
+                    variant="plain"
+                    accessibilityLabel={t('simulatorPreview.toolbar.refreshFrame')}
+                    tooltip={t('simulatorPreview.toolbar.refreshFrame')}
+                    disabled={!controls.canWatch}
+                    onPress={() => { void props.actions.requestKeyframe?.(); }}
+                    {...gaps}
+                />
             ) : null}
         </View>
     );

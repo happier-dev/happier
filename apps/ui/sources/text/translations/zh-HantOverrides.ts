@@ -1,4 +1,5 @@
 import { deploymentRecommendationTranslations } from './deploymentRecommendationTranslations';
+import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { newSessionActionDefaultTranslations } from './newSessionActionDefaultTranslations';
 import { chatLinksTranslations } from './chatLinksTranslations';
@@ -9900,6 +9901,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     simulatorPreview: {
+        viewer: simulatorViewerTranslations['zh-Hant'],
         title: '模擬器',
         picker: {
             title: '裝置',

@@ -161,6 +161,13 @@ function selectLease(input: Readonly<{
     };
 }
 
+const NO_HARDWARE_BUTTONS: SimulatorPreviewControls['hardwareButtons'] = [];
+
+const PLATFORM_LABELS: Readonly<Record<SimulatorDeviceResourceV1['platform'], string>> = {
+    ios: 'iOS',
+    android: 'Android',
+};
+
 function selectControls(input: Readonly<{
     resource: SimulatorDeviceResourceV1 | null;
     lease: SimulatorPreviewLeaseState;
@@ -174,13 +181,16 @@ function selectControls(input: Readonly<{
         canWatch,
         canControl,
         canRequestKeyframe: canWatch && streamControls?.requestKeyframe === true,
-        canRequestSnapshot: canWatch && streamControls?.snapshot === true,
         canSetQuality: canWatch && streamControls?.setQuality === true,
         canSetFps: canWatch && streamControls?.setFps === true,
         canSetScale: canWatch && streamControls?.setScale === true,
         supportedInputKinds: inputSupported
             ? input.resource.capture.supportedInputKinds ?? []
             : [],
+        // The producer owns which buttons the device has; they are pressed through button input.
+        hardwareButtons: inputSupported && input.resource.capture.supportedInputKinds?.includes('hardware_button')
+            ? input.resource.supportedHardwareButtons ?? NO_HARDWARE_BUTTONS
+            : NO_HARDWARE_BUTTONS,
     };
 }
 
@@ -253,7 +263,7 @@ function selectDeviceOptions(input: SimulatorPreviewSelectionInput): readonly Si
         return {
             simulatorId: resource.simulatorId,
             label: resource.displayName,
-            platformLabel: resource.platform,
+            platformLabel: PLATFORM_LABELS[resource.platform],
             selected: resource.simulatorId === input.selectedSimulatorId,
             availability: projectSimulatorPreviewAvailability({
                 resource,
