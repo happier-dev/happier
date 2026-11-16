@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { act, createSessionAccessFixture, createSessionFixture, createRootLayoutFeaturesResponse, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createSessionAccessFixture, createSessionFixture, createRootLayoutFeaturesResponse, renderScreen, standardCleanup, withPopoverWebGlobals } from '@/dev/testkit';
 import { createPlainArtifactHomeFixture, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { projectBotTemplateArtifactHeaderV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { storage } from '@/sync/domains/state/storage';
@@ -24,10 +24,19 @@ vi.mock('@legendapp/list/react-native', async () => (await import('@/dev/testkit
 vi.mock('@shopify/react-native-skia', async () => (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock());
 vi.mock('@/components/sessions/bots/face/BotFaceRasterView', async () => import('@/components/sessions/bots/face/BotFaceRasterView.web'));
 
+/** Rows exist only on an open menu: open the ⋯ the way its trigger does, then read them. */
+async function renderOpenMenu(element: React.ReactElement) {
+    const screen = await renderScreen(element);
+    await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
+    return screen;
+}
+
+let restorePopoverGlobals: (() => void) | undefined;
 let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
 let previousState: ReturnType<typeof storage.getState> | undefined;
 afterEach(async () => {
     standardCleanup();
+    restorePopoverGlobals?.(); restorePopoverGlobals = undefined;
     await home?.dispose(); home = undefined;
     if (previousState) storage.setState(previousState, true);
     vi.clearAllMocks();
@@ -58,11 +67,12 @@ it('deletes only the owner’s template draft after menu confirmation and hides 
     const published = home.boundary.read(releaseId);
     const recipient = { ...source, access: createSessionAccessFixture('admin') };
     storage.setState({ sessions: { [source.id]: recipient } });
-    const other = await renderScreen(<SessionHeaderActionMenu sessionId={source.id} session={recipient} />);
+    restorePopoverGlobals = withPopoverWebGlobals();
+    const other = await renderOpenMenu(<SessionHeaderActionMenu sessionId={source.id} session={recipient} />);
     expect(other.findByType(DropdownMenu).props.items.some((item: { id: string }) => item.id === 'header.deleteBotTemplate')).toBe(false);
     await other.unmount();
     storage.setState({ sessions: { [source.id]: source } });
-    const screen = await renderScreen(<SessionHeaderActionMenu sessionId={source.id} session={source} />);
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={source.id} session={source} />);
     const menu = screen.findByType(DropdownMenu);
     expect(menu.props.items.find((item: { id: string }) => item.id === 'header.deleteBotTemplate')).toMatchObject({ destructive: true });
     let respond: ((confirmed: boolean) => void) | undefined;

@@ -108,6 +108,14 @@ function createProjection(serverIdentityId: string) {
     } }).pluginUiProjection;
 }
 
+/** Rows exist only on an open menu: open the ⋯ the way its trigger does, then read them. */
+async function renderOpenMenu(element: React.ReactElement) {
+    const screen = await renderScreen(element);
+    await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
+    await flushHookEffects();
+    return screen;
+}
+
 describe('SessionHeaderActionMenu real runtime boundaries', () => {
     let homes: Awaited<ReturnType<typeof serveActionHomes>>;
     let boundary: ReturnType<typeof createSocketIoBoundaryStub>;
@@ -115,7 +123,10 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
     let readStateReply: (() => Response) | null;
     let externalAction: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>> | null;
 
+    let restorePopoverGlobals: () => void = () => {};
+
     beforeEach(async () => {
+        restorePopoverGlobals = withPopoverWebGlobals();
         previousState = storage.getState();
         readStateReply = null;
         externalAction = null;
@@ -166,6 +177,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
 
     afterEach(async () => {
         standardCleanup();
+        restorePopoverGlobals();
         await serverScopedRpcSocketPool.stopAll();
         serverScopedRpcSocketPool.resetForTests();
         resetScopedMachineTransportCacheForTests();
@@ -191,7 +203,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             runtimeDescriptorV1: { v: 1, agentId: 'external/agent', agent: {} },
             ...(publication ? { agentRuntimeCapabilitiesV1: publication } : {}) } });
         storage.getState().applySessions([session]);
-        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+        const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
         const item = screen.findByType(DropdownMenu).props.items.find((row: { id: string }) => row.id === 'session.compact');
         expect(item).toBeTruthy();
         expect(item.disabled === true).toBe(disabled);
@@ -213,7 +225,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         storage.setState({ sessions: { [session.id]: session } });
         const target = { serverId, sessionId: session.id };
         const selectedByHost: string[] = [];
-        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session}
+        const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session}
             collaborationHeader={{ target, compact: false }} destinationsInMenu
             onSelectExtraItem={(actionId) => { selectedByHost.push(actionId); return actionId === 'header.share'; }} />);
         const menu = screen.findByType(DropdownMenu);
@@ -236,7 +248,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             metadata: { machineId: MACHINE_ID, path: '/workspace', host: 'projection.local', bot: { kind: 'bot' } },
         });
         storage.setState({ sessions: { [session.id]: session } });
-        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session}
+        const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session}
             collaborationHeader={{ target: { serverId, sessionId: session.id }, compact: false }} destinationsInMenu />);
         const giveCopy = () => (screen.findByType(DropdownMenu).props.items as ReadonlyArray<{ id: string; loading?: boolean;
             keepMenuOpen?: boolean }>).find(row => row.id === 'header.giveBotCopy');
@@ -261,7 +273,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             registerBackStep: () => () => {}, back: () => {}, forward: () => {},
         } satisfies WorkspaceNavigationContextValue;
         try {
-            const screen = await renderScreen(<WorkspaceNavigationProvider value={workspace}>
+            const screen = await renderOpenMenu(<WorkspaceNavigationProvider value={workspace}>
                 <SessionHeaderActionMenu sessionId={session.id} session={session} />
             </WorkspaceNavigationProvider>);
             await vi.waitFor(() => {
@@ -338,7 +350,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         expect(targets.getCurrent()).toMatchObject({ bare: { machineId: focusedMachine.id, basePath: '/focused' },
             routed: { machineId: machine.id, basePath: '/projection' }, control: { machineId: machine.id, basePath: '/projection' } });
         await targets.unmount();
-        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+        const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
         try {
             const reads = () => boundary.socket.emitWithAck.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL);
             await vi.waitFor(() => expect(reads().length).toBeGreaterThan(0));
@@ -358,7 +370,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         });
         storage.setState({ sessions: { [session.id]: session } });
         vi.mocked(router.push).mockClear();
-        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+        const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
         const dropdown = screen.findByType(DropdownMenu);
         expect(dropdown.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'header.reportIssue' })]));
         await act(async () => { dropdown.props.onSelect('header.reportIssue'); });
@@ -399,7 +411,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             pluginHeaderActions={presentations} pluginHeaderActionPlacement={placement}
             pluginUiScopedLaunchFacts={scopedLaunchFacts}
         />;
-        const screen = await renderScreen(renderMenu('overflow'));
+        const screen = await renderOpenMenu(renderMenu('overflow'));
         const dropdown = screen.findByType(DropdownMenu);
         expect(dropdown.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: MENU_ID, title: 'Preview' })]));
 
@@ -501,9 +513,14 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             <SessionHeaderActionMenu sessionId={session.id} session={session} />
         </React.Profiler>);
         await flushHookEffects({ cycles: 5, turns: 2 });
-        const hasAction = (id: string) => screen.findByType(DropdownMenu).props.items
-            .some((item: { id: string }) => item.id === id);
-        expect(hasAction(SESSION_ACTION_MARK_UNREAD_ID)).toBe(true);
+        // Each check is what a person sees when they open the ⋯: open, read the rows, close.
+        const hasAction = async (id: string) => {
+            await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
+            await flushHookEffects();
+            const present = screen.findByType(DropdownMenu).props.items.some((item: { id: string }) => item.id === id);
+            await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(false); });
+            return present;
+        };
         const initialVersion = storage.getState().sessionMessages[session.id]!.messagesVersion;
         commits = 0;
         for (let index = 0; index < 5; index += 1) {
@@ -511,23 +528,25 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         }
         expect(storage.getState().sessionMessages[session.id]!.messagesVersion).toBe(initialVersion + 5);
         expect(commits).toBe(0);
-        expect(hasAction(SESSION_ACTION_MARK_UNREAD_ID)).toBe(true);
+        expect(await hasAction(SESSION_ACTION_MARK_UNREAD_ID)).toBe(true);
 
+        // Shut again (its rows stay mounted after the first open): a real read change commits.
+        commits = 0;
         await act(async () => { storage.getState().applyMessages(session.id, [chunk('A genuinely new unread answer', 2)]); });
         expect(commits).toBeGreaterThan(0);
-        expect(hasAction(SESSION_ACTION_MARK_READ_ID)).toBe(true);
+        expect(await hasAction(SESSION_ACTION_MARK_READ_ID)).toBe(true);
         await act(async () => { storage.getState().applySessions([{ ...session, seq: 2, lastViewedSessionSeq: 2 }]); });
-        expect(hasAction(SESSION_ACTION_MARK_UNREAD_ID)).toBe(true);
-        expect(hasAction(SESSION_ACTION_MARK_READ_ID)).toBe(false);
+        expect(await hasAction(SESSION_ACTION_MARK_UNREAD_ID)).toBe(true);
+        expect(await hasAction(SESSION_ACTION_MARK_READ_ID)).toBe(false);
 
-        expect(hasAction(SESSION_ACTION_STOP_ID)).toBe(true);
+        expect(await hasAction(SESSION_ACTION_STOP_ID)).toBe(true);
         await act(async () => { storage.getState().applySessions([{ ...session, seq: 2, lastViewedSessionSeq: 2,
             access: { ...session.access!, capabilities: { ...session.access!.capabilities, stopSession: false } },
         }]); });
-        expect(hasAction(SESSION_ACTION_STOP_ID)).toBe(false);
+        expect(await hasAction(SESSION_ACTION_STOP_ID)).toBe(false);
 
         await act(async () => { storage.getState().applyMessages(session.id, [chunk('Another unread answer', 3)]); });
-        expect(hasAction(SESSION_ACTION_MARK_READ_ID)).toBe(true);
+        expect(await hasAction(SESSION_ACTION_MARK_READ_ID)).toBe(true);
         // The Home's cursor has advanced again by invocation time; the Action
         // must use that fresh result rather than sending the rendered cursor.
         readStateReply = () => Response.json({ success: true, ...SessionReadStateSetResultV1Schema.parse({
@@ -545,8 +564,8 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             home: 'projection', accountId: 'header-account', body: { state: 'read' },
         });
         expect(storage.getState().sessionListRowsByServerId[homes.homes.projection!.id]?.[session.id]?.lastViewedSessionSeq).toBe(4);
-        expect(hasAction(SESSION_ACTION_MARK_UNREAD_ID)).toBe(true);
-        expect(hasAction(SESSION_ACTION_MARK_READ_ID)).toBe(false);
+        expect(await hasAction(SESSION_ACTION_MARK_UNREAD_ID)).toBe(true);
+        expect(await hasAction(SESSION_ACTION_MARK_READ_ID)).toBe(false);
     });
 
     it('keeps the closed header uncommitted while a streaming turn rewrites its Session row', async () => {
@@ -570,11 +589,38 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             });
         }
         expect(commits).toBe(0);
+        await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
+        await flushHookEffects();
         expect(hasAction(SESSION_ACTION_STOP_ID)).toBe(true);
         await act(async () => { storage.getState().applySessions([{ ...session, updatedAt: 7,
             access: { ...session.access!, capabilities: { ...session.access!.capabilities, stopSession: false } },
         }]); });
         expect(hasAction(SESSION_ACTION_STOP_ID)).toBe(false);
+        await screen.unmount();
+    });
+
+    it('builds and follows no menu rows until the shut menu is first opened', async () => {
+        const session = createSessionFixture({ ...storage.getState().sessions.sess_1!, active: true, seq: 1, lastViewedSessionSeq: 1 });
+        storage.getState().applySessions([session]);
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="header" onRender={() => { commits += 1; }}>
+            <SessionHeaderActionMenu sessionId={session.id} session={session} />
+        </React.Profiler>);
+        await flushHookEffects({ cycles: 5, turns: 2 });
+        commits = 0;
+        // Facts that only rows read: the row's Stop capability and the tool-call display setting.
+        await act(async () => { storage.getState().applySessions([{ ...session, updatedAt: 2,
+            access: { ...session.access!, capabilities: { ...session.access!.capabilities, stopSession: false } },
+        }]); });
+        await act(async () => { storage.getState().applySettingsLocal({ transcriptShowToolCalls: !storage.getState().settings.transcriptShowToolCalls }); });
+        await flushHookEffects();
+        expect({ commits, rows: screen.findByType(DropdownMenu).props.items.length }).toEqual({ commits: 0, rows: 0 });
+
+        await act(async () => { screen.findByType(DropdownMenu).props.onOpenChange(true); });
+        await flushHookEffects();
+        const ids = () => screen.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id);
+        expect(ids()).toEqual(expect.arrayContaining(['header.findChat', 'header.reportIssue']));
+        expect(ids()).not.toContain(SESSION_ACTION_STOP_ID);
         await screen.unmount();
     });
 
@@ -611,7 +657,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             transcriptMode: 'synthetic',
             targetSessionAddress: { serverId: session.serverId!, sessionId: session.id }, updatedAt: 1,
         });
-        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+        const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
         const teleportItem = () => screen.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'voice.teleport');
         expect(teleportItem()).toBeUndefined();
 

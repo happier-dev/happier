@@ -736,9 +736,17 @@ describe('SessionView header action menu visibility', () => {
       <SessionView id="s1" routeServerId={account.home.id} contentOverride={React.createElement('BrowserSurface')} />,
       { wrapper: AppPaneProviderWrapper },
     );
-    expect(screen.root.findAllByType(DropdownMenu).some((menu) =>
-      menu.props.items.some((item: Readonly<{ id: string }>) => item.id === 'header.openComputer'),
-    )).toBe(true);
+    // The header's ⋯ builds its rows when it opens: press its trigger.
+    const trigger = screen.root.findAll((node) => typeof node.type === 'string'
+      && (node.props.testID === 'session-header-action-menu-trigger' || node.props['data-testid'] === 'session-header-action-menu-trigger'))[0];
+    expect(trigger).toBeDefined();
+    const { withPopoverWebGlobals } = await import('@/dev/testkit');
+    await withPopoverWebGlobals(async () => {
+      await act(async () => { (trigger!.props.onPress ?? trigger!.props.onClick)({ stopPropagation() {} }); });
+      await vi.waitFor(() => expect(screen.root.findAllByType(DropdownMenu).some((menu) =>
+        menu.props.items.some((item: Readonly<{ id: string }>) => item.id === 'header.openComputer'),
+      )).toBe(true));
+    });
   });
 
   it('updates the mounted header when history hydration supplies the first prompt without changing the full Session', async () => {

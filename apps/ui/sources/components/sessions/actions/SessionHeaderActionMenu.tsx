@@ -37,7 +37,7 @@ import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCata
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu, type DropdownMenuItem, type DropdownMenuSelection } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
@@ -360,7 +360,67 @@ function didSessionHeaderActionMenuPropsChange(
   return (prev.session.seq > 0) !== (next.session.seq > 0);
 }
 
-function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
+type SessionHeaderMenuRows = Readonly<{
+  items: ReadonlyArray<DropdownMenuItem>;
+  select: (actionId: string, selection?: DropdownMenuSelection) => void;
+}>;
+
+const NO_MENU_ROWS: ReadonlyArray<DropdownMenuItem> = [];
+
+type SessionHeaderMenuRowsStore = Readonly<{
+  get: () => SessionHeaderMenuRows | null;
+  set: (rows: SessionHeaderMenuRows) => void;
+  subscribe: (listener: () => void) => () => void;
+}>;
+
+function createSessionHeaderMenuRowsStore(): SessionHeaderMenuRowsStore {
+  let rows: SessionHeaderMenuRows | null = null;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => rows,
+    set: (next) => {
+      if (rows && next.items === rows.items && next.select === rows.select) return;
+      rows = next;
+      for (const listener of [...listeners]) listener();
+    },
+    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
+}
+
+/** The ⋯ menu: the only reader of the published rows, so a row change redraws the menu, not the header. */
+function SessionHeaderMenuDropdown(props: Omit<React.ComponentProps<typeof DropdownMenu>, 'items' | 'onSelect'> & Readonly<{
+  rows: SessionHeaderMenuRowsStore;
+}>) {
+  const { rows: store, ...menuProps } = props;
+  const rows = React.useSyncExternalStore(store.subscribe, store.get, store.get);
+  const onSelect = React.useCallback((actionId: string, selection?: DropdownMenuSelection) => {
+    store.get()?.select(actionId, selection);
+  }, [store]);
+  return <DropdownMenu {...menuProps} items={props.open ? rows?.items ?? NO_MENU_ROWS : NO_MENU_ROWS} onSelect={onSelect} />;
+}
+
+type SessionHeaderMenuRowsProps = SessionHeaderActionMenuProps & Readonly<{
+  open: boolean;
+  setOpen: (open: boolean) => void;
+  session: Session;
+  sessionServerId: ReturnType<typeof resolveSessionTargetServerId>;
+  companionAddress: ReturnType<typeof normalizeSessionAddress>;
+  followEditor: ReturnType<typeof useAccountSessionFollowEditorHost>;
+  showCompanionInOverflow: boolean;
+  companionHeaderIntent: SessionCompanionHeaderIntent | null | undefined;
+  applyCompanionHeaderIntent: () => Promise<void>;
+  invokePluginHeaderAction: (menuActionId: string, anchor?: PopoverAnchor) => void;
+  /** The open menu's rows and their selection, handed to the trigger's DropdownMenu. */
+  publish: (rows: SessionHeaderMenuRows) => void;
+}>;
+
+/**
+ * Everything only the menu's rows read: Action availability, handoff, approvals, Machine and daemon
+ * facts. Mounted when the menu first opens, then kept: an approval a row started outlives the menu.
+ */
+function SessionHeaderActionMenuRows(props: SessionHeaderMenuRowsProps) {
+  const { open, setOpen, session, sessionServerId, companionAddress, followEditor, showCompanionInOverflow,
+    companionHeaderIntent, applyCompanionHeaderIntent, invokePluginHeaderAction } = props;
   const openExecutionRunDraft = useOpenExecutionRunLauncherDraft();
   const presentationActiveSignal = useLayoutPresentationSignal();
   const followControllerRef = React.useRef<AbortController | null>(null);
@@ -384,7 +444,6 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     return () => { unsubscribe(); stop?.(); };
   }, [props.actionAccountLifetime, props.sessionId, presentationActiveSignal]);
   const { theme } = useUnistyles();
-  const currentUiContextReader = useOptionalCurrentUiContextReader();
   const findSurfaceRuntime = useFindSurfaceRuntime();
   const cockpitNavigation = useSessionCockpitSurfaceNavigation();
   const router = useRouter();
@@ -398,23 +457,10 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const voice = useSetting('voice');
   const hasGlobalVoiceAgentConversation = useHasGlobalVoiceAgentConversation();
   const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
-  const [open, setOpen] = React.useState(false);
   // People is a rail destination; the header's ⋯ carries it (with its conversation attention) only
   // while the rail is not on screen. No named-viewer presence is read for a header entry any more.
   const collaborationAttentionLabel = useSessionPeopleAttentionLabel(
     props.destinationsInMenu === true ? props.collaborationHeader?.target ?? null : null,
-  );
-  const session = React.useMemo(
-    () => open ? readCurrentSessionForOpenMenu(props.sessionId, props.session) : props.session,
-    [open, props.session, props.sessionId],
-  );
-  const preferredSessionServerId = usePreferredServerIdForSession({
-    serverId: session.serverId ?? null,
-    sessionId: props.sessionId,
-  });
-  const sessionServerId = React.useMemo(
-    () => resolveSessionTargetServerId(props.sessionId, preferredSessionServerId ?? session.serverId ?? null),
-    [preferredSessionServerId, session.serverId, props.sessionId],
   );
   const giveBotCopy = useOpenBotTemplate(session, sessionServerId ?? '', true);
   const deleteBotTemplate = useDeleteBotTemplate(session);
@@ -430,20 +476,7 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     scopeKey: JSON.stringify([sessionServerId, props.sessionId, profileId]),
     serverId: sessionServerId ?? '', onExecuted: () => {},
   });
-  const companionAddress = React.useMemo(
-    () => normalizeSessionAddress(sessionServerId, props.sessionId),
-    [props.sessionId, sessionServerId],
-  );
   const archivePending = useSessionArchivePending(companionAddress);
-  const companionRevealPort = useSessionCompanionRevealPort(companionAddress);
-  const openCompanionFullSurface = React.useCallback(() => {
-    companionRevealPort?.openFullSurface();
-  }, [companionRevealPort]);
-  const companion = useSessionCompanionController({
-    sessionId: props.sessionId,
-    serverId: sessionServerId,
-    openFullSurface: openCompanionFullSurface,
-  });
   // The one Computer opener; offline keeps the entry with its presence reason (calm-shell R2-2).
   const computerOpener = useOpenSessionComputerScreen({ sessionId: props.sessionId, serverId: sessionServerId ?? null });
   const openComputer = props.destinationsInMenu === true ? computerOpener : null;
@@ -451,46 +484,6 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
   const openSimulator = useOpenSessionSimulatorPreview({
     sessionId: props.sessionId, serverId: sessionServerId ?? null, active: open,
   });
-  const showCompanionInOverflow = props.companionHeaderActionPlacement === 'overflow'
-    && companionRevealPort !== null
-    && companion.availability === 'ready'
-    && props.companionHeaderIntent !== null
-    && props.companionHeaderIntent !== undefined;
-  const showCompanionDirect = props.companionHeaderActionPlacement === 'direct'
-    && companionRevealPort !== null
-    && companion.availability === 'ready'
-    && props.companionHeaderIntent !== null
-    && props.companionHeaderIntent !== undefined;
-  const companionHeaderIntent = props.companionHeaderIntent;
-  const applyCompanionHeaderIntent = React.useCallback(async () => {
-    if (!companionHeaderIntent) return;
-    switch (companionHeaderIntent.operation) {
-      case 'hide':
-        await applySessionCompanionHumanIntent({ address: companionAddress, intent: { kind: 'companion.hide' } });
-        return;
-      case 'expand':
-        await applySessionCompanionHumanIntent({ address: companionAddress, intent: { kind: 'companion.collapse.set', collapsed: false } });
-        return;
-      case 'show':
-      case 'show_and_open_full':
-        {
-          const mutation: { outcome: SessionCompanionMutationOutcome | null } = { outcome: null };
-          const admitted = await applySessionCompanionHumanIntent({
-            address: companionAddress,
-            intent: { kind: 'companion.show' },
-            onCompanionMutation: outcome => { mutation.outcome = outcome; },
-          });
-          if (admitted && mutation.outcome) {
-            if (companionHeaderIntent.operation === 'show') companionRevealPort?.revealAfterMutation(mutation.outcome);
-            else companionRevealPort?.openFullSurface();
-          }
-        }
-        return;
-      case 'open_full':
-        companionRevealPort?.openFullSurface();
-        return;
-    }
-  }, [companionAddress, companionHeaderIntent, companionRevealPort]);
   const executionRunsEnabled = useFeatureEnabled('execution.runs', sessionServerId
     ? { scopeKind: 'spawn', serverId: sessionServerId }
     : undefined);
@@ -501,16 +494,6 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     scopeKind: 'spawn',
     serverId: sessionServerId,
   });
-  // The Follow editor opens under the header chip (lab P2-A), or under ⋯ where no chip is drawn.
-  const menuAnchorRef = React.useRef<View>(null);
-  const followChipAnchorRef = React.useRef<View>(null);
-  const followAnchorRef = React.useMemo(() => ({
-    get current() { return followChipAnchorRef.current ?? menuAnchorRef.current; },
-  }) as React.RefObject<View | null>, []);
-  const followEditor = useAccountSessionFollowEditorHost({ serverId: sessionServerId ?? null, sessionId: props.sessionId, anchorRef: followAnchorRef });
-  // A tight header (a session column beside the editor) takes the chip's icon form too, so the title keeps its room.
-  const headerCompact = useDetailsTabHeaderActionsCompact();
-  const followChipCompact = !useIsTablet() || headerCompact;
   const currentUserId = typeof profileId === 'string' ? profileId : null;
   const reachableMachineId = useSessionReachableMachineTarget(props.sessionId, sessionServerId)?.machineId ?? null;
   const ownerMetadata = readSessionOwnerMetadataView(session);
@@ -650,37 +633,9 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       projection: daemonMergedProjection.inputs?.pluginProjectionV2,
     });
   }, [daemonMergedProjection.inputs?.pluginProjectionV2, daemonMergedProjection.phase, externalSessionLink]);
-  const invokePluginHeaderAction = React.useCallback((menuActionId: string, anchor?: PopoverAnchor) => {
-    // Both responsive controls re-resolve the selected descriptor against the
-    // current projection through this one callback. The descriptor list never
-    // gains execution authority merely by being rendered directly.
-    fireAndForget((async () => {
-      const outcome = await dispatchPluginSessionHeaderAction({
-        projection: props.pluginUiProjection,
-        menuActionId,
-        anchor,
-        scopedLaunchFacts: props.pluginUiScopedLaunchFacts,
-        scopeIsCurrent: props.pluginUiScopeIsCurrent,
-        sessionId: props.sessionId,
-        openSurface: props.onOpenPluginSurface,
-        ...(currentUiContextReader
-          ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
-          : {}),
-      });
-      if (outcome && 'ok' in outcome && !outcome.ok) {
-        Modal.alert(t('common.error'), t('pluginRuntime.unavailableGeneric'));
-      }
-    })(), { tag: 'SessionHeaderActionMenu.execute.pluginHeaderAction' });
-  }, [
-    props.onOpenPluginSurface,
-    props.pluginUiScopedLaunchFacts,
-    props.pluginUiScopeIsCurrent,
-    props.pluginUiProjection,
-    props.sessionId,
-    currentUiContextReader,
-  ]);
   const accountShowToolCalls = useSetting('transcriptShowToolCalls');
   const actions = React.useMemo(() => {
+    if (!open) return NO_MENU_ROWS;
     const actionItems: DropdownMenuItem[] = listActionSpecs()
       // Placement first: only the few specs placed in this menu reach the enablement check.
       .filter((spec) => Array.isArray(spec.placements) && spec.placements.includes('session_action_menu' as any))
@@ -863,8 +818,6 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     openComputer,
     openSimulator,
     showCompanionInOverflow,
-    companion.preference.items.length,
-    companion.preference.visible,
     companionHeaderIntent?.accessibility,
     companionHeaderIntent?.checked,
     companionHeaderIntent?.itemCount,
@@ -892,12 +845,396 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     props.pluginHeaderActions,
     theme.colors.chrome.header.foreground,
   ]);
+  const select = (actionId: string, selection?: DropdownMenuSelection) => {
+    if (workspaceOpen.select(actionId)) { setOpen(false); return; }
+    if (actionId.startsWith(`${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:`)) {
+      // Custom color… keeps the menu open while the picker loads; the choice closes it when ready.
+      fireAndForget((async () => {
+        const color = await resolveSessionAppearanceColorMenuChoice({
+          menuId: SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
+          itemId: actionId,
+          current: ownAppearanceColor,
+          serverId: sessionServerId ?? null,
+          onPickerLoading: setCustomColorPickerLoading,
+          closeMenus: () => setOpen(false),
+        });
+        if (color === undefined) return;
+        setOpen(false);
+        await writeSessionOrganizationAppearance({
+          scope: await requireSessionOrganizationMutationScope(sessionServerId ?? null),
+          sessionId: props.sessionId,
+          color,
+        });
+      })(), {
+        tag: 'SessionHeaderActionMenu.execute.sessionAppearance',
+        onError: () => Modal.alert(t('common.error'), t('errors.unknownError')),
+      });
+      return;
+    }
+    if (actionId === 'header.giveBotCopy') {
+      // The menu stays open with the row's spinner until the editor is ready (the Custom color… pattern).
+      if (!giveBotCopy || giveBotCopyPending) return;
+      setGiveBotCopyPending(true);
+      fireAndForget(giveBotCopy().finally(() => {
+        setGiveBotCopyPending(false);
+        setOpen(false);
+      }), { tag: 'SessionHeaderActionMenu.execute.giveBotCopy' });
+      return;
+    }
+    setOpen(false);
+    if (actionId === 'header.deleteBotTemplate') {
+      void deleteBotTemplate?.();
+      return;
+    }
+    if (actionId === 'header.findChat') {
+      // On a phone cockpit the transcript stays mounted behind other tabs: bring it forward first.
+      cockpitNavigation?.switchSurface('chat');
+      // The transcript registers once its tab is in front; it opens then.
+      findSurfaceRuntime.open(`transcript:${sessionServerId ?? ''}:${props.sessionId}`, { whenRegistered: cockpitNavigation !== null });
+      return;
+    }
+    if (actionId === 'header.openComputer') {
+      openComputer?.open();
+      return;
+    }
+    if (actionId === 'header.openSimulator') {
+      openSimulator?.open();
+      return;
+    }
+    if (actionId === 'header.openCompanion' && showCompanionInOverflow) {
+      applyCompanionHeaderIntent();
+      return;
+    }
+    if (props.onSelectExtraItem?.(actionId) === true) return;
+    if (actionId === 'header.reportIssue') {
+      fireAndForget((async () => {
+        const serverId = sessionServerId ?? '';
+        const accountId = await resolveBugReportAccountIdForServer(serverId);
+        navigateWithBlurOnWeb(() => router.push({
+          pathname: '/settings/report-issue',
+          params: { sessionId: props.sessionId, serverId, accountId: accountId ?? '' },
+        }));
+      })(), { tag: 'SessionHeaderActionMenu.execute.reportIssue' });
+      return;
+    }
+    if (isSessionCopyActionId(actionId)) {
+      const currentSession = readCurrentSessionForOpenMenu(props.sessionId, session);
+      fireAndForget(copySessionDebugInformationToClipboard(buildSessionDebugInformationForSession(currentSession), actionId, writeClipboard), {
+        tag: 'SessionHeaderActionMenu.execute.copyInformation',
+      });
+      return;
+    }
+    if (actionId.startsWith(PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX)) {
+      invokePluginHeaderAction(actionId, selection?.anchor);
+      return;
+    }
+    if (actionId === 'session.externalSession.backgroundFollow') {
+      const nextPolicy = externalSessionFollowPolicy === 'background_follow' ? 'attached_only' : 'background_follow';
+      fireAndForget((async () => {
+        const signal = followControllerRef.current?.signal;
+        if (!externalSessionLink || !signal || signal.aborted) return;
+        // One shared operation owner with the External Sessions settings
+        // surface: it fences the settlement on the exact link identity and
+        // the active Account lifetime, and applies the canonical local
+        // projection catch-up on success.
+        const outcome = await setExternalSessionFollowPolicy({
+          sessionId: props.sessionId,
+          serverId: sessionServerId ?? null,
+          link: externalSessionLink,
+          policy: nextPolicy,
+          registerApproval: followApproval.requestApproval,
+          signal,
+        });
+        if (outcome.kind === 'stale') return;
+        if (outcome.kind !== 'applied') {
+          // The daemon owns live follow eligibility, so a refusal here is a
+          // real outcome the user asked for. Report it the same way the
+          // External Sessions settings surface reports the same operation
+          // instead of silently discarding the tap.
+          await Modal.alert(
+            t('common.error'),
+            t('externalSessions.followUpdateFailed'),
+          );
+        }
+      })(), { tag: 'SessionHeaderActionMenu.execute.externalSessionBackgroundFollow' });
+      return;
+    }
+    if (actionId === SESSION_FOLLOW_IN_ANOTHER_SESSION_ACTION_ID) {
+      if (!sessionServerId) return;
+      openSessionFollowDestinationPicker({
+        serverId: sessionServerId,
+        sessionId: props.sessionId,
+      }, followEditor.triggerRef);
+      return;
+    }
+    if (actionId === 'voice.teleport') {
+      fireAndForget(teleportVoiceAgentToSessionRoot({ sessionId: props.sessionId }), {
+        tag: 'SessionHeaderActionMenu.execute.voiceTeleport',
+      });
+      return;
+    }
+    const manualReadState = resolveManualReadStateFromSessionActionId(actionId);
+    const handledSessionActionIds: ReadonlySet<string> = new Set(listVisibleSessionActionIds({
+      target: sessionActionTarget,
+      surface: 'sessionHeader',
+    }));
+    if (manualReadState || handledSessionActionIds.has(actionId)) {
+      fireAndForget((async () => {
+        try {
+          if (actionId === SESSION_ACTION_RENAME_ID) {
+            const currentSessionTitle = readSessionDisplayTitleField(session).value ?? ownerMetadata?.name ?? '';
+            const newName = await Modal.prompt(
+              t('sessionInfo.renameSession'),
+              undefined,
+              {
+                defaultValue: currentSessionTitle,
+                placeholder: t('sessionInfo.renameSessionPlaceholder'),
+                confirmText: t('common.save'),
+                cancelText: t('common.cancel'),
+              },
+            );
+            if (!newName?.trim()) return;
+            await executeSessionAction({
+              actionId: SESSION_ACTION_RENAME_ID,
+              target: sessionActionTarget,
+              input: { title: newName },
+            });
+            return;
+          }
+          if (actionId === SESSION_ACTION_DELETE_ID) {
+            if (!await confirmSessionDelete({ target: sessionActionTarget })) return;
+            const result = await executeSessionAction({ actionId, target: sessionActionTarget,
+              context: { confirmed: true } });
+            if (result !== false) navigateAfterDelete();
+            return;
+          }
+          let alsoArchiveReports = false;
+          if (actionId === SESSION_ACTION_ARCHIVE_ID) {
+            const confirmation = await confirmSessionArchive({ leadSessionId: props.sessionId, serverId: sessionServerId ?? null });
+            if (!confirmation.confirmed) return;
+            alsoArchiveReports = confirmation.alsoArchiveReports;
+          }
+          await executeSessionAction({
+            actionId: actionId as SessionActionId,
+            target: sessionActionTarget,
+            ...(actionId === SESSION_ACTION_ARCHIVE_ID ? { input: { alsoArchiveReports } } : {}),
+            ...(actionId === 'ui.session.follow'
+              ? { context: { operations: { openFollowEditor: followEditor.openEditor } } }
+              : {}),
+            ...(actionId === SESSION_ACTION_RESUME_ID
+              ? {
+                  context: {
+                    operations: {
+                      resumeSession: async (sessionId: string) => {
+                        await emitSessionResumeRequest(sessionId, sessionServerId);
+                      },
+                    },
+                  },
+                }
+              : {}),
+          });
+        } catch (error) {
+          showSessionHeaderActionError(error);
+        }
+      })(), { tag: 'SessionHeaderActionMenu.execute.sessionAction' });
+      return;
+    }
+    if (actionId === 'session.fork') {
+      // A launcher only. The header must not also run the old auto-strategy
+      // path behind the modal: the user chooses Native, Replay or Configure
+      // before any fork effect is issued.
+      openSessionForkStrategyFlow({
+        navigation: router,
+        sessionId: props.sessionId,
+        forkSupportSource: session,
+        serverId: sessionServerId ?? null,
+        machineId: reachableMachineId ?? ownerMetadata?.machineId ?? null,
+        forkPoint: { type: 'latest' },
+        settings: storage.getState().settings,
+        replayEnabled: sessionReplayEnabled,
+        currentAgentCapabilities,
+        executionRunsEnabled: executionRunsEnabled === true,
+        agentSwitchingEnabled,
+        navigateToSession: (childSessionId, options) => {
+          router.push(buildScopedSessionRouteHref({
+            sessionId: childSessionId,
+            serverId: options?.serverId ?? sessionServerId,
+          }) as any);
+        },
+        navigateToNewSession: (route) => {
+          navigateWithBlurOnWeb(() => router.push(route as any));
+        },
+      });
+      return;
+    }
+    if (actionId === 'session.compact') {
+      fireAndForget((async () => {
+        try {
+          requireActionSuccess(await executor.execute('session.compact', { sessionId: props.sessionId }, {
+            surface: 'ui', defaultSessionId: props.sessionId, serverId: sessionServerId ?? undefined,
+          }), 'session.compact');
+        } catch (error) { showSessionHeaderActionError(error); }
+      })(), { tag: 'SessionHeaderActionMenu.execute.compact' });
+      return;
+    }
+    if (actionId === 'session.handoff') {
+      if (!handoffAvailability.available) {
+        return;
+      }
+      fireAndForget((async () => {
+        const res = await runHandoff();
+        if (!res?.ok) return;
+      })(), { tag: 'SessionHeaderActionMenu.execute.sessionHandoff' });
+      return;
+    }
+    const defaultBackend = resolveSessionActionDefaultBackend({
+      session,
+      enabledAgentIds,
+    });
+    if (!defaultBackend) return;
+    const input = buildExecutionRunActionDraftInputForUi({
+      actionId: actionId as ActionId,
+      sessionId: props.sessionId,
+      defaultBackendTarget: resolveSessionActionDefaultTarget(defaultBackend),
+      defaultBackendId: defaultBackend.defaultBackendId,
+      instructions: '',
+    });
+    const actionDraftServerId = typeof sessionServerId === 'string' ? sessionServerId.trim() : '';
+    if (
+      !actionDraftServerId
+      || !actionDraftAccountScope
+      || props.actionAccountLifetime?.isCurrent() !== true
+      || !areServerProfileIdentifiersEquivalent(actionDraftAccountScope.serverId, actionDraftServerId)
+    ) return;
+    openExecutionRunDraft({ scope: actionDraftAccountScope, sessionId: props.sessionId, actionId: actionId as ActionId, input });
+  };
+  const latestSelect = React.useRef(select);
+  latestSelect.current = select;
+  const stableSelect = React.useCallback((actionId: string, selection?: DropdownMenuSelection) => latestSelect.current(actionId, selection), []);
+  const { publish } = props;
+  // Only an open menu draws rows; a shut one keeps whatever it last showed and publishes nothing.
+  React.useLayoutEffect(() => { if (open) publish({ items: actions, select: stableSelect }); }, [actions, open, publish, stableSelect]);
+  return null;
+}
 
+function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
+  const [open, setOpen] = React.useState(false);
+  // A shut menu is its trigger (DropdownMenu's rule): the rows, and the hooks that feed only them, mount
+  // when the menu first opens.
+  const [rowsMounted, setRowsMounted] = React.useState(false);
+  const [rowsStore] = React.useState(createSessionHeaderMenuRowsStore);
+  const handleOpenChange = React.useCallback((next: boolean) => {
+    if (next) setRowsMounted(true);
+    setOpen(next);
+  }, []);
+  const currentUiContextReader = useOptionalCurrentUiContextReader();
+  const session = React.useMemo(
+    () => open ? readCurrentSessionForOpenMenu(props.sessionId, props.session) : props.session,
+    [open, props.session, props.sessionId],
+  );
+  const preferredSessionServerId = usePreferredServerIdForSession({
+    serverId: session.serverId ?? null,
+    sessionId: props.sessionId,
+  });
+  const sessionServerId = React.useMemo(
+    () => resolveSessionTargetServerId(props.sessionId, preferredSessionServerId ?? session.serverId ?? null),
+    [preferredSessionServerId, session.serverId, props.sessionId],
+  );
+  const companionAddress = React.useMemo(
+    () => normalizeSessionAddress(sessionServerId, props.sessionId),
+    [props.sessionId, sessionServerId],
+  );
+  const companionRevealPort = useSessionCompanionRevealPort(companionAddress);
+  const openCompanionFullSurface = React.useCallback(() => {
+    companionRevealPort?.openFullSurface();
+  }, [companionRevealPort]);
+  const companion = useSessionCompanionController({
+    sessionId: props.sessionId,
+    serverId: sessionServerId,
+    openFullSurface: openCompanionFullSurface,
+  });
+  const showCompanionInOverflow = props.companionHeaderActionPlacement === 'overflow'
+    && companionRevealPort !== null
+    && companion.availability === 'ready'
+    && props.companionHeaderIntent !== null
+    && props.companionHeaderIntent !== undefined;
+  const showCompanionDirect = props.companionHeaderActionPlacement === 'direct'
+    && companionRevealPort !== null
+    && companion.availability === 'ready'
+    && props.companionHeaderIntent !== null
+    && props.companionHeaderIntent !== undefined;
+  const companionHeaderIntent = props.companionHeaderIntent;
+  const applyCompanionHeaderIntent = React.useCallback(async () => {
+    if (!companionHeaderIntent) return;
+    switch (companionHeaderIntent.operation) {
+      case 'hide':
+        await applySessionCompanionHumanIntent({ address: companionAddress, intent: { kind: 'companion.hide' } });
+        return;
+      case 'expand':
+        await applySessionCompanionHumanIntent({ address: companionAddress, intent: { kind: 'companion.collapse.set', collapsed: false } });
+        return;
+      case 'show':
+      case 'show_and_open_full':
+        {
+          const mutation: { outcome: SessionCompanionMutationOutcome | null } = { outcome: null };
+          const admitted = await applySessionCompanionHumanIntent({
+            address: companionAddress,
+            intent: { kind: 'companion.show' },
+            onCompanionMutation: outcome => { mutation.outcome = outcome; },
+          });
+          if (admitted && mutation.outcome) {
+            if (companionHeaderIntent.operation === 'show') companionRevealPort?.revealAfterMutation(mutation.outcome);
+            else companionRevealPort?.openFullSurface();
+          }
+        }
+        return;
+      case 'open_full':
+        companionRevealPort?.openFullSurface();
+        return;
+    }
+  }, [companionAddress, companionHeaderIntent, companionRevealPort]);
+  // The Follow editor opens under the header chip (lab P2-A), or under ⋯ where no chip is drawn.
+  const menuAnchorRef = React.useRef<View>(null);
+  const followChipAnchorRef = React.useRef<View>(null);
+  const followAnchorRef = React.useMemo(() => ({
+    get current() { return followChipAnchorRef.current ?? menuAnchorRef.current; },
+  }) as React.RefObject<View | null>, []);
+  const followEditor = useAccountSessionFollowEditorHost({ serverId: sessionServerId ?? null, sessionId: props.sessionId, anchorRef: followAnchorRef });
+  // A tight header (a session column beside the editor) takes the chip's icon form too, so the title keeps its room.
+  const headerCompact = useDetailsTabHeaderActionsCompact();
+  const followChipCompact = !useIsTablet() || headerCompact;
+  const invokePluginHeaderAction = React.useCallback((menuActionId: string, anchor?: PopoverAnchor) => {
+    // Both responsive controls re-resolve the selected descriptor against the
+    // current projection through this one callback. The descriptor list never
+    // gains execution authority merely by being rendered directly.
+    fireAndForget((async () => {
+      const outcome = await dispatchPluginSessionHeaderAction({
+        projection: props.pluginUiProjection,
+        menuActionId,
+        anchor,
+        scopedLaunchFacts: props.pluginUiScopedLaunchFacts,
+        scopeIsCurrent: props.pluginUiScopeIsCurrent,
+        sessionId: props.sessionId,
+        openSurface: props.onOpenPluginSurface,
+        ...(currentUiContextReader
+          ? { readCurrentUiContext: currentUiContextReader.readCurrentUiContext }
+          : {}),
+      });
+      if (outcome && 'ok' in outcome && !outcome.ok) {
+        Modal.alert(t('common.error'), t('pluginRuntime.unavailableGeneric'));
+      }
+    })(), { tag: 'SessionHeaderActionMenu.execute.pluginHeaderAction' });
+  }, [
+    props.onOpenPluginSurface,
+    props.pluginUiScopedLaunchFacts,
+    props.pluginUiScopeIsCurrent,
+    props.pluginUiProjection,
+    props.sessionId,
+    currentUiContextReader,
+  ]);
   const directPluginHeaderActions = props.pluginHeaderActionPlacement === 'direct'
     ? props.pluginHeaderActions ?? []
     : [];
-
-  if (actions.length === 0 && directPluginHeaderActions.length === 0 && !showCompanionDirect) return <>{props.beforeMenu ?? null}</>;
 
   return (
     <>
@@ -934,278 +1271,29 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       ) : null}
       {followEditor.editor}
       {props.beforeMenu ?? null}
-      {actions.length > 0 ? (
+      {rowsMounted ? (
+        <SessionHeaderActionMenuRows
+          {...props}
+          open={open}
+          setOpen={setOpen}
+          session={session}
+          sessionServerId={sessionServerId}
+          companionAddress={companionAddress}
+          followEditor={followEditor}
+          showCompanionInOverflow={showCompanionInOverflow}
+          companionHeaderIntent={companionHeaderIntent}
+          applyCompanionHeaderIntent={applyCompanionHeaderIntent}
+          invokePluginHeaderAction={invokePluginHeaderAction}
+          publish={rowsStore.set}
+        />
+      ) : null}
     <View ref={menuAnchorRef} collapsable={false}>
-    <DropdownMenu
+    <SessionHeaderMenuDropdown
+      rows={rowsStore}
       open={open}
-      onOpenChange={setOpen}
-      items={actions}
+      onOpenChange={handleOpenChange}
       showCategoryTitles
       // On a phone the menu is the anchored panel under its ⋯ (owner R2), named by the session it acts on.
-      popoverAccessibilityLabel={readSessionDisplayTitleField(session).value || ownerMetadata?.name || t('session.actionMenu.openA11y')}
-      onSelect={(actionId, selection) => {
-        if (workspaceOpen.select(actionId)) { setOpen(false); return; }
-        if (actionId.startsWith(`${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:`)) {
-          // Custom color… keeps the menu open while the picker loads; the choice closes it when ready.
-          fireAndForget((async () => {
-            const color = await resolveSessionAppearanceColorMenuChoice({
-              menuId: SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
-              itemId: actionId,
-              current: ownAppearanceColor,
-              serverId: sessionServerId ?? null,
-              onPickerLoading: setCustomColorPickerLoading,
-              closeMenus: () => setOpen(false),
-            });
-            if (color === undefined) return;
-            setOpen(false);
-            await writeSessionOrganizationAppearance({
-              scope: await requireSessionOrganizationMutationScope(sessionServerId ?? null),
-              sessionId: props.sessionId,
-              color,
-            });
-          })(), {
-            tag: 'SessionHeaderActionMenu.execute.sessionAppearance',
-            onError: () => Modal.alert(t('common.error'), t('errors.unknownError')),
-          });
-          return;
-        }
-        if (actionId === 'header.giveBotCopy') {
-          // The menu stays open with the row's spinner until the editor is ready (the Custom color… pattern).
-          if (!giveBotCopy || giveBotCopyPending) return;
-          setGiveBotCopyPending(true);
-          fireAndForget(giveBotCopy().finally(() => {
-            setGiveBotCopyPending(false);
-            setOpen(false);
-          }), { tag: 'SessionHeaderActionMenu.execute.giveBotCopy' });
-          return;
-        }
-        setOpen(false);
-        if (actionId === 'header.deleteBotTemplate') {
-          void deleteBotTemplate?.();
-          return;
-        }
-        if (actionId === 'header.findChat') {
-          // On a phone cockpit the transcript stays mounted behind other tabs: bring it forward first.
-          cockpitNavigation?.switchSurface('chat');
-          // The transcript registers once its tab is in front; it opens then.
-          findSurfaceRuntime.open(`transcript:${sessionServerId ?? ''}:${props.sessionId}`, { whenRegistered: cockpitNavigation !== null });
-          return;
-        }
-        if (actionId === 'header.openComputer') {
-          openComputer?.open();
-          return;
-        }
-        if (actionId === 'header.openSimulator') {
-          openSimulator?.open();
-          return;
-        }
-        if (actionId === 'header.openCompanion' && showCompanionInOverflow) {
-          applyCompanionHeaderIntent();
-          return;
-        }
-        if (props.onSelectExtraItem?.(actionId) === true) return;
-        if (actionId === 'header.reportIssue') {
-          fireAndForget((async () => {
-            const serverId = sessionServerId ?? '';
-            const accountId = await resolveBugReportAccountIdForServer(serverId);
-            navigateWithBlurOnWeb(() => router.push({
-              pathname: '/settings/report-issue',
-              params: { sessionId: props.sessionId, serverId, accountId: accountId ?? '' },
-            }));
-          })(), { tag: 'SessionHeaderActionMenu.execute.reportIssue' });
-          return;
-        }
-        if (isSessionCopyActionId(actionId)) {
-          const currentSession = readCurrentSessionForOpenMenu(props.sessionId, session);
-          fireAndForget(copySessionDebugInformationToClipboard(buildSessionDebugInformationForSession(currentSession), actionId, writeClipboard), {
-            tag: 'SessionHeaderActionMenu.execute.copyInformation',
-          });
-          return;
-        }
-        if (actionId.startsWith(PLUGIN_SESSION_HEADER_ACTION_MENU_PREFIX)) {
-          invokePluginHeaderAction(actionId, selection?.anchor);
-          return;
-        }
-        if (actionId === 'session.externalSession.backgroundFollow') {
-          const nextPolicy = externalSessionFollowPolicy === 'background_follow' ? 'attached_only' : 'background_follow';
-          fireAndForget((async () => {
-            const signal = followControllerRef.current?.signal;
-            if (!externalSessionLink || !signal || signal.aborted) return;
-            // One shared operation owner with the External Sessions settings
-            // surface: it fences the settlement on the exact link identity and
-            // the active Account lifetime, and applies the canonical local
-            // projection catch-up on success.
-            const outcome = await setExternalSessionFollowPolicy({
-              sessionId: props.sessionId,
-              serverId: sessionServerId ?? null,
-              link: externalSessionLink,
-              policy: nextPolicy,
-              registerApproval: followApproval.requestApproval,
-              signal,
-            });
-            if (outcome.kind === 'stale') return;
-            if (outcome.kind !== 'applied') {
-              // The daemon owns live follow eligibility, so a refusal here is a
-              // real outcome the user asked for. Report it the same way the
-              // External Sessions settings surface reports the same operation
-              // instead of silently discarding the tap.
-              await Modal.alert(
-                t('common.error'),
-                t('externalSessions.followUpdateFailed'),
-              );
-            }
-          })(), { tag: 'SessionHeaderActionMenu.execute.externalSessionBackgroundFollow' });
-          return;
-        }
-        if (actionId === SESSION_FOLLOW_IN_ANOTHER_SESSION_ACTION_ID) {
-          if (!sessionServerId) return;
-          openSessionFollowDestinationPicker({
-            serverId: sessionServerId,
-            sessionId: props.sessionId,
-          }, followEditor.triggerRef);
-          return;
-        }
-        if (actionId === 'voice.teleport') {
-          fireAndForget(teleportVoiceAgentToSessionRoot({ sessionId: props.sessionId }), {
-            tag: 'SessionHeaderActionMenu.execute.voiceTeleport',
-          });
-          return;
-        }
-        const manualReadState = resolveManualReadStateFromSessionActionId(actionId);
-        const handledSessionActionIds: ReadonlySet<string> = new Set(listVisibleSessionActionIds({
-          target: sessionActionTarget,
-          surface: 'sessionHeader',
-        }));
-        if (manualReadState || handledSessionActionIds.has(actionId)) {
-          fireAndForget((async () => {
-            try {
-              if (actionId === SESSION_ACTION_RENAME_ID) {
-                const currentSessionTitle = readSessionDisplayTitleField(session).value ?? ownerMetadata?.name ?? '';
-                const newName = await Modal.prompt(
-                  t('sessionInfo.renameSession'),
-                  undefined,
-                  {
-                    defaultValue: currentSessionTitle,
-                    placeholder: t('sessionInfo.renameSessionPlaceholder'),
-                    confirmText: t('common.save'),
-                    cancelText: t('common.cancel'),
-                  },
-                );
-                if (!newName?.trim()) return;
-                await executeSessionAction({
-                  actionId: SESSION_ACTION_RENAME_ID,
-                  target: sessionActionTarget,
-                  input: { title: newName },
-                });
-                return;
-              }
-              if (actionId === SESSION_ACTION_DELETE_ID) {
-                if (!await confirmSessionDelete({ target: sessionActionTarget })) return;
-                const result = await executeSessionAction({ actionId, target: sessionActionTarget,
-                  context: { confirmed: true } });
-                if (result !== false) navigateAfterDelete();
-                return;
-              }
-              let alsoArchiveReports = false;
-              if (actionId === SESSION_ACTION_ARCHIVE_ID) {
-                const confirmation = await confirmSessionArchive({ leadSessionId: props.sessionId, serverId: sessionServerId ?? null });
-                if (!confirmation.confirmed) return;
-                alsoArchiveReports = confirmation.alsoArchiveReports;
-              }
-              await executeSessionAction({
-                actionId: actionId as SessionActionId,
-                target: sessionActionTarget,
-                ...(actionId === SESSION_ACTION_ARCHIVE_ID ? { input: { alsoArchiveReports } } : {}),
-                ...(actionId === 'ui.session.follow'
-                  ? { context: { operations: { openFollowEditor: followEditor.openEditor } } }
-                  : {}),
-                ...(actionId === SESSION_ACTION_RESUME_ID
-                  ? {
-                      context: {
-                        operations: {
-                          resumeSession: async (sessionId: string) => {
-                            await emitSessionResumeRequest(sessionId, sessionServerId);
-                          },
-                        },
-                      },
-                    }
-                  : {}),
-              });
-            } catch (error) {
-              showSessionHeaderActionError(error);
-            }
-          })(), { tag: 'SessionHeaderActionMenu.execute.sessionAction' });
-          return;
-        }
-        if (actionId === 'session.fork') {
-          // A launcher only. The header must not also run the old auto-strategy
-          // path behind the modal: the user chooses Native, Replay or Configure
-          // before any fork effect is issued.
-          openSessionForkStrategyFlow({
-            navigation: router,
-            sessionId: props.sessionId,
-            forkSupportSource: session,
-            serverId: sessionServerId ?? null,
-            machineId: reachableMachineId ?? ownerMetadata?.machineId ?? null,
-            forkPoint: { type: 'latest' },
-            settings: storage.getState().settings,
-            replayEnabled: sessionReplayEnabled,
-            currentAgentCapabilities,
-            executionRunsEnabled: executionRunsEnabled === true,
-            agentSwitchingEnabled,
-            navigateToSession: (childSessionId, options) => {
-              router.push(buildScopedSessionRouteHref({
-                sessionId: childSessionId,
-                serverId: options?.serverId ?? sessionServerId,
-              }) as any);
-            },
-            navigateToNewSession: (route) => {
-              navigateWithBlurOnWeb(() => router.push(route as any));
-            },
-          });
-          return;
-        }
-        if (actionId === 'session.compact') {
-          fireAndForget((async () => {
-            try {
-              requireActionSuccess(await executor.execute('session.compact', { sessionId: props.sessionId }, {
-                surface: 'ui', defaultSessionId: props.sessionId, serverId: sessionServerId ?? undefined,
-              }), 'session.compact');
-            } catch (error) { showSessionHeaderActionError(error); }
-          })(), { tag: 'SessionHeaderActionMenu.execute.compact' });
-          return;
-        }
-        if (actionId === 'session.handoff') {
-          if (!handoffAvailability.available) {
-            return;
-          }
-          fireAndForget((async () => {
-            const res = await runHandoff();
-            if (!res?.ok) return;
-          })(), { tag: 'SessionHeaderActionMenu.execute.sessionHandoff' });
-          return;
-        }
-        const defaultBackend = resolveSessionActionDefaultBackend({
-          session,
-          enabledAgentIds,
-        });
-        if (!defaultBackend) return;
-        const input = buildExecutionRunActionDraftInputForUi({
-          actionId: actionId as ActionId,
-          sessionId: props.sessionId,
-          defaultBackendTarget: resolveSessionActionDefaultTarget(defaultBackend),
-          defaultBackendId: defaultBackend.defaultBackendId,
-          instructions: '',
-        });
-        const actionDraftServerId = typeof sessionServerId === 'string' ? sessionServerId.trim() : '';
-        if (
-          !actionDraftServerId
-          || !actionDraftAccountScope
-          || props.actionAccountLifetime?.isCurrent() !== true
-          || !areServerProfileIdentifiersEquivalent(actionDraftAccountScope.serverId, actionDraftServerId)
-        ) return;
-        openExecutionRunDraft({ scope: actionDraftAccountScope, sessionId: props.sessionId, actionId: actionId as ActionId, input });
-      }}
       trigger={({ toggle }) => {
         const label = t('session.actionMenu.openA11y');
         const icon = <SessionHeaderGlyph name="dots-three" />;
@@ -1241,7 +1329,6 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
       maxWidthCap={320}
     />
     </View>
-      ) : null}
     </>
   );
 }

@@ -429,6 +429,14 @@ vi.mock('@/voice/agent/teleportVoiceAgentToSessionRoot', () => ({
 // Transform the new Start renderer graph during collection; each test still gets its reset module instance.
 await import('./SessionHeaderActionMenu');
 
+/** Rows exist only on an open menu: open the ⋯ the way its trigger does, then read them. */
+async function renderOpenMenu(...args: Parameters<typeof renderScreen>) {
+  const screen = await renderScreen(...args);
+  const menus = screen.root.findAll((node) => node.type === 'DropdownMenu');
+  if (menus.length > 0) await act(async () => { menus[0]!.props.onOpenChange(true); });
+  return screen;
+}
+
 describe('SessionHeaderActionMenu handoff', () => {
   beforeEach(async () => {
     resetSessionActionsCommonModuleMockState();
@@ -533,6 +541,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       ownerMetadataView: { path: '/workspace', host: 'host', runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} },
         nativeResumeIdentityV1: { v: 1, vendorResumeId: 'old-id' } },
     });
+    // Opened only after the owner information changes: the menu reads the current Session when it opens.
     const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
     storageState.current.sessions[session.id] = { ...session, ownerMetadataView: { ...session.ownerMetadataView,
       nativeResumeIdentityV1: { v: 1, vendorResumeId: 'current-id' }, sessionLogPath: '/tmp/session.log' } };
@@ -582,13 +591,13 @@ describe('SessionHeaderActionMenu handoff', () => {
       return screen.findByType('DropdownMenu' as React.ElementType);
     };
     try {
-      const unsupported = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+      const unsupported = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
       expect(((await openMenu(unsupported)).props.items as Array<{ id: string }>).map((item) => item.id))
         .not.toContain('ui.session.appearance-color');
       await unsupported.unmount();
 
       getStorage().setState({ sessionOrganizationSessionAppearancesSupportedByServerId: { [profile.id]: true } } as any);
-      const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+      const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
       const dropdown = await openMenu(screen);
       const colorItem = (dropdown.props.items as any[]).find((item) => item.id === 'ui.session.appearance-color');
       expect(colorItem?.submenu?.items.some((item: { swatch?: unknown }) => item.swatch)).toBe(true);
@@ -607,7 +616,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('omits the provider ID choice when none is available', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
     const session = createSessionFixture({ id: 'header-no-provider-id', serverId: 'server_a' });
-    const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
     await act(async () => { screen.findByType('DropdownMenu' as React.ElementType).props.onOpenChange(true); });
     const copy = screen.findByType('DropdownMenu' as React.ElementType).props.items.find((item: { id: string }) => item.id === 'session.copy');
     expect(copy.submenu.items.map((item: { id: string }) => item.id)).toEqual(['session.copyDebugInformation', 'session.copySessionId']);
@@ -617,7 +626,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     clipboardMock.mockRejectedValue(new DOMException('', 'NotAllowedError'));
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
     const session = createSessionFixture({ id: 'header-copy-refused', serverId: 'server_a', metadata: { path: '/workspace', host: 'host', flavor: 'claude', claudeSessionId: 'vendor-id' } });
-    const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
     await act(async () => { screen.findByType('DropdownMenu' as React.ElementType).props.onOpenChange(true); });
     await act(async () => {
       screen.findByType('DropdownMenu' as React.ElementType).props.onSelect(actionId);
@@ -653,7 +662,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       id: 'session-find-entry', serverId: 'server_a', active: true, seq: 1,
       metadataLayoutVersion: 1, metadata: {}, ownerMetadataView: {}, agentState: null, access: null,
     } as any;
-    const screen = await renderScreen(
+    const screen = await renderOpenMenu(
       <KeyboardShortcutProvider handlers={{}}>
         <MountedTranscript />
         <SessionHeaderActionMenu sessionId={session.id} session={session} />
@@ -701,7 +710,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       id: 'session-find-cockpit', serverId: 'server_a', active: true, seq: 1,
       metadataLayoutVersion: 1, metadata: {}, ownerMetadataView: {}, agentState: null, access: null,
     } as any;
-    const screen = await renderScreen(
+    const screen = await renderOpenMenu(
       <KeyboardShortcutProvider handlers={{}}>
         <RetainedTranscript />
         <SessionCockpitSurfaceNavigationProvider value={navigation}>
@@ -736,7 +745,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     } as any;
 
     const revealAfterMutation = vi.fn();
-    const screen = await renderScreen(
+    const screen = await renderOpenMenu(
       <SessionCompanionRevealPortProvider
         address={{ serverId: 'server_a', sessionId: session.id }}
         openFullSurface={() => undefined}
@@ -782,7 +791,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       access: null,
     } as any;
     const revealAfterMutation = vi.fn();
-    const screen = await renderScreen(
+    const screen = await renderOpenMenu(
       <SessionCompanionRevealPortProvider
         address={{ serverId: 'server_a', sessionId: session.id }}
         openFullSurface={() => undefined}
@@ -829,7 +838,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       agentState: null,
       access: null,
     } as any;
-    const screen = await renderScreen(
+    const screen = await renderOpenMenu(
       <SessionCompanionRevealPortProvider
         address={{ serverId: 'server_b', sessionId: session.id }}
         openFullSurface={() => undefined}
@@ -874,7 +883,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       access: null,
     } as any;
     const openFullSurface = vi.fn();
-    const screen = await renderScreen(
+    const screen = await renderOpenMenu(
       <SessionCompanionRevealPortProvider
         address={{ serverId: 'server_a', sessionId: session.id }}
         openFullSurface={openFullSurface}
@@ -937,7 +946,7 @@ describe('SessionHeaderActionMenu handoff', () => {
         {child}
       </SessionCompanionRevealPortProvider>
     );
-    const direct = await renderScreen(wrap(<SessionHeaderActionMenu
+    const direct = await renderOpenMenu(wrap(<SessionHeaderActionMenu
       sessionId={session.id}
       session={session}
       companionHeaderActionPlacement="direct"
@@ -948,7 +957,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(direct.findByType('DropdownMenu' as any).props.items.map((item: { id: string }) => item.id))
       .not.toContain('header.openCompanion');
 
-    const overflow = await renderScreen(wrap(<SessionHeaderActionMenu
+    const overflow = await renderOpenMenu(wrap(<SessionHeaderActionMenu
       sessionId={session.id}
       session={session}
       companionHeaderActionPlacement="overflow"
@@ -987,7 +996,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       },
     } as any;
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
       sessionId={session.id}
       session={session}
     />);
@@ -1026,7 +1035,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     };
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
       sessionId="sess_1"
       session={{
         id: 'sess_1',
@@ -1053,7 +1062,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('keeps the closed trigger stable when metadata only changes freshness timestamps', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
       sessionId="sess_1"
       session={{
         id: 'sess_1',
@@ -1116,7 +1125,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('refreshes closed menu props when active or owner changes action availability', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
       sessionId="sess_1"
       session={{
         id: 'sess_1',
@@ -1166,7 +1175,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       remoteMachineId: 'machine_rebound',
     });
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -1205,7 +1214,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('renders the session action menu trigger with the expected accessibility contract when actions are available', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -1235,7 +1244,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('exposes a web click fallback for opening the session action menu trigger', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -1293,7 +1302,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       const AndroidHeaderTestHost = ({ children }: React.PropsWithChildren) =>
         <HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}>{children}</HappierUiPlatformProvider>;
       const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
-      const screen = await renderScreen(<SessionHeaderActionMenu
+      const screen = await renderOpenMenu(<SessionHeaderActionMenu
         sessionId="sess_1"
         session={{
           id: 'sess_1',
@@ -1412,7 +1421,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     const directLifetime = createRetirableScopeLifetime();
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
       sessionId="sess_1"
       session={{
         id: 'sess_1',
@@ -1530,7 +1539,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       pluginUiScopedLaunchFacts: pluginHeaderScope,
     };
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
       sessionId="sess_1"
       session={{
         id: 'sess_1',
@@ -1582,7 +1591,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('surfaces manual mark-unread for read sessions and sends it through the selected server scope', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_read_header"
           session={{
             id: 'sess_read_header',
@@ -1624,7 +1633,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       },
     };
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
       sessionId="duplicate_session"
       session={{
         id: 'duplicate_session',
@@ -1677,7 +1686,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     };
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
       sessionId="sess_read_header"
       session={sessionShell}
     />);
@@ -1709,7 +1718,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('uses the canonical session display title as the rename prompt default', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_rename_header"
           session={{
             id: 'sess_rename_header',
@@ -1743,7 +1752,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('does not surface manual read-state actions from non-terminal raw seq in the header menu', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_raw_seq_header"
           session={{
             id: 'sess_raw_seq_header',
@@ -1765,7 +1774,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   it('hides manual read-state actions for archived sessions in the header menu', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_archived_header"
           session={{
             id: 'sess_archived_header',
@@ -1788,7 +1797,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     resolveSessionTargetServerIdMock.mockImplementation((_sessionId: string, fallbackServerId?: string | null) => fallbackServerId ?? null);
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -1837,7 +1846,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     preferredServerIdState.current = 'server-explicit';
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_parent"
           session={{
             id: 'sess_parent',
@@ -1884,7 +1893,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     preferredServerIdState.current = 'server-explicit';
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_parent"
           session={{
             id: 'sess_parent',
@@ -1927,7 +1936,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -1974,7 +1983,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -2021,7 +2030,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -2072,7 +2081,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -2102,7 +2111,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -2160,7 +2169,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -2197,7 +2206,7 @@ describe('SessionHeaderActionMenu handoff', () => {
       remoteMachineId: 'machine_rebound',
     });
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -2246,7 +2255,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -2274,7 +2283,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -2320,7 +2329,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={storageState.current.sessions.sess_1 as any}
         />);
@@ -2400,7 +2409,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -2479,7 +2488,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
@@ -2543,7 +2552,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     };
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="s1"
           session={storageState.current.sessions.s1 as any}
         />);
@@ -2590,7 +2599,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="s1"
           session={storageState.current.sessions.s1 as any}
         />);
@@ -2648,7 +2657,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
     registerStorageStateReader(() => storageState.current as any);
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="s1"
           session={storageState.current.sessions.s1 as any}
         />);
@@ -2697,7 +2706,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="s1"
           session={storageState.current.sessions.s1 as any}
         />);
@@ -2714,7 +2723,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     });
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
 
-    const screen = await renderScreen(<SessionHeaderActionMenu
+    const screen = await renderOpenMenu(<SessionHeaderActionMenu
           sessionId="sess_1"
           session={{
             id: 'sess_1',
