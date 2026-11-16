@@ -452,6 +452,7 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
   const prewarmLocalVoiceAgentOnConnect = (params: Readonly<{ settings: any; config: any }>): void => {
     const { config } = params;
     if (config?.conversationMode !== 'agent' || config?.agent?.prewarmOnConnect !== true) return;
+    const playbackEpoch = playbackController.captureEpoch();
 
     fireAndForget(
       (async () => {
@@ -465,6 +466,7 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
           const text = typeof assistantText === 'string' ? assistantText.trim() : '';
           if (text) {
             voiceActivityController.appendAssistantText(sessionId, 'local_conversation', text);
+            if (!playbackController.isEpochCurrent(playbackEpoch)) return;
             // The welcome plays while the mic is already being armed for the first turn. It only
             // owns the status when nothing else does, and hands it back when it finishes.
             let welcomeOwnsSpeakingStatus = false;

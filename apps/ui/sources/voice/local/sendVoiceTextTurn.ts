@@ -103,6 +103,7 @@ export async function sendVoiceTextTurn(params: {
     return;
   }
 
+  const playbackEpoch = params.playbackController.captureEpoch();
   voiceActivityController.appendUserText(sessionId, adapterId, userText);
   const voiceAgentBackend = String(config?.agent?.backend ?? 'daemon').trim() || 'daemon';
   if (
@@ -160,7 +161,6 @@ export async function sendVoiceTextTurn(params: {
       throwIfAborted();
       const chunker = streamingSpeechEnabled ? createTtsChunker(streamingChunkChars) : null;
       const streamingSpeechTextContext = chunker ? createSpeechTextContext() : undefined;
-      const playbackEpoch = params.playbackController.captureEpoch();
       let queuedChunkCount = 0;
       let chunkPlaybackQueue: Promise<void> = Promise.resolve();
       // One failure is reported once per turn; the rest of that turn's speech is skipped.
@@ -291,6 +291,10 @@ export async function sendVoiceTextTurn(params: {
     return;
   }
 
+  if (!params.playbackController.isEpochCurrent(playbackEpoch)) {
+    setIdleStateUnlessRecording(sessionId);
+    return;
+  }
   await speakAssistantText({
     text: assistantText,
     settings,

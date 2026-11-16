@@ -525,6 +525,7 @@ export function registerLocalVoiceEngineHarnessHooks() {
             externalHandoffClaimed: true,
         }));
         daemonVoiceAgentStart.mockReset();
+        daemonVoiceAgentWelcome.mockReset();
         daemonVoiceAgentSendTurn.mockReset();
         daemonVoiceAgentStartTurnStream.mockReset();
         daemonVoiceAgentReadTurnStream.mockReset();

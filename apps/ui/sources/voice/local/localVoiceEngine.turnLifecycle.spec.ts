@@ -357,6 +357,37 @@ describe('local voice engine turn lifecycle (direct session)', () => {
         expect(getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: 's1' });
     });
 
+    it('keeps a newer message readout when an already submitted direct-session reply arrives', async () => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true } } }));
+        await getServerFeaturesSnapshot({ force: true });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        const turnPromise = localVoiceEngine.toggleLocalVoiceTurn('s1');
+        const localId = await readSubmittedLocalId();
+        setTurn(localId, 'in_progress', []);
+
+        let finishReading: (() => void) | undefined;
+        expoSpeechSpeak.mockImplementation((text, options) => {
+            if (text === 'Read this message') finishReading = options?.onDone;
+            else options?.onDone?.();
+        });
+        const reading = toggleReadAloud({ key: 'newer-readout', text: 'Read this message', settings: storage.getState().settings });
+        try {
+            await vi.waitFor(() => expect(expoSpeechSpeak).toHaveBeenCalledTimes(1));
+            expect(getReadAloudActiveKey()).toBe('newer-readout');
+            setTurn(localId, 'completed', [{ id: 'late-reply', kind: 'agent-text', text: 'The earlier task finished.',
+                seq: 11, localId: null, createdAt: Date.now() }]);
+            await turnPromise;
+
+            expect(getReadAloudActiveKey()).toBe('newer-readout');
+            expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Read this message']);
+            expect(submitMessage).toHaveBeenCalledTimes(1);
+        } finally {
+            finishReading?.();
+            await reading;
+        }
+    });
+
     it('does not restore the voice session when the user hangs up while the reply is speaking', async () => {
         configureDirectVoice({ autoSpeakReplies: true });
         const onDoneRef: { current: (() => void) | undefined } = { current: undefined };
