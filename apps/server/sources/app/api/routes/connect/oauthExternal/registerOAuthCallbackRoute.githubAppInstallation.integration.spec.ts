@@ -303,6 +303,9 @@ describe("OAuth callback GitHub App installation verification", () => {
             slug: "happier-team",
             client_id: "Iv1.team-manifest",
             client_secret: "team-manifest-client-secret",
+            // GitHub always returns this field and sends null when the manifest
+            // configures no webhook, which is what Happier's manifest does.
+            webhook_secret: null,
             pem: "team-manifest-private-key",
             owner: { id: 89, login: "acme" },
         }), { status: 201 }));

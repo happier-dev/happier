@@ -93,7 +93,9 @@ const GitHubManifestConversionSchema = z.looseObject({
     slug: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
     client_id: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
     client_secret: z.string().check(z.trim(), z.minLength(1)),
-    webhook_secret: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    // GitHub always sends this field and sends null when the manifest has no
+    // webhook, as Happier's never does.
+    webhook_secret: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
     pem: z.string().check(z.trim(), z.minLength(1)),
     owner: z.looseObject({
         id: z.number().check(z.int(), z.positive(), z.int()),
