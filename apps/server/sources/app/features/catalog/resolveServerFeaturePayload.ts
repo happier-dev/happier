@@ -1,6 +1,6 @@
 import { featuresSchema, type FeaturesResponse } from '../types';
 import { applyFeatureDependencies, evaluateServerFeatureDecisions } from '@happier-dev/protocol/features/featureDecisionEngine';
-import { evaluateFeatureBuildPolicy } from '@happier-dev/protocol/features/buildPolicy';
+import { evaluateFeatureBuildPolicy, type FeatureBuildPolicy } from '@happier-dev/protocol/features/buildPolicy';
 import { FEATURE_IDS, FEATURE_CATALOG, getCanonicalFeatureId, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
 import { FeatureGatesSchema } from '@happier-dev/protocol/features/payload/featureGatesSchema';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -175,17 +175,31 @@ export function resolveServerFeatureGate(
         const partial = resolver(env);
         if (partial.features) mergedFeatures = mergeDeep(mergedFeatures, partial.features as Record<string, unknown>);
     }
+    const document = JSON.stringify(mergedFeatures);
+    const buildPolicy = resolveServerFeatureBuildPolicy(env);
+    const decided = decidedServerFeatureGates.get(featureId);
+    if (decided && decided.document === document && decided.buildPolicy === buildPolicy) return decided.enabled;
     const parsed = FeatureGatesSchema.safeParse(mergedFeatures);
     if (!parsed.success) throw new Error(`Invalid /v1/features feature gates: ${parsed.error.message}`);
     const projection: Pick<FeaturesResponse, 'features'> = { features: parsed.data };
-    const buildPolicy = resolveServerFeatureBuildPolicy(env);
     const decisions = evaluateServerFeatureDecisions({
         serverPayload: projection,
         featureIds: [featureId],
         buildPolicy: id => evaluateFeatureBuildPolicy(buildPolicy, id),
     });
-    return decisions.get(featureId)?.state === 'enabled';
+    const enabled = decisions.get(featureId)?.state === 'enabled';
+    decidedServerFeatureGates.set(featureId, { document, buildPolicy, enabled });
+    return enabled;
 }
+
+/**
+ * The last decision per feature. A bit is a pure function of the resolvers' merged output and the
+ * build policy (whose owner returns one identity per configuration), so a call whose resolvers
+ * produce the same document is not validated and decided again. Resolvers still run on every call:
+ * a changed environment or Home overlay changes the document and is decided afresh. One entry per
+ * catalog feature; an invalid document throws before anything is recorded.
+ */
+const decidedServerFeatureGates = new Map<FeatureId, Readonly<{ document: string; buildPolicy: FeatureBuildPolicy; enabled: boolean }>>();
 
 /**
  * Why each server feature is on or off for this configuration (plan §3.8, invariant I9): the same

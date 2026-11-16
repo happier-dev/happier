@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 
 import { resolveMachineTransferFeature } from "../machineTransferFeature";
@@ -14,6 +14,7 @@ import { resolveServerFeatureBuildPolicy } from "./serverFeatureBuildPolicy";
 import { serverFeatureRegistry, type ServerFeatureResolver } from "./serverFeatureRegistry";
 import type { FeaturesPayloadDelta } from "../types";
 import { evaluateFeatureBuildPolicy, readServerEnabledBit } from "@happier-dev/protocol";
+import { FeatureGatesSchema } from "@happier-dev/protocol/features/payload/featureGatesSchema";
 import { accountUsageRoutePaths } from "@/app/api/routes/account/accountUsageRoutePaths";
 import {
     initializeSessionSystemRecordsProtocolV1Activation,
@@ -208,6 +209,24 @@ describe("resolveServerFeaturePayload", () => {
         } })];
         expect(() => resolveServerFeaturePayload({}, invalid)).toThrow(/Invalid.*feature gates/);
         expect(() => resolveServerFeatureGate({}, invalid, "teams")).toThrow(/Invalid.*feature gates/);
+    });
+
+    it("validates the gate document once per distinct resolver output across repeated bit-only decisions", () => {
+        const parses = vi.spyOn(FeatureGatesSchema, "safeParse");
+        try {
+            const env: NodeJS.ProcessEnv = { HAPPIER_FEATURE_DEPLOYMENTS__ENABLED: "1" };
+            const decisions = Array.from({ length: 5 }, () => resolveServerFeatureGate(env, serverFeatureRegistry, "deployments"));
+            expect(decisions).toEqual([true, true, true, true, true]);
+            expect(parses).toHaveBeenCalledTimes(1);
+            // Different resolver output is a different document: validated and decided again.
+            env.HAPPIER_FEATURE_DEPLOYMENTS__ENABLED = "0";
+            expect(resolveServerFeatureGate(env, serverFeatureRegistry, "deployments")).toBe(false);
+            expect(parses).toHaveBeenCalledTimes(2);
+            expect(resolveServerFeatureGate(env, serverFeatureRegistry, "deployments"))
+                .toBe(readServerEnabledBit(resolveServerFeaturePayload(env, serverFeatureRegistry), "deployments") === true);
+        } finally {
+            parses.mockRestore();
+        }
     });
 
     it("does not apply build policy to the compatibility-only Connected Accounts master bit", () => {
