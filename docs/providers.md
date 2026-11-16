@@ -2738,6 +2738,12 @@ models. A completed broker model read with no models settles as the existing
 `broker_unavailable` / `catalog_empty` refusal and offers Retry; generic
 credential discovery and current Direct material remain independent of broker
 model availability.
+Native Connected Account purposes remain limited to the Agent's declared
+services. A resource from another service can still supply Provider models when
+their complete application matches an application supported by that Agent;
+that does not offer the resource as native authentication. Workflow engine
+authoring uses this same exact-Machine catalog and preserves the selected Team
+resource, application, execution Machine and model in its provider-model binding.
 The new-Session model picker's existing Refresh also reloads this Team catalog,
 alongside native/configuration and Provider observations. Favorites runs that
 shared refresh once across its Agent collectors.

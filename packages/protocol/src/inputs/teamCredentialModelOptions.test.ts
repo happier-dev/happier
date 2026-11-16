@@ -54,7 +54,10 @@ describe('teams.credential_models.available', () => {
       if (actionId === 'teams.list') return { items: [TEAM], nextCursor: null };
       return { resources: [
         resource('codex', { pluginId: 'happier.agent.codex', localId: 'openai-codex' }),
-        resource('claude', { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }),
+        resource('muse', { pluginId: 'happier.agent.muse', localId: 'muse-account' }),
+        { ...resource('other-endpoint', { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }),
+          providerModels: resource('other-endpoint', { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }).providerModels
+            .map(model => ({ ...model, application: { ...APPLICATION, endpointTemplateId: 'not-supported' } })) },
       ], nextCursor: null, failures: [] };
     });
     const providerActionExecute = vi.fn(async (request: any) => ({ ok: true as const, result: { status: 'success', agentTargetKey: CODEX, groups: [],
@@ -67,7 +70,7 @@ describe('teams.credential_models.available', () => {
 
     expect(result).toMatchObject({ ok: true });
     const options = (result as any).result.options;
-    expect(options.map((option: any) => [option.label, option.disabled === true])).toEqual([['codex model', false]]);
+    expect(options.map((option: any) => [option.label, option.disabled === true])).toEqual([['codex model', false], ['muse model', false]]);
     expect(JSON.parse(options[0].value)).toMatchObject({ kind: 'team_credential_provider_model', resourceId: 'codex', modelId: 'codex-model' });
     expect(homeCalls.filter(([id]: any) => id === 'teams.credentials.entitled.list'))
       .toEqual([['teams.credentials.entitled.list', { teamIds: ['team-1'], application: APPLICATION, executionMachineId: 'm1' }]]);

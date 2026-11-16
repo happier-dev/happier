@@ -37,6 +37,28 @@ afterEach(async () => {
 });
 
 describe('Account-scoped Team credential catalog demand', () => {
+    it('exposes a failed catalog through the shared picker probe and recovers through its refresh', async () => {
+        const serverId = await home.addHome({ name: 'Failed Team catalog', serverUrl: 'https://failed-team-catalog.example.test',
+            accountId: 'recipient', teamsEnabled: true, credentialResourcesEnabled: true });
+        home.answer(serverId, '/v1/teams/list', { body: { items: [teamSummaryFixture({ id: 'team-1' })], nextCursor: null } });
+        home.answer(serverId, DISCOVER, { status: 503, body: { error: 'temporarily_unavailable' } });
+        const catalog = await renderHook(() => useHomeTeamCredentialModelCatalog({ serverId, enabled: true }));
+        await waitForHomeGovernance(() => expect(catalog.getCurrent().condition?.retryable).toBe(true));
+        expect(catalog.getCurrent().probe).toMatchObject({ phase: 'idle', failed: true, refreshErrorMessage: expect.any(String) });
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'recovered-source', teamId: 'team-1',
+            displayName: 'Shared source', resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
+            mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+            connectedServiceSelections: [], sourcePresentation: { kind: 'connected_service',
+                service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } }, providerModels: [] });
+        home.answer(serverId, DISCOVER, { body: { resources: [resource], nextCursor: null, failures: [] } });
+        await act(async () => { await catalog.getCurrent().probe?.onRefresh?.(); });
+        await waitForHomeGovernance(() => {
+            expect(catalog.getCurrent().current).toBe(true);
+            expect(catalog.getCurrent().resources).toEqual([resource]);
+            expect(catalog.getCurrent().probe?.failed).not.toBe(true);
+        });
+    });
+
     it.each(['pi', 'codex', 'opencode'])('settles a completed empty broker catalog for %s and recovers on refresh', async agent => {
         const agentTargetKey = 'agent:happier.agent.' + agent + '/' + agent;
         const serverId = await home.addHome({ name: 'Empty broker catalog', serverUrl: 'https://empty-' + agent + '.example.test',
@@ -80,7 +102,7 @@ describe('Account-scoped Team credential catalog demand', () => {
         await waitForHomeGovernance(() => expect(catalog.getCurrent().models.resources[0]?.readiness.kind).toBe('available'));
     });
 
-    it('admits Connected Service credentials only for the selected Agent, including populated broker model catalogs', async () => {
+    it('separates native Connected Service purposes from exact supported Provider application models', async () => {
         const serverId = await home.addHome({ name: 'Agent-scoped Home', serverUrl: 'https://agent-catalog.example.test',
             accountId: 'account-ada', teamsEnabled: true, credentialResourcesEnabled: true });
         home.answer(serverId, '/v1/teams/list', { body: { items: [teamSummaryFixture({ id: 'team-1' })], nextCursor: null } });
@@ -90,17 +112,17 @@ describe('Account-scoped Team credential catalog demand', () => {
             ['claude', 'happier.agent.claude', 'claude-subscription'],
             ['foreign-service', 'foreign.plugin', 'openai-codex'],
         ].map(([id, pluginId, localId]) => TeamCredentialResourceCatalogEntryV1Schema.parse({
-            id, teamId: 'team-1', displayName: id, resourceRevision: 1,
+            id, teamId: 'team-1', displayName: { content: { t: 'plain', v: id }, recipientEnvelope: null }, resourceRevision: 1,
             readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
             directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', connectedServiceSelections: [],
             sourcePresentation: { kind: 'connected_service', service: { pluginId, localId } },
-            // A compatible broker can project Claude models for Codex. The source
-            // credential's declared service must still apply to that Agent.
+            // The broker's exact application can serve this Agent independently
+            // of the source credential's native Connected Account purpose.
             providerModels: [{ selection: { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: id,
                 expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey: codex, modelId: `${id}-model` },
                 descriptor: { id: `${id}-model`, name: `${id} model` },
                 application: { agentTargetKey: codex, implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
-                    endpointTemplateId: 'responses', protocol: 'openai-responses' }, sourceRevision: 'source-1', availability: 'available' }],
+                    endpointTemplateId: id === 'foreign-service' ? 'not-supported' : 'cliproxyapi-openai-responses', protocol: 'openai-responses' }, sourceRevision: 'source-1', availability: 'available' }],
         }));
         resources.push(TeamCredentialResourceCatalogEntryV1Schema.parse({ ...resources[1], id: 'claude-empty', providerModels: [] }));
         home.answer(serverId, LIST, { body: { resources, nextCursor: null } });
@@ -116,7 +138,7 @@ describe('Account-scoped Team credential catalog demand', () => {
             expect(catalog.getCurrent().claude.current).toBe(true);
             expect(catalog.getCurrent().generic.current).toBe(true);
         });
-        expect(catalog.getCurrent().codex.resources.map(resource => resource.id)).toEqual(['codex']);
+        expect(catalog.getCurrent().codex.resources.map(resource => resource.id)).toEqual(['codex', 'claude']);
         expect(catalog.getCurrent().claude.resources.map(resource => resource.id)).toEqual(['claude', 'claude-empty']);
         expect(catalog.getCurrent().generic.resources.map(resource => resource.id)).toEqual(['codex', 'claude', 'foreign-service', 'claude-empty']);
     });

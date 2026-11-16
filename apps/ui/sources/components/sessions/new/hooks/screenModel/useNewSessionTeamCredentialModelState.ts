@@ -1,8 +1,7 @@
+import { readTeamCredentialProviderModelSelection } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
 import * as React from 'react';
 import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { SessionTeamCredentialBindingIntentListV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
-
-import { findAssignedProviderModelCredentialBinding } from '@/components/sessions/teamCredentials/teamCredentialProviderModelCurrentness';
 
 type TeamModelDraft = Readonly<{
     modelSelection?: SessionModelSelectionV1 | null;
@@ -16,18 +15,8 @@ export function useNewSessionTeamCredentialModelState(input: Readonly<{
     draftId: string;
     draft: TeamModelDraft | null;
 }>) {
-    const restored = React.useMemo<TeamCredentialProviderModelSelectionV1 | null>(() => {
-        const binding = findAssignedProviderModelCredentialBinding(input.draft?.teamCredentialBindings);
-        const legacyRef = input.draft?.modelSelection?.ref;
-        const ref = legacyRef ?? binding?.providerModelSelection;
-        if (!binding?.teamId || !ref || (legacyRef && legacyRef.providerConnectionId !== null)) return null;
-        return {
-            kind: 'team_credential_provider_model', teamId: binding.teamId, resourceId: binding.resourceId,
-            expectedResourceRevision: binding.expectedResourceRevision, deliveryMode: binding.deliveryMode,
-            agentTargetKey: ref.agentTargetKey, modelId: ref.modelId,
-            ...(binding.nativeDelivery ? { nativeDelivery: binding.nativeDelivery } : {}),
-        };
-    }, [input.draft?.modelSelection, input.draft?.teamCredentialBindings]);
+    const restored = React.useMemo(() => readTeamCredentialProviderModelSelection(input.draft),
+        [input.draft?.modelSelection, input.draft?.teamCredentialBindings]);
     const scopeKey = JSON.stringify([input.serverId, input.accountId, input.draftId]);
     const sourceKey = JSON.stringify(restored);
     const [state, setState] = React.useState(() => ({ scopeKey, sourceKey, selection: restored, authored: false }));

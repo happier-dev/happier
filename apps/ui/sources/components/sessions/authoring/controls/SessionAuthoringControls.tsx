@@ -5,7 +5,7 @@ import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
-import type { WorkflowSessionAuthoringSelection, WorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowV1';
+import type { WorkflowSessionAuthoringSelection, WorkflowStepExecutionSelection, WorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
@@ -441,9 +441,9 @@ export type SessionAuthoringControlsProps = Readonly<{
     overriddenAccessibilityHint?: string;
     /** Which fields to render, in the caller's order. */
     fields: readonly SessionAuthoringFieldId[];
-    values: WorkflowSessionAuthoringSelection;
+    values: WorkflowStepExecutionSelection;
     /** Atomic engine selection (Agent, model, mode and effort/config). */
-    onChangeFields?: (fields: Partial<WorkflowSessionAuthoringSelection>) => void;
+    onChangeFields?: (fields: Partial<WorkflowStepExecutionSelection>) => void;
     engine?: WorkflowEngineChoiceV1;
     workflowRoles?: readonly WorkflowRoleV1[];
     onChangeEngine?: (engine: WorkflowEngineChoiceV1) => void;

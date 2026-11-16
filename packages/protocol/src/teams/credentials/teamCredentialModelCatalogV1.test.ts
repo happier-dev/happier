@@ -58,3 +58,23 @@ it('keeps an independently current Direct credential when no broker models were 
   expect(mergeTeamCredentialCatalogResourcesV1([[direct]], null, { requireProviderModels: true }).get('team:shared')?.readiness.kind)
     .toBe('available');
 });
+
+it('offers an exact supported Provider application across native services without offering its native credential purpose', () => {
+  const application = { agentTargetKey: 'agent:happier.agent.codex/codex',
+    implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+    endpointTemplateId: 'cliproxyapi-openai-responses', protocol: 'openai-responses' } as const;
+  const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...generic,
+    connectedServiceSelections: [{ source: 'team_resource', resourceId: generic.id, deliveryMode: 'brokered' }],
+    providerModels: [{ selection: { kind: 'team_credential_provider_model', teamId: generic.teamId, resourceId: generic.id,
+      expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey: application.agentTargetKey, modelId: 'muse-spark-1.3-contributor' },
+      descriptor: { id: 'muse-spark-1.3-contributor', name: 'Muse' }, sourceRevision: 'source-1', availability: 'available', application }],
+  });
+  const services = ['happier.agent.codex/openai-codex'];
+  const accepted = mergeTeamCredentialCatalogResourcesV1([[resource]], services,
+    { requireProviderModels: true, providerApplications: [application] }).get('team:shared');
+  expect(accepted?.providerModels).toEqual(resource.providerModels);
+  expect(accepted?.connectedServiceSelections).toEqual([]);
+  expect(mergeTeamCredentialCatalogResourcesV1([[resource]], services).size).toBe(0);
+  expect(mergeTeamCredentialCatalogResourcesV1([[resource]], services,
+    { requireProviderModels: true, providerApplications: [{ ...application, endpointTemplateId: 'other' }] }).size).toBe(0);
+});

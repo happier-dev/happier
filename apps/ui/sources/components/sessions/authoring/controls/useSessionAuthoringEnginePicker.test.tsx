@@ -10,7 +10,7 @@ installDisconnectedServerSocketBoundary();
 installAgentInputCommonModuleMocks();
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn(async (_request: unknown) => ({
     ok: true, result: { availableModels: [{ id: 'terra', name: 'Terra' }], supportsFreeform: false,
-        runtimeDescriptorV1Accepted: true },
+        runtimeDescriptorV1Accepted: true, source: 'dynamic' },
 })) }));
 // Machine RPC is the external boundary; picker, catalog and probe context stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({

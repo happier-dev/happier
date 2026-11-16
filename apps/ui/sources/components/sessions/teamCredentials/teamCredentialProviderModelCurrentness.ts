@@ -1,26 +1,12 @@
 import type {
-    SessionTeamCredentialBindingIntentListV1,
-    SessionTeamCredentialBindingIntentV1,
     TeamCredentialProviderModelSelectionV1,
     TeamCredentialResourceCatalogEntryV1,
 } from '@happier-dev/protocol/teams';
 import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 
-export type AssignedProviderModelCredentialBinding = Extract<
-    SessionTeamCredentialBindingIntentV1,
-    Readonly<{ resourceId: string }>
-> & Readonly<{ slot: Readonly<{ kind: 'provider_model' }> }>;
+export { findAssignedProviderModelCredentialBinding, type AssignedProviderModelCredentialBinding } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
 
 type TeamCredentialProviderModel = TeamCredentialResourceCatalogEntryV1['providerModels'][number];
-
-/** Read the one assigned Provider-model intent without reinterpreting a clear/null intent. */
-export function findAssignedProviderModelCredentialBinding(
-    bindings: SessionTeamCredentialBindingIntentListV1 | null | undefined,
-): AssignedProviderModelCredentialBinding | null {
-    return bindings?.find((binding): binding is AssignedProviderModelCredentialBinding => (
-        binding.slot.kind === 'provider_model' && binding.resourceId !== null
-    )) ?? null;
-}
 
 /** Exact route-bearing model currentness inside one already-current resource. */
 export function findCurrentTeamCredentialProviderModel(

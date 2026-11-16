@@ -1,3 +1,4 @@
+import { withoutWorkflowAuthoringEngine } from '@/sync/domains/workflows/workflowAuthoringEngineSelection';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -278,4 +279,9 @@ export function WorkflowStepInspector(props: Readonly<{
             })}
         </View>
     );
+}
+
+/** Return the step's complete engine to workflow inheritance. */
+export function withoutWorkflowStepEngine(execution: WorkflowStep['execution']): NonNullable<WorkflowStep['execution']> {
+    return withoutWorkflowAuthoringEngine(execution);
 }

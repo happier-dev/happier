@@ -137,20 +137,32 @@ function providerModelKey(model: TeamCredentialResourceCatalogEntryV1['providerM
 
 /**
  * Gathers entitled catalog pages (one per Team × application read) into one row
- * per resource. A connected-service credential the Agent never declared is
- * dropped; application/source alternatives of the same model are kept for the
- * Machine's canonical resolver, never preselected here.
+ * per resource. Native credential purposes follow the Agent's declared services;
+ * Provider models also admit the exact applications its declarations support.
+ * Application/source alternatives stay with the Machine's canonical resolver.
  */
 export function mergeTeamCredentialCatalogResourcesV1(
   pages: Iterable<readonly TeamCredentialResourceCatalogEntryV1[]>,
   connectedServiceKeys: readonly string[] | null,
-  options?: Readonly<{ requireProviderModels: boolean }>,
+  options?: Readonly<{ requireProviderModels: boolean; providerApplications?: readonly ProviderBrokerApplicationBindingV1[] }>,
 ): Map<string, TeamCredentialResourceCatalogEntryV1> {
   const merged = new Map<string, TeamCredentialResourceCatalogEntryV1>();
   for (const page of pages) {
-    for (const resource of page) {
+    for (const candidate of page) {
+      let resource = candidate;
       if (connectedServiceKeys !== null && resource.sourcePresentation?.kind === 'connected_service'
-        && !connectedServiceKeys.includes(buildQualifiedPluginContributionKey(resource.sourcePresentation.service))) continue;
+        && !connectedServiceKeys.includes(buildQualifiedPluginContributionKey(resource.sourcePresentation.service))) {
+        const providerModels = resource.providerModels.filter(model => options?.providerApplications?.some(application => (
+          model.selection.agentTargetKey === application.agentTargetKey
+          && model.application.agentTargetKey === application.agentTargetKey
+          && model.application.implementationIdentity.pluginId === application.implementationIdentity.pluginId
+          && model.application.implementationIdentity.localId === application.implementationIdentity.localId
+          && model.application.endpointTemplateId === application.endpointTemplateId
+          && model.application.protocol === application.protocol
+        )));
+        if (providerModels.length === 0) continue;
+        resource = { ...resource, connectedServiceSelections: [], providerModels };
+      }
       const key = `${resource.teamId}:${resource.id}`;
       const previous = merged.get(key);
       if (!previous) {

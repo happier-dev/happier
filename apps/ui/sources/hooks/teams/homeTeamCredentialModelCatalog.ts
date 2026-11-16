@@ -41,6 +41,7 @@ export function projectHomeCatalogSnapshots(snapshots: readonly CatalogSnapshot[
     }
     const resourcesByKey = mergeTeamCredentialCatalogResourcesV1(snapshots.map(snapshot => snapshot?.data ?? []), demand?.connectedServiceKeys ?? null, {
         requireProviderModels: Boolean(demand && demand.applications.length > 0),
+        providerApplications: demand?.applications,
     });
     for (const key of resourceStatusByKey.keys()) if (!resourcesByKey.has(key)) resourceStatusByKey.delete(key);
     return { resources: [...resourcesByKey.values()], resourceStatusByKey, current };

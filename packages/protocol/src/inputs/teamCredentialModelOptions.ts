@@ -75,7 +75,8 @@ export async function resolveTeamCredentialModelOptionsV1(params: Readonly<{
       pageCursor = page.data.nextCursor;
     } while (pageCursor);
   }
-  const resources = [...mergeTeamCredentialCatalogResourcesV1(pages, demand.connectedServiceKeys).values()]
+  const resources = [...mergeTeamCredentialCatalogResourcesV1(pages, demand.connectedServiceKeys,
+    { requireProviderModels: true, providerApplications: demand.applications }).values()]
     .filter(resource => resource.providerModels.length > 0);
   if (resources.length === 0) return { ok: true, result: [] };
 
