@@ -4571,6 +4571,69 @@ describe('usage query captured Resource adapter', () => {
     } finally { inspector.disconnect(); }
   });
 
+  it.each(['settled', 'cancelled'] as const)('releases private period projections across %s refreshes of the same two queries', async phase => {
+    const { Session: InspectorSession } = await import('node:inspector');
+    let nowMs = 1_710_000_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    const id = 'private-period-retention';
+    const startedAt = nowMs - 1000;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json({ ...value, sessionIds: [id] });
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const input = UsageSessionEvidenceRequestSchema.parse(request.body);
+      return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })),
+        results: [{ sessionId: id,
+          detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({ id, active: false }) } },
+          turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: startedAt + 800,
+            turns: [{ turnId: 'completed', status: 'completed', startedAt, terminalAt: startedAt + 600, updatedAt: startedAt + 800 }] } },
+        }] } satisfies UsageSessionEvidenceResponse);
+    });
+    const queries = ['7days', '30days'].map(relative => normalizeUsageQuery({ period: { relative },
+        includeQuota: false, includeComparison: false, includeCoach: false, includeWorkEvidence: false,
+        includeSessionEvidence: true, includeTranscriptEvidence: false }));
+    const current: Awaited<ReturnType<typeof readUiUsageQueryBatch>>[] = [];
+    const projections: UsageQueryReprojection[] = [];
+    const inspector = new InspectorSession();
+    inspector.connect();
+    const references: WeakRef<object>[] = [];
+    try {
+      for (let round = 0; round < 10; round++) {
+        nowMs += 60_000;
+        invalidateUsageQueryResources(captured.accountLifetime);
+        for (const [index, query] of queries.entries()) {
+          const controller = new AbortController();
+          const reason = new DOMException('View left after private publication', 'AbortError');
+          const reading = readUiUsageQueryBatch(captured, { queries: [query] }, controller.signal, current[index], {
+            onProgress(project) {
+              projections[index] = project;
+              const batch = project();
+              if (batch.results[0]?.pending === false) {
+                current[index] = batch;
+                if (phase === 'cancelled') controller.abort(reason);
+              }
+            },
+          });
+          if (phase === 'cancelled') await expect(reading).rejects.toMatchObject({ name: 'AbortError' });
+          else current[index] = await reading;
+          const slice = current[index]!.results[0]!;
+          expect(slice.pending).toBe(false);
+          expect(slice.howYouWork?.sessionCoverage).toMatchObject({ selected: 1, admitted: 1 });
+          references.push(new WeakRef(slice));
+        }
+      }
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+      const expected = new Set<object>(current.map(batch => batch.results[0]!));
+      const retained = new Set(references.flatMap(reference => {
+        const slice = reference.deref();
+        return slice ? [slice] : [];
+      }));
+      expect(retained.size, 'private generations retire with their replaced query admission').toBe(expected.size);
+      expect([...retained].every(slice => expected.has(slice))).toBe(true);
+      expect(projections.map(project => project().results[0]?.howYouWork?.sessionCoverage?.admitted)).toEqual([1, 1]);
+    } finally { inspector.disconnect(); }
+  });
+
   it('releases retired accounting generations when repeated failed reads retain current fallback facts', async () => {
     const { Session: InspectorSession } = await import('node:inspector');
     const population = usageQaAccountingFixture();

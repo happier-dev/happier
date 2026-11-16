@@ -1585,14 +1585,15 @@ export async function readUiUsageQueryBatch(
         // Settlement reuses this finite read's last consumed projection. The
         // retained reproject closure still evaluates future presentation wakes.
         const result = projectionPending || !admittedPrevious ? reproject(signal) : admittedPrevious;
-        // The retained presentation closure needs the current admission, never
-        // the replaced read's fallback population or its projection witnesses.
-        previous = result;
-        priorAccounting.clear();
-        priorSlices.clear();
-        settleUsageQueryProjection(accounting, result);
         return result;
     } finally {
+        // A read can end after publishing private facts but before settlement.
+        // Its retained presentation closure needs the latest consumed admission,
+        // never the replaced read's fallback population or period witnesses.
+        previous = admittedPrevious;
+        priorAccounting.clear();
+        priorSlices.clear();
+        if (admittedPrevious) settleUsageQueryProjection(accounting, admittedPrevious);
         // Native optional-chain lowering can retain aliases of readOptions.
         // Clear the observer on its private cell, including on cancellation.
         if (readOptions) readOptions.onProgress = undefined;
