@@ -1,3 +1,4 @@
+import { encodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import * as privacyKit from "privacy-kit";
 import type { MachineKeyBasisV1 } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
 import type { Tx } from "@/storage/inTx";
@@ -31,7 +32,7 @@ export async function compareAndSwapMachineContentInTx(params: Readonly<{
                 : privacyKit.decodeBase64(params.expected.dataEncryptionKey),
             ...params.currentness,
         },
-        data: {
+        data: encodeMachineStoredContent({
             metadata: params.next.metadata,
             metadataVersion: params.expected.metadataVersion + 1,
             daemonState: params.next.daemonState,
@@ -43,7 +44,7 @@ export async function compareAndSwapMachineContentInTx(params: Readonly<{
                 ? { contentPublicKeyFingerprint: params.next.contentPublicKeyFingerprint }
                 : {}),
             updatedAt: new Date(),
-        },
+        }),
     });
     return updated.count === 1;
 }

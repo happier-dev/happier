@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { isStoredOpaquePresetMachine } from './managedMachineProjection';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { inTx, type Tx } from '@/storage/inTx';
@@ -244,7 +245,7 @@ export async function readManagedNativeCredentialBindingForGuestInTx(tx: Tx, inp
     const unavailable = { status: 'unavailable', reason: 'binding_unavailable' } as const;
     const { proof, ...request } = input.request;
     if (request.homeId !== input.homeId) return unavailable;
-    const guest = await tx.machine.findUnique({ where: { id: request.machineId } });
+    const guest = await tx.machine.findUnique({ where: { id: request.machineId } }).then(decodeMachineStoredContent);
     if (!guest || guest.accountId !== input.actorAccountId || guest.installationId !== request.installationId
         || !guest.installationPublicKey || classifyMachineAvailabilityState(guest) !== 'available'
         || !verifyMachineInstallationProof({ payload: { version: 1, accountId: input.actorAccountId,

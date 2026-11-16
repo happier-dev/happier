@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { db } from "@/storage/db";
 import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
@@ -115,7 +116,7 @@ export async function writeSessionPublicShare(input: SessionPublicShareWrite) {
         await acquireSessionAccountCursorLocksInTx(tx, [sessionId], [userId]);
         const session = await tx.session.findUnique({
             where: { id: sessionId },
-            select: {
+            select: withSessionContentSelect({
                 encryptionMode: true,
                 metadata: true,
                 metadataVersion: true,
@@ -125,8 +126,8 @@ export async function writeSessionPublicShare(input: SessionPublicShareWrite) {
                 agentStateVersion: true,
                 primaryTeamId: true,
                 ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-            },
-        });
+            }),
+        }).then(decodeSessionStoredContent);
         if (!session) {
             return { type: 'error' as const, error: 'session not found' as const };
         }

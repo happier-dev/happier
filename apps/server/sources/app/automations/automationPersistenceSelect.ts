@@ -113,7 +113,7 @@ export const automationRunItemSelect = {
     executionDispatchState: true, executionAttempt: true,
     executionDispatchCommittedAt: true, executionDispatchDueAt: true,
     executionNativeRunId: true, executionNativeCallId: true, executionNativeSidechainId: true,
-    resultEnvelope: true, replyContextEnvelope: true,
+    resultEnvelope: true, resultEnvelopeBytes: true, replyContextEnvelope: true,
     replyHandoffActionPluginId: true, replyHandoffActionLocalId: true,
     replyHandoffTargetMachineId: true, replyHandoffTargetMachineInstallationId: true,
     replyHandoffTargetMaterializationId: true, replyHandoffId: true,

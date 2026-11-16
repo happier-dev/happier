@@ -2341,6 +2341,7 @@ describe("sessionSystemRecordService account scoping", () => {
                 kind: "workflow_run.v1",
                 localId: "activity:workflow_run:v1:wf_demo",
                 content: { t: "plain", v: workflowRunPayload() },
+                contentBytes: null,
                 ownerKind: "host",
                 pluginId: null,
                 namespaceAddressKey: Uint8Array.from(Buffer.from(
@@ -2450,6 +2451,7 @@ describe("sessionSystemRecordService account scoping", () => {
             }),
             data: {
                 content: nextContent,
+                contentBytes: null,
                 ownerKind: "host",
                 pluginId: null,
                 namespaceAddressKey: Uint8Array.from(Buffer.from(

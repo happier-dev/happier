@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent } from '@/storage/sessionMachineStoredContent';
 import { applyManagedCreationScopeEndInTx } from '@/app/machines/managed/managedCreationBirth';
 import { applySessionArchiveTransitionToFollowsInTx } from "@/app/session/follow/lifecycle";
 import { applySessionArchiveTransitionToManagerInTx } from "@/app/session/follow/sessionManagerService";
@@ -18,7 +19,7 @@ export async function transitionSessionArchiveStateInTx(params: Readonly<{
 }>) {
     if (params.wasArchived === (params.archivedAt !== null) && params.meaningfulActivityAt === undefined) {
         return {
-            session: await params.tx.session.findUniqueOrThrow({ where: { id: params.sessionId } }),
+            session: await params.tx.session.findUniqueOrThrow({ where: { id: params.sessionId } }).then(decodeSessionStoredContent),
             didWrite: false as const,
         };
     }
@@ -33,7 +34,7 @@ export async function transitionSessionArchiveStateInTx(params: Readonly<{
                 ? { meaningfulActivityAt: params.meaningfulActivityAt }
                 : {}),
         },
-    });
+    }).then(decodeSessionStoredContent);
     await applySessionArchiveTransitionToFollowsInTx({
         tx: params.tx,
         sessionId: params.sessionId,

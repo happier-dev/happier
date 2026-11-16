@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { afterTx, type Tx } from "@/storage/inTx";
 import { eventRouter } from "@/app/events/eventRouter";
 import { machineInstallationPublicKeysEqual, type VerifiedMachineInstallationIdentity } from "./installationProof";
@@ -66,7 +67,7 @@ export async function updateMachineInstallationIdentityInTx(
     machine: ExistingMachineInstallationIdentity & Readonly<{ id: string; accountId: string }>,
     data: Extract<InstallationIdentityUpdateResolution, { ok: true }>["data"],
 ) {
-    const updated = await tx.machine.update({ where: { accountId_id: { accountId: machine.accountId, id: machine.id } }, data });
+    const updated = await tx.machine.update({ where: { accountId_id: { accountId: machine.accountId, id: machine.id } }, data }).then(decodeMachineStoredContent);
     if (data.installationId && data.installationId !== machine.installationId) {
         const managed = await tx.managedMachine.findMany({ where: { custodianAccountId: machine.accountId,
             controllerMachineId: machine.id, controllerInstallationId: { not: data.installationId } } });

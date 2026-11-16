@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import * as deploymentActionIds from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
@@ -169,9 +170,9 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
         || routing.kind === 'snapshot' || routing.kind === 'dataRole' || admitted.acceptedReceipt && !archiveOrigin) {
         const selected = capturedMachines.find(machine => machine?.machineId === machineId);
         if (archiveOrigin || !selected) return null;
-        const machine = await tx.machine.findUnique({ where: { id: machineId }, select: { accountId: true, installationId: true,
+        const machine = await tx.machine.findUnique({ where: { id: machineId }, select: withMachineContentSelect({ accountId: true, installationId: true,
             metadata: true, daemonState: true, dataEncryptionKey: true,
-            revokedAt: true, replacedByMachineId: true, account: { select: { encryptionMode: true } } } });
+            revokedAt: true, replacedByMachineId: true, account: { select: { encryptionMode: true } } }) }).then(decodeMachineStoredContent);
         if (!machine || machine.installationId !== selected.installationId || machine.revokedAt || machine.replacedByMachineId) return null;
         const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
         if (mode.status !== 'ready' || !resourceContentMatchesMode(machine, mode.mode)) return null;
@@ -238,9 +239,9 @@ export async function readDeploymentChildMachineReadInTx(tx: Tx, admitted: Deplo
                 'admission' in environment ? environment.admission.owner : environment.owner,
                 [{ machineId, role: 'target' }])) return null;
     }
-    const machine = await tx.machine.findUnique({ where: { id: machineId }, select: { accountId: true, installationId: true,
+    const machine = await tx.machine.findUnique({ where: { id: machineId }, select: withMachineContentSelect({ accountId: true, installationId: true,
         metadata: true, daemonState: true, dataEncryptionKey: true,
-        revokedAt: true, replacedByMachineId: true, account: { select: { encryptionMode: true } } } });
+        revokedAt: true, replacedByMachineId: true, account: { select: { encryptionMode: true } } }) }).then(decodeMachineStoredContent);
     if (!machine?.installationId || machine.revokedAt || machine.replacedByMachineId
         || archiveOrigin && machineId === archiveOrigin.holderMachineId
             && machine.installationId !== archiveOrigin.holderInstallationId) return null;

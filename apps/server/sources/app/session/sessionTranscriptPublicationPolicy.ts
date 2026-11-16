@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from "@prisma/client";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { PrimaryTurnStatusV1Schema, type PrimaryTurnStatusV1, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -657,8 +658,8 @@ export async function loadSessionTranscriptPublication(
 ): Promise<SessionTranscriptPublicationFields> {
     return await reader.session.findUnique({
         where: { id: sessionId },
-        select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-    }) ?? { currentStorageState: "legacy_external_unknown" };
+        select: withSessionContentSelect(SESSION_TRANSCRIPT_PUBLICATION_SELECT),
+    }).then(decodeSessionStoredContent) ?? { currentStorageState: "legacy_external_unknown" };
 }
 
 export function applySessionTranscriptPublicationCeiling(
@@ -884,8 +885,8 @@ export async function loadSessionTranscriptPublicationRecipientProjection(
     if (typeof sessionId !== "string" || !sessionId) return null;
     return await db.session.findUnique({
         where: { id: sessionId },
-        select: SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT,
-    });
+        select: withSessionContentSelect(SESSION_TRANSCRIPT_PUBLICATION_RECIPIENT_PROJECTION_SELECT),
+    }).then(decodeSessionStoredContent);
 }
 
 /**

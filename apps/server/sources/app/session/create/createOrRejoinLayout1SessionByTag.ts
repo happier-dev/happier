@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent } from '@/storage/sessionMachineStoredContent';
 import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { acquireAccountSessionOwnerMetadataFenceInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
@@ -67,7 +68,7 @@ async function resolveExistingLayout1SessionInTx(
                 tag: prepared.tag,
             },
         },
-    });
+    }).then(decodeSessionStoredContent);
     if (!existing) return null;
     // A retry may omit the additive field, but cannot rewrite a recorded birth.
     // Retained rows without the relation keep their original encrypted provenance.

@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from "@/app/changes/markAccountChanged";
 import { buildUpdateMachineUpdate, eventRouter } from "@/app/events/eventRouter";
 import { activityCache } from "@/app/presence/sessionCache";
@@ -37,7 +38,7 @@ export async function applyMachineReplacement(params: ApplyMachineReplacementPar
     await acquireAccountChangePublicationLocksInTx(params.tx, [params.accountId], {
         includeSingleAccount: true, intent: 'serializing',
     });
-    const machines = await params.tx.machine.findMany({ where: { id: { in: [params.oldMachineId, params.replacementMachineId] } } });
+    const machines = await params.tx.machine.findMany({ where: { id: { in: [params.oldMachineId, params.replacementMachineId] } } }).then(decodeMachineStoredContent);
     const validation = validateMachineReplacement({ accountId: params.accountId,
         oldMachine: machines.find(machine => machine.id === params.oldMachineId) ?? null,
         replacementMachine: machines.find(machine => machine.id === params.replacementMachineId) ?? null,

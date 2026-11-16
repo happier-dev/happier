@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from "@prisma/client";
 import { decodeBase64, encodeBase64 } from "privacy-kit";
 import { decodeMembershipSessionDataKeyEnvelopeCursorV1, encodeMembershipSessionDataKeyEnvelopeCursorV1, MembershipSessionDataKeyEnvelopeErrorCodeV1Schema, MembershipSessionDataKeyEnvelopeErrorV1Schema, PatchMembershipSessionDataKeyEnvelopesV1Schema, type MembershipSessionDataKeyEnvelopeExceptionsV1, type MembershipSessionDataKeyEnvelopeItemV1, type MembershipSessionDataKeyEnvelopeErrorCodeV1, type MembershipSessionDataKeyEnvelopePageQueryV1, type MembershipSessionDataKeyEnvelopePageV1 } from '@happier-dev/protocol/sessions/encryption/membershipSessionDataKeyEnvelopes';
@@ -394,8 +395,8 @@ export async function readMembershipSessionDataKeyEnvelopePage(input: Readonly<{
         if (items.length > 0) {
             const metadataRows = await tx.session.findMany({
                 where: { id: { in: items.map(item => item.sessionId) } },
-                select: { id: true, metadata: true, metadataLayoutVersion: true },
-            });
+                select: withSessionContentSelect({ id: true, metadata: true, metadataLayoutVersion: true }),
+            }).then(decodeSessionStoredContent);
             const metadataById = new Map(metadataRows.map(row => [row.id, row]));
             for (const [index, item] of items.entries()) {
                 const row = metadataById.get(item.sessionId);

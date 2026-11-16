@@ -15,6 +15,7 @@ import { PresentUserRequiredResponseSchema, requirePresentUser } from "@/app/api
 import {
     accountSettingsSnapshotToContent,
     resolveAccountSettingsSnapshotContentKind,
+    readAccountSettingsSnapshotDbValue,
 } from "@/app/accountSettings/accountSettingsHistoryContent";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import {
@@ -115,6 +116,7 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
                         createdAt: true,
                         encryptionMode: true,
                         settingsDbValue: true,
+                        settingsDbValueBytes: true,
                     },
                 });
 
@@ -123,7 +125,7 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
                         version: snapshot.version,
                         createdAt: snapshot.createdAt.toISOString(),
                         contentKind: resolveAccountSettingsSnapshotContentKind(snapshot),
-                        byteLength: Buffer.byteLength(snapshot.settingsDbValue ?? "", "utf8"),
+                        byteLength: Buffer.byteLength(readAccountSettingsSnapshotDbValue(snapshot) ?? "", "utf8"),
                     })),
                 } } as const;
             }, { transactionClass: "account-settings-history-list" });
@@ -188,6 +190,7 @@ export function registerAccountSettingsHistoryRoutes(app: Fastify): void {
                         accountId: true,
                         version: true,
                         settingsDbValue: true,
+                        settingsDbValueBytes: true,
                         encryptionMode: true,
                         createdAt: true,
                     },

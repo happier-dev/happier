@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 import { ApiTokenOperationError } from "@/app/auth/auth";
@@ -74,7 +75,7 @@ async function isDeploymentPrepareBirthInTx(tx: Tx, accountId: string,
         || sourceExecution.params !== undefined && typeof sourceExecution.params !== 'string') return false;
     // Root admission already chose this installation. Birth verifies its current
     // key and custody, without introducing another permission decision.
-    const machine = await tx.machine.findUnique({ where: { id: binding.machineId } });
+    const machine = await tx.machine.findUnique({ where: { id: binding.machineId } }).then(decodeMachineStoredContent);
     return !!machine?.installationPublicKey && machine.installationId === binding.installationId
         && machine.accountId === binding.custodianAccountId
         && verifyExternalActionMachineRpcRequestV1({ reviewedChild: execution.reviewedChild,
@@ -115,8 +116,8 @@ async function isCurrentDiscussionModelBirthInTx(tx: Tx, accountId: string,
             || discussion.creationLocalId !== derived.root.retry.creationLocalId) return false;
     }
     const [source, target, admission, sourceAdmission] = await Promise.all([
-        tx.machine.findUnique({ where: { id: binding.machineId } }),
-        tx.machine.findUnique({ where: { id: machineAdmission.machineId } }),
+        tx.machine.findUnique({ where: { id: binding.machineId } }).then(decodeMachineStoredContent),
+        tx.machine.findUnique({ where: { id: machineAdmission.machineId } }).then(decodeMachineStoredContent),
         resolveMachineAdmissionInTx(tx, { actorAccountId: accountId, machineId: machineAdmission.machineId, requiredRole: 'use' }),
         resolveMachineAdmissionInTx(tx, { actorAccountId: accountId, machineId: binding.machineId, requiredRole: 'use' }),
     ]);

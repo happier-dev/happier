@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { refreshTrackedSessionAccountBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { didSessionActivityBadgeSignalChange } from "@/app/activity/accountActivityBadge";
 import {
@@ -59,7 +60,7 @@ export async function applyReleasedUiV021SessionEnd(params: Readonly<{
         await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId], [], { includeLifecyclePublications: true });
         const session = await tx.session.findUnique({
             where: { id: params.sessionId },
-            select: {
+            select: withSessionContentSelect({
                 archivedAt: true,
                 active: true,
                 lastActiveAt: true,
@@ -76,8 +77,8 @@ export async function applyReleasedUiV021SessionEnd(params: Readonly<{
                 runtimeActivityActiveCount: true,
                 runtimeActivityObservedAt: true,
                 runtimeActivityRevision: true,
-            },
-        });
+            }),
+        }).then(decodeSessionStoredContent);
         if (!session) return { status: "rejected" as const, reason: "not_found" as const };
         if (session.accountId !== params.accountId) {
             return { status: "rejected" as const, reason: "unauthorized" as const };

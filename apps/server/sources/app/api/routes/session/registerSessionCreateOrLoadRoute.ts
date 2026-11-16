@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { InactiveAccountError } from "@/app/auth/accountStatus";
 import { inReadSnapshot, inTx } from "@/storage/inTx";
 import { prepareSessionAccountCursorLocks } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
@@ -363,7 +364,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                             tag,
                         },
                     },
-                });
+                }).then(decodeSessionStoredContent);
                 if (!existing) {
                     throw error;
                 }
@@ -385,7 +386,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                 }
                 const restored = await inTx(async (tx) => {
                     await readSessionCreationApiTokenIdInTx(tx, userId, sessionCreationAuthorization);
-                    let current = await tx.session.findUniqueOrThrow({ where: { id: existing.id } });
+                    let current = await tx.session.findUniqueOrThrow({ where: { id: existing.id } }).then(decodeSessionStoredContent);
                     if (requestedStorageState === 'machine_only' && current.currentStorageState !== 'machine_only') {
                         const initialized = await initializeExternalLinkedSessionStorage(tx, current, userId);
                         if (!initialized.ok) return { kind: 'storage-conflict' as const };
@@ -427,8 +428,8 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
         // the Session was never encrypted with.
         const ownerEnvelopeRow = await db.session.findUniqueOrThrow({
             where: { id: resolvedSession.id },
-            select: createSessionDataKeyEnvelopeViewerSelect({ viewerAccountId: userId }),
-        });
+            select: withSessionContentSelect(createSessionDataKeyEnvelopeViewerSelect({ viewerAccountId: userId })),
+        }).then(decodeSessionStoredContent);
         const viewerDataEncryptionKey = projectViewerSessionDataKey(ownerEnvelopeRow);
 
         let metadataProjection: ReturnType<

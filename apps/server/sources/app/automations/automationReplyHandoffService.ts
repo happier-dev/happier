@@ -1,3 +1,4 @@
+import { decodeStoredText } from '@/storage/storedContent';
 import { AutomationAccountCurrentnessWitnessV1Schema, sameAutomationAccountContentIdentityV1, type AutomationAccountCurrentnessWitnessV1 } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { AutomationReplyHandoffSettlementV1Schema, type AutomationReplyHandoffSettlementV1 } from '@happier-dev/protocol/automations/event';
 import { nextAutomationReplyHandoffIdForRunV1 } from '@happier-dev/protocol/automations/automationReplyHandoffIdentityV1';
@@ -58,6 +59,7 @@ const automationReplyHandoffCandidateSelect = {
     automationId: true,
     state: true,
     resultEnvelope: true,
+    resultEnvelopeBytes: true,
     replyContextEnvelope: true,
     replyHandoffActionPluginId: true,
     replyHandoffActionLocalId: true,
@@ -122,6 +124,7 @@ function handoffCandidateWhere(candidate: AutomationReplyHandoffCandidate): Pris
         state: "succeeded",
         causeKind: "conversation",
         resultEnvelope: candidate.resultEnvelope,
+        resultEnvelopeBytes: candidate.resultEnvelopeBytes,
         replyContextEnvelope: candidate.replyContextEnvelope,
         replyHandoffActionPluginId: candidate.replyHandoffActionPluginId,
         replyHandoffActionLocalId: candidate.replyHandoffActionLocalId,
@@ -145,7 +148,7 @@ function hasClaimedFrozenIdentity(
         && candidate.id === claim.runId
         && candidate.replyHandoffId === claim.handoffId
         && candidate.occurrenceKey === claim.occurrenceKey
-        && candidate.resultEnvelope === claim.resultEnvelope
+        && decodeStoredText(candidate.resultEnvelope, candidate.resultEnvelopeBytes) === claim.resultEnvelope
         && candidate.replyContextEnvelope === claim.replyContextEnvelope
         && candidate.replyHandoffActionPluginId === claim.target.actionPluginId
         && candidate.replyHandoffActionLocalId === claim.target.actionLocalId
@@ -176,7 +179,7 @@ function isDispatchableCandidate(
     const currentness = deriveAutomationAccountCurrentnessWitness(candidate.account);
     if (!currentness) return false;
     return classifyAutomationReplyHandoffDispatchability({
-        facts: candidate,
+        facts: { ...candidate, resultEnvelope: decodeStoredText(candidate.resultEnvelope, candidate.resultEnvelopeBytes) },
         mode: currentness.mode,
     }) === "dispatchable";
 }
@@ -288,7 +291,9 @@ async function fetchAutomationRunItemTx(
         where: { id: runId },
         select: automationRunItemSelect,
     });
-    return run as AutomationRunItem | null;
+    if (!run) return null;
+    const { resultEnvelopeBytes, ...value } = run;
+    return { ...value, resultEnvelope: decodeStoredText(run.resultEnvelope, resultEnvelopeBytes) } as AutomationRunItem;
 }
 
 async function publishAutomationRunMutationTx(
@@ -505,7 +510,7 @@ export async function claimNextAutomationReplyHandoff(params: Readonly<{
             attempt: candidate.replyHandoffAttempt + 1,
             runRevision: candidate.revision + 1,
             recipeKind: candidate.workflowCustodyState !== null ? "workflow-v2" as const : "legacy" as const,
-            resultEnvelope: candidate.resultEnvelope,
+            resultEnvelope: decodeStoredText(candidate.resultEnvelope, candidate.resultEnvelopeBytes),
             replyContextEnvelope: candidate.replyContextEnvelope,
             target: {
                 actionPluginId: candidate.replyHandoffActionPluginId,
@@ -574,7 +579,7 @@ export async function retryBlockedAutomationReplyHandoff(params: Readonly<{
         const currentness = deriveAutomationAccountCurrentnessWitness(candidate.account);
         if (!currentness) return null;
         if (classifyAutomationReplyHandoffDispatchability({
-            facts: candidate,
+            facts: { ...candidate, resultEnvelope: decodeStoredText(candidate.resultEnvelope, candidate.resultEnvelopeBytes) },
             mode: currentness.mode,
         }) !== "dispatchable") {
             return null;

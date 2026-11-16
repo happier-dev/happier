@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod/mini';
 import { PendingRequestedActionV1StoredSchema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
@@ -90,7 +91,7 @@ export async function readPendingActivationHoldReasonsInTx(tx: Tx, input: Readon
     sessionId: string; actorAccountId: string; rows: readonly PendingMessageRowRaw[];
 }>): Promise<ReadonlyMap<string, PendingActivationHoldReasonV1>> {
     const holds = new Map<string, PendingActivationHoldReasonV1>();
-    const session = await tx.session.findUnique({ where: { id: input.sessionId }, select: AUTHORIZATION_SELECT });
+    const session = await tx.session.findUnique({ where: { id: input.sessionId }, select: withSessionContentSelect(AUTHORIZATION_SELECT) }).then(decodeSessionStoredContent);
     if (!session || session.accountId !== input.actorAccountId) return holds;
     const candidates = input.rows.flatMap(row => {
         const action = PendingRequestedActionV1StoredSchema.safeParse(row.requestedAction ?? { v: 1, kind: 'enqueue' });
@@ -226,8 +227,8 @@ export async function armPendingActivationAuthorizationInTx(params: Readonly<{
     }
     const session = await params.tx.session.findUniqueOrThrow({
         where: { id: params.sessionId },
-        select: AUTHORIZATION_SELECT,
-    });
+        select: withSessionContentSelect(AUTHORIZATION_SELECT),
+    }).then(decodeSessionStoredContent);
     if (params.currentAccess.level === 'owner' && session.accountId !== params.currentAccess.accountId) return undefined;
     const ownerAdmission = readPendingSessionInputAdmission({ sessionId: params.sessionId, accountId: session.accountId, pending: eligible });
     if (!ownerAdmission) return undefined;
@@ -290,7 +291,7 @@ export async function readPendingActivationTargetsInTx(tx: Tx, sessionIds: reado
     const ids = [...new Set(sessionIds)];
     for (let offset = 0; offset < ids.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
         const sessions = await tx.session.findMany({ where: { id: { in: ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE) } },
-            select: { ...AUTHORIZATION_SELECT, id: true, archivedAt: true } });
+            select: withSessionContentSelect({ ...AUTHORIZATION_SELECT, id: true, archivedAt: true }) }).then(decodeSessionStoredContent);
         const waiting = sessions.filter(session => session.archivedAt === null && session.pendingActivationStatus === 'waiting'
             && session.pendingActivationRequestId && session.pendingActivationRequestedAt);
         if (!waiting.length) continue;
@@ -329,8 +330,8 @@ export async function reconcilePendingActivationAuthorizationForRemovedRequestIn
     await acquireSessionAccountCursorLocksInTx(params.tx, [params.sessionId]);
     const session = await params.tx.session.findUniqueOrThrow({
         where: { id: params.sessionId },
-        select: AUTHORIZATION_SELECT,
-    });
+        select: withSessionContentSelect(AUTHORIZATION_SELECT),
+    }).then(decodeSessionStoredContent);
     if (session.pendingActivationRequestId !== params.requestId) return false;
     const updated = await params.tx.session.updateMany({
         where: {
@@ -353,7 +354,7 @@ export async function markPendingActivationAuthorizationFailedInTx(params: Reado
 }>): Promise<boolean> {
     await acquireSessionAccountCursorLocksInTx(params.tx, [params.sessionId]);
     if (params.failureCode === 'runtime_start_failed') {
-        const session = await params.tx.session.findUnique({ where: { id: params.sessionId }, select: AUTHORIZATION_SELECT });
+        const session = await params.tx.session.findUnique({ where: { id: params.sessionId }, select: withSessionContentSelect(AUTHORIZATION_SELECT) }).then(decodeSessionStoredContent);
         const authorization = session ? mapPendingActivationAuthorization(session) : undefined;
         const target = authorization?.managedWakeTargetV1;
         if (authorization?.status === 'waiting' && target && authorization.requestId === params.requestId

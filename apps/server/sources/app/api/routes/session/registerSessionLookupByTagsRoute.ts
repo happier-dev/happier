@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2, SessionLookupByTagsRequestV2Schema, SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessions/control/contract';
 import { z } from "zod/mini";
@@ -48,8 +49,8 @@ export function registerSessionLookupByTagsRoute(app: Fastify) {
                 },
                 orderBy: { tag: "asc" },
                 take: SESSION_LOOKUP_BY_TAGS_MAX_TAGS_V2,
-                select: createV2SessionOwnerRowSelect(request.userId),
-            });
+                select: withSessionContentSelect(createV2SessionOwnerRowSelect(request.userId)),
+            }).then(decodeSessionStoredContent);
             if (
                 sessions.some((session) =>
                     session.metadataLayoutVersion

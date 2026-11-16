@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { resolveResourceGrantMatchedContributionsFromFacts, projectResourceGrantRows, type ResourceGrantPrincipalFacts } from '@/app/teams/resourceGrantAccess';
 import { db } from "@/storage/db";
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
@@ -334,7 +335,7 @@ async function resolveSessionAccessCapabilityDecisionsFromRow(reader: Tx, actor:
     if (tokenGrant && exactTokenAction && !evaluateApiTokenGrantV1({ grant: tokenGrant, actionId: exactTokenAction.actionId,
         target: { kind: 'session', sessionId: actor.sessionId }, targetMachineId: exactTokenAction.targetMachineId }).ok) return unavailable();
     const row = suppliedRow === undefined ? await reader.session.findUnique({ where: { id: actor.sessionId },
-        select: buildSessionAccessProjectionSelect(actor.accountId) }) : suppliedRow;
+        select: withSessionContentSelect(buildSessionAccessProjectionSelect(actor.accountId)) }).then(decodeSessionStoredContent) : suppliedRow;
     if (!row || row.id !== actor.sessionId) return unavailable();
     const runtimePrincipal = actor.authentication.sessionRuntimePrincipal;
     const runtimeAccess = runtimePrincipal ? projectExactSessionRuntimeAccess(row, actor.accountId, actor.authentication) : null;
@@ -417,7 +418,7 @@ export async function readCurrentSessionAccessForOperation(
 export async function resolveStructuralSessionAccess(reader: SessionAccessReader, input: {
     accountId: string; sessionId: string; row?: SessionAccessProjectionRow;
 }): Promise<EffectiveSessionAccess | null> {
-    const row = input.row ?? await reader.session.findUnique({ where: { id: input.sessionId }, select: buildSessionAccessProjectionSelect(input.accountId) });
+    const row = input.row ?? await reader.session.findUnique({ where: { id: input.sessionId }, select: withSessionContentSelect(buildSessionAccessProjectionSelect(input.accountId)) }).then(decodeSessionStoredContent);
     return row && (input.row === undefined || row.id === input.sessionId) ? projectEffectiveSessionAccess(row, input.accountId, {
         includeCredentialRestrictedTeamEntitlements: true,
     }) : null;
@@ -478,8 +479,8 @@ export async function resolveSessionAccessDecisionsForSessionsInTx(
     for (let offset = 0; offset < sessionIds.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
         const rows = await reader.session.findMany({
             where: { id: { in: sessionIds.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE) } },
-            select: buildSessionAccessProjectionSelect(operation.accountId),
-        });
+            select: withSessionContentSelect(buildSessionAccessProjectionSelect(operation.accountId)),
+        }).then(decodeSessionStoredContent);
         for (const [id, decision] of await resolveSessionAccessForRowsInTx(reader, operation, rows)) result.set(id, decision);
     }
     return result;
@@ -542,8 +543,8 @@ export async function assertSessionTeamReadableGrantInTx(input: {
             { id: input.sessionId },
             { grants: { some: { principalKind: 'team', teamId: input.teamId, team: { archivedAt: null } } } },
         ] },
-        select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-    });
+        select: withSessionContentSelect(SESSION_TRANSCRIPT_PUBLICATION_SELECT),
+    }).then(decodeSessionStoredContent);
     return session && isSessionTranscriptShareable(session) ? { ok: true } : { ok: false, reason: "unavailable" };
 }
 
@@ -583,8 +584,8 @@ export async function resolveSessionAccessForAccountsInTx(tx: Tx, input: Readonl
         const batch = accountIds.slice(offset, offset + 100);
         const row = await tx.session.findUnique({
             where: { id: input.sessionId },
-            select: buildSessionAccessProjectionSelectForAccounts(batch),
-        });
+            select: withSessionContentSelect(buildSessionAccessProjectionSelectForAccounts(batch)),
+        }).then(decodeSessionStoredContent);
         if (!row || row.id !== input.sessionId) continue;
         const qualifiedTeamIds = await resolveQualifiedSessionTeamIdsInTx(tx, {
             accountIds: batch,
@@ -623,8 +624,8 @@ export async function resolveSessionAccessForSessionsInTx(tx: Tx, input: Readonl
             const sessionBatch = sessionIds.slice(sessionOffset, sessionOffset + SESSION_ACCESS_SESSION_BATCH_SIZE);
             const rows = await tx.session.findMany({
                 where: { id: { in: sessionBatch } },
-                select: buildSessionAccessProjectionSelectForAccounts(accountBatch),
-            });
+                select: withSessionContentSelect(buildSessionAccessProjectionSelectForAccounts(accountBatch)),
+            }).then(decodeSessionStoredContent);
             const teams = rows.flatMap(sessionGrantTeams);
             const qualifiedTeamIds = await resolveQualifiedSessionTeamIdsInTx(tx, {
                 accountIds: accountBatch,
@@ -653,7 +654,7 @@ export async function resolveStructuralSessionAccessForAccountsInTx(tx: SessionA
     // boundary. This chunks transport parameters, never the authorized result set.
     for (let offset = 0; offset < accountIds.length; offset += 100) {
         const batch = accountIds.slice(offset, offset + 100);
-        const row = await tx.session.findUnique({ where: { id: input.sessionId }, select: buildSessionAccessProjectionSelectForAccounts(batch) });
+        const row = await tx.session.findUnique({ where: { id: input.sessionId }, select: withSessionContentSelect(buildSessionAccessProjectionSelectForAccounts(batch)) }).then(decodeSessionStoredContent);
         for (const accountId of batch) result.set(accountId, row ? projectEffectiveSessionAccess(row, accountId, {
             includeCredentialRestrictedTeamEntitlements: true,
         }) : null);
@@ -684,8 +685,8 @@ export async function resolveStructuralSessionAccessForSessionsInTx(tx: SessionA
             const sessionBatch = sessionIds.slice(sessionOffset, sessionOffset + SESSION_ACCESS_SESSION_BATCH_SIZE);
             const rows = await tx.session.findMany({
                 where: { id: { in: sessionBatch } },
-                select: buildSessionAccessProjectionSelectForAccounts(accountBatch),
-            });
+                select: withSessionContentSelect(buildSessionAccessProjectionSelectForAccounts(accountBatch)),
+            }).then(decodeSessionStoredContent);
             for (const row of rows) {
                 const perAccount = result.get(row.id) ?? new Map<string, EffectiveSessionAccess | null>();
                 for (const accountId of accountBatch) perAccount.set(accountId, projectEffectiveSessionAccess(row, accountId, {

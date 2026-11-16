@@ -1,3 +1,4 @@
+import { decodeStoredText } from '@/storage/storedContent';
 import { persistentMachineWhere } from "@/app/machines/machineSelection";
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
@@ -499,7 +500,7 @@ async function fetchClaimedRun(tx: Tx, runId: string): Promise<AutomationClaimRu
     });
 
     if (!row) return null;
-    return row;
+    return { ...row, resultEnvelope: decodeStoredText(row.resultEnvelope, row.resultEnvelopeBytes), resultEnvelopeBytes: null };
 }
 
 async function projectClaimedRunWithTriggerCurrentness(
@@ -531,17 +532,19 @@ async function readSucceededCheckpointTx(tx: Tx, params: Readonly<{
 }>): Promise<Readonly<{ runId: string; checkpointEnvelope: string }> | undefined> {
     const previous = await tx.automationRun.findFirst({
         where: { id: params.runId, accountId: params.accountId, triggerId: params.triggerId, state: "succeeded" },
-        select: { id: true, workflowCheckpointEnvelope: true },
+        select: { id: true, workflowCheckpointEnvelope: true, workflowCheckpointEnvelopeBytes: true },
     });
-    if (!previous?.workflowCheckpointEnvelope) return undefined;
+    if (!previous) return undefined;
+    const checkpointEnvelope = decodeStoredText(previous.workflowCheckpointEnvelope, previous.workflowCheckpointEnvelopeBytes);
+    if (!checkpointEnvelope) return undefined;
     const witness = await fetchAutomationAccountCurrentnessWitnessTx(tx, params.accountId);
-    const parsed = parseWorkflowStoredContentEnvelopeV1(previous.workflowCheckpointEnvelope);
+    const parsed = parseWorkflowStoredContentEnvelopeV1(checkpointEnvelope);
     if (!witness || parsed === null
         || validateWorkflowStoredEnvelopeOuterForModeV1({ mode: witness.mode,
             binding: { v: 1, purpose: "checkpoint", accountId: params.accountId, runId: previous.id },
             envelope: parsed,
         }).kind !== "available") return undefined;
-    return { runId: previous.id, checkpointEnvelope: previous.workflowCheckpointEnvelope };
+    return { runId: previous.id, checkpointEnvelope };
 }
 
 async function readLastSucceededTriggerRunTx(tx: Tx, run: AutomationClaimRun) {

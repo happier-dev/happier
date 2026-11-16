@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { UsageTimingBoundsV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { projectSessionTurnWaitingHttpResponse } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
 import { z } from "zod/mini";
@@ -100,8 +101,8 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 }),
                 readPublication: async (ownedSessionId) => await tx.session.findUnique({
                     where: { id: ownedSessionId },
-                    select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-                }),
+                    select: withSessionContentSelect(SESSION_TRANSCRIPT_PUBLICATION_SELECT),
+                }).then(decodeSessionStoredContent),
             });
         });
         return reply.send(resolution);

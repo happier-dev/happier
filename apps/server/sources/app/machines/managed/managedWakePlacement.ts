@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma, SessionPendingMessage } from '@prisma/client';
 import { ManagedWakeTargetV1Schema, type ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -24,7 +25,7 @@ export async function readManagedWakeSessionsInTx(tx: Tx, sessionIds: readonly s
          FROM "Session" WHERE "id" = ANY($1::text[])`, ids);
     const sessions: ManagedWakeSession[] = [];
     for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 1 })) {
-        sessions.push(...await tx.session.findMany({ where: { id: { in: [...chunk] } }, select: sessionSelect }));
+        sessions.push(...await tx.session.findMany({ where: { id: { in: [...chunk] } }, select: withSessionContentSelect(sessionSelect) }).then(decodeSessionStoredContent));
     }
     return sessions;
 }

@@ -14,7 +14,7 @@ import {
     storePlainAccountSettingsDbValue,
 } from "@/app/encryption/accountSettingsStorage";
 import type { Tx } from "@/storage/inTx";
-import { accountSettingsSnapshotToContent } from './accountSettingsHistoryContent';
+import { accountSettingsSnapshotToContent, encodeAccountSettingsSnapshotDbValue } from './accountSettingsHistoryContent';
 
 /** Paged source envelopes for the existing client Settings re-seal path. Never opens E2EE content. */
 export async function readAccountSettingsEncryptionMigrationInventoryInTx(params: Readonly<{
@@ -38,14 +38,14 @@ export async function readAccountSettingsEncryptionMigrationInventoryInTx(params
         },
         orderBy: { version: 'desc' },
         take: ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS + 1,
-        select: { accountId: true, version: true, createdAt: true, encryptionMode: true, settingsDbValue: true },
+        select: { accountId: true, version: true, createdAt: true, encryptionMode: true, settingsDbValue: true, settingsDbValueBytes: true },
     });
     const items: AccountEncryptionMigrateSettingsHistoryInventoryPage['items'] = [];
     // Reuse the containing migration's real transport budget, including page framing.
     let bytes = Buffer.byteLength(JSON.stringify({ items: [], nextBeforeVersion: Number.MAX_SAFE_INTEGER }), 'utf8');
     for (const row of rows) {
         if (items.length === ACCOUNT_ENCRYPTION_MIGRATE_TRANSITION_COLLECTION_PAGE_MAX_ITEMS) break;
-        if (row.encryptionMode !== account.encryptionMode || row.settingsDbValue === '') {
+        if (row.encryptionMode !== account.encryptionMode || (row.settingsDbValue === '' && row.settingsDbValueBytes == null)) {
             return { status: 'inventory_changed' };
         }
         let content: AccountSettingsStoredContentEnvelope | null;
@@ -112,7 +112,7 @@ export async function matchAccountSettingsEncryptionMigrationPostStateInTx(
     const replacements = new Map(params.history?.items.map(item => [item.version, item]));
     if (snapshots.length !== replacements.size || snapshots.some(snapshot => {
         const replacement = replacements.get(snapshot.version);
-        if (!replacement || snapshot.encryptionMode !== params.toMode || snapshot.settingsDbValue === ''
+        if (!replacement || snapshot.encryptionMode !== params.toMode || (snapshot.settingsDbValue === '' && snapshot.settingsDbValueBytes == null)
             || snapshot.contentKind !== (replacement.content?.t ?? 'empty')) return true;
         try { return !isDeepStrictEqual(accountSettingsSnapshotToContent(snapshot), replacement.content); }
         catch { return true; }
@@ -211,7 +211,7 @@ export async function migrateAccountSettingsEncryptionInTx(params: Readonly<{
         || replacements.size !== (params.history?.items.length ?? 0)) return { status: 'inventory_changed' };
     for (const snapshot of snapshots) {
         const replacement = replacements.get(snapshot.version);
-        if (!replacement || snapshot.encryptionMode !== params.fromMode || snapshot.settingsDbValue === '') {
+        if (!replacement || snapshot.encryptionMode !== params.fromMode || (snapshot.settingsDbValue === '' && snapshot.settingsDbValueBytes == null)) {
             return { status: 'inventory_changed' };
         }
         let content: AccountSettingsStoredContentEnvelope | null;
@@ -255,8 +255,8 @@ export async function migrateAccountSettingsEncryptionInTx(params: Readonly<{
             : replacement.content?.t === 'encrypted' ? replacement.content.c : null;
         const rewritten = await params.tx.accountSettingsSnapshot.updateMany({
             where: { id: snapshot.id, accountId: params.accountId, version: snapshot.version,
-                encryptionMode: snapshot.encryptionMode, settingsDbValue: snapshot.settingsDbValue },
-            data: { settingsDbValue, encryptionMode: params.toMode,
+                encryptionMode: snapshot.encryptionMode, settingsDbValue: snapshot.settingsDbValue, settingsDbValueBytes: snapshot.settingsDbValueBytes },
+            data: { ...encodeAccountSettingsSnapshotDbValue({ encryptionMode: params.toMode, settingsDbValue }), encryptionMode: params.toMode,
                 contentKind: replacement.content?.t ?? 'empty' },
         });
         // The caller aborts the containing Account transaction for any refusal.

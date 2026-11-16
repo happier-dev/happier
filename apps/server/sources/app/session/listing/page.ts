@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { conjoinSessionListWhereInputs } from "./query";
 import { createAccountRecipientEnvelopeReadinessReadScope } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import type { Prisma } from "@prisma/client";
@@ -189,8 +190,8 @@ async function findV2SessionListRowsWithSelect(params: Readonly<{
             orderBy,
             ...(page.skip === undefined ? {} : { skip: page.skip }),
             ...(page.take === undefined ? {} : { take: page.take }),
-            select,
-        }),
+            select: withSessionContentSelect(select),
+        }).then(decodeSessionStoredContent),
         isOwner: (row) => row.accountId === userId,
         readPublication: (row) => row,
     });
@@ -396,8 +397,8 @@ export async function resolveV2SessionListCursorForVisibleRows(params: ResolveV2
 
     const read = async (reader: Pick<Tx, "session">, visibilityWhere: Prisma.SessionWhereInput) => await reader.session.findFirst({
         where: conjoinSessionListWhereInputs(visibilityWhere, params.cursorRowWhere, { id: legacySessionId }),
-        select: { id: true, createdAt: true, meaningfulActivityAt: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT },
-    });
+        select: withSessionContentSelect({ id: true, createdAt: true, meaningfulActivityAt: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT }),
+    }).then(decodeSessionStoredContent);
     const row = params.rowAdmission
         ? (await findV2SessionListRows({
             userId: params.userId,
@@ -454,8 +455,8 @@ async function findV2SessionListRowsByEffectiveActivity(params: Readonly<{
                 orderBy: [...branch.orderBy],
                 ...(page.skip === undefined ? {} : { skip: page.skip }),
                 ...(page.take === undefined ? {} : { take: page.take }),
-                select: SESSION_LIST_ACTIVITY_SELECT,
-            }),
+                select: withSessionContentSelect(SESSION_LIST_ACTIVITY_SELECT),
+            }).then(decodeSessionStoredContent),
             isOwner: (row) => row.accountId === userId,
             readPublication: (row) => row,
         }))),
@@ -469,8 +470,8 @@ async function findV2SessionListRowsByEffectiveActivity(params: Readonly<{
     // merged page, instead of repeating the full projection in every branch.
     const rows = await reader.session.findMany({
         where: { id: { in: candidates.map(row => row.id) } },
-        select,
-    });
+        select: withSessionContentSelect(select),
+    }).then(decodeSessionStoredContent);
     const byId = new Map(rows.map(row => [row.id, row]));
     return candidates.map(candidate => {
         const row = byId.get(candidate.id);

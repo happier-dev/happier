@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import type { Machine, Prisma } from '@prisma/client';
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
@@ -64,9 +65,9 @@ export async function readManagedWakeTargetBindingsInTx(tx: Tx, targets: readonl
     const machines: WakeMachine[] = [];
     if (provider === 'postgres') machines.push(...await tx.$queryRawUnsafe<WakeMachine[]>(
         `SELECT m.*, jsonb_build_object('status', a."status") AS "account" FROM "Machine" m
-         JOIN "Account" a ON a."id" = m."accountId" WHERE m."id" = ANY($1::text[])`, machineIds));
+         JOIN "Account" a ON a."id" = m."accountId" WHERE m."id" = ANY($1::text[])`, machineIds).then(decodeMachineStoredContent));
     else for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: 2 })) {
-        machines.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, include: { account: { select: { status: true } } } }));
+        machines.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, include: { account: { select: { status: true } } } }).then(decodeMachineStoredContent));
     }
     const byMachine = new Map(machines.map(machine => [machine.id, machine]));
     const roles = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds,

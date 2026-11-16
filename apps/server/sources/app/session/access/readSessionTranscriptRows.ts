@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Tx } from '@/storage/inTx';
 import { buildSessionAccessProjectionSelect, resolveSessionAccessForRowsInTx } from './sessionAccess';
 import type { SessionAccessAuthentication } from './sessionAccessAuthentication';
@@ -9,8 +10,8 @@ export async function readSessionTranscriptRowsInTx(tx: Tx, input: Readonly<{
 }>) {
     const rows = await tx.session.findMany({
         where: { id: { in: [...input.sessionIds] } },
-        select: { ...buildSessionAccessProjectionSelect(input.accountId), latestTurnId: true, updatedAt: true },
-    });
+        select: withSessionContentSelect({ ...buildSessionAccessProjectionSelect(input.accountId), latestTurnId: true, updatedAt: true }),
+    }).then(decodeSessionStoredContent);
     const decisions = await resolveSessionAccessForRowsInTx(tx, {
         accountId: input.accountId, authentication: input.authentication, capability: 'readTranscript',
     }, rows);

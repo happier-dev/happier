@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from 'node:util';
 import { cancelRpcTarget } from './cancelRpcTarget';
@@ -1987,7 +1988,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         if (sessionActionOrigin || (externalActionExecution
                             ? !externalActionExecution.success || !verifiedExternalAction
                             : routing.target.phase === 'remove')) return null;
-                        const receiver = await db.machine.findUnique({ where: { id: machinePrefix } });
+                        const receiver = await db.machine.findUnique({ where: { id: machinePrefix } }).then(decodeMachineStoredContent);
                         if (!receiver?.installationId || classifyMachineAvailabilityState(receiver) !== 'available') return null;
                         const { kind: _kind, ...context } = writer;
                         return { context, receiverId: receiver.id, receiverInstallationId: receiver.installationId, accountId: receiver.accountId };

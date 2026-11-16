@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, encodeSessionStoredContent } from '@/storage/sessionMachineStoredContent';
 import type { UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { initializeSessionOwnerReadStateInTx } from "@/app/session/personal/readState";
 import type { Tx } from "@/storage/inTx";
@@ -43,7 +44,7 @@ export async function createLegacyLayout0SessionInTx(
     const createdAt = new Date();
     const createdByApiTokenId = await readSessionCreationApiTokenIdInTx(tx, params.accountId, params.sessionCreationAuthorization);
     const session = await tx.session.create({
-        data: {
+        data: encodeSessionStoredContent({
             accountId: params.accountId,
             createdByApiTokenId,
             tag: params.tag,
@@ -57,8 +58,8 @@ export async function createLegacyLayout0SessionInTx(
             ...(params.requestedStorageState
                 ? { currentStorageState: params.requestedStorageState }
                 : {}),
-        },
-    });
+        }),
+    }).then(decodeSessionStoredContent);
     // Layout-0 owners are recipients of their own Session key through the same
     // canonical tuple. A released legacy-credential Session supplies no
     // per-Session key and correctly writes none.

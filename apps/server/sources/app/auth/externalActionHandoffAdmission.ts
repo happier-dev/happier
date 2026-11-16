@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import type { ExternalActionExecutionAuthorizationBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { MachineAdmission, SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -45,11 +46,11 @@ export async function readAdmittedExternalActionMachineInTx(
     installationId: string | undefined,
     retained?: SocketRpcMachineAdmissionContextV1,
 ): Promise<Extract<MachineAdmission, { kind: 'admitted' }> | null> {
-    const machine = await reader.machine.findUnique({ where: { id: machineId }, select: {
+    const machine = await reader.machine.findUnique({ where: { id: machineId }, select: withMachineContentSelect({
         accountId: true, installationId: true, revokedAt: true, replacedByMachineId: true,
         metadata: true, daemonState: true, dataEncryptionKey: true,
         account: { select: { encryptionMode: true } },
-    } });
+    }) }).then(decodeMachineStoredContent);
     const mode = machine && resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
     if (!machine?.installationId || installationId !== undefined && machine.installationId !== installationId
         || classifyMachineAvailabilityState(machine) !== 'available'

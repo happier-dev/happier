@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
 
@@ -35,6 +36,6 @@ export async function loadSessionDeleteRecipients(
 
     return await tx.session.findFirst({
         where,
-        select: sessionDeleteTargetSelect,
-    });
+        select: withSessionContentSelect(sessionDeleteTargetSelect),
+    }).then(decodeSessionStoredContent);
 }

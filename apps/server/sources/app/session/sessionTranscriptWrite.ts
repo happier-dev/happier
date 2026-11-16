@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage, decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import { encodeSessionMessageContentForStorage, toPrismaSessionMessageStoredContent } from "@/storage/sessionMessageContent";
 import { UsageTimingBoundsV1Schema, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
@@ -336,12 +337,12 @@ export async function writeSessionTranscriptMessageInTx(
                     ? "hosted"
                     : { in: ["machine_only", "server_partial", "snapshot_complete"] },
             },
-            select: { tag: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT },
+            select: withSessionContentSelect({ tag: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT }),
             data: {
                 seq: { increment: 1 },
                 ...(params.recordsMeaningfulActivity ? { meaningfulActivityAt: createdAt } : {}),
             },
-        });
+        }).then(decodeSessionStoredContent);
     } catch (error) {
         if (!isPrismaErrorCode(error, "P2025")) throw error;
         return {

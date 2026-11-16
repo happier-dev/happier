@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { persistentMachineWhere } from "@/app/machines/machineSelection";
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
@@ -170,8 +171,8 @@ async function assertMachineAssignmentsCanBeWritten(params: {
     const readMachines = (tx: Tx) => tx.machine.findMany({
         where: { ...(recipe.kind !== 'available' ? { accountId: params.accountId } : {}),
             id: { in: params.machineIds }, ...persistentMachineWhere },
-        select: buildMachineAdmissionFactsSelect(params.accountId),
-    });
+        select: withMachineContentSelect(buildMachineAdmissionFactsSelect(params.accountId)),
+    }).then(decodeMachineStoredContent);
     const [rows, existingAssignments] = await Promise.all([
         readMachines(params.tx),
         params.tx.automationAssignment.findMany({

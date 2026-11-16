@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from "@prisma/client";
 import { isSessionPersonallyTrackedV1 } from '@happier-dev/protocol/sessions/personal/tracking';
 import { projectViewerReadStateV1, resolveSessionPersonalRelevanceV1 } from '@happier-dev/protocol/sessions';
@@ -317,8 +318,8 @@ export async function loadSessionViewerProjection(params: Readonly<{ accountId: 
         });
         const row = await tx.session.findFirst({
             where: { AND: [{ id: params.sessionId }, accessResolution.where] },
-            select: createSessionPersonalProjectionSelect(params.accountId),
-        });
+            select: withSessionContentSelect(createSessionPersonalProjectionSelect(params.accountId)),
+        }).then(decodeSessionStoredContent);
         if (!row) return null;
         const failureSequences = await loadSessionLatestFailureSequencesInTx(tx, [row]);
         const ruleReadStates = await loadSessionRuleReadStatesInTx(tx, {

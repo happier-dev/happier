@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { AccountSessionFollowV1Schema, OtherAccountFollowV1Schema, EXPLICIT_SESSION_UNFOLLOW_STATE_V1, projectSessionFollowFactsV1, normalizeAccountFollowNotificationChoiceV1, projectAccountFollowNotificationLevelV1, SessionAutoFollowPreferencesV1Schema, type AccountFollowRelationV1, type AccountSessionFollowV1, type OtherAccountFollowV1, type SessionAutoFollowPreferencesV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { SetSessionFollowRequestSchema, SetOtherAccountFollowRequestV1Schema, isOtherAccountFollowMutationSupportedV1,
     ReplaceSessionVoiceInclusionsRequestSchema, type SetSessionFollowRequest, type GetSessionFollowResponse } from '@happier-dev/protocol/sessions/follow/api';
@@ -854,7 +855,7 @@ export async function observePendingAccountVoiceFollowInTx(tx: Tx, input: Readon
         const selection = resolveAccountVoiceSelection(follow);
         if (selection === null) continue;
         if (follow.sessionId === input.voiceSessionId) continue;
-        const source = await tx.session.findUnique({ where: { id: follow.sessionId }, select: VOICE_SOURCE_SELECT });
+        const source = await tx.session.findUnique({ where: { id: follow.sessionId }, select: withSessionContentSelect(VOICE_SOURCE_SELECT) }).then(decodeSessionStoredContent);
         if (!source || source.archivedAt !== null) continue;
         if ((await resolveEffectiveSessionAccess(tx, {
             accountId: input.accountId,
@@ -913,7 +914,7 @@ export async function acknowledgeAccountVoiceFollowInTx(tx: Tx, input: Readonly<
         localInputId: input.acceptance.localInputId,
         userMessageSeq: input.acceptance.userMessageSeq,
     })) return { ok: false, rejection: 'provider_acceptance_unverified' };
-    const source = await tx.session.findUnique({ where: { id: input.sourceSessionId }, select: VOICE_SOURCE_SELECT });
+    const source = await tx.session.findUnique({ where: { id: input.sourceSessionId }, select: withSessionContentSelect(VOICE_SOURCE_SELECT) }).then(decodeSessionStoredContent);
     if (!source) return { ok: false, rejection: 'not_followed' };
     if (source.archivedAt !== null) return { ok: false, rejection: 'session_archived' };
     if ((await resolveEffectiveSessionAccess(tx, {

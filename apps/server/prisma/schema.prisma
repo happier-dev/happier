@@ -1031,6 +1031,7 @@ model AccountSettingsSnapshot {
     accountId       String
     version         Int
     settingsDbValue String?
+    settingsDbValueBytes Bytes?
     encryptionMode  String
     contentKind     String
     createdAt       DateTime @default(now())
@@ -1518,6 +1519,7 @@ model Session {
     responsibleAccount   Account?          @relation("SessionResponsibleAccount", fields: [responsibleAccountId], references: [id], onDelete: SetNull)
     encryptionMode    String              @default("e2ee")
     metadata          String
+    metadataBytes Bytes?
     metadataVersion   Int                 @default(0)
     // Clear non-content Usage timing. Null (including old writers) means unknown.
     usageTimingV1     Json?
@@ -1531,6 +1533,7 @@ model Session {
     /// False with a null key means not yet classified, including 0.2 rows: still a Project candidate.
     projectKeyNone    Boolean             @default(false)
     agentState        String?
+    agentStateBytes Bytes?
     agentStateVersion Int                 @default(0)
     seq               Int                 @default(0)
     /// Released compatibility storage only. Current viewer state is owned by AccountSessionReadState.
@@ -1899,6 +1902,7 @@ model SessionSystemRecord {
     permissionTurnId String?
     permissionRequestId String?
     content   Json
+    contentBytes Bytes?
     ownerKind String
     pluginId String?
     namespaceAddressKey Bytes
@@ -2625,8 +2629,10 @@ model Machine {
     accountId          String
     account            Account     @relation(fields: [accountId], references: [id])
     metadata           String // Encrypted - contains static machine info
+    metadataBytes Bytes?
     metadataVersion    Int         @default(0)
     daemonState        String? // Encrypted - contains dynamic daemon state
+    daemonStateBytes Bytes?
     daemonStateVersion Int         @default(0)
     dataEncryptionKey  Bytes?
     /// Creator-authenticated provenance for a Runner-scoped Machine content key.
@@ -3075,6 +3081,7 @@ model AutomationRun {
     sourceArtifactId           String?
     visibleTeamId              String?
     workflowCheckpointEnvelope String?
+    workflowCheckpointEnvelopeBytes Bytes?
     workflowCustodyState       WorkflowRunCustodyState?
     /// Null means no pending boundary Resume; a successful claim consumes the revision.
     workflowResumeRequestedRevision Int?
@@ -3116,6 +3123,7 @@ model AutomationRun {
     executionNativeCallId String?
     executionNativeSidechainId String?
     resultEnvelope     String?
+    resultEnvelopeBytes Bytes?
     replyContextEnvelope String?
     replyHandoffActionPluginId String?
     replyHandoffActionLocalId String?

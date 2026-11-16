@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { encodeSessionOwnerMetadataEnvelopeV1, SESSION_METADATA_LAYOUT_VERSION_V1, type SessionMetadataInactiveModelIntentOwnerPatchV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
@@ -232,7 +233,7 @@ export async function commitSessionAgentCurrentViewInTx(
 
     const current = await tx.session.findUnique({
         where: { id: params.sessionId },
-        select: {
+        select: withSessionContentSelect({
             archivedAt: true,
             metadataLayoutVersion: true,
             metadataVersion: true,
@@ -242,8 +243,8 @@ export async function commitSessionAgentCurrentViewInTx(
             agentStateVersion: true,
             agentState: true,
             latestTurnStatusObservedAt: true,
-        },
-    });
+        }),
+    }).then(decodeSessionStoredContent);
     if (!current) return { ok: false, error: "session-not-found" };
 
     // The exact-current-view retry check runs BEFORE the inactive and archive
@@ -319,7 +320,7 @@ export async function commitSessionAgentCurrentViewInTx(
         await writeTargetTeamCredentialBindingsInTx(tx, params);
         const patchedRow = await tx.session.findUnique({
             where: { id: params.sessionId },
-            select: {
+            select: withSessionContentSelect({
                 accountId: true,
                 metadata: true,
                 metadataVersion: true,
@@ -327,8 +328,8 @@ export async function commitSessionAgentCurrentViewInTx(
                 ownerMetadata: true,
                 agentState: true,
                 agentStateVersion: true,
-            },
-        });
+            }),
+        }).then(decodeSessionStoredContent);
         return transactionResult<CommitSessionAgentCurrentViewResult>(() => ({
             ok: true,
             currentView: {

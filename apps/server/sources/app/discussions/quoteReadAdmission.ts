@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import { DiscussionAnchorV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
@@ -72,10 +73,10 @@ export async function admitDiscussionQuoteSourcesInTx(tx: Tx, input: Readonly<{
     const access = await resolveEffectiveSessionAccessForSessionsInTx(tx, { accountId: input.actorAccountId, sessionIds, authentication: input.authentication });
     const readySessions = new Map<string, 'plain' | 'encrypted'>();
     for (const ids of portableQueryChunks({ values: sessionIds, bindingsPerValue: 1, fixedBindings: 2 })) {
-        const rows = await tx.session.findMany({ where: { id: { in: [...ids] } }, select: {
+        const rows = await tx.session.findMany({ where: { id: { in: [...ids] } }, select: withSessionContentSelect({
             id: true, ...createSessionDataKeyEnvelopeViewerSelect({ viewerAccountId: input.actorAccountId }),
             accountId: true, account: { select: RECIPIENT_READINESS_SELECT },
-        } });
+        }) }).then(decodeSessionStoredContent);
         for (const row of rows) if (access.get(row.id)?.capabilities.readTranscript
             && resolveViewerSessionContentReadAvailability(row, input.actorAccountId)) readySessions.set(row.id, row.encryptionMode === 'plain' ? 'plain' : 'encrypted');
     }

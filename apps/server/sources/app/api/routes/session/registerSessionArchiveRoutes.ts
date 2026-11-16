@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { z } from "zod/mini";
 import { SessionArchiveHttpBodyV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 
@@ -74,7 +75,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             }))) return { ok: false as const, error: "unavailable" as const };
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
-                select: {
+                select: withSessionContentSelect({
                     id: true,
                     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                     pendingCount: true,
@@ -83,8 +84,8 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                     pendingUserActionRequestCount: true,
                     active: true,
                     archivedAt: true,
-                },
-            });
+                }),
+            }).then(decodeSessionStoredContent);
             if (!session) {
                 return { ok: false as const, error: "not-found" as const };
             }
@@ -193,7 +194,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
         const res = await inTx(async (tx) => {
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
-                select: {
+                select: withSessionContentSelect({
                     id: true,
                     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                     pendingCount: true,
@@ -202,8 +203,8 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                     pendingUserActionRequestCount: true,
                     active: true,
                     archivedAt: true,
-                },
-            });
+                }),
+            }).then(decodeSessionStoredContent);
             if (!session) {
                 return { ok: false as const, error: "not-found" as const };
             }

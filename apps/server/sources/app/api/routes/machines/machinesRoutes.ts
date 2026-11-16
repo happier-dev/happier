@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { resolveInstallationIdentityUpdate, updateMachineInstallationIdentityInTx } from "@/app/machines/installationIdentityUpdate";
 import { Fastify } from "../../types";
 import { persistentMachineWhere } from '@/app/machines/machineSelection';
@@ -294,7 +295,7 @@ export function machinesRoutes(app: Fastify) {
                 accountId: userId,
                 id,
             },
-        });
+        }).then(decodeMachineStoredContent);
         const proposedDataEncryptionKey = machine && dataEncryptionKey === undefined
             ? machine.dataEncryptionKey
             : dataEncryptionKey;
@@ -568,7 +569,7 @@ export function machinesRoutes(app: Fastify) {
                             accountId: userId,
                             id,
                         },
-                    });
+                    }).then(decodeMachineStoredContent);
                     if (!current) return null;
                     if (current.revokedAt) return { error: 'machine_revoked' as const };
 
@@ -740,7 +741,7 @@ export function machinesRoutes(app: Fastify) {
                 // Concurrency safety: multiple clients may race to create the same machine (e.g. daemon + session spawns).
                 // If we lost the race, fetch the winner row and return it instead of surfacing a 500.
                 if (isPrismaErrorCode(e, 'P2002')) {
-                    const existingSameAccount = await db.machine.findFirst({ where: { accountId: userId, id } });
+                    const existingSameAccount = await db.machine.findFirst({ where: { accountId: userId, id } }).then(decodeMachineStoredContent);
                     if (existingSameAccount) {
                         if (existingSameAccount.revokedAt) {
                             return reply.code(410).send({ error: 'machine_revoked' });
@@ -761,7 +762,7 @@ export function machinesRoutes(app: Fastify) {
                                 rejoinedMachine = await inTx(async tx => {
                                     await acquireMachineRegistrationAccountsInTx(tx, { accountId: userId, machineId: id, managedEnrollment });
                                     await requireManagedMachineRegistrationInTx(tx, { accountId: userId, machineId: id, enrollment: managedEnrollment });
-                                    const current = await tx.machine.findUnique({ where: { accountId_id: { accountId: userId, id } } });
+                                    const current = await tx.machine.findUnique({ where: { accountId_id: { accountId: userId, id } } }).then(decodeMachineStoredContent);
                                     if (!current || current.revokedAt) throw new ManagedMachineError("enrollment_retired");
                                     let winningMachine = current;
                                     const identityUpdate = resolveInstallationIdentityUpdate(current, verifiedInstallationIdentity);
@@ -835,7 +836,7 @@ export function machinesRoutes(app: Fastify) {
                     accountId: userId,
                     id,
                 },
-            });
+            }).then(decodeMachineStoredContent);
             if (!machine) return { kind: 'not_found' as const };
             if (
                 isPlainMachineDataKeyMarker(machine.dataEncryptionKey)

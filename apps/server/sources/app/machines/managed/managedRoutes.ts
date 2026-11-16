@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
 import { ManagedControllerResizeReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { reportManagedResize } from './managedMutations';
@@ -137,7 +138,7 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
             && acceptedSource.homeId === row.homeId && acceptedSource.managedId === row.id && acceptedSource.enrolledMachineId === row.enrolledMachineId
             && carrier.payload.machineId === acceptedSource.controller?.machineId && carrier.payload.installationId === acceptedSource.controller?.installationId
             && binding.expectedIntentRevision === acceptedSource.expectedIntentRevision && sameManagedInput(binding.controller, acceptedSource.controller);
-        const controller = await tx.machine.findUnique({ where: { id: carrier.payload.machineId }, include: { managedResource: { select: { id: true } } } });
+        const controller = await tx.machine.findUnique({ where: { id: carrier.payload.machineId }, include: { managedResource: { select: { id: true } } } }).then(decodeMachineStoredContent);
         const accountExecutor = row.controllerMachineId === null
             && await resolveSignedManagedAccountExecutorInTx(tx, controller, { custodianAccountId: row.custodianAccountId,
                 managedId: row.id, enrolledMachineId: row.enrolledMachineId }) !== null
@@ -220,7 +221,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         const census = await inReadSnapshot(async tx => {
             await requireManagedControllerInTx(tx, { homeId, controller, custodianAccountId: request.userId });
             const current = await tx.machine.findUniqueOrThrow({ where: { id: controller.machineId },
-                include: { managedResource: { select: { id: true } } } });
+                include: { managedResource: { select: { id: true } } } }).then(decodeMachineStoredContent);
             if (!current.installationPublicKey || !verifyMachineInstallationProof({ payload: { version: 1, machineId: controller.machineId,
                 installationId: controller.installationId, accountId: request.userId, managedPolicyCensus: { homeId } }, proof,
                 publicKey: current.installationPublicKey })) throw new ManagedMachineError('permission_denied');

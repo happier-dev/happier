@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, encodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { removeAutomationMachineAssignmentsTx } from "@/app/automations/automationMachineAssignmentRemoval";
 import { type MachineKind, isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
 import { isPlainMachineDataKeyMarker, machineStoredContentMatchesAccountMode } from "@happier-dev/protocol/machines/machineStoredContent";
@@ -115,7 +116,7 @@ export async function createMachineWithInstallationIdentityInTx(
     }
 
     const machine = await tx.machine.create({
-        data: {
+        data: encodeMachineStoredContent({
             id: params.machineId,
             kind: params.kind,
             accountId: params.accountId,
@@ -142,8 +143,8 @@ export async function createMachineWithInstallationIdentityInTx(
                     : params.contentPublicKeyFingerprint,
             }),
             active: false,
-        },
-    });
+        }),
+    }).then(decodeMachineStoredContent);
 
     const machineReplacement = isPersistentMachine(machine) && params.installationIdentity?.replacesMachineId
         ? await applyVerifiedMachineRegistrationReplacement({
@@ -212,7 +213,7 @@ export async function revokeMachineInTx(
 ): Promise<RevokeMachineInTxResult> {
     const machine = await tx.machine.findFirst({
         where: { accountId: params.accountId, id: params.machineId },
-    });
+    }).then(decodeMachineStoredContent);
     if (!machine) return { ok: false, reason: "machine_not_found" };
 
     const revokedAt = machine.revokedAt ?? new Date();
@@ -239,7 +240,7 @@ export async function revokeMachineInTx(
                     },
                 },
                 data: { active: false, revokedAt },
-            });
+            }).then(decodeMachineStoredContent);
             const deleted = await fencedTx.accessKey.deleteMany({
                 where: {
                     machineId: params.machineId,

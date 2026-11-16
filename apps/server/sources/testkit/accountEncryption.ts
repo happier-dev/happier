@@ -187,7 +187,7 @@ export async function exerciseSettingsHistoryEncryptionMigrationContract(transpo
             if (!mixedContent || mixedContent.t !== "encrypted") throw new Error("History fixture did not seal");
             for (const damage of [{ encryptionMode: "plain", settingsDbValue: "corrupt-history-fixture" },
                 { encryptionMode: "e2ee", settingsDbValue: mixedContent.c }]) {
-                await db.accountSettingsSnapshot.update({ where: { id: first.id }, data: damage });
+                await db.accountSettingsSnapshot.update({ where: { id: first.id }, data: { ...damage, settingsDbValueBytes: null } });
                 const before = await readState();
                 const refusedInventory = await transport.request(account.id, { method: "GET", url: "/v1/account/encryption/migrate/settings-history/inventory" });
                 expect(refusedInventory.statusCode).toBe(400);
@@ -198,7 +198,7 @@ export async function exerciseSettingsHistoryEncryptionMigrationContract(transpo
                 expect(JSON.stringify(refused.json()) === JSON.stringify({ error: "invalid-params", reason: "migration_inventory_changed" })).toBe(true);
                 expect(await readState() === before).toBe(true);
                 await db.accountSettingsSnapshot.update({ where: { id: first.id }, data: {
-                    encryptionMode: first.encryptionMode, settingsDbValue: first.settingsDbValue,
+                    encryptionMode: first.encryptionMode, settingsDbValue: first.settingsDbValue, settingsDbValueBytes: first.settingsDbValueBytes,
                 } });
             }
         }

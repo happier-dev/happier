@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage, decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import { type Fastify } from "../../types";
 import { z } from "zod/mini";
@@ -60,7 +61,7 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
             const header = request.headers[PUBLIC_SHARE_MESSAGES_ACCESS_TOKEN_HEADER];
             if (!validatePublicShareMessagesAccessToken({ secret: requirePublicShareAccessGrantSecret(), token: typeof header === 'string' ? header : undefined,
                 publicShareId: share.id, sessionId: share.sessionId, tokenHashHex: hash.toString('hex') })) return { type: 'missing' as const };
-            const session = await tx.session.findUnique({ where: { id: share.sessionId }, select: { encryptionMode: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT } });
+            const session = await tx.session.findUnique({ where: { id: share.sessionId }, select: withSessionContentSelect({ encryptionMode: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT }) }).then(decodeSessionStoredContent);
             if (!session || !isSessionTranscriptShareable(session) || (session.encryptionMode !== 'plain' && session.encryptionMode !== 'e2ee')) return { type: 'missing' as const };
             const message = await tx.sessionMessage.findFirst({ where: buildShareableSessionMessagePublicationWhere({
                 where: { sessionId: share.sessionId, id: request.params.messageId, sidechainId: null }, publication: session,
@@ -166,10 +167,10 @@ export function registerStoredContentPublicShareRoutes(app: Fastify): void {
                 content = { kind: "artifact" as const, header: Buffer.from(opened.header).toString("base64"), body: Buffer.from(opened.body).toString("base64"), headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion };
                 if (artifact.currentBlobId) artifactBlob = { actorAccountId: artifact.accountId, artifactId: artifact.id, blobId: artifact.currentBlobId };
             } else if (share.sessionId && !share.artifactId) {
-                const session = await tx.session.findUnique({ where: { id: share.sessionId }, select: {
+                const session = await tx.session.findUnique({ where: { id: share.sessionId }, select: withSessionContentSelect({
                     displayProjectionV1: true,
                     encryptionMode: true, metadata: true, metadataVersion: true, metadataLayoutVersion: true, ownerMetadata: true, agentState: true, agentStateVersion: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-                } });
+                }) }).then(decodeSessionStoredContent);
                 if (!session || !isSessionTranscriptShareable(session) || (session.encryptionMode !== "plain" && session.encryptionMode !== "e2ee")) return { type: "missing" as const };
                 encryptionMode = session.encryptionMode;
                 let metadata;

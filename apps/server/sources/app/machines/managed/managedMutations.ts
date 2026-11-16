@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { isStoredOpaquePresetMachine, projectManagedMachineFull, projectManagedMachineOpaque } from './managedMachineProjection';
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
 import { requireManagedCreationAccessInTx } from './managedRead';
@@ -111,7 +112,7 @@ export async function requireManagedPolicyPurposeInTx(tx: Tx, row: StoredManaged
     const evidence = purpose.evidence;
     if (!evidence) throw new ManagedMachineError('permission_denied');
     const { context, method, managedTarget, decision, proof } = evidence;
-    const guest = await tx.machine.findUnique({ where: { id: context.machineId } });
+    const guest = await tx.machine.findUnique({ where: { id: context.machineId } }).then(decodeMachineStoredContent);
     const enrollmentAccountId = readManagedEnrollmentAccountId(row);
     if (context.custodianAccountId !== enrollmentAccountId || context.actorAccountId !== row.custodianAccountId
         || row.enrolledMachineId !== context.machineId || context.role !== 'manage'
@@ -922,14 +923,14 @@ export async function requireManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollm
 
 export async function linkManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollmentCorrelationV1, accountId: string, machineId: string): Promise<void> {
     const row = await requireManagedMachineRegistrationInTx(tx, { accountId, machineId, enrollment: input });
-    const machine = await tx.machine.findUnique({ where: { id: machineId } });
+    const machine = await tx.machine.findUnique({ where: { id: machineId } }).then(decodeMachineStoredContent);
     if (!machine || machine.accountId !== readManagedEnrollmentAccountId(row) || classifyMachineAvailabilityState(machine) !== "available") throw new ManagedMachineError("enrollment_retired");
     if (machine.id === row.controllerMachineId || machine.installationId === row.controllerInstallationId) throw new ManagedMachineError("resource_mismatch");
     if (row.enrolledMachineId && row.enrolledMachineId !== machineId) throw new ManagedMachineError("resource_mismatch");
     const admitted = readManagedAdmissionState(row.admittedInput);
     const { replacementEnrollment, ...retainedAdmission } = admitted;
     if (replacementEnrollment && replacementEnrollment.machineId !== machineId) {
-        const previous = await tx.machine.findUnique({ where: { id: replacementEnrollment.machineId } });
+        const previous = await tx.machine.findUnique({ where: { id: replacementEnrollment.machineId } }).then(decodeMachineStoredContent);
         if (!previous || previous.accountId !== readManagedEnrollmentAccountId(row)) throw new ManagedMachineError('resource_mismatch');
         await applyMachineReplacement({ tx, accountId, oldMachineId: previous.id,
             replacementMachineId: machineId, reason: 'managed_native_rebuild', source: 'automatic',

@@ -37,6 +37,8 @@ import {
 } from "./accountSettingsHistoryConfig";
 import {
     resolveAccountSettingsSnapshotContentKind,
+    encodeAccountSettingsSnapshotDbValue,
+    readAccountSettingsSnapshotDbValue,
     accountSettingsSnapshotToContent,
     type AccountSettingsSnapshotEncryptionMode,
 } from "./accountSettingsHistoryContent";
@@ -77,7 +79,7 @@ export async function mutateAccountSettingsHistorySnapshotInTx(input: Readonly<{
     });
     if (!snapshot) return { status: "not_found" };
     const where = { accountId: input.accountId, version: input.version,
-        encryptionMode: snapshot.encryptionMode, settingsDbValue: snapshot.settingsDbValue };
+        encryptionMode: snapshot.encryptionMode, settingsDbValue: snapshot.settingsDbValue, settingsDbValueBytes: snapshot.settingsDbValueBytes };
     if (mutation.operation.kind === "purge") {
         const deleted = await input.tx.accountSettingsSnapshot.deleteMany({ where });
         return { status: deleted.count === 1 ? "applied" : "conflict" };
@@ -257,7 +259,7 @@ export async function mutateAccountSettingsHistorySnapshotInTx(input: Readonly<{
     const settingsDbValue = next?.t === "plain" ? storePlainAccountSettingsDbValue({ accountId: input.accountId, content: next })
         : next?.t === "encrypted" ? next.c : null;
     const updated = await input.tx.accountSettingsSnapshot.updateMany({ where, data: {
-        settingsDbValue, contentKind: resolveAccountSettingsSnapshotContentKind({ encryptionMode: snapshot.encryptionMode, settingsDbValue }),
+        ...encodeAccountSettingsSnapshotDbValue({ encryptionMode: snapshot.encryptionMode, settingsDbValue }), contentKind: resolveAccountSettingsSnapshotContentKind({ encryptionMode: snapshot.encryptionMode, settingsDbValue }),
     } });
     return { status: updated.count === 1 ? "applied" : "conflict" };
 }
@@ -291,7 +293,7 @@ async function ensureAccountSettingsSnapshot(
     const data = {
         accountId: snapshot.accountId,
         version: snapshot.version,
-        settingsDbValue: snapshot.settingsDbValue,
+        ...encodeAccountSettingsSnapshotDbValue(snapshot),
         encryptionMode: snapshot.encryptionMode,
         contentKind: resolveAccountSettingsSnapshotContentKind(snapshot),
     };
@@ -301,8 +303,8 @@ async function ensureAccountSettingsSnapshot(
         // SQLite's Prisma delegate does not support createMany.skipDuplicates.
         await tx.$executeRaw`
             INSERT INTO "AccountSettingsSnapshot"
-                ("id", "accountId", "version", "settingsDbValue", "encryptionMode", "contentKind")
-            VALUES (${randomUUID()}, ${data.accountId}, ${data.version}, ${data.settingsDbValue}, ${data.encryptionMode}, ${data.contentKind})
+                ("id", "accountId", "version", "settingsDbValue", "settingsDbValueBytes", "encryptionMode", "contentKind")
+            VALUES (${randomUUID()}, ${data.accountId}, ${data.version}, ${data.settingsDbValue}, ${data.settingsDbValueBytes}, ${data.encryptionMode}, ${data.contentKind})
             ON CONFLICT ("accountId", "version") DO NOTHING
         `;
         return;
@@ -326,6 +328,7 @@ async function pruneAccountSettingsSnapshots(
         select: {
             id: true,
             settingsDbValue: true,
+            settingsDbValueBytes: true,
         },
     });
     const stale: string[] = [];
@@ -333,7 +336,7 @@ async function pruneAccountSettingsSnapshots(
     let retainedBytes = 0;
     let pruningOlderSnapshots = false;
     for (const snapshot of snapshots) {
-        const snapshotBytes = Buffer.byteLength(snapshot.settingsDbValue ?? "", "utf8");
+        const snapshotBytes = Buffer.byteLength(readAccountSettingsSnapshotDbValue(snapshot) ?? "", "utf8");
         if (
             // Snapshots are newest first: once one cannot stay, retaining an older
             // row would create a hole instead of one contiguous newest suffix.

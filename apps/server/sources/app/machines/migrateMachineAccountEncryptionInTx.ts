@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { machineStoredContentMatchesAccountMode } from '@happier-dev/protocol/machines/machineStoredContent';
 import { type AccountEncryptionMigrateMachinesDirective } from '@happier-dev/protocol/account/encryptionMigrate';
 
@@ -42,7 +43,7 @@ async function readMachineAccountEncryptionMigrationRowsInTx(
 ): Promise<readonly MachineAccountEncryptionMigrationRow[]> {
     return await tx.machine.findMany({
         where: { accountId },
-        select: {
+        select: withMachineContentSelect({
             id: true,
             kind: true,
             metadata: true,
@@ -51,8 +52,8 @@ async function readMachineAccountEncryptionMigrationRowsInTx(
             daemonStateVersion: true,
             dataEncryptionKey: true,
             contentPublicKeyFingerprint: true,
-        },
-    });
+        }),
+    }).then(decodeMachineStoredContent);
 }
 
 function bytesEqual(

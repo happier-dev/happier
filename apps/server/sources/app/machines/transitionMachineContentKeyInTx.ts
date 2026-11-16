@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import * as privacyKit from "privacy-kit";
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -27,7 +28,7 @@ export async function readMachineContentKeySnapshotInTx(params: Readonly<{
     machineId: string;
 }>): Promise<ReturnType<typeof serializeMachineRow> | null> {
     const machine = await params.tx.machine.findUnique({ where: { id: params.machineId },
-        include: { managedResource: true } });
+        include: { managedResource: true } }).then(decodeMachineStoredContent);
     if (!machine || machine.accountId !== params.accountId || machine.kind !== "persistent"
         || classifyMachineAvailabilityState(machine) !== 'available') return null;
     const account = await params.tx.account.findUnique({ where: { id: params.accountId }, select: {
@@ -49,7 +50,7 @@ export async function transitionMachineContentKeyInTx(params: Readonly<{
     const { tx, accountId } = params;
     const input = MachineContentKeyTransitionInputV1Schema.parse(params.input);
     await acquireMachineAccessPublicationLocksInTx(tx, input.machineId);
-    const machine = await tx.machine.findUnique({ where: { id: input.machineId } });
+    const machine = await tx.machine.findUnique({ where: { id: input.machineId } }).then(decodeMachineStoredContent);
     if (!machine || machine.accountId !== accountId) return { kind: "refused", code: "forbidden" };
     if (machine.kind !== "persistent" || classifyMachineAvailabilityState(machine) !== 'available') {
         return { kind: "refused", code: "machine_unavailable" };
@@ -96,14 +97,14 @@ export async function transitionMachineContentKeyInTx(params: Readonly<{
         currentness: { installationId: machine.installationId, revokedAt: null, replacedByMachineId: null },
     });
     if (!applied) {
-        const fresh = await tx.machine.findUnique({ where: { id: machine.id } });
+        const fresh = await tx.machine.findUnique({ where: { id: machine.id } }).then(decodeMachineStoredContent);
         if (!fresh || fresh.accountId !== accountId || classifyMachineAvailabilityState(fresh) !== 'available') {
             return { kind: "refused", code: "machine_unavailable" };
         }
         return { kind: "conflict", current: serializeMachineKeyBasis(fresh) };
     }
     const committed = await tx.machine.findUniqueOrThrow({ where: { id: machine.id },
-        include: { managedResource: true } });
+        include: { managedResource: true } }).then(decodeMachineStoredContent);
     const devcontainerChild = await readMachineDevcontainerChildInTx(tx, machine.id);
     // Recipient tuples are bound to the retired owner wrapping. Wake their
     // existing row readers without publishing the new owner-only wrapping as a

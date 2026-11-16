@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, encodeSessionStoredContent, sessionStoredContentWhere, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/teamCredentialUsageCounters';
 import { UsageSessionTimingV1Schema, UsageTimingBoundsV1Schema, type UsageTimingBoundsV1, type UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
@@ -223,7 +224,7 @@ async function readAccountEncryptionMigrationSessionRows(
             ],
         },
         orderBy: { id: "asc" },
-        select: {
+        select: withSessionContentSelect({
             id: true,
             accountId: true,
             encryptionMode: true,
@@ -236,8 +237,8 @@ async function readAccountEncryptionMigrationSessionRows(
             agentState: true,
             agentStateVersion: true,
             archivedAt: true,
-        },
-    });
+        }),
+    }).then(decodeSessionStoredContent);
 }
 
 function classifySessionAccountEncryptionMigrationInventory(
@@ -842,7 +843,7 @@ async function readSessionMutationContextInTx(
     // One Session read (after the Session lock) serves the context, the access decision and the
     // current recipients: the access projection already carries the recipient census's Session facts.
     const row = await tx.session.findUnique({ where: { id: params.sessionId },
-        select: { ...buildSessionAccessProjectionSelect(params.actorUserId), ...contextSelect } });
+        select: withSessionContentSelect({ ...buildSessionAccessProjectionSelect(params.actorUserId), ...contextSelect }) }).then(decodeSessionStoredContent);
     if (!row) return { ok: false, error: "session-not-found" };
     const session = pickSelectedFields(row, contextSelect);
     const admitted: SessionCapabilityAssertion = params.kind === "owner" && !params.admittedAccess
@@ -3156,13 +3157,13 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
 
         const session = await tx.session.findUnique({
             where: { id: params.turnMutation.sessionId },
-            select: {
+            select: withSessionContentSelect({
                 ...selectSessionActivityBadgeInputs(),
                 agentStateVersion: true,
                 latestTurnId: true,
                 latestTurnStatusObservedAt: true,
-            },
-        });
+            }),
+        }).then(decodeSessionStoredContent);
         if (!session) {
             return { ok: false, error: "session-not-found" };
         }
@@ -4383,7 +4384,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
         };
         const current = await tx.session.findUnique({
             where: { id: params.sessionId },
-            select: {
+            select: withSessionContentSelect({
                 active: true,
                 latestTurnId: true,
                 latestTurnStatus: true,
@@ -4396,8 +4397,8 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
                 ownerMetadata: true,
                 agentStateVersion: true,
                 agentState: true,
-            },
-        });
+            }),
+        }).then(decodeSessionStoredContent);
         if (!current) return { ok: false, error: "session-not-found" };
         if (isExactOwnerMigrationRetry(current, params, target)) {
             return toOwnerMigrationSuccess(
@@ -4426,13 +4427,12 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
                 id: params.sessionId,
                 metadataLayoutVersion: 0,
                 metadataVersion: params.source.metadata.version,
-                metadata: params.source.metadata.ciphertext,
                 ownerMetadata: null,
                 agentStateVersion:
                     params.source.agentState.version,
-                agentState: params.source.agentState.ciphertext,
+                AND: [sessionStoredContentWhere({ metadata: params.source.metadata.ciphertext, agentState: params.source.agentState.ciphertext })],
             },
-            data: {
+            data: encodeSessionStoredContent({
                 metadataLayoutVersion:
                     SESSION_METADATA_LAYOUT_VERSION_V1,
                 usageTimingV1: params.usageTimingV1 ?? { v: 1, metadata: null, agentState: null },
@@ -4444,12 +4444,12 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
                 agentStateVersion: nextAgentStateVersion,
                 ...pendingSummary,
                 ...sharedConfirmationSummary,
-            },
+            }),
         });
         if (updated.count !== 1) {
             const fresh = await tx.session.findUnique({
                 where: { id: params.sessionId },
-                select: {
+                select: withSessionContentSelect({
                     active: true,
                     displayProjectionV1: true,
                     metadataLayoutVersion: true,
@@ -4459,8 +4459,8 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
                     ownerMetadata: true,
                     agentStateVersion: true,
                     agentState: true,
-                },
-            });
+                }),
+            }).then(decodeSessionStoredContent);
             if (!fresh) {
                 return {
                     ok: false,
@@ -4563,7 +4563,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
 
     const current = await tx.session.findUnique({
         where: { id: params.sessionId },
-        select: {
+        select: withSessionContentSelect({
             active: true,
             latestTurnId: true,
             latestTurnStatus: true,
@@ -4579,8 +4579,8 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
             ownerMetadata: true,
             agentStateVersion: true,
             agentState: true,
-        },
-    });
+        }),
+    }).then(decodeSessionStoredContent);
     if (!current) return { ok: false, error: "session-not-found" };
 
     const requiresInactiveSession =
@@ -4725,7 +4725,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
                     ownerMetadata: current.ownerMetadata,
                 }),
         },
-        data: updateData,
+        data: encodeSessionStoredContent(updateData),
     });
 
     const nextTuple: StoredSessionMetadataEnvelopeTuple = {
@@ -4747,7 +4747,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
     if (count === 0) {
         const fresh = await tx.session.findUnique({
             where: { id: params.sessionId },
-            select: {
+            select: withSessionContentSelect({
                 active: true,
                 archivedAt: true,
                 projectKey: true,
@@ -4760,8 +4760,8 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
                 ownerMetadata: true,
                 agentStateVersion: true,
                 agentState: true,
-            },
-        });
+            }),
+        }).then(decodeSessionStoredContent);
         if (!fresh) return { ok: false, error: "session-not-found" };
         if (
             fresh.metadataLayoutVersion

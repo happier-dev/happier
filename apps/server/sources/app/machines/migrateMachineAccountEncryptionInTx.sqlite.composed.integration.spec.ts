@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import tweetnacl from "tweetnacl";
@@ -121,7 +122,7 @@ describe("migrateMachineAccountEncryptionInTx (SQLite integration)", () => {
         expect(await migrate(items)).toEqual({ status: "applied" });
         expect((await db.account.findUniqueOrThrow({ where: { id: recipient.id } })).seq).toBeGreaterThan(recipientCursor);
         for (const item of items) {
-            const encrypted = await db.machine.findUniqueOrThrow({ where: { id: item.machineId } });
+            const encrypted = await db.machine.findUniqueOrThrow({ where: { id: item.machineId } }).then(decodeMachineStoredContent);
             expect(decryptWithDataKey(Buffer.from(encrypted.metadata, "base64"), key)).toEqual(metadata);
         }
         expect(await inTx((tx) => migrateMachineAccountEncryptionInTx({

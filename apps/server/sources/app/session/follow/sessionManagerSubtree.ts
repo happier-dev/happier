@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Tx } from '@/storage/inTx';
 import { hasSessionFollowSessionSource } from './sessionFollowSourceIdentity';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
@@ -50,8 +51,8 @@ export async function readSessionManagedSubtreeSessionIdsInTx(tx: Tx, input: Rea
     });
     const root = await tx.session.findFirst({
         where: { AND: [access.where, { id: input.rootSessionId }] },
-        select: { id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT },
-    });
+        select: withSessionContentSelect({ id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT }),
+    }).then(decodeSessionStoredContent);
     if (!root || (root.accountId !== input.accountId && !isSessionTranscriptShareable(root))) return [];
 
     const selected = input.sessionIds === undefined ? undefined : new Set(input.sessionIds);
@@ -97,8 +98,8 @@ export async function readSessionManagedSubtreeSessionIdsInTx(tx: Tx, input: Rea
     // canonical access owner also restricts Runner credentials to current_session.
     const rows = await tx.session.findMany({
         where: { AND: [access.where, { id: { in: selected ? [...selected].filter(id => reachable.has(id)) : [...reachable] } }] },
-        select: { id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT },
-    });
+        select: withSessionContentSelect({ id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT }),
+    }).then(decodeSessionStoredContent);
     return rows.filter((row) => row.accountId === input.accountId || isSessionTranscriptShareable(row))
         .map((row) => row.id);
 }

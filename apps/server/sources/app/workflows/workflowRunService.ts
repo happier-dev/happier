@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { canObserveLostWorkflowActionOperationV1 } from '@happier-dev/protocol/workflows';
 import { decodeKeysetCursorV1, encodeKeysetCursorV1, readKeysetCursorIdV1, readKeysetCursorTextV1 } from '@happier-dev/protocol/pagination/keysetCursorV1';
 import { measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '@happier-dev/protocol/actions/externalActionLimits';
@@ -38,6 +39,7 @@ import { applyAutomationRunTerminalEffectsTx, failAutomationRunWithoutContentInT
 import { tryClaimAutomationRunInTx } from '@/app/automations/automationRunClaim';
 import { readRetainedAutomationRunExecutionInputForWorkflowAdmission, validateAutomationStoredContentEnvelopeOuterForMode } from "@/app/automations/automationStoredContentRead";
 import { db } from "@/storage/db";
+import { decodeStoredText, encodeStoredText } from "@/storage/storedContent";
 import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv, isPrismaErrorCode, prismaRuntime } from "@/storage/prisma";
 import { timeWebLatencyPhase } from '@/utils/webLatencyTrace';
@@ -128,8 +130,10 @@ const workflowRunListSelect = {
 const workflowRunSelect = {
     ...workflowRunListSelect,
     workflowCheckpointEnvelope: true,
+    workflowCheckpointEnvelopeBytes: true,
     executionInputEnvelope: true,
     resultEnvelope: true,
+    resultEnvelopeBytes: true,
     scheduledAt: true,
     startedAt: true,
     finishedAt: true,
@@ -438,7 +442,7 @@ export async function admitWorkflowRunTx(tx: Tx, params: AdmitWorkflowRunInput):
         assertWorkflowStoredEnvelopeOuterForMode({ raw: params.acceptedEnvelope, mode, binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: params.runId } });
         assertWorkflowDisplaySummaryEnvelopeForMode(params, mode);
         const machine = await tx.machine.findUnique({ where: { id: params.machineId },
-            select: buildMachineAdmissionFactsSelect(params.accountId) });
+            select: withMachineContentSelect(buildMachineAdmissionFactsSelect(params.accountId)) }).then(decodeMachineStoredContent);
         const admission = await resolveMachineAdmissionFromFactsInTx(tx, machine,
             { actorAccountId: params.accountId, machineId: params.machineId, purpose: 'workflow' });
         if (admission.kind !== 'admitted' || admission.availability !== 'available') throw new WorkflowRunServiceError("target_unavailable");
@@ -733,7 +737,7 @@ export async function initializeWorkflowRunExecution(params: Readonly<{
             if (roots.length === 1
                 && roots[0]!.id === params.rootInvocation.id
                 && roots[0]!.contentEnvelope === params.rootInvocation.contentEnvelope
-                && existing.workflowCheckpointEnvelope === params.checkpointEnvelope) {
+                && decodeStoredText(existing.workflowCheckpointEnvelope, existing.workflowCheckpointEnvelopeBytes) === params.checkpointEnvelope) {
                 return { run: await projectRunInTx(tx, existing as WorkflowRunProjectionRow, params.accountId), initialization: "existing" as const };
             }
             throw new WorkflowRunServiceError("currentness_conflict");
@@ -744,9 +748,10 @@ export async function initializeWorkflowRunExecution(params: Readonly<{
         const roots = await tx.workflowRunInvocation.count({ where: { runId: params.runId, parentRecordId: null } });
         if (roots !== 0) throw new WorkflowRunServiceError("currentness_conflict");
         await tx.workflowRunInvocation.create({ data: { id: params.rootInvocation.id, runId: params.runId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n, attempt: 0n, lifecycle: "pending", contentEnvelope: params.rootInvocation.contentEnvelope } });
+        const storedCheckpoint = encodeStoredText(params.checkpointEnvelope);
         const parent = await tx.automationRun.update({
             where: { id: params.runId },
-            data: { workflowCheckpointEnvelope: params.checkpointEnvelope, state: "running", startedAt: new Date(), revision: { increment: 1 } },
+            data: { workflowCheckpointEnvelope: storedCheckpoint.value, workflowCheckpointEnvelopeBytes: storedCheckpoint.bytes, state: "running", startedAt: new Date(), revision: { increment: 1 } },
             select: workflowRunSelect,
         });
         await markWorkflowRunChangedTx(tx, params.accountId, params.runId);
@@ -806,7 +811,7 @@ export async function admitWorkflowInvocations(params: Readonly<{
         }
         const current = await tx.automationRun.findFirst({
             where: { id: params.runId, accountId: params.accountId, claimedByMachineId: params.machineId, attempt: params.parentAttempt, assignments: { some: { machineId: params.machineId } }, workflowCustodyState: "pending", workflowCheckpointEnvelope: { not: null } },
-            select: { revision: true, workflowCheckpointEnvelope: true },
+            select: { revision: true, workflowCheckpointEnvelope: true, workflowCheckpointEnvelopeBytes: true },
         });
         if (!current) throw new WorkflowRunServiceError("currentness_conflict");
         const existingRows = await tx.workflowRunInvocation.findMany({ where: { id: { in: invocationIds } }, select: invocationSelect }) as InvocationRow[];
@@ -817,7 +822,7 @@ export async function admitWorkflowInvocations(params: Readonly<{
             const previousById = new Map(previousRows.map((row) => [row.id, row]));
             const exact = existingRows.length === params.invocations.length
                 && current.revision === params.expectedRevision + 1
-                && current.workflowCheckpointEnvelope === params.checkpointEnvelope
+                && decodeStoredText(current.workflowCheckpointEnvelope, current.workflowCheckpointEnvelopeBytes) === params.checkpointEnvelope
                 && params.invocations.every((invocation) => {
                     const row = byId.get(invocation.id);
                     return row?.runId === params.runId
@@ -868,7 +873,8 @@ export async function admitWorkflowInvocations(params: Readonly<{
             throw new WorkflowRunServiceError("currentness_conflict");
         }
         const deliveryBefore = await readOriginDeliverySignalTx(tx, params.accountId, params.runId);
-        const changed = await tx.automationRun.updateMany({ where: { ...workflowInputAdmissionWhere(params), revision: params.expectedRevision }, data: { workflowCheckpointEnvelope: params.checkpointEnvelope, revision: { increment: 1 } } });
+        const storedCheckpoint = encodeStoredText(params.checkpointEnvelope);
+        const changed = await tx.automationRun.updateMany({ where: { ...workflowInputAdmissionWhere(params), revision: params.expectedRevision }, data: { workflowCheckpointEnvelope: storedCheckpoint.value, workflowCheckpointEnvelopeBytes: storedCheckpoint.bytes, revision: { increment: 1 } } });
         if (changed.count !== 1) throw new WorkflowRunServiceError("currentness_conflict");
         const created: InvocationRow[] = [];
         for (const invocation of params.invocations) {
@@ -933,12 +939,14 @@ export async function getWorkflowRun(params: Readonly<{ accountId: string; runId
         if (row.workflowAcceptedSnapshotEnvelope === null) {
             throw new WorkflowRunServiceError(row.workflowCustodyState === "pending" ? "custody_pending" : "content_unavailable");
         }
+        const checkpointEnvelope = decodeStoredText(row.workflowCheckpointEnvelope, row.workflowCheckpointEnvelopeBytes);
+        const resultEnvelope = decodeStoredText(row.resultEnvelope, row.resultEnvelopeBytes);
         assertWorkflowStoredEnvelopeOuterForMode({ raw: row.workflowAcceptedSnapshotEnvelope, mode, binding: { v: 1, purpose: "accepted_snapshot", accountId: keyCensus.ownerAccountId, runId: params.runId } });
-        if (row.workflowCheckpointEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: row.workflowCheckpointEnvelope, mode, binding: { v: 1, purpose: "checkpoint", accountId: keyCensus.ownerAccountId, runId: params.runId } });
-        if (row.resultEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: row.resultEnvelope, mode, binding: { v: 1, purpose: "final_result", accountId: keyCensus.ownerAccountId, runId: params.runId } });
+        if (checkpointEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: checkpointEnvelope, mode, binding: { v: 1, purpose: "checkpoint", accountId: keyCensus.ownerAccountId, runId: params.runId } });
+        if (resultEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: resultEnvelope, mode, binding: { v: 1, purpose: "final_result", accountId: keyCensus.ownerAccountId, runId: params.runId } });
         const root = await tx.workflowRunInvocation.findFirst({ where: { runId: params.runId,
             parentRecordId: null, sequence: 0n, memberOrdinal: 0n, attempt: 0n }, select: invocationSelect });
-        return { run: await projectRunInTx(tx, row as WorkflowRunProjectionRow, params.accountId), managedCreationId: row.managedCreationId, acceptedEnvelope: row.workflowAcceptedSnapshotEnvelope, checkpointEnvelope: row.workflowCheckpointEnvelope, resultEnvelope: row.resultEnvelope, keyCensus,
+        return { run: await projectRunInTx(tx, row as WorkflowRunProjectionRow, params.accountId), managedCreationId: row.managedCreationId, acceptedEnvelope: row.workflowAcceptedSnapshotEnvelope, checkpointEnvelope, resultEnvelope, keyCensus,
             rootProgress: projectWorkflowRootProgress(root, keyCensus) };
     }, { isolationLevel: "ReadCommitted", transactionClass: "workflow-get-run" });
 }
@@ -1022,12 +1030,14 @@ export async function pullWorkflowRunOriginDelivery(params: PageOptions & Readon
     }, { transactionClass: "workflow-pull-run-origin-delivery" });
     type DeliverySnapshot = { run: WorkflowRunSummaryV1; acceptedEnvelope: string; checkpointEnvelope: string | null; resultEnvelope: string | null; invocations: never[]; hasOriginInputCandidates: boolean };
     const snapshots: DeliverySnapshot[] = rawPage.candidates.map(({ row, invocationAttentionRequired }) => {
+        const checkpointEnvelope = decodeStoredText(row.workflowCheckpointEnvelope, row.workflowCheckpointEnvelopeBytes);
+        const resultEnvelope = decodeStoredText(row.resultEnvelope, row.resultEnvelopeBytes);
         assertWorkflowStoredEnvelopeOuterForMode({ raw: row.workflowAcceptedSnapshotEnvelope!, mode: rawPage.mode, binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: row.id } });
-        if (row.workflowCheckpointEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: row.workflowCheckpointEnvelope, mode: rawPage.mode, binding: { v: 1, purpose: "checkpoint", accountId: params.accountId, runId: row.id } });
-        if (row.resultEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: row.resultEnvelope, mode: rawPage.mode, binding: { v: 1, purpose: "final_result", accountId: params.accountId, runId: row.id } });
+        if (checkpointEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: checkpointEnvelope, mode: rawPage.mode, binding: { v: 1, purpose: "checkpoint", accountId: params.accountId, runId: row.id } });
+        if (resultEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: resultEnvelope, mode: rawPage.mode, binding: { v: 1, purpose: "final_result", accountId: params.accountId, runId: row.id } });
         // Candidate progress uses the existing byte-paged invocation owner, so even
         // a Run with many valid parallel inputs never exceeds a grouped snapshot page.
-        return { run: projectRun({ ...row, invocationAttentionRequired }, params.accountId), acceptedEnvelope: row.workflowAcceptedSnapshotEnvelope!, checkpointEnvelope: row.workflowCheckpointEnvelope, resultEnvelope: row.resultEnvelope, invocations: [], hasOriginInputCandidates: row.workflowInvocations.length > 0 };
+        return { run: projectRun({ ...row, invocationAttentionRequired }, params.accountId), acceptedEnvelope: row.workflowAcceptedSnapshotEnvelope!, checkpointEnvelope, resultEnvelope, invocations: [], hasOriginInputCandidates: row.workflowInvocations.length > 0 };
     });
     const cursorFor = (snapshot: DeliverySnapshot) => encodeKeysetCursorV1({ queryKey, parts: [snapshot.run.createdAt, snapshot.run.id] });
     const bounded = appendBoundedPage({ existing: [], existingBytes: 2, candidates: snapshots,
@@ -2294,7 +2304,9 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
                 state: true,
                 originKind: true,
                 workflowCheckpointEnvelope: true,
+                workflowCheckpointEnvelopeBytes: true,
                 resultEnvelope: true,
+                resultEnvelopeBytes: true,
                 workflowCustodyState: true,
             },
         });
@@ -2304,8 +2316,8 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
             && AUTOMATION_RUN_TERMINAL_STATES.some((candidate) => candidate === previous.state)
             && previous.workflowCustodyState === "pending"
             && params.custodyState === "settled"
-            && previous.workflowCheckpointEnvelope === params.checkpointEnvelope
-            && (params.resultEnvelope === undefined || previous.resultEnvelope === params.resultEnvelope)
+            && decodeStoredText(previous.workflowCheckpointEnvelope, previous.workflowCheckpointEnvelopeBytes) === params.checkpointEnvelope
+            && (params.resultEnvelope === undefined || decodeStoredText(previous.resultEnvelope, previous.resultEnvelopeBytes) === params.resultEnvelope)
             && allInvocationTransitionsTerminalIdempotent;
         if (AUTOMATION_RUN_TERMINAL_STATES.some((candidate) => candidate === previous.state)
             && !sameTerminalCustodySettlement) {
@@ -2317,6 +2329,8 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
         const previousAutomationState = terminalAutomationState
             ? automationPreviousStateForWorkflowTerminalEffects(previous.state as WorkflowRunState)
             : null;
+        const storedCheckpoint = encodeStoredText(params.checkpointEnvelope);
+        const storedResult = params.resultEnvelope === undefined ? undefined : encodeStoredText(params.resultEnvelope);
         const updated = await tx.automationRun.updateMany({
             where: {
                 id: params.runId,
@@ -2333,8 +2347,9 @@ export async function transitionWorkflowRun(params: Readonly<{ accountId: string
                 ? { workflowCustodyState: "settled", revision: { increment: 1 } }
                 : {
                     state: params.state,
-                    workflowCheckpointEnvelope: params.checkpointEnvelope,
-                    ...(params.resultEnvelope !== undefined ? { resultEnvelope: params.resultEnvelope } : {}),
+                    workflowCheckpointEnvelope: storedCheckpoint.value,
+                    workflowCheckpointEnvelopeBytes: storedCheckpoint.bytes,
+                    ...(storedResult !== undefined ? { resultEnvelope: storedResult.value, resultEnvelopeBytes: storedResult.bytes } : {}),
                     ...(params.custodyState ? { workflowCustodyState: params.custodyState } : {}),
                     revision: { increment: 1 },
                     ...(parksForReview ? { workflowCustodyState: "pending", claimedByMachineId: null, claimedAt: null, leaseExpiresAt: null } : {}),
@@ -2584,6 +2599,7 @@ export async function cancelWorkflowRun(params: Readonly<{ accountId: string; ru
 const workflowRunWaitSelect = {
     ...workflowRunProjectionSelect,
     resultEnvelope: true,
+    resultEnvelopeBytes: true,
 } satisfies Prisma.AutomationRunSelect;
 
 async function readWorkflowRunWaitObservation(accountId: string, runId: string) {
@@ -2598,16 +2614,17 @@ async function readWorkflowRunWaitObservation(accountId: string, runId: string) 
             select: workflowRunWaitSelect,
         });
         if (!row) throw new WorkflowRunServiceError("run_not_found");
-        if (row.resultEnvelope !== null) {
+        const resultEnvelope = decodeStoredText(row.resultEnvelope, row.resultEnvelopeBytes);
+        if (resultEnvelope !== null) {
             const mode = keyCensus.encryptionMode;
             assertWorkflowStoredEnvelopeOuterForMode({
-                raw: row.resultEnvelope,
+                raw: resultEnvelope,
                 mode,
                 binding: { v: 1, purpose: "final_result", accountId: keyCensus.ownerAccountId, runId },
             });
         }
         const run = await projectRunInTx(tx, row as WorkflowRunProjectionRow, accountId);
-        return { run, resultEnvelope: row.resultEnvelope, attention: run.attentionRequired, keyCensus };
+        return { run, resultEnvelope, attention: run.attentionRequired, keyCensus };
     }, { isolationLevel: "ReadCommitted", transactionClass: "workflow-read-run-wait-observation" });
 }
 
@@ -2709,7 +2726,7 @@ export async function recoverWorkflowInvocations(params: Readonly<{
                 }
                 return exact;
             });
-            if (rejoins && parent.workflowCheckpointEnvelope === params.checkpointEnvelope) return {
+            if (rejoins && decodeStoredText(parent.workflowCheckpointEnvelope, parent.workflowCheckpointEnvelopeBytes) === params.checkpointEnvelope) return {
                 disposition: "existing" as const,
                 run: await projectRunInTx(tx, parent as WorkflowRunProjectionRow, params.accountId),
                 invocations: rejoinedRows.map(projectInvocation),
@@ -2728,9 +2745,10 @@ export async function recoverWorkflowInvocations(params: Readonly<{
         });
         if (!parent || prior.length !== params.recoveries.length) throw new WorkflowRunServiceError("currentness_conflict");
         assertWorkflowStoredEnvelopeOuterForMode({ raw: params.checkpointEnvelope, mode, binding: { v: 1, purpose: "checkpoint", accountId: ownerAccountId, runId: params.runId } });
+        const storedCheckpoint = encodeStoredText(params.checkpointEnvelope);
         const changed = await tx.automationRun.updateMany({
             where: { id: params.runId, accountId: ownerAccountId, revision: params.expectedRevision, state: "interrupted" },
-            data: { revision: { increment: 1 }, state: "queued", claimedByMachineId: null, claimedAt: null, leaseExpiresAt: null, workflowCheckpointEnvelope: params.checkpointEnvelope, workflowCustodyState: "pending", finishedAt: null },
+            data: { revision: { increment: 1 }, state: "queued", claimedByMachineId: null, claimedAt: null, leaseExpiresAt: null, workflowCheckpointEnvelope: storedCheckpoint.value, workflowCheckpointEnvelopeBytes: storedCheckpoint.bytes, workflowCustodyState: "pending", finishedAt: null },
         });
         if (changed.count !== 1) throw new WorkflowRunServiceError("currentness_conflict");
         const maximum = await tx.workflowRunInvocation.aggregate({ where: { runId: params.runId }, _max: { sequence: true } });

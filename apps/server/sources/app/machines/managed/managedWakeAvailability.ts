@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from '@prisma/client';
 import { resolveManagedWakeAvailabilityV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { markAccountsChanged } from '@/app/changes/markAccountChanged';
@@ -20,7 +21,7 @@ export async function withManagedWakeAvailabilityInTx<T extends Readonly<{ manag
         ? [row.managedResource.controllerMachineId] : []))];
     const controllers = new Map<string, ControllerPresence>();
     for (const ids of portableQueryChunks({ values: controllerIds, bindingsPerValue: 1 })) {
-        for (const controller of await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: CONTROLLER_PRESENCE_SELECT })) {
+        for (const controller of await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: withMachineContentSelect(CONTROLLER_PRESENCE_SELECT) }).then(decodeMachineStoredContent)) {
             controllers.set(controller.id, controller);
         }
     }

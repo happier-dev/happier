@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { sessionCacheCounter } from "@/app/monitoring/metrics/index";
@@ -159,7 +160,7 @@ class ActivityCache {
                         id: machineId
                     }
                 }
-            });
+            }).then(decodeMachineStoredContent);
             
             if (machine) {
                 if (machine.revokedAt) {

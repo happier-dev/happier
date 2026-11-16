@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from "@prisma/client";
 import { Buffer } from "node:buffer";
 import { isDeepStrictEqual } from "node:util";
@@ -41,6 +42,7 @@ import { db } from "@/storage/db";
 import { inReadSnapshot, inTx, type ResolvedTransactionResult, type Tx } from "@/storage/inTx";
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { isPrismaErrorCode } from "@/storage/prisma";
+import { decodeStoredContent, encodeStoredContent, toPrismaStoredContent } from "@/storage/storedContent";
 import { error as logError } from "@/utils/logging/log";
 import {
     deriveSessionSystemRecordAddressKeys,
@@ -157,6 +159,7 @@ export type PersistedSessionSystemRecordRow = Readonly<{
     permissionTurnId: string | null;
     permissionRequestId: string | null;
     content: unknown;
+    contentBytes?: Uint8Array<ArrayBuffer> | null;
     namespaceAddressKey: Uint8Array | null;
     recordAddressKey: Uint8Array | null;
     version: number;
@@ -249,6 +252,7 @@ const SESSION_SYSTEM_RECORD_SELECT = {
     permissionTurnId: true,
     permissionRequestId: true,
     content: true,
+    contentBytes: true,
     ownerKind: true,
     pluginId: true,
     namespaceAddressKey: true,
@@ -257,6 +261,15 @@ const SESSION_SYSTEM_RECORD_SELECT = {
     createdAt: true,
     updatedAt: true,
 } as const;
+
+function systemRecordContentForStorage(content: object) {
+    const stored = encodeStoredContent(content);
+    return {
+        ...stored,
+        // Prisma's JSON input cannot express the runtime JsonNull sentinel.
+        content: toPrismaStoredContent(stored.content) as Prisma.InputJsonValue,
+    };
+}
 
 function parseRecordPayload(value: unknown): {
     namespace: SessionSystemRecordNamespace;
@@ -275,6 +288,7 @@ function toSessionSystemRecordRow(row: {
     kind: unknown;
     localId: string;
     content: unknown;
+    contentBytes?: Uint8Array<ArrayBuffer> | null;
     createdAt: Date;
     updatedAt: Date;
 }): SessionSystemRecordRow | null {
@@ -282,7 +296,7 @@ function toSessionSystemRecordRow(row: {
         namespace: row.namespace,
         kind: row.kind,
         localId: row.localId,
-        content: row.content,
+        content: decodeStoredContent(row),
     });
     if (!parsed) return null;
     return {
@@ -391,7 +405,7 @@ export async function writeExternalSessionHistoricalImportRecordInTx(
     const namespace = "external_sessions";
     // These two schema-owned records are JSON objects; Prisma's input type cannot
     // represent their readonly protocol fields and conditionally omitted members.
-    const content = params.content as Prisma.InputJsonValue;
+    const content = systemRecordContentForStorage(params.content);
     const lookup = await findExactHostSessionSystemRecordInTx(tx, { ...params, namespace });
     if (!lookup.ok) return { ok: false, code: "address_collision" };
     if (lookup.row) {
@@ -400,7 +414,7 @@ export async function writeExternalSessionHistoricalImportRecordInTx(
             where: { id: lookup.row.id },
             data: {
                 kind: params.kind,
-                content,
+                ...content,
                 ownerKind: "host",
                 pluginId: null,
                 namespaceAddressKey: lookup.keys.namespaceAddressKey,
@@ -418,7 +432,7 @@ export async function writeExternalSessionHistoricalImportRecordInTx(
                 namespace,
                 kind: params.kind,
                 localId: params.localId,
-                content,
+                ...content,
                 ownerKind: "host",
                 pluginId: null,
                 namespaceAddressKey: lookup.keys.namespaceAddressKey,
@@ -739,8 +753,9 @@ function storedV1Record(
         return { ok: false, code: "plugin_session_record_address_collision" };
     }
     const isSurfaceItem = isSurfaceItemAddress(expected, row.kind);
-    const wrapper = isSurfaceItem ? StoredSessionSurfaceRecordV1Schema.safeParse(row.content) : null;
-    const parsedContent = StoredSessionSystemRecordContentSchema.safeParse(wrapper?.success ? wrapper.data.content : row.content);
+    const storedContent = decodeStoredContent(row);
+    const wrapper = isSurfaceItem ? StoredSessionSurfaceRecordV1Schema.safeParse(storedContent) : null;
+    const parsedContent = StoredSessionSystemRecordContentSchema.safeParse(wrapper?.success ? wrapper.data.content : storedContent);
     if (!parsedContent.success || !Number.isInteger(row.version) || row.version < 1 || row.version > SESSION_SYSTEM_RECORD_VERSION_MAX) {
         return { ok: false, code: "plugin_session_record_internal" };
     }
@@ -1084,7 +1099,7 @@ async function resolveV1ConditionalUpsertMiss(
     if (found.row.kind !== params.address.kind) {
         return { ok: false, code: "plugin_session_record_kind_conflict" };
     }
-    if (isDeepStrictEqual(found.row.content, params.content)) return current;
+    if (isDeepStrictEqual(current.record.content, params.content)) return current;
     return {
         ok: false,
         code: "plugin_session_record_revision_conflict",
@@ -1210,7 +1225,7 @@ export async function readActorSessionSystemRecordsV1(
             const batch = ids.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE);
             try {
                 const { admitted, records } = await captureReadSnapshot(async tx => {
-                    const sessions = await tx.session.findMany({ where: { id: { in: batch } }, select: actorRecordSessionSelect(params.actorUserId) });
+                    const sessions = await tx.session.findMany({ where: { id: { in: batch } }, select: withSessionContentSelect(actorRecordSessionSelect(params.actorUserId)) }).then(decodeSessionStoredContent);
                     const decisions = await resolveSessionAccessForRowsInTx(tx, { accountId: params.actorUserId,
                         authentication: params.authentication, capability: 'readTranscript' }, sessions);
                     for (const id of batch) results.set(id, { ok: false, code: 'plugin_session_not_found' });
@@ -1407,7 +1422,7 @@ async function settleV1CreateRace(
     if (raced.row.kind !== params.address.kind) {
         return { ok: false, code: "plugin_session_record_kind_conflict" };
     }
-    if (isDeepStrictEqual(raced.row.content, params.content)) return replay;
+    if (isDeepStrictEqual(replay.record.content, params.content)) return replay;
     return {
         ok: false,
         code: "plugin_session_record_revision_conflict",
@@ -1433,7 +1448,7 @@ async function settleV1UnconditionalCreateRace(
             const current = storedV1Record(currentRow, raced.expected);
             if (!current.ok) return current;
             if (currentRow.kind !== params.address.kind) return { ok: false, code: "plugin_session_record_kind_conflict" as const };
-            if (isDeepStrictEqual(currentRow.content, params.content)) return current;
+            if (isDeepStrictEqual(current.record.content, params.content)) return current;
             if (currentRow.version >= SESSION_SYSTEM_RECORD_VERSION_MAX) return { ok: false, code: "plugin_session_record_revision_exhausted" as const };
             const updated = await tx.sessionSystemRecord.updateMany({
                 where: {
@@ -1448,7 +1463,7 @@ async function settleV1UnconditionalCreateRace(
                         authentication: params.authentication,
                     }),
                 },
-                data: { content: params.content, version: { increment: 1 } },
+                data: { ...systemRecordContentForStorage(params.content), version: { increment: 1 } },
             });
             if (updated.count !== 1) {
                 if (!await hasCurrentSessionRecordAccessInTx(tx, {
@@ -1554,7 +1569,7 @@ async function upsertSessionSystemRecordV1InTx(
                 id: current.id,
                 ...(params.expectedRevision === undefined ? {} : { version: current.version }),
             },
-            data: { content: params.content, version: { increment: 1 } },
+            data: { ...systemRecordContentForStorage(params.content), version: { increment: 1 } },
         });
         if (updated.count !== 1) {
             return {
@@ -1587,7 +1602,7 @@ async function upsertSessionSystemRecordV1InTx(
             namespace: params.address.namespace,
             kind: params.address.kind,
             localId: params.address.localId,
-            content: params.content,
+            ...systemRecordContentForStorage(params.content),
             namespaceAddressKey: found.keys.namespaceAddressKey,
             recordAddressKey: found.keys.recordAddressKey,
             version: 1,
@@ -1980,7 +1995,7 @@ function storedPermissionMediationRecord(
         return { ok: false, code: "permission_mediation_record_internal" };
     }
     const kind = SessionPermissionMediationRecordKindSchema.safeParse(row.kind);
-    const content = SessionSystemRecordContentSchema.safeParse(row.content);
+    const content = SessionSystemRecordContentSchema.safeParse(decodeStoredContent(row));
     if (
         !kind.success
         || !content.success
@@ -2021,7 +2036,7 @@ function listedPermissionMediationRecord(
         return { ok: false, code: "permission_mediation_record_internal" };
     }
     const kind = SessionPermissionMediationRecordKindSchema.safeParse(row.kind);
-    const content = SessionSystemRecordContentSchema.safeParse(row.content);
+    const content = SessionSystemRecordContentSchema.safeParse(decodeStoredContent(row));
     if (
         !kind.success
         || !content.success
@@ -2231,7 +2246,7 @@ export async function writePermissionMediationRecord(
                         currentRevision: current.record.revision,
                     };
                 }
-                if (isDeepStrictEqual(found.row.content, params.request.content)) {
+                if (isDeepStrictEqual(current.record.content, params.request.content)) {
                     return { ok: true, record: current.record };
                 }
                 if (found.row.version >= SESSION_SYSTEM_RECORD_VERSION_MAX) {
@@ -2245,7 +2260,7 @@ export async function writePermissionMediationRecord(
                         id: found.row.id,
                         version: found.row.version,
                     },
-                    data: { content: params.request.content, version: { increment: 1 } },
+                    data: { ...systemRecordContentForStorage(params.request.content), version: { increment: 1 } },
                 });
                 if (updated.count !== 1) {
                     return { kind: "refetch-permission-mediation-conflict" as const };
@@ -2274,7 +2289,7 @@ export async function writePermissionMediationRecord(
                     localId: address.localId,
                     permissionTurnId: params.identity.turnId,
                     permissionRequestId: params.identity.requestId,
-                    content: params.request.content,
+                    ...systemRecordContentForStorage(params.request.content),
                     namespaceAddressKey: found.keys.namespaceAddressKey,
                     recordAddressKey: found.keys.recordAddressKey,
                     version: 1,
@@ -2518,7 +2533,7 @@ async function upsertSessionSystemRecordWithCreateRaceRetry(
                         }),
                     },
                     data: {
-                        content: params.content,
+                        ...systemRecordContentForStorage(params.content),
                         ownerKind: "host",
                         pluginId: null,
                         namespaceAddressKey: addressKeys.namespaceAddressKey,
@@ -2570,7 +2585,7 @@ async function upsertSessionSystemRecordWithCreateRaceRetry(
                     namespace: params.namespace,
                     kind: params.kind,
                     localId: params.localId,
-                    content: params.content,
+                    ...systemRecordContentForStorage(params.content),
                     ownerKind: "host",
                     pluginId: null,
                     namespaceAddressKey: addressKeys.namespaceAddressKey,

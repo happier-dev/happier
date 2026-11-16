@@ -1,3 +1,4 @@
+import { decodeStoredText, encodeStoredText } from '@/storage/storedContent';
 import { randomUUID } from "node:crypto";
 import { markSharedWorkflowTriggerSummaryChangedInTx } from './automationSharedWorkflowSummaries';
 import type { Prisma } from "@prisma/client";
@@ -1476,7 +1477,9 @@ const automationRunMigrationParticipantSelect = {
     executionInputEnvelope: true,
     workflowAcceptedSnapshotEnvelope: true,
     workflowCheckpointEnvelope: true,
+    workflowCheckpointEnvelopeBytes: true,
     resultEnvelope: true,
+    resultEnvelopeBytes: true,
     replyContextEnvelope: true,
     errorMessage: true,
     summaryCiphertext: true,
@@ -1487,6 +1490,14 @@ const automationRunMigrationParticipantSelect = {
 type AutomationAccountEncryptionMigrationRunRow = Prisma.AutomationRunGetPayload<{
     select: typeof automationRunMigrationParticipantSelect;
 }>;
+
+/** Decode only at the migration repository read boundary; retain physical bytes for its CAS. */
+function decodeAutomationMigrationRunRow(row: AutomationAccountEncryptionMigrationRunRow): AutomationAccountEncryptionMigrationRunRow {
+    return { ...row,
+        workflowCheckpointEnvelope: decodeStoredText(row.workflowCheckpointEnvelope, row.workflowCheckpointEnvelopeBytes),
+        resultEnvelope: decodeStoredText(row.resultEnvelope, row.resultEnvelopeBytes),
+    };
+}
 
 const workflowInvocationMigrationParticipantSelect = {
     id: true,
@@ -1765,7 +1776,7 @@ async function loadAutomationAccountEncryptionMigrationRunPageInTx(
         const last = rows.at(-1);
         if (!last) break;
         scanAfterId = last.id;
-        participants.push(...rows.filter(automationRunHasMigrationPrivateContent));
+        participants.push(...rows.map(decodeAutomationMigrationRunRow).filter(automationRunHasMigrationPrivateContent));
         if (rows.length < take) break;
     }
     return participants.slice(0, take);
@@ -2086,10 +2097,11 @@ async function loadAutomationAccountEncryptionTransitionRunsByIdsInTx(
     ids: readonly string[],
 ): Promise<AutomationAccountEncryptionMigrationRunRow[]> {
     if (ids.length === 0) return [];
-    return await tx.automationRun.findMany({
+    const rows = await tx.automationRun.findMany({
         where: { accountId, id: { in: [...ids] } },
         select: automationRunMigrationParticipantSelect,
     });
+    return rows.map(decodeAutomationMigrationRunRow);
 }
 
 async function loadWorkflowInvocationEncryptionTransitionRowsByIdsInTx(
@@ -2403,6 +2415,8 @@ export async function applyAutomationAccountEncryptionTransitionStageInTx(
                 automationId: null,
                 originSessionId: candidate.item.origin.originSessionId ?? null,
             };
+        const storedCheckpoint = encodeStoredText(candidate.item.target.workflowCheckpointEnvelope);
+        const storedResult = encodeStoredText(candidate.item.target.resultEnvelope);
         const updated = await params.tx.automationRun.updateMany({
             where: {
                 id: candidate.row.id,
@@ -2417,12 +2431,13 @@ export async function applyAutomationAccountEncryptionTransitionStageInTx(
                 executionInputEnvelope: candidate.item.target.executionInputEnvelope,
                 workflowAcceptedSnapshotEnvelope:
                     candidate.item.target.workflowAcceptedSnapshotEnvelope,
-                workflowCheckpointEnvelope:
-                    candidate.item.target.workflowCheckpointEnvelope,
+                workflowCheckpointEnvelope: storedCheckpoint.value,
+                workflowCheckpointEnvelopeBytes: storedCheckpoint.bytes,
                 // A re-sealed snapshot retires the summary sealed under the old Run key.
                 ...(candidate.item.target.workflowAcceptedSnapshotEnvelope !== candidate.row.workflowAcceptedSnapshotEnvelope
                     ? { workflowDisplaySummaryEnvelope: null } : {}),
-                resultEnvelope: candidate.item.target.resultEnvelope,
+                resultEnvelope: storedResult.value,
+                resultEnvelopeBytes: storedResult.bytes,
                 replyContextEnvelope: candidate.item.target.replyContextEnvelope,
                 errorMessage: candidate.item.target.failureDetailEnvelope
                     ?? (currentAutomationRunFailureDetailEnvelope(candidate.row) === null
@@ -2449,7 +2464,7 @@ export async function applyAutomationAccountEncryptionTransitionStageInTx(
             afterTx(params.tx, () => {
                 emitAutomationRunUpdated({
                     accountId: params.accountId,
-                    run: run as AutomationRunItem,
+                    run: projectAutomationOriginRun(run)!,
                     cursor: cursor.resolveCursor(),
                 });
             });
@@ -2512,7 +2527,7 @@ async function loadAutomationAccountEncryptionMigrationRunsInTx(
         select: automationRunMigrationParticipantSelect,
         orderBy: { id: "asc" },
     });
-    return rows.filter(automationRunHasMigrationPrivateContent);
+    return rows.map(decodeAutomationMigrationRunRow).filter(automationRunHasMigrationPrivateContent);
 }
 
 /** The development cut leaves recognized Account-key Workflow history untouched. */
@@ -3768,6 +3783,9 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
     for (const row of runRows) {
         const item = runsById.get(row.id)!;
         const cause = decodeAutomationRunCause(row);
+        const sourceStoredCheckpoint = item.workflow ? encodeStoredText(item.workflow.sourceCheckpointEnvelope) : null;
+        const storedCheckpoint = item.workflow ? encodeStoredText(item.workflow.checkpointEnvelope) : null;
+        const storedResult = encodeStoredText(item.resultEnvelope);
         const updated = await params.tx.automationRun.updateMany({
             where: {
                 id: row.id,
@@ -3775,7 +3793,9 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
                 revision: item.expectedRunRevision,
                 ...(item.workflow ? {
                     workflowAcceptedSnapshotEnvelope: item.workflow.sourceAcceptedSnapshotEnvelope,
-                    workflowCheckpointEnvelope: item.workflow.sourceCheckpointEnvelope,
+                    workflowCheckpointEnvelope: row.workflowCheckpointEnvelopeBytes != null
+                        ? sourceStoredCheckpoint!.value : item.workflow.sourceCheckpointEnvelope,
+                    workflowCheckpointEnvelopeBytes: row.workflowCheckpointEnvelopeBytes != null ? sourceStoredCheckpoint!.bytes : null,
                 } : {}),
                 ...(cause === null
                     ? { originKind: "direct", automationId: null, causeKind: null }
@@ -3788,12 +3808,14 @@ export async function migrateAutomationAccountEncryptionInTx(params: Readonly<{
                 executionInputEnvelope: item.executionInputEnvelope,
                 ...(item.workflow ? {
                     workflowAcceptedSnapshotEnvelope: item.workflow.acceptedSnapshotEnvelope,
-                    workflowCheckpointEnvelope: item.workflow.checkpointEnvelope,
+                    workflowCheckpointEnvelope: storedCheckpoint!.value,
+                    workflowCheckpointEnvelopeBytes: storedCheckpoint!.bytes,
                     // The display summary was sealed under the replaced Run key;
                     // the list reads this Run from its re-sealed snapshot instead.
                     workflowDisplaySummaryEnvelope: null,
                 } : {}),
-                resultEnvelope: item.resultEnvelope,
+                resultEnvelope: storedResult.value,
+                resultEnvelopeBytes: storedResult.bytes,
                 replyContextEnvelope: item.replyContextEnvelope,
                 errorMessage: item.failureDetailEnvelope
                     ?? (currentAutomationRunFailureDetailEnvelope(row) === null
@@ -6603,5 +6625,6 @@ export async function getAutomationRun(params: {
             where: { id: row.triggerId, deletedAt: null },
             select: { id: true },
         }) === null;
-    return { ...row, triggerRetired } as AutomationRunDetailItem;
+    const { resultEnvelopeBytes, ...run } = row;
+    return { ...run, resultEnvelope: decodeStoredText(row.resultEnvelope, resultEnvelopeBytes), triggerRetired } as AutomationRunDetailItem;
 }

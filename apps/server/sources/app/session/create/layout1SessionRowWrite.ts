@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, encodeSessionStoredContent } from '@/storage/sessionMachineStoredContent';
 import { initializeSessionOwnerReadStateInTx } from "@/app/session/personal/readState";
 import { resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
 import { attachCreatedSessionManagerInTx, type SessionManagerSetResult } from "@/app/session/follow/sessionManagerService";
@@ -241,7 +242,7 @@ export async function insertLayout1SessionRowInTx(
     if (managedBirth === false) throw new SessionCreationOriginError();
     const createdByApiTokenId = await readSessionCreationApiTokenIdInTx(tx, prepared.accountId, params.sessionCreationAuthorization);
     const session = await tx.session.create({
-        data: {
+        data: encodeSessionStoredContent({
             ...(params.sessionId ? { id: params.sessionId } : {}),
             accountId: prepared.accountId,
             managedCreationId: prepared.managedCreation?.managedId ?? null,
@@ -267,8 +268,8 @@ export async function insertLayout1SessionRowInTx(
                 ? { currentStorageState: prepared.requestedStorageState }
                 : {}),
             ...(prepared.primaryTeamId !== undefined ? { primaryTeamId: prepared.primaryTeamId } : {}),
-        },
-    });
+        }),
+    }).then(decodeSessionStoredContent);
     if (managedBirth) await bindManagedCreationScopeRetentionInTx(tx, managedBirth, { kind: 'session', sessionId: session.id });
     // The owner is an ordinary recipient of their own Session key, so their
     // envelope lands in the one canonical tuple inside this same transaction. A

@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { buildAccountStoredContentUpgradeRequired, type AccountStoredContentCompatibilityEvaluation } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { z } from "zod/mini";
 import { readSessionComputerBindingsInTx } from '@/app/session/metadata/sessionComputerBinding';
@@ -95,18 +96,18 @@ async function findV2SessionDetailRowsInTx(tx: Tx, params: Readonly<{
     const readCurrentRows = async () => {
         const select = { ...current, account: { select: { ...current.account.select, ...sessionMetadataOwnerAccountCurrentnessSelect } } };
         if (params.usageProjection) {
-            const rows = await tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select: { ...select, ownerMetadata: false, metadata: false, agentState: false } });
+            const rows = await tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select: withSessionContentSelect({ ...select, ownerMetadata: false, metadata: false, agentState: false }) }).then(decodeSessionStoredContent);
             return rows.map(row => ({ ...row, ownerMetadata: null, metadata: '', agentState: null }));
         }
-        return tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select });
+        return tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select: withSessionContentSelect(select) }).then(decodeSessionStoredContent);
     };
     const readLegacyRows = async () => {
         const select = { ...legacy, account: { select: { ...legacy.account.select, ...sessionMetadataOwnerAccountCurrentnessSelect } } };
         if (params.usageProjection) {
-            const rows = await tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select: { ...select, ownerMetadata: false, metadata: false, agentState: false } });
+            const rows = await tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select: withSessionContentSelect({ ...select, ownerMetadata: false, metadata: false, agentState: false }) }).then(decodeSessionStoredContent);
             return rows.map(row => ({ ...row, ownerMetadata: null, metadata: '', agentState: null }));
         }
-        return tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select });
+        return tx.session.findMany({ where: { id: { in: [...params.sessionIds] } }, select: withSessionContentSelect(select) }).then(decodeSessionStoredContent);
     };
     type Row = Awaited<ReturnType<typeof readCurrentRows>>[number] | Awaited<ReturnType<typeof readLegacyRows>>[number];
     // Only the released adapter permits migration-skew fallback. Current detail
@@ -127,11 +128,12 @@ async function readUsageDetailDocumentsInTx(tx: Tx, sessionIds: readonly string[
     const plain = `${sql.column('encryptionMode')} = 'plain'`;
     const shared = `CASE WHEN ${plain} AND ${sql.isObjectText(metadata)} THEN CAST(${sql.remove(`(${sql.parseText(metadata)})`, 'actionConfirmationsV1')} AS ${sql.dialect === 'mysql' ? 'CHAR' : 'TEXT'}) ELSE ${metadata} END`;
     const agentState = `CASE WHEN ${plain} THEN NULL ELSE ${sql.column('agentState')} END`;
-    const rows = await tx.$queryRaw<{ id: string; ownerMetadata: string | null; metadata: string; agentState: string | null }[]>(prismaRuntime.sql`
+    const rows = await tx.$queryRaw<{ id: string; ownerMetadata: string | null; metadata: string; metadataBytes: Uint8Array | null; agentState: string | null; agentStateBytes: Uint8Array | null }[]>(prismaRuntime.sql`
         SELECT ${prismaRuntime.raw(sql.column('id'))}, ${prismaRuntime.raw(projected)} AS ${prismaRuntime.raw(owner)},
-            ${prismaRuntime.raw(shared)} AS ${prismaRuntime.raw(metadata)}, ${prismaRuntime.raw(agentState)} AS ${prismaRuntime.raw(sql.column('agentState'))}
+            ${prismaRuntime.raw(shared)} AS ${prismaRuntime.raw(metadata)}, ${prismaRuntime.raw(sql.column('metadataBytes'))},
+            ${prismaRuntime.raw(agentState)} AS ${prismaRuntime.raw(sql.column('agentState'))}, ${prismaRuntime.raw(sql.column('agentStateBytes'))}
         FROM ${prismaRuntime.raw(sql.column('Session'))} WHERE ${prismaRuntime.raw(sql.column('id'))} IN (${prismaRuntime.join([...sessionIds])})`);
-    return new Map(rows.map(row => [row.id, row]));
+    return new Map(rows.map(row => [row.id, decodeSessionStoredContent(row)]));
 }
 
 type SessionDetailInput = Readonly<{ userId: string; authentication: SessionAccessAuthentication; accessProjectionVersion?: number; storedContentCompatibility: AccountStoredContentCompatibilityEvaluation;

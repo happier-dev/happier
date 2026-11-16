@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { ManagedWakeTargetV1Schema, ManagedWakeTargetsReadRequestV1Schema, type ManagedWakeTargetV1, type ManagedWakeTargetsReadRequestV1, ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { isExternalActionManagedWakeRootV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ManagedFiniteWakeRequestV1Schema, MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -336,7 +337,7 @@ export async function assertManagedWakeOriginCurrentInTx(tx: Tx, input: Readonly
     }
     if (!hasManagedWakeAuthority(await resolveManagedMachineRoleInTx(tx, row, actorAccountId), row.wakeOnAcceptedMessage, target.origin.kind, finiteActionId)
         || !await resolveEffectiveMachineRoleInTx(tx, { actorAccountId, machineId: target.enrolledMachineId })) throw new ManagedMachineError('permission_denied');
-    const guest = await tx.machine.findUnique({ where: { id: target.enrolledMachineId } });
+    const guest = await tx.machine.findUnique({ where: { id: target.enrolledMachineId } }).then(decodeMachineStoredContent);
     if (classifyMachineAvailabilityState(guest) !== 'available') throw new ManagedMachineError('enrollment_retired');
 }
 

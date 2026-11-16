@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { createHash } from 'node:crypto';
 import type { Prisma } from '@prisma/client';
 import {
@@ -359,8 +360,8 @@ export async function queryTeamCredentialUsage(
             });
             const readable = (await Promise.all(resourceWheres.map(resourceWhere => tx.session.findMany({
                 where: { AND: [{ usageEvents: { some: resourceWhere } }, access.where] },
-                select: { id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT },
-            })))).flat();
+                select: withSessionContentSelect({ id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT }),
+            }).then(decodeSessionStoredContent)))).flat();
             for (const session of readable) {
                 // The portable database predicate is deliberately broader than
                 // publication admission; retain its canonical runtime guard.

@@ -124,9 +124,8 @@ function generateProviderSchemaFromPostgres(
         // Prisma's default Bytes mapping is BLOB and would disagree with that storage contract.
         body = body.replace(/^model\s+(?:Artifact|ArtifactRevision|ArtifactKeyEnvelope)\s+\{[\s\S]*?^\}/gm,
             (model) => model.replace(/^([ \t]*\w+\s+Bytes\??)(?!\?)(?![^\n]*@db\.)/gm, "$1 @db.LongBlob"));
-        // SessionMessage ciphertext retains the existing JSON column's message capacity.
-        body = body.replace(/^model\s+SessionMessage\s+\{[\s\S]*?^\}/gm,
-            model => model.replace(/^([ \t]*contentBytes\s+Bytes\?)(?![^\n]*@db\.)/m, "$1 @db.LongBlob"));
+        // Stored-content byte siblings retain the existing text/JSON document capacity.
+        body = body.replace(/^([ \t]*\w+Bytes\s+Bytes\?)(?![^\n]*@db\.)/gm, "$1 @db.LongBlob");
         // Personal Follow policy and accepted one-shot source references are
         // serialized documents, not VARCHAR(191) identifiers.
         body = body.replace(/^model\s+AccountSessionFollow\s+\{[\s\S]*?^\}/gm,

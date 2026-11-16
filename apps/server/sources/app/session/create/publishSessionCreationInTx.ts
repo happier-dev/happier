@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { buildNewSessionUpdate, eventRouter } from "@/app/events/eventRouter";
 import { projectSessionMetadataForRecipient } from "@/app/session/metadata/sessionMetadataRecipientProjection";
@@ -27,11 +28,11 @@ export async function publishSessionCreationInTx(
     });
     const personalRow = await tx.session.findUniqueOrThrow({
         where: { id: session.id },
-        select: {
+        select: withSessionContentSelect({
             ...createSessionPersonalProjectionSelect(session.accountId),
             ...createSessionDataKeyEnvelopeViewerSelect({ viewerAccountId: session.accountId }),
-        },
-    });
+        }),
+    }).then(decodeSessionStoredContent);
     const viewer = projectSessionViewer({
         row: personalRow,
         latestFailureSeq: null,

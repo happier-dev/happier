@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessages } from "@/storage/sessionMessageContent";
 import { type Fastify } from "../../types";
 import { z } from "zod/mini";
@@ -176,7 +177,7 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
 
             const session = await tx.session.findUnique({
                 where: { id: publicShare.sessionId },
-                select: {
+                select: withSessionContentSelect({
                     id: true,
                     encryptionMode: true,
                     createdAt: true,
@@ -194,8 +195,8 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
                         select: ACCOUNT_DISPLAY_PROFILE_SELECT,
                     },
                     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-                },
-            });
+                }),
+            }).then(decodeSessionStoredContent);
             if (!session) {
                 return { error: 'Public share not found or expired' };
             }
@@ -423,14 +424,14 @@ export function registerPublicShareReadRoutes(app: Fastify): void {
 
             const session = await tx.session.findUnique({
                 where: { id: publicShare.sessionId },
-                select: {
+                select: withSessionContentSelect({
                     encryptionMode: true,
                     account: {
                         select: ACCOUNT_DISPLAY_PROFILE_SELECT,
                     },
                     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-                },
-            });
+                }),
+            }).then(decodeSessionStoredContent);
             if (!session) {
                 return { error: 'Public share not found or expired' };
             }

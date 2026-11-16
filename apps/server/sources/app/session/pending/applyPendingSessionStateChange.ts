@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
 import type { SessionRecipientPublication } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import type { Tx } from "@/storage/inTx";
@@ -30,7 +31,7 @@ export async function applyPendingSessionStateChange(params: {
         : 0;
     const before = await tx.session.findUniqueOrThrow({
         where: { id: sessionId },
-        select: {
+        select: withSessionContentSelect({
             ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
             pendingCount: true,
             pendingBlockedCount: true,
@@ -39,8 +40,8 @@ export async function applyPendingSessionStateChange(params: {
             pendingUserActionRequestCount: true,
             active: true,
             archivedAt: true,
-        },
-    });
+        }),
+    }).then(decodeSessionStoredContent);
     const baseData: {
         pendingVersion: { increment: 1 };
         meaningfulActivityAt?: Date;

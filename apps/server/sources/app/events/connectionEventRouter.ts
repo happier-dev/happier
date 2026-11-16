@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { log } from "@/utils/logging/log";
 import { recordEventFanoutDrop, recordEventFanoutEmit } from "@/app/monitoring/metrics/index";
 import { readAccountStoredContentCompatibilityForSocket } from "@/app/clientCompatibility/accountStoredContentCompatibility";
@@ -720,10 +721,10 @@ class EventRouter {
             throw new Error("Session delivery decision needs a read snapshot");
         } }) as Tx;
         const rowOnly = await decide(rowOnlyReader, await inReadSnapshot(tx => tx.session.findUnique({
-            where: { id: params.sessionId }, select,
-        }), { singleStatementRead: true }));
+            where: { id: params.sessionId }, select: withSessionContentSelect(select),
+        }).then(decodeSessionStoredContent), { singleStatementRead: true }));
         const decided = !readBeyondRow ? rowOnly : await captureReadSnapshot(async tx => decide(tx,
-            await tx.session.findUnique({ where: { id: params.sessionId }, select })));
+            await tx.session.findUnique({ where: { id: params.sessionId }, select: withSessionContentSelect(select) }).then(decodeSessionStoredContent)));
         for (const socket of decided.refused) withdrawSessionConsumption(socket, params.sessionId);
         return decided.qualified.filter(({ socket, isSessionOwner, metadataLayoutVersion }) =>
             params.emit(socket, isSessionOwner, metadataLayoutVersion)).length;

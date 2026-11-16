@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from '@prisma/client';
 import { isProjectedSessionStalledV1, projectSessionAwarenessRuntimeV1, resolveSessionAwarenessLifecycleV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
 import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
@@ -203,8 +204,8 @@ export async function projectSessionManagerForRowsInTx<T extends SessionManagerP
             })).where;
         related = await tx.session.findMany({
             where: { AND: [accessWhere, { id: { in: relatedIds } }] },
-            select: createReportSessionSelect(input.accountId),
-        });
+            select: withSessionContentSelect(createReportSessionSelect(input.accountId)),
+        }).then(decodeSessionStoredContent);
     }
     const readable = new Map(related.filter((row) => row.accountId === input.accountId || isSessionTranscriptShareable(row))
         .map((row) => [row.id, row]));

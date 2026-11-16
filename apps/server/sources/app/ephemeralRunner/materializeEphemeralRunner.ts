@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, decodeSessionStoredContent } from '@/storage/sessionMachineStoredContent';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { isPlainMachineDataKeyMarker } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -155,8 +156,8 @@ export async function materializeEphemeralRunner(params: Readonly<{
 
             if (row.state === "materialized") {
                 const [session, machine, accessKey] = await Promise.all([
-                    tx.session.findFirst({ where: { id: row.sessionId, accountId: row.creatorAccountId } }),
-                    tx.machine.findFirst({ where: { id: row.machineId, accountId: row.creatorAccountId, kind: "ephemeral_session_runner" } }),
+                    tx.session.findFirst({ where: { id: row.sessionId, accountId: row.creatorAccountId } }).then(decodeSessionStoredContent),
+                    tx.machine.findFirst({ where: { id: row.machineId, accountId: row.creatorAccountId, kind: "ephemeral_session_runner" } }).then(decodeMachineStoredContent),
                     tx.accessKey.findUnique({ where: { accountId_machineId_sessionId: {
                         accountId: row.creatorAccountId, machineId: row.machineId, sessionId: row.sessionId,
                     } } }),

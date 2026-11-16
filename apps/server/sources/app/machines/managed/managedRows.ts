@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { isStoredOpaquePresetMachine } from './managedMachineProjection';
 import { withManagedWakeAvailabilityInTx } from './managedWakeAvailability';
@@ -268,7 +269,7 @@ export async function requireManagedControllerInTx(tx: Tx, input: Readonly<{
     await requireManagedHomeInTx(tx, input.homeId);
     if (!input.controller) return;
     const machine = projection ? projection.controllers.get(input.controller.machineId)
-        : await tx.machine.findUnique({ where: { id: input.controller.machineId }, select: MANAGED_PROJECTION_CONTROLLER_SELECT });
+        : await tx.machine.findUnique({ where: { id: input.controller.machineId }, select: withMachineContentSelect(MANAGED_PROJECTION_CONTROLLER_SELECT) }).then(decodeMachineStoredContent);
     return requireManagedControllerFromFacts(input, machine);
 }
 
@@ -330,7 +331,7 @@ export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly Ma
     const controllers = new Map<string, ManagedProjectionController>();
     // Exact controller IDs plus Prisma's nested Account and pagination bindings.
     for (const ids of portableQueryChunks({ values: [...new Set(inputs.flatMap(input => input.controller ? [input.controller.machineId] : []))], bindingsPerValue: 1, fixedBindings: 2 })) {
-        for (const controller of await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MANAGED_PROJECTION_CONTROLLER_SELECT })) {
+        for (const controller of await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: withMachineContentSelect(MANAGED_PROJECTION_CONTROLLER_SELECT) }).then(decodeMachineStoredContent)) {
             controllers.set(controller.id, controller);
         }
     }
@@ -512,7 +513,7 @@ export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, i
     operation: Readonly<{ actorAccountId: string; rpcMethod: string }> & MachineOperationRequesterContext;
 }>): Promise<Readonly<{ custodianAccountId: string; machineId: string; installationId: string }> | null> {
     if (input.accountServerId !== await readCurrentServerIdentityId(process.env, tx)) return null;
-    const machine = await tx.machine.findUnique({ where: { id: input.machineId } });
+    const machine = await tx.machine.findUnique({ where: { id: input.machineId } }).then(decodeMachineStoredContent);
     if (!machine?.installationId || classifyMachineAvailabilityState(machine) !== 'available'
         || !isMachineOperationSupportedForRequester({ ...input.operation, machine })) return null;
     const enrollment = await tx.managedMachine.findUnique({ where: { enrolledMachineId: input.machineId } });
@@ -527,7 +528,7 @@ export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, i
     }
     const controller = readManagedController(row);
     if (!controller) return null;
-    const parent = await tx.machine.findUnique({ where: { id: controller.machineId } });
+    const parent = await tx.machine.findUnique({ where: { id: controller.machineId } }).then(decodeMachineStoredContent);
     if (!parent || parent.accountId !== row.custodianAccountId
         || classifyMachineAvailabilityState(parent) !== 'available'
         || !isMachineOperationSupportedForRequester({ ...input.operation, machine: parent })
@@ -547,8 +548,8 @@ export async function readMachineDevcontainerWorkspaceSyncRouteInTx(tx: Tx, inpu
         // this route can only reach commit/abort/release, never a fresh native/copy operation.
         if (input.accountServerId !== await readCurrentServerIdentityId(process.env, tx)) return null;
         const [source, parent] = await Promise.all([
-            tx.machine.findUnique({ where: { id: input.childMachineId } }),
-            tx.machine.findUnique({ where: { id: input.parentMachineId } }),
+            tx.machine.findUnique({ where: { id: input.childMachineId } }).then(decodeMachineStoredContent),
+            tx.machine.findUnique({ where: { id: input.parentMachineId } }).then(decodeMachineStoredContent),
         ]);
         if (!source || !parent
             || classifyMachineAvailabilityState(source) !== 'available'

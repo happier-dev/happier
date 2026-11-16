@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { DiscussionSecondOpinionPreviewInputV1Schema, type DiscussionSecondOpinionPreviewInputV1,
     type DiscussionSecondOpinionPreviewV1, type DiscussionSecondOpinionPreviewSourceV1 } from '@happier-dev/protocol/discussions/secondOpinion';
@@ -54,10 +55,10 @@ async function sessionSourceFactsInTx(tx: Tx, input: Actor & Readonly<{ sessionI
     const access = await resolveEffectiveSessionAccess(tx, { accountId: input.actorAccountId, sessionId, authentication: input.authentication });
     if (!access?.capabilities.readTranscript) return null;
     const [session, message, audience] = await Promise.all([
-        tx.session.findUnique({ where: { id: sessionId }, select: {
+        tx.session.findUnique({ where: { id: sessionId }, select: withSessionContentSelect({
             ...createSessionDataKeyEnvelopeViewerSelect({ viewerAccountId: input.actorAccountId }),
             accountId: true, account: { select: RECIPIENT_READINESS_SELECT },
-        } }),
+        }) }).then(decodeSessionStoredContent),
         tx.sessionMessage.findFirst({ where: { sessionId, id: input.messageId }, select: { contentBytes: true, content: true } }).then(row => decodeStoredSessionMessage(row)),
         access.capabilities.manageAccess ? resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: [sessionId] }) : new Map<string, readonly string[]>(),
     ]);

@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { UsageSessionTimingV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { z } from "zod/mini";
 import { SESSION_METADATA_LAYOUT_VERSION_V1, SessionMetadataActiveConflictV1Schema, SessionMetadataInactiveModelIntentOwnerPatchV1Schema, SessionMetadataInactiveModelIntentPatchSuccessV1Schema, SessionMetadataInactiveModelIntentPatchV1Schema, SessionMetadataInactiveModelIntentVersionConflictV1Schema, SessionMetadataTuplePatchSuccessV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataVersionConflictV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -326,7 +327,7 @@ export function registerSessionPatchRoute(app: Fastify) {
         try {
             const currentSession = await db.session.findUnique({
                 where: { id: sessionId },
-                select: {
+                select: withSessionContentSelect({
                     accountId: true,
                     metadata: true,
                     metadataVersion: true,
@@ -334,8 +335,8 @@ export function registerSessionPatchRoute(app: Fastify) {
                     ownerMetadata: true,
                     agentState: true,
                     agentStateVersion: true,
-                },
-            });
+                }),
+            }).then(decodeSessionStoredContent);
             const published = currentSession ? await publishSessionCurrentViewUpdates({
                 sessionId,
                 recipientCursors: result.recipientCursors,

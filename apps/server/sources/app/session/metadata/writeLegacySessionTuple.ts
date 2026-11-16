@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, encodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { isDeepStrictEqual } from "node:util";
 import type { Prisma } from "@prisma/client";
 
@@ -75,7 +76,7 @@ export async function writeLegacySessionTupleInTx(tx: Tx, input: Readonly<{
         }
         return null;
     };
-    const current = await tx.session.findUnique({ where: { id: input.sessionId }, select: tupleSelect });
+    const current = await tx.session.findUnique({ where: { id: input.sessionId }, select: withSessionContentSelect(tupleSelect) }).then(decodeSessionStoredContent);
     if (!current) return { ok: false, error: "session-not-found" };
     const rejected = classify(current, false);
     if (rejected) return rejected;
@@ -108,16 +109,16 @@ export async function writeLegacySessionTupleInTx(tx: Tx, input: Readonly<{
             ...(input.requireInactiveSession ? { active: false } : {}),
             ...(input.requireUnarchivedSession ? { archivedAt: null } : {}),
         },
-        data: {
+        data: encodeSessionStoredContent({
             usageTimingV1: nextSessionUsageTiming({ current: current.usageTimingV1, supplied: input.usageTimingV1,
                 metadataWritten: metadata !== undefined, metadataChanged, agentStateWritten: agentState !== undefined, agentStateChanged }),
             ...(metadataChanged && metadata ? { metadata: next.metadata, metadataVersion: next.metadataVersion } : {}),
             ...(agentStateChanged && agentState ? { agentState: next.agentState, agentStateVersion: next.agentStateVersion } : {}),
             ...summary,
-        },
+        }),
     });
     if (updated.count === 0) {
-        const fresh = await tx.session.findUnique({ where: { id: input.sessionId }, select: tupleSelect });
+        const fresh = await tx.session.findUnique({ where: { id: input.sessionId }, select: withSessionContentSelect(tupleSelect) }).then(decodeSessionStoredContent);
         if (!fresh) return { ok: false, error: "session-not-found" };
         return classify(fresh, true) ?? { ok: false, error: "version-mismatch", current: fields(fresh) };
     }

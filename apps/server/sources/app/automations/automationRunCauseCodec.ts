@@ -1,3 +1,4 @@
+import { decodeStoredText } from '@/storage/storedContent';
 import { AutomationRunCauseSchema, type AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import type { Prisma } from "@prisma/client";
 
@@ -44,7 +45,8 @@ export function isAutomationCauseRow<T extends Readonly<{
  */
 export function projectAutomationOriginRun(row: StoredAutomationRunRow): AutomationRunItem | null {
     if (!isAutomationCauseRow(row)) return null;
-    return row as AutomationRunItem;
+    const { resultEnvelopeBytes, ...run } = row;
+    return { ...run, resultEnvelope: decodeStoredText(row.resultEnvelope, resultEnvelopeBytes) } as AutomationRunItem;
 }
 
 function required<T>(value: T | null, field: string): T {

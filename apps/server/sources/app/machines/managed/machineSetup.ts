@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { isStoredOpaquePresetMachine } from './managedMachineProjection';
 import { MachineSetupResolveInputV1Schema, MachineSetupReportInputV1Schema, MachineSetupResolveResultV1Schema, ManagedMutationInputV1Schema, type MachineSetupResolveInputV1, type MachineSetupPresetApplyInputV1, type MachineSetupReportInputV1, type ManagedMachineActionInputV1, type ManagedMachineReadV1, type MachineSetupOpaquePresetSourceV1, type MachineSetupResolvedSourceEntryV1, type MachineSetupResolvedSourceV1, type MachineSetupSourceApplyEntryV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineSetupV1Schema, ManagedOpaqueMachineSetupStateV1Schema, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -36,7 +37,7 @@ async function requireTargetInTx(tx: Tx, params: Readonly<{
     admittedMachineRole?: MachineAccessRoleV1;
 }>) {
     if (await readCurrentServerIdentityId(process.env, tx) !== params.input.homeId) throw new ManagedMachineError('permission_denied');
-    const machine = await tx.machine.findUnique({ where: { id: params.input.machineId } });
+    const machine = await tx.machine.findUnique({ where: { id: params.input.machineId } }).then(decodeMachineStoredContent);
     if (!machine || machine.accountId !== params.custodianAccountId
         || classifyMachineAvailabilityState(machine) !== 'available'
         || (params.admittedMachineRole ?? await resolveEffectiveMachineRoleInTx(tx,

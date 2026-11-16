@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { readDeclarationIntentIdentitiesTx } from './declarationReadRows';
 import { readIntentRows, decodeIntentReadRow, readIntentListDeclarations } from './intentReadRows';
 import { updateIntentRow } from './intentWriteRows';
@@ -1403,14 +1404,14 @@ export async function resolveCurrentClaimablePluginMachineMaterializationsTx(par
         const machines = [];
         for (const chunk of portableQueryChunks({ values: targets, bindingsPerValue: 2, fixedBindings: 2 })) {
             machines.push(...await params.tx.machine.findMany({ where: { accountId: params.accountId,
-                OR: chunk.map(target => ({ id: target.machineId, installationId: target.machineInstallationId })) }, select: machineSelect }));
+                OR: chunk.map(target => ({ id: target.machineId, installationId: target.machineInstallationId })) }, select: withMachineContentSelect(machineSelect) }).then(decodeMachineStoredContent));
         }
         const currentInstallations = new Set(machines.filter(machine => isClaimableMachineRowV1(machine,
             params.requiredMachineOperationCapability, params.retainedInstallation)).map(machine => JSON.stringify([machine.id, machine.installationId])));
         currentTargets = targets.filter(target => currentInstallations.has(JSON.stringify([target.machineId, target.machineInstallationId])));
     } else {
         const machine = await params.tx.machine.findFirst({ where: { accountId: params.accountId,
-            id: params.machineId, installationId: params.machineInstallationId }, select: machineSelect });
+            id: params.machineId, installationId: params.machineInstallationId }, select: withMachineContentSelect(machineSelect) }).then(decodeMachineStoredContent);
         currentTargets = isClaimableMachineRowV1(machine, params.requiredMachineOperationCapability, params.retainedInstallation) ? [params] : [];
     }
     if (currentTargets.length === 0) return [];

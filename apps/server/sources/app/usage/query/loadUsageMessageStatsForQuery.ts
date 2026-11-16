@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import {
     buildSessionMessagesPublicationWhere,
@@ -57,11 +58,11 @@ export async function loadUsageMessageCountsBySessionInTx(
                 { usageReports: { some: { updatedAt: toObservedAtFilter(request) } } },
             ],
         },
-        select: {
+        select: withSessionContentSelect({
             id: true,
             ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-        },
-    });
+        }),
+    }).then(decodeSessionStoredContent);
     const counts = await tx.sessionMessage.groupBy({
         by: ['sessionId'],
         _count: { _all: true },

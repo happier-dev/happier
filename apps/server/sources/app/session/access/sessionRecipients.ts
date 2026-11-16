@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { iterateResourceGrantPrincipalAccountIdsFromFacts, projectResourceGrantRows } from '@/app/teams/resourceGrantAccess';
 import type { TeamRoleV1 } from '@happier-dev/protocol/teams';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
@@ -67,12 +68,12 @@ async function resolveCurrentSessionRecipientsInTx(
     const unread = sessionIdChunk.filter(sessionId => !known.some(session => session.id === sessionId));
     const sessions: readonly CurrentSessionRecipientSessionRow[] = unread.length === 0 ? known : [...known, ...await tx.session.findMany({
       where: { id: { in: unread } },
-      select: {
+      select: withSessionContentSelect({
         id: true,
         ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
         account: { select: { status: true } },
-      },
-    })];
+      }),
+    }).then(decodeSessionStoredContent)];
     const shareableSessionIds: string[] = [];
     for (const session of sessions) {
       onPublicationRead?.(session);

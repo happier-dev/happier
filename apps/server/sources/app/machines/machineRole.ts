@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from '@prisma/client';
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
@@ -89,7 +90,7 @@ export async function readMachineRoleGraphInTx(tx: Tx, machines: readonly Machin
         pending = [];
         const select = accountIds.length === 1 ? buildMachineActorPermissionFactsSelect(accountIds[0]) : MACHINE_PERMISSION_FACTS_SELECT;
         for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: accountIds.length === 1 ? 12 : 9 })) {
-            const rows = await tx.machine.findMany({ where: { id: { in: [...chunk] } }, select });
+            const rows = await tx.machine.findMany({ where: { id: { in: [...chunk] } }, select: withMachineContentSelect(select) }).then(decodeMachineStoredContent);
             for (const row of rows) {
                 graph.set(row.id, { ...row, ...projectResourceGrantRows(row.grants) });
                 if (row.managedResource?.controllerMachineId) pending.push(row.managedResource.controllerMachineId);

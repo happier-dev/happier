@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { inTx, type Tx } from '@/storage/inTx';
 import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
@@ -166,7 +167,7 @@ async function mutateSessionManagerInTx(tx: Tx, input: SessionManagerSetInput, c
     await acquireSessionAccountCursorLocksInTx(tx, [input.sessionId,
         ...(input.expectedManagerSessionId ? [input.expectedManagerSessionId] : []),
         ...(input.managerSessionId ? [input.managerSessionId] : [])]);
-    const child = await tx.session.findUnique({ where: { id: input.sessionId }, select: SOURCE_SELECT });
+    const child = await tx.session.findUnique({ where: { id: input.sessionId }, select: withSessionContentSelect(SOURCE_SELECT) }).then(decodeSessionStoredContent);
     if (!child) return forbidden('read');
     const existing = await readSessionManagerInTx(tx, input.sessionId);
     const admission = await readManagerAdmissionInTx(tx, input, existing?.destinationSessionId ?? null);
@@ -238,7 +239,7 @@ export async function applySessionArchiveTransitionToManagerInTx(tx: Tx, input: 
     for (const edge of edges.filter(hasSessionFollowSessionSource)) {
         if (input.isArchived) continue;
         const [child, lead] = await Promise.all([
-            tx.session.findUnique({ where: { id: edge.sourceSessionId }, select: SOURCE_SELECT }),
+            tx.session.findUnique({ where: { id: edge.sourceSessionId }, select: withSessionContentSelect(SOURCE_SELECT) }).then(decodeSessionStoredContent),
             tx.session.findUnique({ where: { id: edge.destinationSessionId }, select: { archivedAt: true } }),
         ]);
         if (!child || !lead || child.archivedAt !== null || lead.archivedAt !== null) continue;

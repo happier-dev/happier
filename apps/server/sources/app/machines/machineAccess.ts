@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { ApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { isDeepStrictEqual } from 'node:util';
 import type { Machine, MachineKeyEnvelope, Prisma } from '@prisma/client';
@@ -94,7 +95,7 @@ type MachineOpeningRow = MachineOpeningStorageRow & ReturnType<typeof projectRes
 
 async function readFactsInTx(tx: Tx, machineId: string, actorAccountId?: string) {
     const row = await tx.machine.findUnique({ where: { id: machineId },
-        select: actorAccountId === undefined ? MACHINE_ACCESS_FACTS_SELECT : buildMachineAdmissionFactsSelect(actorAccountId) });
+        select: withMachineContentSelect(actorAccountId === undefined ? MACHINE_ACCESS_FACTS_SELECT : buildMachineAdmissionFactsSelect(actorAccountId)) }).then(decodeMachineStoredContent);
     return row ? { ...row, ...projectResourceGrantRows(row.grants) } : null;
 }
 type MachineFacts = NonNullable<Awaited<ReturnType<typeof readFactsInTx>>>;
@@ -146,7 +147,7 @@ export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input
     // Nine relation-projection bindings, including managedResource;
     // singleton reads add three actor predicates.
     for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: actorAccountId === undefined ? 9 : 12 })) {
-        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select });
+        const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: withMachineContentSelect(select) }).then(decodeMachineStoredContent);
         for (const row of rows) byId.set(row.id, { ...row, ...projectResourceGrantRows(row.grants) });
     }
     const roles = await machineRolesInTx(tx, [...byId.values()], input.accountIds);
@@ -173,7 +174,7 @@ export async function resolveMachinePrincipalAccessForMachinesInTx(tx: Tx, input
     }
     const rows: Parameters<typeof readMachineRoleGraphInTx>[1][number][] = [];
     for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 9 })) {
-        const loaded = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MACHINE_PERMISSION_FACTS_SELECT });
+        const loaded = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: withMachineContentSelect(MACHINE_PERMISSION_FACTS_SELECT) }).then(decodeMachineStoredContent);
         rows.push(...loaded.map(row => ({ ...row, ...projectResourceGrantRows(row.grants) })));
     }
     const roles = projectMachineTeamRoles(await readMachineRoleGraphInTx(tx, rows, []), principal.teamId);
@@ -339,7 +340,7 @@ export async function readMachineAdmissionFactsInTx(tx: Tx, input: MachineActor)
 async function readMachineFactsInTx(tx: Tx, actorAccountId: string, machineIds: readonly string[]): Promise<ReadonlyMap<string, MachineAdmissionFacts>> {
     const rows: MachineResourceFacts[] = [];
     for (const ids of portableQueryChunks({ values: [...new Set(machineIds)], bindingsPerValue: 1, fixedBindings: 3 })) {
-        rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MACHINE_RESOURCE_FACTS_SELECT }));
+        rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: withMachineContentSelect(MACHINE_RESOURCE_FACTS_SELECT) }).then(decodeMachineStoredContent));
     }
     const result = new Map<string, MachineAdmissionFacts>();
     for (const row of rows) if (row.accountId === actorAccountId) {
@@ -350,7 +351,7 @@ async function readMachineFactsInTx(tx: Tx, actorAccountId: string, machineIds: 
     const foreignIds = rows.filter(row => row.accountId !== actorAccountId).map(row => row.id);
     if (foreignIds.length > 0) {
         for (const ids of portableQueryChunks({ values: foreignIds, bindingsPerValue: 1, fixedBindings: 15 })) {
-            const foreignRows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: buildMachineAdmissionFactsSelect(actorAccountId) });
+            const foreignRows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: withMachineContentSelect(buildMachineAdmissionFactsSelect(actorAccountId)) }).then(decodeMachineStoredContent);
             for (const row of foreignRows) result.set(row.id, row);
         }
     }
@@ -390,7 +391,7 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
         const loaded = await tx.machine.findMany({ where: { id: { in: [...ids] } }, include: {
             ...MACHINE_OPENING_INCLUDE,
             grants: actorFacts.grants,
-        } });
+        } }).then(decodeMachineStoredContent);
         rows.push(...loaded.map(row => ({ ...row, ...projectResourceGrantRows(row.grants) })));
     }
     const foreignEncryptedIds = rows.filter(row => row.accountId !== input.actorAccountId && resourceMode(row) === 'e2ee').map(row => row.id);
@@ -450,9 +451,9 @@ export async function resolveMachineTargetAdmissionsInTx(tx: Tx, targets: readon
              CASE WHEN managed."id" IS NULL THEN NULL ELSE jsonb_build_object(${managedFields}) END AS "managedResource"
              FROM "Machine" m JOIN "Account" a ON a."id" = m."accountId"
              LEFT JOIN "ManagedMachine" managed ON managed."enrolledMachineId" = m."id"
-             WHERE m."id" = ANY($1::text[])`, machineIds));
+             WHERE m."id" = ANY($1::text[])`, machineIds).then(decodeMachineStoredContent));
     } else for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: 3 })) {
-        rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MACHINE_RESOURCE_FACTS_SELECT }));
+        rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: withMachineContentSelect(MACHINE_RESOURCE_FACTS_SELECT) }).then(decodeMachineStoredContent));
     }
     const facts = new Map(rows.map(row => [row.id, { ...row, grants: [], ...projectResourceGrantRows([]) }]));
     const accountIds = [...new Set(targets.map(target => target.actorAccountId))];

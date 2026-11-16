@@ -12,6 +12,7 @@ import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1, McpServerCatalogV1Schema } from "@ha
 import { formatSharedSavedSecretRefV1 } from "@happier-dev/protocol/account/settings/savedSecretReferenceV1";
 
 import { ACCOUNT_SETTINGS_HISTORY_MAX_AGGREGATE_BYTES } from "./accountSettingsHistoryConfig";
+import { readAccountSettingsSnapshotDbValue } from "./accountSettingsHistoryContent";
 import { mutateAccountSettingsHistorySnapshotInTx, recordAccountSettingsSnapshotsForWrite } from "./accountSettingsHistoryRepository";
 
 type Snapshot = Readonly<{
@@ -20,6 +21,7 @@ type Snapshot = Readonly<{
     version: number;
     createdAt: Date;
     settingsDbValue: string | null;
+    settingsDbValueBytes?: Uint8Array | null;
 }>;
 
 function createHistoryTransaction(initialSnapshots: readonly Snapshot[]) {
@@ -31,6 +33,7 @@ function createHistoryTransaction(initialSnapshots: readonly Snapshot[]) {
                 accountId: string;
                 version: number;
                 settingsDbValue: string | null;
+                settingsDbValueBytes?: Uint8Array | null;
             }>;
             skipDuplicates: boolean;
         }>) => {
@@ -47,6 +50,7 @@ function createHistoryTransaction(initialSnapshots: readonly Snapshot[]) {
                 version: input.data.version,
                 createdAt: new Date(input.data.version),
                 settingsDbValue: input.data.settingsDbValue,
+                settingsDbValueBytes: input.data.settingsDbValueBytes,
             };
             snapshots.push(created);
             return { count: 1 };
@@ -61,6 +65,7 @@ function createHistoryTransaction(initialSnapshots: readonly Snapshot[]) {
             .map((snapshot) => ({
                 id: snapshot.id,
                 settingsDbValue: snapshot.settingsDbValue,
+                settingsDbValueBytes: snapshot.settingsDbValueBytes,
             }))),
         deleteMany: vi.fn(async (input: Readonly<{
             where: Readonly<{
@@ -350,7 +355,7 @@ describe("Account Settings history repository", () => {
             mutation: { ...captured, expectedContent: { t: "encrypted", c: "locked-2" }, operation: { kind: "purge" } },
         })).toEqual({ status: "applied" });
         expect(snapshots).toEqual([
-            { accountId: "account-1", version: 1, settingsDbValue: "normalized-1", encryptionMode: "e2ee", contentKind: "encrypted" },
+            { accountId: "account-1", version: 1, settingsDbValue: "normalized-1", settingsDbValueBytes: null, encryptionMode: "e2ee", contentKind: "encrypted" },
             { accountId: "account-1", version: 4, settingsDbValue: JSON.stringify({ t: "plain", v: { futurePreference: true } }), encryptionMode: "plain", contentKind: "plain" },
         ]);
     });
@@ -387,7 +392,7 @@ describe("Account Settings history repository", () => {
         expect(fixture.snapshots.map((snapshot) => snapshot.version).sort((left, right) => left - right))
             .toEqual(Array.from({ length: 32 }, (_, index) => index + 3));
         expect(fixture.snapshots.reduce(
-            (total, snapshot) => total + Buffer.byteLength(snapshot.settingsDbValue ?? "", "utf8"),
+            (total, snapshot) => total + Buffer.byteLength(readAccountSettingsSnapshotDbValue(snapshot) ?? "", "utf8"),
             0,
         )).toBe(16 * 1024 * 1024);
     });

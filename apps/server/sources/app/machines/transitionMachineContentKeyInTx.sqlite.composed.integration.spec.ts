@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { randomUUID } from "node:crypto";
 import tweetnacl from "tweetnacl";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -47,8 +48,9 @@ describe("Machine content key transition (real route and SQLite)", () => {
             expect(committed.statusCode).toBe(200);
             expect(committed.json()).toMatchObject({ kind: "committed", machine: { ...next, metadataVersion: 3, daemonStateVersion: 4 } });
             const stored = await db.machine.findUniqueOrThrow({ where: { id: machine.id } });
-            expect(decryptWithDataKey(Buffer.from(stored.metadata, "base64"), nextKey)).toEqual(content);
-            expect(decryptWithDataKey(Buffer.from(stored.daemonState!, "base64"), nextKey)).toEqual(daemonState);
+            const decoded = decodeMachineStoredContent(stored);
+            expect(decryptWithDataKey(Buffer.from(decoded.metadata, "base64"), nextKey)).toEqual(content);
+            expect(decryptWithDataKey(Buffer.from(decoded.daemonState!, "base64"), nextKey)).toEqual(daemonState);
             expect(published.mock.calls.map(([event]) => event.payload.body).filter((body) => body.t === "update-machine")).toEqual([
                 expect.objectContaining({ machineId: machine.id, dataEncryptionKey: next.dataEncryptionKey,
                     keyBasis: { dataEncryptionKey: next.dataEncryptionKey, metadataVersion: 3, daemonStateVersion: 4 },

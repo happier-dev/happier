@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { SessionRuntimeActivitySnapshotSchema, type SessionRuntimeActivitySnapshot } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { SessionPublisherGenerationV1Schema } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
 import { SessionInputMachineTargetV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -307,8 +308,8 @@ export async function expireSessionPublisherCandidates(params: Readonly<{
         for (const candidate of params.candidates) {
             const session = await tx.session.findUnique({
                 where: { id: candidate.sessionId },
-                select: { ...sessionActivityBadgeSelect, lastActiveAt: true, latestTurnId: true, updatedAt: true },
-            });
+                select: withSessionContentSelect({ ...sessionActivityBadgeSelect, lastActiveAt: true, latestTurnId: true, updatedAt: true }),
+            }).then(decodeSessionStoredContent);
             if (
                 !session
                 || session.active !== true
@@ -428,13 +429,13 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         await acquireSessionAccountCursorLocksInTx(tx, [binding.sessionId]);
         const session = await tx.session.findUnique({
             where: { id: binding.sessionId },
-            select: {
+            select: withSessionContentSelect({
                 ...sessionActivityBadgeSelect,
                 accountId: true,
                 lastActiveAt: true,
                 publisherGeneration: true,
-            },
-        });
+            }),
+        }).then(decodeSessionStoredContent);
         if (!session) return { status: "rejected", reason: "not_found" };
         if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, ...binding })) {
             return { status: "rejected", reason: "unauthorized" };
@@ -599,14 +600,14 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                 else await acquireSessionAccountCursorLocksInTx(tx, [registration.binding.sessionId]);
                 const session = await tx.session.findUnique({
                     where: { id: registration.binding.sessionId },
-                    select: {
+                    select: withSessionContentSelect({
                         ...sessionActivityBadgeSelect,
                         lastActiveAt: true,
                         publisherGeneration: true,
                         publisherGenerationLastActiveAt: true,
                         updatedAt: true,
-                    },
-                });
+                    }),
+                }).then(decodeSessionStoredContent);
                 if (!session) return { status: "rejected", reason: "not_found" };
                 if (session.archivedAt !== null) return { status: "rejected", reason: "archived" };
                 if (
@@ -694,14 +695,14 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
         });
         const session = await tx.session.findUnique({
             where: { id: params.binding.sessionId },
-            select: {
+            select: withSessionContentSelect({
                 ...sessionActivityBadgeSelect,
                 lastActiveAt: true,
                 publisherGeneration: true,
                 publisherGenerationLastActiveAt: true,
                 runtimeMachineTarget: true,
-            },
-        });
+            }),
+        }).then(decodeSessionStoredContent);
         if (!session) return { status: "rejected", reason: "not_found" };
         const hasInstalledCustody = params.installedMachineCustody !== undefined
             && await hasInstalledMachineTerminalCustodyInTx(tx, {

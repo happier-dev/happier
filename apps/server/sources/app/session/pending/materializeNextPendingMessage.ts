@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 import type { SessionRecipientCursor, SessionRecipientPublication } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
@@ -511,7 +512,7 @@ async function materializePendingTargetInTx(
         const result = await (async () => {
             const sessionBefore = await tx.session.findUniqueOrThrow({
                 where: { id: sessionId },
-                select: {
+                select: withSessionContentSelect({
                     ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                     pendingCount: true,
                     pendingBlockedCount: true,
@@ -525,8 +526,8 @@ async function materializePendingTargetInTx(
                     runtimeActivityActiveCount: true,
                     runtimeActivityObservedAt: true,
                     runtimeActivityRevision: true,
-                },
-            });
+                }),
+            }).then(decodeSessionStoredContent);
 
             const rejoin = await resolvePendingProviderRejoinInTx({
                 tx,
@@ -768,7 +769,7 @@ async function materializePendingTargetInTx(
                 if (sessionFence.count !== 1) throw new PublisherAuthorityLostError();
                 const session = await tx.session.findUniqueOrThrow({
                     where: { id: sessionId },
-                    select: {
+                    select: withSessionContentSelect({
                         ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                         pendingCount: true,
                         pendingBlockedCount: true,
@@ -777,8 +778,8 @@ async function materializePendingTargetInTx(
                         pendingUserActionRequestCount: true,
                         active: true,
                         archivedAt: true,
-                    },
-                });
+                    }),
+                }).then(decodeSessionStoredContent);
 
                 const recipientCursorsPending = await markPendingStateChangedRecipients({
                     tx,

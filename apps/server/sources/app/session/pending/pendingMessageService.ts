@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
@@ -227,7 +228,7 @@ export async function listPendingResetStartsForSource(params: Readonly<{
         const bySession = new Map<string, SessionAccessProjectionRow>();
         for (let offset = 0; offset < sessionIds.length; offset += SESSION_ACCESS_SESSION_BATCH_SIZE) {
             const sessionRows = await tx.session.findMany({ where: { id: { in: sessionIds.slice(offset, offset + SESSION_ACCESS_SESSION_BATCH_SIZE) } },
-                select: buildSessionAccessProjectionSelect(params.actorUserId) });
+                select: withSessionContentSelect(buildSessionAccessProjectionSelect(params.actorUserId)) }).then(decodeSessionStoredContent);
             for (const row of sessionRows) bySession.set(row.id, row);
         }
         const currentTargets = await readCurrentPendingResetStartTargetsInTx(tx, candidates.map(({ row }) => ({

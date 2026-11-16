@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
 import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
@@ -4224,7 +4225,7 @@ export async function verifyWorkspaceSyncProjectSourceAuthorization(
             }
         }
     }
-    const rootMachine = await db.machine.findUnique({ where: { id: binding.machineId } });
+    const rootMachine = await db.machine.findUnique({ where: { id: binding.machineId } }).then(decodeMachineStoredContent);
     if (!rootMachine?.installationPublicKey || rootMachine.installationId !== binding.installationId
         || classifyMachineAvailabilityState(rootMachine) !== 'available'
         || !verifyExternalActionMachineRpcRequestV1({ reviewedChild: packet.reviewedChild, authorizationToken: authorization.token,
@@ -4249,7 +4250,7 @@ export async function readCurrentWorkspaceSyncCopyRetirementAuthorization(
         || !await hasCurrentExternalActionSessionSource(binding, resolveCurrentSessionMachine)) return null;
     const current = await verifyCurrentExternalActionPrincipal(binding);
     const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
-    const machine = await db.machine.findUnique({ where: { id: binding.machineId } });
+    const machine = await db.machine.findUnique({ where: { id: binding.machineId } }).then(decodeMachineStoredContent);
     const action = PublicActionIdSchema.safeParse(binding.actionId);
         if (!principal || !machine || !action.success || !await hasCurrentExecutionMachineAdmission(binding, machine)
         || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(action.data), authority: principal.authority,
@@ -4473,7 +4474,7 @@ export async function verifyExternalActionMachineRpcExecution(
                     rootRequestId: binding.requestId,
                     rootPreparationAdmission: binding.deploymentPreparationAdmission, reviewedChild: execution.reviewedChild })) return refuseExternalActionExecutionRequest('deployment_child_root_input', { rpc: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD });
         }
-        const machine = await db.machine.findUnique({ where: { id: binding.machineId } });
+        const machine = await db.machine.findUnique({ where: { id: binding.machineId } }).then(decodeMachineStoredContent);
         // Mint owns root permission admission; this finite child proves the captured installation and exact routing.
         const principal = projectAcceptedDeploymentPrincipal(binding);
         if (!machine?.installationPublicKey || machine.installationId !== binding.installationId
@@ -4559,7 +4560,7 @@ export async function verifyExternalActionMachineRpcExecution(
                 || slot.discussion.creationLocalId !== derived.root.retry.creationLocalId
                 || !sameStrictJsonValue(slot.modelLaunch, derived.launch)) return null;
         }
-        const machine = await db.machine.findUnique({ where: { id: binding.machineId } });
+        const machine = await db.machine.findUnique({ where: { id: binding.machineId } }).then(decodeMachineStoredContent);
         const destination = await resolveMachineAdmission({ actorAccountId: binding.accountId, machineId, requiredRole: setupPlanChild ? 'manage' : 'use' });
         const current = await verifyCurrentExternalActionPrincipal(binding);
         const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
@@ -4616,7 +4617,7 @@ export async function verifyExternalActionMachineRpcExecution(
                 || execution.effectActionId !== binding.actionId || request.event !== undefined && request.event !== SOCKET_RPC_EVENTS.CALL
                 || request.method.slice(request.method.indexOf(':') + 1) !== readWorkspaceSyncTargetMethodV1(routing.target.phase)) return null;
             const verified = await readCurrentWorkspaceSyncCopyRetirementAuthorization(execution.authorization, routing, request.resolveCurrentSessionMachine);
-            const writer = await db.machine.findUnique({ where: { id: routing.sourceWriter.machineId } });
+            const writer = await db.machine.findUnique({ where: { id: routing.sourceWriter.machineId } }).then(decodeMachineStoredContent);
             if (!verified || !writer?.installationPublicKey || writer.accountId !== routing.source.sourceContext.machineAdmission.custodianAccountId
                 || writer.installationId !== routing.sourceWriter.installationId || execution.installationId !== writer.installationId
                 || classifyMachineAvailabilityState(writer) !== 'available'

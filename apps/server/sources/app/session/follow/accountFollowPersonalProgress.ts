@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SessionFollowPersonalProgressRequestV1Schema, type SessionFollowPersonalProgressRequestV1,
     type SessionFollowPersonalProgressResponseV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
@@ -100,10 +101,10 @@ export async function acceptAccountFollowPersonalProgress(input: Readonly<{
             if (consumesOnce) await markSessionFollowsChangedInTx(tx, { accountId: input.accountId });
             return { ok: true, value: { accepted: true, alreadyRepresented: false } };
         }
-        const source = await tx.session.findUnique({ where: { id: occurrence.sourceSessionId }, select: {
+        const source = await tx.session.findUnique({ where: { id: occurrence.sourceSessionId }, select: withSessionContentSelect({
             ...createSessionPersonalProjectionSelect(input.accountId), agentStateVersion: true, publisherGeneration: true,
             encryptionMode: true,
-        } });
+        }) }).then(decodeSessionStoredContent);
         if (!source || source.archivedAt !== null) return unrepresented;
         const receiverEvaluation = 'evaluation' in occurrence;
         if (!receiverEvaluation) {

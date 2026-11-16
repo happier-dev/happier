@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { compareSessionFollowFrontierProgressV1, isSessionFollowFrontierEqualV1, isSessionFollowTurnEqualV1, isSessionFollowConsumptionWithinCurrentV1, type SessionFollowFrontierV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
 import { deriveSessionFollowWakeEventLocalIdV1, normalizeSessionFollowWakeObservationsV1,
     type SessionFollowAcknowledgeRequestV1, type SessionFollowObserveInactiveResponseV1,
@@ -242,7 +243,7 @@ async function admitSessionFollowSourceForRunnerInTx(
 
     const source = await tx.session.findUnique({
         where: { id: input.request.sourceSessionId },
-        select: {
+        select: withSessionContentSelect({
             id: true, seq: true, encryptionMode: true, metadata: true, metadataLayoutVersion: true,
             archivedAt: true, createdAt: true, updatedAt: true, active: true, lastActiveAt: true,
             thinking: true, thinkingAt: true, latestTurnStatus: true, latestTurnStatusObservedAt: true,
@@ -251,8 +252,8 @@ async function admitSessionFollowSourceForRunnerInTx(
             agentStateVersion: true, agentState: true, pendingPermissionRequestCount: true, pendingUserActionRequestCount: true,
             pendingRequestObservedAt: true, pendingCount: true, pendingBlockedCount: true,
             runtimeActivityState: true, runtimeActivityActiveCount: true,
-        },
-    });
+        }),
+    }).then(decodeSessionStoredContent);
     if (!source || source.archivedAt !== null || (source.encryptionMode !== "plain" && source.encryptionMode !== "e2ee")) return null;
     // The Runner reports the observation it is hydrating, but those sequence
     // numbers are never read authority. Bound the lower bound by the exact
@@ -430,7 +431,7 @@ function projectSource(edge: EdgeRow, source: SessionRow | null, dormant: boolea
 }
 
 async function loadSession(tx: Tx, sessionId: string): Promise<SessionRow | null> {
-    return await tx.session.findUnique({ where: { id: sessionId }, select: SESSION_SELECT });
+    return await tx.session.findUnique({ where: { id: sessionId }, select: withSessionContentSelect(SESSION_SELECT) }).then(decodeSessionStoredContent);
 }
 
 async function isActingAccountActive(tx: Tx, accountId: string): Promise<boolean> {
@@ -473,7 +474,7 @@ export async function observeSessionFollowSourceRoutes(input: Readonly<{
         const denied = { ok: false, v: 1, error: 'forbidden' } as const;
         if (input.authentication.sessionRuntimePrincipal || !await isActingAccountActive(tx, input.accountId)) return denied;
         const source = await tx.session.findUnique({ where: { id: input.sourceSessionId },
-            select: { ...SESSION_SELECT, encryptionMode: true, responsibleAccountId: true } });
+            select: withSessionContentSelect({ ...SESSION_SELECT, encryptionMode: true, responsibleAccountId: true }) }).then(decodeSessionStoredContent);
         const publisher = input.request.sourcePublisher;
         let recoveryDestinationId: string | undefined;
         if (!source || source.archivedAt !== null) return denied;
@@ -560,7 +561,7 @@ export async function readSessionFollowTerminalAckFacts(input: Readonly<{
     return inReadSnapshot(async tx => {
         if (input.authentication.sessionRuntimePrincipal || !await isActingAccountActive(tx, input.accountId)) return null;
         const source = await tx.session.findUnique({ where: { id: input.sessionId },
-            select: { ...SESSION_SELECT, responsibleAccountId: true } });
+            select: withSessionContentSelect({ ...SESSION_SELECT, responsibleAccountId: true }) }).then(decodeSessionStoredContent);
         // The write just fenced this publisher; its current registration generation is the one proven here.
         if (!source || source.archivedAt !== null || !await isSessionFollowSourcePublisherCurrentInTx(tx, {
             accountId: input.accountId, source,
@@ -1462,7 +1463,7 @@ async function observePendingSessionFollowEdgesInTx(tx: Tx, input: Readonly<{
     const sources = new Map<string, NonNullable<Awaited<ReturnType<typeof loadSession>>>>();
     const sourceIds = [...new Set(edges.map(edge => edge.sourceSessionId))];
     for (const ids of portableQueryChunks({ values: sourceIds, bindingsPerValue: 1, fixedBindings: 1 })) {
-        for (const source of await tx.session.findMany({ where: { id: { in: [...ids] } }, select: SESSION_SELECT })) {
+        for (const source of await tx.session.findMany({ where: { id: { in: [...ids] } }, select: withSessionContentSelect(SESSION_SELECT) }).then(decodeSessionStoredContent)) {
             if (source.archivedAt === null) sources.set(source.id, source);
         }
     }

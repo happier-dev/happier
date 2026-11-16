@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, encodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Socket } from 'socket.io';
 import { afterTx, inTx, type Tx } from '@/storage/inTx';
 import { MachineUpdateStateRequestSchema, type MachineUpdateStateResponse } from '@happier-dev/protocol/machines/metadataUpdate';
@@ -47,7 +48,7 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
                 }
                 const machine = await tx.machine.findFirst({
                     where: { accountId: admission.custodianAccountId, id: machineId, installationId: admission.installationId },
-                    select: {
+                    select: withMachineContentSelect({
                         id: true,
                         accountId: true,
                         kind: true,
@@ -61,8 +62,8 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
                         replacedByMachineId: true,
                         active: true,
                         lastActiveAt: true,
-                    },
-                });
+                    }),
+                }).then(decodeMachineStoredContent);
                 if (!machine) {
                     return response({ result: 'error', message: 'Machine not found' });
                 }
@@ -116,17 +117,17 @@ export function registerMachineDaemonStateHandler(userId: string, socket: Socket
                         dataEncryptionKey: machine.dataEncryptionKey, installationId: machine.installationId,
                         revokedAt: null, replacedByMachineId: null,
                     },
-                    data: {
+                    data: encodeMachineStoredContent({
                         daemonState,
                         daemonStateVersion: expectedVersion + 1,
-                    },
+                    }),
                 });
 
                 if (count === 0) {
                     const fresh = await tx.machine.findFirst({
                         where: { accountId: userId, id: machineId },
-                        select: { daemonStateVersion: true, daemonState: true, dataEncryptionKey: true, installationId: true, revokedAt: true, replacedByMachineId: true },
-                    });
+                        select: withMachineContentSelect({ daemonStateVersion: true, daemonState: true, dataEncryptionKey: true, installationId: true, revokedAt: true, replacedByMachineId: true }),
+                    }).then(decodeMachineStoredContent);
                     const freshState = classifyMachineAvailabilityState(fresh);
                     if (freshState === "revoked") {
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));

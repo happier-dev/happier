@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Tx } from "@/storage/inTx";
 import { evaluateExistingSessionAutomationEligibility } from "@happier-dev/agents";
 import { openPlainAccountSettingsDbValue } from "@/app/encryption/accountSettingsStorage";
@@ -169,14 +170,14 @@ export async function validateExistingSessionAutomationTargetTx(params: {
             id: template.existingSessionId,
             accountId: params.accountId,
         },
-        select: {
+        select: withSessionContentSelect({
             id: true,
             encryptionMode: true,
             metadata: true,
             metadataLayoutVersion: true,
             ownerMetadata: true,
-        },
-    });
+        }),
+    }).then(decodeSessionStoredContent);
     if (!session) {
         throw new AutomationValidationError("existing session target does not exist");
     }

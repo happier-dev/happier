@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx, type MachineAdmissionFacts } from "@/app/machines/machineAccess";
 import { isPrismaErrorCode } from "@/storage/db";
@@ -71,8 +72,8 @@ export async function readSessionMachineBindingStateInTx(
             }),
             tx.machine.findUnique({
                 where: { id: binding.machineId },
-                select: buildMachineAdmissionFactsSelect(binding.accountId),
-            }),
+                select: withMachineContentSelect(buildMachineAdmissionFactsSelect(binding.accountId)),
+            }).then(decodeMachineStoredContent),
         ]);
         return { session, machine };
     })();

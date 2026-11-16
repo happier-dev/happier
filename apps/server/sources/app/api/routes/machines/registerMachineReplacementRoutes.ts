@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { applyMachineReplacement, clearMachineReplacement, MachineReplacementWriteConflictError } from "@/app/machines/applyMachineReplacement";
 import {
     enforceCurrentAccountStoredContentCompatibilityForHttpRequest,
@@ -40,10 +41,10 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
         const result = await inTx(async (tx) => {
             const oldMachine = await tx.machine.findFirst({
                 where: { accountId: userId, id: oldMachineId },
-            });
+            }).then(decodeMachineStoredContent);
             const replacementMachine = await tx.machine.findFirst({
                 where: { accountId: userId, id: replacementMachineId },
-            });
+            }).then(decodeMachineStoredContent);
             if (
                 isPlainMachineDataKeyMarker(oldMachine?.dataEncryptionKey)
                 && !supportsCurrentStoredContentProtocol
@@ -80,7 +81,7 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
             const updatedOldMachine = await tx.machine.findFirst({
                 where: { accountId: userId, id: oldMachineId },
                 include: { managedResource: true },
-            });
+            }).then(decodeMachineStoredContent);
 
             return { kind: "ok" as const, machine: updatedOldMachine
                 ? (await withManagedWakeAvailabilityInTx(tx, [updatedOldMachine]))[0] : null };
@@ -127,7 +128,7 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
         const result = await inTx(async (tx) => {
             const machine = await tx.machine.findFirst({
                 where: { accountId: userId, id: oldMachineId },
-            });
+            }).then(decodeMachineStoredContent);
             if (!machine) {
                 return { kind: "not_found" as const };
             }
@@ -143,7 +144,7 @@ export function registerMachineReplacementRoutes(app: Fastify): void {
             const updatedMachine = await tx.machine.findFirst({
                 where: { accountId: userId, id: oldMachineId },
                 include: { managedResource: true },
-            });
+            }).then(decodeMachineStoredContent);
 
             return { kind: "ok" as const, machine: updatedMachine
                 ? (await withManagedWakeAvailabilityInTx(tx, [updatedMachine]))[0] : null };

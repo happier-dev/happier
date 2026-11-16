@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, encodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { registerMachineDaemonStateHandler } from './machineDaemonStateHandler';
 import {
     acquireMachinePublicationLocksInTx, readMarkedMachineSocketUpgradeRequired,
@@ -906,7 +907,7 @@ export function machineUpdateHandler(
                 }
                 const machine = await tx.machine.findFirst({
                     where: { accountId: admission.custodianAccountId, id: machineId, installationId: admission.installationId },
-                    select: {
+                    select: withMachineContentSelect({
                         metadataVersion: true,
                         daemonStateVersion: true,
                         metadata: true,
@@ -915,8 +916,8 @@ export function machineUpdateHandler(
                         installationId: true,
                         revokedAt: true,
                         replacedByMachineId: true,
-                    },
-                });
+                    }),
+                }).then(decodeMachineStoredContent);
                 if (!machine) {
                     afterTx(tx, () => callback?.({ result: 'error', message: 'Machine not found' }));
                     return null;
@@ -967,14 +968,14 @@ export function machineUpdateHandler(
                         dataEncryptionKey: machine.dataEncryptionKey, installationId: machine.installationId,
                         revokedAt: null, replacedByMachineId: null,
                     },
-                    data: { metadata, metadataVersion: expectedVersion + 1 },
+                    data: encodeMachineStoredContent({ metadata, metadataVersion: expectedVersion + 1 }),
                 });
 
                 if (count === 0) {
                     const fresh = await tx.machine.findFirst({
                         where: { accountId: admission.custodianAccountId, id: machineId },
-                        select: { metadataVersion: true, metadata: true, dataEncryptionKey: true, installationId: true, revokedAt: true, replacedByMachineId: true },
-                    });
+                        select: withMachineContentSelect({ metadataVersion: true, metadata: true, dataEncryptionKey: true, installationId: true, revokedAt: true, replacedByMachineId: true }),
+                    }).then(decodeMachineStoredContent);
                     const freshState = classifyMachineAvailabilityState(fresh);
                     if (freshState === "revoked") {
                         afterTx(tx, () => callback?.({ result: 'error', message: 'Machine revoked' }));

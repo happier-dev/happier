@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { isDeepStrictEqual } from 'node:util';
 import { SESSION_FOLLOW_ZERO_FRONTIER_V1, isSessionFollowTurnEqualV1, type SessionFollowFrontierV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
 import { isSessionFollowStalledOccurrenceCurrentV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1';
@@ -28,7 +29,7 @@ export async function admitStalledSessionFollowRulesInTx(tx: Tx, input: Readonly
 }>) {
     const selection = input.selection;
     const [source, destination] = await Promise.all([
-        tx.session.findUnique({ where: { id: selection.sourceSessionId }, select: sourceSelect }),
+        tx.session.findUnique({ where: { id: selection.sourceSessionId }, select: withSessionContentSelect(sourceSelect) }).then(decodeSessionStoredContent),
         tx.session.findUnique({ where: { id: selection.destinationSessionId }, select: { accountId: true, archivedAt: true } }),
     ]);
     if (!source || destination?.accountId !== input.accountId || destination.archivedAt !== null
@@ -106,7 +107,7 @@ export async function readStalledSessionFollowRulesInTx(tx: Tx, input: Readonly<
     const sources = new Map<string, SessionFollowSourceFrontierRow & { id: string; lastActiveAt: Date; archivedAt: Date | null }>();
     for (const ids of portableQueryChunks({ values: [...new Set(candidates.map(entry => entry.progress.sourceSessionId))],
         bindingsPerValue: 1, fixedBindings: 0 })) {
-        for (const source of await tx.session.findMany({ where: { id: { in: [...ids] } }, select: sourceSelect })) sources.set(source.id, source);
+        for (const source of await tx.session.findMany({ where: { id: { in: [...ids] } }, select: withSessionContentSelect(sourceSelect) }).then(decodeSessionStoredContent)) sources.set(source.id, source);
     }
     const muted = input.readMuted ?? createDeliveryMuteReaderInTx(tx, { accountId: input.accountId,
         receiver: { kind: 'session', sessionId: input.destinationSessionId } });

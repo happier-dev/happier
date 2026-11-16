@@ -550,6 +550,15 @@ rewriting historical content; MySQL uses LongBlob rather than narrowing messages
 to its default Blob capacity. Deploy the additive schema before loading new
 server queries. An older server reading new byte-backed rows is unsupported.
 
+The same physical storage owner also handles Session metadata/Agent state,
+Machine metadata/daemon state, Session System Records, Automation Run results
+and Workflow checkpoints, and Account settings snapshots. Their nullable byte
+siblings are additive and have no backfill. Text and envelope shells preserve
+serialization, extra fields, and the Workflow cipher prefix. Read owners decode
+before returning domain values or comparing replay/CAS content; writes clear
+obsolete byte siblings. Provider Usage History's nested record payload stays in
+its existing representation. See [other stored-content bytes](encryption.md#other-stored-content-bytes-03-development).
+
 The predecessor basis is `../0.2` at
 `7b0f74960b1393886b994dbda71dcb3439c1ab57`, with no scoped working changes to
 CLI encryption or UI encryptor at inspection. Its AES uses version 0, a 12-byte

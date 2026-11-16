@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from "@prisma/client";
 import type { SessionListScopeV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { type Tx } from "@/storage/inTx";
@@ -141,8 +142,8 @@ export async function countSessionPersonalAttentionRowsInTx(tx: Tx, params: Read
             },
             orderBy: { id: "asc" },
             take,
-            select: createSessionPersonalAttentionProjectionSelect(params.accountId),
-        }),
+            select: withSessionContentSelect(createSessionPersonalAttentionProjectionSelect(params.accountId)),
+        }).then(decodeSessionStoredContent),
         cursorAfter: (rows) => rows[rows.length - 1]?.id ?? "",
         admitCandidates: query.admitRows,
     })) {
@@ -216,8 +217,8 @@ export async function countAccountPersonalAttentionRowsForAccountsInTx(
                 },
                 orderBy: { id: "asc" },
                 take,
-                select: createSessionPersonalAttentionProjectionSelectForAccounts(accountIds),
-            }),
+                select: withSessionContentSelect(createSessionPersonalAttentionProjectionSelectForAccounts(accountIds)),
+            }).then(decodeSessionStoredContent),
             cursorAfter: (rows) => rows[rows.length - 1]?.id ?? "",
             admitCandidates: async (rows) => {
                 const failureSequences = await loadSessionLatestFailureSequencesInTx(tx, rows);

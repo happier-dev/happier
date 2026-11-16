@@ -8,6 +8,12 @@ import {
 } from "./accountSettingsHistoryContent";
 
 describe("accountSettingsHistoryContent", () => {
+    it("projects byte-backed encrypted history without treating its placeholder as empty", () => {
+        const snapshot = { accountId: "account-1", encryptionMode: "e2ee", settingsDbValue: "",
+            settingsDbValueBytes: new Uint8Array([1, 2, 3]) };
+        expect(resolveAccountSettingsSnapshotContentKind(snapshot)).toBe("encrypted");
+        expect(accountSettingsSnapshotToContent(snapshot)).toEqual({ t: "encrypted", c: "AQID" });
+    });
     it.each(["future-mode", null])(
         "fails closed before projecting snapshot mode %j",
         (encryptionMode) => {

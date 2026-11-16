@@ -1,3 +1,4 @@
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { z } from 'zod/mini';
 import { isDeepStrictEqual } from 'node:util';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -79,7 +80,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 return reply.code(403).send({ error: 'access_denied' });
             }
             const receiver = await db.machine.findUnique({ where: { id: request.params.id },
-                select: { ...buildMachineAdmissionFactsSelect(context.actorAccountId), installationPublicKey: true } });
+                select: withMachineContentSelect({ ...buildMachineAdmissionFactsSelect(context.actorAccountId), installationPublicKey: true }) }).then(decodeMachineStoredContent);
             if (!receiver?.installationId || !receiver.installationPublicKey || receiver.accountId !== request.userId
                 || receiver.installationId !== context.installationId || receiver.accountId !== context.custodianAccountId
                 || classifyMachineAvailabilityState(receiver) !== 'available'
@@ -134,7 +135,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 || !isDeepStrictEqual(context, workspaceSyncSeedRouting.sourceWriterTarget.source.sourceContext.machineAdmission)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const signer = await db.machine.findUnique({ where: { id: request.params.id } });
+            const signer = await db.machine.findUnique({ where: { id: request.params.id } }).then(decodeMachineStoredContent);
             if (!signer?.installationId || !signer.installationPublicKey || signer.accountId !== request.userId
                 || classifyMachineAvailabilityState(signer) !== 'available'
                 || !verifyMachineInstallationProof({ payload: { version: 1, machineId: signer.id, installationId: signer.installationId,
@@ -148,7 +149,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                     : signer.id !== route.machineId || signer.installationId !== route.installationId)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const destination = await db.machine.findUnique({ where: { id: admitted.writer.machineId } });
+            const destination = await db.machine.findUnique({ where: { id: admitted.writer.machineId } }).then(decodeMachineStoredContent);
             if (!destination?.installationPublicKey || destination.installationId !== admitted.writer.installationId
                 || classifyMachineAvailabilityState(destination) !== 'available'
                 || !await hasCurrentExternalActionSessionSource(admitted.verified.binding, app.resolveCurrentSessionMachine)) {
@@ -174,7 +175,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 || !isDeepStrictEqual(context, workspaceSyncSourceRouting.sourceContext?.machineAdmission)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const writer = await db.machine.findUnique({ where: { id: request.params.id } });
+            const writer = await db.machine.findUnique({ where: { id: request.params.id } }).then(decodeMachineStoredContent);
             if (!writer?.installationId || !writer.installationPublicKey || writer.accountId !== request.userId
                 || !workspaceSyncSourceExecution && writer.accountId !== callerInputAuthorization.binding.custodianAccountId
                 || !workspaceSyncSourceExecution && (writer.id !== callerInputAuthorization.binding.machineId
@@ -197,7 +198,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 || admitted.route.custodianAccountId !== writer.accountId)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const destination = await db.machine.findUnique({ where: { id: admitted.route.parentMachineId } });
+            const destination = await db.machine.findUnique({ where: { id: admitted.route.parentMachineId } }).then(decodeMachineStoredContent);
             if (!destination?.installationId || !destination.installationPublicKey
                 || destination.installationId !== admitted.route.parentInstallationId
                 || classifyMachineAvailabilityState(destination) !== 'available') return reply.code(403).send({ error: 'access_denied' });
@@ -220,7 +221,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                     || (callerInputAuthorization ? !retirement : writerRouting.target.phase === 'remove') : !callerInputAuthorization)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const receiver = await db.machine.findUnique({ where: { id: request.params.id } });
+            const receiver = await db.machine.findUnique({ where: { id: request.params.id } }).then(decodeMachineStoredContent);
             if (!receiver || receiver.accountId !== request.userId || !receiver.installationId || !receiver.installationPublicKey
                 || classifyMachineAvailabilityState(receiver) !== 'available'
                 || !verifyMachineInstallationProof({ payload: { version: 1, machineId: receiver.id,
@@ -248,7 +249,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                     && receiver.installationId === writer.installationId) {
                     // SOURCE discovers only transport; the retained TARGET owner
                     // still decides whether this exact copy may be inspected.
-                    const destination = await db.machine.findUnique({ where: { id: method.slice(0, method.indexOf(':')) } });
+                    const destination = await db.machine.findUnique({ where: { id: method.slice(0, method.indexOf(':')) } }).then(decodeMachineStoredContent);
                     if (!destination?.installationId || !destination.installationPublicKey
                         || classifyMachineAvailabilityState(destination) !== 'available') {
                         return reply.code(403).send({ error: 'access_denied' });
@@ -291,7 +292,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 || !isDeepStrictEqual(context, writerRouting.source.sourceContext.machineAdmission)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
-            const destination = await db.machine.findUnique({ where: { id: destinationId } });
+            const destination = await db.machine.findUnique({ where: { id: destinationId } }).then(decodeMachineStoredContent);
             if (!destination?.installationId || destination.installationId !== destinationInstallationId || !destination.installationPublicKey
                 || classifyMachineAvailabilityState(destination) !== 'available'
                 || !await hasCurrentExternalActionSessionSource(admitted.verified.binding, app.resolveCurrentSessionMachine)) {

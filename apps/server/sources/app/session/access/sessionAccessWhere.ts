@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { projectResourceGrantRows } from '@/app/teams/resourceGrantAccess';
 import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/storage/inTx";
@@ -550,7 +551,7 @@ export async function buildSessionReadableAccountWhereInTx(input: {
 }): Promise<Prisma.AccountWhereInput> {
     const capability = input.capability ?? "readTranscript";
     const grant = grantCapabilityWhere(capability);
-    const session = await input.tx.session.findUnique({ where: { id: input.sessionId }, select: {
+    const session = await input.tx.session.findUnique({ where: { id: input.sessionId }, select: withSessionContentSelect({
         ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
         grants: { where: { OR: [
             { principalKind: 'team', ...grant, team: { archivedAt: null } },
@@ -559,7 +560,7 @@ export async function buildSessionReadableAccountWhereInTx(input: {
             team: { select: { authenticationPolicy: true } },
             teamGroup: { select: { teamId: true, team: { select: { authenticationPolicy: true } } } },
         } },
-    } });
+    }) }).then(decodeSessionStoredContent);
     if (!session) return { id: { in: [] } };
     const sources: Prisma.AccountWhereInput[] = [{ id: session.accountId }];
     const sessionGrants = projectResourceGrantRows(session.grants);

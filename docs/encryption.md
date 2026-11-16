@@ -7566,3 +7566,29 @@ Canonical owners:
 - Session message format: `apps/cli/src/api/types.ts`
 - Server message ingestion: `apps/server/sources/app/api/socket/sessionUpdateHandler.ts`
 - Artifact/KV routes: `apps/server/sources/app/api/routes/artifactsRoutes.ts`, `apps/server/sources/app/kv/kvMutate.ts`
+
+
+### Other stored-content bytes (0.3 development)
+
+The server's `storage/storedContent.ts` owns lossless physical encoding for
+SessionMessage and Session System Record envelopes, Session metadata and Agent
+state, Machine metadata and daemon state, Automation Run results and Workflow
+checkpoints, and Account settings snapshots. Canonical ciphertext is stored in
+nullable byte siblings; read owners reconstruct the original domain envelope or
+text before projecting it to clients. This does not decrypt content or add
+server-side compression. Plain content and noncanonical historical spellings
+retain their original representation.
+
+JSON envelopes with only the ordinary encrypted discriminator and ciphertext
+use JSON null alongside the bytes. Additional envelope fields, canonical text
+serialization, and the Workflow cipher prefix remain in the original column as
+a representation shell. Bare ciphertext text uses an empty text shell. Writers
+clear the byte sibling when replacing byte-backed content with plain or
+noncanonical text. The additive migrations do not rewrite historical rows.
+
+Provider Account Usage History stores complete records with nested sealed
+payloads, rather than root encrypted envelopes. Its payload remains unchanged;
+it does not use a table-specific variant of the storage codec. The 0.2 upgrade
+converter remains separately owned and consumes the same storage encoder for
+the domains it converts. Old server binaries reading new byte-backed rows are
+not a supported rollback direction.

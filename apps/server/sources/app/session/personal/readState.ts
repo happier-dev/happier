@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { isSessionPersonallyTrackedV1 } from '@happier-dev/protocol/sessions/personal/tracking';
 import { clearFulfilledAccountSessionFollowOnceInTx } from '@/app/session/follow/accountFollowService';
 import { projectViewerReadStateV1, type ViewerReadStateV1 } from '@happier-dev/protocol/sessions';
@@ -262,8 +263,8 @@ async function seedViewerReadStateAtCurrentCeilingInTx(
 ): Promise<void> {
     const session = await tx.session.findUnique({
         where: { id: params.sessionId },
-        select: SESSION_READ_CEILING_SELECT,
-    });
+        select: withSessionContentSelect(SESSION_READ_CEILING_SELECT),
+    }).then(decodeSessionStoredContent);
     if (!session) return;
     const lastViewedSessionSeq = resolveVisibleSessionSeq(session);
     await tx.accountSessionReadState.upsert({
@@ -448,8 +449,8 @@ async function admitViewerReadCursorOperation(
 
     const session = await tx.session.findUnique({
         where: { id: params.sessionId },
-        select: SESSION_READ_CEILING_SELECT,
-    });
+        select: withSessionContentSelect(SESSION_READ_CEILING_SELECT),
+    }).then(decodeSessionStoredContent);
     if (!session) return { ok: false, error: "session-not-found" };
 
     const tracked = await isSessionPersonallyTrackedInTx(tx, {

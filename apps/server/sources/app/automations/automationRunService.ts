@@ -1,3 +1,4 @@
+import { encodeStoredText } from '@/storage/storedContent';
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { publishManagedRunWakeInTx } from '@/app/machines/managed/managedWake';
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
@@ -332,6 +333,7 @@ async function settleSucceededAutomationRun(params: {
             params.resultEnvelope,
         );
         const resultEnvelope = parsedResultEnvelope?.raw ?? null;
+        const storedResult = encodeStoredText(resultEnvelope);
         const preflightRow = await tx.automationRun.findFirst({
             where: {
                 id: params.runId,
@@ -484,7 +486,8 @@ async function settleSucceededAutomationRun(params: {
             data: {
                 state: "succeeded",
                 finishedAt: now,
-                resultEnvelope,
+                resultEnvelope: storedResult.value,
+                resultEnvelopeBytes: storedResult.bytes,
                 // New/current settlement has one result-envelope owner. The
                 // predecessor column remains read-only until its floor retires.
                 summaryCiphertext: null,

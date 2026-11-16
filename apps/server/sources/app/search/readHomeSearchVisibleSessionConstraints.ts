@@ -1,3 +1,4 @@
+import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { MemorySearchScope } from '@happier-dev/protocol/memory/memorySearch';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { buildSessionAccessWhere } from '@/app/session/access/sessionAccessWhere';
@@ -26,7 +27,7 @@ export async function readHomeSearchVisibleSessionConstraints(input: Readonly<{
             where: input.scope.type === 'session'
                 ? { AND: [accessWhere, { id: input.scope.sessionId }] }
                 : accessWhere,
-            select: { id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT },
-        });
+            select: withSessionContentSelect({ id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT }),
+        }).then(decodeSessionStoredContent);
     }));
 }
