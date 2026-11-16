@@ -3,6 +3,7 @@ import { buildConnectedServicesAccountChangeV1, readSessionFollowReceiverAvailab
 
 import { markSessionProjectionRecipientsChanged } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
+import { invalidateSessionReviewProjectionForRunInTx } from '@/app/automations/sessionReviewProjectionInvalidation';
 import { db } from "@/storage/db";
 import { afterTx, inTx, transactionResult } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -201,6 +202,23 @@ describe("terminal AccountChange publication on SQLite", () => {
         await inTx(tx => markPendingStateChangedRecipients({ tx, sessionId: session.id, pendingVersion: 1, pendingCount: 1 }));
         await inTx(tx => markPendingStateChangedRecipients({ tx, sessionId: session.id, pendingVersion: 2, pendingCount: 0 }));
         expect(readSessionMemoryInputsChangedV1(await read(), transcript.cursor)).toBe(false);
+    });
+
+    it('keeps Memory facts across an Automation Run review invalidation of its source Session', async () => {
+        const account = await db.account.create({ data: { publicKey: 'memory-review-invalidation' } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: 'memory-review', metadata: '{}', seq: 4 } });
+        const read = () => db.accountChange.findUniqueOrThrow({ where: {
+            accountId_kind_entityId: { accountId: account.id, kind: 'session', entityId: session.id },
+        } });
+        await inTx(tx => markAccountChanged(tx, { accountId: account.id, kind: 'session', entityId: session.id,
+            hint: { lastMessageSeq: 4 } }));
+        const transcript = await read();
+        await inTx(tx => invalidateSessionReviewProjectionForRunInTx(tx, { causeTriggerKind: 'sessionLifecycle',
+            causeSessionLifecycleEvent: 'parentTurnCompleted', causeSourceSessionId: session.id }));
+        const latest = await read();
+        expect(latest.cursor).toBeGreaterThan(transcript.cursor);
+        // A Run lifecycle hint touches no Memory input: seq, owner locality, archive and access are unchanged.
+        expect(readSessionMemoryInputsChangedV1(latest, transcript.cursor)).toBe(false);
     });
 
     it('pushes the transcript seq and keeps the Memory locality floor across transcript and queue writes', async () => {

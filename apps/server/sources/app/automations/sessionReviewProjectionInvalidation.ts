@@ -18,6 +18,7 @@ export async function invalidateSessionReviewProjectionForRunInTx(tx: Tx,
     run: Parameters<typeof getSessionReviewProjectionIdForRun>[0]): Promise<void> {
     const sourceSessionId = getSessionReviewProjectionIdForRun(run);
     if (sourceSessionId === null) return;
-    const recipients = await markSessionProjectionRecipientsChanged({ tx, sessionId: sourceSessionId });
+    // The review barrier touches no Memory input (transcript seq, owner locality, archive, access).
+    const recipients = await markSessionProjectionRecipientsChanged({ tx, sessionId: sourceSessionId, memoryInputsChanged: false });
     scheduleSessionRelationBroadcastAfterTx(tx, sourceSessionId, recipients.map(({ accountId }) => accountId));
 }
