@@ -48,6 +48,7 @@ import { useWorkflowStepOptionsSummary } from './useWorkflowStepOptionsSummary';
 import { WorkflowStepSessionDropZone, type WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 import type { WorkflowDocumentStepSlots } from './workflowDocumentPresentation';
 import { createWorkflowPromptSuggestions, resolveWorkflowPromptReferenceStates } from './workflowPromptSuggestions';
+import { WorkflowEventValueContext } from './WorkflowEventValueContext';
 
 /**
  * One repeatable authored step (07 S7, 04 §4.3): a stable ordinal, a prompt-derived label,
@@ -223,12 +224,14 @@ export function WorkflowStepEditor(props: Readonly<{
     // they stay referentially stable while the whole draft changes underneath.
     const latestRef = React.useRef({ step, draft: props.draft, onChangeInput: props.onChangeInput, onChangeDocument, onSelect, onRequestEdit: props.onRequestEdit });
     latestRef.current = { step, draft: props.draft, onChangeInput: props.onChangeInput, onChangeDocument, onSelect, onRequestEdit: props.onRequestEdit };
+    const valueContext = React.useContext(WorkflowEventValueContext);
     const additionalSuggestions = React.useCallback((query: string) => createWorkflowPromptSuggestions({
         draft: latestRef.current.draft,
         step: latestRef.current.step,
         query,
         onChangeInput: latestRef.current.onChangeInput,
-    }), []);
+        valueContext,
+    }), [valueContext]);
     // The composer publishes its portable document through the protocol's
     // read-only projection of the same values the saved definition owns, so the
     // authored document is rebuilt here through the canonical value schema.

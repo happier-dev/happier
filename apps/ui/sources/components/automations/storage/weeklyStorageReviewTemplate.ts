@@ -1,4 +1,5 @@
 import type { WorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol';
 import { readDeviceTimeZone } from '@/components/workflows/triggers/sessionTriggerForm';
 
 /** Ordinary Workflow + scheduled Automation seed; Save remains the editor's only write. */
@@ -11,7 +12,7 @@ export const WEEKLY_STORAGE_REVIEW_PROMPT = [
     'Finish with a short per-machine summary.',
 ].join(' ');
 
-export function createWeeklyStorageReviewWorkflowSeed(input: Readonly<{ name: string }>): WorkflowDefinitionDraftSeed {
+export function createWeeklyStorageReviewWorkflowSeed(input: Readonly<{ name: string }>): WorkflowDefinitionDraftSeed & { definition: WorkflowDefinitionV1 } {
     return {
         name: input.name,
         definition: {

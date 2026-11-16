@@ -7,6 +7,9 @@ import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 // HTTP, credentials, native rendering and Metro loading are external boundaries.
 // Account currentness, the Action front door, trigger reads and rendering stay real.
@@ -64,6 +67,42 @@ afterEach(async () => {
 });
 
 describe('Account trigger HTTP read failure and recovery', () => {
+    it('opens subject custom and Event starters in the ordinary sentence editor without enrolling a trigger', async () => {
+        await loadSyncSingletonForTests();
+        let writes = 0;
+        const account = await restoreServerAccountForTest({
+            serverUrl: `https://subject-sentence-${crypto.randomUUID()}.test`, accountId: 'subject-sentence',
+            request: homeRequest(async (_url, init) => {
+                if (init?.method !== undefined && init.method !== 'GET' && !String(_url).includes('/query')) writes++;
+                return json({ automations: [], nextCursor: null });
+            }),
+        });
+        disposals.push(() => account.dispose());
+        const { router } = await import('expo-router');
+        const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+        const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active>
+            <ListPresentationProvider value="page">
+            <SubjectTriggersSection subject={{ kind: 'service', machineId: 'machine-a', serviceId: 'web' }} subjectName="Web" />
+            </ListPresentationProvider>
+        </PluginSurfaceFocusEligibilityProvider>);
+        disposals.push(() => screen.unmount());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-add'), screen.getTextContent()).toBeTruthy());
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        disposals.unshift(async () => restorePopoverGlobals());
+        for (const id of ['subject-triggers-add', 'subject-triggers-set-up', 'subject-triggers-starter:healthFailed', 'subject-triggers-starter:nightly']) {
+            const before = vi.mocked(router.push).mock.calls.length;
+            await act(async () => screen.findByTestId(id)!.props.onPress());
+            expect(vi.mocked(router.push).mock.calls).toHaveLength(before + 1);
+            const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+            if (typeof entry !== 'object' || entry === null || !('params' in entry)) throw new Error('Expected a sentence route');
+            const seed = readWorkflowDefinitionDraftSeed(String(entry.params?.definitionDraftSeedId));
+            expect(seed).toMatchObject({ name: 'Web', initialView: 'sentence', project: { machineId: 'machine-a', directory: '~' } });
+            expect(seed?.definition).toBeUndefined();
+            if (id.endsWith('healthFailed')) expect(seed?.eventSeed?.setupInput).toMatchObject({ subject: { kind: 'machineService', machineId: 'machine-a', serviceId: 'web' } });
+            if (id.endsWith('nightly')) expect(seed?.trigger).toMatchObject({ kind: 'schedule', schedule: { scheduleExpr: '0 3 * * *' } });
+        }
+        expect(writes).toBe(0);
+    });
     it('Session attachment reads follow the layout presentation owner', async () => {
         await loadSyncSingletonForTests();
         let reads = 0;

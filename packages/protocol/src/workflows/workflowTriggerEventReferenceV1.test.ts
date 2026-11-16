@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { WorkflowValueReferenceSchema } from './workflowReferenceV1.js';
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
 import { materializeWorkflowAcceptedSnapshotV1 } from './materializeWorkflowAcceptedSnapshotV1.js';
+import { createWorkflowActionTriggerEventDeclarationV1, projectWorkflowActionTriggerEventOccurrenceV1, sealWorkflowTriggerEventValuesV1 } from './workflowTriggerEventReferenceV1.js';
+import { WorkflowDefinitionV1Schema } from './workflowV1.js';
 
 const event = { pluginId: 'example.events', localId: 'pull-request' };
 const payloadSchema = { type: 'object', properties: {
@@ -13,6 +15,28 @@ const definition = (path: (string | number)[]) => ({ version: 1, defaults: {}, b
   input: { text: { kind: 'trigger_event', event, path } },
 }] });
 describe('trigger Event value references', () => {
+  it.each(['before', 'after'] as const)('accepts the %s Action phase without a plugin identity', phase => {
+    expect(WorkflowValueReferenceSchema.safeParse({ kind: 'trigger_event', event: { kind: 'action', phase },
+      path: ['requestId'] }).success).toBe(true);
+  });
+  it.each(['before', 'after'] as const)('declares and seals only safe %s Action scalar evidence', phase => {
+    const actionEvent = { kind: 'action' as const, phase };
+    const authored = (path: string[]) => WorkflowDefinitionV1Schema.parse({ ...definition(path), blocks: [{
+      kind: 'action', id: 'message', actionId: 'example.actions/message',
+      input: { text: { kind: 'trigger_event', event: actionEvent, path } },
+    }] });
+    const declaration = createWorkflowActionTriggerEventDeclarationV1(phase);
+    expect(validateWorkflowDefinition(authored(['requestId']), { triggerEvents: [declaration] }).issues
+      .filter(issue => issue.code === 'missing_reference' || issue.code === 'invalid_input')).toEqual([]);
+    expect(validateWorkflowDefinition(authored(['input']), { triggerEvents: [declaration] }).issues)
+      .toContainEqual(expect.objectContaining({ code: 'invalid_input' }));
+    const occurrence = projectWorkflowActionTriggerEventOccurrenceV1({ actionId: 'scm.commit.create',
+      requestId: 'material-invocation', phase, ...(phase === 'after' ? { status: 'failed' as const, errorCode: 'cancelled' } : {}) });
+    expect(sealWorkflowTriggerEventValuesV1([authored(['requestId'])], occurrence))
+      .toEqual([{ event: actionEvent, path: ['requestId'], value: 'material-invocation' }]);
+    expect(sealWorkflowTriggerEventValuesV1([authored(['requestId'])], { ...occurrence,
+      event: { kind: 'action', phase: phase === 'after' ? 'before' : 'after' } })).toEqual([]);
+  });
   it('accepts the qualified Event and path arm', () => {
     expect(WorkflowValueReferenceSchema.safeParse({ kind: 'trigger_event', event, path: ['number'] }).success).toBe(true);
   });

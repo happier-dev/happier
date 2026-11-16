@@ -1,4 +1,6 @@
 import type { AutomationQualifiedPluginContributionRefV1 } from '../automations/automationEventDeclarationV1.js';
+import type { AutomationActionRunEvidenceV1 } from '../automations/automationActionOccurrenceV1.js';
+import { AutomationActionPhaseV1Schema } from '../automations/automationActionIdentityV1.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -119,10 +121,20 @@ export const WorkflowLoopTrailingCountReferenceSchema = lazyZodSchema(() => z.st
 }));
 export type WorkflowLoopTrailingCountReference = z.infer<typeof WorkflowLoopTrailingCountReferenceSchema>;
 
-export type WorkflowTriggerEventReferenceV1 = Readonly<{ kind: 'trigger_event'; event: AutomationQualifiedPluginContributionRefV1; path: (string | number)[] }>;
+export type WorkflowTriggerEventIdentityV1 = AutomationQualifiedPluginContributionRefV1
+  | Readonly<{ kind: 'action'; phase: AutomationActionRunEvidenceV1['phase'] }>;
+
+export const WorkflowActionTriggerEventIdentityV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('action'), phase: AutomationActionPhaseV1Schema,
+}));
+export const WorkflowTriggerEventIdentityV1Schema = lazyZodSchema(() => z.union([
+  asProtocolZod(PluginContributionIdentityV1Schema), WorkflowActionTriggerEventIdentityV1Schema,
+]));
+
+export type WorkflowTriggerEventReferenceV1 = Readonly<{ kind: 'trigger_event'; event: WorkflowTriggerEventIdentityV1; path: (string | number)[] }>;
 
 export const WorkflowTriggerEventReferenceV1Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('trigger_event'), event: asProtocolZod(PluginContributionIdentityV1Schema),
+  kind: z.literal('trigger_event'), event: WorkflowTriggerEventIdentityV1Schema,
   path: WorkflowResultPathSchema,
 }));
 

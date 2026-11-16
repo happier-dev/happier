@@ -1051,6 +1051,141 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 }
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it('adds an event and Only-when through the mounted Action without losing edits or splitting undo', async () => {
+        const event = { pluginId: 'com.acme.events', localId: 'health' };
+        const payloadSchema: PluginJsonSchemaV2 = { type: 'object', properties: { outcome: { type: 'string' } } };
+        const definition = createWorkflowDefinitionFixture({ defaults: {
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        } });
+        const boundary = await serveMountedDraftActionHome(definition, false, undefined, undefined, 'plain', [{ event, payloadSchema }]);
+        const seed = storeWorkflowDefinitionDraftSeed({ name: 'Review health', definition });
+        await renderRunEditor(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: seed }} />);
+        await act(async () => {
+            readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Keep my title' });
+            readBodyProps()!.onChangeProjectTarget!({ machineId: 'machine-a', directory: '/repo' });
+        });
+        const before = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        const { addWorkflowEventToMountedDraft } = await import('@/sync/ops/actions/workflowEventDraft');
+        const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
+        const trigger = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
+            eventRef: event, sourceInstanceId: 'health', sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Health',
+            filter: { v: 1, all: [{ field: '/outcome', op: 'eq', value: 'failed' }] }, maximumObservationAgeMs: null,
+            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                machineId: 'machine-a', pluginId: event.pluginId, materializationId: 'materialization',
+            } } });
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'ui' as const, authority: 'present_user' as const,
+            serverId: boundary.scope.serverId, runtimeAccountId: boundary.scope.accountId,
+            executeChildAction: executor.execute.bind(executor) };
+        let result: unknown;
+        await act(async () => { result = await addWorkflowEventToMountedDraft({ draft: before, trigger, payloadSchema,
+            clientId: 'selected-event', context }); });
+        expect(result).toMatchObject({ status: 'applied' });
+        const changed = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        expect(changed.name).toBe('Keep my title');
+        expect(changed.settings.triggers).toEqual({ ...before.settings.triggers, rows: [...before.settings.triggers.rows,
+            { identity: { clientId: 'selected-event' }, enabled: true, trigger, payloadSchema }] });
+        expect(boundary.creates).toHaveLength(0);
+        expect(boundary.automationCreates).toHaveLength(0);
+        await act(async () => { result = await addWorkflowEventToMountedDraft({ draft: before, trigger, payloadSchema, context }); });
+        expect(result).toMatchObject({ status: 'refused', reason: 'stale_draft_revision' });
+        const address = { scope: before.scope, draftId: before.draftId };
+        await act(async () => { await executor.execute('workflow.authoring.draft.undo', address, context); });
+        const undone = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        expect(undone.name).toBe('Keep my title');
+        expect(undone.settings).toEqual(before.settings);
+        await act(async () => { await executor.execute('workflow.authoring.draft.redo', address, context); });
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.settings).toEqual(changed.settings);
+        await act(async () => { result = await executor.execute('workflow.authoring.draft.save', address, context); });
+        expect(result).toMatchObject({ ok: true, result: { status: 'applied' } });
+        expect(boundary.creates).toHaveLength(1);
+        expect(boundary.automationCreates).toHaveLength(1);
+    });
+
+    it('retains an unconfigured sentence Event source for ordinary enrollment without writing', async () => {
+        const definition = createWorkflowDefinitionFixture();
+        const boundary = await serveMountedDraftActionHome(definition, false);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected the sentence Account');
+        const { prepareWorkflowSentenceEditorEntry } = await import('@/components/workflows/authoring/workflowSentenceAuthoring');
+        const eventSeed = { eventRef: { pluginId: 'happier.health', localId: 'failed' }, monitoringMachineId: 'machine-a',
+            setupInput: { subject: { kind: 'environment', environmentId: 'production' } } };
+        const project = { machineId: 'machine-a', directory: '~' };
+        const entry = prepareWorkflowSentenceEditorEntry({ name: 'Production', project, eventSeed }, lifetime);
+        if (!entry) throw new Error('Expected a current sentence editor entry');
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: entry.params.definitionDraftSeedId }} />);
+        const section = readBodyProps()!.triggersSection;
+        if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(section)) throw new Error('Missing trigger editor');
+        expect(section.props.incomplete?.state.pending).toMatchObject([{ when: { kind: 'pluginEvent', value: null, eventRef: eventSeed.eventRef }, eventSeed }]);
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.settings.projectTarget).toEqual(project);
+        expect(readBodyProps()!.draftStore.get().blocks).toEqual([]);
+        expect(readBodyProps()!.view).toBe('sentence');
+        await act(async () => section.props.incomplete!.onChange(() => ({ pending: [], edits: {} })));
+        await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: entry.params.definitionDraftSeedId }} />);
+        const editedSection = readBodyProps()!.triggersSection;
+        if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(editedSection)) throw new Error('Missing trigger editor');
+        expect(editedSection.props.incomplete?.state.pending).toEqual([]);
+        const replacementSeed = { ...eventSeed, setupInput: { subject: { kind: 'environment', environmentId: 'staging' } } };
+        const replacement = prepareWorkflowSentenceEditorEntry({ name: 'Staging', project, eventSeed: replacementSeed }, lifetime);
+        if (!replacement) throw new Error('Expected the next sentence source');
+        await screen.update(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: replacement.params.definitionDraftSeedId }} />);
+        const replacementSection = readBodyProps()!.triggersSection;
+        if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(replacementSection)) throw new Error('Missing replacement trigger editor');
+        expect(replacementSection.props.incomplete?.state.pending).toMatchObject([{ eventSeed: replacementSeed }]);
+        await act(async () => replacementSection.props.incomplete!.onChange(() => ({ pending: [], edits: {} })));
+        // A source enrollment finishing after navigation cannot replace the new source's newer edits.
+        await act(async () => section.props.incomplete!.onChange(current => current));
+        const currentSection = readBodyProps()!.triggersSection;
+        if (!React.isValidElement<React.ComponentProps<typeof WorkflowTriggerSection>>(currentSection)) throw new Error('Missing current trigger editor');
+        expect(currentSection.props.incomplete?.state.pending).toEqual([]);
+        expect(boundary.creates).toHaveLength(0);
+        expect(boundary.automationCreates).toHaveLength(0);
+    });
+
+    it('adopts sentence operands and placement before saving one definition and one trigger', async () => {
+        const event = { pluginId: 'com.acme.events', localId: 'health' };
+        const payloadSchema: PluginJsonSchemaV2 = { type: 'object', properties: { outcome: { type: 'string' } } };
+        const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'action', id: 'command',
+            actionId: 'machines.command.run', input: {
+                machineId: { kind: 'literal', value: 'machine-a' },
+                command: { kind: 'literal', value: 'echo ready' },
+                stdin: { kind: 'trigger_event', event, path: ['outcome'] },
+            } }] });
+        const boundary = await serveMountedDraftActionHome(definition, false, undefined, undefined, 'plain', [{ event, payloadSchema }]);
+        const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
+        const trigger = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
+            eventRef: event, sourceInstanceId: 'health', sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Health',
+            filter: { v: 1, all: [{ field: '/outcome', op: 'eq', value: 'failed' }] }, maximumObservationAgeMs: null,
+            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                machineId: 'machine-a', pluginId: event.pluginId, materializationId: 'materialization',
+            } } });
+        const project = { machineId: 'machine-a', directory: '/repo' };
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected the sentence Account');
+        const { prepareWorkflowSentenceEditorEntry } = await import('@/components/workflows/authoring/workflowSentenceAuthoring');
+        const step = definition.blocks[0];
+        if (step?.kind !== 'action') throw new Error('Expected the ordinary command Action');
+        const entry = prepareWorkflowSentenceEditorEntry({ name: 'Health command', step, trigger, project, payloadSchema,
+            executionTarget: 'detached_run' }, lifetime);
+        if (!entry) throw new Error('Expected a current sentence editor entry');
+        await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: entry.params.definitionDraftSeedId }} />);
+        const snapshot = readBodyProps()!.mountedDraftActions!.getSnapshot()!;
+        expect(snapshot.settings.projectTarget).toEqual(project);
+        expect(snapshot.settings.executionTarget).toBe('detached_run');
+        expect(snapshot.settings.triggers.rows).toMatchObject([{ trigger, payloadSchema }]);
+        expect(readBodyProps()!.draftStore.get().blocks).toEqual(definition.blocks);
+        expect(readBodyProps()!.view).toBe('sentence');
+        expect(boundary.creates).toHaveLength(0);
+        expect(boundary.automationCreates).toHaveLength(0);
+        let result: unknown;
+        await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
+        expect(result).toMatchObject({ status: 'applied' });
+        expect(boundary.creates).toHaveLength(1);
+        expect(boundary.automationCreates).toHaveLength(1);
+        expect(boundary.automationCreates[0]).toMatchObject({ assignments: [{ machineId: 'machine-a', enabled: true }] });
+    });
+
     it.each(['plain', 'e2ee'] as const)('validates a pending Event leaf offline and saves its first definition before enrolling the trigger (%s)', async accountMode => {
         const event = { pluginId: 'com.acme.events', localId: 'pull-request' };
         const payloadSchema: PluginJsonSchemaV2 = { type: 'object', properties: {

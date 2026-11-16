@@ -1,4 +1,5 @@
 import type { AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
@@ -162,7 +163,7 @@ export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhe
  * card and the Sentence view show the same ones.
  */
 export type WorkflowTriggerIncomplete = Readonly<{
-    pending: readonly Readonly<{ clientId: string; when: TriggerWhenValue }>[];
+    pending: readonly Readonly<{ clientId: string; when: TriggerWhenValue; eventSeed?: PluginUiOpenAutomationEventRequestV1 }>[];
     edits: Readonly<Record<string, TriggerWhenValue>>;
 }>;
 export const EMPTY_WORKFLOW_TRIGGER_INCOMPLETE: WorkflowTriggerIncomplete = Object.freeze({ pending: Object.freeze([]), edits: Object.freeze({}) });

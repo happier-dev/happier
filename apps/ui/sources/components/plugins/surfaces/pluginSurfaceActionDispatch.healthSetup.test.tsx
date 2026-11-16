@@ -25,7 +25,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
-import { readAutomationEventAuthoringSeed } from '@/sync/domains/workflows/automationEventAuthoringSeed';
+import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import { consumeWorkflowEditorDraftSeed } from '@/sync/domains/workflows/workflowEditorDraftSeed';
 import { configurePluginEventAutomationSetup } from '@/components/automations/editor/pluginEventAutomationSetup';
 import { createPluginOpenAutomationEventHandler } from './pluginOpenAutomationEventHostApi';
@@ -202,13 +202,13 @@ it('carries the watched subject from public Health client activation through the
         navigation.push.mockClear();
         expect(await handler({ subject, monitoringMachineId: machineId }, context)).toEqual({ status: 'opened' });
         const route = navigation.push.mock.calls[0]?.[0] as Readonly<{
-            pathname: string; params: { automationEventSeedId: string; serverId: string };
+            pathname: string; params: { id: string; definitionDraftSeedId: string; serverId: string };
         }>;
-        expect(route).toMatchObject({ pathname: '/workflows', params: { serverId: connection.serverId } });
-        expect(Object.keys(route.params).sort()).toEqual(['automationEventSeedId', 'serverId']);
-        seedId = route.params.automationEventSeedId;
-        const routedSeed = readAutomationEventAuthoringSeed(seedId, lifetime.scope);
-        if (!routedSeed || 'kind' in routedSeed) throw new Error('Health Action must leave a plugin Event authoring seed');
+        expect(route).toMatchObject({ pathname: '/workflows/[id]', params: { id: 'new', serverId: connection.serverId } });
+        expect(Object.keys(route.params).sort()).toEqual(['definitionDraftSeedId', 'id', 'serverId']);
+        seedId = route.params.definitionDraftSeedId;
+        const routedSeed = readWorkflowDefinitionDraftSeed(seedId, lifetime.scope)?.eventSeed;
+        if (!routedSeed) throw new Error('Health Action must leave a plugin Event authoring seed');
         expect(routedSeed).toMatchObject({ monitoringMachineId: machineId, setupInput: { v: 1, subject } });
 
         const pluginId = PLUGIN_MANIFEST.id;

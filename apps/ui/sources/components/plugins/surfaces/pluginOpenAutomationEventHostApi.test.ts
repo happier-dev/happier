@@ -4,7 +4,7 @@ import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, 
 import { consumeWorkflowEditorDraftSeed } from '@/sync/domains/workflows/workflowEditorDraftSeed';
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 import { createPluginOpenAutomationEventHandler } from './pluginOpenAutomationEventHostApi';
-import { readAutomationEventAuthoringSeed } from '@/sync/domains/workflows/automationEventAuthoringSeed';
+import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 
 const lifetime = { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true,
     onRetire: () => ({ dispose() {} }) };
@@ -29,17 +29,21 @@ afterEach(() => {
 
 describe('Automation Event host navigation', () => {
     it.each([seed, { eventRef: seed.eventRef, setupInput: seed.setupInput },
-        { ...seed, sourceInstanceId: 'repository:acme/widgets' }])('hands a complete or partial private seed to the existing Account trigger owner using only an opaque route handle: %j', async (intent) => {
+        { ...seed, sourceInstanceId: 'repository:acme/widgets' }])('hands complete or partial source enrollment to the ordinary sentence editor using only an opaque route handle: %j', async (intent) => {
         const navigate = vi.fn<NonNullable<Parameters<typeof createPluginOpenAutomationEventHandler>[0]['navigate']>>();
         const open = createPluginOpenAutomationEventHandler({ accountLifetime: lifetime, isCurrent: () => true, navigate });
         expect(await open(intent)).toBeNull();
         expect(navigate).toHaveBeenCalledTimes(1);
         const route = navigate.mock.calls[0]![0];
-        expect(route.pathname).toBe('/workflows');
-        expect(Object.keys(route.params).sort()).toEqual(['automationEventSeedId', 'serverId']);
-        expect(readAutomationEventAuthoringSeed(route.params.automationEventSeedId, lifetime.scope)).toEqual(intent);
-        expect(readAutomationEventAuthoringSeed(route.params.automationEventSeedId, { serverId: 'other', accountId: 'account' })).toBeNull();
-        consumeWorkflowEditorDraftSeed(route.params.automationEventSeedId);
+        expect(route.pathname).toBe('/workflows/[id]');
+        expect(Object.keys(route.params).sort()).toEqual(['definitionDraftSeedId', 'id', 'serverId']);
+        expect(route.params.id).toBe('new');
+        const draftSeed = readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId, lifetime.scope);
+        expect(draftSeed).toMatchObject({ initialView: 'sentence', eventSeed: intent });
+        expect(draftSeed?.definition).toBeUndefined();
+        expect(draftSeed?.project).toBeUndefined();
+        expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId, { serverId: 'other', accountId: 'account' })).toBeNull();
+        consumeWorkflowEditorDraftSeed(route.params.definitionDraftSeedId);
     });
 
     it('does no navigation for a retired mount, a cancelled request or an invalid seed', async () => {

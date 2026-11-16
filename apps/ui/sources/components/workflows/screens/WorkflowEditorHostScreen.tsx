@@ -10,6 +10,7 @@ import { Platform, ScrollView, View } from 'react-native';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useNavigation, useOpenAppSection, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { randomUUID } from 'expo-crypto';
+import { WorkflowEventValueContext } from '../editor/WorkflowEventValueContext';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Modal } from '@/modal';
@@ -372,7 +373,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 captureProvenance: seed.captureProvenance,
             })
             : definitionDraftSeed !== null
-                ? buildWorkflowEditorDraftFromDefinition({ draftId: randomUUID(), ...definitionDraftSeed })
+                ? definitionDraftSeed.definition === undefined
+                    ? createWorkflowEditorDraft({ draftId: randomUUID(), name: definitionDraftSeed.name, blocks: [] })
+                    : buildWorkflowEditorDraftFromDefinition({ draftId: randomUUID(), ...definitionDraftSeed, definition: definitionDraftSeed.definition })
             : newSessionSeed !== null
                 ? newSessionSeed.draft
                 : triggerSeed !== null
@@ -494,7 +497,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     }, [agentDraft, onAgentSessionCreated]);
     const [hydrationFailure, setHydrationFailure] = React.useState<Readonly<{ error: unknown }> | null>(null);
     const hydrationRefreshRef = React.useRef<(() => void) | null>(null);
-    const [view, setView] = React.useState<WorkflowEditorView>('steps');
+    const [view, setView] = React.useState<WorkflowEditorView>(definitionDraftSeed?.initialView ?? 'steps');
     const [selection, setSelection] = React.useState<WorkflowEditorViewState>(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
     const [inputValues, setInputValues] = React.useState<Readonly<Record<string, JsonValue | undefined>>>(reviewedRunSeed?.inputs ?? {});
     const [inputRawTextValues, setInputRawTextValues] = React.useState<Readonly<Record<string, string>>>({});
@@ -558,7 +561,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     };
     const starterProject = definitionDraftSeed?.sessionTarget === undefined ? null : resolveStarterProject(definitionDraftSeed.sessionTarget);
     const [projectTarget, setProjectTargetState] = React.useState<WorkflowProjectTargetV1 | null>(
-        rememberedProject ?? reviewedRunSeed?.project ?? newSessionProject ?? starterProject,
+        definitionDraftSeed?.project ?? rememberedProject ?? reviewedRunSeed?.project ?? newSessionProject ?? starterProject,
     );
     const savedProjectTargetRef = React.useRef(projectTarget);
     const authoredProjectTargetRef = React.useRef(false);
@@ -566,18 +569,18 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         authoredProjectTargetRef.current = true;
         setProjectTargetState(target);
     }, []);
-    const seededContextualTargetRef = React.useRef(reviewedRunSeed?.project !== undefined || newSessionProject !== null
+    const seededContextualTargetRef = React.useRef(definitionDraftSeed?.project !== undefined || reviewedRunSeed?.project !== undefined || newSessionProject !== null
         || definitionDraftSeed?.sessionTarget !== undefined || rememberedProject !== null);
     /** Whether this logical source has already been offered the contextual Agent. */
     const seededContextualAgentRef = React.useRef(false);
     React.useEffect(() => {
         // A delayed Account projection may replace only the contextual seed,
         // never a Machine/path the person or a mounted Action already authored.
-        if (rememberedProject === null || authoredProjectTargetRef.current) return;
+        if (definitionDraftSeed?.project !== undefined || rememberedProject === null || authoredProjectTargetRef.current) return;
         savedProjectTargetRef.current = rememberedProject;
         seededContextualTargetRef.current = true;
         setProjectTargetState(rememberedProject);
-    }, [rememberedProject]);
+    }, [definitionDraftSeed?.project, rememberedProject]);
     React.useEffect(() => {
         if (seededContextualTargetRef.current) return;
         const contextual = resolveContextualWorkflowProjectTarget({
@@ -606,7 +609,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         [detachedRunSupport],
     );
     const [executionTarget, setExecutionTarget] = React.useState<WorkflowRunAsTargetKind>(
-        reviewedRunSeed?.executionTarget.kind ?? 'session',
+        definitionDraftSeed?.executionTarget ?? reviewedRunSeed?.executionTarget.kind ?? 'session',
     );
 
     // Explicit Plan identities and an unsaved draft's first-save promotion keep
@@ -679,7 +682,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         setSavedRouteId(null);
         setHydrationFailure(null);
         setSelection(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
-        setView('steps');
+        setView(withdrawn ? 'steps' : definitionDraftSeed?.initialView ?? 'steps');
         setInputValues(withdrawn ? {} : nextReviewedRunSeed?.inputs ?? {});
         setInputRawTextValues({});
         setInputSheetOpen(!withdrawn && nextReviewedRunSeed?.planReview !== undefined);
@@ -687,7 +690,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         setReportBack(true);
         setPlanPending(false);
         planPendingRef.current = false;
-        setExecutionTarget(nextReviewedRunSeed?.executionTarget.kind ?? 'session');
+        setExecutionTarget(withdrawn ? 'session' : definitionDraftSeed?.executionTarget ?? nextReviewedRunSeed?.executionTarget.kind ?? 'session');
         pendingRunIdRef.current = null;
         importRequestedRef.current = false;
         consumedEntryIntentKeyRef.current = null;
@@ -696,7 +699,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // contextual Agent is offered to it again rather than being consumed
         // for the whole mount.
         seededContextualAgentRef.current = false;
-        const nextProjectTarget = withdrawn ? null : rememberedProject ?? nextReviewedRunSeed?.project ?? newSessionProject ?? starterProject;
+        const nextProjectTarget = withdrawn ? null : definitionDraftSeed?.project ?? rememberedProject ?? nextReviewedRunSeed?.project ?? newSessionProject ?? starterProject;
         setProjectTargetState(nextProjectTarget);
         savedProjectTargetRef.current = nextProjectTarget;
         authoredProjectTargetRef.current = false;
@@ -729,7 +732,13 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     // Folders read home-relative wherever this editor says where it runs (07 copy rules).
     const machineHomeDir = machines.find((candidate) => candidate.id === projectTarget?.machineId)?.metadata?.homeDir ?? null;
     // Trigger edits are part of the draft (04 §5.4): written after the definition on Save.
-    const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null, sourceKey: authoringSourceKey, projectTarget, accountLifetime });
+    const initialIncomplete = React.useMemo(() => {
+        const eventSeed = definitionDraftSeed?.eventSeed;
+        return eventSeed === undefined ? undefined : { pending: [{ clientId: randomUUID(),
+            when: { kind: 'pluginEvent' as const, value: null, eventRef: eventSeed.eventRef }, eventSeed }], edits: {} };
+    }, [authoringSourceKey, definitionDraftSeed?.eventSeed]);
+    const triggers = useWorkflowTriggerEditing({ definitionId: saved?.definitionId ?? null, sourceKey: authoringSourceKey, projectTarget, accountLifetime, initialIncomplete });
+    const eventValueContext = React.useMemo(() => ({ triggerEvents: triggers.triggerEvents }), [triggers.triggerEvents]);
     const triggerInputs = useWorkflowEditorSelector(draftStore, (value) => value?.inputs ?? NO_WORKFLOW_INPUTS);
     React.useEffect(() => {
         // A deep link to a schedule template arrives with its schedule too, like one opened from the library.
@@ -737,8 +746,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             ? materializeWorkflowStarterExample(catalogSeed, { timezone: readDeviceTimeZone() }) : null;
         const trigger = definitionDraftSeed?.trigger ?? (catalogSelection?.status === 'ready' ? catalogSelection.example.trigger : undefined);
         if (trigger === undefined || privateSeedWithdrawn || saved !== null) return;
-        triggers.setDraft(editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT, { kind: 'add', clientId: randomUUID(), trigger }));
-    }, [initializationKey, definitionDraftSeed?.trigger, catalogSeed, privateSeedWithdrawn, saved?.definitionId, triggers.setDraft]);
+        triggers.setDraft(editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT, { kind: 'add', clientId: randomUUID(), trigger,
+            ...(definitionDraftSeed?.payloadSchema === undefined ? {} : { payloadSchema: definitionDraftSeed.payloadSchema }) }));
+    }, [initializationKey, definitionDraftSeed?.trigger, definitionDraftSeed?.payloadSchema, catalogSeed, privateSeedWithdrawn, saved?.definitionId, triggers.setDraft]);
     {
         const current = draftStore.get();
         snapshotRef.current = current === null ? null : { draft: current, description, projectTarget, executionTarget, triggers: triggers.captureSnapshot() };
@@ -1937,6 +1947,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     }
 
     return (
+        <WorkflowEventValueContext.Provider value={eventValueContext}>
         <View style={styles.root}>
             {presented ? <WorkflowEditorCurrentContext draftStore={bodyDraftStore} scope={authoringHost.sessionBindingScope}
                 workflowId={saved?.definitionId} /> : null}
@@ -2093,6 +2104,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             />
             {runComposer}
         </View>
+        </WorkflowEventValueContext.Provider>
     );
 }
 

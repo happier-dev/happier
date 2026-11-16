@@ -5949,7 +5949,7 @@ describe('plugin-surface action branch selection', () => {
 
     it('opens the canonical Automation Event editor through a registered client Action', async () => {
         const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
-        const { readAutomationEventAuthoringSeed } = await import('@/sync/domains/workflows/automationEventAuthoringSeed');
+        const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
         const { consumeWorkflowEditorDraftSeed } = await import('@/sync/domains/workflows/workflowEditorDraftSeed');
         const previousScope = getStorage().getState().profileScope;
         const previousSnapshot = getAppliedActiveServerSnapshot();
@@ -5971,14 +5971,15 @@ describe('plugin-surface action branch selection', () => {
             await expect(dispatchPluginSurfaceAction({
                 action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
                 resolveContributedAction: resolveExactClientAction(activation.action), clientAction: {},
-            })).resolves.toEqual({ ok: true, result: null });
+            })).resolves.toMatchObject({ ok: true, result: null });
             const route = newSessionNavigation.mock.calls[0]?.[0] as Readonly<{
-                pathname: string; params: { automationEventSeedId: string; serverId: string };
+                pathname: string; params: { id: string; definitionDraftSeedId: string; serverId: string };
             }>;
-            expect(route.pathname).toBe('/workflows');
-            expect(Object.keys(route.params).sort()).toEqual(['automationEventSeedId', 'serverId']);
-            seedId = route.params.automationEventSeedId;
-            expect(readAutomationEventAuthoringSeed(seedId, accountLifetime.scope)).toEqual(intent);
+            expect(route.pathname).toBe('/workflows/[id]');
+            expect(Object.keys(route.params).sort()).toEqual(['definitionDraftSeedId', 'id', 'serverId']);
+            expect(route.params.id).toBe('new');
+            seedId = route.params.definitionDraftSeedId;
+            expect(readWorkflowDefinitionDraftSeed(seedId, accountLifetime.scope)).toMatchObject({ initialView: 'sentence', eventSeed: intent });
         } finally {
             if (seedId) consumeWorkflowEditorDraftSeed(seedId);
             await activation.composition.unload(); accountLifetime.retire();

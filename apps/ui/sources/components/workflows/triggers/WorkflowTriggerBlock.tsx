@@ -157,6 +157,7 @@ export function WorkflowTriggerBlock(
     serverId: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
     eventEdit?: Readonly<{ automationId: string; triggerId: string }>;
+    initialEventSeed?: React.ComponentProps<typeof TriggerPluginEventRows>['initialEventSeed'];
     onEditSeedApplied?: React.ComponentProps<
       typeof TriggerPluginEventRows
     >['onEditSeedApplied'];
@@ -273,6 +274,7 @@ export function WorkflowTriggerBlock(
           machineId={props.machineId}
           serverId={props.serverId}
           eventEdit={props.eventEdit}
+          initialEventSeed={props.initialEventSeed}
           onEditSeedApplied={props.onEditSeedApplied}
           renderEntry={(entry) => (
             <TrackRow

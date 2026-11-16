@@ -259,7 +259,9 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         const next = commitWorkflowTriggerWhen({ draft: props.draft, row: { kind: 'new', clientId }, when, enabled: true });
         setPending(current => next === null
             ? current.some(item => item.clientId === clientId)
-                ? current.map(item => item.clientId === clientId ? { clientId, when } : item) : [...current, { clientId, when }]
+                ? current.map(item => item.clientId === clientId
+                    ? { ...item, when, ...(readWorkflowTriggerStartId(item.when) === readWorkflowTriggerStartId(when) ? {} : { eventSeed: undefined }) }
+                    : item) : [...current, { clientId, when }]
             : current.filter(item => item.clientId !== clientId));
         if (next !== null) change(next);
     };
@@ -326,6 +328,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         ...pending.map((item) => (
             <WorkflowTriggerBlock key={`new:${item.clientId}`} testID={`${props.testIDPrefix}-trigger:new:${item.clientId}`}
                 title={startTitle(item.when)} when={item.when} enabled incomplete startOptions={startOptions}
+                initialEventSeed={item.eventSeed}
                 onStartsOpenChange={demandCatalog}
                 onSelectStart={(id) => selectStart(item.when, id, (next) => editPending(item.clientId, next))}
                 {...placement} accountLifetime={props.accountLifetime}

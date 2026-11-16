@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useRouter } from 'expo-router';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
@@ -9,14 +10,16 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
+import { prepareWorkflowSentenceEditorEntry } from '@/components/workflows/authoring/workflowSentenceAuthoring';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 
 import type { AccountTriggerRow, TriggerSubject } from './accountTriggerRows';
 import { NewAccountTriggerPopover } from './AccountTriggersSection';
-import { GuidedAutomationSetup } from './GuidedAutomationSetup';
 import { DeploymentPushTriggerSetup } from './DeploymentPushTriggerSetup';
 import type { DeploymentPushSetupConfig } from './deploymentPushSetup';
 import { ScheduledServiceJobSetup } from './ScheduledServiceJobSetup';
-import { guidedStarterEventSeed, type GuidedStarter } from './guidedAutomation';
+import { guidedStarterDraft, guidedStarterEventSeed, type GuidedStarter } from './guidedAutomation';
+import { buildTriggerDefinition } from './sessionTriggerForm';
 import {
   SUBJECT_TRIGGER_PERSISTENT_STARTERS,
   SUBJECT_TRIGGER_STARTER_GLYPH,
@@ -27,21 +30,15 @@ import { TriggerRow } from './TriggerRow';
 import { useResourceAutomationsSection } from './useResourceAutomationsSection';
 
 type Opening =
-  | Readonly<{ kind: 'custom' }>
   | Readonly<{ kind: 'scheduledJob' | 'deployOnPush'; anchor: React.RefObject<View | null> }>
   /** Add a check: the New trigger editor opened at the subject's own health form (the bound health-setup seed). */
-  | Readonly<{ kind: 'check'; anchor: React.RefObject<View | null> }>
-  | Readonly<{
-      kind: 'guided';
-      starter: GuidedStarter | null;
-      anchor: React.RefObject<View | null>;
-    }>;
+  | Readonly<{ kind: 'check'; anchor: React.RefObject<View | null> }>;
 
 /**
  * A subject page's Triggers (OPS-AUTOMATIONS-1102 D2/D3): the Account's triggers that run on this
  * subject's Machine, read from the same `account_inline` list the Workflows column shows and edited in
- * the same popover. "Set up an automation" asks the four questions; "Custom trigger" opens the
- * column's New trigger. Both start with Runs on at the subject. Empty, the section suggests starters.
+ * the same popover. Creation opens the ordinary sentence editor with the subject's project and
+ * any source setup intent. Empty, the section suggests starters.
  * The section waits for the first read instead of drawing a loading line between the page's sections.
  */
 export const SubjectTriggersSection = React.memo(
@@ -57,6 +54,7 @@ export const SubjectTriggersSection = React.memo(
     }>,
   ) {
     const { accountLifetime, read, editor, rows, project } = useResourceAutomationsSection(props);
+    const router = useRouter();
     const { status } = read;
     const addAnchor = React.useRef<View>(null);
     const [opening, setOpening] = React.useState<Opening | null>(null);
@@ -64,6 +62,26 @@ export const SubjectTriggersSection = React.memo(
       ? props.deploymentEnvironment !== undefined : starter !== 'deployOnPush' || props.pushSetup !== undefined;
     const empty = rows.length === 0;
     const close = () => setOpening(null);
+    const openSentence = (starter: GuidedStarter | null) => {
+      const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
+      if (!lifetime) return;
+      const eventSeed = starter === null ? undefined : guidedStarterEventSeed(starter, {
+        subject: props.subject, deploymentEnvironment: props.deploymentEnvironment,
+        controllerMachineId: props.controllerMachineId,
+      });
+      const trigger = starter === 'nightly' ? buildTriggerDefinition({
+        when: guidedStarterDraft('nightly').when, enabled: true, sessionId: null,
+      }) : null;
+      const entry = prepareWorkflowSentenceEditorEntry({ name: props.subjectName, project,
+        ...(eventSeed ? { eventSeed } : {}), ...(trigger ? { trigger } : {}),
+      }, lifetime);
+      if (entry) router.push(entry);
+    };
+    const openStarter = (starter: SubjectTriggerStarter, anchor: React.RefObject<View | null>) => {
+      if (starter === 'scheduledJob' || starter === 'deployOnPush') setOpening({ kind: starter, anchor });
+      else if (starter === 'addCheck') setOpening({ kind: 'check', anchor });
+      else openSentence(starter);
+    };
     const section = rows.length === 0 && status !== 'ready' ? null : (
       <ItemGroup
         testID="subject-triggers"
@@ -78,7 +96,7 @@ export const SubjectTriggersSection = React.memo(
               size="small"
               display="inverted"
               title={t('workflows.triggers.section.custom')}
-              onPress={() => setOpening({ kind: 'custom' })}
+              onPress={() => openSentence(null)}
             />
             <RoundButton
               testID="subject-triggers-set-up"
@@ -86,7 +104,7 @@ export const SubjectTriggersSection = React.memo(
               display="secondary"
               title={t('workflows.triggers.section.setUp')}
               onPress={() =>
-                setOpening({ kind: 'guided', starter: null, anchor: addAnchor })
+                openSentence(null)
               }
             />
           </View>
@@ -94,7 +112,7 @@ export const SubjectTriggersSection = React.memo(
       >
         {empty
           ? SUBJECT_TRIGGER_STARTERS[props.subject.kind].filter(starterAvailable).map((starter) => (
-              <StarterRow key={starter} starter={starter} onOpen={(anchor) => setOpening(openStarter(starter, anchor))} />
+              <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
             ))
           : rows.map((row) => (
               <SubjectTriggerRowView
@@ -110,7 +128,7 @@ export const SubjectTriggersSection = React.memo(
               />
             ))}
         {empty ? null : SUBJECT_TRIGGER_PERSISTENT_STARTERS[props.subject.kind].filter(starterAvailable).map((starter) => (
-          <StarterRow key={starter} starter={starter} onOpen={(anchor) => setOpening(openStarter(starter, anchor))} />
+          <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
         ))}
         {rows.length > 0 && status === 'failed' ? (
           <SurfaceFreshnessLine
@@ -130,14 +148,6 @@ export const SubjectTriggersSection = React.memo(
       <>
         {section}
         {editor.popover}
-        {opening?.kind === 'custom' ? (
-          <NewAccountTriggerPopover
-            anchorRef={addAnchor}
-            onRequestClose={close}
-            initialProject={project}
-            accountLifetime={accountLifetime}
-          />
-        ) : null}
         {opening?.kind === 'check' ? (
           <NewAccountTriggerPopover
             anchorRef={opening.anchor}
@@ -156,30 +166,12 @@ export const SubjectTriggersSection = React.memo(
             serverId={props.deploymentEnvironment.serverId} environmentId={props.deploymentEnvironment.environmentId}
             machineId={props.subject.machineId} project={project} />
         ) : null}
-        {opening?.kind === 'guided' ? (
-          <GuidedAutomationSetup
-            anchorRef={opening.anchor}
-            onRequestClose={close}
-            subjectName={props.subjectName}
-            subject={props.subject}
-            initialProject={project}
-            starter={opening.starter}
-            deploymentEnvironment={props.deploymentEnvironment}
-            deploymentSourceName={props.deploymentSourceName}
-            controllerMachineId={props.controllerMachineId}
-          />
-        ) : null}
       </>
     );
   },
 );
 
-function openStarter(starter: SubjectTriggerStarter, anchor: React.RefObject<View | null>): Opening {
-  if (starter === 'scheduledJob' || starter === 'deployOnPush') return { kind: starter, anchor };
-  return starter === 'addCheck' ? { kind: 'check', anchor } : { kind: 'guided', starter, anchor };
-}
-
-/** A suggested entry: a row that opens the four questions already answered for it, or Add a check's health form. */
+/** A suggested entry opens a sentence draft or the subject's specialized setup. */
 const StarterRow = React.memo(function StarterRow(
   props: Readonly<{
     starter: SubjectTriggerStarter;

@@ -6,6 +6,10 @@ import {
   type WorkflowResultField,
 } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import type { WorkflowResultContract } from '@happier-dev/protocol/workflows/workflowV1';
+import { formatWorkflowTriggerEventIdentityV1, type WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
+import { resolveAutomationEventFilterScalarLeafV1 } from '@happier-dev/protocol/automations/automationEventV1';
 
 import { listWorkflowProducerOptions, resolveWorkflowReferenceScopeFacts, type WorkflowProducerOption, type WorkflowReferenceConsumer } from '@/sync/domains/workflows/workflowAuthoring';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
@@ -30,6 +34,30 @@ export type WorkflowConditionValueOption = Readonly<{
 const UNKNOWN: WorkflowConditionValueFacts = { type: 'unknown' };
 const TEXT: WorkflowConditionValueFacts = { type: 'text' };
 const NUMBER: WorkflowConditionValueFacts = { type: 'number' };
+
+export type WorkflowValueContext = Readonly<{ triggerEvents?: readonly WorkflowTriggerEventDeclarationV1[] }>;
+
+/** Enumerate authored property names; the Event schema owner decides which are scalar operands. */
+function eventFields(declaration: WorkflowTriggerEventDeclarationV1) {
+  const fields = new Map<string, { path: string[]; schema: PluginJsonSchemaV2 }>();
+  const visit = (schema: PluginJsonSchemaV2, path: string[]): void => {
+    if (path.length > 0) fields.set(JSON.stringify(path), { path, schema });
+    for (const [key, child] of Object.entries(schema.properties ?? {})) visit(child, [...path, key]);
+    for (const branch of [...(schema.allOf ?? []), ...(schema.anyOf ?? []), ...(schema.oneOf ?? [])]) visit(branch, path);
+  };
+  const payloadSchema = declaration.payloadSchema;
+  if (payloadSchema === null) return [];
+  visit(payloadSchema, []);
+  return [...fields.values()].filter(field => resolveAutomationEventFilterScalarLeafV1(payloadSchema,
+    '/' + field.path.map(segment => segment.replace(/~/g, '~0').replace(/\//g, '~1')).join('/')).kind === 'declared');
+}
+
+function eventFieldFacts(schema: PluginJsonSchemaV2): WorkflowConditionValueFacts {
+  const choices = schema.enum ?? (typeof schema.const === 'string' ? [schema.const] : undefined);
+  if (choices?.every((value): value is string => typeof value === 'string')) return { type: 'choice', choices };
+  return schema.type === 'string' ? TEXT : schema.type === 'number' || schema.type === 'integer' ? NUMBER
+    : schema.type === 'boolean' ? { type: 'boolean' } : UNKNOWN;
+}
 
 function factsForField(
   field: WorkflowResultField,
@@ -66,6 +94,7 @@ function resultContractOf(
 export function resolveWorkflowConditionValueFacts(
   draft: WorkflowEditorDraft,
   reference: WorkflowValueReference,
+  context?: WorkflowValueContext,
 ): WorkflowConditionValueFacts {
   switch (reference.kind) {
     case 'literal':
@@ -113,6 +142,11 @@ export function resolveWorkflowConditionValueFacts(
     }
     case 'workspace':
       return TEXT;
+    case 'trigger_event': {
+      const field = context?.triggerEvents?.filter(candidate => sameStrictJsonValue(candidate.event, reference.event)).flatMap(eventFields).find(candidate =>
+          JSON.stringify(candidate.path) === JSON.stringify(reference.path));
+      return field === undefined ? UNKNOWN : eventFieldFacts(field.schema);
+    }
     case 'iteration':
       return reference.field === 'stopReason' ? TEXT : NUMBER;
     case 'item':
@@ -150,7 +184,7 @@ export function listWorkflowConditionValueOptions(
   draft: WorkflowEditorDraft,
   consumerBlockId: string,
   consumer?: WorkflowReferenceConsumer,
-  presentation?: Readonly<{ includeUnavailable?: boolean }>,
+  presentation?: Readonly<{ includeUnavailable?: boolean }> & WorkflowValueContext,
 ): readonly WorkflowConditionValueOption[] {
   const options: WorkflowConditionValueOption[] = [];
   const push = (
@@ -159,7 +193,7 @@ export function listWorkflowConditionValueOptions(
     reference: WorkflowValueReference,
     typeLabelOverride?: string,
   ): void => {
-    const facts = resolveWorkflowConditionValueFacts(draft, reference);
+    const facts = resolveWorkflowConditionValueFacts(draft, reference, presentation);
     options.push({
       id: JSON.stringify(reference),
       title,
@@ -169,6 +203,19 @@ export function listWorkflowConditionValueOptions(
       typeLabel: typeLabelOverride ?? typeLabelFor(facts),
     });
   };
+  const eventIds = new Set<string>();
+  for (const declaration of presentation?.triggerEvents ?? []) {
+    for (const field of eventFields(declaration)) {
+      const reference: WorkflowValueReference = { kind: 'trigger_event', event: declaration.event, path: field.path };
+      const id = JSON.stringify(reference);
+      if (eventIds.has(id)) continue;
+      eventIds.add(id);
+      const facts = eventFieldFacts(field.schema);
+      options.push({ id, title: field.schema.title ?? field.path.map(part => formatWorkflowFieldLabel(part)).join(' · '),
+        category: formatWorkflowTriggerEventIdentityV1(declaration.event),
+        reference, facts, typeLabel: typeLabelFor(facts) });
+    }
+  }
   const producers = listWorkflowProducerOptions(
     draft,
     consumerBlockId,

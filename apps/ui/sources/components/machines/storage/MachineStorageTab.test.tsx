@@ -1013,7 +1013,7 @@ describe('MachineStorageTab', () => {
         expect(route.pathname).toBe('/workflows/new');
         const seed = peekTempData<{ seed: WorkflowDefinitionDraftSeed }>(route.params.definitionDraftSeedId)?.seed;
         expect(seed?.trigger?.kind).toBe('schedule');
-        expect(seed?.definition.blocks[0]).toMatchObject({ document: { text: expect.stringContaining('Move items to Trash') } });
+        expect(seed?.definition?.blocks[0]).toMatchObject({ document: { text: expect.stringContaining('Move items to Trash') } });
     });
     it('says what Happier holds, draws each disk with its share and lists kinds biggest first with what can go', async () => {
         const { screen, setParams } = await mount({ id: 'storage' });

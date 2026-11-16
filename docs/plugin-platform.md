@@ -1658,16 +1658,17 @@ frames still have no in-process ephemeral shared-scope bridge. This is an
 unpublished current-source addition, not a compatibility promise for stale
 independently bundled development SDKs with an earlier strict context grammar.
 
-The development `openAutomationEvent` UI host method opens the existing Account trigger
-popover and its Event editor. Plugins supply a qualified Event and source-specific setup
+The development `openAutomationEvent` UI host method seeds the ordinary sentence
+Workflow editor. Plugins supply a qualified Event and source-specific setup
 input, optionally a monitoring Machine and qualified Connected Account. Omitted choices
 remain unselected: the existing watcher chooser admits an explicit current Machine before
 loading its Event catalog, and the Event's Action form owns Connected Account selection. Only an opaque,
-Account-scoped temporary seed handle enters the Workflows route. The Event's current
+Account-scoped temporary definition seed handle enters the new Workflow route. Partial
+intent retains unselected placement and verb operands. The Event's current
 setup Action owns input validation and account selection; contradictory seeded account
 references are refused. Opening performs no source setup, enrollment or trigger write.
-The person explicitly configures the source, then completes the incumbent trigger form,
-including its Runs on and Then selections. The current Event editor serves the active
+The person explicitly configures the source and sentence operands, then uses the
+ordinary Workflow Save path. The current Event editor serves the active
 Account only; an addressed nonactive Account is refused before navigation. Both native
 and hosted transports negotiate the method, and an older host reports unsupported.
 Generated SDK governance and loaded-runtime verification remain separate checks.

@@ -76,6 +76,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     /** The editor's Where, which seeds the set's one machine when its first trigger is added. */
     projectTarget: WorkflowProjectTargetV1 | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
+    initialIncomplete?: WorkflowTriggerIncomplete;
 }>): WorkflowTriggerEditing {
     const request = React.useMemo(() => params.definitionId === null ? null : { workflow: params.definitionId }, [params.definitionId]);
     const { sets, status, retry, acknowledge } = useWorkflowTriggerSets(request, params.accountLifetime);
@@ -92,11 +93,13 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     const pendingSave = React.useRef<Readonly<{ identity: object; draft: WorkflowTriggerDraft }> | null>(null);
     const [state, setState] = React.useState(() => ({ identity, draft: EMPTY_WORKFLOW_TRIGGER_DRAFT }));
     const draft = state.identity === identity ? state.draft : EMPTY_WORKFLOW_TRIGGER_DRAFT;
-    const [incompleteState, setIncompleteState] = React.useState(() => ({ identity, value: EMPTY_WORKFLOW_TRIGGER_INCOMPLETE }));
-    const incomplete = incompleteState.identity === identity ? incompleteState.value : EMPTY_WORKFLOW_TRIGGER_INCOMPLETE;
+    const initialIncomplete = params.initialIncomplete ?? EMPTY_WORKFLOW_TRIGGER_INCOMPLETE;
+    const [incompleteState, setIncompleteState] = React.useState(() => ({ identity, value: initialIncomplete }));
+    const incomplete = incompleteState.identity === identity ? incompleteState.value : initialIncomplete;
     const updateIncomplete = React.useCallback((update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => {
-        setIncompleteState((current) => ({ identity, value: update(current.identity === identity ? current.value : EMPTY_WORKFLOW_TRIGGER_INCOMPLETE) }));
-    }, [identity]);
+        if (identityRef.current !== identity) return;
+        setIncompleteState((current) => ({ identity, value: update(current.identity === identity ? current.value : initialIncomplete) }));
+    }, [identity, initialIncomplete]);
     const eventProjection = React.useMemo(() => params.definitionId !== null && status !== 'ready'
         ? undefined : projectWorkflowTriggerEvents(set, draft), [params.definitionId, status, set, draft]);
     const mounted = React.useRef(true);

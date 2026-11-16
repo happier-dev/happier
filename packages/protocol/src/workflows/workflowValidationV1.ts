@@ -477,8 +477,7 @@ function validateValueReference(
     case 'trigger_event': {
       // Stored reads are structural. Save passes the intended/current trigger set explicitly.
       if (state.triggerEvents === undefined) return;
-      const declared = state.triggerEvents.find(candidate => candidate.event.pluginId === reference.event.pluginId
-        && candidate.event.localId === reference.event.localId);
+      const declared = state.triggerEvents.find(candidate => sameStrictJsonValue(candidate.event, reference.event));
       if (!declared || declared.payloadSchema === null) {
         state.issues.push({ ...issue('missing_reference', path, 'The Event declaration is unavailable in this workflow trigger set.', blockId), severity: 'warning' });
       } else {

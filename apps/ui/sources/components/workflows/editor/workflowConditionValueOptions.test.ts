@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import { createWorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import { listWorkflowConditionValueOptions } from './workflowConditionValueOptions';
+import { listWorkflowConditionValueOptions, resolveWorkflowConditionValueFacts } from './workflowConditionValueOptions';
 
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 
@@ -9,6 +9,42 @@ const step = (id: string): WorkflowStep => ({ kind: 'step', id, name: id,
     document: { text: id, references: [], attachments: [] }, input: [], result: { kind: 'text' } });
 
 describe('workflow prompt reference scope', () => {
+    it('offers only declared Event scalar leaves and keeps qualified Event identities distinct', () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'event-values', name: 'Notify', blocks: [step('notify')] });
+        const event = { pluginId: 'example.events', localId: 'run' };
+        const otherEvent = { pluginId: 'other.events', localId: 'run' };
+        const options = listWorkflowConditionValueOptions(draft, 'notify', undefined, {
+            triggerEvents: [
+                { event, payloadSchema: { type: 'object', properties: {
+                    state: { type: 'string', enum: ['succeeded', 'failed'] },
+                    attempt: { type: 'integer' },
+                    source: { type: 'object', properties: { name: { type: 'string' } } },
+                    labels: { type: 'array', items: { type: 'string' } },
+                } } },
+                { event, payloadSchema: { type: 'object', properties: { state: { type: 'string', enum: ['succeeded', 'failed'] } } } },
+                { event: otherEvent, payloadSchema: { type: 'object', properties: { state: { type: 'boolean' } } } },
+                { event: { pluginId: 'unavailable.events', localId: 'run' }, payloadSchema: null },
+            ],
+        });
+        const eventOptions = options.filter(option => option.reference.kind === 'trigger_event');
+        expect(eventOptions.map(option => option.reference)).toEqual([
+            { kind: 'trigger_event', event, path: ['state'] },
+            { kind: 'trigger_event', event, path: ['attempt'] },
+            { kind: 'trigger_event', event, path: ['source', 'name'] },
+            { kind: 'trigger_event', event: otherEvent, path: ['state'] },
+        ]);
+        expect(eventOptions.map(option => option.facts)).toEqual([
+            { type: 'choice', choices: ['succeeded', 'failed'] },
+            { type: 'number' }, { type: 'text' }, { type: 'boolean' },
+        ]);
+        expect(new Set(eventOptions.map(option => option.id)).size).toBe(4);
+        expect(resolveWorkflowConditionValueFacts(draft, { kind: 'trigger_event', event, path: ['state'] }, { triggerEvents: [
+            { event, payloadSchema: null },
+            { event, payloadSchema: { type: 'object', properties: { state: { type: 'boolean' } } } },
+        ] })).toEqual({ type: 'boolean' });
+        expect(listWorkflowConditionValueOptions(draft, 'notify').some(option => option.reference.kind === 'trigger_event')).toBe(false);
+    });
+
     it('offers prior results and inputs while explaining later and sibling-lane results', () => {
         const draft = { ...createWorkflowEditorDraft({ draftId: 'scope', name: 'Release', blocks: [
             step('gather'), { kind: 'parallel' as const, id: 'lanes', failurePolicy: 'fail_stop' as const, branches: [

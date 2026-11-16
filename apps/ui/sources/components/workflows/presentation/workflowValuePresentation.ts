@@ -2,6 +2,7 @@ import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowActionValueReferenceV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowReferenceScope } from '@happier-dev/protocol/workflows/workflowReferenceV1';
+import { formatWorkflowTriggerEventIdentityV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import type { WorkflowResultField, WorkflowResultFieldType, WorkflowResultListItemType } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
@@ -57,6 +58,8 @@ export function formatWorkflowValueReference(draft: WorkflowValuePresentationCon
             return formatWorkflowExecutionLiteral(reference.value, fieldName) ?? formatWorkflowLiteralValue(reference.value);
         case 'input':
             return withPath(t('workflows.input.workflowInput', { name: formatWorkflowFieldLabel(reference.name) }), reference.path);
+        case 'trigger_event':
+            return withPath(t('workflows.list.event', { eventId: formatWorkflowTriggerEventIdentityV1(reference.event) }), reference.path);
         case 'result':
             // A field reads as its step and field ("Check the fix · Fixed", lab E1); the whole result keeps its noun.
             return reference.path.length === 0

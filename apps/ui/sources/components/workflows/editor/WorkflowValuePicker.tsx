@@ -20,6 +20,7 @@ import {
     workflowValueIsDeclaredField,
 } from './workflowConditionValueOptions';
 import { workflowEditorStyles } from './workflowEditorStyles';
+import { WorkflowEventValueContext } from './WorkflowEventValueContext';
 
 const FIXED_VALUE = '$fixed';
 
@@ -84,11 +85,12 @@ export function WorkflowValuePicker(props: Readonly<{
     pathTestID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const valueContext = React.useContext(WorkflowEventValueContext);
     const [open, setOpen] = React.useState(false);
     const [pathOpen, setPathOpen] = React.useState(false);
     const { draft, consumerBlockId, continuation, reference, fixedOnly } = props;
     const options = React.useMemo(() => fixedOnly === true ? [] : listWorkflowConditionValueOptions(draft, consumerBlockId,
-        continuation === true ? { continuation: true } : undefined), [consumerBlockId, continuation, draft, fixedOnly]);
+        continuation === true ? { continuation: true } : undefined, valueContext), [consumerBlockId, continuation, draft, fixedOnly, valueContext]);
     const fixed = reference?.kind === 'literal' && props.onChooseFixedValue !== undefined;
     const selectedId = reference === null ? null : fixed ? FIXED_VALUE : JSON.stringify(reference);
     const label = reference === null ? t('workflows.condition.chooseValue')
@@ -161,7 +163,7 @@ export function WorkflowValuePicker(props: Readonly<{
                     testID={props.pathTestID}
                     style={[workflowEditorStyles.inlineValue, workflowEditorStyles.pathValue]}
                     reference={pathReference}
-                    onChange={(next) => props.onChange(next, resolveWorkflowConditionValueFacts(draft, next))}
+                    onChange={(next) => props.onChange(next, resolveWorkflowConditionValueFacts(draft, next, valueContext))}
                 />
             )}
         </>

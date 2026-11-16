@@ -2,6 +2,10 @@ import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workf
 import type { AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { WorkflowStarterSessionTarget } from '@happier-dev/protocol/workflows/builtins/examples';
 import type { WorkflowDefinitionCaptureResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import type { WorkflowDraftSettingsPatchV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
+import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
+import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { readWorkflowEditorDraftSeed, storeWorkflowEditorDraftSeed } from './workflowEditorDraftSeed';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -10,8 +14,16 @@ import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/doma
 export type WorkflowDefinitionDraftSeed = Readonly<{
     name: string;
     description?: string;
-    definition: WorkflowDefinitionV1;
+    definition?: WorkflowDefinitionV1;
     trigger?: AutomationTriggerDefinitionInput;
+    /** Event declaration retained with its trigger for local validation and history. */
+    payloadSchema?: PluginJsonSchemaV2 | null;
+    /** An unconfigured source stays with the ordinary When editor until enrollment completes. */
+    eventSeed?: PluginUiOpenAutomationEventRequestV1;
+    project?: WorkflowProjectTargetV1;
+    executionTarget?: WorkflowDraftSettingsPatchV1['executionTarget'];
+    /** The sentence and full editor share the same draft and Save. */
+    initialView?: 'sentence';
     sessionTarget?: WorkflowStarterSessionTarget;
     /** Attribution stays out of the executable graph and never confers source access. */
     captureProvenance?: WorkflowDefinitionCaptureResultV1['provenance'];

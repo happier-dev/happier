@@ -11,7 +11,7 @@ import { parseComposerSuggestionQuery } from '@/components/autocomplete/composer
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { t } from '@/text';
 
-import { listWorkflowConditionValueOptions } from './workflowConditionValueOptions';
+import { listWorkflowConditionValueOptions, type WorkflowValueContext } from './workflowConditionValueOptions';
 
 /** The validator owns scope and existence; both the live field and its picture consume its result. */
 export function resolveWorkflowPromptReferenceStates(
@@ -48,12 +48,13 @@ export function createWorkflowPromptSuggestions<Reference extends WorkflowAction
     /** The block whose scope applies and the value list its tokens address: a prompt step, or one Action text field. */
     step: Readonly<{ id: string; input: readonly Reference[] }>;
     query: string;
+    valueContext?: WorkflowValueContext;
     onChangeInput: (input: (Reference | WorkflowValueReference)[]) => void;
 }>): AutocompleteSuggestion[] {
     const query = parseComposerSuggestionQuery(params.query);
     if (query?.trigger !== '@') return [];
     const search = query.query.toLocaleLowerCase();
-    return listWorkflowConditionValueOptions(params.draft, params.step.id, undefined, { includeUnavailable: true })
+    return listWorkflowConditionValueOptions(params.draft, params.step.id, undefined, { ...params.valueContext, includeUnavailable: true })
         .filter(option => !option.opensPath)
         .flatMap((option): AutocompleteSuggestion[] => {
             const label = option.reference.kind === 'result'
