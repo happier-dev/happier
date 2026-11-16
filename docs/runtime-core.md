@@ -4640,7 +4640,7 @@ Run occurrence and parent Session through the existing broker check.
 
 ### Background task runner selection (0.3 development)
 
-Memory hints, the commit message, the diff summary and the replay summary each
+Memory hints, deploy suggestions, the commit message, the diff summary and the replay summary each
 store one runner choice: **Auto**, or an explicit runner
 (`LlmTaskRunnerChoiceV1` in
 [`llmTaskRunnerConfigV1.ts`](../packages/protocol/src/llm/tasks/llmTaskRunnerConfigV1.ts)).
@@ -4661,7 +4661,8 @@ Session text, and the cost tiers Auto may use.
   signed in or connected through a service, with their offered models. Task
   runs and the pickers' "Auto — currently" read use the same reader
   ([`llmTaskRunner.ts`](../apps/cli/src/agent/executionRuns/tasks/llmTaskRunner.ts)).
-- Auto takes the cheapest model among every enabled Agent that is ready: the
+- Auto follows the task's declared cost policy among enabled Agents that are ready:
+  deploy suggestions prefer `standard`, then `premium`, then `low`; other tasks take the
   lowest tagged cost tier across all candidates (the diff summary needs `low`),
   skipping models the task can't use. The Session's own Agent wins a tie, then
   catalog order; there is no provider list. An untagged model is never assumed
@@ -4689,8 +4690,20 @@ The commit message stores its choice in the Account setting
 stays Auto, any other Agent becomes an explicit runner on its default model.
 Writers no longer write the old key. The UI generator
 ([`commitMessageGenerator.ts`](../apps/ui/sources/scm/operations/commitMessageGenerator.ts))
-resolves Auto on the machine that runs the commit message (the workspace's, or
-the Session's), then starts `execution.run.start` with that runner.
+uses the shared UI lifecycle owner
+[`runLlmTaskInWorkspace.ts`](../apps/ui/sources/execution/llmTasks/runLlmTaskInWorkspace.ts).
+It resolves Auto on the executing Machine (the workspace's, or the Session's),
+then starts the existing `execution.run.start` with that runner.
+
+Deploy suggestions store the same runner choice in `deploySuggestionRunnerV1`
+(null is Auto), through the Deployments Settings picker. The suggestion controller
+reads one catalog snapshot and runs the existing `task` intent in a Machine
+workspace without creating a Session. Its typed result passes through
+`validateDeploySuggestionV1`, which checks catalog identities and delegates target
+fit to `resolvePublishTargetRecommendation`. Starter choices create through
+`projects.starters.create` and open its Session handoff; catalog apps continue to
+target selection without opening a Session. The shared task lifecycle reports the
+accepted run before waiting, so Stop reaches that run through `execution.run.stop`.
 
 ## Execution Run recovery and observation
 
