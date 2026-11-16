@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1';
 import tweetnacl from 'tweetnacl';
 import React from 'react';
 import { act } from 'react-test-renderer';
@@ -3245,10 +3246,10 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(await deleteSavedSecretResource({ scope: account.scope, resourceId, expectedRevision: 1,
             expectedSettingsVersion: account.settingsVersion })).toMatchObject({ ok: false, reason: 'in_use',
             references: [{ owner: 'connectedAccountCredential', path: 'connectedAccountCredentials["happier.agent.claude"].anthropic.work',
-                referrer: { kind: 'connectedAccountCredential', id: 'work', displayName: 'Chosen credential' } },
+                referrer: { kind: 'connectedAccountCredential', id: connectedEntitySubjectKeyV1({ kind: 'account', account: connected }), displayName: 'Chosen credential' } },
             { owner: 'connectedAccountCredential',
                 // The incumbent approval harness renders translation keys; the canonical presenter owns this fallback.
-                referrer: { kind: 'connectedAccountCredential', id: 'private-routing-handle',
+                referrer: { kind: 'connectedAccountCredential', id: connectedEntitySubjectKeyV1({ kind: 'account', account: { ...connected, accountId: 'private-routing-handle' } }),
                     displayName: 'connectedServicesCollection.accountLabel' } }] });
         expect(account.writes).toEqual([]);
     });
