@@ -46,6 +46,8 @@ describe('Deployment Action front door', () => {
       context: { ...context, presentUserConfirmation: { actionId } } });
     expect(confirmed.required).toBe(false);
     expect(confirmed.uiConfirmationRequired).toBeUndefined();
+    expect(resolveActionApprovalRouting({ actionId, spec, input: { ...input, providerRemoval: 'delete' },
+      context: { surface: 'agent' } }).required).toBe(true);
   });
   it('approves retained Domain removal through durable review without prepared-content input', async () => {
     const input = { serverId: 'home', environmentId: 'production', domainId: 'domain',

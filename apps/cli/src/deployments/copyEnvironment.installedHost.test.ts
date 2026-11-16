@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { accountSettingsParse, ActionsSettingsV1Schema, ProjectDeploymentDefaultsOutputV1Schema,
-    type QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
+    decodePlainArtifactStoredContent, type QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
@@ -181,7 +181,7 @@ it('copies through the installed data declaration and reviewed children without 
                 boundaryFailures.push({ method: 'POST', path: '/projects', errorClass: error instanceof Error ? error.name : 'unknown' });
                 return new Response(null, { status: 400 });
             }
-            return new Response(JSON.stringify({ state: 'provisioned', status: 'ACTIVE', ready: true, engine: 'postgres',
+            return new Response(JSON.stringify({ state: 'provisioned', status: 'ACTIVE', ready: true, engine: 'postgres', providerResourceOrigin: 'created',
                 providerConsole: { url: 'https://copy-provider.test/projects/resource-1', label: 'Database' },
                 providerIdentity: { providerAccountId: 'fresh-provider', providerResourceId: `resource-${providerRequests.length}`,
                     providerEnvironment: 'main' }, providerEnvironment: { kind: 'custom', id: 'main' } }),
@@ -232,6 +232,11 @@ it('copies through the installed data declaration and reviewed children without 
         expect(providerRequests).toHaveLength(1);
         expect(providerRequests[0]).toMatchObject({ environmentId: destination.id, expectedRevision: 1, credentialPrincipal: principal });
         expect(associated).toHaveLength(1);
+        const dataLinkArtifact = documents.get(associated[0]!.contentArtifactId)!;
+        const dataLinkBody = decodePlainArtifactStoredContent(String(dataLinkArtifact.body));
+        if (!dataLinkBody || typeof dataLinkBody !== 'object' || !('body' in dataLinkBody) || typeof dataLinkBody.body !== 'string')
+            throw new Error('Expected stored target-link content');
+        expect(JSON.parse(dataLinkBody.body)).toMatchObject({ providerResourceOrigin: 'created' });
         const replay = await executor.execute('deployments.environments.create', prepared.input, context);
         expect(replay).toMatchObject({ ok: false, errorCode: 'deployment_conflict', details: {
             kind: 'partial', phase: 'environment', environmentId: destination.id, revision: 2,

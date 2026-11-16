@@ -334,7 +334,7 @@ export async function readDeploymentDomainInTx(tx: Tx, actorAccountId: string, i
         acceptedRead?.environmentId === input.environmentId ? { environmentId: input.environmentId } : undefined);
     if (!loaded.ok) return loaded;
     const row = await tx.deploymentDomain.findFirst({ where: { id: input.domainId, environmentId: loaded.row.id } });
-    return row ? domainResult(row, loaded.row.revision) : deploymentFailure('deployment_unavailable');
+    return row ? domainResult(row, loaded.row.revision) : deploymentFailure('deployment_unavailable', { phase: 'deployment.domain.read', causeKind: 'not_found' });
 }
 
 /** The demanded Domain page uses the incumbent Artifact page boundary; cleanup uses the complete inventory below. */
@@ -345,7 +345,7 @@ export async function listDeploymentDomainsInTx(tx: Tx, actorAccountId: string, 
 ) {
     const member = admittedChild?.routing.kind === 'member' ? admittedChild : undefined;
     const row = member ? await tx.deploymentEnvironment.findUnique({ where: { id: input.environmentId }, select: { id: true, revision: true } }) : null;
-    const loaded = member ? row ? { ok: true as const, row } : deploymentFailure('deployment_unavailable')
+    const loaded = member ? row ? { ok: true as const, row } : deploymentFailure('deployment_unavailable', { phase: 'deployment.domain.list.environment', causeKind: 'not_found' })
         : await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication,
             acceptedRead?.environmentId === input.environmentId ? { environmentId: input.environmentId } : undefined);
     if (!loaded.ok) return loaded;
@@ -396,7 +396,7 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     if (input.provider === true) {
         if (membership || link.sourceKind !== 'plugin' || previous && (!readProviderCapture(previous) || previous.targetLinkId !== link.id))
             return deploymentFailure('deployment_conflict');
-        if (!loaded.row.controllerMachineId) return deploymentFailure('deployment_unavailable');
+        if (!loaded.row.controllerMachineId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.domain.create.controller', causeKind: 'binding_missing' });
         const contentFailure = await admitDeploymentStoredContentInTx(tx, actorAccountId, owner, input, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
         if (contentFailure) return contentFailure;
         const controller = await tx.machine.findFirst({ where: { id: loaded.row.controllerMachineId,
@@ -516,12 +516,14 @@ async function markDeploymentDomainRemovingInTx(tx: Tx, row: DeploymentDomainRow
                 actionOperationId: input.actionOperationId, requestId: input.requestId } })) } });
 }
 
-/** Teardown's one admission owns every retained Environment Domain, including predecessor links. */
+/** Teardown's one admission captures the Domains selected by its canonical removal scope. */
 export async function prepareDeploymentTeardownDomainsInTx(tx: Tx, actorAccountId: string,
     actionOperationId: string, loaded: AdmittedDeploymentEnvironment,
     binding?: ExternalActionExecutionAuthorizationBindingV1,
+    scope: Readonly<{ targetLinkId?: string }> = {},
 ) {
-    const rows = await tx.deploymentDomain.findMany({ where: { environmentId: loaded.row.id, deletedAt: null }, orderBy: { id: 'asc' } });
+    const rows = await tx.deploymentDomain.findMany({ where: { environmentId: loaded.row.id, deletedAt: null,
+        ...scope }, orderBy: { id: 'asc' } });
     if (rows.length === 0) return { ok: true as const };
     if (!binding?.requestEnvelopeDigest) return deploymentFailure('unsupported_action');
     if (!loaded.admission.canManage) return deploymentFailure('deployment_access_denied');
@@ -564,7 +566,7 @@ export async function removeDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         || executionBinding.machineId !== loaded.row.controllerMachineId || executionBinding.requestId !== input.requestId
         || executionBinding.serverIdentityId !== input.serverId || !executionBinding.requestEnvelopeDigest)) return deploymentFailure('deployment_access_denied');
     const row = await tx.deploymentDomain.findFirst({ where: { id: input.domainId, environmentId: loaded.row.id } });
-    if (!row) return deploymentFailure('deployment_unavailable');
+    if (!row) return deploymentFailure('deployment_unavailable', { phase: 'deployment.domain.remove.load', causeKind: 'not_found' });
     const now = await readTransactionDatabaseTime(tx);
     const repeatKey = `deployments.domains.remove:${actorAccountId}:${input.environmentId}:${input.requestKey}`;
     const digest = deploymentIntentDigest(input);
@@ -574,7 +576,7 @@ export async function removeDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     if (provider) {
         if (row.deletedAt || row.revision !== input.expectedDomainRevision || loaded.row.revision !== input.expectedRevision)
             return deploymentFailure('deployment_conflict');
-        if (!loaded.row.controllerMachineId) return deploymentFailure('deployment_unavailable');
+        if (!loaded.row.controllerMachineId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.domain.remove.controller', causeKind: 'binding_missing' });
         const controller = await tx.machine.findFirst({ where: { id: loaded.row.controllerMachineId,
             revokedAt: null, replacedByMachineId: null }, select: { id: true, installationId: true, installationPublicKey: true } });
         if (!controller?.installationId || !controller.installationPublicKey
@@ -627,7 +629,7 @@ export async function prepareDeploymentDomainContentInTx(tx: Tx, actorAccountId:
     }
     const environment = await tx.deploymentEnvironment.findUnique({ where: { id: input.environmentId } });
     const custody = environment ? await readProjectSourceCustodyInTx(tx, environment.projectSourceId) : null;
-    if (!environment || !custody) return deploymentFailure('deployment_unavailable');
+    if (!environment || !custody) return deploymentFailure('deployment_unavailable', { phase: 'deployment.domain.content.prepare', causeKind: environment ? 'binding_missing' : 'not_found' });
     const updated = await updateDeploymentStoredContentInTx(tx, actorAccountId, custody,
         input.capture.content, input.contentUpdate, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
     if (!updated.ok) return updated;
@@ -642,10 +644,10 @@ export async function prepareDeploymentDomainContentInTx(tx: Tx, actorAccountId:
 /** Captured installations settle semantic facts; requester departure and current placement edits cannot erase custody. */
 export async function transitionDeploymentDomainInTx(tx: Tx, input: DeploymentDomainTransitionInputV1) {
     await lockDeploymentEnvironmentInTx(tx, input.environmentId);
-    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable');
+    if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId) return deploymentFailure('deployment_unavailable', { phase: 'deployment.domain.transition.server', causeKind: 'server_mismatch' });
     const row = await tx.deploymentDomain.findFirst({ where: { id: input.domainId, environmentId: input.environmentId } });
     const environment = await tx.deploymentEnvironment.findUnique({ where: { id: input.environmentId } });
-    if (!row || !environment) return deploymentFailure('deployment_unavailable');
+    if (!row || !environment) return deploymentFailure('deployment_unavailable', { phase: 'deployment.domain.transition.load', causeKind: 'not_found' });
     const provider = readProviderCapture(row);
     if (provider) {
         const observation = input.providerObservation;
@@ -659,7 +661,7 @@ export async function transitionDeploymentDomainInTx(tx: Tx, input: DeploymentDo
         if (removed !== (row.state === 'removing')) return deploymentFailure('deployment_conflict');
         let reference = deploymentContentReference(row);
         const custody = await readProjectSourceCustodyInTx(tx, environment.projectSourceId);
-        if (!custody) return deploymentFailure('deployment_unavailable');
+        if (!custody) return deploymentFailure('deployment_unavailable', { phase: 'deployment.domain.transition.source_custody', causeKind: 'binding_missing' });
         if (body.contentUpdate) {
             const updated = await updateDeploymentStoredContentInTx(tx, provider.placement.accountId, custody,
                 reference, body.contentUpdate, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
@@ -722,8 +724,8 @@ export async function transitionDeploymentDomainInTx(tx: Tx, input: DeploymentDo
 }
 
 /**
- * The locked cleanup admission reads every non-tombstoned Domain, including
- * removing Domains and Domains on predecessor or detached links. This opens
+ * The locked cleanup admission reads non-tombstoned Domains in the selected
+ * scope, defaulting to the whole Environment including predecessor links. This opens
  * no private content and applies no list-page bound. An empty result is true
  * only for this transaction: Environment revision is not a Domain generation.
  * Every destructive disposal must re-admit here under the same Environment
@@ -733,6 +735,7 @@ export async function readDeploymentDomainInventoryInTx(tx: Tx, actorAccountId: 
     input: Readonly<{ serverId: string; environmentId: string; expectedRevision: number }>,
     authentication: DeploymentAuthentication = {},
     admitted?: Readonly<{ ok: true; row: Readonly<{ id: string; revision: number }> }>,
+    scope: Readonly<{ targetLinkId?: string }> = {},
 ) {
     // Receipt admission/installation-signed settlement already hold this lock
     // and their authority in this transaction; neither needs another census.
@@ -741,7 +744,7 @@ export async function readDeploymentDomainInventoryInTx(tx: Tx, actorAccountId: 
     if (!loaded.ok) return loaded;
     if (loaded.row.id !== input.environmentId || loaded.row.revision !== input.expectedRevision) return deploymentFailure('deployment_conflict');
     const rows = await tx.deploymentDomain.findMany({
-        where: { environmentId: input.environmentId, deletedAt: null },
+        where: { environmentId: input.environmentId, deletedAt: null, ...scope },
         orderBy: { id: 'asc' },
     });
     return { ok: true as const, environmentId: loaded.row.id, environmentRevision: loaded.row.revision,

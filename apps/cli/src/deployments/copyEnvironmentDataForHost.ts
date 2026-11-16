@@ -79,7 +79,8 @@ export async function copyEnvironmentDataForHost(request: Readonly<{
             }
             const provider = DeploymentTargetLinkProviderContentV1Schema.safeParse({
                 credentialPrincipal: row.provision.input.credentialPrincipal,
-                providerIdentity: created.result.providerIdentity, providerEnvironment: created.result.providerEnvironment });
+                providerIdentity: created.result.providerIdentity, providerEnvironment: created.result.providerEnvironment,
+                ...(created.result.providerResourceOrigin === undefined ? {} : { providerResourceOrigin: created.result.providerResourceOrigin }) });
             if (!provider.success) return partial(deploymentOutputValidationFailure('deployments.copy.data.provision', undefined, provider.error));
             createdResource = `${provider.data.providerIdentity.providerAccountId}/${provider.data.providerIdentity.providerResourceId}`;
             const linkInput = { serverId: input.serverId, environmentId, expectedRevision: revision,

@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto';
 import {
     DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentDomainDiscoverChildRpcV1Schema,
     isDeploymentDomainChildActionIdV1, isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1,
+    selectDeploymentTeardownDomainScopeV1,
     type DeploymentDomainChildActionIdV1, type DeploymentTeardownInputV1,
     type ActionExecutorContext, type ActionExecutorDeps, type DeploymentDomainChildRpcV1, type DeploymentDomainDiscoverChildRpcV1, type DeploymentDomainDnsChildRpcV1,
 } from '@happier-dev/protocol';
@@ -192,7 +193,9 @@ export async function prepareOwnServerTeardownDomainReviewedChildren(
         }
     }
     const children: HostReviewedChildrenPlanV1['children'][number][] = [];
+    const scope = selectDeploymentTeardownDomainScopeV1(input);
     for await (const domain of readEnvironmentDomainsForHost(input.environmentId, request.context, host)) {
+        if (scope.targetLinkId !== undefined && domain.targetLinkId !== scope.targetLinkId) continue;
         const removal = { ...request, actionId: 'deployments.domains.remove' as const,
             input: { serverId: input.serverId, environmentId: input.environmentId, domainId: domain.id,
                 expectedDomainRevision: domain.revision, expectedRevision: input.expectedRevision, requestKey: input.requestKey } };
@@ -515,7 +518,7 @@ export function createOwnServerDomainActions(host: Readonly<{
     return Object.assign((...args: Parameters<Execute>) => execute(args[0], args[1], args[2]), {
         reconcileMembership,
         async retireEnvironment(input: Pick<DeploymentTeardownInputV1, 'environmentId' | 'expectedRevision' | 'requestKey'>
-            & Partial<Pick<DeploymentTeardownInputV1, 'targetLinkId' | 'machines'>> & Readonly<{ deploymentId?: string }>,
+            & Partial<Pick<DeploymentTeardownInputV1, 'targetLinkId' | 'machines' | 'removeEnvironment'>> & Readonly<{ deploymentId?: string }>,
             context: ActionExecutorContext): Promise<ActionExecuteFailure | null> {
             const { environmentId, expectedRevision, requestKey } = input;
             if (input.machines && input.targetLinkId && input.deploymentId) {
@@ -526,7 +529,9 @@ export function createOwnServerDomainActions(host: Readonly<{
                 if (membershipMachines.length) return reconcileMembership({
                     ...input, targetLinkId: input.targetLinkId, deploymentId: input.deploymentId }, context, { environment, membershipMachines });
             }
+            const scope = selectDeploymentTeardownDomainScopeV1(input);
             for await (const domain of readEnvironmentDomainsForHost(environmentId, context, host)) {
+                if (scope.targetLinkId !== undefined && domain.targetLinkId !== scope.targetLinkId) continue;
                 let hostname: string | undefined;
                 let result: Awaited<ReturnType<Execute>>;
                 try {

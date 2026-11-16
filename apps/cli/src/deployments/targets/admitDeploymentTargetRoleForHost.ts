@@ -1,4 +1,5 @@
 import { sameStrictJsonValue as isDeepStrictEqual } from '@happier-dev/protocol/json/strictJsonValue';
+import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
 import { readHostReviewedChildOperationV1, isHostAdmittedReviewedChildPolicyV1,
     readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isDeploymentTargetLinkActionIdV1, deploymentOperationForRootActionV1, deploymentTargetDomainRoleForActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -9,6 +10,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { MachineNativeEffectOperation } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import {
     DeploymentTargetRoleInputSchemasV1, DeploymentTargetRoleCommonInputV1Schema, isDeploymentTargetRuntimeRoleV1,
+    isDeploymentTargetRoleReadOnlyV1,
     type DeploymentTargetRoleInputV1, type DeploymentTargetRoleCommonInputV1,
     type DeploymentTargetRoleV1,
 } from '@happier-dev/protocol/plugins/contributions/v2';
@@ -21,11 +23,6 @@ import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
-
-function isReadOnlyTargetRole(role: string): boolean {
-    return ['inspect', 'observe', 'projects.list', 'projects.provisionOptions',
-        'projects.link', 'branches.list', 'query.readOnly', 'variables.read', 'logs.build', 'logs.runtime', 'domains.read', 'domains.verify'].includes(role);
-}
 
 export type DeploymentTargetRoleAdmissionHost = Readonly<{
     serverId: string;
@@ -89,7 +86,7 @@ export type DeploymentTargetRoleAdmissionForHost = Readonly<{
     workloadControl?: MachineNativeEffectOperation;
     /** Actual effect custody selected once at ordinary daemon role admission. */
     executionEnvironment?: Readonly<{ phase: 'runtime'; machineId: string; installationId: string }>;
-}> | Readonly<{ input: DeploymentTargetRoleInputV1; role: 'inspect' | 'branches.delete' | 'domains.add' | 'domains.remove' | 'domains.verify' | 'variables.read' | 'variables.sync'; environment?: never; receipt?: never; executionEnvironment?: never; workloadControl?: never }>;
+}> | Readonly<{ input: DeploymentTargetRoleInputV1; role: 'inspect' | 'branches.delete' | 'projects.delete' | 'projects.observe' | 'domains.add' | 'domains.remove' | 'domains.verify' | 'variables.read' | 'variables.sync'; environment?: never; receipt?: never; executionEnvironment?: never; workloadControl?: never }>;
 function roleName(role: string): role is DeploymentTargetRoleV1 {
     return has(DeploymentTargetRoleInputSchemasV1, role);
 }
@@ -134,7 +131,7 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     // custody projection must never erase a successfully parsed receipt.
     const lifecycle = parsed.filter(entry => 'deploymentId' in entry.input);
     const matched = lifecycle.length ? lifecycle : parsed;
-    const mutating = matched.some(({ binding }) => !isReadOnlyTargetRole(binding.role));
+    const mutating = matched.some(({ binding }) => !isDeploymentTargetRoleReadOnlyV1(binding.role));
     // A managed query selects a live data link rather than a historical receipt.
     // Its provider/custody path must therefore begin from the exact current
     // Environment and Link, even though the query itself is read-only.
@@ -179,12 +176,18 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
         && admittedParent.input.environmentId === input.environmentId
         && admittedParent.input.targetLinkId === input.targetLinkId
         ? deploymentOperationForRootActionV1(admittedParent.actionId) : undefined;
-    if (!preparation && matched.every(entry => entry.binding.role === 'branches.delete')
+    const reviewedTeardownRole = matched.every(entry => entry.binding.role === 'branches.delete') ? 'branches.delete'
+        : matched.every(entry => entry.binding.role === 'projects.delete') ? 'projects.delete'
+            : matched.every(entry => entry.binding.role === 'projects.observe') ? 'projects.observe' : null;
+    if (!preparation && reviewedTeardownRole
         && parent?.actionId === 'deployments.teardown'
         && parent.input.serverId === input.serverId && parent.input.environmentId === input.environmentId
         && parent.input.targetLinkId === input.targetLinkId
         && admittedReviewedChild) {
-        return { input: DeploymentTargetRoleInputSchemasV1['branches.delete'].parse(input), role: 'branches.delete' };
+        return { input: DeploymentTargetRoleInputSchemasV1[reviewedTeardownRole].parse(input), role: reviewedTeardownRole };
+    }
+    if (!preparation && isAgentCaller(request.context) && matched.some(entry => entry.binding.role === 'projects.delete')) {
+        return refuse('action_forbidden');
     }
     const retained = preparation && matched.every(entry => entry.binding.role === 'branches.delete')
         ? request.retainedDataCreation : undefined;
@@ -254,8 +257,8 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     }
     if ((request.executionTarget === 'account' || candidates.some(candidate => candidate.binding.role === 'create') || candidates.some(candidate => candidate.binding.role.includes('.') || candidate.binding.role === 'uploadDeploy'))
         && environment.controllerMachineId !== host.machineId) return refuse('machine_unavailable');
-    candidates = candidates.filter(({ binding }) => isReadOnlyTargetRole(binding.role)
-        ? environment.capabilities.read : binding.role === 'variables.sync' ? environment.capabilities.manageBindings : ['create', 'link', 'projects.provision', 'connectionSecret.save', 'domains.add', 'domains.remove'].includes(binding.role)
+    candidates = candidates.filter(({ binding }) => isDeploymentTargetRoleReadOnlyV1(binding.role)
+        ? environment.capabilities.read : binding.role === 'variables.sync' ? environment.capabilities.manageBindings : ['create', 'link', 'projects.provision', 'projects.delete', 'connectionSecret.save', 'domains.add', 'domains.remove'].includes(binding.role)
             ? environment.capabilities.manageTargets : environment.capabilities.deploy
                 || admittedOperation === (binding.role === 'uploadDeploy' ? 'deploy' : binding.role));
     if (!candidates.length) return refuse('deployment_access_denied', 'deployment.target.admission.role_capability');
@@ -327,6 +330,6 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
     request.context.signal?.throwIfAborted();
     const role = candidates[0]!.binding.role;
     return { input, environment: detail, ...(receipt ? { receipt } : {}),
-        ...(executionEnvironment && workloadControl && !isReadOnlyTargetRole(role) && role !== 'cancel' ? { executionEnvironment } : {}),
+        ...(executionEnvironment && workloadControl && !isDeploymentTargetRoleReadOnlyV1(role) && role !== 'cancel' ? { executionEnvironment } : {}),
         ...(workloadControl ? { workloadControl } : {}), role: candidates[0]!.binding.role };
 }

@@ -21,7 +21,7 @@ import { EnvironmentVariableBindingInputV1Schema } from './storedAppInputV1.js';
 export * from './deploymentControllerAvailabilityV1.js';
 import { ActionExecuteFailureSchema, ActionFailureCauseV1Schema, type ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 export { buildDeploymentTargetLinkInputV1 } from './targetLinkInput.js';
-export { buildDeploymentTeardownInputV1 } from './teardownInput.js';
+export { buildDeploymentTeardownInputV1, selectDeploymentTeardownDomainScopeV1 } from './teardownInput.js';
 import { DeploymentTeardownRequestInputV1Schema } from './deploymentTeardownRequestV1.js';
 import { DeploymentTeardownVolumesV1Schema, DeploymentTeardownPreviewV1Schema } from './deploymentTeardownVolumesV1.js';
 export * from './deploymentTeardownVolumesV1.js';

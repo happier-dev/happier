@@ -47,9 +47,11 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
         if (!host.acquirePluginRuntimeRegistryLease) return refuse('unsupported_action');
         const lease = await host.acquirePluginRuntimeRegistryLease();
         const target = readDeploymentTargetV1(link.source, lease.registry.contributes.deploymentTargets);
-        const reference = target?.role === 'data' && target.targetKind === link.targetKind ? target.dataV1?.projects?.delete : undefined;
+        const projects = target?.role === 'data' && target.targetKind === link.targetKind ? target.dataV1?.projects : undefined;
+        const reference = projects?.delete;
         const action = reference?.kind === 'plugin' ? parseQualifiedPluginActionId(reference.actionId) : null;
-        return { lease, action, declaration: action ? readResolvedActionContribution(lease.registry.contributes, action) : null };
+        const observeAction = projects?.observe?.kind === 'plugin' ? parseQualifiedPluginActionId(projects.observe.actionId) : null;
+        return { lease, action, observeAction, declaration: action ? readResolvedActionContribution(lease.registry.contributes, action) : null };
     }
     return {
         async prepareProject(request: Request, environment: DeploymentEnvironmentDetailV1) {
@@ -60,7 +62,7 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                 if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
                 if ('dataCreation' in input || 'detachKeepRunning' in input) return null;
                 if (input.volumes !== undefined || 'machines' in input && input.machines !== undefined) return failure('deployment_invalid');
-                const { lease, action, declaration } = await leaseDeclaration(row.targetLink);
+                const { lease, action, observeAction, declaration } = await leaseDeclaration(row.targetLink);
                 try {
                     const choices = selectDeploymentTargetRemovalChoicesV1(row.targetLink.source, [{
                         pluginId: row.targetLink.source.contribution.pluginId, targetId: row.targetLink.source.contribution.localId,
@@ -77,7 +79,11 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                             preview: deploymentTeardownDetachPreview };
                     }
                     if (!action || !row.content) return failure('deployment_target_role_unavailable');
-                    const retained = 'contentArtifactId' in input ? DeploymentProviderTeardownContentV1Schema.safeParse(await host.readContent(input, context)) : null;
+                    const prior = !('contentArtifactId' in input) && input.requestKey ? await host.findReceipt({
+                        environmentId: input.environmentId, targetLinkId: row.targetLink.id, requestKey: input.requestKey }, context) : null;
+                    const retained = prior ? DeploymentProviderTeardownContentV1Schema.safeParse(prior.content)
+                        : 'contentArtifactId' in input ? DeploymentProviderTeardownContentV1Schema.safeParse(await host.readContent(input, context)) : null;
+                    if (prior && (prior.deployment.operation !== 'teardown' || !retained?.success)) return failure('deployment_conflict');
                     if (retained && !retained.success) return failure('deployment_content_unavailable');
                     const content = retained?.success ? retained.data : DeploymentProviderTeardownContentV1Schema.parse({
                         machines: [], images: [], machineResults: [], steps: [], teardown: { reason: input.reason,
@@ -105,10 +111,13 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                     const prepared = 'contentArtifactId' in input ? DeploymentTeardownInputV1Schema.parse(input)
                         : DeploymentTeardownInputV1Schema.parse({ ...custody, reason: input.reason,
                             requestKey: input.requestKey ?? randomUUID(), ...(input.removeEnvironment ? { removeEnvironment: true } : {}),
-                            ...await host.createCandidate(environment, content, context) });
+                            ...(prior ? { contentArtifactId: prior.deployment.contentArtifactId,
+                                contentHeaderVersion: prior.deployment.contentHeaderVersion, contentBodyVersion: prior.deployment.contentBodyVersion }
+                                : await host.createCandidate(environment, content, context)) });
                     return { input: prepared, preview: normalizeStrictJsonValue({ providerIdentity: content.platform.providerIdentity,
                         providerEnvironment: content.platform.providerEnvironment, summary: 'Delete this linked resource at its provider.' }),
-                        hostReviewedChildren: { children: [{ action, role: 'projects.delete', input: child }] } };
+                        hostReviewedChildren: { children: [{ action, role: 'projects.delete', input: child },
+                            ...(observeAction ? [{ action: observeAction, role: 'projects.observe' as const, input: child }] : [])] } };
                 } finally { await lease.release(); }
             } catch (error) { return projectDeploymentException(error, { signal: context.signal }); }
         },
@@ -118,7 +127,8 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
             const accepted = receipt.deployment.acceptedExecution;
             if (receipt.deployment.operation !== 'teardown' || receipt.deployment.targetLinkId !== request.input.targetLinkId
                 || receipt.deployment.requestKey !== request.input.requestKey || accepted?.controller.machineId !== host.machineId) return failure('target_mismatch');
-            if (receipt.deployment.state !== 'queued' && receipt.deployment.state !== 'running') return { ok: true as const,
+            if (receipt.deployment.state !== 'queued' && receipt.deployment.state !== 'running'
+                && receipt.deployment.state !== 'outcome_unknown') return { ok: true as const,
                 environmentId: receipt.deployment.environmentId, revision: request.receipt.revision, deploymentId: receipt.deployment.id,
                 deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state };
             const installation = readInstallationIdentityIfExistsSync();
@@ -130,10 +140,13 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
             const content = parsed.data;
             let response: ActionExecuteResult;
             try {
-                const { lease, action } = await leaseDeclaration(link);
+                const { lease, action, observeAction } = await leaseDeclaration(link);
                 try {
-                    if (!action) return failure('deployment_target_role_unavailable');
-                    response = await port.invoke({ action, role: 'projects.delete', input: projectInput(request.input, content.platform) });
+                    const selected = receipt.deployment.state === 'queued' ? action : observeAction;
+                    if (!selected) return failure('deployment_target_role_unavailable');
+                    response = await port.invoke({ action: selected,
+                        role: receipt.deployment.state === 'queued' ? 'projects.delete' : 'projects.observe',
+                        input: projectInput(request.input, content.platform) });
                 } finally { await lease.release(); }
             } catch (error) { response = { ...projectDeploymentException(error, { signal: request.context.signal }), effectAttempted: true }; }
             const observation = response.ok ? DeploymentTargetRoleResultV1Schema.safeParse(response.result) : null;

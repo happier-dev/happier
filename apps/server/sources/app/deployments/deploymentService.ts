@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentReceiptHeaderV1Schema, DeploymentReceiptResultV1Schema, DeploymentTeardownDispositionV1Schema, computeDeploymentTransitionRequestDigestV1,
+    selectDeploymentTeardownDomainScopeV1,
     type DeploymentDeployAdmissionInputV1, type DeploymentRollbackAdmissionInputV1, type DeploymentPromoteAdmissionInputV1, type DeploymentTeardownAdmissionInputV1, type DeploymentTransitionInputV1,
     type DeploymentCancelInputV1, type DeploymentCancelTransitionInputV1 } from '@happier-dev/protocol';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
@@ -186,7 +187,8 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
         DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1);
     if (contentFailure) return contentFailure;
     if (operation === 'teardown' && !selectiveTeardown) {
-        const domains = await prepareDeploymentTeardownDomainsInTx(tx, actorAccountId, input.actionOperationId, loaded, executionBinding);
+        const domains = await prepareDeploymentTeardownDomainsInTx(tx, actorAccountId, input.actionOperationId, loaded,
+            executionBinding, selectDeploymentTeardownDomainScopeV1(input));
         if (!domains.ok) return domains.error === 'unsupported_action' ? retainedDomainTeardownFailure() : domains;
     }
     if (pendingInput?.pendingDeploy) {
@@ -348,10 +350,10 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
             if (newer) return deploymentFailure('deployment_conflict');
             const inventory = admittedTeardownSelection.success && !completeTeardown ? null : await readDeploymentDomainInventoryInTx(tx, actorAccountId, {
                 serverId: input.serverId, environmentId: loaded.row.id, expectedRevision: loaded.row.revision,
-            }, authentication, loaded);
+            }, authentication, loaded, selectDeploymentTeardownDomainScopeV1({ targetLinkId: link.id, removeEnvironment }));
             if (inventory && !inventory.ok) return inventory;
             // Starting/resuming may execute this receipt's admitted removals.
-            // Completion still requires every Domain's signed removal settlement.
+            // Completion still requires every selected Domain's signed removal settlement.
             if (inventory?.ok && inventory.domains.length > 0 && (input.teardownProof || inventory.domains.some(domain =>
                 domain.state !== 'removing' || domain.operationAddress?.operationId !== row.actionOperationId
                 || domain.operationAddress.machineId !== acceptedExecution?.controller.machineId

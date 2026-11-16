@@ -765,8 +765,10 @@ and projects their inputs and results. `defineMachineProvisionerPreparationSchem
 provides the corresponding authoring schemas. Artifacts and native operations
 retain `{ contributionRef, schemaVersion, value }`; an unknown outcome retains
 its native operation reference for recovery. Inspect also accepts the retained
-`operationId` and original `input` to recover a build whose native identity was
-not returned. `artifactLaunchPath` selects complete launch choices inside the
+`operationId` and original `launch` choices to recover a build whose native identity
+was not returned. The helper takes the provider's existing launch schema separately
+from its build input schema; recovery does not need the CLI archive.
+`artifactLaunchPath` selects complete launch choices inside the
 artifact value; the provisioner contract boundary validates those choices against
 the launch schema. The canonical prepared build input contains the validated
 `launch` snapshot and credential-free `cli` installation payload supplied by the
@@ -777,6 +779,11 @@ credential-free build composition; a provider's ready result alone establishes
 neither a matching preset nor permission to skip installation or setup. The
 declaration grants no provider-effect authority: build and destroy still require
 the admitted preset operation's custody through the existing host execution seam.
+
+Selected native option facts may include `preparationGuest` with the provider's
+exact target OS/architecture and `remoteHomeDir`. The existing selection projection
+carries those facts for the selected image or host; absence supplies no preparation
+target. The guest CLI supplier consumes these facts without guessing from its host.
 
 The development `machineRecipes` and `machineSetupPresets` families use the
 existing Protocol contribution catalog, manifest admission, public SDK authoring
@@ -3518,10 +3525,11 @@ or wrong-Home Account authority yields no admitted pages. Page target keys and
 the existing ephemeral launch handoff distinguish both Home and Machine.
 
 The host route builder encodes Machine plugin selection and local subpath in
-the existing Machine page query; authors do not own routes. The Machine shell's
-consumed tab composition and Docker Sandboxes renderer are still in progress,
-so target admission alone is not a claim that this page is available in a
-published release or that loaded first-party/installed-plugin QA has passed.
+the existing Machine page query; authors do not own routes. In 0.3 development
+source, the core Sandboxes tab consumes the host's managed Sandbox inventory;
+the Docker Sandboxes plugin's custom tab is retired. Other plugin Machine pages
+retain the generic admission and rendering path. Target admission alone does
+not establish published availability or loaded installed-plugin QA.
 
 In 0.3 development source, `registrySources` is a descriptor-only manifest
 family. `definePlugin.registrySources` projects plugin-local declarations;
@@ -4321,6 +4329,8 @@ current row custody and releases its temporary delivery; no native key is kept
 between invocations.
 
 Safe checks may return an optional prerequisite `repairAction` containing a qualified Action reference and JSON invocation input. The host validates that reference and input against the current Action catalog without activating or running the repair. The fact is descriptive, not installation authority: an explicit repair uses the ordinary Action front door and its current approval and execution policy. A missing system tool does not imply a managed installer exists.
+
+In 0.3 development, a prerequisite may also carry `setupSources` using the canonical `MachineSetupSourceApplyV1` wire sources. Hosts pass these exact sources into the existing Setup Plan, review, approval and Apply flow so the person can review the recipe steps under one plan approval. Hosts do not derive Setup sources from opaque repair Action input.
 
 In 0.3 development, an options result can also attach prerequisites to its
 selected `base` launch. When present, that complete snapshot replaces the check
@@ -12569,6 +12579,26 @@ Rendered integration and loaded-runtime evidence remain
 pending; these source declarations do not establish released availability.
 
 ## Deployment target declaration boundary
+
+In unreleased 0.3 source, optional runtime `teardown` and data
+`projects.delete` roles remove the exact provider resource retained on a Link.
+They are write Actions at Account or daemon placement, invoked by the shared
+`deployments.teardown` review path. Providers return positive
+`providerResourceAbsent: true` evidence only after observing native absence;
+an acknowledged delete alone does not settle the receipt. Uncertain effects
+retain their typed provider cause and use observation rather than replay.
+Data targets declare read-only `projects.observe` for exact-project absence
+recovery. Project deletion requires the Environment's target-management
+authority, like creating or linking a project; ordinary runtime teardown keeps
+its existing deployment authority. Agents use the same approval-required Action.
+Direct agent project-delete role calls are refused outside the admitted teardown
+parent. Target teardown retires that Link's retained Domains; whole Environment
+removal retains the existing all-Domains scope.
+The protected Link's `providerResourceOrigin: 'created'` fact selects Delete as
+the default; adopted and historical Links default to Unlink. Explicit
+`providerRemoval: 'delete'` chooses provider deletion for an adopted resource.
+Unlink remains an association-only host Action. App confirmation composition
+and security review are required before the new provider deletion flow is shipped.
 
 In 0.3 development source, `deploymentTargets` is one descriptor-only family
 with strict runtime and data alternatives. Runtime keeps its required Actions;

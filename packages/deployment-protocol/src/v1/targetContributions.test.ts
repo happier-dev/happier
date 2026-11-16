@@ -67,19 +67,35 @@ function dataManifest() {
 }
 
 describe('deployment target manifest admission', () => {
+    it('admits read-only exact-resource data project observation for Account and daemon execution', () => {
+        for (const execution of [{ target: 'daemon' }, { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } }]) {
+            const value = manifest([]);
+            const descriptor = { ...dataTarget, dataV1: { projects: { observe: 'projects/observe' } } };
+            const action = { id: 'projects/observe', title: 'Observe project', scopes: ['global'], surfaces: ['plugin'], execution,
+                inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.observe'].jsonSchema,
+                resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema, dangerLevel: 'safe', readOnly: true };
+            const authored = { ...value, contributes: { ...value.contributes,
+                deploymentTargets: [descriptor], actions: [action] } };
+            expect(admittedTargets(authored).targets).toEqual([descriptor]);
+            for (const patch of [{ resultSchema: closed }, { dangerLevel: 'writesLocal', readOnly: false }]) {
+                expect(admittedTargets({ ...authored, contributes: { ...authored.contributes,
+                    actions: [{ ...action, ...patch }] } }).targets).toEqual([]);
+            }
+        }
+    });
+
     it('admits exact-resource data project deletion for Account and daemon execution', () => {
         for (const execution of [{ target: 'daemon' }, { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } }]) {
-            const value = dataManifest();
-            const descriptor = { ...dataTarget, dataV1: { ...dataTarget.dataV1,
-                projects: { ...dataTarget.dataV1.projects, delete: 'projects/delete' } } };
-            // The selected data input is the same recorded custody as branches.create; no name operand exists.
+            const value = manifest([]);
+            const descriptor = { ...dataTarget, dataV1: { projects: { delete: 'projects/delete' } } };
+            // The selected data input carries recorded custody; no name operand exists.
             const action = { id: 'projects/delete', title: 'Delete project', scopes: ['global'], surfaces: ['plugin'], execution,
-                inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['branches.create'].jsonSchema,
+                inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.delete'].jsonSchema,
                 resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema, dangerLevel: 'destructive', readOnly: false };
             expect(admittedTargets({ ...value, contributes: { ...value.contributes,
-                deploymentTargets: [descriptor], actions: [...value.contributes.actions, action] } }).targets).toEqual([descriptor]);
+                deploymentTargets: [descriptor], actions: [action] } }).targets).toEqual([descriptor]);
             expect(admittedTargets({ ...value, contributes: { ...value.contributes,
-                deploymentTargets: [descriptor], actions: [...value.contributes.actions, { ...action, resultSchema: closed }] } }).targets).toEqual([]);
+                deploymentTargets: [descriptor], actions: [{ ...action, resultSchema: closed }] } }).targets).toEqual([]);
         }
     });
 

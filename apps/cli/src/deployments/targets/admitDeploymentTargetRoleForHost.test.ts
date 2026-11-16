@@ -64,7 +64,8 @@ describe('deployment role host admission', () => {
         const role = 'variables.sync' as const;
         const action = { pluginId: fixture.request.pluginId, localId: fixture.request.localId };
         const input = normalizeStrictJsonValue({ ...fixture.input, owned: [], desiredRevision: 2,
-            set: [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN', source: { kind: 'value', value: 'public' } }],
+            set: [{ purpose: 'variable', phase: 'runtime', name: 'TOKEN', grantRef: crypto.randomUUID(),
+                source: { kind: 'value', value: 'public' } }],
             remove: [], useOurs: [], keepTheirs: [] });
         const request = { ...fixture.request, role, input, bindings: [{ ...fixture.request.bindings[0]!, role }] };
         await expect(admitDeploymentTargetRoleForHost(request, fixture.host)).rejects.toMatchObject({ code: 'action_forbidden' });
@@ -379,7 +380,7 @@ describe('deployment role host admission', () => {
 
     it.each([401, 403])('projects provider HTTP %s with its phase and no response body', async status => {
         const failure = await requestCloudflareDeployment({ signal: new AbortController().signal, now: () => 1,
-            http: { async request() { return { status, headers: {}, body: new TextEncoder().encode('private-provider-body') }; } } },
+            http: { async request({ url }) { return { status, finalUrl: url, headers: {}, body: new TextEncoder().encode('private-provider-body') }; } } },
             'account', '/pages/projects/project/deployments', 'send', 'POST', {})
             .then(() => null, error => {
                 expect(error).toMatchObject({ code: 'deployment_access_denied' });
@@ -443,30 +444,37 @@ describe('deployment role host admission', () => {
         expect(fixture.state.reads).toBe(0);
     });
 
-    it('consumes an exact admitted data teardown child without another Environment authorization read', async () => {
-        const fixture = createDeploymentTargetRoleAdmissionFixture('branches.delete');
-        const action = { pluginId: 'acme.alpha', localId: 'branches-delete' };
+    it.each([
+        { role: 'branches.delete', surface: 'cli' },
+        { role: 'projects.delete', surface: 'cli' }, { role: 'projects.observe', surface: 'cli' },
+        { role: 'projects.delete', surface: 'agent' }, { role: 'projects.observe', surface: 'agent' },
+    ] as const)('consumes an exact admitted $role teardown child from $surface without another Environment authorization read', async ({ role, surface }) => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+        const context = { ...fixture.request.context, surface };
+        const action = { pluginId: 'acme.alpha', localId: role.replace('.', '-') };
         const input = normalizeStrictJsonValue(fixture.input);
         fixture.state.environment.targetLinks[0]!.content!.providerEnvironment = { kind: 'custom', id: 'branch-B' };
         const port = createHostReviewedChildPortV1({ actionId: 'deployments.teardown', input: {
             serverId: 'home', environmentId: fixture.input.environmentId, targetLinkId: fixture.input.targetLinkId },
-            context: fixture.request.context, reviewAdmitted: true,
-            plan: { children: [{ action, role: 'branches.delete', input }] },
-            policies: [{ action, role: 'branches.delete', surface: 'cli' }],
+            context, reviewAdmitted: true,
+            plan: { children: [{ action, role, input }] },
+            policies: [{ action, role, surface }],
             async execute(_envelope, context) {
                 const admitted = await admitDeploymentTargetRoleForHost({ ...fixture.request, localId: action.localId,
                     input: fixture.input, context }, fixture.host);
                 return { ok: true, result: normalizeStrictJsonValue({ role: admitted.role }) };
             } });
-        await expect(port.invoke({ action, role: 'branches.delete', input })).resolves.toMatchObject({ ok: true });
+        await expect(port.invoke({ action, role, input })).resolves.toMatchObject({ ok: true });
         expect(fixture.state.reads).toBe(0);
         await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, localId: action.localId,
-            context: { ...fixture.request.context, hostReviewedChild: port } }, fixture.host))
-            .rejects.toMatchObject({ code: 'deployment_access_denied' });
+            context: { ...context, hostReviewedChild: port } }, fixture.host))
+            .rejects.toMatchObject({ code: surface === 'agent' && role === 'projects.delete'
+                ? 'action_forbidden' : 'deployment_access_denied' });
     });
 
-    it.each(['deploy', 'branches.create'] as const)('binds the %s link author to the Account whose credential is spent', async role => {
+    it.each(['deploy', 'teardown', 'branches.create'] as const)('binds the %s link author to the Account whose credential is spent', async role => {
         const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+        if (role === 'teardown') fixture.state.receipt.deployment.operation = 'teardown';
         fixture.state.environment.environment.owner = { kind: 'team', teamId: 'shared-team' };
         const link = fixture.state.environment.targetLinks[0]!.targetLink;
         link.createdByAccountId = 'another-team-manager';
@@ -552,6 +560,28 @@ describe('deployment role host admission', () => {
     });
     it.each(['projects.provision', 'connectionSecret.save'] as const)('requires target management for %s', async role => {
         const fixture = createDeploymentTargetRoleAdmissionFixture(role);
+        fixture.state.environment.environment.capabilities.manageTargets = false;
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code: 'deployment_access_denied' });
+    });
+    it('admits project observation with read access and no deploy or target-management grant', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('projects.observe');
+        Object.assign(fixture.state.environment.environment.capabilities, { deploy: false, manageTargets: false, manageBindings: false });
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).resolves.toMatchObject({ role: 'projects.observe' });
+    });
+
+    it.each(['agent', 'session'] as const)('requires the teardown receipt for direct project deletion from an %s caller', async caller => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('projects.delete');
+        const context = { ...fixture.request.context, ...(caller === 'agent' ? { surface: 'agent' as const }
+            : { actionCaller: { kind: 'session' as const, sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 } }) };
+        await expect(admitDeploymentTargetRoleForHost({ ...fixture.request, context }, fixture.host))
+            .rejects.toMatchObject({ code: 'action_forbidden' });
+    });
+
+    it('admits project deletion with target management and refuses a deploy-only collaborator', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('projects.delete');
+        fixture.state.environment.environment.capabilities.deploy = false;
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).resolves.toMatchObject({ role: 'projects.delete' });
+        fixture.state.environment.environment.capabilities.deploy = true;
         fixture.state.environment.environment.capabilities.manageTargets = false;
         await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code: 'deployment_access_denied' });
     });

@@ -6,6 +6,7 @@ import * as undici from 'undici';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { WorkflowActionInputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { encodeBase64, DeploymentTransitionInputV1Schema } from '@happier-dev/protocol';
 import { encodePlainArtifactStoredContent, decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -42,9 +43,10 @@ afterEach(() => { vi.restoreAllMocks(); vi.mocked(undici.fetch).mockReset(); vi.
 /** Home HTTP/artifact persistence and vendor HTTP are replaced; Account activation,
  * reviewed child dispatch, role admission and Workflow getters stay real. */
 describe('ordinary preview data teardown composition', () => {
-    it.each(['retained A', 'encrypted retained A', 'provider refusal', 'provider refusal after retained resume', 'native volume operand', 'wrong invocation', 'wrong result', 'another person', 'unknown creation'] as const)(
+    it.each(['project delete', 'project delete agent', 'project delete linked', 'project delete refusal', 'project delete denied', 'project delete recovery', 'retained A', 'encrypted retained A', 'provider refusal', 'provider refusal after retained resume', 'native volume operand', 'wrong invocation', 'wrong result', 'another person', 'unknown creation'] as const)(
         'tears down only the accepted resource and principal after the live link moves to B: %s', async scenario => {
             const providerRefusal = scenario === 'provider refusal' || scenario === 'provider refusal after retained resume';
+            const projectDeletion = scenario.startsWith('project delete');
             const accountId = 'account-A', origin = 'https://preview-home.test';
             const app = fastify();
             const homeRequests: string[] = [];
@@ -65,6 +67,7 @@ describe('ordinary preview data teardown composition', () => {
                 owner: { kind: 'account', accountId }, controllerMachineId: 'host', purpose: 'preview',
                 previewTemplateEnvironmentId: 'template-A', previewRepositoryId: 'repository-source',
                 previewPullRequestId: '17', previewTargetLinkId: 'template-runtime' });
+            if (scenario === 'project delete denied') environment.capabilities.manageTargets = false;
             const link = createDeploymentTargetLinkHeaderV1({ id: 'data-link', environmentId: environment.id,
                 createdByAccountId: accountId, role: 'data', revision: 2, targetKind: 'supabase', machines: [], members: [],
                 contentArtifactId: 'artifact-data-link',
@@ -95,6 +98,7 @@ describe('ordinary preview data teardown composition', () => {
                 configurationReady: true, configurationRevision, kind: 'token', expiresAt: null,
                 displayName: 'Original Supabase', scopes: [] });
             const providerRequests: { method: string; pathname: string; authorization: string | null }[] = [];
+            let projectRecovery = false;
             const materializations: unknown[] = [];
             let establishedRuntime: ReturnType<typeof createQualifiedConnectedAccountEstablishedRuntimeOwner>;
             const materializeSelectedAccount = createConnectedAccountPurposeMaterializer({
@@ -119,6 +123,14 @@ describe('ordinary preview data teardown composition', () => {
                 if (parsed.hostname !== 'api.supabase.com') throw new Error(`Unexpected provider ${parsed.pathname}`);
                 providerRequests.push({ method: init?.method ?? 'GET', pathname: parsed.pathname,
                     authorization: new Headers(init?.headers).get('authorization') });
+                if (projectDeletion && init?.method === 'DELETE' && parsed.pathname === '/v1/projects/parent-project-A')
+                    return scenario === 'project delete refusal' ? Response.json({ message: 'forbidden' }, { status: 403 })
+                        : scenario === 'project delete recovery' ? Response.json({ message: 'upstream unavailable' }, { status: 503 })
+                        : new Response(null, { status: 204 });
+                if (projectDeletion && (init?.method ?? 'GET') === 'GET' && parsed.pathname === '/v1/projects/parent-project-A')
+                    return scenario === 'project delete recovery' && !projectRecovery
+                        ? Response.json({ message: 'upstream unavailable' }, { status: 503 })
+                        : Response.json({ message: 'not found' }, { status: 404 });
                 if ((init?.method ?? 'GET') === 'GET' && parsed.pathname === '/v1/projects/parent-project-A/branches')
                     return Response.json([{ id: 'branch-A', name: 'pr-17', project_ref: 'child-project-A',
                         parent_project_ref: 'parent-project-A', persistent: false }]);
@@ -232,20 +244,30 @@ describe('ordinary preview data teardown composition', () => {
                 });
                 link.source = { kind: 'plugin', contribution: { pluginId: created.input.credentialRef.service.pluginId, localId: 'database' } };
                 seed(link.contentArtifactId, 'deployment-target-link.v1', {
+                    ...(projectDeletion ? { ...(scenario === 'project delete linked' ? {} : { providerResourceOrigin: 'created' as const }),
+                        credentialPrincipal: created.input.credentialPrincipal,
+                        providerIdentity: created.input.providerIdentity, providerEnvironment: created.input.providerEnvironment } : {
                     credentialPrincipal: { ...created.input.credentialPrincipal, target: { kind: 'account', account: {
                         ...created.input.credentialRef, accountId: 'connected-B' } } },
                     providerIdentity: { providerAccountId: 'organization-B', providerResourceId: 'parent-project-B', providerEnvironment: 'child-project-B' },
-                    providerEnvironment: { kind: 'custom', id: 'child-project-B' },
+                    providerEnvironment: { kind: 'custom', id: 'child-project-B' } }),
                 });
                 const list: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['listContributedActionDefinitions']> =
                     selection => listRuntimeContributedActionDefinitions(mounted.registry, selection);
                 const childResults: unknown[] = [];
+                // Only the approval Artifact write is substituted; root preparation stays real.
+                const approvals = new Map<string, ApprovalRequestV2>();
                 const invokeContributedAction = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => {
                     const lease = mounted.controller.tryAcquireRuntimeRegistry();
                     if (!lease) throw new Error('Fixture registry unavailable');
                     return lease;
                 }, requestCurrentIntent: async ({ fingerprint }) => ({ status: 'approved', fingerprint }) });
                 const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+                    approvalsCreate: async ({ request }) => {
+                        const parsed = ApprovalRequestV2Schema.parse(request);
+                        approvals.set('project-removal-approval', structuredClone(parsed));
+                        return { artifactId: 'project-removal-approval', request: parsed };
+                    },
                     workflowAction: request => created.readWorkflowInvocation(
                         WorkflowActionInputSchemasV1['workflow.run.invocations.get'].parse(request.input), request.context),
                     listContributedActionDefinitions: list,
@@ -257,20 +279,73 @@ describe('ordinary preview data teardown composition', () => {
                     },
                 });
                 const teardownInput: Record<string, JsonValue> = { serverId: 'home', environmentId: 'environment-A',
-                    expectedRevision: 1, targetLinkId: 'data-link', expectedTargetLinkRevision: 2,
+                    targetLinkId: 'data-link', ...(projectDeletion ? {} : { expectedRevision: 1, expectedTargetLinkRevision: 2 }),
                     requestKey: 'preview-close', reason: 'previewClosed',
                     ...(scenario === 'native volume operand' ? { volumes: [{ name: 'app_data', disposition: 'delete', confirmation: 'app_data' }] } : {}),
-                    dataCreation: { ...created.reference,
+                    ...(projectDeletion ? scenario === 'project delete linked' ? { providerRemoval: 'delete' } : {} : { dataCreation: { ...created.reference,
                         invocationId: scenario === 'wrong invocation' ? 'unrelated-invocation'
-                            : scenario === 'wrong result' ? 'preview-environment-create' : created.reference.invocationId } };
-                const execute = () => executor.execute('deployments.teardown', teardownInput,
-                { surface: 'cli', authority: 'present_user', runtimeAccountId: accountId,
+                            : scenario === 'wrong result' ? 'preview-environment-create' : created.reference.invocationId } }) };
+                const context = { surface: scenario === 'project delete agent' ? 'agent' as const : 'cli' as const,
+                    authority: 'present_user' as const, runtimeAccountId: accountId, actionRequestId: 'project-removal',
                     actionCaller: { kind: 'host' }, serverId: 'home', serverIdentityId: 'home',
+                    externalActionTarget: { kind: 'machine', machineId: 'host' },
+                    machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId, machineId: 'host',
+                        installationId: 'host-installation', role: 'manage', encryptionMode: 'plain' },
+                    verifyMachineAdmissionCurrent: async () => true,
                     actionsSettings: normalizeActionsSettingsV1(undefined),
                     presentUserConfirmation: { actionId: 'deployments.teardown' },
-                    operationAcceptance: { operationId: 'close-operation', accept() {} } });
+                    operationAcceptance: { operationId: 'close-operation', accept() {} } } satisfies import('@happier-dev/protocol').ActionExecutorContext;
+                const execute = () => executor.execute('deployments.teardown', teardownInput, context);
                 const result = await execute();
-                const diagnostic = JSON.stringify({ result, childResults, homeRequests, providerRequests, materializations });
+                const diagnostic = JSON.stringify({ result, childResults, providerRequests, materializations });
+                if (projectDeletion) {
+                    if (scenario === 'project delete agent') {
+                        expect(result, diagnostic).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                        expect(providerRequests).toEqual([]);
+                        expect(materializations).toEqual([]);
+                        expect(transitions).toEqual([]);
+                        expect(approvals.get('project-removal-approval')).toMatchObject({ status: 'open',
+                            actionId: 'deployments.teardown', actionArgs: { targetLinkId: 'data-link',
+                                expectedTargetLinkRevision: 2, contentArtifactId: expect.any(String) },
+                            preview: { hostReviewedChildren: { children: [
+                                { role: 'projects.delete', input: { providerIdentity: { providerResourceId: 'parent-project-A' } } },
+                                { role: 'projects.observe', input: { providerIdentity: { providerResourceId: 'parent-project-A' } } },
+                            ] } } });
+                        return;
+                    }
+                    if (scenario === 'project delete recovery') {
+                        expect(result, diagnostic).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+                        expect(receipt.state).toBe('outcome_unknown');
+                        projectRecovery = true;
+                        const recovered = await execute();
+                        expect(recovered, JSON.stringify({ recovered, childResults, providerRequests }))
+                            .toMatchObject({ ok: true, result: { state: 'succeeded', deploymentId: receipt.id } });
+                        expect(providerRequests.map(request => request.method)).toEqual(['DELETE', 'GET', 'GET']);
+                        expect(providerRequests.every(request => request.pathname === '/v1/projects/parent-project-A'
+                            && request.authorization === 'Bearer original-A')).toBe(true);
+                        expect(transitions).toEqual([
+                            expect.objectContaining({ state: 'outcome_unknown' }),
+                            expect.objectContaining({ state: 'succeeded', teardownProof: expect.objectContaining({ retainedProviderResource: false }) }),
+                        ]);
+                        return;
+                    }
+                    if (scenario === 'project delete denied') {
+                        expect(result, diagnostic).toMatchObject({ ok: false, errorCode: 'deployment_access_denied' });
+                        expect(providerRequests).toEqual([]);
+                        expect(transitions).toEqual([]);
+                    } else if (scenario === 'project delete refusal') {
+                        expect(result, diagnostic).toMatchObject({ ok: false, errorCode: 'deployment_access_denied', failureCause: { httpStatus: 403 } });
+                        expect(providerRequests).toEqual([{ method: 'DELETE', pathname: '/v1/projects/parent-project-A', authorization: 'Bearer original-A' }]);
+                    } else {
+                        expect(result, diagnostic).toMatchObject({ ok: true, result: { state: 'succeeded' } });
+                        expect(providerRequests).toEqual([
+                            { method: 'DELETE', pathname: '/v1/projects/parent-project-A', authorization: 'Bearer original-A' },
+                            { method: 'GET', pathname: '/v1/projects/parent-project-A', authorization: 'Bearer original-A' },
+                        ]);
+                        expect(transitions).toEqual([expect.objectContaining({ state: 'succeeded', teardownProof: expect.objectContaining({ retainedProviderResource: false }) })]);
+                    }
+                    return;
+                }
                 if (scenario === 'native volume operand') {
                     expect(result, diagnostic).toMatchObject({ ok: false, errorCode: 'deployment_invalid' });
                     expect(providerRequests).toEqual([]);
@@ -292,7 +367,7 @@ describe('ordinary preview data teardown composition', () => {
                     }
                     const content = DeploymentDataTeardownContentV1Schema.parse(JSON.parse(body.body));
                     expect(content.failure, diagnostic).toMatchObject({ code: 'deployment_access_denied',
-                        failureCause: { errorCode: 'deployment_access_denied' } });
+                        failureCause: { httpStatus: 403 } });
                     expect(receipt.state).toBe(content.failure?.effectAttempted === true ? 'outcome_unknown' : 'failed');
                     expect(result, diagnostic).toMatchObject({ ok: false, errorCode: 'deployment_access_denied',
                         failureCause: content.failure?.failureCause, details: { serverId: 'home', environmentId: environment.id,

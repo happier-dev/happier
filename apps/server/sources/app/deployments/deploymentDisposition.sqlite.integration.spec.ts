@@ -431,6 +431,50 @@ it.each([false, true])('composes both disposition HTTP routes through current So
     }
 });
 
+it('settles one data target teardown while retaining another runtime target Domain', async () => {
+    const f = await fixture();
+    const domain = await db.deploymentDomain.create({ data: { environmentId: f.environment.id,
+        targetLinkId: f.link.id, state: 'active', createdByAccountId: f.owner.id,
+        ...await f.content('deployment-domain.v1') } });
+    const linkContent = await f.content('deployment-target-link.v1');
+    const linked = await inTx(tx => linkDeploymentTargetInTx(tx, f.owner.id, { ...f.base,
+        targetId: 'database', role: 'data', machines: [], targetKind: 'database',
+        source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'database' } },
+        ...linkContent,
+    }));
+    if (!linked.ok) throw new Error('Expected data association');
+    const receiptContent = await f.content('deployment-receipt.v1');
+    const admitted = await inTx(tx => createDeploymentInTx(tx, f.owner.id, { ...f.base,
+        expectedRevision: linked.revision, targetLinkId: linked.targetLinkId,
+        expectedTargetLinkRevision: linked.targetLinkRevision, reason: 'manual', actionOperationId: crypto.randomUUID(),
+        ...receiptContent,
+    }, 'teardown'));
+    expect(admitted, JSON.stringify(admitted)).toMatchObject({ ok: true });
+    if (!admitted.ok || !('deploymentId' in admitted)) throw new Error('Expected data teardown reservation');
+    expect(await db.deploymentDomain.findUniqueOrThrow({ where: { id: domain.id } }))
+        .toMatchObject({ state: 'active', revision: 1, deletedAt: null });
+    await db.deployment.update({ where: { id: admitted.deploymentId }, data: deploymentAcceptedExecutionColumns(
+        createDeploymentAcceptedExecution({ controller: { machineId: f.machine.id, installationId: f.machine.installationId! } })) });
+    for (const state of ['running', 'succeeded'] as const) {
+        const receipt = await db.deployment.findUniqueOrThrow({ where: { id: admitted.deploymentId } });
+        const body: Omit<DeploymentTransitionInputV1, 'proof'> = { serverId, environmentId: f.environment.id,
+            deploymentId: receipt.id, expectedRevision: receipt.revision, actionOperationId: receipt.actionOperationId,
+            machineId: f.machine.id, installationId: f.machine.installationId!, kind: state === 'running' ? 'stage' : 'settle', state,
+            ...(state === 'succeeded' ? { teardownProof: { targetLinkRevision: linked.targetLinkRevision,
+                machines: [{ machineId: f.machine.id, installationId: f.machine.installationId! }], workloadAbsent: true as const,
+                retainedProviderResource: false,
+                steps: ['admit', 'settleDeploy', 'removeTarget', 'removeDomain', 'removeRelease', 'withdrawBindings', 'verify'] } } : {}) };
+        const proof = signMachineInstallationProof({ payload: { version: 1, machineId: f.machine.id,
+            installationId: f.machine.installationId!, accountId: f.owner.id, deploymentTransition: {
+                serverId, environmentId: f.environment.id, deploymentId: receipt.id, actionOperationId: receipt.actionOperationId,
+                expectedRevision: receipt.revision, requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body),
+            } }, privateKey: f.keys.secretKey });
+        expect(await inTx(tx => transitionDeploymentInTx(tx, f.owner.id, { ...body, proof }))).toMatchObject({ ok: true });
+    }
+    expect(await db.deploymentDomain.findUniqueOrThrow({ where: { id: domain.id } }))
+        .toMatchObject({ state: 'active', revision: 1, deletedAt: null });
+});
+
 it.each([false, true].flatMap(scalar => (['unlink', 'delete'] as const).map(action => [scalar, action] as const)))(
     'accepts signed plugin teardown using its exact %s scalar/controller custody through %s', async (scalarPlacement, action) => {
     const f = await fixture();

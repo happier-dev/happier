@@ -84,7 +84,7 @@ it('retains a real Vercel Create choice through protected storage and omitted-me
                 return { ok: true, result: created.recovery };
             },
         });
-        expect.soft(result).toMatchObject({ ok: true, result: { provider: { sourceMethod: 'upload' } } });
+        expect.soft(result).toMatchObject({ ok: true, result: { provider: { sourceMethod: 'upload', providerResourceOrigin: 'created' } } });
         if (!result.ok) throw new Error(result.errorCode);
         const { DeploymentTargetLinkProviderIntentInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
         const intent = DeploymentTargetLinkProviderIntentInputV1Schema.parse(result.result);
@@ -106,7 +106,7 @@ it('retains a real Vercel Create choice through protected storage and omitted-me
         const artifact = await runWithServerHttpBaseUrl(origin, () => artifacts.read(link.contentArtifactId,
             { prepareRecipients: false, includeSharedAudience: false }));
         const reopened = readDeploymentTargetLinkArtifactV1(link, artifact);
-        expect.soft(reopened).toMatchObject({ ok: true, content: { sourceMethod: 'upload' } });
+        expect.soft(reopened).toMatchObject({ ok: true, content: { sourceMethod: 'upload', providerResourceOrigin: 'created' } });
         if (!reopened.ok) throw new Error('Expected reopened protected provider content');
         environment.environment.runtimeTargetLinkId = link.id;
         environment.targetLinks = [{ targetLink: link, content: reopened.content }];
