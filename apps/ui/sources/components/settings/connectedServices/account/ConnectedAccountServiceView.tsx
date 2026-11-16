@@ -1441,6 +1441,13 @@ const ConnectedAccountServiceController = React.memo(
         title,
     ]);
 
+    // A browser mode's own-client guide sits with its client ID field and offers the attempt's callback to copy:
+    // the mode's own, else the relay at the Home's web app. Only that guide reads the Home's features.
+    // Read before the route's early returns below: every render calls the same hooks in the same order.
+    const homeFeatures = useServerFeaturesSnapshotForServerId(serverId, { enabled: activeMode?.kind === 'oauthAuthorizationCode'
+        && !activeMode.callbackUrl && activeMode.setup !== undefined && activeMode.clientConfiguration !== undefined });
+    const homeWebappUrl = homeFeatures.status === 'ready' ? homeFeatures.features.capabilities.server?.webappUrl : undefined;
+
     if (controllerProps.panel && (!exactRoute || !service)) {
         return <ConnectedServiceSetupFlowBody state={connectedServicesRegistry.status === 'loading' ? 'preparing' : 'unknownService'} />;
     }
@@ -1650,11 +1657,6 @@ const ConnectedAccountServiceController = React.memo(
         shapeHint: resolveProjectedLocalizedText(setup.shapeHint, localizeServiceText),
     });
     const manualGuide = activeMode?.kind === 'manual' && activeMode.setup ? presentSetup(activeMode.setup) : undefined;
-    // A browser mode's own-client guide sits with its client ID field and offers the attempt's callback to copy:
-    // the mode's own, else the relay at the Home's web app. Only that guide reads the Home's features.
-    const homeFeatures = useServerFeaturesSnapshotForServerId(serverId, { enabled: activeMode?.kind === 'oauthAuthorizationCode'
-        && !activeMode.callbackUrl && activeMode.setup !== undefined && activeMode.clientConfiguration !== undefined });
-    const homeWebappUrl = homeFeatures.status === 'ready' ? homeFeatures.features.capabilities.server?.webappUrl : undefined;
     const clientGuide = activeMode?.kind === 'oauthAuthorizationCode' && activeMode.setup && activeMode.clientConfiguration ? {
         ...presentSetup(activeMode.setup),
         copyValue: { label: t('connectedServicesSettings.keyRedirectUrl'), value: resolveConnectedAccountOAuthCallbackUrlV1({
