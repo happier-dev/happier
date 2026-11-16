@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import {
     CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1,
     PluginConnectedAccountAuthenticationModeV2Schema,
@@ -1965,6 +1966,44 @@ describe('ConnectedAccountAuthenticationAttemptOwner', () => {
         });
         expect(h.admitConfiguration).not.toHaveBeenCalled();
         expect(h.invoke).not.toHaveBeenCalled();
+    });
+
+    it('keeps the typed admission cause instead of a bare runtime unavailability', async () => {
+        const h = harness({
+            admitMode: async () => {
+                throw new PluginError({ code: 'connected_account_service_unavailable',
+                    message: 'Acme plugin did not activate.', remediation: { kind: 'retry' } });
+            },
+        });
+
+        await expect(h.owner.beginConnect({ service, modeId: 'manual' })).resolves.toEqual({
+            status: 'unavailable',
+            code: 'connected_account_service_unavailable',
+            diagnostic: {
+                code: 'connected_account_service_unavailable', severity: 'error',
+                message: 'Acme plugin did not activate.', remediation: { kind: 'retry' },
+                details: { failureCause: expect.objectContaining({ errorCode: 'connected_account_service_unavailable' }) },
+            },
+        });
+    });
+
+    it('carries a thrown provider cause on the interrupted outcome', async () => {
+        const h = harness({
+            invoke: async () => {
+                throw new PluginError({ code: 'acme_team_unavailable', message: 'Acme could not read this team.',
+                    remediation: { kind: 'openSettings', path: '/settings/team' } });
+            },
+        });
+        await h.owner.beginConnect({ service, modeId: 'manual' });
+
+        await expect(h.owner.submitManual({ attemptId: 'attempt-1', fields: { token: 'candidate' } })).resolves.toMatchObject({
+            diagnostic: {
+                code: 'connected_account_provider_operation_interrupted', severity: 'error',
+                message: 'Acme could not read this team.', remediation: { kind: 'openSettings', path: '/settings/team' },
+                details: { failureCause: expect.objectContaining({ errorCode: 'acme_team_unavailable' }) },
+            },
+        });
+        h.owner.dispose();
     });
 
     it('reports runtime generation drift, not unavailability, when admission rejects with the typed currentness error', async () => {

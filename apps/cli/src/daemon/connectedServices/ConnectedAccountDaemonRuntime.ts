@@ -31,6 +31,7 @@ import {
 import {
     createConnectedAccountAuthenticationAttemptOwner,
     executeConnectedAccountAuthenticationCommand,
+    projectConnectedAccountFailure,
     type ConnectedAccountAttemptProviderInvocation,
 } from '@happier-dev/cli-common/connectedAccounts';
 import {
@@ -918,14 +919,8 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                     return Object.freeze({ status: 'removalReviewRequired' as const, account: command.account,
                         resources: Object.freeze([...error.resources]) });
                 }
-                const code = (
-                    error
-                    && typeof error === 'object'
-                    && 'code' in error
-                    && typeof error.code === 'string'
-                )
-                    ? error.code
-                    : 'connected_account_control_unavailable';
+                const { code, diagnostic } = projectConnectedAccountFailure(error, {
+                    code: { fallback: 'connected_account_control_unavailable' }, phase: 'connected_account.control' });
                 const controlStatus = (
                     error
                     && typeof error === 'object'
@@ -934,10 +929,8 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
                 ) || code === 'connected_account_configuration_consequence_stale'
                     ? 'conflict' as const
                     : 'unavailable' as const;
-                return Object.freeze({
-                    status: controlStatus,
-                    code,
-                });
+                return Object.freeze(controlStatus === 'unavailable' && diagnostic
+                    ? { status: controlStatus, code, diagnostic } : { status: controlStatus, code });
             }
         },
         async execute(command, options) {
@@ -982,12 +975,9 @@ export function createConnectedAccountDaemonRuntime(params: Readonly<{
             });
             return response;
             } catch (error) {
-                report({
-                    status: 'unavailable',
-                    attemptId,
-                    code: error && typeof error === 'object' && 'code' in error ? error.code : 'connected_account_attempt_unavailable',
-                    diagnostic: null,
-                });
+                const { code, diagnostic } = projectConnectedAccountFailure(error, {
+                    code: { fallback: 'connected_account_attempt_unavailable' }, phase: 'connected_account.authentication' });
+                report({ status: 'unavailable', attemptId, code, diagnostic: diagnostic ?? null });
                 throw error;
             }
         },

@@ -2,7 +2,9 @@ import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-d
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ConnectedAccountServiceIdentityV1Schema, type ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { ConnectedAccountPortableRuntime, ConnectedAccountRuntime as PluginConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginContributionRef } from '@happier-dev/plugin-sdk';
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { describePluginModuleFailure } from '../moduleFailure';
 
 import type { ResolvedConnectedAccountDescriptorContribution } from '@/plugins/projection/registry/types';
 import { createPluginRuntimeOccurrenceId, type PluginRuntimeOccurrenceId } from '../runtimeSlots';
@@ -98,8 +100,8 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
     readPluginOccurrenceId(pluginId: string): PluginRuntimeOccurrenceId | null;
     readPluginSourceCustody(pluginId: string): PluginSourceCustody | null;
     isPluginOccurrenceCurrent(pluginId: string, occurrenceId: PluginRuntimeOccurrenceId): boolean;
-    /** The activation owner distinguishes an unavailable plugin from a retired occurrence. */
-    isPluginActivationUnavailable?(pluginId: string): boolean;
+    /** The activation owner's failure, which distinguishes an unavailable plugin from a retired occurrence. */
+    readPluginActivationFailure?(pluginId: string): PluginCompatibilityDiagnostic | undefined;
     resolveRetirementSignal?(pluginId: string): AbortSignal;
     /**
      * Reports a descriptor this generation could not admit, so the host can tell
@@ -198,11 +200,11 @@ export function createConnectedAccountContributionRegistry(params: Readonly<{
     function assertCurrentOccurrence(pluginId: string, occurrenceId: PluginRuntimeOccurrenceId): void {
         if (isCurrentOccurrence(pluginId, occurrenceId)) return;
         // Failed activation fences this occurrence too, but restarting it cannot
-        // supply missing executable artifacts. Keep the owner's availability fact.
-        if (!disposed && params.isPluginActivationUnavailable?.(pluginId)) {
-            throw Object.assign(new Error('Connected account service is unavailable'), {
-                code: 'connected_account_service_unavailable',
-            });
+        // supply missing executable artifacts. Keep the owner's availability fact and its cause.
+        const activationFailure = disposed ? undefined : params.readPluginActivationFailure?.(pluginId);
+        if (activationFailure) {
+            throw new PluginError({ code: 'connected_account_service_unavailable',
+                message: describePluginModuleFailure(activationFailure.message, activationFailure.details) ?? activationFailure.message });
         }
         throw new ConnectedAccountRuntimeInvocationNotStartedError();
     }

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createSensitiveDiagnosticTextRedactor } from '@happier-dev/protocol/bugs/reports/redaction';
 import { logger } from '@/ui/logger';
-import { createConnectedAccountEstablishedRuntimeDispatcher, invokeConnectedAccountAuthenticationRuntime } from '@happier-dev/cli-common/connectedAccounts';
+import { createConnectedAccountEstablishedRuntimeDispatcher, invokeConnectedAccountAuthenticationRuntime, projectConnectedAccountFailure } from '@happier-dev/cli-common/connectedAccounts';
 import { observeCurrentConnectedServiceMaterializationPhase as observeMaterializationPhase } from '@/daemon/connectedServices/materialize/materializationPhase';
 
 import type { PluginHostAccessRequestV2 } from '@happier-dev/protocol';
@@ -102,14 +102,11 @@ function sameService(left: PluginContributionRef, right: PluginContributionRef):
     return left.pluginId === right.pluginId && left.localId === right.localId;
 }
 
-function authenticationUnavailable(code: string): Readonly<{
-    status: 'unavailable';
-    diagnostic: Readonly<{ code: string; severity: 'error' }>;
-}> {
-    return Object.freeze({
-        status: 'unavailable',
-        diagnostic: Object.freeze({ code, severity: 'error' }),
-    });
+/** The producer context outcome stays fixed; the cause that refused it travels with it. */
+function producerContextUnavailable(error: unknown) {
+    const code = 'connected_account_producer_context_unavailable';
+    const { diagnostic } = projectConnectedAccountFailure(error, { code: { outcome: code }, phase: 'connected_account.context' });
+    return Object.freeze({ status: 'unavailable' as const, diagnostic: diagnostic ?? Object.freeze({ code, severity: 'error' as const }) });
 }
 
 export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
@@ -496,7 +493,7 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
                 invocation = await createContext(input);
             } catch (error) {
                 if (error instanceof ConnectedAccountRuntimeInvocationNotStartedError) throw error;
-                return authenticationUnavailable('connected_account_producer_context_unavailable');
+                return producerContextUnavailable(error);
             }
             try {
                 const common = {

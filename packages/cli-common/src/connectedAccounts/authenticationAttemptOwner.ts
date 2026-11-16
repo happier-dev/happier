@@ -25,6 +25,8 @@ import { areConnectedAccountManualFieldsValidV1 } from '@happier-dev/protocol/co
 import { normalizeLegacyConnectedServiceUxDiagnosticCode } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 
 import { ConnectedAccountAuthenticationModeUnavailableError, ConnectedAccountRuntimeInvocationNotStartedError } from './runtimeInvocationError.js';
+import { projectConnectedAccountFailure } from './failureProjection.js';
+import type { PluginDiagnosticData } from '../plugins/errors.js';
 import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import type { ConnectedAccountManualAttemptBasis } from './manualAttemptDraft.js';
 
@@ -444,23 +446,23 @@ function snapshotSourceMatchesAdmission(
  * connect surface. The typed error maps onto the same drift response this
  * owner already returns when the non-throwing currentness check reports the
  * admission is stale. A missing mode retains its typed admission refusal so
- * placement can delegate to a selected Machine. Other rejections stay unavailable.
+ * placement can delegate to a selected Machine. Other rejections stay unavailable
+ * with their own typed code and cause (an untyped one is `connected_account_runtime_unavailable`).
  * These outcomes admit no attempt, so the reason becomes legible without loosening
  * fail-closed admission.
  */
 function runtimeAdmissionFailure(error: unknown): Readonly<{
     status: 'conflict' | 'unavailable';
-    code:
-        | 'connected_account_runtime_generation_changed'
-        | 'connected_account_authentication_mode_unavailable'
-        | 'connected_account_runtime_unavailable';
+    code: string;
+    diagnostic?: PluginDiagnosticData;
 }> {
     if (error instanceof ConnectedAccountAuthenticationModeUnavailableError) {
         return { status: 'unavailable', code: error.code };
     }
-    return error instanceof ConnectedAccountRuntimeInvocationNotStartedError
-        ? { status: 'conflict', code: error.code }
-        : { status: 'unavailable', code: 'connected_account_runtime_unavailable' };
+    if (error instanceof ConnectedAccountRuntimeInvocationNotStartedError) return { status: 'conflict', code: error.code };
+    const { code, diagnostic } = projectConnectedAccountFailure(error, {
+        code: { fallback: 'connected_account_runtime_unavailable' }, phase: 'connected_account.admission' });
+    return { status: 'unavailable', code, ...(diagnostic ? { diagnostic } : {}) };
 }
 
 function createAttemptCredentialStore(): PluginConnectedAccountCredentialStore & Readonly<{
@@ -2556,14 +2558,11 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 context: contextFor(attempt, operation),
                 ...(signal ? { signal } : {}),
             });
-        } catch {
-            result = {
-                status: 'outcomeUnknown',
-                diagnostic: {
-                    code: 'connected_account_provider_operation_interrupted',
-                    severity: 'error',
-                },
-            };
+        } catch (error) {
+            // An effect may have run, so the outcome stays unknown; the provider's cause still travels.
+            const code = 'connected_account_provider_operation_interrupted';
+            const { diagnostic } = projectConnectedAccountFailure(error, { code: { outcome: code }, phase: 'connected_account.provider' });
+            result = { status: 'outcomeUnknown', diagnostic: diagnostic ?? { code, severity: 'error' } };
         }
         return await handleProviderResult(
             attempt,

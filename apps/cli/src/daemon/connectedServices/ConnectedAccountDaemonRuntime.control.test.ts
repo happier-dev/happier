@@ -4,7 +4,7 @@ import {
   PluginConnectedAccountDescriptorContributionV2Schema,
 } from '@happier-dev/protocol';
 
-import type { PluginContributionRef } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { createConnectedAccountAttemptTransactionApiBoundary } from '@/testkit/connectedAccountAttemptTransactionApi';
 import { createQualifiedConnectedAccountAttemptTransactionAdapters } from './qualifiedConnectedAccountAttemptTransactionAdapters';
 
@@ -511,6 +511,32 @@ describe('ConnectedAccountDaemonRuntime control facade', () => {
       code: 'connected_account_service_identity_unsupported',
     });
     expect(acquireRuntimeRegistry).not.toHaveBeenCalled();
+  });
+
+  it('carries a typed control failure cause on the unavailable response', async () => {
+    const daemon = createConnectedAccountDaemonRuntime({
+      reloadController: { acquireRuntimeRegistry: vi.fn() } as unknown as PluginReloadController,
+      persistence: {
+        profiles: { list: vi.fn(async () => []) },
+        configuration: { read: vi.fn(async () => null), replace: vi.fn(), destroyAttempt: vi.fn(),
+          secrets: { admit: vi.fn(async () => undefined), has: vi.fn(async () => false), read: vi.fn(async () => null) } },
+        attempts: { accounts: { readExact: vi.fn(async () => null) }, oauth: { create: vi.fn() }, settlement: { settle: vi.fn() } },
+      } as unknown as ConnectedAccountDaemonPersistence,
+      resolvePeerOperationTransport: vi.fn(() => {
+        throw new PluginError({ code: 'acme_peer_unreachable', message: 'Acme peer did not answer.',
+          remediation: { kind: 'retry' } });
+      }),
+      configurationConsequences: { assertAvailable: vi.fn(), apply: vi.fn() },
+      revocation: {} as never,
+    });
+
+    await expect(daemon.control({ operation: 'describeService', service, requiredOperation: 'account_list' }))
+      .resolves.toEqual({
+        status: 'unavailable',
+        code: 'acme_peer_unreachable',
+        diagnostic: { code: 'acme_peer_unreachable', severity: 'error', message: 'Acme peer did not answer.',
+          remediation: { kind: 'retry' }, details: { failureCause: expect.objectContaining({ errorCode: 'acme_peer_unreachable' }) } },
+      });
   });
 
   it('keeps revisioned legacy credential deletion on its exact guarded route', async () => {

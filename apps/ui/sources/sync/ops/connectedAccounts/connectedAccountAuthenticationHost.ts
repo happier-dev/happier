@@ -1,5 +1,6 @@
 import { resolveConnectedAccountAuthenticationModeMachineRequirement } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { projectConnectedAccountFailure } from '@happier-dev/cli-common/connectedAccounts';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readConnectedAccountBrowserSignInMachineSupport } from '@/sync/domains/connectedServices/connectedAccountBrowserSignInMachineSupport';
 import { readUiAccountConnectedServiceDeclarations, type AccountConnectedServiceDeclaration } from '@/sync/domains/connectedServices/accountDeclarations';
@@ -35,12 +36,14 @@ export type UiConnectedAccountAuthenticationHost = Readonly<{
     }>>;
 }>;
 
-function failureCode(error: unknown): string {
-    return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
-        ? error.code : 'connected_account_service_unavailable';
-}
 function unavailable(code: string, attemptId?: string) {
     return { status: 'unavailable' as const, code, ...(attemptId ? { attemptId } : {}) };
+}
+/** The same connected-account failure projection as the CLI host: typed code plus the redacted cause. */
+function unavailableFrom(error: unknown, attemptId?: string) {
+    const { code, diagnostic } = projectConnectedAccountFailure(error, {
+        code: { fallback: 'connected_account_service_unavailable' }, phase: 'connected_account.host' });
+    return { ...unavailable(code, attemptId), ...(diagnostic ? { diagnostic } : {}) };
 }
 function fail(code: string): never { throw Object.assign(new Error(code), { code }); }
 
@@ -105,7 +108,7 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
                 if (admitted.kind === 'unavailable') return { status: 'unavailable', code: admitted.code };
             }
             return await modePlacement(service);
-        } catch (error) { return { status: 'unavailable', code: failureCode(error) }; }
+        } catch (error) { return { status: 'unavailable', code: unavailableFrom(error).code }; }
     };
     const nativeControl = (machineId: string, command: ConnectedAccountDaemonControlCommand) =>
         runConnectedAccountControlCommand({ serverId: account.serverId, machineId, command, signal, requestId,
@@ -151,7 +154,7 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
             return { description: { status: 'described', service, descriptor: known.descriptor,
                 occurrenceId: known.occurrenceId, sourceCustody: known.sourceCustody, accounts: listed.accounts },
             accountAuthenticationModes };
-        } catch (error) { return { description: unavailable(failureCode(error)), accountAuthenticationModes }; }
+        } catch (error) { return { description: unavailableFrom(error), accountAuthenticationModes }; }
     };
     const authenticationCommand = async (machineId: string | undefined,
         command: ConnectedAccountDaemonCommand): Promise<ConnectedAccountAttemptResponse> => {
@@ -190,7 +193,7 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
                 accountId: account.accountId, machineId: record.scope.machineId, command, signal, requestId, assertCurrent: account.assertCurrent });
             const selected = await selection(record.scope.service);
             return (await runtime(selected)).execute(command, signal, record);
-        } catch (error) { return unavailable(failureCode(error), 'attemptId' in command ? command.attemptId : undefined); }
+        } catch (error) { return unavailableFrom(error, 'attemptId' in command ? command.attemptId : undefined); }
     };
     const controlCommand = async (machineId: string | undefined,
         command: ConnectedAccountDaemonControlCommand): Promise<ConnectedAccountDaemonControlResponse> => {
@@ -267,7 +270,7 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
                 if (replacement.status !== 'committed') return replacement;
                 const { mode: effectiveMode, ...configuration } = replacement.configuration;
                 return { status: 'configurationCommitted', ...basis, mode: effectiveMode, configuration };
-            } catch (error) { return unavailable(failureCode(error)); }
+            } catch (error) { return unavailableFrom(error); }
         }
         if (machineId) return nativeControl(machineId, command);
         return unavailable('connected_account_configuration_unavailable');

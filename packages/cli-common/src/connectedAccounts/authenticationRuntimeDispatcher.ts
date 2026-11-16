@@ -2,6 +2,7 @@ import type { PluginConnectedAccountAuthenticationModeV2 } from '@happier-dev/pr
 import type { ConnectedAccountAttemptProviderOperation } from './authenticationAttemptOwner.js';
 import type { ConnectedAccountAuthenticationModeRuntime } from './authenticationTypes.js';
 import { snapshotConnectedAccountAuthenticationResult } from './producerResultSnapshot.js';
+import { redactConnectedAccountProviderFailure } from './failureProjection.js';
 
 function unavailable(code: string) {
     return Object.freeze({ status: 'unavailable' as const,
@@ -19,7 +20,10 @@ export async function invokeConnectedAccountAuthenticationRuntime<Context>(input
     invokeCallback<Result>(work: () => Result | Promise<Result>): Promise<Result>;
     redactDiagnosticText?(value: string): string;
 }>): Promise<unknown> {
-    const { mode, descriptor, operation, context, registerRawForRedaction, invokeCallback } = input;
+    const { mode, descriptor, operation, context, registerRawForRedaction } = input;
+    // The attempt owner decides what a throw means; the cause leaves only redacted.
+    const invokeCallback = <Result>(work: () => Result | Promise<Result>): Promise<Result> => input.invokeCallback(work)
+        .catch((error: unknown) => { throw redactConnectedAccountProviderFailure(error, input.redactDiagnosticText); });
     const result = await (async () => {
         if (!mode || mode.kind !== descriptor.kind) {
             return unavailable('connected_account_authentication_mode_unavailable');

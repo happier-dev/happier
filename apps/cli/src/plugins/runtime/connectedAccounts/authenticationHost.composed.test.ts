@@ -299,10 +299,11 @@ it('reports missing Account artifact availability on first and repeated lookup i
         expect(registry.pluginDiagnosticsByPluginId[service.pluginId]).toEqual(expect.arrayContaining([
             expect.objectContaining({ code: 'plugin_daemon_module_load_failed', message: 'plugin_account_execution_artifact_unavailable' }),
         ]));
-        expect(outcomes).toEqual([
-            { status: 'unavailable', code: 'connected_account_service_unavailable' },
-            { status: 'unavailable', code: 'connected_account_service_unavailable' },
-        ]);
+        // The activation owner's cause reaches the caller instead of a bare code.
+        const unavailable = { status: 'unavailable', code: 'connected_account_service_unavailable',
+            diagnostic: expect.objectContaining({ code: 'connected_account_service_unavailable', severity: 'error',
+                message: expect.stringContaining('plugin_account_execution_artifact_unavailable') }) };
+        expect(outcomes).toEqual([unavailable, unavailable]);
         expect(fixture.machineRequests).toBe(0);
         expect(fixture.promotedResourceCount).toBe(0);
     } finally {

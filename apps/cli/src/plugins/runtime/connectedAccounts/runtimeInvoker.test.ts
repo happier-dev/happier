@@ -7,6 +7,7 @@ import {
     PluginHostAccessRequestV2Schema,
 } from '@happier-dev/protocol';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import type {
     TargetPluginInterceptedRequest as PluginInterceptedRequest,
@@ -1588,9 +1589,10 @@ describe('connected-account runtime invoker', () => {
                     },
                 };
             await expect(completion).resolves.toEqual(expected);
+            // The retired runtime cannot reconcile; the outcome stays unknown and may name that cause.
             await expect(attempts.reconcile({
                 attemptId: 'attempt-1',
-            })).resolves.toEqual(expected);
+            })).resolves.toMatchObject(expected);
             expect(complete).toHaveBeenCalledOnce();
             expect(reconcile).not.toHaveBeenCalled();
             expect(settle).not.toHaveBeenCalled();
@@ -1694,6 +1696,27 @@ describe('connected-account runtime invoker', () => {
             createInvoker().invokeAuthentication(invocation),
         ).rejects.toBe(providerFailure);
         expect(complete).toHaveBeenCalledTimes(2);
+
+        // A typed provider refusal keeps its code and remediation, never the submitted secret.
+        const secret = 'sk-live-0123456789abcdef0123';
+        complete.mockRejectedValueOnce(new PluginError({ code: 'acme_token_refused',
+            message: `Acme refused token ${secret}`, remediation: { kind: 'retry' } }));
+        // Production composition wires the invocation redactor (connectedAccountAssembly.ts).
+        const redactingInvoker = createConnectedAccountHostRuntimeInvoker({
+            resolveRuntime: async () => Object.freeze({ ref: service, ...runtimeIdentity, descriptor, runtime: deniedRuntime, isCurrent: () => true }),
+            resolvePlugin: () => Object.freeze({ version: '1.0.0', hostAccessRequests: Object.freeze([networkRequest]) }),
+            resolveHostPolicy: owners.resolveInvocationHostPolicy,
+            createServices: owners.createServices,
+            registerRawForRedaction: owners.registerRawForRedaction,
+            redactDiagnosticText: (seed, value) => owners.redactDiagnosticText({
+                pluginId: seed.plugin.id, occurrenceId: seed.occurrenceId, correlationId: seed.correlationId }, value),
+        });
+        const refusal = await redactingInvoker.invokeAuthentication({ ...invocation,
+            operation: Object.freeze({ kind: 'submitManual', fields: Object.freeze({ token: secret }) }) })
+            .then(() => null, (error: unknown) => error);
+        expect(refusal).toMatchObject({ code: 'acme_token_refused', remediation: { kind: 'retry' } });
+        expect(String((refusal as Error).message)).toContain('Acme refused token');
+        expect(String((refusal as Error).message)).not.toContain(secret);
         await owners.dispose();
     });
 

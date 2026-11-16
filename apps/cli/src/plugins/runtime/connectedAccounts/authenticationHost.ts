@@ -3,7 +3,7 @@ import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon
 import type { ConnectedAccountEstablishedRuntimeRegistry, ConnectedAccountRuntimeEstablishedOperation, ConnectedAccountRuntimeEstablishedInvocation } from '@happier-dev/cli-common/connectedAccounts';
 import { resolveConnectedAccountAuthenticationModeMachineRequirement } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
 import { ConnectedAccountAuthenticationModeUnavailableError, createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner,
-    executeConnectedAccountAuthenticationCommand, type ConnectedAccountAttemptTransactionRecord } from '@happier-dev/cli-common/connectedAccounts';
+    executeConnectedAccountAuthenticationCommand, projectConnectedAccountFailure, type ConnectedAccountAttemptTransactionRecord } from '@happier-dev/cli-common/connectedAccounts';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId, ConnectedAccountDaemonCommand,
     ConnectedAccountAttemptResponse, ConnectedAccountDaemonControlCommand, ConnectedAccountDaemonControlResponse,
     PluginConnectedAccountAuthenticationV2 } from '@happier-dev/protocol';
@@ -61,9 +61,11 @@ export function resolveCredentialedConnectedAccountAuthenticationPlacement(
     if (machineId) return { kind: 'machine' as const, machineId };
     return { kind: 'unavailable' as const, code: 'connected_account_authentication_mode_unavailable' };
 }
-function failureCode(error: unknown): string {
-    return error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-        ? error.code : 'connected_account_service_unavailable';
+/** A host refusal keeps its typed code and cause through the one connected-account projector. */
+function unavailableFrom(error: unknown, attemptId?: string) {
+    const { code, diagnostic } = projectConnectedAccountFailure(error, {
+        code: { fallback: 'connected_account_service_unavailable' }, phase: 'connected_account.host' });
+    return { ...unavailable(code, attemptId), ...(diagnostic ? { diagnostic } : {}) };
 }
 
 /** Physical CLI ports only. The selected registration owns the shared attempt runtime. */
@@ -196,7 +198,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                             const attemptId = command.target.attemptId;
                             return withHome(async () => {
                                 try { return await attemptConfiguration(selected, attemptId, command); }
-                                catch (error) { return unavailable(failureCode(error)); }
+                                catch (error) { return unavailableFrom(error); }
                             });
                         }
                         return host.controlCommand(machineId, command, options);
@@ -205,8 +207,8 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
             } catch (error) {
                 // Artifact failure is an Account refusal, never native fallback.
                 // Ordinary core admission still runs before returning that refusal.
-                bound = Object.freeze({ ...host, authenticationCommand: async () => unavailable(failureCode(error)),
-                    controlCommand: async () => unavailable(failureCode(error)) });
+                bound = Object.freeze({ ...host, authenticationCommand: async () => unavailableFrom(error),
+                    controlCommand: async () => unavailableFrom(error) });
             }
             if (!bound) return { matched: false };
             return { matched: true, result: await executeLocal(actionId, operands, context, bound) };
@@ -229,7 +231,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                     if (!record) return unavailable('connected_account_attempt_not_found', command.attemptId);
                     if (record.scope.machineId) return options.native(record.scope.machineId, command);
                     return runtime(await select(record.scope.service)).execute(command, options.signal, record);
-                } catch (error) { return unavailable(failureCode(error), 'attemptId' in command ? command.attemptId : undefined); }
+                } catch (error) { return unavailableFrom(error, 'attemptId' in command ? command.attemptId : undefined); }
             });
         },
         controlCommand(machineId, command, options): Promise<ConnectedAccountDaemonControlResponse> {
@@ -261,7 +263,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                         });
                         return { status: 'connectionTested' as const, result: await owner.invoke({ account: command.account,
                             operation: { kind: 'testConnection' }, ...(options.signal ? { signal: options.signal } : {}) }) };
-                    } catch (error) { return unavailable(failureCode(error)); }
+                    } catch (error) { return unavailableFrom(error); }
                 }
                 if (command.operation === 'listPendingAttempts') {
                     if (machineId) return options.native(machineId, command);
@@ -284,7 +286,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                         return { status: 'described' as const, service: selected.ref, descriptor: selected.descriptor,
                             occurrenceId: selected.occurrenceId, sourceCustody: selected.sourceCustody,
                             accounts: await persistence.profiles.list(command.service) };
-                    } catch (error) { return unavailable(failureCode(error)); }
+                    } catch (error) { return unavailableFrom(error); }
                 }
                 if (command.operation === 'readConfiguration' || command.operation === 'replaceConfiguration') {
                     try {
@@ -319,7 +321,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
                         if (replacement.status !== 'committed') return replacement;
                         const { mode: effectiveMode, ...configuration } = replacement.configuration;
                         return { status: 'configurationCommitted' as const, ...basis, mode: effectiveMode, configuration };
-                    } catch (error) { return unavailable(failureCode(error)); }
+                    } catch (error) { return unavailableFrom(error); }
                 }
                 return machineId ? options.native(machineId, command) : unavailable('connected_account_configuration_target_unavailable');
             });

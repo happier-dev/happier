@@ -3554,6 +3554,7 @@ export type ConnectedServicesConfigurationActionResultById = {
     } | {
         status: 'unavailable';
         code: string;
+        diagnostic?: unknown;
     };
     readonly "connectedServices.subscription.price.set": {
         applied: true;
@@ -6308,6 +6309,7 @@ export type ConnectedServicesConfigurationActionResultById = {
     } | {
         status: 'unavailable';
         code: string;
+        diagnostic?: unknown;
     };
     readonly "connectedServices.accounts.default.set": {
         applied: true;

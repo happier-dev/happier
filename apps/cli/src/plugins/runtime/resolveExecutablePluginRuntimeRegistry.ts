@@ -6047,7 +6047,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
         readPluginOccurrenceId: readCurrentPluginOccurrenceId,
         readPluginSourceCustody: readCurrentPluginSourceCustody,
         isPluginOccurrenceCurrent: isCurrentPluginOccurrence,
-        isPluginActivationUnavailable: pluginId => activatedRegistry.failedActivationPluginIds.has(pluginId),
+        // The one unavailable activation fact carries the typed diagnostic that refused it.
+        readPluginActivationFailure: pluginId => activatedRegistry.failedActivationPluginIds.has(pluginId)
+            ? activatedRegistry.targetActivationFacts.find(fact => fact.pluginId === pluginId && fact.status === 'unavailable')
+                ?.diagnostics.at(-1) ?? activatedRegistry.pluginDiagnosticsByPluginId[pluginId]?.at(-1)
+                ?? { code: 'plugin_activation_failed', message: `Plugin '${pluginId}' did not activate` }
+            : undefined,
         descriptors: authoritativeContributes.connectedAccountDescriptors ?? Object.freeze([]),
         onDescriptorUnavailable(ref, error) {
             const rejected = committed?.rejectedGenerations.get(ref.pluginId);

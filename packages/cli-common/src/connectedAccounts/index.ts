@@ -6,6 +6,7 @@ export * from './authenticationAttemptOwner.js';
 export * from './authenticationCommand.js';
 export * from './authenticationRuntimeDispatcher.js';
 export * from './runtimeInvocationError.js';
+export * from './failureProjection.js';
 export * from './configurationOwner.js';
 export { generatePkceCodes, type PkceCodes } from './pkce.js';
 export * from './attemptTransactionApi.js';

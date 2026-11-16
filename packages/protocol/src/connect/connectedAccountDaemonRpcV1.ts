@@ -426,7 +426,8 @@ export const ConnectedAccountRevokedResponseV1Schema = lazyZodSchema(() => z.str
 
 export const ConnectedAccountRevokeResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('conflict'), code: BoundedIdentitySchema }),
-  z.strictObject({ status: z.literal('unavailable'), code: BoundedIdentitySchema }),
+  // The same producer cause slot as the attempt response's `unavailable`.
+  z.strictObject({ status: z.literal('unavailable'), code: BoundedIdentitySchema, diagnostic: z.optional(z.unknown()) }),
   ConnectedAccountRevokedResponseV1Schema,
   z.strictObject({
     status: z.literal('removalReviewRequired'),
