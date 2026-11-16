@@ -18,6 +18,7 @@ export const OWN_SERVER_DEPLOYMENT_TARGET_V1: DeploymentTargetV1 = DeploymentTar
     v: 1, id: 'own-server', ...readOwnServerDeploymentTargetDeclarationV1(),
     role: 'runtime', targetKind: 'ownServer', title: 'Own server', icon: 'server-outline',
     accepts: ['static', 'server', 'container', 'compose'], needs: [],
+    sources: { gitIntegration: ['github', 'gitlab', 'bitbucket', 'azure-devops'], upload: false },
     targetSchema: z.toJSONSchema(DeploymentOwnServerTargetLinkContentV1Schema, { target: 'draft-7', io: 'input' }),
     linkSchema: z.toJSONSchema(z.strictObject({ machines: DeploymentOwnServerTargetMachinesV1Schema }),
         { target: 'draft-7', io: 'input' }),
@@ -156,6 +157,7 @@ export function projectDeploymentSuggestionTargetsV1(targets: readonly Deploymen
             availability: 'available' as const,
             ...(target.accepts === undefined ? {} : { accepts: target.accepts }),
             ...(target.needs === undefined ? {} : { needs: target.needs }),
+            ...(target.sources === undefined ? {} : { sources: target.sources }),
         }] : []),
         // A data-target descriptor does not declare the engine of a saved store. Until its owner supplies that
         // fact, it is not an executable managed-store choice; self-hosted databases remain catalog apps.

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { OWN_SERVER_DEPLOYMENT_TARGET_SOURCE_V1, selectDeploymentTargetTeardownAvailableV1, selectDeploymentTargetRemovalChoicesV1 } from './deploymentTargetCatalog.js';
+import { OWN_SERVER_DEPLOYMENT_TARGET_V1, OWN_SERVER_DEPLOYMENT_TARGET_SOURCE_V1, projectDeploymentSuggestionTargetsV1, selectDeploymentTargetTeardownAvailableV1, selectDeploymentTargetRemovalChoicesV1 } from './deploymentTargetCatalog.js';
+
+it('carries the host repository source routes into the suggestion catalog', () => {
+    const catalog = projectDeploymentSuggestionTargetsV1([OWN_SERVER_DEPLOYMENT_TARGET_V1]);
+    expect(catalog.targets[0]?.sources).toEqual({ gitIntegration: ['github', 'gitlab', 'bitbucket', 'azure-devops'], upload: false });
+});
 
 it('defaults linked and legacy resources to unlink and offers provider delete only when declared', () => {
     const source = { kind: 'plugin', contribution: { pluginId: 'provider', localId: 'runtime' } } as const;
