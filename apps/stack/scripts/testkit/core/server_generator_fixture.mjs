@@ -6,7 +6,8 @@ import { promisify } from 'node:util';
 /**
  * The server's Prisma generator (apps/server/scripts/generateClients.ts) is a
  * third-party code generator boundary. This stand-in keeps its file contract:
- * the same schema → client locations, one client module per schema, and the
+ * the same schema → client locations, one client module (with its `Machine`
+ * declaration) per schema, and the
  * `.happier-source-schema.sha256` stamp of the schema it generated from. Each
  * run appends its server root to `HSTACK_TEST_GENERATOR_LOG` when set.
  */
@@ -22,6 +23,8 @@ for (const [schema, client] of [['prisma/schema.prisma', '../../node_modules/.pr
   const output = join(server, client);
   await mkdir(output, { recursive: true });
   await writeFile(join(output, 'index.js'), 'exports.fields = ' + JSON.stringify(fields) + ';\\n');
+  await writeFile(join(output, 'index.d.ts'), 'export type Machine = { ' + fields.map(field => field + ': string;').join(' ') + ' };\\n');
+  await writeFile(join(output, 'package.json'), JSON.stringify({ name: '.prisma/client', main: 'index.js', types: 'index.d.ts' }));
   await writeFile(join(output, '.happier-source-schema.sha256'), createHash('sha256').update(source).digest('hex') + '\\n');
 }
 if (process.env.HSTACK_TEST_GENERATOR_LOG) await appendFile(process.env.HSTACK_TEST_GENERATOR_LOG, server + '\\n');

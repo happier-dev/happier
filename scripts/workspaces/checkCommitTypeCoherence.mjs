@@ -21,15 +21,17 @@
 // The checkout is read through a request-filesystem layer of the Microsoft compiler's API: compiler
 // inputs whose bytes differ from the tree carry the tree's blob, paths the tree lacks (including
 // untracked files) are removed, and everything else — node_modules, ignored generated inputs — is
-// read from disk. Workspace packages resolve to their sources (the `happier-source` condition, and
+// read from disk, except generated Prisma clients: each tree reads the clients generated from its own
+// schema (the build's digest rule and derivation, deriveRevisionGeneratedInputs). Workspace packages resolve to their sources (the `happier-source` condition, and
 // tsconfig `paths` into packages/*/dist redirected to src), which is what CI type-checks after it
 // builds those packages at the commit. This is a fast slice check, not a package typecheck verdict:
 // importers reached only through barrels are not roots, and the package typecheck remains the gate.
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { posix, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, posix, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { resolveTypeScriptApiExecutable } from './resolveTypeScriptApiExecutable.mjs';
 import { diagnosticHunks, diagnosticMessageText, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
@@ -37,6 +39,7 @@ import { uiTypedRoutesDeclaration } from '../../apps/ui/scripts/uiTypedRoutesDec
 import { commitProducerClosure } from './commitProducerClosure.mjs';
 import { runCommitPackageTypecheck } from './commitPackageTypecheck.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
+import { readStaleServerGeneratedClients, SERVER_GENERATED_CLIENTS } from '../../apps/stack/scripts/build/server_generated_clients.mjs';
 
 // The textual producer-closure scan (missing modules/exports, untracked lockfile importers) runs
 // before any compiler or admission on every commit path, including the fast private-index path.
@@ -64,6 +67,21 @@ const redirectDist = (target) =>
   );
 
 // Parse only grep candidates: imports in comments or fixture strings are not consumers.
+function gitBlobId(bytes) {
+  return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
+}
+
+function compilerInputsUnder(dir, prefix = '') {
+  let entries;
+  try { entries = readdirSync(join(dir, prefix), { withFileTypes: true }); }
+  catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return []; throw error; }
+  return entries.flatMap(entry => {
+    const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) return compilerInputsUnder(dir, path);
+    return entry.isFile() && COMPILER_INPUT.test(entry.name) ? [path] : [];
+  });
+}
+
 function importSpecifiers(file, text, source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false)) {
   const values = new Map();
   const add = (value, node) => {
@@ -190,6 +208,62 @@ function repository(repo) {
       ),
       removedPaths,
     };
+  }
+
+  // Generated Prisma clients are git-ignored, so the checkout's copy can come from another schema.
+  // A tree reads the disk clients only while their stamps name its schema (the build's reuse rule);
+  // otherwise the build's own derivation generates them from that tree, once per schema set.
+  const derivedClients = new Map();
+  function generatedClientsFor(tree, entries) {
+    const disk = path => {
+      try { return readFileSync(abs(path)); }
+      catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; }
+    };
+    const schemas = [];
+    const readSchema = path => {
+      const entry = entries.get(path);
+      if (!entry) return null;
+      const bytes = disk(path);
+      // The checkout's bytes stand in for the blob when Git names them identical (no object read).
+      const source = bytes && gitBlobId(bytes) === entry.oid ? bytes : git(['cat-file', 'blob', entry.oid]);
+      schemas.push([path, source]);
+      return source;
+    };
+    const none = { files: {}, removedPaths: [] };
+    if (!readStaleServerGeneratedClients({ readSchema, readStamp: disk }).length) return none;
+    const key = createHash('sha256').update(JSON.stringify(schemas.map(([path, bytes]) => [path, gitBlobId(bytes)]))).digest('hex');
+    if (!derivedClients.has(key)) derivedClients.set(key, deriveGeneratedClients(tree, entries));
+    return derivedClients.get(key);
+  }
+
+  function deriveGeneratedClients(tree, entries) {
+    const scratch = mkdtempSync(join(tmpdir(), 'happier-coherence-generated-'));
+    try {
+      // The tree's generator closure, from Git objects only.
+      const roots = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/server', 'scripts/workspaces', 'packages/cli-common']
+        .filter(root => entries.has(root) || [...entries.keys()].some(path => path.startsWith(`${root}/`)));
+      execFileSync('tar', ['-x', '-C', scratch], { input: git(['archive', '--format=tar', tree, '--', ...roots]) });
+      // Physical client roots and installed client package: generation must never write through a
+      // mounted link into the checkout's node_modules.
+      for (const { client } of SERVER_GENERATED_CLIENTS) mkdirSync(join(scratch, client), { recursive: true });
+      if (existsSync(abs('node_modules/@prisma/client'))) {
+        cpSync(abs('node_modules/@prisma/client'), join(scratch, 'node_modules/@prisma/client'), { recursive: true, verbatimSymlinks: true });
+      }
+      execFileSync(process.execPath, ['--input-type=module', '--eval', `const { deriveRevisionGeneratedInputs } = await import(${JSON.stringify(
+        pathToFileURL(fileURLToPath(new URL('../../apps/stack/scripts/build/source_revision.mjs', import.meta.url))).href)});
+await deriveRevisionGeneratedInputs({ captureDir: ${JSON.stringify(scratch)}, sourceDir: ${JSON.stringify(repo)} });`],
+      { stdio: ['ignore', 'ignore', 'inherit'] });
+      const files = {};
+      const removedPaths = [];
+      for (const { client } of SERVER_GENERATED_CLIENTS) {
+        const derived = compilerInputsUnder(join(scratch, client));
+        for (const path of derived) files[abs(`${client}/${path}`)] = readFileSync(join(scratch, client, path), 'utf8');
+        for (const path of compilerInputsUnder(abs(client))) if (!derived.includes(path)) removedPaths.push(abs(`${client}/${path}`));
+      }
+      return { files, removedPaths };
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   }
 
   function sliceOf(base, tree) {
@@ -391,6 +465,7 @@ function repository(repo) {
     treeEntries,
     readBlobs,
     layerFor,
+    generatedClientsFor,
     sliceOf,
     importerCandidates,
     importersOf,
@@ -432,6 +507,9 @@ export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups, beforeC
     : fileURLToPath(new URL('./runCommitTypeCoherenceApi.mjs', import.meta.url)) });
   try {
     const layer = git.layerFor(tree, treeIndex);
+    const treeClients = git.generatedClientsFor(tree, treeIndex);
+    Object.assign(layer.files, treeClients.files);
+    layer.removedPaths.push(...treeClients.removedPaths);
     Object.assign(layer.files, git.typedRouteInputs(groups, treeIndex));
     // Changed files and discovered importers both belong to their configured program.
     // In an aggregate, a renamed composed test is changed but is still excluded.
@@ -536,6 +614,17 @@ export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups, beforeC
         const entry = baseIndex.get(path);
         if (entry) revert.files[git.abs(path)] = priorBlobs.get(entry.oid);
         else revert.removedPaths.push(git.abs(path));
+      }
+      // The base reads its own generated clients: the checkout's where they match its schema.
+      const baseClients = git.generatedClientsFor(base, baseIndex);
+      if (baseClients !== treeClients) {
+        for (const path of [...Object.keys(treeClients.files), ...treeClients.removedPaths]) {
+          if (Object.hasOwn(baseClients.files, path)) continue;
+          if (existsSync(path)) revert.files[path] = readFileSync(path, 'utf8');
+          else revert.removedPaths.push(path);
+        }
+        Object.assign(revert.files, baseClients.files);
+        revert.removedPaths.push(...baseClients.removedPaths);
       }
       const baseGroups = git.groupRoots(baseRoots, baseIndex).groups;
       Object.assign(revert.files, git.typedRouteInputs(baseGroups, baseIndex));

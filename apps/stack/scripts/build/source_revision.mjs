@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile, spawn } from 'node:child_process';
-import { createWriteStream, existsSync } from 'node:fs';
+import { createWriteStream, existsSync, readFileSync } from 'node:fs';
 import { lstat, mkdir, readFile, readlink, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, posix } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -9,7 +9,8 @@ import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { createGzip, gunzipSync } from 'node:zlib';
 import { BuildInputDriftError, mountInstalledNodeModules } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
-import { EMBEDDED_FEATURE_POLICIES_OUTPUT, isSourceGeneratedInput, isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs, SERVER_GENERATED_CLIENT_STAMP, SERVER_GENERATED_CLIENTS } from '../utils/fs/workspaceBuildInputs.mjs';
+import { EMBEDDED_FEATURE_POLICIES_OUTPUT, isSourceGeneratedInput, isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
+import { readStaleServerGeneratedClients, SERVER_GENERATED_CLIENTS } from './server_generated_clients.mjs';
 import { run } from '../utils/proc/proc.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 
@@ -325,16 +326,13 @@ export function isRevisionGeneratorInput(path) {
   return SERVER_GENERATED_CLIENTS.some(({ schema }) => schema === path) || path.startsWith('.github/feature-policy/');
 }
 
-async function readStaleServerGeneratedClients(captureDir) {
-  const stale = [];
-  for (const { schema, client } of SERVER_GENERATED_CLIENTS) {
-    const source = await readCheckoutBytes(join(captureDir, schema));
-    if (!source) continue;
-    const stamp = await readFile(join(captureDir, client, SERVER_GENERATED_CLIENT_STAMP), 'utf8').catch(error =>
-      error.code === 'ENOENT' || error.code === 'ENOTDIR' ? null : Promise.reject(error));
-    if (stamp?.trim() !== sha256(source)) stale.push(client);
-  }
-  return stale;
+/** The shared reuse rule against a capture directory's own schema and clients. */
+function readStaleCapturedClients(captureDir) {
+  const read = path => {
+    try { return readFileSync(join(captureDir, path)); }
+    catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null; throw error; }
+  };
+  return readStaleServerGeneratedClients({ readSchema: read, readStamp: read });
 }
 
 /**
@@ -373,7 +371,7 @@ async function deriveEmbeddedFeaturePolicies({ captureDir, env, signal }) {
 }
 
 async function deriveServerGeneratedClients({ captureDir, sourceDir, env, signal }) {
-  const stale = await readStaleServerGeneratedClients(captureDir);
+  const stale = readStaleCapturedClients(captureDir);
   if (!stale.length) return [];
   const started = performance.now();
   // Installed tools only, at the capture root: the captured physical clients stay
@@ -385,7 +383,7 @@ async function deriveServerGeneratedClients({ captureDir, sourceDir, env, signal
     cwd: join(captureDir, 'apps/server'), signal, stdio: ['ignore', 'ignore', 'inherit'], captureFailureDiagnostic: true,
     // Schema sync only checks: the capture's schemas are the revision's bytes.
     env: { ...env, HAPPIER_BUILD_DB_PROVIDERS: 'all', HAPPIER_DEV_TARGET_EXECUTION: '1' } });
-  const remaining = await readStaleServerGeneratedClients(captureDir);
+  const remaining = readStaleCapturedClients(captureDir);
   if (remaining.length) throw new Error(`[source-revision] generated server clients still differ from the captured schema: ${remaining.join(', ')}`);
   console.error(`[source-revision] regenerated server clients from the captured schema (${stale.join(', ')}) elapsedMs=${Math.round(performance.now() - started)}`);
   return stale;

@@ -16,6 +16,7 @@ import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation
 import { installUiTypecheckFixtureDependencies } from '../testing/lib/typecheckProjectFixture.mjs';
 import { resolveHeavyweightMemoryFloorKiB } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
 import { holdNativeAdmissionFixtureMemory, installNativeAdmissionControllerFixture, installWorkspaceAdmissionProcessFixture } from '../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
+import { FIXTURE_MACHINE_SCHEMA, generateServerClients, installServerGeneratorFixture, writeServerSchemas } from '../../apps/stack/scripts/testkit/core/server_generator_fixture.mjs';
 
 // A shared dirty checkout: the worktree holds both halves of a change, a commit takes only one.
 async function checkout(t) {
@@ -1032,4 +1033,42 @@ test('the checker CLI refuses a plugin packet that adds an extension import-boun
   const fixed = commitOnly('packages/plugins/demo/src/index.mjs');
   const accepted = cli(`--base=${broken}`, `--tree=${fixed}`);
   assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+});
+
+// Generated Prisma clients are git-ignored: the shared checkout's copy can come from
+// another schema. Each judged tree must read the clients generated from its own schema.
+async function prismaCheckout(t) {
+  const fixture = await checkout(t);
+  const { repo, write, git } = fixture;
+  await write('.gitignore', 'node_modules/\napps/server/generated/\n');
+  await mkdir(join(repo, 'apps/server'), { recursive: true });
+  await write('apps/server/package.json', JSON.stringify({ name: '@happier-dev/server', type: 'module' }));
+  await installServerGeneratorFixture(repo);
+  await write('machine.ts', "import type { Machine } from '.prisma/client';\nexport const id = (machine: Machine): string => machine.id;\n");
+  git('add', '-A');
+  git('commit', '--quiet', '-m', 'schema');
+  await generateServerClients(repo);
+  const withColumn = FIXTURE_MACHINE_SCHEMA.replace('  id String\n', '  id String\n  metadataBytes Bytes\n');
+  return { ...fixture, withColumn };
+}
+
+const usesColumn = "import type { Machine } from '.prisma/client';\nexport const id = (machine: Machine): string => machine.metadataBytes;\n";
+
+test('a packet that adds a Prisma column and uses it is coherent while the checkout clients predate the column', async (t) => {
+  const { repo, write, commitOnly, withColumn } = await prismaCheckout(t);
+  await writeServerSchemas(repo, withColumn);
+  await write('machine.ts', usesColumn);
+  const commit = commitOnly('apps/server/prisma', 'machine.ts');
+  assert.deepEqual(checkCommitTypeCoherence({ repo, base: `${commit}^`, tree: commit }).fresh, []);
+});
+
+test('a packet that uses a column its schema lacks is incoherent although the checkout clients have it', async (t) => {
+  const { repo, write, commitOnly, withColumn } = await prismaCheckout(t);
+  // Another lane's uncommitted schema edit, generated into the shared checkout.
+  await writeServerSchemas(repo, withColumn);
+  await generateServerClients(repo);
+  await write('machine.ts', usesColumn);
+  const commit = commitOnly('machine.ts');
+  assert.deepEqual(checkCommitTypeCoherence({ repo, base: `${commit}^`, tree: commit }).fresh
+    .map(row => [row.file, row.code]), [['machine.ts', 2339]]);
 });
