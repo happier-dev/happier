@@ -78,13 +78,13 @@ import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/review
 import { askSelectionQuote, type AskSelectionTargetContext } from '@/components/ui/code/selection/askSelectionTarget';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceDiscoverInputV1Schema, TeamCredentialResourceReadInputV1Schema } from '@happier-dev/protocol/teams';
-import { teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
+import { teamCredentialDisplayNameFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { resetTeamsDirectoryEngineForTests } from '@/sync/engine/teams/teamsDirectoryEngine';
 import { resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS, BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
+import { BUNDLED_ACCOUNT_PROVIDER_DECLARATIONS, BUNDLED_CANONICAL_AGENTS_CORE, BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 
 // Platform, credentials, local persistence, HTTP and RPC are the boundaries. The composer,
 // capture/coordinator, draft repository, launcher options, role catalog, capability/feature
@@ -206,7 +206,7 @@ const teamModel = { kind: 'team_credential_provider_model', teamId: 'team_run', 
     expectedResourceRevision: 3, deliveryMode: 'brokered', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'gpt-5.5' } as const;
 function teamResource(application?: unknown) {
     return TeamCredentialResourceCatalogEntryV1Schema.parse({ id: teamModel.resourceId, teamId: teamModel.teamId,
-        displayName: 'Shared coding pool', resourceRevision: 3, readiness: { kind: 'available' }, recoveryAction: null,
+        displayName: teamCredentialDisplayNameFixture('Shared coding pool'), resourceRevision: 3, readiness: { kind: 'available' }, recoveryAction: null,
         mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
         connectedServiceSelections: [{ source: 'team_resource', resourceId: teamModel.resourceId, deliveryMode: 'brokered' }],
         providerModels: application ? [{ selection: teamModel, descriptor: { id: teamModel.modelId, name: 'GPT-5.5' },
@@ -215,7 +215,8 @@ function teamResource(application?: unknown) {
 }
 const secretRef = 'happier:shared-secret:v1:personal-secret';
 const reviewAgentProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, installedPackagesById: {},
-    agentsById: Object.fromEntries((['claude', 'codex'] as const).map(agentId => [agentId, { id: agentId, title: agentId,
+    agentsById: Object.fromEntries((['claude', 'codex'] as const).map(agentId => [agentId, { id: agentId,
+        title: t(BUNDLED_CANONICAL_AGENTS_CORE[agentId]!.displayNameKey),
         identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId],
         providerRequirements: BUNDLED_CANONICAL_AGENT_DECLARATIONS[agentId]?.providerRequirements ?? undefined,
         capabilities: { surfaces: [], sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } },
