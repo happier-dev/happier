@@ -38,8 +38,8 @@ export function MessageActionRow(props: Readonly<{
     // On the web the controls of a closed row are not mounted: a transcript mounts a row per message, and
     // these controls are most of what each one costs. The closed row keeps one focusable stand-in, so a
     // keyboard reaches the actions as before; focusing it (or revealing the row) mounts the controls, which
-    // then stay mounted for the row's life. Touch hosts keep their controls mounted (their own opener).
-    const [engaged, setEngaged] = React.useState(props.showActions || !props.isWeb);
+    // then stay mounted for the row's life. Touch hosts follow the same rule: a closed touch row is itself the opener (a tap, or a screen reader's activation through `onOpenActions`).
+    const [engaged, setEngaged] = React.useState(props.showActions);
     if (props.showActions && !engaged) setEngaged(true);
     type FocusTarget = { focus?: () => void };
     const handoffRef = React.useRef<Readonly<{ slot: { querySelectorAll?: (selector: string) => ArrayLike<FocusTarget> }; reverse: boolean }> | null>(null);
@@ -128,7 +128,7 @@ export function MessageActionRow(props: Readonly<{
                 onBlur={props.onActionsBlur}
                 testID={`transcript-message-actions:${props.messageId}`}
             >
-                {engaged ? props.children : (
+                {engaged ? props.children : !props.isWeb ? null : (
                     <Pressable
                         testID={`transcript-message-actions-opener:${props.messageId}`}
                         accessibilityRole="button"

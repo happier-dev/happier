@@ -195,6 +195,28 @@ describe('MessageActionRow', () => {
             expect(screen.findAllByTestId('lazy-action')).toHaveLength(1);
         });
 
+        it('mounts a touch row\'s controls only once a tap reveals it, with the row itself as the closed opener', async () => {
+            const { MessageActionRow } = await import('./MessageActionRow');
+            const opened: string[] = [];
+            const element = (show: boolean) => (
+                <MessageActionRow messageId="touch-lazy" timestampText={null} showActions={show} isWeb={false}
+                    invertTimestampAndActions={false} onOpenActions={show ? undefined : () => opened.push('open')}>
+                    <View testID="touch-lazy-action" />
+                </MessageActionRow>
+            );
+            const screen = await renderScreen(element(false));
+
+            expect(screen.findAllByTestId('touch-lazy-action')).toHaveLength(0);
+            expect(screen.findAllByTestId('transcript-message-actions-opener:touch-lazy')).toHaveLength(0);
+            screen.findByTestId('transcript-message-actions-row:touch-lazy')?.props.onAccessibilityTap?.();
+            expect(opened).toEqual(['open']);
+
+            await act(async () => { screen.update(element(true)); });
+            expect(screen.findAllByTestId('touch-lazy-action')).toHaveLength(1);
+            await act(async () => { screen.update(element(false)); });
+            expect(screen.findAllByTestId('touch-lazy-action')).toHaveLength(1);
+        });
+
         it('keeps the row keyboard-reachable: focusing the stand-in mounts the controls', async () => {
             const { MessageActionRow } = await import('./MessageActionRow');
             const screen = await renderScreen(
