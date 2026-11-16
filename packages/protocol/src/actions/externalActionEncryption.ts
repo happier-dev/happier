@@ -17,10 +17,10 @@ import { projectDeploymentPreparationAdmissionV1 } from '../deployments/deployme
 import { projectDeploymentNativeAdmissionV1 } from '../deployments/deploymentCandidatePublicationV1.js';
 import { projectRegistryAppUpdateAdmissionV1 } from '../registries/registryAppUpdateAdmissionV1.js';
 import {
-  projectExternalActionPresetPreparationEnvelopeAdmissionV1,
   ExternalActionActionIdV1Schema, ExternalActionRequestIdV1Schema,
   ExternalActionTargetV1Schema, ExternalActionApiTokenServerPrincipalV1Schema,
-  ExternalActionWorkflowPreparationV1Schema,
+  ExternalActionWorkflowPreparationV1Schema, projectExternalActionWorkflowPreparationTargetV1,
+  projectExternalActionPresetPreparationEnvelopeAdmissionV1,
   ExternalActionAccountAuthenticationV1Schema, ExternalActionTerminalAuthenticationV1Schema,
   ExternalActionExecutionResultV1Schema, ExternalActionRequestEnvelopeV1Schema, ExternalActionRequestEnvelopeV2Schema,
   ExternalActionResponseEnvelopeV2Schema, EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES,
@@ -39,6 +39,7 @@ import {
   projectExternalActionDeploymentLinkEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvironmentIdV1,
   type ExternalActionRequestEnvelopeV2, type ExternalActionResponseEnvelopeV2, type ExternalActionTargetV1,
+  type ExternalActionExecutionAuthorizationBindingV1,
   type PreparedExternalActionResponseEnvelope,
 } from './externalActionApi.js';
 
@@ -65,6 +66,16 @@ const AccountBindingSchema = lazyZodSchema(() => z.strictObject({ ...BindingRout
 }));
 const BindingSchema = lazyZodSchema(() => z.union([ApiTokenBindingSchema, AccountBindingSchema]));
 export type ExternalActionEncryptionBindingV2 = Readonly<z.infer<typeof BindingSchema>>;
+
+/** Retain only the opener's original authenticated data, never its execution credential. */
+export function projectExternalActionEncryptionBindingV2(binding: ExternalActionExecutionAuthorizationBindingV1): ExternalActionEncryptionBindingV2 {
+  const { serverIdentityId, accountId, actionId, requestId, target } = binding;
+  return BindingSchema.parse({ serverIdentityId, accountId, actionId, requestId, target,
+    ...('authentication' in binding
+      ? { authentication: { kind: binding.authentication.kind, tokenEpoch: binding.authentication.tokenEpoch } }
+      : { credentialId: binding.credentialId }),
+  });
+}
 
 /** Original transport and noncredential AAD; current execution still needs fresh authorization. */
 export const ExternalActionRetainedWorkflowRootV1Schema = lazyZodSchema(() => z.strictObject({
@@ -93,7 +104,13 @@ const requestShape = () => ({
 });
 const RequestSchema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ApiTokenBindingSchema, { ...requestShape(), apiTokenContentAccess: z.optional(ApiTokenContentAccessSchema) })), (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AccountBindingSchema, requestShape())),
-]));
+]).check(z.superRefine((value, context) => {
+  if (!value.workflowPreparation) return;
+  const expected = projectExternalActionWorkflowPreparationTargetV1(value.workflowPreparation);
+  if (!expected || !externalActionTargetsEqualV1(expected, value.target)) {
+    context.addIssue({ code: 'custom', path: ['workflowPreparation'], message: 'Workflow preparation target mismatch' });
+  }
+})));
 const responseShape = () => ({
   v: z.literal(2), direction: z.literal('response'),
   executedMachineId: ExternalActionTargetV1Schema._zod.def.options[0].shape.machineId,

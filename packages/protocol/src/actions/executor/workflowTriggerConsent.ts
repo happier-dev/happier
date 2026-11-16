@@ -25,6 +25,8 @@ type WorkflowTriggerConsentDefinition = Readonly<{
 export async function materializeWorkflowTriggerActionDefinition(input: Readonly<{
   definition: WorkflowDefinitionV1; inputs: WorkflowResolvedInputsV1; project: WorkflowProjectTargetV1;
   resolveWorkflow(ref: string): Promise<WorkflowDefinitionV1>;
+  /** A pre-guest review freezes effects; the enrolled Run decides actual target availability. */
+  deferTargetAvailability?: boolean;
 }>) {
   const children: Record<string, WorkflowDefinitionV1> = {};
   const { ActionIdSchema } = await import('../actionIds.js');
@@ -36,7 +38,7 @@ export async function materializeWorkflowTriggerActionDefinition(input: Readonly
       workspaceTarget: { project: { ...input.project, checkoutRootPath: input.project.directory } },
       authorization: { principal: { kind: 'host' } } },
     effects: {
-      resolveTargetAvailability: async leaf => leaf.kind === 'action' || leaf.kind === 'workflow',
+      resolveTargetAvailability: async leaf => input.deferTargetAvailability === true || leaf.kind === 'action' || leaf.kind === 'workflow',
       readActionContract: async id => {
         const actionId = ActionIdSchema.safeParse(id);
         return actionId.success ? freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(actionId.data))) : null;

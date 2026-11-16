@@ -513,6 +513,7 @@ export function createCliWorkflowFamily(
           },
           storage: workflowRunStorage,
           definitions: workflowDefinitions,
+          acquireWorkflowPlacement: params.acquireWorkflowPlacement,
           readPluginWorkflows: workflowDefinitions.readPluginWorkflows,
           resolveEncryption: (signal) => resolveWorkflowRunEncryption(encryptionCaller, signal),
           observeRecovery: async ({ run, progress, signal }) => {

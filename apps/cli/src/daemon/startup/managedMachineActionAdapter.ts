@@ -41,14 +41,19 @@ import { invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHos
 import type { ManagedMachineExecutionOptions } from '@/machines/managed/acquire';
 import axios from 'axios';
 import { prepareMachinePresetOnHost } from './machinePresetPreparation';
+import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
+import type { WorkflowRunStartRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
-const sessionIsolationAcquisition = Symbol('sessionIsolationAcquisition');
-type SessionIsolationAcquisitionOptions = Pick<ManagedMachineExecutionOptions,
-    'acquisitionMode' | 'reuseIdle' | 'expectedProvisioner' | 'onLocalSessionPlacement'>;
-type SessionIsolationAcquisitionContext = ActionExecutorContext & Readonly<{
-    [sessionIsolationAcquisition]?: Readonly<{
+const managedCreationAcquisition = Symbol('managedCreationAcquisition');
+type ManagedCreationAcquisitionOptions = Pick<ManagedMachineExecutionOptions,
+    'acquisitionMode' | 'reuseIdle' | 'expectedProvisioner' | 'onLocalSessionPlacement' | 'runCreationContinuation'>
+    & Partial<Pick<ManagedMachineExecutionOptions, 'requestId'>>;
+type ManagedCreationAcquisitionContext = ActionExecutorContext & Readonly<{
+    [managedCreationAcquisition]?: Readonly<{
         input: ReturnType<typeof ManagedAcquireInputV1Schema.parse>;
-        take(): SessionIsolationAcquisitionOptions;
+        take(): ManagedCreationAcquisitionOptions;
     }>;
 }>;
 
@@ -62,6 +67,8 @@ type ManagedMachineActionAdapterParams = Readonly<{
     serverId: string;
     readGuestHomeHostIdentity?: import('@/machines/managed/acquire').ManagedMachineAcquisitionDriverInput['readGuestHomeHostIdentity'];
     executeSessionStart?: (input: SessionSpawnNewInputV2, context: ActionExecutorContext, machine: ManagedMachineV1) => Promise<ActionExecuteResult>;
+    executeWorkflowStart?: (input: WorkflowRunStartRequestV1, project: WorkflowProjectTargetV1,
+        context: ActionExecutorContext, machine: ManagedMachineFullV1) => Promise<ActionExecuteResult>;
     executeEnvironmentSetup?: (machine: ManagedMachineFullV1, context: ActionExecutorContext, isCurrent: () => Promise<boolean>) => Promise<ActionExecuteResult>;
     subscribeEnvironmentSetupChanges?: (context: ActionExecutorContext, callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
     observeRecordedApprovalExecution?: (args: RecordedApprovalExecutionObservationArgs) => Promise<ActionExecuteResult>;
@@ -73,6 +80,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
     managedGuestLocalStop?: ManagedGuestLocalStop;
     observeActionExecution?: ApiMachineClient['observeActionExecution'];
     cancelAndWaitForActionOperation?: ApiMachineClient['cancelAndWaitForActionOperation'];
+    waitForActionOperationCompletion?: ApiMachineClient['waitForActionOperationCompletion'];
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
     prepareTeamCredentialNativeSource?: RuntimeProviderModelManagementServices['prepareTeamCredentialNativeSource'];
     subscribeManagedMachineChanges?: ApiMachineClient['onManagedMachinePolicyInvalidated'];
@@ -219,7 +227,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             || (context.externalActionExecutionAuthorization && (!params.preflightSessionStart || !await params.preflightSessionStart(context))))) {
             throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
         }
-        const isolation = (context as SessionIsolationAcquisitionContext)[sessionIsolationAcquisition];
+        const isolation = (context as ManagedCreationAcquisitionContext)[managedCreationAcquisition];
         if (isolation && (actionId !== MANAGED_ACQUIRE_ACTION_ID_V1
             || !sameStrictJsonValue(isolation.input, input)
             || !isHostAdmittedReviewedChildPolicyV1(readHostReviewedChildOperationV1(context, actionId, input), actionId, input))) {
@@ -327,7 +335,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 ...(request.lifecycle === 'fresh' ? { creationScopeRetention: { effect: 'delete' as const } }
                     : { retention: { kind: 'until-delete' as const } }),
             });
-            const options: SessionIsolationAcquisitionOptions = {
+            const options: ManagedCreationAcquisitionOptions = {
                 acquisitionMode: 'resource-bound', expectedProvisioner: request.configuredSandbox.provisioner,
                 onLocalSessionPlacement: placement => {
                     sandboxTypeSupportsNativeSandbox = placement.supportsAgentNativeSandbox === true;
@@ -341,18 +349,63 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 context: request.context,
                 child: { action: MANAGED_ACQUIRE_ACTION_ID_V1, role: 'acquire-session-sandbox', input: projectNativeJsonValueForTransport(acquisition) },
                 execute: (_input, context) => request.executeSessionIsolationAcquire(acquisition, { ...context,
-                    [sessionIsolationAcquisition]: { input: acquisition, take: () => {
+                    [managedCreationAcquisition]: { input: acquisition, take: () => {
                         if (consumed) throw new ManagedMachineControllerError('admission_unavailable');
                         consumed = true;
                         return options;
                     } },
-                } as SessionIsolationAcquisitionContext),
+                } as ManagedCreationAcquisitionContext),
             });
             if (!result.ok) throw ManagedMachineControllerError.fromActionFailure(result, MANAGED_ACQUIRE_ACTION_ID_V1);
             const accepted = ManagedAcceptedV1Schema.parse(result.result);
             return { managedCreation: { homeId, managedId: accepted.managedId, controller }, sandboxTypeSupportsNativeSandbox,
                 ...(nativeSandbox ? { nativeSandbox } : {}) };
         }) satisfies AcquireSessionIsolationSandbox,
+        acquireWorkflowPlacement: (async request => {
+            const preparation = request.context.workflowPreparation;
+            const authorization = request.context.externalActionExecutionAuthorization;
+            const executeChild = request.context.executeHostReviewedChildAction;
+            const executeWorkflow = params.executeWorkflowStart;
+            const waitForCompletion = params.waitForActionOperationCompletion;
+            if (!preparation || !authorization || !executeChild || !executeWorkflow || !waitForCompletion) {
+                return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+            }
+            let workflowResult: ActionExecuteResult | undefined;
+            let consumed = false;
+            const acquisition = preparation.acquisition;
+            const options: ManagedCreationAcquisitionOptions = { requestId: request.start.runId,
+                runCreationContinuation: async ({ machine }) => {
+                    if (!machine.enrolledMachineId) throw new ManagedMachineControllerError('intent_changed');
+                    const { workspaceRefId: _previousWorkspace, ...authoredProject } = preparation.project;
+                    workflowResult = await executeWorkflow({ ...request.start, managedCreation: {
+                        homeId: machine.homeId, managedId: machine.id, controller: machine.controller,
+                    } }, { ...authoredProject, machineId: machine.enrolledMachineId }, request.context, machine);
+                    if (!workflowResult.ok) throw ManagedMachineControllerError.fromActionFailure(workflowResult, WORKFLOW_RUN_START_ACTION_ID_V1);
+                } };
+            const acquired = await invokeHostReviewedChildV1({
+                parent: { actionId: WORKFLOW_RUN_START_ACTION_ID_V1, input: projectNativeJsonValueForTransport(request.start) },
+                context: request.context,
+                child: { action: MANAGED_ACQUIRE_ACTION_ID_V1, role: 'acquire-workflow-placement', input: projectNativeJsonValueForTransport(acquisition) },
+                execute: (_input, context) => executeChild(MANAGED_ACQUIRE_ACTION_ID_V1, acquisition, { ...context,
+                    [managedCreationAcquisition]: { input: acquisition, take: () => {
+                        if (consumed) throw new ManagedMachineControllerError('admission_unavailable');
+                        consumed = true;
+                        return options;
+                    } },
+                } as ManagedCreationAcquisitionContext),
+            });
+            if (!acquired.ok) return acquired;
+            const accepted = ManagedAcceptedV1Schema.parse(acquired.result);
+            if (accepted.operation) {
+                const completed = await waitForCompletion({ accountId: authorization.binding.accountId, machineId: params.machineId },
+                    accepted.operation.operationId);
+                if (!workflowResult && completed) {
+                    const failure = readActionOperationTerminalResultV1(completed);
+                    if (failure && !failure.ok) return failure;
+                }
+            }
+            return workflowResult ?? { ok: false, errorCode: 'continuation_unavailable', error: 'continuation_unavailable' };
+        }) satisfies NonNullable<ActionExecutorDeps['acquireWorkflowPlacement']>,
         /**
          * A Session placed on a managed target: the bound driver (and its runtime
          * lease) stays held for the Session's lifetime, because the target's

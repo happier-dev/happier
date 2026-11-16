@@ -305,6 +305,7 @@ export type CliActionDepsParams = Readonly<{
       projectCreationFailure?: (error: unknown) => import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1').SessionSpawnNewResultV1;
     }>;
   acquireSessionIsolationSandbox?: AcquireSessionIsolationSandbox;
+  acquireWorkflowPlacement?: ActionExecutorDeps['acquireWorkflowPlacement'];
   machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
   /** The CLI's explicit `--machine-id`; the one Machine an Account-owned read goes through when the host has no Session or daemon of its own. */
   explicitMachineId?: string;

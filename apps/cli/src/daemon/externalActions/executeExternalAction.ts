@@ -5,7 +5,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
 import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isWorkspaceSyncRelationshipWriteActionId, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isSessionAgentReadinessRootActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -421,6 +421,7 @@ async function executeExternalActionRequest(input: Readonly<{
   let releaseTokenAccountProjection: (() => void) | undefined;
   try {
   let decodedInput: unknown;
+  let decodedWorkflowPreparation: ActionExecutorContext['workflowPreparation'];
   let decodedTokenContentAccess: NonNullable<ReturnType<typeof openExternalActionRequestV2>>['apiTokenContentAccess'];
   let hasProtectedLogsOperands = false;
   let logsOperands: Pick<NonNullable<ReturnType<typeof openExternalActionRequestV2>>, 'resourceContinuation' | 'machineServiceLogsGeneration'> = {};
@@ -484,6 +485,7 @@ async function executeExternalActionRequest(input: Readonly<{
       return { kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope', requestId: request.requestId };
     }
     decodedInput = opened.input;
+    decodedWorkflowPreparation = opened.workflowPreparation;
     // Whole-Action transport encryption does not imply Account content custody.
     decodedTokenContentAccess = doesExternalActionConsumeRequesterAccountContentV1({ actionId: actionId.data,
       input: opened.input, target: binding.target })
@@ -503,6 +505,7 @@ async function executeExternalActionRequest(input: Readonly<{
   } else {
     diagnoseSessionInput('strict_envelope_open', 'plain_v1');
     decodedInput = envelope.data.input;
+    decodedWorkflowPreparation = envelope.data.workflowPreparation;
     logsOperands = envelope.data;
     hasProtectedLogsOperands = envelope.data.resourceContinuation !== undefined || envelope.data.machineServiceLogsGeneration !== undefined;
   }
@@ -977,7 +980,10 @@ async function executeExternalActionRequest(input: Readonly<{
     ...(executionAuthorization?.success
       ? {
           externalActionExecutionAuthorization: admittedAuthorization!,
+          ...(actionId.data === WORKFLOW_RUN_START_ACTION_ID_V1 && decodedWorkflowPreparation
+            ? { workflowPreparation: decodedWorkflowPreparation } : {}),
           ...(hasProtectedTokenContentAccess || hasProtectedLogsOperands || isSessionAgentReadinessRootActionIdV1(actionId.data) || actionId.data === 'projects.open'
+            || actionId.data === WORKFLOW_RUN_START_ACTION_ID_V1
             || actionId.data === 'machines.managed.acquire'
             || actionId.data === 'action.operations.cancel' || isProjectWorkspaceSyncPreparationActionV1(actionId.data)
             || isWorkspaceSyncRelationshipWriteActionId(actionId.data)

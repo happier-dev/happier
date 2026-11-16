@@ -174,6 +174,43 @@ function storedRootInvocation(snapshot: ReturnType<typeof runSnapshot>) {
 }
 
 describe('shared Account workflow run owner', () => {
+  it.each(['saved', 'catalog'] as const)('reviews %s cloud Workflow effects without preparing or admitting a controller workspace', async sourceKind => {
+    const cloudDefinition = validateWorkflowDefinition({ version: 1, defaults: definition.defaults,
+      blocks: [{ kind: 'action', id: 'command', actionId: 'machines.command.run',
+        input: { command: { kind: 'literal', value: 'echo reviewed' } } }, 'work'],
+    }).normalizedDefinition!;
+    const workspaceEffects: string[] = [];
+    const storageEffects: string[] = [];
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      storageEffects.push(operation.operation);
+      throw Object.assign(new Error('missing'), { code: 'run_not_found' });
+    } }), definitions: { get: async () => ({ definitionId: 'def-1',
+      revision: { headerVersion: 1, bodyVersion: 1 }, definition: cloudDefinition, metadata: { title: 'Cloud review' } }) },
+      readPluginWorkflows: () => [{ workflow: 'plugin:example.workflows/cloud', pluginId: 'example.workflows',
+        version: '1', title: 'Cloud review', definition: cloudDefinition }],
+      prepareWorkspace: async ({ projectTarget }) => {
+        workspaceEffects.push(projectTarget.machineId);
+        throw new Error('controller_workspace_must_not_be_prepared');
+      },
+    });
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId,
+      source: sourceKind === 'saved'
+        ? { kind: 'saved', definitionId: 'def-1', revision: { headerVersion: 1, bodyVersion: 1 } }
+        : { kind: 'catalog', workflow: 'plugin:example.workflows/cloud', pluginVersion: '1' } });
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', serverId: 'home',
+      externalActionTarget: { kind: 'machine', machineId: 'controller', project: { machineId: 'controller',
+        directory: '/repo', sessionPlacement: { kind: 'preset', homeId: 'home', presetId: 'preset' } } } };
+    const prepared = await owner.prepareStartApproval({ actionId: 'workflow.run.start', input, context }, {});
+    expect(prepared.children).toEqual([{ action: 'machines.command.run', role: 'command', input: { command: 'echo reviewed' } }]);
+    expect(workspaceEffects).toEqual([]);
+    expect(storageEffects).toEqual([]);
+    await expect(prepared.executeAdmittedAction!({ actionId: 'workflow.run.start', input, context,
+      execute: async () => { throw new Error('cloud_placement_must_not_launch_on_controller'); },
+    })).rejects.toMatchObject({ code: 'target_unavailable' });
+    expect(workspaceEffects).toEqual([]);
+    expect(storageEffects).toEqual([]);
+  });
+
   it('refuses lost-start rejoin with a different saved Session placement', async () => {
     const owner = createWorkflowAccountRunActionOwner(ownerDeps({ execute: async () => runSnapshot() }));
     const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: {

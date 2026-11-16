@@ -213,6 +213,8 @@ export type ManagedMachineExecutionOptions = Readonly<{
     runPolicyAction?: (machine: ManagedMachineFullV1, runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineFullV1>) => Promise<ManagedMachineFullV1>;
     /** Ordinary fresh Session admission retained only by its initiating host. */
     runAgentStart?: (input: Readonly<{ machine: ManagedMachineFullV1 }>) => Promise<void>;
+    /** Original admitted Workflow continuation on its ordinary enrolled Machine. */
+    runCreationContinuation?: (input: Readonly<{ machine: ManagedMachineFullV1 }>) => Promise<void>;
     runEnvironmentSetup?: (input: Readonly<{ machine: ManagedMachineFullV1; isCurrent(): Promise<boolean> }>) => Promise<ManagedMachineV1>;
     /** Content-free installed Account socket; every wake re-reads the signed row. */
     subscribeEnvironmentSetupChanges?: (callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
@@ -1199,12 +1201,14 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const operationId = options.context?.operationAcceptance?.operationId;
                 if (!operationId || (acquisition.agentStart && !options.runAgentStart)) throw new ManagedMachineControllerError('admission_unavailable');
                 const { agentStart, ...computeInput } = acquisition;
+                const hasCreationContinuation = Boolean(agentStart || options.runCreationContinuation);
+                const runCreationContinuation = options.runCreationContinuation ?? (agentStart ? options.runAgentStart : undefined);
                 let admittedExecutionOptions = options;
                 let openedRequiresEnrollmentRead = false;
                 const delegated = options.context?.externalActionExecutionAuthorization?.binding.managedAcquireDelegation === true;
                 const needsPresetPolicy = isManagedPresetAcquireInputV1(acquisition)
                     && (options.acquisitionMode === 'resource-bound' || delegated || acquisition.retention === undefined || acquisition.wakeOnAcceptedMessage === undefined);
-                if (needsPresetPolicy && !options.context?.originalActionEnvelope) throw new ManagedMachineControllerError('admission_unavailable');
+                if ((needsPresetPolicy || options.runCreationContinuation) && !options.context?.originalActionEnvelope) throw new ManagedMachineControllerError('admission_unavailable');
                 const admission = await executeManagedMachineAcquire({ host: 'native',
                     admit: async () => {
                         const admit = async (presetPolicy?: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
@@ -1215,10 +1219,11 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                                 } });
                             }
                             const admitted = await client.post('/v1/machines/managed/controller/admit', ManagedAdmissionInputV1Schema.parse({
-                                input: computeInput, requestId: options.requestId, continuationPresent: Boolean(agentStart),
+                                input: computeInput, requestId: options.requestId, continuationPresent: hasCreationContinuation,
                                 ...(options.acquisitionMode === 'resource-bound' ? { acquisitionMode: 'resource-bound',
                                     ...(options.reuseIdle ? { reuseIdle: true } : {}) } : {}),
-                                ...(presetPolicy ? { presetPolicy, originalActionEnvelope: options.context?.originalActionEnvelope } : {}),
+                                ...(presetPolicy ? { presetPolicy } : {}),
+                                ...(presetPolicy || options.runCreationContinuation ? { originalActionEnvelope: options.context?.originalActionEnvelope } : {}),
                             }), ManagedAdmissionOutputV1Schema);
                             client.assertConnection(admitted.machine);
                             return await openManagedPresetAdmissionWithHydrator({ input, acquisition, admission: admitted,
@@ -1236,7 +1241,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         const opaqueMachine = hydrator.structural(machine);
                         admittedExecutionOptions = isManagedOpaquePresetMachineV1(opaqueMachine)
                             ? withManagedOpaquePresetReview(options, { machine, opaqueMachine,
-                                parent: { actionId: action, input: acquisition }, requestId: options.requestId })
+                                parent: { actionId: action, input: acquisition },
+                                requestId: options.context?.actionRequestId ?? options.requestId })
                             : options;
                         return machine;
                     },
@@ -1249,7 +1255,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 });
                 const accepted: ManagedAcceptedV1 = { managedId: admission.machine.id, operation: { operationId } };
                 if (options.acquisitionMode === 'resource-bound') return accepted;
-                let enrolled = admission.machine.machineSetup || agentStart || openedRequiresEnrollmentRead
+                let enrolled = admission.machine.machineSetup || hasCreationContinuation || openedRequiresEnrollmentRead
                     ? await client.row('current', client.correlation(admission.machine)) : admission.machine;
                 client.assertConnection(enrolled);
                 if (enrolled.machineSetup && !['succeeded', 'skipped'].includes(enrolled.machineSetup.state)) {
@@ -1260,14 +1266,14 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                             isCurrent: async () => !options.signal?.aborted }));
                     }
                     catch (error) {
-                        if (!agentStart || options.signal?.aborted) throw error;
+                        if (!hasCreationContinuation || options.signal?.aborted) throw error;
                         const current = await client.readCurrent(joined);
                         if (!current) throw new ManagedMachineControllerError('intent_changed');
                         enrolled = current;
                     }
                     client.assertConnection(enrolled);
                     if (!enrolled.machineSetup || !['succeeded', 'skipped'].includes(enrolled.machineSetup.state)) {
-                        if (!agentStart || !options.subscribeEnvironmentSetupChanges) throw new ManagedMachineControllerError('machine_setup_setup_failed');
+                        if (!hasCreationContinuation || !options.subscribeEnvironmentSetupChanges) throw new ManagedMachineControllerError('machine_setup_setup_failed');
                         options.context?.operationProgress?.update({ phase: 'machineSetup', label: 'Waiting for environment setup recovery' });
                         let dirty = true;
                         let failed = false;
@@ -1300,11 +1306,11 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         }
                     }
                 }
-                if (agentStart && options.runAgentStart) {
+                if (runCreationContinuation) {
                     enrolled = await client.row('current', client.correlation(admission.machine));
                     client.assertConnection(enrolled);
                     if (!enrolled.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
-                    await options.runAgentStart({ machine: enrolled });
+                    await runCreationContinuation({ machine: enrolled });
                 }
                 return accepted;
             }

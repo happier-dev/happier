@@ -4,6 +4,8 @@ import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/act
 import { isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { MachinePresetActionInputSchemasV1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
+import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
     from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
@@ -11,7 +13,7 @@ import { readAdmittedManagedCreationChildInTx, hasAdmittedManagedCreationRootInT
 import { readTeamCredentialActionHttpPurposeV1 } from '@happier-dev/protocol/teams/credentials/actionHttpPurposeV1';
 import { TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialDirectMaterialRouteParamsV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { isSessionStopChildRootV1, isSessionStopChildEffectV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { ExternalActionManagedControlAdmissionV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionManagedControlAdmissionV1Schema, isExternalActionRequestVersionAllowedForAccountModeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { personalSavedSecretResourceMutationActionIdV1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionIdsV1';
 import { PROJECT_READINESS_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import { isMachineSetupCombinedRunHttpPurpose } from '@/app/auth/externalActionMachineSetupWorkflowPurpose';
@@ -87,7 +89,7 @@ import { projectApiTokenSessionSpawnAdmissionV1, type ApiTokenSessionSpawnAdmiss
 import { resolveCredentialActionAdmissionV1, computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MachineSetupResolveInputV1Schema,
     MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, managedMachineActionEndpointPathV1, ManagedControllerReportV1Schema, ManagedControllerIntentReportV1Schema, ManagedControllerCredentialDeliveryReportV1Schema, isMachineSetupPlanRpcChildV1, readMachineSetupPlanChildInputV1, type ManagedControllerReportV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, ManagedResourceTargetV1Schema, managedMachineActionEndpointPathV1, ManagedControllerReportV1Schema, ManagedControllerIntentReportV1Schema, ManagedControllerCredentialDeliveryReportV1Schema, isMachineSetupPlanRpcChildV1, readMachineSetupPlanChildInputV1, type ManagedControllerReportV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isManagedEnrollmentPolicyChildActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupPlanOrApplyActionIdV1, isManagedEnrollmentRecoveryChildV1, isManagedPowerOrDeleteActionIdV1, readSessionAgentReadinessRoleV1, SESSION_AGENT_READINESS_ROOT_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { type AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { ActionOperationGetV2RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
@@ -114,7 +116,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { requireActiveManagedResizeInTx, readManagedIntentReportAuthority } from '@/app/machines/managed/managedRows';
-import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, MANAGED_BOUND_SETUP_REPORT_ACTION_IDS_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
@@ -1294,14 +1296,16 @@ function readDeploymentPrepareSessionHttpPurpose(binding: ExternalActionExecutio
     return isAccountEncryptionCurrentnessHttpRead(proof) || sessionRead ? { sessionId: target.sessionId } : null;
 }
 
-/** The installed issuer attests the exact child operand beneath its admitted Session root. */
-async function isReviewedSessionAcquirePurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
+/** The installed issuer attests the exact placement child beneath its admitted creation root. */
+async function isReviewedManagedAcquirePurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, proof: ExternalActionExecutionRequestProof): Promise<boolean> {
-    if (binding.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 || effectActionId !== MANAGED_ACQUIRE_ACTION_ID_V1
+    const session = binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
+    const workflow = binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1;
+    if ((!session && !workflow) || effectActionId !== MANAGED_ACQUIRE_ACTION_ID_V1
         || proof.method.toUpperCase() !== 'POST'
         || !/^\/v1\/machines\/managed\/controller\/[^/]+$/u.test(proof.path)
         || proof.reviewedChild?.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1
-        || proof.reviewedChild.role !== 'acquire-session-sandbox') return false;
+        || proof.reviewedChild.role !== (session ? 'acquire-session-sandbox' : 'acquire-workflow-placement')) return false;
     if (proof.path !== '/v1/machines/managed/controller/admit') {
         const body = proof.body !== null && typeof proof.body === 'object' && !Array.isArray(proof.body)
             ? proof.body as Readonly<Record<string, unknown>> : null;
@@ -1315,18 +1319,29 @@ async function isReviewedSessionAcquirePurpose(binding: ExternalActionExecutionA
     const parsed = ManagedAdmissionInputV1Schema.safeParse(proof.body);
     if (!parsed.success) return false;
     const { input, originalActionEnvelope: root } = parsed.data;
-    return input.selection.kind === 'preset' && input.selection.homeId === binding.serverIdentityId
-        && input.controller?.machineId === binding.machineId && input.controller.installationId === binding.installationId
-        && parsed.data.acquisitionMode === 'resource-bound'
-        && parsed.data.continuationPresent === false && root !== undefined
-        && isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId, machineId: binding.machineId, envelope: root })
-        && proof.reviewedChild.inputDigest === computeActionInputApprovalDigestV1(MANAGED_ACQUIRE_ACTION_ID_V1, input);
+    if (input.selection.kind !== 'preset' || input.selection.homeId !== binding.serverIdentityId
+        || input.controller?.machineId !== binding.machineId || input.controller.installationId !== binding.installationId
+        || root === undefined
+        || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId, machineId: binding.machineId, envelope: root })
+        || proof.reviewedChild.inputDigest !== computeActionInputApprovalDigestV1(MANAGED_ACQUIRE_ACTION_ID_V1, input)) return false;
+    if (session) return parsed.data.acquisitionMode === 'resource-bound' && parsed.data.continuationPresent === false;
+    const placement = binding.target.kind === 'machine' ? binding.target.project?.sessionPlacement : undefined;
+    if (parsed.data.acquisitionMode !== undefined || !parsed.data.continuationPresent
+        || placement?.kind !== 'preset' || placement.homeId !== input.selection.homeId || placement.presetId !== input.selection.id
+        || binding.accountEncryptionMode === undefined || !isExternalActionRequestVersionAllowedForAccountModeV1({
+            accountEncryptionMode: binding.accountEncryptionMode, envelopeVersion: root.v,
+        })) return false;
+    // Encrypted operands are opened and compared once by the installed host.
+    // Plain roots also expose their exact retained Run and bound operand here.
+    return root.v === 2 || root.input !== null && typeof root.input === 'object' && !Array.isArray(root.input)
+        && root.input.runId === parsed.data.requestId
+        && sameManagedInput(root.workflowPreparation?.acquisition, input);
 }
 
 /** One signed binding decides sibling eligibility and the credential ceiling together. */
 async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, target: ExternalActionTargetV1, proof: ExternalActionExecutionRequestProof) {
-    const reviewedSessionAcquirePurpose = await isReviewedSessionAcquirePurpose(binding, effectActionId, proof);
+    const reviewedManagedAcquirePurpose = await isReviewedManagedAcquirePurpose(binding, effectActionId, proof);
     const domainPurpose = readExternalActionDeploymentDomainPurpose(binding, effectActionId, proof);
     const teardownDomainContinuation = binding.actionId === 'deployments.teardown' && domainPurpose?.kind === 'transition';
     const membershipDomainContinuation = isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
@@ -1392,18 +1407,18 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && isDeploymentBackupConfigureNativeAdmissionV1(binding.deploymentNativeAdmission);
     const crossesEffectFamily = configureBindings || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
-        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedSessionAcquirePurpose;
+        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
             && (isContributedActionRoot(binding.actionId)
                 || !('authentication' in binding) && binding.actionId === 'approval.request.create'
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = sibling.docDecision || templateDeployEffect || sibling.deploymentRead || movePreparationEffect
-        || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedSessionAcquirePurpose
+        || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose
         || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential,
-        createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild, reviewedSessionAcquirePurpose,
+        createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild, reviewedManagedAcquirePurpose,
         reviewedSetupRead, candidatePublication, prepareSession, deploymentWorkspaceRead, deploymentReferenceRead, sibling,
         nativeTransition: readDeploymentNativeTransition(binding, effectActionId, proof),
         domainPurpose };
@@ -3345,6 +3360,18 @@ function isSessionStateFieldActionHttpPurpose(verified: VerifiedExternalActionEx
         && SessionMetadataTuplePatchV1Schema.safeParse(proof.body).success;
 }
 
+/** The receiving guest owner admits the exact retained row after this signed relay framing. */
+function isManagedCreationChildHttpPurpose(verified: VerifiedSignedChildRequest,
+    proof: ExternalActionExecutionRequestProof): boolean {
+    if (proof.method.toUpperCase() !== 'POST' || verified.effectActionId !== verified.binding.actionId) return false;
+    const continuation = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
+    return continuation.success && continuation.data.managedContinuation !== undefined
+        && MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1.some(action =>
+            isManagedCreationContinuationRootV1(verified.binding.actionId, action)
+            && (proof.path === bindExternalActionExecutionAuthorizationHttpPathV1(action)
+                || proof.path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${action}`));
+}
+
 /** The Run Action owner spends its storage phases without acquiring a worker claim. */
 function isWorkflowRunActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
@@ -3356,6 +3383,7 @@ function isWorkflowRunActionHttpPurpose(verified: VerifiedSignedChildRequest,
                 || isDiscussionActionHttpPreparation(verified, proof)
                 || proof.path === '/v1/features/authenticated');
     }
+    if (verified.binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1 && isManagedCreationChildHttpPurpose(verified, proof)) return true;
     const reads = ['get', 'run-key.census', 'run-key.commit'];
     const invocationReads = [...reads, 'invocations.list', 'invocations.get', 'invocations.current'];
     const purposes: Readonly<Record<string, readonly string[]>> = {
@@ -3676,6 +3704,10 @@ export async function verifyExternalActionDomainExecutionRequest(
         || verified.signedChildPurpose.sibling.sectionArchive
         || verified.signedChildPurpose.sibling.stopChild) {
         if (!await isSessionSectionHttpPurpose(verified, proof)) return refuse('session_section_purpose');
+    } else if (verified.signedChildPurpose.reviewedManagedAcquirePurpose) {
+        // The common signed-child owner binds new admission, then consumes the
+        // retained creation's root/input/controller correspondence. The route
+        // owns current submission and settlement; preset access is not re-run.
     } else if (verified.binding.actionId === 'workflow.trigger.run_now') {
         const match = /^\/v3\/automations\/([^/]+)\/run-now$/u.exec(proof.path);
         if (proof.method.toUpperCase() !== 'POST' || proof.body !== undefined || !match
@@ -3720,7 +3752,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         && verified.effectActionId === verified.binding.actionId
         && proof.method.toUpperCase() === 'POST'
         && proof.path.split('?')[0] === managedMachineActionEndpointPathV1('machines.managed.get')) {
-        const request = ManagedMachineActionInputSchemasV1['machines.managed.get'].safeParse(proof.body);
+        const request = ManagedResourceTargetV1Schema.safeParse(proof.body);
         if (!request.success || request.data.homeId !== verified.binding.serverIdentityId
             || request.data.managedId !== verified.binding.managedContinuation.managedId) return refuse('managed_enrollment_get_purpose');
     } else if (!managedRoot.success && isMachineConnectorSecretGrantHttpPurpose(verified.binding, verified.effectActionId, proof)) {
@@ -3741,10 +3773,6 @@ export async function verifyExternalActionDomainExecutionRequest(
                 controllerMachineId: verified.binding.machineId, controllerInstallationId: verified.binding.installationId },
         }, select: { id: true } });
         if (!session) return refuse('managed_bound_session_setup');
-    } else if (verified.signedChildPurpose.reviewedSessionAcquirePurpose) {
-        // The common signed-child owner binds new admission, then consumes the
-        // retained creation's root/input/controller correspondence. The route
-        // owns current submission and settlement; preset access is not re-run.
     } else if (managedRoot.success) {
         const path = proof.path.split('?')[0];
         const method = proof.method.toUpperCase();
@@ -3789,12 +3817,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         // A retained controller may execute only the creator's reviewed revision.
         if (directPurpose && isManagedCreationMutationActionIdV1(managedRoot.data)
             && (!recovery || !sameManagedInput(body, recovery.input))) return refuse('managed_direct_revision');
-        const childPurpose = method === 'POST'
-            && MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1.some(action =>
-                (managedRoot.data === 'machines.managed.acquire' || isManagedEnrollmentRecoveryChildV1(managedRoot.data, action)) && (
-                path === bindExternalActionExecutionAuthorizationHttpPathV1(action)
-                || path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${action}`))
-            && continuation.success && continuation.data.managedContinuation !== undefined;
+        const childPurpose = isManagedCreationChildHttpPurpose(verified, proof);
         const setupPurpose = method === 'POST' && (managedRoot.data === 'machines.setup.apply'
             && ['/v1/machines/setup/resolve', '/v1/machines/setup/report'].includes(path)
             || managedRoot.data === 'machines.setup.plan' && path === '/v1/machines/setup/resolve');

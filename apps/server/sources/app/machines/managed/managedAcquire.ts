@@ -24,6 +24,7 @@ import { hasMachinePresetAcquireCapacityInTx, resolveMachinePresetForAcquireInTx
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
+import type { ExternalActionRetainedWorkflowRootV1 } from '@happier-dev/protocol/actions/externalActionEncryption';
 
 /** Admission evidence comes from the write owner, never an absent-row read. */
 export class ExternalActionAdmissionUnexpectedError extends Error {
@@ -54,6 +55,8 @@ export async function admitManagedAcquire(params: Readonly<{
     managedAcquireDelegation?: true;
     authentication?: TeamOperationAuthenticationContext;
     requestEnvelopeDigest: string;
+    /** Original transport, derived by the route from its verified Workflow root. */
+    workflowRoot?: ExternalActionRetainedWorkflowRootV1;
     input: ManagedAdmissionInputV1;
 }>): Promise<ManagedAcquireAdmissionResult> {
     let transactionStarted = false;
@@ -65,10 +68,11 @@ export async function admitManagedAcquire(params: Readonly<{
             throw new ManagedMachineError('invalid_request');
         }
         if (!review.controller && params.custodianAccountId !== params.requesterAccountId) throw new ManagedMachineError('permission_denied');
-        // Dedupe includes the private continuation without retaining its prompt,
-        // attachments, or startup instructions in a Home-visible resource row.
+        // The Workflow continuation retains its original transport for private
+        // retry comparison; an E2EE transport remains ciphertext at Home.
         const admittedInputIdentity = { computeInput: projectManagedAcquisitionComputeInput(request.input),
-            continuation: request.continuationPresent ? { requestEnvelopeDigest: params.requestEnvelopeDigest } : null,
+            continuation: request.continuationPresent ? { requestEnvelopeDigest: params.requestEnvelopeDigest,
+                ...(params.workflowRoot ? { workflowRoot: params.workflowRoot } : {}) } : null,
             ...(request.acquisitionMode ? { acquisitionMode: request.acquisitionMode } : {}),
             ...(request.reuseIdle ? { reuseIdle: true } : {}) };
         const existingAdmission = async (tx: Tx) => {

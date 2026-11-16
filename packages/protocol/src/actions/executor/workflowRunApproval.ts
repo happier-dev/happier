@@ -5,7 +5,9 @@ import type { WorkflowAcceptedSnapshotV1 } from '../../workflows/workflowDefinit
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
 /** Review the materializer's effective operands, never a second authored-input binding. */
-export async function prepareWorkflowRunApprovalPreview(snapshot: WorkflowAcceptedSnapshotV1,
+export async function prepareWorkflowRunApprovalPreview(snapshot: {
+  materializedLeaves: readonly WorkflowAcceptedSnapshotV1['materializedLeaves'][number][];
+},
   deps: Pick<ActionExecutorDeps, 'homeDomainAction'>, context: ActionExecutorContext) {
   const selections = new Map<string | undefined, TeamCredentialSourceSelection['resources'][number][]>();
   for (const leaf of snapshot.materializedLeaves) {

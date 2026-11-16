@@ -194,13 +194,17 @@ describe('managed continuation through the ordinary public Action transport', ()
         { actionId: 'session.spawn_new', mode: 'e2ee', foreign: true },
         { actionId: 'machines.setup.plan', mode: 'e2ee', foreign: false },
         { actionId: 'machines.setup.plan', mode: 'plain', foreign: false },
-    ] as const)('decrypts a fresh $actionId child on the guest with $mode Account custody (foreign=$foreign)', async ({ actionId, mode, foreign }) => {
+        { actionId: 'machines.setup.plan', mode: 'e2ee', foreign: false, workflowRoot: true },
+        { actionId: 'machines.setup.plan', mode: 'plain', foreign: false, workflowRoot: true },
+    ] as const)('decrypts a fresh $actionId child on the guest with $mode Account custody (foreign=$foreign, Workflow=$workflowRoot)', async testCase => {
+        const { actionId, mode, foreign } = testCase;
         const currentness = await createRequesterCurrentnessSocketHarness();
         onTestFinished(() => currentness.close());
         const secret = new Uint8Array(32).fill(61);
         const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`,
             encryption: mode === 'plain' ? null : { type: 'legacy' as const, secret } };
-        const parent = { ...root, binding: { ...root.binding, custodianAccountId: foreign ? 'company' : 'account', accountEncryptionMode: mode } };
+        const parent = { ...root, binding: { ...root.binding, custodianAccountId: foreign ? 'company' : 'account', accountEncryptionMode: mode,
+            ...('workflowRoot' in testCase ? { actionId: 'workflow.run.start', requestId: 'workflow-request' } : {}) } };
         const ownMaterial = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };
         const guest = new ApiMachineClient(credentials.token, { id: 'guest', encryptionMode: 'plain', metadataVersion: 0,
             daemonState: null, daemonStateVersion: 0, metadata: { host: 'worker', platform: 'linux', happyCliVersion: 'test',
@@ -245,6 +249,7 @@ describe('managed continuation through the ordinary public Action transport', ()
             const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, token: 'home-child-root', binding: {
                 ...root.binding, accountEncryptionMode: mode, actionId, machineId: 'guest', installationId: 'guest-installation', target: carrier.envelope.target,
+                requestId: carrier.envelope.requestId,
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(carrier.envelope),
                 managedContinuation: { ...continuation, controller: { machineId: 'controller', installationId: 'installation' },
                     acquireRequestEnvelopeDigest: parent.binding.requestEnvelopeDigest } } });

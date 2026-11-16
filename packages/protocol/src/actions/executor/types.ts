@@ -872,6 +872,8 @@ export type ActionExecutorContext = Readonly<{
   externalActionExecutionAuthorization?: ExternalActionExecutionAuthorizationV1;
   /** Exact admitted public envelope retained locally for closed Project SOURCE routing. */
   originalActionEnvelope?: import('../externalActionApi.js').ExternalActionRequestEnvelope;
+  /** Host-captured authenticated Workflow operand; never accepted from public Action context. */
+  workflowPreparation?: import('../externalActionApi.js').ExternalActionWorkflowPreparationV1;
   /** Process-local Machine signer; capture signs only the canonical stored approval input. */
   signExternalActionApprovalInput?: (input: Readonly<{
     actionId: ActionId; input: unknown; target: ExternalActionTargetV1; authorization: ExternalActionExecutionAuthorizationV1;
@@ -3440,6 +3442,13 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<MachineReferenceCensusV1>;
+
+  /** Admitted Workflow placement continues through the incumbent enrolled creation owner. */
+  acquireWorkflowPlacement?: (request: Readonly<{
+    start: import('../../workflows/actionsV1.js').WorkflowRunStartRequestV1;
+    project: import('../../workflows/workflowWorkspaceV1.js').WorkflowProjectTargetV1;
+    context: ActionExecutorContext;
+  }>) => Promise<ActionExecuteResult>;
 
   managedMachineAction?: (args: Readonly<{
     actionId: ManagedMachineActionIdV1;

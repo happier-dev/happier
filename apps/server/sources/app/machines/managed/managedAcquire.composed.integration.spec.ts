@@ -108,7 +108,7 @@ describe("managed acquisition durable authority", () => {
                 actionId: 'workflow.run.start', requestId: 'original-workflow-request', target },
             envelope: { v: 1, requestId: 'original-workflow-request', target,
                 input: { runId: 'retained-workflow-run', source: { kind: 'saved', definitionId: 'definition', revision: 1 } },
-                workflowPreparation: { acquisition: { selection: { kind: 'preset', homeId, id: 'original-preset', revision: 7 },
+                workflowPreparation: { project: target.project, acquisition: { selection: { kind: 'preset', homeId, id: 'original-preset', revision: 7 },
                     controller: { machineId: controller.id, installationId: controller.installationId! } } } },
         };
         // Database boundary fixture represents Home's retained, not yet enrolled allocation.

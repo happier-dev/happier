@@ -1,6 +1,6 @@
 import axios from '@/api/client/credentialAxios';
 import { ManagedGetOutputV1Schema, ManagedListOutputV1Schema, managedMachineActionEndpointPathV1,
-  unwrapManagedMachineReadV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+  unwrapManagedMachineReadV1, type ManagedMachineReadV1, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineFullV1, ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ManagedErrorV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineControllerError } from './controllerErrors';
@@ -10,14 +10,15 @@ import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protoc
 import { createManagedPresetHydrator } from './presetHydration';
 
 export type ReadManagedMachineInput = Readonly<{
-  credentials?: StoredCredentials; serverHttpBaseUrl: string; homeId: string; managedId: string; signal?: AbortSignal;
+  credentials?: StoredCredentials; serverHttpBaseUrl: string; signal?: AbortSignal;
   authorization?: ExternalActionExecutionAuthorizationV1; effectActionId?: string;
-}>;
+}> & ManagedMachineActionInputV1<'machines.managed.get'>;
 
 /** Ordinary Account read: child consumers do not need controller custody or reachability. */
-export async function readManagedMachineRead(input: ReadManagedMachineInput): Promise<ManagedMachineReadV1> {
+export async function readManagedMachineRead(input: ReadManagedMachineInput): Promise<ReturnType<typeof ManagedGetOutputV1Schema.parse>> {
   const path = managedMachineActionEndpointPathV1('machines.managed.get');
-  const body = { homeId: input.homeId, managedId: input.managedId };
+  const { credentials: _credentials, serverHttpBaseUrl: _url, signal: _signal,
+    authorization: _authorization, effectActionId: _effect, ...body } = input;
   const http = input.authorization?.requesterHttpProjection;
   const requesterHeaders = http && http.serverIdentityId === input.homeId && await http.isCurrent()
     ? await http.createRequestHeaders({ effectActionId: input.effectActionId ?? input.authorization!.binding.actionId,

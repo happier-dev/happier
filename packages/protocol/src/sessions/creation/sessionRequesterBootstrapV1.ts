@@ -33,7 +33,7 @@ import { isProjectWorkspaceSyncPreparationActionV1 } from '../../actions/project
 import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../deployments/deploymentChildRpcV1.js';
 import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1, isManagedEnrollmentRecoveryChildV1, isManagedCreationMutationActionIdV1 } from '../../machines/managed/actionIdsV1.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import { ActionIdSchema } from '../../actions/actionIds.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
 import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../../local/services/actionIdsV1.js';
@@ -297,8 +297,7 @@ export function sealManagedCreationActionCodecV1(input: SealManagedCreationActio
 function isManagedCreationCodecParent(root: ExternalActionExecutionAuthorizationV1['binding'], actionId: string) {
   return 'authentication' in root && (root.accountEncryptionMode === 'plain' || root.accountEncryptionMode === 'e2ee')
     && root.target.kind === 'machine' && root.target.machineId === root.machineId
-    && MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1.some(id => id === actionId)
-    && (root.actionId === 'machines.managed.acquire' || isManagedEnrollmentRecoveryChildV1(root.actionId, actionId));
+    && isManagedCreationContinuationRootV1(root.actionId, actionId);
 }
 
 /** Called only after Home verifies the child root; no Account credentials are recovered. */

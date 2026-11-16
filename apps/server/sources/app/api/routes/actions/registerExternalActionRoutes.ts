@@ -46,7 +46,8 @@ import { MachineSetupApplyInputV1Schema, MachineSetupPlanInputV1Schema, ManagedM
 import { projectManagedMachineSetupCreationSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import { computeActionInputApprovalDigestV1, resolveCredentialActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
-import { ActionIdSchema, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { getActionSpec, isPluginProvenanceOnlyActionId, PublicActionIdSchema, SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SessionRequesterHandoffBootstrapRpcRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -413,7 +414,7 @@ async function readHandoffPreflight(request: FastifyRequest, actionId: string,
 /** Both admitted hosts consume the same retained child recipe; Home never opens sealed input. */
 function requireManagedCreationChild(row: StoredManagedMachine, actionId: string,
     body: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>, parent: Readonly<{
-        accountId: string; custodianAccountId: string; requestId: string; requestEnvelopeDigest: string;
+        accountId: string; custodianAccountId: string; requestId: string; requestEnvelopeDigest: string; actionId?: string;
     }>, enrollmentPolicy?: ManagedCreationEnrollmentPolicy): boolean {
     const acquisition = readManagedAdmissionState(row.admittedInput);
     const policyChild = isManagedEnrollmentPolicyChildActionIdV1(actionId);
@@ -429,9 +430,15 @@ function requireManagedCreationChild(row: StoredManagedMachine, actionId: string
     if (row.custodianAccountId !== parent.custodianAccountId || readManagedEnrollmentAccountId(row) !== parent.accountId
         || row.enrolledMachineId !== body.machineId || !hasBoundManagedLifecycle(row) || row.desired === 'delete'
         || digest !== parent.requestEnvelopeDigest
-        || actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && creationSetup?.state !== undefined
+        || (actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || actionId === WORKFLOW_RUN_START_ACTION_ID_V1) && creationSetup?.state !== undefined
             && !['succeeded', 'skipped'].includes(creationSetup.state)
         || setupAction && !creationSetup?.runnable) throw new ManagedMachineError('request_conflict');
+    if (parent.actionId === WORKFLOW_RUN_START_ACTION_ID_V1) {
+        const original = acquisition.continuation?.workflowRoot;
+        if (!original || original.binding.accountId !== parent.accountId || original.binding.requestId !== parent.requestId) {
+            throw new ManagedMachineError('request_conflict');
+        }
+    }
     if ((administrator || isolation) && body.envelope.requestId !== parent.requestId) throw new ManagedMachineError('request_conflict');
     if (administrator && enrollmentPolicy?.kind !== 'sealed') {
         const enrollmentIdentity = enrollmentPolicy?.enrollmentIdentity ?? projectManagedMachine(row).enrollmentIdentity;
@@ -544,8 +551,7 @@ async function readManagedGuestContinuation(
     const mode = account ? resolveEffectiveAccountEncryptionModeFromAccountRow(account) : null;
     if (mode?.status !== 'ready' || !isExternalActionRequestVersionAllowedForAccountModeV1({
         accountEncryptionMode: mode.mode, envelopeVersion: body.envelope.v })) return null;
-    if (!root || !(root.actionId === 'machines.managed.acquire'
-        || isManagedEnrollmentRecoveryChildV1(root.actionId, actionId))
+    if (!root || !isManagedCreationContinuationRootV1(root.actionId, actionId)
         || request.externalActionEffectActionId !== root.actionId
         || root.accountId !== request.userId
         || root.actionId === 'machines.managed.acquire' && root.requestId !== body.managedContinuation.creationRequestId

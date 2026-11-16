@@ -11316,6 +11316,212 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it.each(['plain', 'e2ee'] as const)('retains the original %s Workflow transport when its reviewed enrolled Acquire is admitted', async mode => {
+        const { fixture, homeId, controller, input: oneOff } = await createManagedNativeAuthFixture();
+        const { storeOpaquePresetLaunch } = await import('@/app/machines/managed/managedRows');
+        const { ManagedAcquireInputV1Schema } = await import('@happier-dev/protocol/machines/managed/actionsV1');
+        const { sealManagedMachinePresetContentV1, replaceManagedMachinePresetLaunchNameV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+        const { readMachinePresetRecipientCensus } = await import('@/app/machines/managed/machinePresetService');
+        const { createSignedAccountContentBinding } = await import('@/testkit/accountEncryption');
+        const { ExternalActionRetainedWorkflowRootV1Schema, openExternalActionRequestV2 } = await import('@happier-dev/protocol/actions/externalActionEncryption');
+        const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(31) };
+        if (mode === 'e2ee') {
+            const contentPublicKey = tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey;
+            await db.account.update({ where: { id: fixture.account.id }, data: {
+                encryptionMode: mode, ...createSignedAccountContentBinding(contentPublicKey) } });
+            const { sealSessionDataKeyBundleV0 } = await import('@happier-dev/protocol');
+            const machineKey = createMachineDataEncryptionKeyV1({ material, dataKeyPublicKey: contentPublicKey, randomBytes: tweetnacl.randomBytes });
+            await db.machine.update({ where: { id: controller.machineId }, data: {
+                metadata: encodeBase64(await sealSessionDataKeyBundleV0(decodePlainMachineStoredContent(fixture.machine.metadata), machineKey.encryptionKey)),
+                dataEncryptionKey: new Uint8Array(machineKey.dataEncryptionKey) } });
+        }
+        const presetId = crypto.randomUUID();
+        const census = await readMachinePresetRecipientCensus({ accountId: fixture.account.id,
+            input: { homeId, owner: { kind: 'account', accountId: fixture.account.id }, controller } });
+        if (census.kind !== 'ready') throw new Error('workflow_preset_recipient_census_required');
+        const presetContent = sealManagedMachinePresetContentV1({ presetId, mode,
+            content: { v: 1, name: 'Workflow guest', launch: oneOff.selection.launch },
+            recipientCensus: census.recipients, randomBytes: tweetnacl.randomBytes });
+        const preset = await db.managedMachinePreset.create({ data: { id: presetId, homeId, custodianAccountId: fixture.account.id,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            name: '', launch: storeOpaquePresetLaunch({ contentEncryptionMode: mode, ...presetContent }) } });
+        const acquisition = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId,
+            id: preset.id, revision: preset.revision }, controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+        const runId = crypto.randomUUID();
+        const actionId = 'workflow.run.start';
+        const { WorkflowRunStartRequestV1Schema } = await import('@happier-dev/protocol/workflows/actionsV1');
+        const rootInput = WorkflowRunStartRequestV1Schema.parse({ runId,
+            source: { kind: 'saved', definitionId: 'workflow', revision: { headerVersion: 1, bodyVersion: 1 } } });
+        const target = { kind: 'machine' as const, machineId: controller.machineId,
+            project: { machineId: controller.machineId, directory: '/workspace',
+                sessionPlacement: { kind: 'preset' as const, homeId, presetId: preset.id } } };
+        const plainEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(), target,
+            input: rootInput, workflowPreparation: { project: target.project, acquisition } });
+        const envelope = mode === 'plain' ? plainEnvelope : sealExternalActionRequestV2({
+            binding: { serverIdentityId: homeId, accountId: fixture.account.id,
+                authentication: { kind: 'account', tokenEpoch: fixture.account.tokenEpoch }, actionId,
+                requestId: plainEnvelope.requestId, target }, input: rootInput, workflowPreparation: { project: target.project, acquisition }, material,
+            randomBytes: tweetnacl.randomBytes, projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const guestDispatches: Parameters<ExternalActionDaemonDispatcher>[0][] = [];
+        const { app } = await createApp(fixture.team.id, false, undefined, async request => {
+            guestDispatches.push(request);
+            const execution = { ok: false as const, errorCode: 'target_unavailable', error: 'guest unavailable' };
+            if (request.envelope.v === 2) {
+                const binding = { serverIdentityId: homeId, accountId: fixture.account.id,
+                    authentication: { kind: 'account' as const, tokenEpoch: fixture.account.tokenEpoch }, actionId,
+                    requestId: request.envelope.requestId, target: request.envelope.target! };
+                const opened = openExternalActionRequestV2({ envelope: request.envelope, binding, material,
+                    projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+                expect(opened).not.toBeNull();
+                expect(opened?.input).toMatchObject({ ...rootInput, managedCreation: { homeId, controller } });
+                return { kind: 'response', prepared: prepareExternalActionResponseV2({ binding, request: request.envelope,
+                    execution, executedMachineId: request.envelope.target!.kind === 'machine' ? request.envelope.target!.machineId : '',
+                    material, randomBytes: tweetnacl.randomBytes }) };
+            }
+            return { kind: 'response', prepared: prepareExternalActionResponseEnvelopeV1({ v: 1, actionId,
+                requestId: request.envelope.requestId, execution }) };
+        }, false, registerManagedMachineRoutes);
+        const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+        try {
+            const issue = (root: typeof envelope) => app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId, envelope: root } });
+            if (mode === 'e2ee') {
+                const refused = await issue(plainEnvelope);
+                expect(refused.statusCode, refused.body).toBe(400);
+                expect(await db.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: { homeId, admittedActionRequestId: runId } } })).toBeNull();
+            }
+            const minted = await issue(envelope);
+            expect(minted.statusCode, minted.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            authorizationRequests.set(authorization.token, { target: authorization.binding.target,
+                installationId: controller.installationId, requestId: envelope.requestId });
+            const projected = await projectExternalActionRequesterHttpAuthorization({ authorization,
+                serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: origin, target,
+                installationId: controller.installationId, privateKey: fixture.keyPair.secretKey, isCurrent: async () => true });
+            if (!projected) throw new Error('workflow_acquire_http_projection_required');
+            const result = await invokeHostReviewedChildV1({ parent: { actionId, input: rootInput },
+                context: { surface: 'cli', serverId: homeId, runtimeAccountId: fixture.account.id,
+                    externalActionTarget: target, externalActionExecutionAuthorization: projected },
+                child: { action: 'machines.managed.acquire', role: 'acquire-workflow-placement', input: acquisition },
+                admittedReview: { action: 'machines.managed.acquire', role: 'acquire-workflow-placement', surface: 'cli' },
+                execute: async (_input, context) => {
+                    const body = { input: acquisition, requestId: runId, continuationPresent: true,
+                        presetPolicy: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }, originalActionEnvelope: envelope };
+                    const path = '/v1/machines/managed/controller/admit';
+                    const headers = await context.externalActionExecutionAuthorization?.requesterHttpProjection
+                        ?.createRequestHeaders({ effectActionId: 'machines.managed.acquire', method: 'POST', path, body });
+                    if (!headers) throw new Error('workflow_acquire_child_headers_required');
+                    const admitted = await app.inject({ method: 'POST', url: path, payload: body, headers });
+                    expect(admitted.statusCode, admitted.body).toBe(200);
+                    const read = await app.inject({ method: 'POST', url: '/v1/machines/managed/actions/get',
+                        payload: { homeId, creationRequestId: runId }, headers: { authorization: `Bearer ${token}` } });
+                    expect(read.statusCode, read.body).toBe(200);
+                    expect(read.json()).toMatchObject({ retainedWorkflowRoot: { envelope,
+                        binding: { accountId: fixture.account.id, actionId, requestId: envelope.requestId, target } } });
+                    expect(JSON.stringify(read.json().retainedWorkflowRoot)).not.toContain(authorization.token);
+                    if (mode === 'e2ee') {
+                        expect(JSON.stringify(read.json().retainedWorkflowRoot)).not.toContain('definitionId');
+                        const retained = ExternalActionRetainedWorkflowRootV1Schema.parse(read.json().retainedWorkflowRoot);
+                        if (retained.envelope.v !== 2) throw new Error('workflow_original_ciphertext_required');
+                        const replay = { envelope: retained.envelope, binding: retained.binding, material,
+                            projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 };
+                        expect(openExternalActionRequestV2(replay)).toMatchObject({ input: rootInput,
+                            workflowPreparation: { project: target.project, acquisition } });
+                        expect(openExternalActionRequestV2({ ...replay, binding: { ...retained.binding, accountId: crypto.randomUUID() } })).toBeNull();
+                    }
+                    const correlation = { homeId, managedId: admitted.json().machine.id, expectedIntentRevision: 0,
+                        requestId: runId, controller };
+                    const submitPath = '/v1/machines/managed/controller/submit';
+                    const submitHeaders = await context.externalActionExecutionAuthorization?.requesterHttpProjection
+                        ?.createRequestHeaders({ effectActionId: 'machines.managed.acquire', method: 'POST', path: submitPath, body: correlation });
+                    if (!submitHeaders) throw new Error('workflow_acquire_submit_headers_required');
+                    const submitted = await app.inject({ method: 'POST', url: submitPath, payload: correlation, headers: submitHeaders });
+                    expect(submitted.statusCode, submitted.body).toBe(200);
+                    const reportPath = '/v1/machines/managed/controller/report';
+                    const resource = { contributionRef: oneOff.selection.launch.provider, schemaVersion: 1, value: { id: 'workflow-resource' } };
+                    const reportedContent = replaceManagedMachinePresetLaunchNameV1({ presetId, mode,
+                        content: presetContent.content, recipients: presetContent.recipients,
+                        accountId: fixture.account.id, accountKey: material.machineKey, randomBytes: tweetnacl.randomBytes,
+                        launchName: oneOff.selection.launch.name, nativeResult: { kind: 'bound', resource } });
+                    expect(reportedContent).not.toBeNull();
+                    const report = { ...correlation, result: { kind: 'bound' }, presetContent: reportedContent };
+                    const reportHeaders = await context.externalActionExecutionAuthorization?.requesterHttpProjection
+                        ?.createRequestHeaders({ effectActionId: 'machines.managed.acquire', method: 'POST', path: reportPath, body: report });
+                    if (!reportHeaders) throw new Error('workflow_acquire_report_headers_required');
+                    const settled = await app.inject({ method: 'POST', url: reportPath, payload: report, headers: reportHeaders });
+                    expect(settled.statusCode, settled.body).toBe(200);
+                    expect(settled.json()).toMatchObject({ machine: { allocation: 'bound' } });
+                    // Enrollment is the external guest/controller boundary here;
+                    // the retained creation and its signed root stay real.
+                    const guestCodec = await db.machine.findUniqueOrThrow({ where: { id: controller.machineId },
+                        select: { metadata: true, dataEncryptionKey: true } });
+                    const guest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: fixture.account.id,
+                        installationId: crypto.randomUUID(), ...guestCodec } });
+                    await db.managedMachine.update({ where: { id: correlation.managedId }, data: { enrolledMachineId: guest.id } });
+                    const childInput = WorkflowRunStartRequestV1Schema.parse({ ...rootInput,
+                        managedCreation: { homeId, managedId: correlation.managedId, controller } });
+                    const childTarget = { ...target, machineId: guest.id, project: { ...target.project, machineId: guest.id } };
+                    const childBinding = { serverIdentityId: homeId, accountId: fixture.account.id,
+                        authentication: { kind: 'account' as const, tokenEpoch: fixture.account.tokenEpoch }, actionId,
+                        requestId: envelope.requestId!, target: childTarget };
+                    const childEnvelope = mode === 'plain' ? ExternalActionRequestEnvelopeV1Schema.parse({ v: 1,
+                        requestId: envelope.requestId, target: childTarget, input: childInput })
+                        : sealExternalActionRequestV2({ binding: childBinding, input: childInput, material,
+                            randomBytes: tweetnacl.randomBytes, projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+                    const childBody = { v: 1, machineId: guest.id, envelope: childEnvelope,
+                        managedContinuation: { managedId: correlation.managedId, creationRequestId: runId, expectedIntentRevision: 0 } };
+                    const childPath = `/v1/actions/${actionId}`;
+                    const childHeaders = machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
+                        method: 'POST', path: childPath, body: childBody, privateKey: fixture.keyPair.secretKey });
+                    const childAuthorization = await app.inject({ method: 'POST', url: childPath, payload: childBody, headers: childHeaders });
+                    expect(childAuthorization.statusCode, childAuthorization.body).toBe(200);
+                    if (childEnvelope.v === 1) expect(childAuthorization.json()).toMatchObject({ execution: { ok: false, errorCode: 'target_unavailable' } });
+                    else expect(openExternalActionResponseV2({ envelope: childAuthorization.json(), binding: childBinding,
+                        request: childEnvelope, material })).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+                    expect(guestDispatches).toHaveLength(1);
+                    expect(guestDispatches[0]).toMatchObject({ actionId, envelope: childEnvelope,
+                        principal: { accountId: fixture.account.id },
+                        managedContinuation: { managedId: correlation.managedId, creationRequestId: runId,
+                            acquireRequestEnvelopeDigest: authorization.binding.requestEnvelopeDigest } });
+                    for (const managedContinuation of [
+                        { ...childBody.managedContinuation, managedId: crypto.randomUUID() },
+                        { ...childBody.managedContinuation, creationRequestId: crypto.randomUUID() },
+                        { ...childBody.managedContinuation, expectedIntentRevision: 1 },
+                    ]) {
+                        const changed = { ...childBody, managedContinuation };
+                        const denied = await app.inject({ method: 'POST', url: childPath, payload: changed,
+                            headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
+                                method: 'POST', path: childPath, body: changed, privateKey: fixture.keyPair.secretKey }) });
+                        expect(denied.statusCode, denied.body).not.toBe(200);
+                        expect(guestDispatches).toHaveLength(1);
+                    }
+                    const sessionChildPath = '/v1/actions/session.spawn_new';
+                    const wrongChild = await app.inject({ method: 'POST', url: sessionChildPath, payload: childBody,
+                        headers: machineHeaders({ authorizationToken: authorization.token, effectActionId: actionId,
+                            method: 'POST', path: sessionChildPath, body: childBody, privateKey: fixture.keyPair.secretKey }) });
+                    expect(wrongChild.statusCode, wrongChild.body).toBe(401);
+                    expect(guestDispatches).toHaveLength(1);
+                    for (const tamperedEnvelope of mode === 'e2ee' ? [] : [
+                        { ...childEnvelope, input: { ...childInput, runId: crypto.randomUUID() } },
+                        { ...childEnvelope, input: { ...childInput, source: { ...childInput.source, definitionId: 'another-workflow' } } },
+                        { ...childEnvelope, input: { ...childInput, managedCreation: { ...childInput.managedCreation!, managedId: crypto.randomUUID() } } },
+                        { ...childEnvelope, target: { ...childEnvelope.target, project: { ...target.project, machineId: guest.id, directory: '/another-workspace' } } },
+                        { ...childEnvelope, target: { ...childEnvelope.target, project: { ...target.project, machineId: guest.id,
+                            sessionPlacement: { kind: 'preset', homeId, presetId: crypto.randomUUID() } } } },
+                    ]) {
+                        const tampered = { ...childBody, envelope: tamperedEnvelope };
+                        const denied = await app.inject({ method: 'POST', url: childPath, payload: tampered,
+                            headers: childHeaders });
+                        expect(denied.statusCode, denied.body).not.toBe(200);
+                        expect(guestDispatches).toHaveLength(1);
+                    }
+                    return { ok: true, result: null };
+                } });
+            expect(result).toMatchObject({ ok: true });
+        } finally { await app.close(); }
+    });
+
     async function createManagedNativeAuthFixture(rebuild = false) {
         const fixture = await createFixture({ qualifiedPat: false });
         const homeId = await getOrCreateServerIdentityId();

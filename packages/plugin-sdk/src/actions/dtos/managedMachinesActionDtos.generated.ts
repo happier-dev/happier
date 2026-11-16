@@ -14496,6 +14496,32 @@ export type ManagedMachinesActionResultById = {
                     sessionId: string;
                 };
                 workflowPreparation?: undefined | {
+                    project: {
+                        machineId: string;
+                        directory: string;
+                        workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
+                    };
                     acquisition: {
                         selection: {
                             kind: 'preset';
@@ -17414,6 +17440,32 @@ export type ManagedMachinesActionResultById = {
                     sessionId: string;
                 };
                 workflowPreparation?: undefined | {
+                    project: {
+                        machineId: string;
+                        directory: string;
+                        workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
+                    };
                     acquisition: {
                         selection: {
                             kind: 'preset';
@@ -23037,6 +23089,32 @@ export type ManagedMachinesActionResultById = {
                     sessionId: string;
                 };
                 workflowPreparation?: undefined | {
+                    project: {
+                        machineId: string;
+                        directory: string;
+                        workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
+                    };
                     acquisition: {
                         selection: {
                             kind: 'preset';
@@ -25955,6 +26033,32 @@ export type ManagedMachinesActionResultById = {
                     sessionId: string;
                 };
                 workflowPreparation?: undefined | {
+                    project: {
+                        machineId: string;
+                        directory: string;
+                        workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
+                    };
                     acquisition: {
                         selection: {
                             kind: 'preset';
@@ -38368,6 +38472,32 @@ export type ManagedMachinesActionResultById = {
                     sessionId: string;
                 };
                 workflowPreparation?: undefined | {
+                    project: {
+                        machineId: string;
+                        directory: string;
+                        workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
+                    };
                     acquisition: {
                         selection: {
                             kind: 'preset';
@@ -41286,6 +41416,32 @@ export type ManagedMachinesActionResultById = {
                     sessionId: string;
                 };
                 workflowPreparation?: undefined | {
+                    project: {
+                        machineId: string;
+                        directory: string;
+                        workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
+                    };
                     acquisition: {
                         selection: {
                             kind: 'preset';
@@ -45004,6 +45160,32 @@ export type ManagedMachinesActionResultById = {
                     sessionId: string;
                 };
                 workflowPreparation?: undefined | {
+                    project: {
+                        machineId: string;
+                        directory: string;
+                        workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
+                    };
                     acquisition: {
                         selection: {
                             kind: 'preset';
@@ -47922,6 +48104,32 @@ export type ManagedMachinesActionResultById = {
                     sessionId: string;
                 };
                 workflowPreparation?: undefined | {
+                    project: {
+                        machineId: string;
+                        directory: string;
+                        workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
+                    };
                     acquisition: {
                         selection: {
                             kind: 'preset';
@@ -51567,6 +51775,32 @@ export type ManagedMachinesActionResultById = {
                     sessionId: string;
                 };
                 workflowPreparation?: undefined | {
+                    project: {
+                        machineId: string;
+                        directory: string;
+                        workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
+                    };
                     acquisition: {
                         selection: {
                             kind: 'preset';
@@ -54485,6 +54719,32 @@ export type ManagedMachinesActionResultById = {
                     sessionId: string;
                 };
                 workflowPreparation?: undefined | {
+                    project: {
+                        machineId: string;
+                        directory: string;
+                        workspaceRefId?: string | undefined;
+                        sessionPlacement?: undefined | {
+                            kind: 'machine';
+                            target: {
+                                serverId: string;
+                                machineId: string;
+                            };
+                            configuredSandbox?: undefined | {
+                                kind: 'sandbox';
+                                configuredSandboxId: string;
+                                lifecycle: 'fresh' | 'shared-kept';
+                                provisioner: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                presetId: string;
+                            };
+                        } | {
+                            kind: 'preset';
+                            homeId: string;
+                            presetId: string;
+                        };
+                    };
                     acquisition: {
                         selection: {
                             kind: 'preset';

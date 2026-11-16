@@ -1,5 +1,5 @@
-import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
 import { ManagedMachinePresetPrepareInputV1Schema, type ManagedMachinePresetPrepareInputV1 } from '../machines/managed/managedMachinePresetRevisionV1.js';
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '../machines/managed/machinePresetActionIdsV1.js';
 import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema, ExternalActionTargetRefusalPhaseSchema } from './externalActionHttpError.js';
 import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
@@ -835,11 +835,26 @@ export const ExternalActionHandoffContinuationV1Schema = lazyZodSchema(() => z.s
 
 /** Bound once by the original Workflow caller and protected by the root envelope digest. */
 export const ExternalActionWorkflowPreparationV1Schema = lazyZodSchema(() => z.strictObject({
+  /** Authored placement retained before the transport target binds a controller. */
+  project: WorkflowProjectTargetV1Schema,
   acquisition: z.extend(z.omit(ManagedAcquireInputV1Schema._zod.def.options[1], { agentStart: true }), {
     controller: ManagedControllerV1Schema,
   }),
 }));
 export type ExternalActionWorkflowPreparationV1 = z.infer<typeof ExternalActionWorkflowPreparationV1Schema>;
+
+/** The reviewed target preserves authored intent while routing to the selected controller. */
+export function projectExternalActionWorkflowPreparationTargetV1(
+  preparation: ExternalActionWorkflowPreparationV1,
+): Extract<ExternalActionTargetV1, { kind: 'machine' }> | null {
+  const placement = preparation.project.sessionPlacement;
+  const selection = preparation.acquisition.selection;
+  if (placement?.kind !== 'preset' || placement.homeId !== selection.homeId || placement.presetId !== selection.id) return null;
+  const machineId = preparation.acquisition.controller.machineId;
+  const { workspaceRefId: _previousWorkspace, ...authoredProject } = preparation.project;
+  return { kind: 'machine', machineId, project: machineId === preparation.project.machineId
+    ? preparation.project : { ...authoredProject, machineId } };
+}
 
 export const ExternalActionRequestEnvelopeV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -856,6 +871,12 @@ export const ExternalActionRequestEnvelopeV1Schema = lazyZodSchema(() => z.stric
   sessionSpawnAdmission: z.optional(ApiTokenSessionSpawnAdmissionV1Schema),
   handoffAdmission: z.optional(ExternalActionHandoffAdmissionV1Schema),
 }).check(z.superRefine((value, context) => {
+  if (value.workflowPreparation) {
+    const expected = projectExternalActionWorkflowPreparationTargetV1(value.workflowPreparation);
+    if (!expected || !value.target || !externalActionTargetsEqualV1(expected, value.target)) {
+      context.addIssue({ code: 'custom', path: ['workflowPreparation'], message: 'Workflow preparation target mismatch' });
+    }
+  }
   if (value.pluginInvocation && !value.requestId) {
     context.addIssue({ code: "custom", path: ['requestId'], message: 'Mounted plugin invocation requires requestId' });
   }

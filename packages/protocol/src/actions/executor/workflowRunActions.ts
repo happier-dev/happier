@@ -55,6 +55,7 @@ import type {
 } from '../../automations/automationAccountCurrentnessV1.js';
 import type { ActionExecutorContext, ActionExecutorDeps, HostReviewedChildrenPreparationV1, WorkflowActionExecuteArgs } from './types.js';
 import { prepareWorkflowRunApprovalPreview } from './workflowRunApproval.js';
+import { materializeWorkflowTriggerActionDefinition } from './workflowTriggerConsent.js';
 import type { WorkflowRunActionOwner } from './workflowAccountActions.js';
 import { admitActionAgentStartV1, resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
 import { readWorkflowDiscussionRoundBindingV1 } from '../../workflows/builtins/catalog.js';
@@ -526,6 +527,7 @@ export type WorkflowAccountRunActionDeps = Readonly<{
     /** The host defers retirement until already admitted Runs release this scope. */
     retire: (input: Readonly<{ scopeId: string; machineId: string }>, options?: Readonly<{ signal?: AbortSignal }>) => Promise<void>;
   }>;
+  acquireWorkflowPlacement?: ActionExecutorDeps['acquireWorkflowPlacement'];
   resolveAccountId: (signal?: AbortSignal) => Promise<string>;
   storage: Storage;
   definitions: DefinitionReader;
@@ -742,7 +744,9 @@ function readWorkflowApprovedOperationSteps(snapshot: WorkflowAcceptedSnapshotV1
   return readWorkflowApprovedOperationLeaves(snapshot).map(({ step }) => step);
 }
 
-function readWorkflowApprovedOperationLeaves(snapshot: WorkflowAcceptedSnapshotV1): {
+function readWorkflowApprovedOperationLeaves(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'definition' | 'frozenChildren'> & {
+  materializedLeaves: readonly WorkflowAcceptedSnapshotV1['materializedLeaves'][number][];
+}): {
   leaf: WorkflowAcceptedSnapshotV1['materializedLeaves'][number];
   step: WorkflowApprovedOperationV1['steps'][number];
 }[] {
@@ -971,9 +975,109 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     return undefined;
   };
 
-  const prepareStart = async (args: WorkflowActionExecuteArgs<'workflow.run.start'>, ingressContext?: WorkflowIngressContextV1,
-    combined?: WorkflowCombinedRunStartV1): Promise<Readonly<{ snapshot: WorkflowAcceptedSnapshotV1;
-      execute: (context: ActionExecutorContext) => ReturnType<WorkflowRunActionOwner['execute']> }>> => {
+  type PreparedStart = Readonly<{ snapshot: WorkflowAcceptedSnapshotV1;
+    execute: (context: ActionExecutorContext) => ReturnType<WorkflowRunActionOwner['execute']> }>;
+  type CloudApproval = Readonly<{ cloudApproval: HostReviewedChildrenPreparationV1 }>;
+
+  const readStartDefinition = async (args: WorkflowActionExecuteArgs<'workflow.run.start'>,
+    projectTarget: WorkflowProjectTargetV1, ingressContext: WorkflowIngressContextV1 | undefined,
+    replaySource: Awaited<ReturnType<typeof readAccepted>> | undefined,
+    checkedInline: ReturnType<typeof validateWorkflowDefinition> | undefined,
+    projectExisting?: () => Promise<PreparedStart>) => {
+    const input = args.input;
+    const inputSource = input.source;
+    const normalizedInline = checkedInline?.normalizedDefinition;
+    let definition: WorkflowDefinitionV1;
+    let definitionValidation = checkedInline;
+    let metadata = replaySource ? replaySource.accepted.metadata ?? undefined : input.metadata;
+    let source: Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0]['context']['source'];
+    if (replaySource) {
+      definition = replaySource.accepted.authoredDefinition;
+      source = replaySource.accepted.source;
+    } else if (inputSource.kind === 'inline') {
+      definition = normalizedInline!;
+      if (inputSource.sourceArtifactId !== undefined) {
+        try {
+          // The authorized Artifact read binds grants; the reviewed content remains authoritative for this Run.
+          await deps.definitions.get({ definitionId: inputSource.sourceArtifactId,
+            ...(args.context.signal ? { signal: args.context.signal } : {}) });
+        } catch (sourceError) {
+          args.context.signal?.throwIfAborted();
+          try {
+            if (!projectExisting) throw sourceError;
+            return { kind: 'existing' as const, prepared: await projectExisting() };
+          }
+          catch (rejoinError) { if (!isNotFound(rejoinError)) throw rejoinError; throw sourceError; }
+        }
+      }
+      source = { kind: 'inline', ...(inputSource.sourceArtifactId !== undefined
+        ? { sourceArtifactId: inputSource.sourceArtifactId } : {}) };
+    } else if (inputSource.kind === 'saved') {
+      let saved: Awaited<ReturnType<DefinitionReader['get']>>;
+      try {
+        saved = await deps.definitions.get({ definitionId: inputSource.definitionId,
+          ...(args.context.signal ? { signal: args.context.signal } : {}) });
+        if (!sameStrictJsonValue(saved.revision, inputSource.revision)) throw workflowError('currentness_conflict');
+      } catch (sourceError) {
+        args.context.signal?.throwIfAborted();
+        // An admission may commit between the initial missing read and mutable
+        // Artifact resolution. Rejoin that immutable effect before surfacing a
+        // source edit/deletion failure.
+        try {
+          if (!projectExisting) throw sourceError;
+          return { kind: 'existing' as const, prepared: await projectExisting() };
+        } catch (rejoinError) {
+          if (!isNotFound(rejoinError)) throw rejoinError;
+          throw sourceError;
+        }
+      }
+      const checkedSaved = validateWorkflowDefinition(
+        saved.definition,
+        ingressContext ? { context: ingressContext } : {},
+      );
+      if (!checkedSaved.valid || !checkedSaved.normalizedDefinition) throw workflowError('invalid_input');
+      definition = checkedSaved.normalizedDefinition;
+      definitionValidation = checkedSaved;
+      metadata = saved.metadata;
+      source = { kind: 'saved', definitionId: inputSource.definitionId, revision: inputSource.revision,
+        savedBy: saved.savedBy ?? null };
+    } else if (inputSource.kind === 'repo_file') {
+      if (!deps.readRepositoryWorkflow) throw workflowError('source_unavailable');
+      const file = await deps.readRepositoryWorkflow({ path: inputSource.path, projectTarget,
+        ...(args.context.signal ? { signal: args.context.signal } : {}) });
+      args.context.signal?.throwIfAborted();
+      const parsed = parseWorkflowDocumentJsonIngressV1(file.json, ingressContext);
+      if (!parsed.ok) throw workflowError('invalid_input', { code: parsed.code, issues: parsed.issues });
+      definition = parsed.document.definition;
+      definitionValidation = { valid: true, normalizedDefinition: definition, issues: [], targetValidation: 'not_requested' };
+      // Preserve the submitted spelling so an admitted Run can rejoin without another filesystem read.
+      source = { kind: 'repo_file', path: inputSource.path, commit: file.commit };
+    } else {
+      const resolved = await resolveWorkflowDefinitionRefV1(inputSource.workflow, {
+        readPluginWorkflows: deps.readPluginWorkflows,
+        ...(args.context.signal ? { signal: args.context.signal } : {}),
+      });
+      if (!resolved || resolved.kind !== 'catalog') throw workflowError('source_unavailable');
+      if (typeof resolved.version === 'string' && inputSource.pluginVersion !== undefined
+        && inputSource.pluginVersion !== resolved.version) throw workflowError('currentness_conflict');
+      const checked = validateWorkflowDefinition(resolved.definition, ingressContext ? { context: ingressContext } : {});
+      if (!checked.valid || !checked.normalizedDefinition) throw workflowError('invalid_input', { issues: checked.issues });
+      definition = checked.normalizedDefinition;
+      definitionValidation = checked;
+      metadata = resolved.metadata ?? metadata;
+      source = { kind: 'catalog', ref: inputSource.workflow, version: resolved.version };
+    }
+    return { kind: 'source' as const, definition, definitionValidation, metadata, source };
+  };
+
+  function prepareStart(args: WorkflowActionExecuteArgs<'workflow.run.start'>, ingressContext: WorkflowIngressContextV1 | undefined,
+    combined: WorkflowCombinedRunStartV1 | undefined, approvalOnly: true,
+    approvalPresentationDeps: Pick<ActionExecutorDeps, 'homeDomainAction'>): Promise<PreparedStart | CloudApproval>;
+  function prepareStart(args: WorkflowActionExecuteArgs<'workflow.run.start'>, ingressContext?: WorkflowIngressContextV1,
+    combined?: WorkflowCombinedRunStartV1): Promise<PreparedStart>;
+  async function prepareStart(args: WorkflowActionExecuteArgs<'workflow.run.start'>, ingressContext?: WorkflowIngressContextV1,
+    combined?: WorkflowCombinedRunStartV1, approvalOnly = false,
+    approvalPresentationDeps?: Pick<ActionExecutorDeps, 'homeDomainAction'>): Promise<PreparedStart | CloudApproval> {
     const admittedTarget = combined?.orchestrationTarget ?? workflowProjectTarget(args.context);
     if (combined) {
       const reviewedHost = combined.parent.input.machineId;
@@ -1040,7 +1144,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       return resolved;
     };
     const inputSource = input.source;
-    if (inputSource.kind === 'catalog' && !deps.resolveMaterializationContext) throw workflowError('source_unavailable');
+    const reviewCloudPlacement = approvalOnly && !input.managedCreation && admittedTarget?.sessionPlacement?.kind === 'preset';
+    if (inputSource.kind === 'catalog' && !deps.resolveMaterializationContext && !reviewCloudPlacement) throw workflowError('source_unavailable');
     const executionTarget = replaySource?.accepted.executionTarget ?? input.executionTarget ?? { kind: 'session' as const };
     const checkedInline = input.source.kind === 'inline' && !replaySource
       ? validateWorkflowDefinition(
@@ -1051,6 +1156,38 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const normalizedInline = checkedInline?.normalizedDefinition;
     if (input.source.kind === 'inline' && !replaySource && (!checkedInline?.valid || !normalizedInline)) {
       throw workflowError('invalid_input');
+    }
+    if (reviewCloudPlacement) {
+      const resolved = await readStartDefinition(args, admittedTarget, ingressContext, replaySource, checkedInline);
+      if (resolved.kind === 'existing') throw workflowError('continuation_unavailable');
+      const inputs = await resolveWorkflowContextInputsV1({ definition: resolved.definition,
+        inputs: startInputs, originSessionId });
+      const preview = await materializeWorkflowTriggerActionDefinition({ definition: resolved.definition, inputs,
+        project: admittedTarget, deferTargetAvailability: true, resolveWorkflow: async ref => {
+          const child = await resolveWorkflowDefinitionRefV1(ref, { readPluginWorkflows: deps.readPluginWorkflows,
+            readArtifact: async artifactId => await deps.definitions.get({ definitionId: artifactId,
+              ...(args.context.signal ? { signal: args.context.signal } : {}) }),
+            ...(args.context.signal ? { signal: args.context.signal } : {}) });
+          if (!child) throw workflowError('source_unavailable');
+          return child.definition;
+        } });
+      if (!preview.materialized.ok) throw workflowError(preview.materialized.error.code, preview.materialized.error);
+      const scope = { definition: preview.program.definition, frozenChildren: preview.program.children,
+        materializedLeaves: preview.materialized.materializedLeaves };
+      const children = readWorkflowApprovedOperationLeaves(scope).flatMap(({ leaf, step }) => {
+        const action = ActionIdSchema.safeParse(step.actionId);
+        return action.success && !step.binding && hasDurableWorkflowApprovalInput(step)
+          ? [{ action: action.data, role: leaf.blockId, input: step.input }] : [];
+      });
+      const approvalPreview = await prepareWorkflowRunApprovalPreview(scope, approvalPresentationDeps ?? {}, args.context);
+      return { cloudApproval: { children, approvalPreview, executeAdmittedAction: async request => {
+        deps.assertCurrent?.();
+        request.context.signal?.throwIfAborted();
+        if (!deps.acquireWorkflowPlacement) throw workflowError('target_unavailable');
+        try {
+          return await deps.acquireWorkflowPlacement({ start: input, project: admittedTarget, context: request.context });
+        } finally { deps.assertCurrent?.(); }
+      } } };
     }
     let replayAccepted: ReturnType<typeof WorkflowAcceptedSnapshotV1Schema.parse> | undefined;
     const projectExisting = async (snapshot?: ReturnType<typeof parseSnapshot>) => {
@@ -1172,91 +1309,20 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
     const discussionOrigin = await resolveDiscussion();
 
-    let definition: WorkflowDefinitionV1;
-    let definitionValidation = checkedInline;
-    let metadata = replaySource ? replaySource.accepted.metadata ?? undefined : input.metadata;
-    let source: Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0]['context']['source'];
     const projectTarget = admittedTarget;
     if (!projectTarget) throw workflowError('target_unavailable',
       actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details);
     let materialization: Awaited<ReturnType<NonNullable<WorkflowAccountRunActionDeps['resolveMaterializationContext']>>> | undefined;
     let agentStartContext: ReturnType<typeof resolveActionAgentStartContextV1> | undefined;
     const readAgentStartContext = () => agentStartContext ??= resolveActionAgentStartContextV1(deps, args.context);
-    if (replaySource) {
-      definition = replaySource.accepted.authoredDefinition;
-      source = replaySource.accepted.source;
-    } else if (inputSource.kind === 'inline') {
-      definition = normalizedInline!;
-      if (inputSource.sourceArtifactId !== undefined) {
-        try {
-          // The authorized Artifact read binds grants; the reviewed content remains authoritative for this Run.
-          await deps.definitions.get({ definitionId: inputSource.sourceArtifactId,
-            ...(args.context.signal ? { signal: args.context.signal } : {}) });
-        } catch (sourceError) {
-          args.context.signal?.throwIfAborted();
-          try { return await projectExisting(); }
-          catch (rejoinError) { if (!isNotFound(rejoinError)) throw rejoinError; throw sourceError; }
-        }
-      }
-      source = { kind: 'inline', ...(inputSource.sourceArtifactId !== undefined
-        ? { sourceArtifactId: inputSource.sourceArtifactId } : {}) };
-    } else if (inputSource.kind === 'saved') {
-      let saved: Awaited<ReturnType<DefinitionReader['get']>>;
-      try {
-        saved = await deps.definitions.get({ definitionId: inputSource.definitionId,
-          ...(args.context.signal ? { signal: args.context.signal } : {}) });
-        if (!sameStrictJsonValue(saved.revision, inputSource.revision)) throw workflowError('currentness_conflict');
-      } catch (sourceError) {
-        args.context.signal?.throwIfAborted();
-        // An admission may commit between the initial missing read and mutable
-        // Artifact resolution. Rejoin that immutable effect before surfacing a
-        // source edit/deletion failure.
-        try {
-          return await projectExisting();
-        } catch (rejoinError) {
-          if (!isNotFound(rejoinError)) throw rejoinError;
-          throw sourceError;
-        }
-      }
-      const checkedSaved = validateWorkflowDefinition(
-        saved.definition,
-        ingressContext ? { context: ingressContext } : {},
-      );
-      if (!checkedSaved.valid || !checkedSaved.normalizedDefinition) throw workflowError('invalid_input');
-      definition = checkedSaved.normalizedDefinition;
-      definitionValidation = checkedSaved;
-      metadata = saved.metadata;
-      source = { kind: 'saved', definitionId: inputSource.definitionId, revision: inputSource.revision,
-        savedBy: saved.savedBy ?? null };
-    } else if (inputSource.kind === 'repo_file') {
-      if (!deps.readRepositoryWorkflow) throw workflowError('source_unavailable');
-      const file = await deps.readRepositoryWorkflow({ path: inputSource.path, projectTarget,
-        ...(args.context.signal ? { signal: args.context.signal } : {}) });
-      args.context.signal?.throwIfAborted();
-      const parsed = parseWorkflowDocumentJsonIngressV1(file.json, ingressContext);
-      if (!parsed.ok) throw workflowError('invalid_input', { code: parsed.code, issues: parsed.issues });
-      definition = parsed.document.definition;
-      definitionValidation = { valid: true, normalizedDefinition: definition, issues: [], targetValidation: 'not_requested' };
-      // Preserve the submitted spelling so an admitted Run can rejoin without another filesystem read.
-      source = { kind: 'repo_file', path: inputSource.path, commit: file.commit };
-    } else {
+    if (!replaySource && inputSource.kind === 'catalog') {
       if (!deps.resolveMaterializationContext) throw workflowError('source_unavailable');
       materialization = await measureActionStartPhaseV1(args.context, 'workflow_materialization_context',
         () => deps.resolveMaterializationContext!(args, projectTarget, readAgentStartContext));
-      const resolved = await resolveWorkflowDefinitionRefV1(inputSource.workflow, {
-        readPluginWorkflows: deps.readPluginWorkflows,
-        ...(args.context.signal ? { signal: args.context.signal } : {}),
-      });
-      if (!resolved || resolved.kind !== 'catalog') throw workflowError('source_unavailable');
-      if (typeof resolved.version === 'string' && inputSource.pluginVersion !== undefined
-        && inputSource.pluginVersion !== resolved.version) throw workflowError('currentness_conflict');
-      const checked = validateWorkflowDefinition(resolved.definition, ingressContext ? { context: ingressContext } : {});
-      if (!checked.valid || !checked.normalizedDefinition) throw workflowError('invalid_input', { issues: checked.issues });
-      definition = checked.normalizedDefinition;
-      definitionValidation = checked;
-      metadata = resolved.metadata ?? metadata;
-      source = { kind: 'catalog', ref: inputSource.workflow, version: resolved.version };
     }
+    const resolvedDefinition = await readStartDefinition(args, projectTarget, ingressContext, replaySource, checkedInline, projectExisting);
+    if (resolvedDefinition.kind === 'existing') return resolvedDefinition.prepared;
+    let { definition, definitionValidation, metadata, source } = resolvedDefinition;
     if (!materialization) {
       if (!deps.resolveMaterializationContext) throw workflowError('target_unavailable', actionStartTargetUnavailableV1(args.context,
         'workflow_materialization_context', 'materialization_owner_unavailable').details);
@@ -3204,7 +3270,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     }
   }, prepareStartApproval: async (args, presentationDeps, ingressContext) => {
     deps.assertCurrent?.();
-    const prepared = await prepareStart(args, ingressContext);
+    const prepared = await prepareStart(args, ingressContext, undefined, true, presentationDeps);
+    if ('cloudApproval' in prepared) return prepared.cloudApproval;
     const approvalPreview = await prepareWorkflowRunApprovalPreview(prepared.snapshot, presentationDeps, args.context);
     const children = readWorkflowApprovedOperationLeaves(prepared.snapshot).flatMap(({ leaf, step }) => {
       const action = ActionIdSchema.safeParse(step.actionId);

@@ -1,6 +1,7 @@
 import { decodeMachineStoredContent } from '@/storage/sessionMachineStoredContent';
 import { readManagedCreationBirthInTx } from './managedCreationBirth';
-import { isSessionSpawnNewActionIdV1, getManagedBoundSetupReportActionIdsV1 } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionSpawnNewActionIdV1, getManagedBoundSetupReportActionIdsV1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ExternalActionRetainedWorkflowRootV1Schema, projectExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ManagedControllerResizeReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { reportManagedResize } from './managedMutations';
 import { isManagedEnrollmentRecoveryChildV1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -382,15 +383,18 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             });
             authority = requireManagedControllerProof(request, machine.id, ['machines.managed.acquire']);
         } else { requireManagedPresentUser(request); authority = { requestId: request.body.requestId, custodianAccountId: request.userId }; }
-        const reviewedSessionAcquire = isSessionSpawnNewActionIdV1(request.externalActionExecutionAuthorizationBinding?.actionId ?? '')
+        const rootBinding = request.externalActionExecutionAuthorizationBinding;
+        const reviewedWorkflowAcquire = rootBinding?.actionId === WORKFLOW_RUN_START_ACTION_ID_V1
+            && request.externalActionReviewedChildAdmission?.actionId === MANAGED_ACQUIRE_ACTION_ID_V1;
+        const reviewedCreationAcquire = (isSessionSpawnNewActionIdV1(rootBinding?.actionId ?? '') || reviewedWorkflowAcquire)
             && request.externalActionReviewedChildAdmission?.actionId === MANAGED_ACQUIRE_ACTION_ID_V1;
         const custodianAccountId = authority.custodianAccountId;
-        const requestId = reviewedSessionAcquire ? request.body.requestId : authority.requestId;
+        const requestId = reviewedCreationAcquire ? request.body.requestId : authority.requestId;
         if (requestId !== request.body.requestId) throw new ManagedMachineError("request_conflict");
         const requestEnvelopeDigest = request.externalActionExecutionRequestEnvelopeDigest ?? request.body.requestEnvelopeDigest;
         if (!requestEnvelopeDigest || (request.externalActionExecutionRequestEnvelopeDigest && request.body.requestEnvelopeDigest
             && request.externalActionExecutionRequestEnvelopeDigest !== request.body.requestEnvelopeDigest)) throw new ManagedMachineError('permission_denied');
-        if (!reviewedSessionAcquire && (request.body.presetPolicy !== undefined || request.body.originalActionEnvelope !== undefined)) {
+        if (!reviewedCreationAcquire && (request.body.presetPolicy !== undefined || request.body.originalActionEnvelope !== undefined)) {
             const root = request.body.originalActionEnvelope;
             const projected = root && readExternalActionManagedAcquireAdmission(root);
             const binding = request.externalActionExecutionAuthorizationBinding;
@@ -402,7 +406,11 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 || !sameManagedInput(projected.input, request.body.input)
                 || projected.continuationPresent !== request.body.continuationPresent) throw new ManagedMachineError('permission_denied');
         }
+        const workflowRoot = reviewedWorkflowAcquire && rootBinding
+            ? ExternalActionRetainedWorkflowRootV1Schema.parse({ binding: projectExternalActionEncryptionBindingV2(rootBinding),
+                envelope: request.body.originalActionEnvelope }) : undefined;
         return await admitManagedAcquire({ custodianAccountId, requesterAccountId: request.userId,
+            ...(workflowRoot ? { workflowRoot } : {}),
             managedAcquireDelegation: request.externalActionExecutionAuthorizationBinding?.managedAcquireDelegation, authentication: readTeamOperationAuthenticationFromRequest(request), requestEnvelopeDigest, input: request.body });
     }));
     app.post("/v1/machines/managed/controller/context", { preHandler: app.authenticate, schema: { body: ManagedControllerContextInputV1Schema } }, async (request, reply) => respond(reply, async () => {

@@ -1131,6 +1131,10 @@ export class ApiMachineClient {
         return this.actionOperationRuntime.runner.cancelAndWait(...args);
     }
 
+    waitForActionOperationCompletion(...args: Parameters<HostActionOperationRuntime['runner']['waitForCompletion']>) {
+        return this.actionOperationRuntime.runner.waitForCompletion(...args);
+    }
+
     runActionOperation(request: Parameters<HostActionOperationRuntime['runActionOperation']>[0]) {
         return runHostActionOperation(observed => this.observeActionExecution(observed), request);
     }
@@ -2321,6 +2325,7 @@ export class ApiMachineClient {
                 } : {}),
                 actionsSettingsProvider,
                 currentMachineId: this.machine.id,
+                readMachineMetadataSnapshot: () => this.getMachineMetadataSnapshot(),
                 ...(workSummaryInstallation ? { sessionCreationInstallation: workSummaryInstallation } : {}),
                 ...(this.lifecycleDependencies.requesterSessionRuntime ? { requesterSessionRuntime: this.lifecycleDependencies.requesterSessionRuntime } : {}),
                 requesterBootstrapBoundary: this.lifecycleDependencies.requesterBootstrapBoundary ?? {
@@ -2467,6 +2472,7 @@ export class ApiMachineClient {
                 activateCapabilitiesPurposeBindings: this.activateCapabilitiesPurposeBindings,
                 sessionServerStart: {
                     machineId: this.machine.id,
+                    readMachineMetadataSnapshot: () => this.getMachineMetadataSnapshot(),
                     token: this.token,
                     readCredentials: async () => await readStoredCredentials().catch(() => null),
                     resolveAccountId: async (signal) => await this.getAccountId(signal),
@@ -3170,7 +3176,7 @@ export class ApiMachineClient {
                 const current = async () => !ingress.signal.aborted && await verifyCurrent() && !ingress.signal.aborted;
                 if (!await current()) return false;
                 const [{ createCliDeploymentActionDeps }, { DeploymentEnvironmentGetResultV1Schema }] = await Promise.all([
-                    import('@/deployments/createCliDeploymentActionDeps'), import('@happier-dev/protocol'),
+                    import('@/deployments/createCliDeploymentActionDeps'), import('@happier-dev/protocol/deployments/deploymentActionsV1'),
                 ]);
                 const authorization = runtime.accountAuthorization;
                 const failure = () => ({ ok: false as const, errorCode: 'action_forbidden', error: 'action_forbidden' });

@@ -23,7 +23,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import tweetnacl from 'tweetnacl';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient, openManagedPresetAdmission } from './acquire';
@@ -1058,7 +1058,9 @@ esac
         runHomeRecoveryScenario, 60_000);
     it.each(['opaque-enrollment-default', 'opaque-enrollment-override', 'plain-enrollment-context'] as const)(
         'projects enrollment-context with the admitted resource visibility (%s)', runHomeRecoveryScenario, 60_000);
-    it.each(['succeeded', 'skipped'] as const)('retains the original first message across failed setup until exact paid row becomes %s', async state => {
+    it.each([['succeeded', 'session'], ['skipped', 'session'], ['succeeded', 'workflow'], ['skipped', 'workflow']] as const)(
+        'retains the original %s creation continuation across failed setup (%s)', async (state, kind) => {
+        const { WorkflowRunStartRequestV1Schema } = await import('@happier-dev/protocol/workflows/actionsV1');
         const fixture = plainOpaqueSetupReplayFixture();
         let retained = fixture.admission.machine;
         const writes: string[] = [];
@@ -1071,17 +1073,22 @@ esac
         let started = 0;
         let setup = 0;
         let settled = false;
-        const execution = fixture.acquisition.execute('machines.managed.acquire', { ...fixture.input, agentStart: {
+        const continuation = async ({ machine: prepared }: { machine: ManagedMachineV1 }) => {
+            expect(prepared.machineSetup?.state).toBe(state); started++; };
+        const execution = fixture.acquisition.execute('machines.managed.acquire', { ...fixture.input, ...(kind === 'session' ? { agentStart: {
             creationKey: 'first-message', directory: { kind: 'managed' },
             agentTarget: { kind: 'agent', identity: { pluginId: 'fixture.agent', localId: 'agent' } },
-        } }, { requestId: 'create', signal: new AbortController().signal,
-            context: { surface: 'cli', operationAcceptance: { operationId: 'creation', accept() {} } },
+        } } : {}) }, { requestId: 'create', signal: new AbortController().signal,
+            context: { surface: 'cli', operationAcceptance: { operationId: 'creation', accept() {} },
+                ...(kind === 'workflow' ? { originalActionEnvelope: { v: 1 as const, requestId: 'workflow-root',
+                    target: { kind: 'machine' as const, machineId: controller.machineId },
+                    input: WorkflowRunStartRequestV1Schema.parse({ runId: '0f2cf13d-4ad7-4f4b-b5e0-cc3b7dce7f11',
+                        source: { kind: 'saved', definitionId: 'definition-1', revision: { headerVersion: 1, bodyVersion: 1 } } }) } } : {}) },
             // Genuine external Account socket boundary; the notification grants no row authority.
             subscribeEnvironmentSetupChanges: async callbacks => { wake = callbacks.onChange; return { dispose() { disposed = true; } }; },
             runEnvironmentSetup: async () => { setup++; retained = { ...retained, machineSetup: { ...retained.machineSetup!, state: 'failed' } };
                 throw Object.assign(new Error('setup failed'), { code: 'machine_setup_setup_failed' }); },
-            runAgentStart: async ({ machine: prepared }) => {
-                expect(prepared.machineSetup?.state).toBe(state); started++; },
+            ...(kind === 'workflow' ? { runCreationContinuation: continuation } : { runAgentStart: continuation }),
         });
         const observed = execution.then(value => { settled = true; return value; }, error => { settled = true; return error; });
         await expect.poll(() => setup).toBe(1);
@@ -1403,6 +1410,126 @@ function retainTeamMemberReviewedSnapshot(carrier: ReturnType<typeof createTeamM
 }
 
 describe('opaque managed preset admission', () => {
+    it('binds opaque Workflow native custody to the reviewed child invocation while retaining the Run creation key', async () => {
+        const { WorkflowRunStartRequestV1Schema } = await import('@happier-dev/protocol/workflows/actionsV1');
+        const { createWorkflowRunStorageTestkit } = await import('@/daemon/workflows/workflowRunStorage.testkit');
+        const { createWorkflowRunActionOwner } = await import('@/session/actions/workflowRunActions');
+        const { createWorkflowActionExecutor, normalizeWorkflowActionThrownError } = await import('@/session/actions/workflowActionExecutor');
+        const { invokeHostReviewedChildV1 } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+        const { ActionIdSchema } = await import('@happier-dev/protocol/actions/actionIds');
+        const { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
+        const homeId = 'srv_workflow_opaque_custody';
+        const runId = '0f2cf13d-4ad7-4f4b-b5e0-cc3b7dce7f11';
+        const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Workflow guest', choices: {} };
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'workflow-opaque', launch,
+            allocation: 'unsubmitted', custodianAccountId: 'owner' });
+        const project = { machineId: controller.machineId, directory: '/repo',
+            sessionPlacement: { kind: 'preset' as const, homeId, presetId: carrier.acquisition.selection.id } };
+        const target = { kind: 'machine' as const, machineId: controller.machineId, project };
+        const start = WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'inline', definition: { version: 1, defaults: {},
+            blocks: [{ kind: 'action', id: 'command', actionId: 'machines.command.run', input: { command: { kind: 'literal', value: 'echo reviewed' } } }] } } });
+        const binding = { serverIdentityId: homeId, accountId: 'owner', actionId: 'workflow.run.start' as const,
+            requestId: 'original-workflow-root', authentication: { kind: 'account' as const, tokenEpoch: 7 }, target };
+        const material = { type: 'dataKey' as const, machineKey: carrier.custodianKey };
+        const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+            binding, material, input: start, workflowPreparation: { project, acquisition: carrier.acquisition }, randomBytes: tweetnacl.randomBytes });
+        const opened = openExternalActionRequestV2({ binding, envelope, material,
+            projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+        if (!opened?.workflowPreparation) throw new Error('Missing opened Workflow acquisition');
+        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-workflow-root', binding: { ...binding,
+            machineId: controller.machineId, installationId: controller.installationId, custodianAccountId: 'owner',
+            accountEncryptionMode: 'e2ee', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
+        const keys = tweetnacl.sign.keyPair();
+        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root,
+            serverId: 'profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example', target,
+            installationId: controller.installationId, privateKey: keys.secretKey, rootAdmitted: true, isCurrent: async () => true });
+        if (!authorization) throw new Error('Workflow root projection unavailable');
+        const roles: string[] = [], admissionKeys: string[] = [], invocationIds: string[] = [];
+        const native = nativeFixture({ privateNative: true, credentialPurposes: [], nativeRoleResults: {
+            acquire: { kind: 'unknown', recovery: { reference: runId, reason: 'response-lost' } },
+        }, onNativeRole: role => { roles.push(role); } });
+        let retained = carrier.admission.machine;
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+                signingKeyFingerprint: null, contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.custodianPublicKey), updatedAt: 1 } };
+            throw new Error(`Unexpected Workflow Home GET ${path}`);
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/admit')) {
+                const request = body as { requestId: string; originalActionEnvelope?: unknown };
+                admissionKeys.push(request.requestId);
+                expect(request.originalActionEnvelope).toEqual(envelope);
+                return { status: 200, data: carrier.admission };
+            }
+            if (path.endsWith('/submit')) { retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
+                return { status: 200, data: { machine: retained, submitted: true } }; }
+            if (path.endsWith('/report')) return { status: 200, data: { machine: retained } };
+            throw new Error(`Unexpected Workflow Home POST ${path}`);
+        });
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token, credentials: { token: carrier.token,
+            encryption: { type: 'dataKey', machineKey: carrier.custodianKey, publicKey: carrier.custodianPublicKey } },
+            serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            externalActionMachineRequestPrivateKey: keys.secretKey,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
+        const accountCrypto = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material,
+            dataKeyPublicKey: carrier.custodianPublicKey });
+        const witness = { mode: 'e2ee' as const, version: 1, contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.custodianPublicKey) };
+        const storage = createWorkflowRunStorageTestkit({ runId, machineId: controller.machineId, accountId: 'owner', origin: { kind: 'direct' },
+            keyCensus: { runId, ownerAccountId: 'owner', ownerAccountCurrentness: witness, encryptionMode: 'e2ee',
+                access: 'owner', visibleTeamId: null, dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [] } });
+        const owner = createWorkflowRunActionOwner({ storage, resolveAccountId: async () => 'owner',
+            definitions: { get: async () => { throw new Error('Inline source has no saved definition'); } },
+            resolveEncryption: async () => ({ kind: 'available', material: accountCrypto, witness }),
+            prepareWorkspace: async () => { throw new Error('Cloud review must not prepare the controller workspace'); },
+            resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+                readActionContract: async actionId => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(actionId)))),
+            } }),
+            acquireWorkflowPlacement: async request => {
+                const preparation = request.context.workflowPreparation;
+                const executeChild = request.context.executeHostReviewedChildAction;
+                if (!preparation || !executeChild) throw new Error('Workflow did not retain its admitted child port');
+                return await invokeHostReviewedChildV1({ parent: { actionId: 'workflow.run.start', input: request.start }, context: request.context,
+                    child: { action: 'machines.managed.acquire', role: 'acquire-workflow-placement', input: preparation.acquisition },
+                    execute: (input, context) => executeChild('machines.managed.acquire', input, context) });
+            },
+        });
+        const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner' });
+        let work: Promise<JsonValue | null> | undefined;
+        const executor = createActionExecutor({ runActionOperation: operations.runActionOperation,
+            workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }),
+            prepareHostReviewedChildren: async request => {
+                if (request.actionId !== 'workflow.run.start') return null;
+                try { return await owner.prepareStartApproval({ actionId: request.actionId,
+                    input: WorkflowRunStartRequestV1Schema.parse(request.input), context: request.context }, {}); }
+                catch (error) { return normalizeWorkflowActionThrownError(error); }
+            },
+            managedMachineAction: async ({ actionId, input, context }) => {
+                invocationIds.push(context.actionRequestId!);
+                work = driver.execute(actionId, input, { requestId: runId, context, signal: context.signal,
+                    runCreationContinuation: async () => { throw new Error('Uncertain acquisition cannot start the Workflow'); } });
+                return await work;
+            },
+        });
+        const result = await executor.execute('workflow.run.start', start, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: {
+                'workflow.run.start': ['cli'], 'machines.managed.acquire': ['cli'], 'machines.command.run': ['cli'],
+            } }), runtimeAccountId: 'owner', actionRequestId: binding.requestId,
+            serverId: 'profile', serverIdentityId: homeId, externalActionTarget: target, externalActionExecutionAuthorization: authorization,
+            originalActionEnvelope: envelope, workflowPreparation: opened.workflowPreparation });
+        if (!work) throw new Error(`Workflow never reached acquisition: ${JSON.stringify(result)}`);
+        const failure = await work.catch((error: unknown) => error);
+        expect(failure, JSON.stringify({ roles, admissionKeys, invocationIds,
+            stack: failure instanceof Error ? failure.stack : undefined })).toMatchObject({ code: 'native_acquisition_unconfirmed' });
+        expect(roles).toEqual(['acquire']);
+        expect(admissionKeys).toEqual([runId]);
+        expect(invocationIds).toHaveLength(1);
+        expect(invocationIds[0]).not.toBe(runId);
+        expect(invocationIds[0]).not.toBe(binding.requestId);
+    });
     it.each([['warm', 'resource-bound'], ['stale', 'resource-bound'], ['warm', 'enrolled'], ['stale', 'enrolled']] as const)(
         'selects the %s prepared execution once at admitted %s creation', async (freshness, acquisitionMode) => {
         const { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, defineMachineProvisionerPreparationSchemas } = await import('@happier-dev/protocol/plugins/contributions/machineProvisioners');
@@ -5178,6 +5305,97 @@ describe('managed acquisition durable custody', () => {
         expect(JSON.stringify(retained.observation)).not.toMatch(/PRIVATE_NATIVE_|PRIVATE_SIGNAL/);
         expect(nativeCalls).toEqual(['bootstrap', 'exec']);
         expect(retained).toMatchObject({ allocation: 'bound', resource: { value: {} } });
+    });
+    it('refuses a private creation continuation without its original admitted root before Home or native effects', async () => {
+        const native = nativeFixture({ privateNative: true });
+        const post = vi.spyOn(axios, 'post').mockRejectedValue(new Error('Original root must be checked before Home admission'));
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example',
+            homeId: 'home', controller, runtimeRegistry: native.runtimeRegistry });
+        const options = { requestId: 'retained-run', context: { operationAcceptance: { operationId: 'reviewed-child', accept() {} } },
+            runCreationContinuation: async () => { throw new Error('Unadmitted continuation'); } };
+        await expect(driver.execute('machines.managed.acquire', input, options)).rejects.toMatchObject({ code: 'admission_unavailable' });
+        expect(post).not.toHaveBeenCalled();
+        expect(native.effects()).toBe(0);
+    });
+    it('awaits one enrolled creation continuation after an uncertain purchase rejoins the retained Workflow creation', async () => {
+        const { WorkflowRunStartRequestV1Schema } = await import('@happier-dev/protocol/workflows/actionsV1');
+        const homeId = 'srv_workflow_creation_continuation';
+        const acquisition = { ...input, selection: { ...input.selection, homeId } };
+        const runId = '0f2cf13d-4ad7-4f4b-b5e0-cc3b7dce7f11';
+        const originalActionEnvelope = { v: 1 as const, requestId: 'workflow-root',
+            target: { kind: 'machine' as const, machineId: controller.machineId },
+            input: WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'saved', definitionId: 'definition-1',
+                revision: { headerVersion: 1, bodyVersion: 1 } } }) };
+        const nativeCalls: string[] = [], admissions: unknown[] = [];
+        const native = nativeFixture({ privateNative: true, reconciliation: true,
+            nativeRoleResults: { acquire: { kind: 'unknown', recovery: { reference: runId, reason: 'response-lost' } } },
+            onNativeRole: role => { nativeCalls.push(role); } });
+        let retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'unsubmitted' });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = String(url);
+            if (path.endsWith('/admit')) {
+                admissions.push(body);
+                return { status: 200, data: { machine: retained, replayed: admissions.length > 1 } };
+            }
+            if (path.endsWith('/submit')) {
+                retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
+                return { status: 200, data: { machine: retained, submitted: true } };
+            }
+            if (path.endsWith('/report')) {
+                const report = ManagedControllerReportV1Schema.parse(body);
+                retained = ManagedMachineV1Schema.parse({ ...retained,
+                    ...(report.result.kind === 'unknown' ? { recovery: report.result.recovery } : {}),
+                    ...(report.observation ? { observation: report.observation } : {}) });
+            }
+            return { status: 200, data: path.endsWith('/context') ? { machine: retained, requestId: runId } : { machine: retained } };
+        });
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: 'token', serverUrl: 'https://home.example',
+            homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
+        let continued = 0, entered!: () => void, release!: () => void;
+        const started = new Promise<void>(resolve => { entered = resolve; });
+        const completion = new Promise<void>(resolve => { release = resolve; });
+        onTestFinished(() => { release(); vi.restoreAllMocks(); });
+        const continuation = async ({ machine: prepared }: { machine: ManagedMachineV1 }) => {
+            expect(prepared).toMatchObject({ id: retained.id, enrolledMachineId: 'enrolled-workflow-guest' });
+            continued++; entered(); await completion;
+        };
+        const attempt = async (childRequestId: string) => {
+            const operations = createHostActionOperationRuntime({ machineId: controller.machineId,
+                resolveAccountId: async () => 'owner', generateOperationId: () => childRequestId + ':operation' });
+            let work!: Promise<JsonValue | null>;
+            await operations.observeExecution({ actionId: 'machines.managed.acquire', input: acquisition, actionRequestId: childRequestId,
+                execute: async context => {
+                    expect(context.actionRequestId).toBe(childRequestId);
+                    expect(context.actionRequestId).not.toBe(runId);
+                    // Real operation/native owners consume the admitted child
+                    // context; the Home creation key remains the Workflow run.
+                    const options = { requestId: runId, context: { ...context, originalActionEnvelope }, signal: context.signal,
+                        runCreationContinuation: continuation };
+                    work = driver.execute('machines.managed.acquire', acquisition, options);
+                    try { return { ok: true, result: await work }; }
+                    catch { return { ok: false, errorCode: 'native_acquisition_unconfirmed', error: 'Native acquisition unconfirmed' }; }
+                } });
+            return { operations, work };
+        };
+        const first = await attempt('reviewed-acquire-first');
+        await expect(first.work).rejects.toMatchObject({ code: 'native_acquisition_unconfirmed' });
+        expect(continued).toBe(0);
+        // Genuine Home boundary: the uncertain native outcome has subsequently
+        // confirmed this same retained resource's enrollment before Retry.
+        retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'bound',
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} },
+            enrolledMachineId: 'enrolled-workflow-guest', observation: { observedAt: 1, availability: 'present', power: 'running' } });
+        const retry = await attempt('reviewed-acquire-retry');
+        expect(await Promise.race([started.then(() => 'continuation'), retry.work.then(() => 'settled')])).toBe('continuation');
+        expect(await retry.operations.handlers.getV2({ operationId: 'reviewed-acquire-retry:operation' }))
+            .toMatchObject({ kind: 'found', operation: { state: 'running' } });
+        release();
+        await expect(retry.work).resolves.toMatchObject({ managedId: retained.id });
+        expect(continued).toBe(1);
+        expect(nativeCalls).toEqual(['acquire']);
+        expect(admissions).toEqual([1, 2].map(() => ({ input: acquisition, requestId: runId, continuationPresent: true, originalActionEnvelope })));
     });
     it.each(['unavailable', 'pending', 'unknown'] as const)('settles a retained bootstrap retry with %s reconciliation as a typed failure without purchasing again', async reconciliation => {
         const nativeHomeId = 'srv_managed_native';

@@ -61,7 +61,7 @@ import { createCliActionExecutorFromCredentials } from "@/session/actions/create
 import { createMachineRecipeReadAction } from "@/machines/setup/machineRecipeActionDeps";
 import { createLocalServicesDaemonRestartPreparation, createLocalServicesDaemonRuntimeActionExecutor } from "@/daemon/local/services/actions/runtimeActionExecutor";
 import { createLocalServicesDaemonFeatureGate } from "@/daemon/local/services/featureGate";
-import { dispatchManagedSessionStart, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan, managedChildRequiresRequesterMaterial,
+import { dispatchManagedSessionStart, dispatchManagedWorkflowStart, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan, managedChildRequiresRequesterMaterial,
   dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild } from "@/api/externalActionExecutionAuthorization";
 import type { SessionSpawnDirectTargetTransport } from "@/session/actions/createCliActionDeps";
 import type { ExternalSessionPluginAdmissionOwner } from "@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner";
@@ -994,10 +994,37 @@ resolveServerFeaturesSnapshot?: () =>
               requesterRuntime,
             ).execute('session.spawn_new', projectSessionSpawnNewActionInputV2(input), context);
           },
+          executeWorkflowStart: async (input, project, context, machine) => {
+            const authorization = context.externalActionExecutionAuthorization;
+            if (!authorization || !externalActionInstallationIdentity) {
+              return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+            }
+            const requiresMaterial = managedChildRequiresRequesterMaterial(authorization.binding);
+            const encryption = requiresMaterial
+              ? await (requesterAccountContext ? requesterAccountContext.resolveEncryption : externalActionIngressOwner?.resolveEncryption)?.(
+                  context.signal, authorization)
+              : undefined;
+            if (requiresMaterial && encryption?.serverIdentityId !== authorization.binding.serverIdentityId) {
+              return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+            }
+            return await dispatchManagedWorkflowStart({ input, project, context, authorization, serverId: params.serverId,
+              observeRecordedApprovalExecution, authority: context.authority,
+              continuation: { managedId: machine.id, creationRequestId: input.runId,
+                expectedIntentRevision: machine.intentRevision },
+              serverHttpBaseUrl: params.serverBaseUrl,
+              installationId: externalActionInstallationIdentity.installationId,
+              privateKey: externalActionInstallationIdentity.privateKey,
+              ...(encryption ? { material: encryption.material } : {}),
+              ...(context.signal ? { signal: context.signal } : {}),
+            });
+          },
           observeRecordedApprovalExecution,
           ...(apiMachineForSessions ? { cancelAndWaitForActionOperation:
             (...args: Parameters<ApiMachineClient['cancelAndWaitForActionOperation']>) =>
               apiMachineForSessions.cancelAndWaitForActionOperation(...args) } : {}),
+          ...(apiMachineForSessions ? { waitForActionOperationCompletion:
+            (...args: Parameters<ApiMachineClient['waitForActionOperationCompletion']>) =>
+              apiMachineForSessions.waitForActionOperationCompletion(...args) } : {}),
           observeActionExecution: request => {
             if (!apiMachineForSessions) return Promise.resolve({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' });
             const rpcContext = resolveRequesterIngress(executionContext);
@@ -1297,6 +1324,7 @@ resolveServerFeaturesSnapshot?: () =>
         },
         managedMachineAction: managedPolicyAction?.managedMachineAction ?? nativeManagedMachineAdapter,
         acquireSessionIsolationSandbox: nativeManagedMachineAdapter.acquireSessionIsolationSandbox,
+        acquireWorkflowPlacement: nativeManagedMachineAdapter.acquireWorkflowPlacement,
         machinePresetPrepare: nativeManagedMachineAdapter.preparePreset,
         ...(fallbackRuntimeActionExecute
           ? { runtimeActionExecute: async request => {

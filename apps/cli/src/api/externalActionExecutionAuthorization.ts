@@ -4,6 +4,7 @@ import { MachineRolesSetInputV1Schema, type MachineRolesSetInputV1 } from '@happ
 import { type ExternalActionHeaderRefusal, refuseExternalActionHeaders } from './externalActionHeaderRefusal';
 import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal';
 import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_DECIDE_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { resolveWorkflowProjectTargetMachineV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/ed25519';
@@ -11,7 +12,7 @@ import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, proj
 import { isAgentInitiatedApprovalRequiredByDefault } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
-import { isMachineSetupPlanOrApplyActionIdV1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedEnrollmentRecoveryChildV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupPlanOrApplyActionIdV1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
@@ -34,12 +35,12 @@ import { type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 import { MachineSetupApplyInputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
 import type { ManagedPresetAcquireOriginV1 } from '@happier-dev/cli-common/machines/managed';
-import { prepareOriginalAccountManagedPresetAcquire } from './managedPresetOrigination';
+import { prepareOriginalAccountManagedPresetAcquire, prepareOriginalAccountWorkflowPlacement } from './managedPresetOrigination';
 import { projectExternalActionManagedAdmissionV1, projectDeploymentPreparationAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomBytes } from 'node:crypto';
 
-import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyResponseV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyResponseV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, projectExternalActionWorkflowPreparationTargetV1, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1, signExternalActionMachineRpcRequestV1,
   encodeDeploymentChildExecutionV1, createDeploymentChildExecutionProofV1,
   readSessionSpawnNativeCredentialChildV1, readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -792,6 +793,9 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     const project = resolveWorkflowProjectTargetMachineV1(input.target.project);
     input = { ...input, target: { ...input.target, machineId: project.machineId, project } };
   }
+  const workflowPlacementRequested = input.actionId === WORKFLOW_RUN_START_ACTION_ID_V1
+    && input.target.kind === 'machine' && input.target.project?.sessionPlacement?.kind === 'preset'
+    && !(input.input !== null && typeof input.input === 'object' && 'managedCreation' in input.input);
   const installedCaller = input.installedWorkflow?.context.actionCaller;
   if (input.installedWorkflow && installedCaller?.kind === 'workflowRun'
     && isReviewedMachineSetupCodecV1({ actionId: input.actionId, workflowActionOrigin: {
@@ -879,7 +883,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     if (scopedController && (input.target.kind !== 'machine' || scopedController.machineId !== input.target.machineId
       || !await isCurrent())) return fail('controller_retired');
   }
-  if (input.foreignTargetOnly && !workflow && !scopedController) {
+  if (input.foreignTargetOnly && !workflow && !scopedController && !workflowPlacementRequested) {
     if (input.target.kind !== 'machine') return fail('target_unavailable');
     const machineId = input.target.machineId;
     machines = await phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token,
@@ -914,6 +918,41 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   const headers = { Authorization: `Bearer ${input.credentials.token}`, 'Content-Type': 'application/json',
     ...(invocationAuthority === 'account_automation' || input.authority === 'account_automation'
       ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) };
+  let workflowPlacement: Awaited<ReturnType<typeof prepareOriginalAccountWorkflowPlacement>> = null;
+  let workflowMode: Awaited<ReturnType<typeof readAccountEncryptionModeOnce>> | undefined;
+  let workflowMaterial: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }> | undefined;
+  if (workflowPlacementRequested && !workflow && input.target.kind === 'machine' && input.target.project) {
+    if (input.target.project.sessionPlacement?.kind !== 'preset'
+      || input.target.project.sessionPlacement.homeId !== input.serverIdentityId) return fail('server_target_mismatch');
+    workflowMode = await phase('account_mode', () => readAccountEncryptionModeOnce({ credentials: input.credentials,
+      request: () => axios.get<unknown>(`${homeUrl}/v1/account/encryption`, {
+        headers, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
+      }) }));
+    if (workflowMode.kind !== 'resolved') return fail('content_unavailable');
+    if (workflowMode.mode === 'e2ee') {
+      try {
+        const keyed = requireAccountEncryptionCredentials(input.credentials).encryption;
+        workflowMaterial = { type: 'dataKey', machineKey: keyed.type === 'dataKey'
+          ? keyed.machineKey : deriveAccountMachineKeyFromRecoverySecret(keyed.secret) };
+      } catch { return fail('content_unavailable'); }
+    }
+    const project = input.target.project;
+    const accountEncryptionMode = workflowMode.mode;
+    workflowPlacement = await phase('workflow_creation', () => prepareOriginalAccountWorkflowPlacement({
+      start: WorkflowRunStartRequestV1Schema.parse(input.input), project,
+      accountId, authentication: authentication.data, accountEncryptionMode,
+      credentials: input.credentials, serverHttpBaseUrl: homeUrl, ...(workflowMaterial ? { material: workflowMaterial } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
+    }));
+    if (!workflowPlacement) return fail('managed_response_invalid');
+    if (workflowPlacement.kind === 'refused') return fail(workflowPlacement.code);
+    const controller = workflowPlacement.workflowPreparation.acquisition.controller;
+    const target = workflowPlacement.retainedRoot?.binding.target
+      ?? projectExternalActionWorkflowPreparationTargetV1(workflowPlacement.workflowPreparation);
+    if (!target) return fail('managed_response_invalid');
+    input = { ...input, target, ...(workflowPlacement.retainedRoot ? { requestId: workflowPlacement.retainedRoot.binding.requestId } : {}) };
+    if (workflowPlacement.controllerAccess) scopedController = { ...controller, ...workflowPlacement.controllerAccess };
+  }
   const readInstalledPublication = (machineId: string) => phase('installed_machine', () => readExternalActionInstalledMachine({
     serverHttpBaseUrl: homeUrl, machineId, headers, ...(input.signal ? { signal: input.signal } : {}),
   }));
@@ -921,7 +960,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   // before interpreting mode/ownership, minting authority or disclosing material.
   const target = input.target;
   const [modeRead, inventoryRead, installedRead] = await Promise.allSettled([
-    workflowBinding ? Promise.resolve(workflowBinding.accountEncryptionMode
+    workflowMode ? Promise.resolve(workflowMode) : workflowBinding ? Promise.resolve(workflowBinding.accountEncryptionMode
       ? { kind: 'resolved' as const, mode: workflowBinding.accountEncryptionMode }
       : { kind: 'unavailable' as const })
       : phase('account_mode', () => readAccountEncryptionModeOnce({ credentials: input.credentials, request: () => axios.get<unknown>(`${homeUrl}/v1/account/encryption`, {
@@ -951,7 +990,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     machine = selected.machine;
     foreign = selected.foreign;
   }
-  let material: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }> | undefined;
+  let material: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }> | undefined = workflowMaterial;
   const workflowActionOrigin = workflow && workflowCaller?.kind === 'workflowRun'
     ? { runId: workflowCaller.runId, requestId: input.requestId,
       ...(workflowCaller.authorization.reviewedChild ? { reviewedChild: workflowCaller.authorization.reviewedChild } : {}) }
@@ -963,7 +1002,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   if (mode.mode === 'e2ee') {
     if (!input.serverIdentityId) return fail('admission_unavailable', 'dispatch.home_identity');
     if (workflowBinding && accountId !== publisherAccountId) return fail('content_unavailable');
-    try { if (!controllerCodec) {
+    try { if (!controllerCodec && !material) {
       const keyed = requireAccountEncryptionCredentials(input.credentials).encryption;
       material = { type: 'dataKey', machineKey: keyed.type === 'dataKey'
         ? keyed.machineKey : deriveAccountMachineKeyFromRecoverySecret(keyed.secret) }; }
@@ -979,7 +1018,9 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   // Requester execution retains private authored input locally. Home receives
   // the Action owner's existing admission projection.
   const envelopeInput = input.executeOnRequester?.input ?? input.input;
-  const envelope = binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: envelopeInput, randomBytes,
+  const workflowPreparation = workflowPlacement?.kind === 'bound' ? workflowPlacement.workflowPreparation : undefined;
+  const envelope = (workflowPlacement?.kind === 'bound' ? workflowPlacement.retainedRoot?.envelope : undefined) ?? (binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: envelopeInput, randomBytes,
+    ...(workflowPreparation ? { workflowPreparation } : {}),
     ...(actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && input.input !== null && typeof input.input === 'object'
       && 'machineSetupPlanInput' in input.input && input.input.machineSetupPlanInput !== undefined ? {
       sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(
@@ -987,7 +1028,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     } : {}),
   })
     : ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target: input.target, input: envelopeInput,
-        ...(idempotencyKey === undefined ? {} : { idempotencyKey }) });
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        ...(workflowPreparation ? { workflowPreparation } : {}) }));
   if (input.executeOnRequester) {
     const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({
       actionId, envelope, machineId: input.target.machineId,
@@ -2040,8 +2082,18 @@ export function isManagedSessionStartTransportAvailable(params: Readonly<{
   installationId: string;
   material?: Extract<AccountScopedCryptoMaterial, Readonly<{ type: 'dataKey' }>>;
 }>): boolean {
+  return isManagedChildTransportAvailable({ ...params, actionId: SESSION_SPAWN_NEW_ACTION_ID_V1 });
+}
+
+function isManagedChildTransportAvailable(params: Readonly<{
+  authorization?: ExternalActionExecutionAuthorizationV1;
+  installationId: string;
+  material?: Extract<AccountScopedCryptoMaterial, Readonly<{ type: 'dataKey' }>>;
+  actionId: string;
+}>): boolean {
   const root = params.authorization?.binding;
-  return root?.actionId === 'machines.managed.acquire' && root.installationId === params.installationId
+  return root !== undefined && isManagedCreationContinuationRootV1(root.actionId, params.actionId)
+    && root.installationId === params.installationId
     && root.target.kind === 'machine' && root.target.machineId === root.machineId
     && (root.accountEncryptionMode === 'plain' || root.accountEncryptionMode === 'e2ee'
       && ('authentication' in root && root.accountId !== root.custodianAccountId || params.material?.machineKey.length === 32));
@@ -2068,6 +2120,17 @@ export async function dispatchManagedSessionStart(params: ManagedChildDispatchPa
     targetMachineId: params.input.executionTarget.machineId });
 }
 
+/** The enrolled guest resumes the admitted Run through the same creation transport. */
+export async function dispatchManagedWorkflowStart(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
+  input: import('@happier-dev/protocol/workflows/actionsV1').WorkflowRunStartRequestV1;
+  project: import('@happier-dev/protocol/workflows/workflowWorkspaceV1').WorkflowProjectTargetV1;
+  serverId: string;
+}>): Promise<ActionExecuteResult> {
+  return dispatchManagedChild({ ...params, actionId: WORKFLOW_RUN_START_ACTION_ID_V1,
+    targetMachineId: params.project.machineId,
+    workflowProject: params.project });
+}
+
 /** A member's child on another Account's controller is sealed with a fresh installation codec. */
 function isManagedChildFreshCodec(root: ExternalActionExecutionAuthorizationV1['binding']): boolean {
   return 'authentication' in root && root.accountId !== root.custodianAccountId && root.accountEncryptionMode === 'e2ee';
@@ -2080,9 +2143,12 @@ export function managedChildRequiresRequesterMaterial(root: ExternalActionExecut
 
 async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
   input: SessionSpawnNewInputV2 | MachineSetupApplyInputV1 | MachineSetupPlanInputV1 | ReturnType<typeof MachineAdminAccessSetInputV1Schema.parse>
-    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1 | MachineRolesSetInputV1;
+    | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1 | MachineRolesSetInputV1
+    | import('@happier-dev/protocol/workflows/actionsV1').WorkflowRunStartRequestV1;
   actionId: 'session.spawn_new' | 'machines.setup.plan' | 'machines.setup.apply' | 'machines.setup.adminAccess.set'
-    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set' | 'machines.roles.set'; serverId: string; targetMachineId: string;
+    | 'machines.agentIsolation.preview' | 'machines.agentIsolation.set' | 'machines.roles.set'
+    | typeof WORKFLOW_RUN_START_ACTION_ID_V1; serverId: string; targetMachineId: string;
+  workflowProject?: import('@happier-dev/protocol/workflows/workflowWorkspaceV1').WorkflowProjectTargetV1;
   retainedCreationSetup?: Parameters<typeof projectManagedMachineSetupCreationSourcesV1>[0];
 }>): Promise<ActionExecuteResult> {
   const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
@@ -2091,10 +2157,7 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
   const invocation = params.context ? readExternalActionRequesterInvocation(params.context) : params.invocation;
   const managedChildCodec = isManagedChildFreshCodec(root);
   const carriesInvocation = managedChildCodec || invocation !== undefined || reviewedParent !== null;
-  const recoveryAvailable = isManagedEnrollmentRecoveryChildV1(root.actionId, params.actionId)
-    && root.installationId === params.installationId && root.target.kind === 'machine' && root.target.machineId === root.machineId
-    && (root.accountEncryptionMode === 'plain' || root.accountEncryptionMode === 'e2ee' && (managedChildCodec || params.material?.machineKey.length === 32));
-  if (!(isManagedSessionStartTransportAvailable(params) || recoveryAvailable)
+  if (!isManagedChildTransportAvailable(params)
     || root.actionId === 'machines.managed.acquire' && root.requestId !== params.continuation.creationRequestId) return fail('admission_unavailable');
   if (params.signal?.aborted) return fail('cancelled');
   let input: typeof params.input;
@@ -2113,6 +2176,8 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
     if (params.actionId === 'session.spawn_new') {
       const parsed = SessionSpawnNewInputV2Schema.parse(params.input);
       input = { ...parsed, executionTarget: { ...parsed.executionTarget, serverId: serverIdentityId } };
+    } else if (params.actionId === WORKFLOW_RUN_START_ACTION_ID_V1) {
+      input = WorkflowRunStartRequestV1Schema.parse(params.input);
     } else if (params.actionId === 'machines.setup.adminAccess.set') {
       const parsed = MachineAdminAccessSetInputV1Schema.parse(params.input);
       if (parsed.serverId !== serverIdentityId || parsed.machineId !== params.targetMachineId) return fail('target_unavailable');
@@ -2142,7 +2207,8 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
   // The ordinary spawn owner namespaces identity by Action and requester.
   // Preserve its fresh acquisition correlation across an explicit retry.
   const requestId = root.requestId;
-  const target = { kind: 'machine' as const, machineId: params.targetMachineId };
+  const target = { kind: 'machine' as const, machineId: params.targetMachineId,
+    ...(params.workflowProject ? { project: params.workflowProject } : {}) };
   const binding: ExternalActionEncryptionBindingV2 = { serverIdentityId: root.serverIdentityId,
     accountId: root.accountId, actionId: params.actionId, requestId, target,
     ...('authentication' in root ? { authentication: { kind: root.authentication.kind, tokenEpoch: root.authentication.tokenEpoch } }

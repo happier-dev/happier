@@ -6,7 +6,7 @@ import { ExternalActionManagedRecoveryAdmissionV1Schema, ExternalActionManagedCo
     type ExternalActionManagedControlAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineAdmission } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -84,7 +84,7 @@ export async function readAdmittedManagedCreationChildInTx(reader: Tx, binding: 
                 && !resolveManagedMachineEnrollmentAgentIsolationV1(enrollmentPolicy.enrollmentIdentity)
             || binding.actionId === 'machines.setup.apply' && (!creationSetup?.runnable && creationSetup?.state !== 'succeeded')
             || binding.actionId === 'machines.setup.plan' && !creationSetup?.runnable
-            || binding.actionId === 'session.spawn_new' && creationSetup?.state !== undefined
+            || (binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || binding.actionId === WORKFLOW_RUN_START_ACTION_ID_V1) && creationSetup?.state !== undefined
                 && !['succeeded', 'skipped'].includes(creationSetup.state)) return null;
         const machineAdmission = await readAdmittedExternalActionMachineInTx(reader, binding, binding.machineId, binding.installationId);
         return machineAdmission ? { row, machineAdmission, enrollmentPolicy } : null;
@@ -161,7 +161,8 @@ export async function qualifyExternalActionManagedAccountExecutorInTx(reader: Tx
 export async function readExternalActionManagedAcquireResourceInTx(reader: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1,
     reviewedChild?: Readonly<{ managedId: string; requestId?: string; inputDigest: string }>): Promise<StoredManagedMachine | null> {
-    if (reviewedChild ? binding.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 : binding.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1) return null;
+    if (reviewedChild ? binding.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 && binding.actionId !== WORKFLOW_RUN_START_ACTION_ID_V1
+        : binding.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1) return null;
     const row = reviewedChild
         ? await reader.managedMachine.findUnique({ where: { id: reviewedChild.managedId } })
         : await reader.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: {
