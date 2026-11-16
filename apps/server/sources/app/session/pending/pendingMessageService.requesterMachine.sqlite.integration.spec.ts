@@ -9,7 +9,8 @@ import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol
 import { createMachineDataEncryptionKeyV1 } from '@happier-dev/protocol/machines/machineStoredContent';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER, API_TOKEN_FULL_GRANT_V1,
     SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMachineRequestV1Schema,
-    SessionPendingEnqueueByMachineResponseV1Schema } from '@happier-dev/protocol';
+    SessionPendingEnqueueByMachineResponseV1Schema, computeExternalActionRequestEnvelopeDigestV1,
+    signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol';
 
 import { auth } from '@/app/auth/auth';
 import { machineUpdateHandler } from '@/app/api/socket/machineUpdateHandler';
@@ -881,6 +882,64 @@ describe('requester Session input through the custodian Machine socket', () => {
             principal: { kind: 'account', accountId: requester.id } }))).toMatchObject({ kind: 'removed' });
         expect(await enqueue(target, 'revoked-input')).toMatchObject({ status: 'rejected' });
         expect(await enqueue(target, 'hosted-input')).toMatchObject({ status: 'rejected' });
+        expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(1);
+    });
+
+    it('admits the custodian Machine carrying its hosted requester verified Session send like the unsigned tuple', async () => {
+        // MACH-PRINCIPAL-AUDIT-1116: the custodian's socket already admits the hosted
+        // requester tuple unsigned; the requester's verified session.message.send must not be refused.
+        const requester = await db.account.create({ data: { publicKey: `requester-${randomUUID()}`, encryptionMode: 'plain' } });
+        const custodian = await db.account.create({ data: { publicKey: `custodian-${randomUUID()}`, encryptionMode: 'plain' } });
+        const keys = tweetnacl.sign.keyPair();
+        const target = await db.machine.create({ data: {
+            id: randomUUID(), accountId: custodian.id, installationId: randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey),
+            metadata: encodePlainMachineStoredContent({ host: 'host', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1, active: true,
+        } });
+        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: target.id,
+            principal: { kind: 'account', accountId: requester.id }, level: 'view' }))).toMatchObject({ kind: 'saved' });
+        const session = await db.session.create({ data: { accountId: requester.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', active: true } });
+        await db.accessKey.create({ data: { accountId: requester.id, machineId: target.id, sessionId: session.id, data: 'opaque' } });
+        const token = await auth.createToken(custodian.id, undefined, { kind: 'account', authority: 'present_user' });
+        const homeId = await getOrCreateServerIdentityId();
+        const sessionTarget = { kind: 'session' as const, sessionId: session.id };
+        const enqueue = async (localId: string, principalAccountId: string) => {
+            const socket = Object.assign(createAuthenticatedFakeSocket({ nsp: { server: createSocketRoomDiscoveryHarness(async () => []) },
+                data: { clientType: 'machine-scoped', machineId: target.id,
+                [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: target.installationId } }), { handshake: { auth: { token } } });
+            machineUpdateHandler(custodian.id, socket as unknown as Socket, { operationSocketBatchLimits: {
+                ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+            }, resolveCurrentSessionMachine: async () => target.id });
+            const request = SessionPendingEnqueueByMachineRequestV1Schema.parse({ v: 1, sessionId: session.id,
+                targetMachineId: target.id, localId, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'hi' } } },
+                requestedAction: { v: 1, kind: 'enqueue' } });
+            const principal = await db.account.findUniqueOrThrow({ where: { id: principalAccountId } });
+            const requestId = randomUUID();
+            const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: principal.id,
+                authentication: { kind: 'account', tokenEpoch: principal.tokenEpoch }, serverIdentityId: homeId,
+                machineId: target.id, actionId: 'session.message.send', requestId, target: sessionTarget,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target: sessionTarget, input: { text: 'hi' } }) });
+            const externalAction = { v: 1 as const, authorization, target: sessionTarget, effectActionId: 'session.message.send',
+                installationId: target.installationId!, machineSignature: signExternalActionMachineRpcRequestV1({
+                    authorizationToken: authorization.token, target: sessionTarget, effectActionId: 'session.message.send',
+                    installationId: target.installationId!, requestId, event: SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1,
+                    method: SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, params: request, privateKey: keys.secretKey }) };
+            let response: unknown;
+            await getSocketHandler(socket, SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1)({ ...request, externalAction },
+                (value: unknown) => { response = value; });
+            return SessionPendingEnqueueByMachineResponseV1Schema.parse(response).result;
+        };
+        expect(await enqueue('signed-hosted-input', requester.id)).toEqual({ status: 'accepted', localId: 'signed-hosted-input' });
+        expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: {
+            sessionId_localId: { sessionId: session.id, localId: 'signed-hosted-input' } },
+            select: { inputAdmissionReceipt: true } })).toMatchObject({ inputAdmissionReceipt: { issuer: 'authenticatedMachine',
+                admittedTarget: { accountId: requester.id, machineId: target.id, sessionId: session.id } } });
+        // A third Account's Action carried by the custodian still names a person who does not own this Session.
+        const stranger = await db.account.create({ data: { publicKey: `stranger-${randomUUID()}`, encryptionMode: 'plain' } });
+        expect(await enqueue('stranger-input', stranger.id).catch(() => ({ status: 'rejected' }))).toMatchObject({ status: 'rejected' });
         expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(1);
     });
 });

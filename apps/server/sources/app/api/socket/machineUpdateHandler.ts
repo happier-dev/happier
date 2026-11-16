@@ -334,8 +334,12 @@ export function machineUpdateHandler(
                         params: unsignedRequest,
                         resolveCurrentSessionMachine: options.resolveCurrentSessionMachine,
                     }) : null;
+                // The custodian's socket carries its hosted requester's verified Action as
+                // it carries the unsigned hosted tuple; Pending admission owns the Session.
                 if (externalAction && (!verifiedInvocation
                     || verifiedInvocation.principal.accountId !== userId
+                        && (verifiedInvocation.binding.custodianAccountId !== userId
+                            || parsed.data.targetMachineId !== sourceMachineId)
                     || verifiedInvocation.binding.machineId !== sourceMachineId
                     || parsed.data.targetMachineId !== sourceMachineId && !verifiedInvocation.deploymentPrepareSessionInput
                     || verifiedInvocation.effectActionId !== "session.message.send"
