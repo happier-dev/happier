@@ -2365,8 +2365,8 @@ describe('Project deployments page', () => {
     try {
       await waitForContent(screen, 'project-deployments.environment.sourceMethod');
       await screen.pressByTestIdAsync('project-deployments.environment.deploy');
-      expect(deploy).toHaveBeenLastCalledWith({ environmentId: detail.environment.id,
-        targetLinkId: detail.environment.runtimeTargetLinkId, sourceMethod: recorded ?? 'gitIntegration' });
+      await vi.waitFor(() => expect(deploy).toHaveBeenLastCalledWith({ environmentId: detail.environment.id,
+        targetLinkId: detail.environment.runtimeTargetLinkId, sourceMethod: recorded ?? 'gitIntegration' }));
       expect(homes.requests.slice(beforeRead).filter(request => request.path === '/v1/artifacts/read'
         && JSON.stringify(request.input).includes(detail.environment.contentArtifactId)).map(request => request.input))
         .toEqual([{ artifactIds: [detail.environment.contentArtifactId, detail.targetLinks[0]!.targetLink.contentArtifactId] }]);
