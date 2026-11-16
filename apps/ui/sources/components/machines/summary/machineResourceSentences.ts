@@ -25,8 +25,11 @@ export function readMachinePublishedResources(daemonState: unknown): MachinePubl
     return parsed.success ? parsed.data : null;
 }
 
-/** One machine as the sentences name it. */
-export type MachineAttentionSubject = Readonly<{ name: string; attention: MachineResourceAttentionV1 }>;
+/**
+ * One machine as the sentences name it. `failingServices` is its published managed-services count, the same fact its
+ * row's Work cell shows in rose ("8 failing"), so no sentence calls a machine calm while its row says it is failing.
+ */
+export type MachineAttentionSubject = Readonly<{ name: string; attention: MachineResourceAttentionV1; failingServices?: number }>;
 
 export type MachineAttentionTone = 'calm' | 'look' | 'needs_you';
 
@@ -138,33 +141,52 @@ export function selectAttentionSubjects<T extends MachineAttentionSubject>(subje
 }
 
 /**
+ * The machines that need a look, worst first: a resource reason, then services its row shows failing (TH D-H, MB-2).
+ * The fleet sentences, the Needs-you list and the "need a look" count all read this one selection.
+ */
+export function selectFleetLookSubjects<T extends MachineAttentionSubject>(subjects: readonly T[]): readonly T[] {
+    const attention = selectAttentionSubjects(subjects);
+    const named = new Set(attention);
+    return [...attention, ...subjects.filter(subject => !named.has(subject) && (subject.failingServices ?? 0) > 0)];
+}
+
+/**
  * The fleet in one title (All machines, the popover, the phone Settings row): "2 machines need a look",
- * "edge-1 is short on memory", "All calm". `null` while no machine reports
+ * "edge-1 is short on memory", "eadc has 8 failing services", "All calm". `null` while no machine reports
  * resources, so the surface keeps its plain title.
  */
 export function describeFleetTitle(input: Readonly<{ subjects: readonly MachineAttentionSubject[]; reportingCount: number }>): string | null {
     if (input.reportingCount === 0) return null;
-    const attention = selectAttentionSubjects(input.subjects);
-    if (attention.length === 0) return t('machineAttention.fleet.calm');
-    if (attention.length === 1) {
-        const reason = selectHeadlineReason(attention[0]!.attention)!;
-        return describeMachineReasonPhrase(attention[0]!.name, reason);
+    const look = selectFleetLookSubjects(input.subjects);
+    if (look.length === 0) return t('machineAttention.fleet.calm');
+    if (look.length === 1) {
+        const subject = look[0]!;
+        const reason = selectHeadlineReason(subject.attention);
+        return reason ? describeMachineReasonPhrase(subject.name, reason)
+            : t('machineAttention.phrases.servicesFailing', { machine: subject.name, count: subject.failingServices ?? 0 });
     }
-    return t('machineAttention.fleet.count', { count: attention.length });
+    return t('machineAttention.fleet.count', { count: look.length });
 }
 
 /**
  * The sentence under the fleet title: only how the others online are. The title counts or names the machines
  * that need a look and the Needs-you rows beneath name each with its reason, so the sentence never names them again.
  */
-export function describeFleetDescription(input: Readonly<{ subjects: readonly MachineAttentionSubject[]; reportingCount: number; onlineCount: number; nowMs: number }>): string | null {
+export function describeFleetDescription(input: Readonly<{
+    subjects: readonly MachineAttentionSubject[]; reportingCount: number; onlineCount: number; nowMs: number;
+    /** `false` when the surface shows no title above the sentence (its Needs-you list does): the sentence then leads with it. */
+    titleShown?: boolean;
+}>): string | null {
     if (input.reportingCount === 0) return null;
-    const attention = selectAttentionSubjects(input.subjects);
-    const calmOnline = Math.max(0, input.onlineCount - attention.length);
-    if (calmOnline === 0) return null;
-    return attention.length === 0
+    const look = selectFleetLookSubjects(input.subjects);
+    const calmOnline = Math.max(0, input.onlineCount - look.length);
+    // Without a title, "the other" would have nothing to refer to: the fleet's own title leads (TH MB-2).
+    const lead = input.titleShown === false && look.length > 0
+        ? t('machineAttention.fleet.sentenceOne', { phrase: describeFleetTitle(input)! }) : null;
+    const calm = calmOnline === 0 ? null : look.length === 0
         ? t('machineAttention.fleet.allOnlineCalm', { count: calmOnline })
         : t('machineAttention.fleet.otherOnlineCalm', { count: calmOnline });
+    return [lead, calm].filter(Boolean).join(' ') || null;
 }
 
 /** What the guard did, as one line ("Guard freed 410 MB on edge-1"). */

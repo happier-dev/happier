@@ -6,7 +6,7 @@ import {
     describeMachineAttentionWord,
     describeMachineReasonDetail,
     resolveMachineReasonAction,
-    selectAttentionSubjects,
+    selectFleetLookSubjects,
     selectHeadlineReason,
 } from '@/components/machines/summary/machineResourceSentences';
 import { resolveMachineAttentionWordColor } from '@/components/machines/summary/machineSummaryStripModel';
@@ -36,7 +36,8 @@ export const MachinesNeedsYouList = React.memo(function MachinesNeedsYouList(pro
     compact?: boolean;
     testID?: string;
 }>) {
-    const subjects = React.useMemo(() => selectAttentionSubjects(props.entries), [props.entries]);
+    // The same machines the fleet sentence counts, so a row's failing services are named here too (TH MB-2).
+    const subjects = React.useMemo(() => selectFleetLookSubjects(props.entries), [props.entries]);
     if (subjects.length === 0) return null;
     return (
         <View testID={props.testID ?? 'machines.needs-you'}>
@@ -55,11 +56,14 @@ const MachineNeedsYouItem = React.memo(function MachineNeedsYouItem(props: Reado
 }>) {
     const { theme } = useUnistyles();
     const { entry } = props;
-    const reason = selectHeadlineReason(entry.attention)!;
+    const reason = selectHeadlineReason(entry.attention);
     const tone = resolveMachineAttentionWordColor(theme.colors);
-    const action = resolveMachineReasonAction(reason);
-    const word = describeMachineAttentionWord(reason);
-    const detail = describeMachineReasonDetail(reason, props.nowMs);
+    // A machine listed only for its failing services says so in its word and opens its Services.
+    const action = reason ? resolveMachineReasonAction(reason)
+        : { label: t('machineAttention.actions.review'), tab: SERVICES_TAB };
+    const word = reason ? describeMachineAttentionWord(reason)
+        : t('machineAttention.words.servicesFailing', { count: entry.failingServices ?? 0 });
+    const detail = reason ? describeMachineReasonDetail(reason, props.nowMs) : undefined;
     return (
         <Item
             testID={`machines.needs-you.${entry.serverId}.${entry.machineId}`}
@@ -69,9 +73,9 @@ const MachineNeedsYouItem = React.memo(function MachineNeedsYouItem(props: Reado
             titleLines={props.compact ? 1 : undefined}
             titleAccessory={props.compact ? undefined : <Text style={[stylesheet.word, { color: tone }]} numberOfLines={1}>{word}</Text>}
             subtitle={props.compact ? <Text style={stylesheet.detail} numberOfLines={2}>
-                <Text style={[stylesheet.word, { color: tone }]}>{word}</Text>{` · ${detail}`}
+                <Text style={[stylesheet.word, { color: tone }]}>{word}</Text>{detail ? ` · ${detail}` : null}
             </Text> : detail}
-            accessibilityLabel={`${entry.name}, ${word}. ${detail}`}
+            accessibilityLabel={[`${entry.name}, ${word}.`, detail].filter(Boolean).join(' ')}
             icon={<Icon name="desktop" color={theme.colors.text.secondary} />}
             showChevron={!action || props.compact}
             accessoryLayout="adaptive"
@@ -94,6 +98,8 @@ const MachineNeedsYouItem = React.memo(function MachineNeedsYouItem(props: Reado
         />
     );
 });
+
+const SERVICES_TAB: MachinePageTabParams = Object.freeze({ id: 'services' });
 
 const stylesheet = StyleSheet.create((theme) => ({
     detail: {

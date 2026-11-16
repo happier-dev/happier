@@ -923,7 +923,9 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                 } } : undefined} />}
         {/* A resource that no longer exists has nothing left to manage; the receipt keeps where it was managed from. */}
         {resourceEnded || !machine.controller ? null : requiredController && controllerName !== undefined ? <ManagedMachineControllerSection testID="managed-machine.controller"
-            description={controllerRequired(controllerName)}
+            // Keep it already says the offline controller is what it waits for; the row's presence says the rest (TH D-J).
+            description={!resourceEnded && machine.creationState === 'active' && controllerPresence?.online === false
+                ? undefined : controllerRequired(controllerName)}
             controller={{ name: controllerName, icon: machineMark, online: controllerPresence!.online,
                 presence: controllerPresence!.label, move: billing?.location === 'local' ? { kind: 'fixed' }
                     : canMove ? { kind: 'movable', onPress: () => fireAndForget(reviewMove(), { tag: 'ManagedMachineSections.moveReview' }) }

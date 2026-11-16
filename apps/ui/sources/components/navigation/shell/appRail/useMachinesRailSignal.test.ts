@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildMachinesRailSeen, forgetRecoveredMachinesRailReasons, resolveMachinesRailSignal } from './useMachinesRailSignal';
 
-const calm = { accountScope: null, needsYou: [], look: [], reportingMachineKeys: [], lastAutomaticActionAt: null, headline: null } as const;
+const calm = { accountScope: null, needsYou: [], look: [], failingServices: [], reportingMachineKeys: [], lastAutomaticActionAt: null, headline: null } as const;
 const NO_SEEN = { look: {}, guardSeenAt: 0 };
 
 describe('the Machines rail badge (R4)', () => {

@@ -121,9 +121,12 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
     // A failed install is evidence Investigate can hand to Triage; a newer check's diagnostic has no operation to hand.
     const failedOperation = error && operation?.snapshot.state === 'failed' ? operation : null;
     const operationIsState = STATE_FROM_OPERATION.has(state.kind);
-    const operationCard = Boolean(observationDiagnostic) || !operationIsState
+    // A banner state already says the cause and carries Check now: a newer check that couldn't confirm it is that
+    // banner's Details, not a second card stating the same unconfirmed resource (TH D-J).
+    const checkInBanner = Boolean(observationDiagnostic && failure && lifecycle.banner && showStateRow);
+    const operationCard = !checkInBanner && (Boolean(observationDiagnostic) || !operationIsState
         && Boolean(operation && status && status.tone !== 'success' && !(newerObservation && operation.snapshot.error))
-        || installationRetryOnly && !(showStateRow && !lifecycle.banner);
+        || installationRetryOnly && !(showStateRow && !lifecycle.banner));
     // While the install task tells the story, a quiet creation state would be a second, contradicting card:
     // the task's stage is the state, and the resource's freshness joins its card.
     const operationTells = operationCard && !lifecycle.banner && (QUIET_UNDER_OPERATION.has(state.kind)
@@ -203,7 +206,11 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
         </ItemGroup> : null}
         {/* A blocking or billing-uncertain state is the page's banner, which already says what may bill. */}
         {stateRow && lifecycle.banner ? <ManagedMachineStateRow name={name} mark={null}
-            state={state} provider={props.provider} handlers={props.handlers ?? {}} testID="managed-machine.progress" /> : null}
+            state={state} provider={props.provider} handlers={props.handlers ?? {}}
+            pendingAction={props.starting ? 'start' : props.checking ? 'checkNow' : undefined}
+            {...(machine.observation && !staleRead ? { asOf: t('surfaceState.asOf', { time: formatAsOfTime(machine.observation.observedAt) }) } : {})}
+            {...(checkInBanner && failure ? { details: [failure.title, failure.detail].filter((line): line is string => Boolean(line)) } : {})}
+            testID="managed-machine.progress" /> : null}
         {stateRow && !lifecycle.banner ? <ItemGroup>
             {/* The page header already names the machine: an ended or canceled one's row leads with its state word. */}
             <ManagedMachineStateRow name={lifecycle.word ?? name}
@@ -213,16 +220,19 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 // A joined machine's header already says its power word (`managedMachineHeaderPresence`).
                 leadWithLine={Boolean(machine.enrolledMachineId)}
                 {...(asOfOnStateRow ? { asOf: asOfOnStateRow } : {})}
+                {...(mayBill && machine.allocation !== 'confirmed-absent' && (machine.allocation === 'may-exist' || machine.cleanup)
+                    ? { consequence: t('managedMachines.creation.mayBill') } : {})}
                 ended={machine.allocation === 'confirmed-absent'} testID="managed-machine.progress" />
             {/* Without an operation to report, the install is a step of this same resource, not a second copy of its row. */}
             {installationRetryOnly && !failure ? <Item title={recoveryLine ?? t('managedMachines.creation.install')}
                 subtitle={recoveryHelp ?? undefined} subtitleLines={0} mode="info" showChevron={false}
                 testID="managed-machine.installation" rightElement={installationRetry} /> : null}
-            {mayBill && machine.allocation !== 'confirmed-absent' && (machine.allocation === 'may-exist' || machine.cleanup) ? <Item title={t('managedMachines.creation.mayBill')}
-                mode="info" showChevron={false} titleLines={0} testID="managed-machine.possible-cost" /> : null}
             {asOfOnStateRow ? null : observationRow}
         </ItemGroup> : observationRow && !operationTells && (staleRead || observationChecks) ? <ItemGroup>{observationRow}</ItemGroup> : null}
-        {needsRecovery && (machine.resource || machine.recovery) ? <ItemGroup title={t('managedMachines.detail.recoveryTitle')} testID="managed-machine.recovery">
+        {/* Recovery is on-demand detail: what to look for, with where to look said once above it, never a title-weight row (TH D-J). */}
+        {needsRecovery && (machine.resource || machine.recovery) ? <ItemGroup title={t('managedMachines.detail.recoveryTitle')} testID="managed-machine.recovery"
+            description={machine.allocation !== 'confirmed-absent' && (machine.cleanup || machine.allocation === 'may-exist')
+                && !machine.recovery?.consoleUrl ? t('managedCleanup.consoleHelp') : undefined}>
             {machine.resource ? <Item title={t('managedMachines.detail.nativeIdentity')} mode="info" showChevron={false}
                 testID="managed-machine.recovery-native" accessoryLayout="stacked" rightElement={
                     <Text selectable style={styles.identity}>{nativeIdentityLines(machine.resource.value).join('\n')}</Text>
@@ -231,9 +241,6 @@ export function ManagedCreationProgress(props: Readonly<{ machine: ManagedMachin
                 testID="managed-machine.recovery-tag" accessoryLayout="stacked" rightElement={
                     <Text selectable style={styles.identity}>{machine.recovery.reference}</Text>
                 } /> : null}
-            {machine.allocation !== 'confirmed-absent' && (machine.cleanup || machine.allocation === 'may-exist')
-                && !machine.recovery?.consoleUrl ? <Item title={t('managedCleanup.consoleHelp')} mode="info" showChevron={false}
-                    titleLines={0} testID="managed-machine.recovery-manual" /> : null}
         </ItemGroup> : null}
     </>;
 }

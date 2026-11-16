@@ -6941,6 +6941,7 @@ const machineDetailPageTranslations = { es: translated({
                 diskFull: ({ volume }) => `${volume} lleno`,
                 limitReached: ({ limit }) => `Sin ${limit}`,
                 guardOutOfSteps: "La protección se quedó sin pasos",
+                servicesFailing: ({ count }) => count === 1 ? '1 servicio con fallos' : `${count} servicios con fallos`,
             },
             fleet: {
                 calm: "Todo en calma",
@@ -6976,6 +6977,7 @@ const machineDetailPageTranslations = { es: translated({
                 diskFull: ({ machine, volume }) => `${volume} de ${machine} está lleno`,
                 limitReached: ({ machine, limit }) => `${machine} se ha quedado sin ${limit}`,
                 guardOutOfSteps: ({ machine }) => `La protección de memoria de ${machine} no tiene nada seguro que detener`,
+                servicesFailing: ({ machine, count }) => count === 1 ? `${machine} tiene un servicio con fallos` : `${machine} tiene ${count} servicios con fallos`,
             },
             duration: {
                 minutes: ({ count }) => `${count} min`,
@@ -7254,9 +7256,9 @@ const machineDetailPageTranslations = { es: translated({
             },
             states: {
                 offlineEmpty: ({ machine }) => `${machine} no ha informado sus recursos desde que abriste Happier.`,
-                offlineTitle: ({ machine }) => `${machine} está desconectada`,
-                offlineLastReported: ({ machine }) => `Esto es lo último que informó. Sus sesiones continúan cuando vuelva; las alertas de ${machine} quedan en pausa hasta entonces.`,
-                offlineNeverReported: 'No ha informado de sus recursos desde que abriste Happier. Sus sesiones continúan cuando vuelva.',
+                offlineBackTitle: 'Sus sesiones continúan cuando vuelva',
+                offlineLastReported: ({ machine }) => `Esto es lo último que informó. Las alertas de ${machine} quedan en pausa hasta entonces.`,
+                offlineNeverReported: 'No ha informado de sus recursos desde que abriste Happier.',
                 olderTitle: ({ machine }) => `Mira qué está haciendo ${machine}`,
                 olderReason: ({ machine }) => `CPU, presión de memoria, disco y lo que usan tus sesiones, en vivo. ${machine} necesita Happier 0.3 para informarlos.`,
                 askOwner: ({ machine }) => `Copiar una nota pidiendo actualizar ${machine}`,

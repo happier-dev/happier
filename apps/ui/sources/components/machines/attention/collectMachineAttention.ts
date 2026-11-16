@@ -15,6 +15,8 @@ export type MachineAttentionFact = Readonly<{
     online: boolean;
     lastAutomaticAction: MachineResourceAutomaticActionV1 | null;
     attention: MachineAttentionSubject['attention'];
+    /** Managed services the machine publishes as failing, as its row shows them. */
+    failingServices?: number;
 }>;
 export type MachineAttentionEntry = MachineAttentionFact & MachineAttentionSubject;
 
@@ -24,6 +26,12 @@ type MachineAttentionCollection<T> = Readonly<{
     onlineCount: number;
     reportingMachineKeys: readonly string[];
 }>;
+
+/** The published managed-services failing count the machine row shows; 0 when it reports none. */
+function readMachineFailingServices(daemonState: unknown): number {
+    const failing = inputObject(inputObject(daemonState)?.managedServices)?.failing;
+    return typeof failing === 'number' ? failing : 0;
+}
 
 function canPublishAttention(machine: Machine): boolean {
     return isMachineVisibleForLaunchSelection(machine) && machine.availability?.kind !== 'locked'
@@ -62,6 +70,8 @@ export function readMachineAttentionInputs(groups: readonly ActiveSelectionMachi
                     reason?.pressure, reason?.swapping, reason?.volumeId, reason?.volumeLabel,
                     reason?.limit, reason?.used, reason?.max);
             }
+            // The row's Work cell shows this count; the fleet sentence reads the same fact (TH D-H).
+            inputs.push(inputObject(daemon?.managedServices)?.failing);
             const action = inputObject(resources?.lastAutomaticAction);
             const facts = inputObject(action?.facts);
             inputs.push(action !== null, action?.at, action?.kind, action?.entryId, action?.undoable,
@@ -100,6 +110,7 @@ export function collectMachineAttention(groups: readonly ActiveSelectionMachineG
                 ...(names ? { name: names.get(machine.id) ?? machine.id } : {}),
                 online,
                 attention: published.attention,
+                failingServices: readMachineFailingServices(machine.daemonState),
                 lastAutomaticAction: published.lastAutomaticAction ?? null,
             });
         }

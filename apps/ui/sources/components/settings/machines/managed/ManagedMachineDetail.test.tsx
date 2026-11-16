@@ -2520,7 +2520,9 @@ describe('managed Machine detail', () => {
             expect(openConsole).toHaveBeenCalledWith(consoleUrl, '_blank', 'noopener,noreferrer');
         } else {
             expect(consoleAction).toBeNull();
-            if (allocation === 'bound') expect(screen.findByTestId('managed-machine.recovery-manual')).not.toBeNull();
+            // Where to look is the Recovery section's description, not a title-weight row (TH D-J).
+            if (allocation === 'bound') expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.recovery'
+                && node.props.description === t('managedCleanup.consoleHelp'))).not.toHaveLength(0);
         }
         expect(retired).toEqual([]);
         if ('noNativeRef' in scenario) expect(screen.findByTestId('managed-machine.progress:remove')).not.toBeNull();
@@ -2549,7 +2551,8 @@ describe('managed Machine detail', () => {
         expect(screen.tree.findByType(ManagedCreationProgress).props.machine.creationState).toBe('canceled');
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.recovery').length > 0).toBe(Boolean(machine.resource || machine.recovery));
         expect(screen.tree.findByType(ManagedCreationProgress).props.machine).toEqual(archived);
-        if (allocation !== 'confirmed-absent') expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.possible-cost').length).toBeGreaterThan(0);
+        // The bill consequence is said once, in the state's own banner (TH D-J).
+        if (allocation !== 'confirmed-absent') expect(screen.getTextContent().split(t('managedMachines.creation.mayBill')).length - 1).toBe(1);
         expect(nativeActions).not.toContain('machines.managed.delete');
         expect(nativeActions).not.toContain('machines.managed.inspect');
         expect(nativeActions).not.toContain('machines.managed.retire');
@@ -4485,7 +4488,7 @@ describe('managed Machine detail', () => {
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'confirmed-absent', creationState: 'canceled',
             cleanup: { disposition: 'pending', reason: 'previous_cleanup' }, desired: 'delete', desiredWhen: 'now', intentRevision: 2,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }} />);
-        expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.possible-cost')).toHaveLength(0);
+        expect(screen.getTextContent()).not.toContain(t('managedMachines.creation.mayBill'));
     });
     it('shows Check now working while its check runs', async () => {
         const stopped = { id: 'checking', homeId: 'home', custodianAccountId: 'owner',

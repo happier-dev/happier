@@ -1302,7 +1302,7 @@ describe('managed creation presentation', () => {
       cleanup: { disposition: 'pending' as const, reason: 'late_allocation' },
     };
     expect(describeManagedCreation(canceled)).toMatchObject({
-      line: t('managedMachines.creation.canceledCleanup'),
+      cause: t('managedMachines.creation.canceledCleanup'),
       tone: 'warning',
     });
     expect(

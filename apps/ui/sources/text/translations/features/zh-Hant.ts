@@ -6930,6 +6930,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 diskFull: ({ volume }) => `${volume} 已滿`,
                 limitReached: ({ limit }) => `${limit}已用盡`,
                 guardOutOfSteps: "防護已無可執行的步驟",
+                servicesFailing: ({ count }) => `${count} 個服務故障`,
             },
             fleet: {
                 calm: "一切平穩",
@@ -6965,6 +6966,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 diskFull: ({ machine, volume }) => `${machine} 的 ${volume} 已滿`,
                 limitReached: ({ machine, limit }) => `${machine} 的${limit}已用盡`,
                 guardOutOfSteps: ({ machine }) => `${machine} 的記憶體防護已沒有可安全停止的內容`,
+                servicesFailing: ({ machine, count }) => `${machine} 有 ${count} 個服務發生故障`,
             },
             duration: {
                 minutes: ({ count }) => `${count} 分鐘`,
@@ -7243,9 +7245,9 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             },
             states: {
                 offlineEmpty: ({ machine }) => `自你開啟 Happier 以來，${machine} 一直沒有回報資源。`,
-                offlineTitle: ({ machine }) => `${machine} 已離線`,
-                offlineLastReported: ({ machine }) => `這是它最後回報的內容。它回來後工作階段會繼續；在此之前 ${machine} 的提醒已暫停。`,
-                offlineNeverReported: '自你開啟 Happier 以來，它尚未回報資源。它回來後工作階段會繼續。',
+                offlineBackTitle: '它回來後工作階段會繼續',
+                offlineLastReported: ({ machine }) => `這是它最後回報的內容。在此之前 ${machine} 的提醒已暫停。`,
+                offlineNeverReported: '自你開啟 Happier 以來，它尚未回報資源。',
                 olderTitle: ({ machine }) => `查看 ${machine} 正在做什麼`,
                 olderReason: ({ machine }) => `即時顯示 CPU、記憶體壓力、磁碟以及工作階段的使用量。${machine} 需要 Happier 0.3 才能回報。`,
                 askOwner: ({ machine }) => `複製請求更新 ${machine} 的留言`,

@@ -14,6 +14,8 @@ export type MachineResourceFleetAttention = Readonly<{
     accountScope: ServerAccountScope | null;
     needsYou: readonly MachineResourceKey[];
     look: readonly Readonly<{ machineKey: string; reasonKey: string }>[];
+    /** Machines whose published managed services are failing, as their rows show them (TH MB-2). */
+    failingServices: readonly string[];
     /** Positive sampler evidence: absence from look alone may instead mean offline or unknown. */
     reportingMachineKeys: readonly string[];
     lastAutomaticActionAt: number | null;
@@ -34,18 +36,20 @@ export function useMachineResourceFleetAttention(): MachineResourceFleetAttentio
         const attention = collectMachineAttention([{ serverId, accountScope: scope, serverName: '', status: 'idle', machines }], nowMs, 'facts');
         const needsYou: MachineResourceKey[] = [];
         const look: { machineKey: string; reasonKey: string }[] = [];
+        const failingServices: string[] = [];
         let lastAutomaticActionAt: number | null = null;
         let headline: MachineResourceFleetAttention['headline'] = null;
         for (const entry of attention.entries) {
             const machineKey = { serverId: entry.serverId, machineId: entry.machineId };
             if (entry.attention.level === 'needs_you') needsYou.push(machineKey);
+            if ((entry.failingServices ?? 0) > 0) failingServices.push(entry.key);
             for (const reason of entry.attention.reasons) {
                 if (reason.level === 'look') look.push({ machineKey: entry.key, reasonKey: reason.key });
                 if (!headline || (headline.reason.level === 'look' && reason.level === 'needs_you')) headline = { machineKey, reason };
             }
             if (entry.lastAutomaticAction) lastAutomaticActionAt = Math.max(lastAutomaticActionAt ?? 0, entry.lastAutomaticAction.at);
         }
-        return { accountScope: scope, needsYou, look, reportingMachineKeys: attention.reportingMachineKeys, lastAutomaticActionAt, headline };
+        return { accountScope: scope, needsYou, look, failingServices, reportingMachineKeys: attention.reportingMachineKeys, lastAutomaticActionAt, headline };
     }, [readMachines, serverId, scope]);
     const readDemandedInputs = React.useCallback((nowMs: number) => readMachineAttentionInputs([{
         serverId, accountScope: scope, serverName: '', status: 'idle',

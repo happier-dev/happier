@@ -83,7 +83,7 @@ function PresetCollectionEntry() {
                 controller: { machineId: 'builder', installationId: 'builder-installation' },
                 launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Build box', choices: {} },
             }).opened,
-        }] }} />;
+        }], archivedRows: [] }} />;
 }
 function PresetRouteProbe() { return React.createElement('PresetRouteProbe', { door: useMachinesDoor() }); }
 

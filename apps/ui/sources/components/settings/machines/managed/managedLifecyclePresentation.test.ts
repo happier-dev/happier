@@ -19,11 +19,19 @@ describe('native Ends presentation', () => {
   });
   it('gives every state a list row shows as a status word its one short word (TH D3)', () => {
     for (const state of [{ kind: 'creationCanceledCleanup' }, { kind: 'cleanupUnknown' }, { kind: 'mayExist', name: 'Cua' },
-      { kind: 'cleanupPending' }] as const) {
+      { kind: 'cleanupPending' }, { kind: 'creationWaiting', name: 'Boat' }] as const) {
       const presentation = describeManagedLifecycleState(state as Parameters<typeof describeManagedLifecycleState>[0]);
       expect(presentation.word).toEqual(expect.any(String));
       expect(presentation.word).not.toBe(presentation.line);
     }
+  });
+  it('says an unconfirmed cancellation cleanup once, as the page banner with its bill consequence (TH D-J)', () => {
+    const cloud = describeManagedLifecycleState({ kind: 'creationCanceledCleanup' });
+    expect(cloud.banner?.title).toBe(cloud.word);
+    expect(cloud.line).toBe(`${t('managedMachines.creation.canceledCleanup')} ${t('managedMachines.creation.mayBill')}`);
+    // A local machine runs on its controller and bills no one.
+    expect(describeManagedLifecycleState({ kind: 'creationCanceledCleanup', cost: { kind: 'local' } }).line)
+      .toBe(t('managedMachines.creation.canceledCleanup'));
   });
   it('prefers a real native expiry even when the creation record includes limits', () => {
     const state = resolveManagedNativeEndState({ provider: 'Modal', finiteOnly: true, duration, nativeExpiry: 1_790_008_200_000 });

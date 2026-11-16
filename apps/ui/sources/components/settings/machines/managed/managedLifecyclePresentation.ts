@@ -25,7 +25,7 @@ export type ManagedLifecycleState =
   | Readonly<{ kind: 'creationDisabled' }>
   | Readonly<{ kind: 'resourceReady' }>
   | Readonly<{ kind: 'observationUnavailable' }>
-  | Readonly<{ kind: 'creationCanceledCleanup' }>
+  | Readonly<{ kind: 'creationCanceledCleanup'; cost?: ManagedCost }>
   /** Canceled before any resource was made: nothing exists, so nothing "no longer exists". */
   | Readonly<{ kind: 'creationCanceled' }>
   /** Creation settled without a bound native resource. */
@@ -134,11 +134,12 @@ export function describeManagedLifecycleState(
         { title: t('managedMachines.creation.disabledTitle') },
       );
     case 'creationWaiting':
-      return present(
+      // The page says what it waits for; a row's one word agrees with it, never "Nothing created" (TH D-J).
+      return { ...present(
         'neutral',
         { detail: t('managedMachines.inspect.notCreated') },
         [],
-      );
+      ), word: t('managedMachines.creation.waitingShort') };
     case 'creating':
       // A row's status cell says the state in one word, the page its sentence (TH D3).
       return { ...present(
@@ -179,10 +180,14 @@ export function describeManagedLifecycleState(
         ['checkNow'],
       );
     case 'creationCanceledCleanup':
+      // Billing is uncertain until cleanup is confirmed: it is the page's one banner, titled with the state, whose body
+      // says what happened and what it means for the bill once (TH D-J). A local machine bills no one.
       return { ...present(
         'warning',
-        { cause: t('managedMachines.creation.canceledCleanup') },
+        { cause: t('managedMachines.creation.canceledCleanup'),
+          ...(state.cost?.kind === 'local' ? {} : { detail: t('managedMachines.creation.mayBill') }) },
         ['review', 'deleteNow', 'checkNow', 'openProvider', 'remove'],
+        { title: t('managedMachines.creation.cleanupPendingShort') },
       ), word: t('managedMachines.creation.cleanupPendingShort') };
     case 'stopPending':
       return present('pending', { detail: t('managedPower.stopPending') }, [

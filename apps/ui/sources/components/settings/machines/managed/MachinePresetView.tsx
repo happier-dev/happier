@@ -359,9 +359,11 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                         && machine.installationId === desiredController?.installationId) return;
                     edit({ controller: { machineId: machine.id, installationId: machine.installationId }, controllerPoolId: null });
                 },
-            // An unnamed controller is still a sentence-case row, with its presence when this Account can see it (TH D7).
-            } : { title: knownControllerName ?? t('machinePresets.controllerUnnamed'),
-                ...(controller ? { subtitle: presenceLabel(controller) } : {}) } },
+            // The controller's name and presence when this Account can see it; one it can't see says so as its typed
+            // state, by the name the preset saved when it has one, never a placeholder without presence (TH D7, D-K).
+            } : { title: knownControllerName ?? t('machinePresets.controllerNotShared'),
+                ...(controller ? { subtitle: presenceLabel(controller) }
+                    : machines ? { subtitle: t('machinePresets.controllerStatusNotShared') } : {}) } },
         // Under "Made from this preset" a row is the machine, who made it and its state (lab m-presets); an
         // older revision says so, since edits apply only to machines made after them.
         machines: detail.history.map(row => ({ id: row.managedId, title: row.title,

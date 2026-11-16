@@ -103,6 +103,8 @@ export type MachinePresetCollectionRow = Readonly<{
 
 export type MachinePresetCollectionSection = Omit<MachineCollectionSection, 'rows'> & Readonly<{
     rows: readonly MachinePresetCollectionRow[];
+    /** Archived presets, folded under the section's Archive as retired Machines are (TH D-G). */
+    archivedRows: readonly MachinePresetCollectionRow[];
 }>;
 
 export type MachineCollectionSection = Readonly<{
@@ -326,16 +328,20 @@ export function buildMachineCollection(input: Readonly<{
                 audience: preset.owner.kind === 'account' ? t('machinePresets.ownerPersonal')
                     : input.teamNamesByServerId?.[group.serverId]?.[preset.owner.teamId] ?? t('common.loading'),
                 ...(preset.owner.kind === 'team' ? { teamName: input.teamNamesByServerId?.[group.serverId]?.[preset.owner.teamId] } : {}) }))
-            .sort((a, b) => Number(a.preset.archivedAt !== undefined) - Number(b.preset.archivedAt !== undefined)
-                || a.title.localeCompare(b.title) || machinePresetCollectionRowKey(a).localeCompare(machinePresetCollectionRowKey(b)));
+            .sort((a, b) => a.title.localeCompare(b.title) || machinePresetCollectionRowKey(a).localeCompare(machinePresetCollectionRowKey(b)));
         count += rows.length;
         return { key: JSON.stringify([group.serverId, 'presets']), serverId: group.serverId,
-            title: input.groupedByHome ? group.serverName : null, status: group.status, rows };
+            title: input.groupedByHome ? group.serverName : null, status: group.status,
+            rows: rows.filter(row => row.preset.archivedAt === undefined),
+            archivedRows: rows.filter(row => row.preset.archivedAt !== undefined) };
     });
     // A typed query lists what matched: a group it left empty has nothing to say (its empty line is for a Home with no
     // machines). With no match anywhere the groups stay, so the list can say "No matches".
     const shownSections = query && count > 0 ? sections.filter(section => section.rows.length > 0) : sections;
-    const firstAnswerPending = machineCount > 0 && shownSections.every(section => section.rows.every(row => row.hydrating));
+    // Pending only while there are machine rows and none can be read yet: a search that matched only presets (or nothing)
+    // has its answer, never a reserved first read (TH MB-1).
+    const shownRows = shownSections.flatMap(section => section.rows);
+    const firstAnswerPending = machineCount > 0 && shownRows.length > 0 && shownRows.every(row => row.hydrating);
     return { count, machineCount, firstAnswerPending, sections: shownSections, presetSections };
 }
 
@@ -371,7 +377,8 @@ export function reconcileMachineCollection(previous: MachineCollection | null, n
     }), section => section.key);
     const presetSections = reconcileStableRows(previous.presetSections, next.presetSections.map(section => {
         const before = previous.presetSections.find(candidate => candidate.key === section.key);
-        return before ? { ...section, rows: reconcileStableRows(before.rows, section.rows, machinePresetCollectionRowKey) } : section;
+        return before ? { ...section, rows: reconcileStableRows(before.rows, section.rows, machinePresetCollectionRowKey),
+            archivedRows: reconcileStableRows(before.archivedRows, section.archivedRows, machinePresetCollectionRowKey) } : section;
     }), section => section.key);
     return sections === previous.sections && presetSections === previous.presetSections
         && previous.count === next.count && previous.machineCount === next.machineCount && previous.firstAnswerPending === next.firstAnswerPending

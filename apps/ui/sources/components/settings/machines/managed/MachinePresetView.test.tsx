@@ -1749,7 +1749,9 @@ describe('reachable preset detail', () => {
       id: 'controller', value: t('managedMachines.receipt.managingComputer'),
     }));
     expect(model.receipt?.facts).not.toContainEqual(expect.objectContaining({ id: 'controller', value: t('common.unknown') }));
-    expect(model.controller?.row.title).toBe(t('machinePresets.controllerUnnamed'));
+    // A controller this Account can't see is a typed state, never a placeholder title without presence (TH D-K).
+    expect(model.controller?.row.title).toBe(t('machinePresets.controllerNotShared'));
+    expect(model.controller?.row.subtitle).toBe(t('machinePresets.controllerStatusNotShared'));
     expect(screen.findByTestId('machine-preset.configuration-unavailable')).toBeNull();
     await screen.unmount();
   });

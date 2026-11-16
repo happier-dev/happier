@@ -6968,6 +6968,7 @@ const machineDetailPageTranslations = { ru: translated({
                 diskFull: ({ volume }) => `${volume} заполнен`,
                 limitReached: ({ limit }) => `Нет свободных ${limit}`,
                 guardOutOfSteps: "У защиты закончились шаги",
+                servicesFailing: ({ count }) => count === 1 ? '1 служба сбоит' : `Сбоят службы: ${count}`,
             },
             fleet: {
                 calm: "Всё спокойно",
@@ -7003,6 +7004,7 @@ const machineDetailPageTranslations = { ru: translated({
                 diskFull: ({ machine, volume }) => `${volume} на ${machine} заполнен`,
                 limitReached: ({ machine, limit }) => `У ${machine} закончились свободные слоты: ${limit}`,
                 guardOutOfSteps: ({ machine }) => `У защиты памяти ${machine} не осталось ничего безопасного для остановки`,
+                servicesFailing: ({ machine, count }) => count === 1 ? `На ${machine} сбоит служба` : `На ${machine} сбоят службы: ${count}`,
             },
             duration: {
                 minutes: ({ count }) => `${count} мин`,
@@ -7281,9 +7283,9 @@ const machineDetailPageTranslations = { ru: translated({
             },
             states: {
                 offlineEmpty: ({ machine }) => `${machine} не сообщала о своих ресурсах с тех пор, как вы открыли Happier.`,
-                offlineTitle: ({ machine }) => `${machine} не в сети`,
-                offlineLastReported: ({ machine }) => `Это последнее, что она сообщила. Её сессии продолжатся, когда она вернётся; оповещения для ${machine} до тех пор приостановлены.`,
-                offlineNeverReported: 'Она не сообщала о ресурсах с момента открытия Happier. Её сессии продолжатся, когда она вернётся.',
+                offlineBackTitle: 'Её сессии продолжатся, когда она вернётся',
+                offlineLastReported: ({ machine }) => `Это последнее, что она сообщила. Оповещения для ${machine} до тех пор приостановлены.`,
+                offlineNeverReported: 'Она не сообщала о ресурсах с момента открытия Happier.',
                 olderTitle: ({ machine }) => `Посмотрите, что делает ${machine}`,
                 olderReason: ({ machine }) => `CPU, давление на память, диск и то, что используют ваши сессии, в реальном времени. Чтобы ${machine} их сообщала, нужен Happier 0.3.`,
                 askOwner: ({ machine }) => `Скопировать просьбу обновить ${machine}`,

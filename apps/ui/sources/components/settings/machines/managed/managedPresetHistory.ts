@@ -2,6 +2,7 @@ import { t } from '@/text';
 import type { ManagedMachineV1, ValidatedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
+import { formatMachineDisplayNameParts, resolveMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
 
 import { machineCollectionHref } from '../collection/machineCollectionModel';
 import { describeManagedCreation } from './managedCreationPresentation';
@@ -22,12 +23,17 @@ export function buildManagedPresetHistory(input: Readonly<{
     presetId: string;
     machines: readonly ManagedMachineV1[];
 }>): readonly ManagedPresetHistoryRow[] {
-    return input.machines.flatMap(machine => {
-        if (machine.homeId !== input.homeId || machine.preset?.id !== input.presetId) return [];
+    const made = input.machines.filter(machine => machine.homeId === input.homeId && machine.preset?.id === input.presetId);
+    // Named as the Machines list names created machines: same-named ones are told apart by their short id (TH D-K).
+    // An unreadable sealed machine has no name to tell apart: it keeps the generic label.
+    const names = resolveMachineDisplayNameParts(made.flatMap(machine => machine.launch?.name ? [{ id: machine.id, managedName: machine.launch.name }] : []));
+    return made.flatMap(machine => {
+        if (!machine.preset) return [];
         // A history row's status is the state's one word ("Ended"), not its sentence (TH D3).
         const creation = describeManagedCreation(machine);
+        const parts = names.get(machine.id);
         return [{ managedId: machine.id, presetRevision: machine.preset.revision,
-            title: machine.launch?.name ?? t('common.machine'), subtitle: creation.word ?? creation.line,
+            title: parts ? formatMachineDisplayNameParts(parts) : machine.launch?.name ?? t('common.machine'), subtitle: creation.word ?? creation.line,
             href: machineCollectionHref({ kind: 'managed', managedId: machine.id, serverId: input.serverId }), machine }];
     });
 }

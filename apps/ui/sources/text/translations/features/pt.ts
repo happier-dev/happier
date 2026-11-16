@@ -6941,6 +6941,7 @@ const machineDetailPageTranslations = { pt: translated({
                 diskFull: ({ volume }) => `${volume} cheio`,
                 limitReached: ({ limit }) => `Sem ${limit}`,
                 guardOutOfSteps: "A proteção ficou sem passos",
+                servicesFailing: ({ count }) => count === 1 ? '1 serviço a falhar' : `${count} serviços a falhar`,
             },
             fleet: {
                 calm: "Tudo calmo",
@@ -6976,6 +6977,7 @@ const machineDetailPageTranslations = { pt: translated({
                 diskFull: ({ machine, volume }) => `${volume} de ${machine} está cheio`,
                 limitReached: ({ machine, limit }) => `${machine} ficou sem ${limit}`,
                 guardOutOfSteps: ({ machine }) => `A proteção de memória de ${machine} não tem mais nada seguro para parar`,
+                servicesFailing: ({ machine, count }) => count === 1 ? `${machine} tem um serviço a falhar` : `${machine} tem ${count} serviços a falhar`,
             },
             duration: {
                 minutes: ({ count }) => `${count} min`,
@@ -7254,9 +7256,9 @@ const machineDetailPageTranslations = { pt: translated({
             },
             states: {
                 offlineEmpty: ({ machine }) => `${machine} não informou os seus recursos desde que abriu o Happier.`,
-                offlineTitle: ({ machine }) => `${machine} está offline`,
-                offlineLastReported: ({ machine }) => `Isto é o que reportou por último. As sessões continuam quando voltar; os alertas de ${machine} ficam pausados até lá.`,
-                offlineNeverReported: 'Não reportou os recursos desde que abriste o Happier. As sessões continuam quando voltar.',
+                offlineBackTitle: 'As sessões continuam quando voltar',
+                offlineLastReported: ({ machine }) => `Isto é o que reportou por último. Os alertas de ${machine} ficam pausados até lá.`,
+                offlineNeverReported: 'Não reportou os recursos desde que abriste o Happier.',
                 olderTitle: ({ machine }) => `Veja o que ${machine} está a fazer`,
                 olderReason: ({ machine }) => `CPU, pressão de memória, disco e o que as suas sessões usam, ao vivo. ${machine} precisa do Happier 0.3 para os informar.`,
                 askOwner: ({ machine }) => `Copiar uma nota a pedir para atualizar ${machine}`,

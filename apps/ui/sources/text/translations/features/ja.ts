@@ -6936,6 +6936,7 @@ const machineDetailPageTranslations = { ja: translated({
                 diskFull: ({ volume }) => `${volume} が満杯`,
                 limitReached: ({ limit }) => `${limit} が上限`,
                 guardOutOfSteps: "ガードの手順が尽きました",
+                servicesFailing: ({ count }) => `${count} 件のサービスが失敗`,
             },
             fleet: {
                 calm: "すべて安定",
@@ -6971,6 +6972,7 @@ const machineDetailPageTranslations = { ja: translated({
                 diskFull: ({ machine, volume }) => `${machine} の ${volume} が満杯です`,
                 limitReached: ({ machine, limit }) => `${machine} の${limit}が上限に達しました`,
                 guardOutOfSteps: ({ machine }) => `${machine} のメモリガードには、安全に停止できるものが残っていません`,
+                servicesFailing: ({ machine, count }) => `${machine} で ${count} 件のサービスが失敗しています`,
             },
             duration: {
                 minutes: ({ count }) => `${count} 分`,
@@ -7249,9 +7251,9 @@ const machineDetailPageTranslations = { ja: translated({
             },
             states: {
                 offlineEmpty: ({ machine }) => `${machine} は、Happier を開いてからリソースを報告していません。`,
-                offlineTitle: ({ machine }) => `${machine} はオフラインです`,
-                offlineLastReported: ({ machine }) => `これは最後に報告された内容です。戻るとセッションは再開します。それまで ${machine} のアラートは一時停止します。`,
-                offlineNeverReported: 'Happier を開いてからリソースの報告がありません。戻るとセッションは再開します。',
+                offlineBackTitle: '戻るとセッションは再開します',
+                offlineLastReported: ({ machine }) => `これは最後に報告された内容です。それまで ${machine} のアラートは一時停止します。`,
+                offlineNeverReported: 'Happier を開いてからリソースの報告がありません。',
                 olderTitle: ({ machine }) => `${machine} の状況を見る`,
                 olderReason: ({ machine }) => `CPU、メモリプレッシャー、ディスク、セッションの使用状況をライブで表示します。報告には ${machine} で Happier 0.3 が必要です。`,
                 askOwner: ({ machine }) => `${machine} の更新を依頼するメモをコピー`,

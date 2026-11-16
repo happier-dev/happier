@@ -57,7 +57,7 @@ import type { MachineAttentionEntry } from '@/components/machines/attention/coll
 import { useMachineAttention } from '@/sync/domains/machines/resources/useMachineAttention';
 import { MachinesNeedsYouList } from '@/components/machines/attention/MachinesNeedsYouList';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
-import { describeFleetDescription, describeFleetTitle, describeMachineAttentionWord, describeMachineReasonDetail, readMachinePublishedResources, selectAttentionSubjects, selectHeadlineReason } from '@/components/machines/summary/machineResourceSentences';
+import { describeFleetDescription, describeFleetTitle, describeMachineAttentionWord, describeMachineReasonDetail, readMachinePublishedResources, selectAttentionSubjects, selectFleetLookSubjects, selectHeadlineReason } from '@/components/machines/summary/machineResourceSentences';
 import { MachineListRowSummary } from '@/components/machines/summary/MachineListRowSummary';
 import { MACHINE_CARD_METRICS_HEIGHT_PX, MachineCardBody } from './MachineCardBody';
 import { useMachineIndexCardAttention } from './machineIndexCardAttention';
@@ -153,13 +153,17 @@ function AllMachinesIndexBody() {
     // What each machine publishes (plan 20): the fleet sentence and Needs you first.
     const attention = useMachineAttention(viewModel.visibleMachineGroups);
     const attentionSubjects = React.useMemo(() => selectAttentionSubjects(attention.entries), [attention.entries]);
-    const needsYouSubjectKeys = useReconciledStableRows(attentionSubjects.map(entry => entry.key), String);
+    // Needs you lists what the fleet sentence counts: resource reasons and failing services (TH MB-2).
+    const lookSubjects = React.useMemo(() => selectFleetLookSubjects(attention.entries), [attention.entries]);
+    const needsYouSubjectKeys = useReconciledStableRows(lookSubjects.map(entry => entry.key), String);
     const needsYouKeys = React.useMemo(() => new Set(needsYouSubjectKeys), [needsYouSubjectKeys]);
     // The machines whose resources need attention: a phone list row says why on its second line; a calm one has none.
     const rowAttentionKeys = React.useMemo(() => new Set(attention.entries
         .filter(entry => selectHeadlineReason(entry.attention) !== null).map(entry => entry.key)), [attention.entries]);
     const fleetTitle = describeFleetTitle({ subjects: attention.entries, reportingCount: attention.reportingCount });
-    const fleetDescription = describeFleetDescription({ subjects: attention.entries, reportingCount: attention.reportingCount, onlineCount: attention.onlineCount, nowMs });
+    // With Needs you shown the title gives way, so the sentence carries its own lead (TH MB-2).
+    const fleetDescription = describeFleetDescription({ subjects: attention.entries, reportingCount: attention.reportingCount,
+        onlineCount: attention.onlineCount, nowMs, titleShown: needsYouKeys.size === 0 });
     const openAttention = React.useCallback((entry: MachineAttentionEntry, tab: MachinePageTabParams | null) => {
         const result = runGuardedNavigation(() => router.push(machinePageHref({ door, target: { machineId: entry.machineId, serverId: entry.serverId },
             ...(tab ? { tab } : {}) }) as never));

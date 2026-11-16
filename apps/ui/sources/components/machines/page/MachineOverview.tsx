@@ -78,6 +78,15 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
     const managedMachine = managedEnrolled.machine;
     const managedRecoveryExplains = managedMachine !== undefined && props.online === false
         && resolveManagedInstallationRecovery(managedMachine, null, { guestOnline: false }) === 'restartDaemon';
+    // Plan 20's vitals body: live while this tab is shown, its history and Alerts row. Offline, it opens with the one
+    // banner that says what being offline means, so it leads the page: the cause before the work it blocks (TH D-I).
+    const vitals = (
+        <MachineVitalsOverview serverId={props.serverId} machine={machine} machineName={props.machineName} online={props.online}
+            onOpenProcesses={openProcesses}
+            offlineRetry={runtimePresence.nextAction === 'retry' && !managedRecoveryExplains ? offlineRetry : undefined}
+            offlineExplained={runtimePresence.nextAction !== 'retry' || managedRecoveryExplains} />
+    );
+    const vitalsLead = props.online === false;
     return (
         // The vitals banner says once that the machine is offline; the sections below inherit it, never repeat it.
         <CheckoutReachabilityScope scope={reachabilityScope}>
@@ -93,6 +102,7 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
                     action={{ label: t('common.retry'), onPress: () => void retry(), loading: retrying, disabled: retrying }}
                 />
             ) : null}
+            {vitalsLead ? vitals : null}
 
             {/* A machine Happier created explains itself first (lab m-detail): Keep it, Managed from and
                 what it was made with, beside its receipt, before the sections every machine has. */}
@@ -109,11 +119,7 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
             {/* What runs here (pfc-redesign mOv): the Environments this Machine runs, with the one environment row. */}
             <MachineWhatRunsHereSection serverId={props.serverId} machineId={props.machineId} lifetime={binding ?? null} />
 
-            {/* Plan 20's vitals body: live while this tab is shown, its history and Alerts row. */}
-            <MachineVitalsOverview serverId={props.serverId} machine={machine} machineName={props.machineName} online={props.online}
-                onOpenProcesses={openProcesses}
-                offlineRetry={runtimePresence.nextAction === 'retry' && !managedRecoveryExplains ? offlineRetry : undefined}
-                offlineTitle={runtimePresence.label} offlineExplained={runtimePresence.nextAction !== 'retry' || managedRecoveryExplains} />
+            {vitalsLead ? null : vitals}
 
             {/* The page answers first; the agent is there when it is not enough (lab `ra` A1). */}
             <MachineResourcesAskBlock serverId={props.serverId} machineId={props.machineId} machineName={props.machineName} />

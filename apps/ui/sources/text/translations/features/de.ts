@@ -6933,6 +6933,7 @@ const machineDetailPageTranslations = { de: translated({
                 diskFull: ({ volume }) => `${volume} voll`,
                 limitReached: ({ limit }) => `Keine ${limit} mehr`,
                 guardOutOfSteps: "Der Schutz hat keine Schritte mehr",
+                servicesFailing: ({ count }) => count === 1 ? '1 Dienst fehlerhaft' : `${count} Dienste fehlerhaft`,
             },
             fleet: {
                 calm: "Alles ruhig",
@@ -6968,6 +6969,7 @@ const machineDetailPageTranslations = { de: translated({
                 diskFull: ({ machine, volume }) => `${volume} auf ${machine} ist voll`,
                 limitReached: ({ machine, limit }) => `${machine} hat keine ${limit} mehr`,
                 guardOutOfSteps: ({ machine }) => `Der Speicherschutz von ${machine} hat nichts Sicheres mehr zum Beenden`,
+                servicesFailing: ({ machine, count }) => count === 1 ? `${machine} hat einen fehlerhaften Dienst` : `${machine} hat ${count} fehlerhafte Dienste`,
             },
             duration: {
                 minutes: ({ count }) => `${count} min`,
@@ -7246,9 +7248,9 @@ const machineDetailPageTranslations = { de: translated({
             },
             states: {
                 offlineEmpty: ({ machine }) => `${machine} hat seit dem Öffnen von Happier keine Ressourcen gemeldet.`,
-                offlineTitle: ({ machine }) => `${machine} ist offline`,
-                offlineLastReported: ({ machine }) => `Das hat es zuletzt gemeldet. Seine Sitzungen laufen weiter, sobald es zurück ist; Warnungen für ${machine} pausieren bis dahin.`,
-                offlineNeverReported: 'Es hat seit dem Öffnen von Happier keine Ressourcen gemeldet. Seine Sitzungen laufen weiter, sobald es zurück ist.',
+                offlineBackTitle: 'Seine Sitzungen laufen weiter, sobald es zurück ist',
+                offlineLastReported: ({ machine }) => `Das hat es zuletzt gemeldet. Warnungen für ${machine} pausieren bis dahin.`,
+                offlineNeverReported: 'Es hat seit dem Öffnen von Happier keine Ressourcen gemeldet.',
                 olderTitle: ({ machine }) => `Sieh, was ${machine} gerade tut`,
                 olderReason: ({ machine }) => `CPU, Speicherdruck, Speicherplatz und was deine Sitzungen nutzen, live. ${machine} braucht Happier 0.3, um sie zu melden.`,
                 askOwner: ({ machine }) => `Hinweis kopieren, der um ein Update von ${machine} bittet`,

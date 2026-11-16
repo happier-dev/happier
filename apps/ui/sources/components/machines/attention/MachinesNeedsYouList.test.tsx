@@ -34,6 +34,15 @@ describe('Machines needing you', () => {
         }
     });
 
+    it('names a machine whose only problem is failing services, and opens its Services (TH MB-2)', async () => {
+        const opened: unknown[] = [];
+        const failing = { ...entry('look'), key: 'eadc', machineId: 'eadc', name: 'eadc', attention: { level: 'calm', reasons: [] }, failingServices: 8 } as MachineAttentionEntry;
+        const screen = await renderScreen(<MachinesNeedsYouList entries={[entry('needs_you'), failing]} nowMs={Date.now()} onOpen={(_entry, tab) => opened.push(tab)} />);
+        expect(screen.findByTestId('machines.needs-you.home-a.eadc')).not.toBeNull();
+        await screen.pressByTestIdAsync('machines.needs-you.home-a.eadc.action');
+        expect(opened).toEqual([{ id: 'services' }]);
+    });
+
     it('on a phone keeps each row light: the row opens its reason\'s tab and no bordered button stands under it', async () => {
         const opened: unknown[] = [];
         const screen = await renderScreen(<MachinesNeedsYouList entries={[entry('needs_you'), entry('look')]} nowMs={Date.now()} compact

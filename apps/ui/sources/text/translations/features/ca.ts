@@ -6941,6 +6941,7 @@ const machineDetailPageTranslations = { ca: translated({
                 diskFull: ({ volume }) => `${volume} ple`,
                 limitReached: ({ limit }) => `Sense ${limit}`,
                 guardOutOfSteps: "La protecció s’ha quedat sense passos",
+                servicesFailing: ({ count }) => count === 1 ? '1 servei falla' : `${count} serveis fallen`,
             },
             fleet: {
                 calm: "Tot tranquil",
@@ -6976,6 +6977,7 @@ const machineDetailPageTranslations = { ca: translated({
                 diskFull: ({ machine, volume }) => `${volume} de ${machine} és ple`,
                 limitReached: ({ machine, limit }) => `${machine} s’ha quedat sense ${limit}`,
                 guardOutOfSteps: ({ machine }) => `La protecció de memòria de ${machine} no té res segur per aturar`,
+                servicesFailing: ({ machine, count }) => count === 1 ? `${machine} té un servei que falla` : `${machine} té ${count} serveis que fallen`,
             },
             duration: {
                 minutes: ({ count }) => `${count} min`,
@@ -7254,9 +7256,9 @@ const machineDetailPageTranslations = { ca: translated({
             },
             states: {
                 offlineEmpty: ({ machine }) => `${machine} no ha informat dels seus recursos des que has obert Happier.`,
-                offlineTitle: ({ machine }) => `${machine} està fora de línia`,
-                offlineLastReported: ({ machine }) => `Això és el que va informar per últim cop. Les seves sessions continuen quan torni; les alertes de ${machine} queden en pausa fins aleshores.`,
-                offlineNeverReported: 'No ha informat dels seus recursos des que vas obrir Happier. Les seves sessions continuen quan torni.',
+                offlineBackTitle: 'Les seves sessions continuen quan torni',
+                offlineLastReported: ({ machine }) => `Això és el que va informar per últim cop. Les alertes de ${machine} queden en pausa fins aleshores.`,
+                offlineNeverReported: 'No ha informat dels seus recursos des que vas obrir Happier.',
                 olderTitle: ({ machine }) => `Mira què està fent ${machine}`,
                 olderReason: ({ machine }) => `CPU, pressió de memòria, disc i el que fan servir les teves sessions, en directe. ${machine} necessita Happier 0.3 per informar-ne.`,
                 askOwner: ({ machine }) => `Copia una nota demanant d’actualitzar ${machine}`,

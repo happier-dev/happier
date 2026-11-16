@@ -253,7 +253,11 @@ function AttentionBannerStrip(props: React.ComponentProps<typeof AttentionBanner
     );
 }
 
-/** Stacked (a narrow banner), every way forward takes the one width of the column, so the group reads as one (TH D-J). */
+/**
+ * Stacked (a narrow banner), every way forward takes the one width of the column and the same bordered shape, so the
+ * stack reads as one group of buttons rather than one button over loose labels (TH D-J, MB-3). In a row, the first
+ * stays bordered and the rest quiet.
+ */
 function BannerButton(props: Readonly<{ action: AttentionBannerAction; testID: string; quiet?: boolean; fullWidth?: boolean; beside?: boolean; stacked?: boolean }>) {
     const { theme } = useUnistyles();
     return (
@@ -261,11 +265,11 @@ function BannerButton(props: Readonly<{ action: AttentionBannerAction; testID: s
             testID={props.action.testID ?? props.testID}
             size={props.fullWidth ? 'normal' : props.beside ? 'small' : 'mini'}
             style={props.fullWidth || props.stacked ? { width: '100%' } : undefined}
-            display={props.action.display ?? (props.quiet ? 'inverted' : 'secondary')}
+            display={props.action.display ?? (props.quiet && !props.stacked ? 'inverted' : 'secondary')}
             title={props.action.label}
             leading={props.action.icon ? <Icon name={props.action.icon} size={ICON_SIZE.xs}
                 color={props.action.display === 'default' ? theme.colors.button.primary.tint : theme.colors.text.primary} /> : undefined}
-            textStyle={props.quiet ? Typography.default() : undefined}
+            textStyle={props.quiet && !props.stacked ? Typography.default() : undefined}
             disabled={props.action.disabled}
             loading={props.action.loading}
             onPress={props.action.onPress}

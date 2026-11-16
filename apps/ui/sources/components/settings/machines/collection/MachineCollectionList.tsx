@@ -40,6 +40,8 @@ import {
     resolveSelectedMachineCollectionKey,
     type MachineCollectionRow,
     type MachineCollectionSection,
+    type MachineCollectionTarget,
+    type MachinePresetCollectionRow,
     type MachinePresetCollectionSection,
 } from './machineCollectionModel';
 import { recordMachineCollectionVisit, readLastVisitedMachine } from './machineCollectionVisit';
@@ -312,6 +314,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     const fleetLookCount = React.useMemo(() => new Set([
         ...fleetAttention.needsYou.map(key => JSON.stringify([key.serverId ?? null, key.machineId])),
         ...fleetAttention.look.map(entry => entry.machineKey),
+        // The same machines the Overview's sentence counts: failing services need a look too (TH MB-2).
+        ...fleetAttention.failingServices,
     ]).size, [fleetAttention]);
     const onDetailRoute = pathname === doorRoot || pathname.startsWith(`${doorRoot}/`);
     const replaceConfiguration = rail && onDetailRoute && door === 'settings';
@@ -596,7 +600,9 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             {managedReadApprovals}
             {/* The machines are one section (owner 11-11): the one being added, this computer, then the fleet. A first group
                 that names itself ("Your machines") heads them; a second "Machines" over it said the same thing (A5). */}
-            {collection.sections.find(section => !section.archived)?.title ? null
+            {/* A search that matched only presets lists them under Presets; no empty Machines heading stands above (TH MB-1). */}
+            {collection.sections.find(section => !section.archived)?.title
+                || query.trim() && collection.sections.every(section => section.rows.length === 0) ? null
                 : <CollectionListGroupLabel testID="settings.machines.rail.machinesLabel" title={t('settings.machines')} />}
             <MachineDraftRow selected={selectedKey === 'machineDraft'} replace={replaceConfiguration} />
             {thisComputerRow}
@@ -726,15 +732,18 @@ function MachineRowsFoldCaret(props: Readonly<{ expanded: boolean }>) {
     return <DisclosureCaret expanded={props.expanded} size={ICON_SIZE.xs} />;
 }
 
-/** Rows kept under one fold, with their count; it opens while one of them is selected or a search is typed. */
-function MachineRowsFold(props: Readonly<{
+/**
+ * Rows kept under one fold, with their count; it opens while one of them is selected or a search is typed. Machines
+ * and presets share it: offline machines, retired creations and archived presets fold the same way (TH D-G).
+ */
+function MachineRowsFold<Row extends MachineCollectionTarget>(props: Readonly<{
     testID: string;
     title: string;
-    rows: readonly MachineCollectionRow[];
+    rows: readonly Row[];
     rail: boolean;
     selectedKey: string | null;
     query: string;
-    renderRow: (row: MachineCollectionRow) => React.ReactElement;
+    renderRow: (row: Row) => React.ReactElement;
 }>) {
     const [expanded, setExpanded] = React.useState(false);
     const selected = props.rows.some(row => isMachineCollectionRowSelected(props.selectedKey, row));
@@ -783,25 +792,15 @@ export const MachinePresetCollectionSectionView = React.memo(function MachinePre
     const add = !awaiting && !props.state?.error ? <IconButton testID={`settings.machines.presets.new.${props.section.serverId}`}
         iconName="plus" accessibilityLabel={t('machinePresets.newPreset')} variant="plain"
         onPress={() => openHref(router, newHref, props.replacing, 'MachinePresetCollection.new')} /> : null;
-    const rows = <>
-        {approval.approvalId ? <Item testID={`settings.machines.presets.approval.${props.section.serverId}`}
-            title={t('approvals.status.open')} density={props.rail ? 'compact' : undefined}
-            onPress={() => openHref(router, `/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.section.serverId)}`, false, 'MachinePresetCollection.approval')} /> : null}
-        {props.state?.error ? <SurfaceStateCard testID={`settings.machines.presets.error.${props.section.serverId}`}
-            size="line" kind={props.state.error === 'permission_denied' || props.state.error === 'signed_out' ? 'denied' : 'unavailable'}
-            title={props.state.error === 'permission_denied' || props.state.error === 'signed_out' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
-            diagnosticCode={props.state.error} action={props.refresh ? { label: t('common.retry'), onPress: props.refresh } : undefined} /> : null}
-        {props.section.rows.map(row => {
+    const renderRow = (row: MachinePresetCollectionRow) => {
             const render = (audience: string) => <Item key={machineCollectionRowKey(row)} testID={`settings.machines.preset.${row.serverId}.${row.presetId}`}
             // The same rail anatomy as machine and pool rows: the name keeps its line, the fact yields (TH D2).
             rowRole="catalogRow"
             title={row.title}
-            // The rail is an index: the name keeps its line; a short fact (Yours, Archived) sits at its end, while a Team's
+            // The rail is an index: the name keeps its line; a short fact (Yours) sits at its end, while a Team's
             // name, which can be as long as the preset's, moves beneath it so neither truncates the other (TH D2).
-            {...(props.rail ? row.preset.archivedAt === undefined && row.preset.owner.kind === 'team'
-                ? { subtitle: audience || undefined }
-                : { detail: row.preset.archivedAt !== undefined ? t('machinePresets.archivedShort') : audience || undefined }
-                : { subtitle: row.preset.archivedAt !== undefined ? [audience, t('machinePresets.archived')].filter(Boolean).join(' · ') : audience || undefined })}
+            // An archived preset is already under Archive, so its row never says "Archived" again (TH D-G).
+            {...(props.rail && row.preset.owner.kind !== 'team' ? { detail: audience || undefined } : { subtitle: audience || undefined })}
             // The preset's provider mark, as the preset page draws it (lab m-presets rail).
             icon={<HappierCollectionListMark rowRole="catalogRow"><ManagedPresetMark serverId={row.serverId} preset={row.preset}
                 size={props.rail ? MANAGED_PROVISIONER_MARK_SIZE.rail : MANAGED_PROVISIONER_MARK_SIZE.row} /></HappierCollectionListMark>}
@@ -811,10 +810,23 @@ export const MachinePresetCollectionSectionView = React.memo(function MachinePre
                 openHref(router, machineCollectionHref(row), props.replacing, 'MachinePresetCollection.open'); }} />;
             return row.preset.owner.kind === 'team' ? <MachinePresetTeamCollectionRow key={machineCollectionRowKey(row)}
                 serverId={row.serverId} teamId={row.preset.owner.teamId} knownName={row.teamName} render={render} /> : render(row.audience);
-        })}
+    };
+    const rows = <>
+        {approval.approvalId ? <Item testID={`settings.machines.presets.approval.${props.section.serverId}`}
+            title={t('approvals.status.open')} density={props.rail ? 'compact' : undefined}
+            onPress={() => openHref(router, `/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.section.serverId)}`, false, 'MachinePresetCollection.approval')} /> : null}
+        {props.state?.error ? <SurfaceStateCard testID={`settings.machines.presets.error.${props.section.serverId}`}
+            size="line" kind={props.state.error === 'permission_denied' || props.state.error === 'signed_out' ? 'denied' : 'unavailable'}
+            title={props.state.error === 'permission_denied' || props.state.error === 'signed_out' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
+            diagnosticCode={props.state.error} action={props.refresh ? { label: t('common.retry'), onPress: props.refresh } : undefined} /> : null}
+        {props.section.rows.map(renderRow)}
+        {/* Archived presets fold under one Archive, as retired Machines do (TH D-G); a search or selection opens it. */}
+        {props.section.archivedRows.length > 0 ? <MachineRowsFold testID={`settings.machines.presets.archived.${props.section.serverId}`}
+            title={t('managedCleanup.archiveTitle')} rows={props.section.archivedRows} rail={props.rail}
+            selectedKey={props.selectedKey} query={props.query} renderRow={renderRow} /> : null}
         {/* Loading and empty are one line on the rows' edge, so the section never shifts when the answer arrives. */}
         {/* The first read reserves its row quietly (TH D12); empty is one line on the rows' edge. */}
-        {props.section.rows.length === 0 && !props.state?.error ? awaiting ? (
+        {props.section.rows.length === 0 && props.section.archivedRows.length === 0 && !props.state?.error ? awaiting ? (
             <ItemLoadStateRows state={FIRST_READ} rows={1} lines={1} shape={props.rail ? 'list' : undefined}
                 accessibilityLabel={t('machinePresets.short')} testID={`settings.machines.presets.loading.${props.section.serverId}`} />
         ) : (

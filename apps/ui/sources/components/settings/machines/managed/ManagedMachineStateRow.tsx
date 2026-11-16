@@ -48,8 +48,12 @@ export const ManagedMachineStateRow = React.memo(
        * line instead, so the word is said once.
        */
       leadWithLine?: boolean;
-      /** When the state was observed ("As of 4:45 PM"): quiet meta on the row's own line. */
+      /** When the state was observed ("As of 4:45 PM"): quiet meta on the row's own line, or the banner's last words. */
       asOf?: string;
+      /** What the state means for the bill, said in the row's own description rather than a row of its own (TH D-J). */
+      consequence?: string;
+      /** A banner's on-demand diagnostics (the last check's own message), behind its quiet Details. */
+      details?: readonly string[];
       testID: string;
     }>,
   ) {
@@ -62,6 +66,7 @@ export const ManagedMachineStateRow = React.memo(
       const [first, ...rest] = actions.map((action) => ({
         label: managedLifecycleActionLabel(action, props.provider),
         onPress: props.handlers[action]!,
+        loading: props.pendingAction === action,
         testID: `${props.testID}:${action}`,
       }));
       return (
@@ -75,7 +80,9 @@ export const ManagedMachineStateRow = React.memo(
                 : 'neutral'
           }
           title={presentation.banner.title}
-          description={presentation.detail}
+          // The cause and what it means, then when it was seen: one body, said once (TH D-J).
+          description={[presentation.line, props.asOf].filter(Boolean).join(' ') || undefined}
+          details={props.details}
           // The bordered next step leads; a way out of the app (Open Hetzner) stays quiet beside it.
           action={first ?? null}
           secondaryAction={rest[0] ?? null}
@@ -101,10 +108,11 @@ export const ManagedMachineStateRow = React.memo(
             <Text style={styles.line}>
               <Text style={{ color: tint }}>{presentation.cause}</Text>
               {presentation.detail ? ` ${presentation.detail}` : null}
+              {props.consequence ? ` ${props.consequence}` : null}
               {props.asOf ? ` · ${props.asOf}` : null}
             </Text>
           ) : (
-            [presentation.line, props.asOf].filter(Boolean).join(' · ') || undefined
+            [[presentation.line, props.consequence].filter(Boolean).join(' '), props.asOf].filter(Boolean).join(' · ') || undefined
           )
         }
         subtitleLines={0}

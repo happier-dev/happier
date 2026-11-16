@@ -25,10 +25,15 @@ describe('buildManagedPresetHistory', () => {
         const history = buildManagedPresetHistory({ serverId: 'route/home', homeId: 'home', presetId: 'preset',
             machines: [admitted, enrolled, row('foreign', { homeId: 'other' }), row('one-off', { preset: undefined }),
                 row('different', { preset: { id: 'other', revision: 1, contentEncryptionMode: 'plain' } })] });
-        expect(history.map(item => ({ id: item.managedId, revision: item.presetRevision, title: item.title, href: item.href }))).toEqual([
-            { id: 'pending', revision: 1, title: 'Original guest', href: '/settings/machines/managed/pending?serverId=route%2Fhome' },
-            { id: 'joined', revision: 1, title: 'Original guest', href: '/settings/machines/managed/joined?serverId=route%2Fhome' },
+        expect(history.map(item => ({ id: item.managedId, revision: item.presetRevision, href: item.href }))).toEqual([
+            { id: 'pending', revision: 1, href: '/settings/machines/managed/pending?serverId=route%2Fhome' },
+            { id: 'joined', revision: 1, href: '/settings/machines/managed/joined?serverId=route%2Fhome' },
         ]);
+        // Same-named machines are told apart as the Machines list tells them apart (TH D-K), never two identical rows.
+        expect(history.every(item => item.title.startsWith('Original guest · '))).toBe(true);
+        expect(new Set(history.map(item => item.title)).size).toBe(2);
+        expect(buildManagedPresetHistory({ serverId: 'route/home', homeId: 'home', presetId: 'preset', machines: [admitted] })[0]?.title)
+            .toBe('Original guest');
         expect(history[1]?.machine).toBe(enrolled);
         expect(buildManagedPresetHistory({ serverId: 'route/home', homeId: 'home', presetId: 'absent', machines: [admitted] })).toEqual([]);
     });

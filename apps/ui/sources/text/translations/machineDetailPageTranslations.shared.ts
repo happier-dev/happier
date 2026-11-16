@@ -541,6 +541,7 @@ export const english = {
             diskFull: ({ volume }: { volume: string }) => `${volume} full`,
             limitReached: ({ limit }: { limit: string }) => `Out of ${limit}`,
             guardOutOfSteps: "Guard is out of steps",
+            servicesFailing: ({ count }: { count: number }) => count === 1 ? '1 service failing' : `${count} services failing`,
         },
         fleet: {
             calm: "All calm",
@@ -577,6 +578,7 @@ export const english = {
             diskFull: ({ machine, volume }: { machine: string; volume: string }) => `${machine}’s ${volume} is full`,
             limitReached: ({ machine, limit }: { machine: string; limit: string }) => `${machine} is out of ${limit}`,
             guardOutOfSteps: ({ machine }: { machine: string }) => `${machine}’s memory guard has nothing safe left to stop`,
+            servicesFailing: ({ machine, count }: { machine: string; count: number }) => count === 1 ? `${machine} has a failing service` : `${machine} has ${count} failing services`,
         },
         duration: {
             minutes: ({ count }: { count: number }) => `${count} min`,
@@ -855,9 +857,9 @@ export const english = {
         },
         states: {
             offlineEmpty: ({ machine }: { machine: string }) => `${machine} hasn’t reported its resources since you opened Happier.`,
-            offlineTitle: ({ machine }: { machine: string }) => `${machine} is offline`,
-            offlineLastReported: ({ machine }: { machine: string }) => `This is what it last reported. Its sessions pick up again when it’s back; alerts for ${machine} are paused until then.`,
-            offlineNeverReported: 'It hasn’t reported its resources since you opened Happier. Its sessions pick up again when it’s back.',
+            offlineBackTitle: 'Its sessions pick up again when it’s back',
+            offlineLastReported: ({ machine }: { machine: string }) => `This is what it last reported. Alerts for ${machine} are paused until then.`,
+            offlineNeverReported: 'It hasn’t reported its resources since you opened Happier.',
             olderTitle: ({ machine }: { machine: string }) => `See what ${machine} is doing`,
             olderReason: ({ machine }: { machine: string }) => `CPU, memory pressure, disk and what your sessions use, live. ${machine} needs Happier 0.3 to report them.`,
             askOwner: ({ machine }: { machine: string }) => `Copy a note asking to update ${machine}`,

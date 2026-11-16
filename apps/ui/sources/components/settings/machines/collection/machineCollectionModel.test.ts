@@ -404,14 +404,27 @@ describe('buildMachineCollection', () => {
         const collection = buildMachineCollection({ groups: [group('a', [machine('shared', { isShared: true })])], groupedByHome: false });
         expect(collection.sections[0]?.title).toBe(t('machines.destinations.sharedWithoutOwner'));
     });
+    it('lists a search that matches only presets instead of reserving a first read (TH MB-1)', () => {
+        const preset = createPlainManagedMachinePresetFixture({ id: 'fixed', homeId: 'home-a', revision: 1, name: 'g1-fixed',
+            owner: { kind: 'account', accountId: 'owner' }, launch: managed('m').launch, controller: managed('m').controller }).opened;
+        const collection = buildMachineCollection({ groups: [group('a', [machine('m1', { displayName: 'Builder' })])], groupedByHome: false,
+            presetsByServerId: { a: [preset, { ...preset, id: 'old', name: 'g1-fixed old', archivedAt: 0 }] }, query: 'g1-fixed' });
+        expect(collection.firstAnswerPending).toBe(false);
+        expect(collection.presetSections[0]?.rows.map(row => row.presetId)).toEqual(['fixed']);
+        expect(collection.presetSections[0]?.archivedRows.map(row => row.presetId)).toEqual(['old']);
+    });
     it('keeps accessible presets separate from actual machines and scopes archive/search navigation to their Home', () => {
         const preset = createPlainManagedMachinePresetFixture({ id: 'recipe /', homeId: 'home-a', revision: 2, name: 'Build recipe',
             owner: { kind: 'account', accountId: 'owner' }, launch: managed('m').launch, controller: managed('m').controller }).opened;
         const collection = buildMachineCollection({ groups: [group('a', []), group('b', [])], groupedByHome: true,
             presetsByServerId: { a: [preset, { ...preset, id: 'archived', archivedAt: 0 }], b: [{ ...preset, homeId: 'home-b' }] }, query: 'BUILD' });
         expect(collection.sections.flatMap(section => section.rows)).toEqual([]);
+        // Archived presets fold under the section's Archive, as retired Machines do (TH D-G); search still reaches them.
         expect(collection.presetSections.map(section => section.rows.map(machinePresetCollectionRowKey))).toEqual([
-            ['preset:a:recipe /', 'preset:a:archived'], ['preset:b:recipe /'],
+            ['preset:a:recipe /'], ['preset:b:recipe /'],
+        ]);
+        expect(collection.presetSections.map(section => section.archivedRows.map(machinePresetCollectionRowKey))).toEqual([
+            ['preset:a:archived'], [],
         ]);
         expect(machinePresetCollectionHref(collection.presetSections[0]!.rows[0]!)).toBe('/settings/machines/presets/recipe%20%2F?serverId=a');
         expect(resolveSelectedMachineCollectionKey('/settings/machines/presets/recipe%20%2F', { serverId: 'a' })).toBe('preset:a:recipe /');

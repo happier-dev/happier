@@ -68,7 +68,9 @@ export function describeManagedRemovalResource(resource: ManagedResourceDependen
     const state = managedResourceState(resource, name);
     // A may-exist line already names the resource; it is not said twice.
     if (state?.kind === 'mayExist') return describeManagedLifecycleState(state).line;
-    return state ? `${name} · ${describeManagedLifecycleState(state).line}` : name;
+    // The review's lead already says provider charges may continue: a state's cause is enough here.
+    const presentation = state ? describeManagedLifecycleState(state) : null;
+    return presentation ? `${name} · ${presentation.cause ?? presentation.line}` : name;
 }
 
 /** Native owners supply non-secret recovery facts and validate these exact expectations on retry. */

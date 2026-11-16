@@ -6941,6 +6941,7 @@ const machineDetailPageTranslations = { it: translated({
                 diskFull: ({ volume }) => `${volume} pieno`,
                 limitReached: ({ limit }) => `${limit} esauriti`,
                 guardOutOfSteps: "La protezione ha esaurito i passaggi",
+                servicesFailing: ({ count }) => count === 1 ? '1 servizio non funziona' : `${count} servizi non funzionano`,
             },
             fleet: {
                 calm: "Tutto tranquillo",
@@ -6976,6 +6977,7 @@ const machineDetailPageTranslations = { it: translated({
                 diskFull: ({ machine, volume }) => `${volume} di ${machine} è pieno`,
                 limitReached: ({ machine, limit }) => `${machine} ha esaurito i ${limit}`,
                 guardOutOfSteps: ({ machine }) => `La protezione della memoria di ${machine} non ha più nulla di sicuro da fermare`,
+                servicesFailing: ({ machine, count }) => count === 1 ? `${machine} ha un servizio che non funziona` : `${machine} ha ${count} servizi che non funzionano`,
             },
             duration: {
                 minutes: ({ count }) => `${count} min`,
@@ -7254,9 +7256,9 @@ const machineDetailPageTranslations = { it: translated({
             },
             states: {
                 offlineEmpty: ({ machine }) => `${machine} non ha segnalato le sue risorse da quando hai aperto Happier.`,
-                offlineTitle: ({ machine }) => `${machine} è offline`,
-                offlineLastReported: ({ machine }) => `Questo è ciò che ha segnalato per ultimo. Le sue sessioni riprendono quando torna; gli avvisi per ${machine} sono in pausa fino ad allora.`,
-                offlineNeverReported: 'Non ha segnalato le sue risorse da quando hai aperto Happier. Le sue sessioni riprendono quando torna.',
+                offlineBackTitle: 'Le sue sessioni riprendono quando torna',
+                offlineLastReported: ({ machine }) => `Questo è ciò che ha segnalato per ultimo. Gli avvisi per ${machine} sono in pausa fino ad allora.`,
+                offlineNeverReported: 'Non ha segnalato le sue risorse da quando hai aperto Happier.',
                 olderTitle: ({ machine }) => `Guarda cosa sta facendo ${machine}`,
                 olderReason: ({ machine }) => `CPU, pressione della memoria, disco e ciò che usano le tue sessioni, in diretta. ${machine} richiede Happier 0.3 per segnalarli.`,
                 askOwner: ({ machine }) => `Copia una nota che chiede di aggiornare ${machine}`,

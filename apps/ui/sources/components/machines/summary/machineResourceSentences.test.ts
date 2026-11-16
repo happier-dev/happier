@@ -63,6 +63,23 @@ describe('machine sentences (MPG-28)', () => {
         expect(describeFleetDescription({ subjects: [fleet[2]!], reportingCount: 1, onlineCount: 1, nowMs: NOW })).toBe('Nothing on the one machine online needs you.');
     });
 
+    it('never calls a fleet calm while a row shows failing services (TH D-H)', () => {
+        // The table's Work cell reads "8 services · 8 failing" from the same published facts.
+        const failing = { name: 'eadc', attention: calm, failingServices: 8 };
+        const quiet = { name: '5964', attention: calm, failingServices: 0 };
+        expect(describeFleetTitle({ subjects: [failing, quiet], reportingCount: 2 })).toBe('eadc has 8 failing services');
+        expect(describeFleetDescription({ subjects: [failing, quiet], reportingCount: 2, onlineCount: 2, nowMs: NOW }))
+            .toBe('The other one online is calm.');
+        expect(describeFleetTitle({ subjects: [failing, fleet[1]!], reportingCount: 2 })).toBe('2 machines need a look');
+        expect(describeFleetDescription({ subjects: [failing, fleet[1]!], reportingCount: 2, onlineCount: 2, nowMs: NOW })).toBeNull();
+        expect(describeFleetTitle({ subjects: [{ ...failing, failingServices: 1 }], reportingCount: 1 })).toBe('eadc has a failing service');
+        // With no title above it (the Needs-you list shows), the sentence carries its own antecedent (TH MB-2).
+        expect(describeFleetDescription({ subjects: [failing, fleet[1]!, quiet], reportingCount: 3, onlineCount: 5, nowMs: NOW, titleShown: false }))
+            .toBe('2 machines need a look. The other 3 online are calm.');
+        expect(describeFleetDescription({ subjects: [failing, fleet[1]!], reportingCount: 2, onlineCount: 2, nowMs: NOW, titleShown: false }))
+            .toBe('2 machines need a look.');
+    });
+
     it('names the machine and reason in the rail tooltip, or counts several that need you', () => {
         expect(describeMachinesRailTooltip({ needsYouCount: 1, subject: fleet[1]!, guard: null, presence: null })).toBe('edge-1 is short on memory');
         expect(describeMachinesRailTooltip({ needsYouCount: 2, subject: null, guard: null, presence: null })).toBe('2 machines need you');

@@ -75,8 +75,6 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
     offlineRetry?: Readonly<{ onPress: () => void; loading: boolean }>;
     /** The page already says why it is offline (a created machine that is stopped); no second banner. */
     offlineExplained?: boolean;
-    /** The shared Machine presentation sentence; vitals contributes only its own last-report fact. */
-    offlineTitle?: string;
   }>,
 ) {
   const { machine } = props;
@@ -111,13 +109,14 @@ export const MachineVitalsOverview = React.memo(function MachineVitalsOverview(
   const axisLive = view.kind === 'ready' && view.freshness === 'live';
   const axis = React.useMemo(() => resolveVitalsAxis(range, timeline, axisLive), [axisLive, range, timeline, language]);
   const { retry } = overview;
-  // Offline is said once, in a quiet banner above what the machine last reported (lab `rv` OS 3); with nothing
-  // reported this session the banner says that too, and no body follows.
+  // Offline is said once, by the page header's presence ("Offline · Oct 13"); this quiet banner above what the machine
+  // last reported says only what that means and offers Try again (lab `rv` OS 3, TH D-I). With nothing reported this
+  // session the banner says that too, and no body follows.
   const offlineBanner = props.online === false && !props.offlineExplained ? (
     <AttentionBanner
       testID="machine-vitals-offline"
       tone="neutral"
-      title={props.offlineTitle ?? t('machineVitals.states.offlineTitle', { machine: props.machineName })}
+      title={t('machineVitals.states.offlineBackTitle')}
       description={view.kind === 'offline_empty'
         ? t('machineVitals.states.offlineNeverReported')
         : t('machineVitals.states.offlineLastReported', { machine: props.machineName })}

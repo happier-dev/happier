@@ -85,7 +85,8 @@ export function managedCreationState(machine: ManagedMachineReadSnapshotV1, cont
     const name = machine.launch?.name ?? t('common.machine');
     if (machine.allocation === 'confirmed-absent') return managedConfirmedAbsenceState(machine);
     if (machine.cleanup) return machine.creationState === 'canceled' && machine.cleanup.disposition === 'pending'
-        ? { kind: 'creationCanceledCleanup' } : { kind: 'cleanupUnknown' };
+        ? { kind: 'creationCanceledCleanup', cost: resolveManagedConfigurationCost({ ...machine.reviewedFacts, provider: context.provider ?? null }) }
+        : { kind: 'cleanupUnknown' };
     if (machine.allocation === 'may-exist') {
         const operation = currentManagedCreationOperation(machine, context.operation, context);
         const acquire = operation?.observation === 'available' && !operation.isUnavailableProjection
