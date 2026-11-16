@@ -140,7 +140,7 @@ const SecretKeyLoginFormBody = React.memo(function SecretKeyLoginFormBody(props:
             let completed = false;
             await presentFirstKeyCredentialLifecycle({
                 run: async () => isCurrent()
-                    ? await auth.loginWithCredentials(credentials, { target: persistenceTarget })
+                    ? await auth.loginWithCredentials(credentials, { target: persistenceTarget, signInMethodId: 'key_challenge' })
                     : { kind: 'recovery_failed' },
                 onCompleted: () => {
                     completed = true;

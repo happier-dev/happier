@@ -15214,10 +15214,12 @@ settingsSession: {
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Witaj.",
     welcomeQuestionSubtitle: "Jesteś tu pierwszy raz?",
+    welcomeQuestionBody: "Happier to centrum kontroli twoich agentów kodujących AI.",
+    welcomeQuestionBodyWithKey: "Happier to centrum kontroli twoich agentów kodujących AI. E-mail nie jest potrzebny. Twoje konto to klucz prywatny generowany na tym urządzeniu.",
     terminalContinuationTitle: 'Połącz swój terminal.',
     terminalContinuationSubtitle: 'Zaloguj się, aby dokończyć.',
 
-    welcomePrimaryButton: "Pierwszy raz tutaj?",
+    welcomePrimaryButton: "Pierwszy raz tutaj — zaczynajmy",
     welcomePrimarySubtitle: "Jedno dotknięcie. Bez formularzy. Twój klucz zostaje tutaj.",
     newHereHomeSubtitle: ({ home }: { home: string }) => `Utwórz prywatne konto na ${home}.`,
     newHereServiceSubtitle: ({ service }: { service: string }) => `Utwórz konto w ${service}, a następnie znajdź lub dodaj swój Home.`,
@@ -15244,7 +15246,12 @@ settingsSession: {
     emailCreateDescription: "Utwórz konto przy użyciu adresu e-mail.",
     emailConnectDescription: "Dodaj je do konta, którego już używasz.",
     useDifferentHomeSubtitle: ({ home }: { home: string }) => `Zamiast ${home}`,
-    welcomeSecondarySubtitle: "Zeskanuj kod QR albo wpisz swój klucz odzyskiwania",
+    welcomeSecondaryButton: "Zaloguj się — używam już Happier",
+    welcomeSecondarySubtitle: "Zeskanuj kod QR albo wpisz swój tajny klucz",
+    lastTimeKey: "Użyj swojego klucza, jak ostatnio",
+    lastTimeEmail: "Zaloguj się e-mailem, jak ostatnio",
+    lastTimeCertificate: "Użyj swojego certyfikatu, jak ostatnio",
+    lastTimeProvider: ({ provider }: { provider: string }) => `Kontynuuj z ${provider}, jak ostatnio`,
 
     // Unified onboarding redesign — returning-user copy variants.
     // Shown when localSettings.hasCompletedAuthOnce === true, i.e. the

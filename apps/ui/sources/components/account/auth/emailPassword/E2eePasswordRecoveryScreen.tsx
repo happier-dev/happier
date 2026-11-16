@@ -236,6 +236,7 @@ export const E2eePasswordRecoveryScreen = React.memo(function E2eePasswordRecove
                     secret: encodeBase64(context.secret, 'base64url'),
                 }, {
                     target: { serverUrl: target.canonicalServerUrl, serverId: target.serverId },
+                    signInMethodId: 'email_password',
                 }),
                 onCompleted: () => { completed = true; },
             });

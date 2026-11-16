@@ -192,7 +192,7 @@ describe('MtlsCallbackScreen', () => {
         expect(claimCalls()).toHaveLength(1);
         expect(JSON.parse(String(claimCalls()[0]?.[1]?.body))).toEqual({ code: 'mtls-code' });
         expect(globalFetch).not.toHaveBeenCalled();
-        expect(login).toHaveBeenCalledWith({ token }, { target: { serverId: home.id, serverUrl: home.serverUrl } });
+        expect(login).toHaveBeenCalledWith({ token }, { signInMethodId: 'mtls', target: { serverId: home.id, serverUrl: home.serverUrl } });
         expect(clearCustody).toHaveBeenCalledWith({ serverId: home.id, serverUrl: home.serverUrl });
         expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual({ token });
         expect((await TokenStorage.readPendingExternalAuthContinuationState()).value).toBeNull();
@@ -210,7 +210,7 @@ describe('MtlsCallbackScreen', () => {
         await mountRoute();
         await vi.waitFor(() => expect(boundary.replace).toHaveBeenCalledWith(teamReturn()));
         expect(JSON.parse(String(claimCalls()[0]?.[1]?.body))).toEqual({ code: 'mtls-code', admissionReference: 'mtls-admission-1' });
-        expect(login).toHaveBeenCalledWith({ token }, { target: { serverId: home.id, serverUrl: home.serverUrl } });
+        expect(login).toHaveBeenCalledWith({ token }, { signInMethodId: 'mtls', target: { serverId: home.id, serverUrl: home.serverUrl } });
         expect(clearCustody).toHaveBeenCalledWith({ serverId: home.id, serverUrl: home.serverUrl });
         expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual({ token });
         expect((await TokenStorage.readPendingExternalAuthContinuationState()).value).toBeNull();
@@ -223,7 +223,7 @@ describe('MtlsCallbackScreen', () => {
         await mountRoute();
         await vi.waitFor(() => expect(boundary.replace).toHaveBeenCalledWith(teamReturn() + '&postAuthInvitation=1'));
         expect(clear).not.toHaveBeenCalled();
-        expect(login).toHaveBeenCalledWith({ token }, { target: { serverId: home.id, serverUrl: home.serverUrl } });
+        expect(login).toHaveBeenCalledWith({ token }, { signInMethodId: 'mtls', target: { serverId: home.id, serverUrl: home.serverUrl } });
         expect((await TokenStorage.readPendingExternalAuthContinuationState()).value).toEqual({ ...pending, postAuthInvitation: invitation });
         expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id })).toEqual({ token });
     });
@@ -306,7 +306,7 @@ describe('MtlsCallbackScreen', () => {
         modal.onRequestClose();
         await act(async () => {});
         expect(clear).not.toHaveBeenCalled();
-        expect(login).toHaveBeenCalledWith({ token: 'replacement-token' }, { target });
+        expect(login).toHaveBeenCalledWith({ token: 'replacement-token' }, { signInMethodId: 'mtls', target });
         expect(boundary.replace).not.toHaveBeenCalled();
         expect(Modal.alert).not.toHaveBeenCalled();
         expect((await TokenStorage.readPendingExternalAuthContinuationState()).value).toEqual(marked.recovery.pending);

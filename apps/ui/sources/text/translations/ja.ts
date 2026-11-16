@@ -15663,10 +15663,12 @@ settingsSession: {
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "ようこそ。",
     welcomeQuestionSubtitle: "初めてですか?",
+    welcomeQuestionBody: "Happier は AI コーディングエージェントのコントロールルームです。",
+    welcomeQuestionBodyWithKey: "Happier は AI コーディングエージェントのコントロールルームです。メールアドレスは不要。アカウントはこのデバイスで生成される秘密鍵です。",
     terminalContinuationTitle: 'ターミナルを接続しましょう。',
     terminalContinuationSubtitle: 'サインインして完了します。',
 
-    welcomePrimaryButton: "初めてですか？",
+    welcomePrimaryButton: "初めてですか — はじめましょう",
     welcomePrimarySubtitle: "ワンタップ。フォーム不要。鍵はこの端末に保管されます。",
     newHereHomeSubtitle: ({ home }: { home: string }) => `${home} にプライベートアカウントを作成します。`,
     newHereServiceSubtitle: ({ service }: { service: string }) => `${service} でアカウントを作成し、Home を検索または追加します。`,
@@ -15693,7 +15695,12 @@ settingsSession: {
     emailCreateDescription: "メールアドレスでアカウントを作成します。",
     emailConnectDescription: "すでに使っているアカウントに追加します。",
     useDifferentHomeSubtitle: ({ home }: { home: string }) => `現在: ${home}`,
-    welcomeSecondarySubtitle: "QRコードをスキャンするか、復旧キーを入力してください",
+    welcomeSecondaryButton: "ログイン — すでに Happier を使っています",
+    welcomeSecondarySubtitle: "QRコードをスキャンするか、シークレットキーを入力してください",
+    lastTimeKey: "前回と同じく、キーを使用",
+    lastTimeEmail: "前回と同じく、メールでサインイン",
+    lastTimeCertificate: "前回と同じく、証明書を使用",
+    lastTimeProvider: ({ provider }: { provider: string }) => `前回と同じく、${provider} で続行`,
 
     // Unified onboarding redesign — returning-user copy variants.
     // Shown when localSettings.hasCompletedAuthOnce === true, i.e. the

@@ -14886,10 +14886,12 @@ settingsSession: {
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "欢迎。",
     welcomeQuestionSubtitle: "第一次使用?",
+    welcomeQuestionBody: "Happier 是你的 AI 编码代理控制中心。",
+    welcomeQuestionBodyWithKey: "Happier 是你的 AI 编码代理控制中心。无需电子邮件。你的账户是一把在本设备上生成的私钥。",
     terminalContinuationTitle: '连接你的终端。',
     terminalContinuationSubtitle: '登录以完成。',
 
-    welcomePrimaryButton: "初次使用？",
+    welcomePrimaryButton: "第一次使用 — 开始吧",
     welcomePrimarySubtitle: "一次点击。无需表单。你的密钥就在这里。",
     newHereHomeSubtitle: ({ home }: { home: string }) => `在 ${home} 上创建私人账户。`,
     newHereServiceSubtitle: ({ service }: { service: string }) => `通过 ${service} 创建账户，然后查找或添加你的 Home。`,
@@ -14916,7 +14918,12 @@ settingsSession: {
     emailCreateDescription: "用你的邮箱地址创建账户。",
     emailConnectDescription: "添加到你已有的账户。",
     useDifferentHomeSubtitle: ({ home }: { home: string }) => `当前：${home}`,
-    welcomeSecondarySubtitle: "扫描二维码，或输入你的恢复密钥",
+    welcomeSecondaryButton: "登录 — 我已在使用 Happier",
+    welcomeSecondarySubtitle: "扫描二维码，或输入你的密钥",
+    lastTimeKey: "像上次一样，使用你的密钥",
+    lastTimeEmail: "像上次一样，用邮箱登录",
+    lastTimeCertificate: "像上次一样，使用你的证书",
+    lastTimeProvider: ({ provider }: { provider: string }) => `像上次一样，使用 ${provider} 继续`,
 
     // Unified onboarding redesign — returning-user copy variants.
     // Shown when localSettings.hasCompletedAuthOnce === true, i.e. the

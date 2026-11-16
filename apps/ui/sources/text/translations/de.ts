@@ -15469,10 +15469,12 @@ settingsSession: {
         // Unified onboarding redesign — welcome decision (right pane)
         welcomeQuestionTitle: 'Willkommen.',
         welcomeQuestionSubtitle: 'Zum ersten Mal hier?',
+        welcomeQuestionBody: "Happier ist die Kommandozentrale für deine KI-Coding-Agents.",
+        welcomeQuestionBodyWithKey: "Happier ist die Kommandozentrale für deine KI-Coding-Agents. Keine E-Mail nötig. Dein Konto ist ein privater Schlüssel, erzeugt auf diesem Gerät.",
         terminalContinuationTitle: 'Verbinde dein Terminal.',
         terminalContinuationSubtitle: 'Melde dich an, um abzuschließen.',
 
-        welcomePrimaryButton: 'Neu hier?',
+        welcomePrimaryButton: "Zum ersten Mal hier – los geht's",
         welcomePrimarySubtitle: 'Ein Tipp. Kein Formular. Dein Schlüssel bleibt hier.',
         newHereHomeSubtitle: ({ home }: { home: string }) => `Erstelle ein privates Konto auf ${home}.`,
         newHereServiceSubtitle: ({ service }: { service: string }) => `Erstelle ein Konto bei ${service} und finde oder füge dann dein Home hinzu.`,
@@ -15499,7 +15501,12 @@ settingsSession: {
         emailCreateDescription: 'Erstelle ein Konto mit deiner E-Mail-Adresse.',
         emailConnectDescription: 'Füge sie dem Konto hinzu, das du bereits nutzt.',
         useDifferentHomeSubtitle: ({ home }: { home: string }) => `Statt ${home}`,
-        welcomeSecondarySubtitle: 'Scanne einen QR-Code oder gib deinen Wiederherstellungsschlüssel ein',
+        welcomeSecondaryButton: "Anmelden – ich nutze Happier schon",
+        welcomeSecondarySubtitle: "Scanne einen QR-Code oder gib deinen Secret Key ein",
+        lastTimeKey: "Mit deinem Schlüssel, wie beim letzten Mal",
+        lastTimeEmail: "Mit E-Mail anmelden, wie beim letzten Mal",
+        lastTimeCertificate: "Mit deinem Zertifikat, wie beim letzten Mal",
+        lastTimeProvider: ({ provider }: { provider: string }) => `Weiter mit ${provider}, wie beim letzten Mal`,
 
         // Unified onboarding redesign — returning-user copy variants.
         // Shown when localSettings.hasCompletedAuthOnce === true, i.e. the

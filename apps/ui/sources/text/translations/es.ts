@@ -15385,10 +15385,12 @@ settingsSession: {
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Te damos la bienvenida.",
     welcomeQuestionSubtitle: "¿Es tu primera vez aquí?",
+    welcomeQuestionBody: "Happier es el centro de control de tus agentes de codificación con IA.",
+    welcomeQuestionBodyWithKey: "Happier es el centro de control de tus agentes de codificación con IA. No hace falta correo electrónico. Tu cuenta es una clave privada que se genera en este dispositivo.",
     terminalContinuationTitle: 'Conecta tu terminal.',
     terminalContinuationSubtitle: 'Inicia sesión para terminar.',
 
-    welcomePrimaryButton: "¿Eres nuevo aquí?",
+    welcomePrimaryButton: "Primera vez aquí — empecemos",
     welcomePrimarySubtitle: "Un toque. Sin formulario. Tu clave vive aquí.",
     newHereHomeSubtitle: ({ home }: { home: string }) => `Crea una cuenta privada en ${home}.`,
     newHereServiceSubtitle: ({ service }: { service: string }) => `Crea una cuenta con ${service} y luego encuentra o añade tu Home.`,
@@ -15415,7 +15417,12 @@ settingsSession: {
     emailCreateDescription: "Crea una cuenta con tu dirección de correo.",
     emailConnectDescription: "Añádelos a la cuenta que ya usas.",
     useDifferentHomeSubtitle: ({ home }: { home: string }) => `En lugar de ${home}`,
-    welcomeSecondarySubtitle: "Escanea un código QR o introduce tu clave de recuperación",
+    welcomeSecondaryButton: "Iniciar sesión — ya uso Happier",
+    welcomeSecondarySubtitle: "Escanea un código QR o introduce tu clave secreta",
+    lastTimeKey: "Usa tu clave, como la última vez",
+    lastTimeEmail: "Inicia sesión con tu correo, como la última vez",
+    lastTimeCertificate: "Usa tu certificado, como la última vez",
+    lastTimeProvider: ({ provider }: { provider: string }) => `Continúa con ${provider}, como la última vez`,
 
     // Unified onboarding redesign — returning-user copy variants.
     // Shown when localSettings.hasCompletedAuthOnce === true, i.e. the

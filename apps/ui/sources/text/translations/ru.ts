@@ -15207,10 +15207,12 @@ settingsSession: {
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Добро пожаловать.",
     welcomeQuestionSubtitle: "Вы здесь впервые?",
+    welcomeQuestionBody: "Happier — это центр управления вашими ИИ-агентами для программирования.",
+    welcomeQuestionBodyWithKey: "Happier — это центр управления вашими ИИ-агентами для программирования. Email не нужен. Ваш аккаунт — это приватный ключ, сгенерированный на этом устройстве.",
     terminalContinuationTitle: 'Подключите терминал.',
     terminalContinuationSubtitle: 'Войдите, чтобы завершить.',
 
-    welcomePrimaryButton: "Впервые здесь?",
+    welcomePrimaryButton: "Впервые здесь — начнём",
     welcomePrimarySubtitle: "Одно касание. Без форм. Ваш ключ хранится здесь.",
     newHereHomeSubtitle: ({ home }: { home: string }) => `Создайте приватную учётную запись на ${home}.`,
     newHereServiceSubtitle: ({ service }: { service: string }) => `Создайте учётную запись через ${service}, затем найдите или добавьте свой Home.`,
@@ -15237,7 +15239,12 @@ settingsSession: {
     emailCreateDescription: "Создайте аккаунт по адресу электронной почты.",
     emailConnectDescription: "Добавьте их к аккаунту, который у вас уже есть.",
     useDifferentHomeSubtitle: ({ home }: { home: string }) => `Вместо ${home}`,
-    welcomeSecondarySubtitle: "Отсканируйте QR-код или введите ключ восстановления",
+    welcomeSecondaryButton: "Войти — я уже пользуюсь Happier",
+    welcomeSecondarySubtitle: "Отсканируйте QR-код или введите секретный ключ",
+    lastTimeKey: "Используйте свой ключ, как в прошлый раз",
+    lastTimeEmail: "Войдите по email, как в прошлый раз",
+    lastTimeCertificate: "Используйте свой сертификат, как в прошлый раз",
+    lastTimeProvider: ({ provider }: { provider: string }) => `Продолжите через ${provider}, как в прошлый раз`,
 
     // Unified onboarding redesign — returning-user copy variants.
     // Shown when localSettings.hasCompletedAuthOnce === true, i.e. the

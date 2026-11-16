@@ -99,7 +99,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
         expect(screen.findAllByTestId('oauth-provisioning-choice-plain')).toHaveLength(0);
         expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
         expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-        expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_3' });
+        expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_3' }, { signInMethodId: 'github' });
         expect(loginSpy).not.toHaveBeenCalled();
         expect(getRandomBytesSpy).not.toHaveBeenCalled();
         expect(replaceSpy).toHaveBeenCalledWith('/');
@@ -169,6 +169,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
       await vi.waitFor(() => expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
         { token: 'token-home-a' },
         {
+          signInMethodId: 'github',
           target: {
             serverUrl: 'https://oauth-home-a.test',
             serverId: 'srv_oauth_home_a',
@@ -226,7 +227,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
 
       expect(fetchMock.mock.calls.some(([calledUrl]) => String(calledUrl).includes('/v1/auth/external/github/finalize-keyless'))).toBe(true);
       expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-      expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_4' });
+      expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_4' }, { signInMethodId: 'github' });
       expect(loginSpy).not.toHaveBeenCalled();
       expect(getRandomBytesSpy).not.toHaveBeenCalled();
       expect(replaceSpy).toHaveBeenCalledWith('/');
@@ -280,6 +281,7 @@ describe('oauth/[provider] return (provisioning choice)', () => {
         expect(loginSpy).toHaveBeenCalledWith(
           'tok_5',
           encodeBase64(new Uint8Array(32).fill(9), 'base64url'),
+        { signInMethodId: 'github' },
         );
         expect(loginWithCredentialsSpy).not.toHaveBeenCalled();
         expect(replaceSpy).toHaveBeenCalledWith('/');

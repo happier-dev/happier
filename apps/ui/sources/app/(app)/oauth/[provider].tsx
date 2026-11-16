@@ -548,24 +548,20 @@ function OAuthProviderReturnBody() {
                         continuationPending = updatedPending;
                         retainPostAuthInvitation = true;
                     }
-                    const persistenceOptions = base ? {
-                        target: {
-                            serverUrl: base,
-                            ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
-                        },
-                    } as const : null;
+                    const persistenceOptions = {
+                        ...(base ? {
+                            target: {
+                                serverUrl: base,
+                                ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
+                            },
+                        } : {}),
+                        signInMethodId: ctx.providerId,
+                    } as const;
                     await presentFirstKeyCredentialLifecycle({
                         run: async () =>
                             params.mode === 'plain'
-                                ? persistenceOptions
-                                    ? await auth.loginWithCredentials(
-                                        { token: String(json.token) },
-                                        persistenceOptions,
-                                    )
-                                    : await auth.loginWithCredentials({ token: String(json.token) })
-                                : persistenceOptions
-                                    ? await auth.login(String(json.token), secret!, persistenceOptions)
-                                    : await auth.login(String(json.token), secret!),
+                                ? await auth.loginWithCredentials({ token: String(json.token) }, persistenceOptions)
+                                : await auth.login(String(json.token), secret!, persistenceOptions),
                         onCompleted: async () => {
                             if (!await ownsContinuation()) return;
                             // Only a retained invitation continuation keeps the

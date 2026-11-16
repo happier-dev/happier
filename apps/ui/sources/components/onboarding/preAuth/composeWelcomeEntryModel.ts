@@ -23,9 +23,15 @@ export type WelcomeAuthenticationMethod =
         intendedHome: HomeTargetInput | null;
     }>;
 
+/**
+ * `login` is the Login door: "Login — I already use Happier" beside First time here on a first run,
+ * "Login — let's get back to it" leading on a returning device. As a method it names the way this
+ * device signed in last time (`lastUsed`), or the Home's first way in when that is no longer offered.
+ */
 export type WelcomeAction =
     | Readonly<{ kind: 'authenticate'; request: WelcomeAuthenticationMethod; labelRole: 'new_here' | 'method' }>
-    | Readonly<{ kind: 'scan_or_paste_home' }>
+    | Readonly<{ kind: 'authenticate'; request: WelcomeAuthenticationMethod; labelRole: 'login'; lastUsed: boolean }>
+    | Readonly<{ kind: 'scan_or_paste_home'; labelRole: 'login' | 'method' }>
     | Readonly<{ kind: 'choose_home' }>
     | Readonly<{ kind: 'choose_sign_in_service' }>
     | Readonly<{ kind: 'create_personal_home' }>;
@@ -80,6 +86,8 @@ export type ComposeWelcomeEntryModelInput = Readonly<{
         }>
         | Readonly<{ kind: 'unavailable' | 'unsupported' | 'methodless'; hintName?: string }>;
     userHistory: 'first_time' | 'returning';
+    /** Catalog method id of this device's last successful sign-in; absent when nothing is recorded. */
+    lastSignInMethodId?: string | null;
 }>;
 
 function targetIdentity(target: HomeTargetInput | null): string {
@@ -91,6 +99,11 @@ function targetIdentity(target: HomeTargetInput | null): string {
 
 function methodAction(request: WelcomeAuthenticationMethod, labelRole: 'new_here' | 'method' = 'method'): WelcomeAction {
     return { kind: 'authenticate', request, labelRole };
+}
+
+function isRecordedMethod(row: WelcomeAuthenticationMethod, methodId: string): boolean {
+    if (row.action.id === 'provision') return false;
+    return row.method.id === methodId || (row.execution.kind === 'oauth' && row.execution.providerId === methodId);
 }
 
 function actionIdentity(action: WelcomeAction): string {
@@ -120,6 +133,10 @@ function executionEquivalent(
  * Home row is always the one retained, so a Home recovery-key action is never
  * collapsed into a token-only Directory action.
  */
+function withoutProvision(rows: readonly WelcomeAuthenticationMethod[]): readonly WelcomeAuthenticationMethod[] {
+    return rows.filter((row) => row.action.id !== 'provision');
+}
+
 function withoutSameServerDuplicates(
     input: ComposeWelcomeEntryModelInput,
 ): readonly WelcomeAuthenticationMethod[] {
@@ -139,7 +156,7 @@ function withoutSameServerDuplicates(
 /** A door someone walks through stays a card; everything else is a quiet way in beneath the doors. */
 function emphasisOf(action: WelcomeAction, hasAuthentication: boolean): 'secondary' | 'tertiary' {
     if (action.kind === 'create_personal_home') return 'secondary';
-    if (action.kind === 'authenticate' && action.labelRole === 'new_here') return 'secondary';
+    if ((action.kind === 'authenticate' || action.kind === 'scan_or_paste_home') && action.labelRole !== 'method') return 'secondary';
     if (!hasAuthentication && (action.kind === 'choose_home' || action.kind === 'choose_sign_in_service')) return 'secondary';
     return 'tertiary';
 }
@@ -180,31 +197,54 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
     const chooseService: readonly WelcomeAction[] = input.allowedNavigation.selectService && (input.target.kind === 'none' || input.target.kind === 'selected_service')
         ? [{ kind: 'choose_sign_in_service' }]
         : [];
-    const scanOrPaste: readonly WelcomeAction[] = input.allowedNavigation.scanOrPasteHome ? [{ kind: 'scan_or_paste_home' }] : [];
+    const scanOrPaste: readonly WelcomeAction[] = input.allowedNavigation.scanOrPasteHome ? [{ kind: 'scan_or_paste_home', labelRole: 'method' }] : [];
+    // Scanning a QR code or entering a secret key restores an account on the Home, so it is the Login
+    // door only where Home methods are on offer. It then carries the Home's key, which is not listed twice.
+    const pairingDoor = input.allowedNavigation.scanOrPasteHome && input.homeMethods.length > 0;
+    const pairingLogin: WelcomeAction = { kind: 'scan_or_paste_home', labelRole: 'login' };
+    const quietDirect = (login: WelcomeAction | undefined) => homeDirect
+        .filter((row) => !(login === pairingLogin && row.execution.kind === 'key_entry'))
+        .map((row) => methodAction(row));
+    const newHere = [
+        ...(primaryProvision ? [methodAction(primaryProvision, 'new_here')] : []),
+        ...(newHereService ? [methodAction(newHereService, 'new_here')] : []),
+    ];
 
     if (input.userHistory === 'first_time') {
-        // The two ways to begin lead: an account here, or a Home of your own. Signing in to something
-        // you already use, and every way to point elsewhere, follows quietly.
-        if (primaryProvision) actions.push(methodAction(primaryProvision, 'new_here'));
-        if (newHereService) actions.push(methodAction(newHereService, 'new_here'));
-        actions.push(...createPersonalHome);
+        // The two ways to begin lead: an account here, or a Home of your own. Login is their peer;
+        // signing in some other way, and every way to point elsewhere, follows quietly.
+        actions.push(...newHere, ...createPersonalHome);
+        const login = actions.length > 0 && pairingDoor ? pairingLogin : undefined;
+        if (login) actions.push(login);
         const signIn = [
-            ...homeDirect.map((row) => methodAction(row)),
+            ...quietDirect(login),
             ...remainingProvision.map((row) => methodAction(row)),
             ...signInOnService,
         ];
         actions.push(...signIn);
         // Without anything to sign in to, reaching a Home or a service is the first decision.
         if (actions.length === createPersonalHome.length) actions.push(...changeHome, ...chooseService, ...scanOrPaste);
-        else actions.push(...scanOrPaste, ...changeHome, ...chooseService);
+        else actions.push(...(login ? [] : scanOrPaste), ...changeHome, ...chooseService);
     } else {
-        actions.push(...homeDirect.map((row) => methodAction(row)));
-        actions.push(...scanOrPaste);
-        if (newHereService) actions.push(methodAction(newHereService, 'new_here'));
-        actions.push(...signInOnService);
-        actions.push(...changeHome, ...chooseService, ...createPersonalHome);
-        if (primaryProvision) actions.push(methodAction(primaryProvision, 'new_here'));
+        // A returning device leads with Login: the way it signed in last time when the Home still offers
+        // it, otherwise the QR or key door, otherwise the Home's own order. Starting fresh follows.
+        const signInRows = [...homeDirect, ...withoutProvision(serviceMethods)];
+        const record = input.lastSignInMethodId ?? null;
+        const recorded = record ? signInRows.find((row) => isRecordedMethod(row, record)) : undefined;
+        const serverFirst = signInRows[0];
+        const login: WelcomeAction | undefined = recorded
+            ? { kind: 'authenticate', request: recorded, labelRole: 'login', lastUsed: true }
+            : record === null && pairingDoor
+                ? pairingLogin
+                : serverFirst
+                    ? { kind: 'authenticate', request: serverFirst, labelRole: 'login', lastUsed: false }
+                    : pairingDoor ? pairingLogin : undefined;
+        if (login) actions.push(login);
+        actions.push(...newHere, ...createPersonalHome);
+        actions.push(...quietDirect(login));
         actions.push(...remainingProvision.map((row) => methodAction(row)));
+        actions.push(...signInOnService);
+        actions.push(...(login === pairingLogin ? [] : scanOrPaste), ...changeHome, ...chooseService);
     }
 
     const unique = actions.filter((action, index) => (

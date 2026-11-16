@@ -529,7 +529,7 @@ describe('oauth/[provider] return (keyless)', () => {
             expect(recordTeamInvitationPostAuthContinuationMock).toHaveBeenCalled();
             expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
                 { token: 'team-token' },
-                { target: { serverId: 'server-a', serverUrl: 'http://default.example.test' } },
+                { signInMethodId: 'github', target: { serverId: 'server-a', serverUrl: 'http://default.example.test' } },
             );
             expect(replaceSpy).toHaveBeenCalledWith(
                 '/teams/team-1/sign-in?target=server-a&postAuthInvitation=1',
@@ -595,6 +595,7 @@ describe('oauth/[provider] return (keyless)', () => {
             expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
                 { token: 'team-token' },
                 {
+                    signInMethodId: 'github',
                     target: {
                         serverId: 'local-profile-7',
                         serverUrl: 'http://default.example.test',
@@ -681,7 +682,7 @@ describe('oauth/[provider] return (keyless)', () => {
             await flushOAuthEffects();
             expect(loginWithCredentialsSpy).toHaveBeenCalledWith(
                 { token: 'team-token' },
-                { target: { serverId: 'local-profile-7', serverUrl: 'http://default.example.test' } },
+                { signInMethodId: 'github', target: { serverId: 'local-profile-7', serverUrl: 'http://default.example.test' } },
             );
             expect(recordTeamInvitationPostAuthContinuationMock).not.toHaveBeenCalled();
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
@@ -812,7 +813,7 @@ describe('oauth/[provider] return (keyless)', () => {
             await flushOAuthEffects();
             expect(fetchMock).toHaveBeenCalled();
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-            expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_1' });
+            expect(loginWithCredentialsSpy).toHaveBeenCalledWith({ token: 'tok_1' }, { signInMethodId: 'github' });
             expect(getRandomBytesSpy).not.toHaveBeenCalled();
             expect(trackAccountRestoredSpy).toHaveBeenCalledTimes(1);
             expect(replaceSpy).toHaveBeenCalledWith('/');
@@ -845,7 +846,7 @@ describe('oauth/[provider] return (keyless)', () => {
             await flushOAuthEffects();
             expect(loginWithCredentialsSpy).toHaveBeenCalledWith({
                 token: 'replacement-token',
-            });
+            }, { signInMethodId: 'github' });
             expect(clearPendingExternalAuthMock).not.toHaveBeenCalled();
             expect(trackAccountRestoredSpy).not.toHaveBeenCalled();
             expect(replaceSpy).not.toHaveBeenCalled();

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
+import { t } from '@/text';
 
 import { WelcomeDecisionPanel } from './WelcomeDecisionPanel';
 
@@ -82,7 +83,7 @@ describe('WelcomeDecisionPanel native email/password entry', () => {
             .toBe('Email and password');
         // The extra provision action must not repeat the generic "New here?" card.
         expect(screen.findByTestId('welcome-email-password-provision-title')?.props.children)
-            .toBe('Create account');
+            .toBe(t('settingsAccount.nativePassword.signUpWithEmail'));
         expect(screen.findAllHostsByTestId('welcome-primary-start')).toHaveLength(1);
 
         await screen.pressByTestIdAsync('welcome-email-password-login');
@@ -103,7 +104,7 @@ describe('WelcomeDecisionPanel native email/password entry', () => {
         });
         const screen = await screenPromise;
 
-        expect(screen.findByTestId('welcome-primary-start-title')?.props.children).toBe('New here?');
+        expect(screen.findByTestId('welcome-primary-start-title')?.props.children).toBe(t('welcome.welcomePrimaryButton'));
         expect(screen.findAllByTestId('welcome-email-password-provision')).toHaveLength(0);
         expect(screen.findAllByTestId('welcome-signup-disabled')).toHaveLength(0);
     });

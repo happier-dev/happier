@@ -12508,10 +12508,12 @@ settingsSession: {
         // Unified onboarding redesign — welcome decision (right pane)
         welcomeQuestionTitle: '歡迎。',
         welcomeQuestionSubtitle: '第一次使用?',
+        welcomeQuestionBody: "Happier 是你 AI 編碼代理的控制中心。",
+        welcomeQuestionBodyWithKey: "Happier 是你 AI 編碼代理的控制中心。無需電子郵件。你的帳戶是一把在本裝置上產生的私鑰。",
         terminalContinuationTitle: '連接你的終端機。',
         terminalContinuationSubtitle: '登入以完成。',
 
-        welcomePrimaryButton: '第一次使用？',
+        welcomePrimaryButton: "第一次使用 — 開始吧",
         welcomePrimarySubtitle: '一次點擊。無需表單。你的金鑰就在這裡。',
         newHereHomeSubtitle: ({ home }: { home: string }) => `在 ${home} 上建立私人帳戶。`,
         newHereServiceSubtitle: ({ service }: { service: string }) => `透過 ${service} 建立帳戶，然後尋找或加入你的 Home。`,
@@ -12538,7 +12540,12 @@ settingsSession: {
         emailCreateDescription: '用你的電子郵件地址建立帳戶。',
         emailConnectDescription: '新增到你已有的帳戶。',
         useDifferentHomeSubtitle: ({ home }: { home: string }) => `目前：${home}`,
-        welcomeSecondarySubtitle: '掃描 QR 碼，或輸入你的復原金鑰',
+        welcomeSecondaryButton: "登入 — 我已在使用 Happier",
+        welcomeSecondarySubtitle: "掃描 QR 碼，或輸入你的密鑰",
+        lastTimeKey: "像上次一樣，使用你的金鑰",
+        lastTimeEmail: "像上次一樣，用電子郵件登入",
+        lastTimeCertificate: "像上次一樣，使用你的憑證",
+        lastTimeProvider: ({ provider }: { provider: string }) => `像上次一樣，使用 ${provider} 繼續`,
 
         // Unified onboarding redesign — returning-user copy variants.
         // Shown when localSettings.hasCompletedAuthOnce === true, i.e. the

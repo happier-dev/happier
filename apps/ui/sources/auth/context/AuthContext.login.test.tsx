@@ -13,7 +13,7 @@ import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/
 import tweetnacl from 'tweetnacl';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
-import { onboardingAuthHistoryState, onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
+import { lastSignInMethodState, onboardingAuthHistoryState, onboardingHistoryState } from '@/sync/domains/state/onboardingUiState';
 
 // Analytics is an external service boundary; the logout ordering contract observes it.
 vi.mock('@/track', () => ({
@@ -593,6 +593,38 @@ describe('AuthContext.login', () => {
             expect(getCurrentAuth()).toMatchObject({ isAuthenticated: true, credentials: { token } });
         } finally {
             await screen.unmount();
+        }
+    });
+
+    it('remembers how this device last signed in, keeps it across logout, and leaves it for credential replacements', async () => {
+        const { clearPersistence } = await import('@/sync/domains/state/persistence');
+        await clearPersistence();
+        const { home } = await prepareHomes('home');
+        await focusHome(home);
+        const credentials = { token: buildTokenWithSub('server-test'), secret: LEGACY_SECRET };
+        network.accountCurrentness = createAccountEncryptionCurrentnessFixtureForCredentials(credentials);
+        const screen = await mountAuth(null);
+        try {
+            expect(lastSignInMethodState.read('method') ?? null).toBeNull();
+            await act(async () => {
+                await expect(getCurrentAuth()!.loginWithCredentials(credentials, { signInMethodId: 'email_password' }))
+                    .resolves.toEqual({ kind: 'completed' });
+            });
+            expect(lastSignInMethodState.read('method')).toBe('email_password');
+
+            // A credential replacement that is not a sign-in says nothing about how the person signs in.
+            await act(async () => {
+                await getCurrentAuth()!.loginWithCredentials(credentials);
+            });
+            expect(lastSignInMethodState.read('method')).toBe('email_password');
+
+            await act(async () => {
+                await getCurrentAuth()!.logout();
+            });
+            expect(lastSignInMethodState.read('method')).toBe('email_password');
+        } finally {
+            await screen.unmount();
+            await clearPersistence();
         }
     });
 

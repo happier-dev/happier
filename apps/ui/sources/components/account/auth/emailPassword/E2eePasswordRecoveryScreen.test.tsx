@@ -170,7 +170,7 @@ it('replaces the E2EE password through one existing-Account key proof before per
     expect(boundary.submit).toHaveBeenCalledOnce();
     expect(boundary.loginWithCredentials).toHaveBeenCalledWith(
         { token, secret: key },
-        { target: { serverUrl: HOME_A_URL, serverId: homeAProfileId } },
+        { target: { serverUrl: HOME_A_URL, serverId: homeAProfileId }, signInMethodId: 'email_password' },
     );
     expect(boundary.replace).toHaveBeenCalledWith('/');
 });

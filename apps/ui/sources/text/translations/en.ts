@@ -18606,10 +18606,12 @@ const enWelcome = {
   // Unified onboarding redesign — welcome decision (right pane)
   welcomeQuestionTitle: 'Welcome.',
   welcomeQuestionSubtitle: 'First time here?',
+  welcomeQuestionBody: "Happier is the control room for your AI coding agents.",
+  welcomeQuestionBodyWithKey: "Happier is the control room for your AI coding agents. No email needed. Your account is a private key, generated on this device.",
   terminalContinuationTitle: 'Connect terminal.',
   terminalContinuationSubtitle: 'Sign in to finish.',
 
-  welcomePrimaryButton: 'New here?',
+  welcomePrimaryButton: "First time here — let's start",
   welcomePrimarySubtitle: 'One tap. No form. Your key lives here.',
   newHereHomeSubtitle: ({ home }: { home: string }) =>
     `Create a private account on ${home}.`,
@@ -18644,7 +18646,12 @@ const enWelcome = {
   emailCreateDescription: 'Create an account with your email address.',
   emailConnectDescription: 'Add them to the account you already use.',
   useDifferentHomeSubtitle: ({ home }: { home: string }) => `Instead of ${home}`,
-  welcomeSecondarySubtitle: 'Scan a QR code, or enter your recovery key',
+  welcomeSecondaryButton: "Login — I already use Happier",
+  welcomeSecondarySubtitle: "Scan a QR code, or enter your secret key",
+  lastTimeKey: "Use your key, like last time",
+  lastTimeEmail: "Sign in with email, like last time",
+  lastTimeCertificate: "Use your certificate, like last time",
+  lastTimeProvider: ({ provider }: { provider: string }) => `Continue with ${provider}, like last time`,
 
   // Unified onboarding redesign — returning-user copy variants.
   // Shown when localSettings.hasCompletedAuthOnce === true, i.e. the

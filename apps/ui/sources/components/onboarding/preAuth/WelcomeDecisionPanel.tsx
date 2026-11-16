@@ -12,7 +12,7 @@ import { createVerifiedAccountServiceAuthority } from '@/auth/accountDirectory/a
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useHasCompletedAuthOnce } from '@/sync/domains/state/onboardingUiState';
+import { useHasCompletedAuthOnce, useLastSignInMethod } from '@/sync/domains/state/onboardingUiState';
 import { formatAccountServiceHost } from '@/sync/domains/accountDirectory/accountDirectoryEndpoint';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
@@ -57,6 +57,14 @@ export type WelcomeDecisionPanelProps = Readonly<{
 
 type WelcomeEntryModelAction = WelcomeEntryModel['actions'][number];
 
+/** The Login door names the way this device signed in last time. */
+function lastTimeSubtitle(execution: WelcomeAuthenticationMethod['execution'], provider: string): string {
+    if (execution.kind === 'email_password') return t('welcome.lastTimeEmail');
+    if (execution.kind === 'mtls') return t('welcome.lastTimeCertificate');
+    if (execution.kind === 'oauth') return t('welcome.lastTimeProvider', { provider });
+    return t('welcome.lastTimeKey');
+}
+
 export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(props: WelcomeDecisionPanelProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
@@ -73,6 +81,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     // true across re-installs of the session — exactly like the brand-hero
     // seen flag.
     const isReturningUser = useHasCompletedAuthOnce();
+    const lastSignInMethodId = useLastSignInMethod();
     const returningGreeting = useReturningGreeting();
     // A terminal link hands off to sign-in here: the heading says what signing in is for, for as
     // long as that link can still be approved. The pairing's own expiry decides, not a second clock.
@@ -163,7 +172,17 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         },
         serviceCatalogState,
         userHistory: isReturningUser ? 'returning' : 'first_time',
+        lastSignInMethodId,
     });
+    // "No email needed" is only true when starting here generates the key on this device.
+    const newHereCreatesKey = model.actions.some(({ action }) => (
+        action.kind === 'authenticate' && action.labelRole === 'new_here' && action.request.execution.kind === 'generated_key'
+    ));
+    const hasLoginDoor = model.actions.some(({ action }) => (
+        (action.kind === 'authenticate' || action.kind === 'scan_or_paste_home') && action.labelRole === 'login'
+    ));
+    // On the build's own Home (nobody chose it), changing Home is 0.2's "Self-hosting? Use your own Relay".
+    const selfHostingFooter = hasHome && !requestedHomeTarget;
     // A first run is the Homes doorway on every width (lab K1p; UI refinements 11-13: one first run, wide only has
     // more room): it asks how to reach a Home. A chosen Home, a returning person, a chosen sign-in service or a device
     // that can host its own Home keeps the Home's own sign-in below. The doorway's paths all add a Home, so a Home
@@ -181,18 +200,22 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             const presentation = quiet ? 'row' as const : undefined;
             if (action.kind === 'scan_or_paste_home') {
                 const canScanQr = props.canScanQr === true;
+                const loginDoor = action.labelRole === 'login';
                 return <WelcomeActionCard
                     key={row.id}
                     actionId={row.id}
                     testID="welcome-scan-existing-home"
                     primary={row.emphasis === 'primary'}
                     presentation={presentation}
-                    title={t(canScanQr ? 'connect.scanExistingHomeQrTitle' : 'connect.usePairingLinkTitle')}
-                    subtitle={t(canScanQr ? 'welcome.welcomeSecondarySubtitle' : 'connect.pairingLinkRequired')}
-                    iconName={canScanQr ? 'qr-code' : 'link'}
+                    title={loginDoor
+                        ? t(isReturningUser ? 'welcome.welcomeReturningLoginButton' : 'welcome.welcomeSecondaryButton')
+                        : t(canScanQr ? 'connect.scanExistingHomeQrTitle' : 'connect.usePairingLinkTitle')}
+                    subtitle={t(loginDoor || canScanQr ? 'welcome.welcomeSecondarySubtitle' : 'connect.pairingLinkRequired')}
+                    iconName={loginDoor || canScanQr ? 'qr-code' : 'link'}
                     onPress={handleLogin}
                 />;
             }
+            if (action.kind === 'choose_home' && selfHostingFooter) return null;
             if (action.kind === 'choose_home') {
                 // With no Home yet this is "Connect to a Home directly": the same Welcome step on every width.
                 // Choosing among Homes (saved, hosted, this computer) stays the Home chooser's.
@@ -217,6 +240,8 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             const isMtls = request.execution.kind === 'mtls';
             const isService = request.authority.purpose === 'account_service';
             const isNewHere = action.labelRole === 'new_here';
+            const isLoginDoor = action.labelRole === 'login';
+            const startsWithKey = request.execution.kind === 'generated_key';
             const testID = isService
                 ? isKey ? 'welcome-account-service-key' : `welcome-account-service-provider-${request.method.id}`
                 : isNewHere ? 'welcome-primary-start'
@@ -225,8 +250,12 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                             : index === 0 ? 'welcome-provider-primary' : 'welcome-login-provider';
             const title = isNewHere
                 ? (isReturningUser ? t('welcome.welcomeReturningStartFreshButton') : t('welcome.welcomePrimaryButton'))
-                : authenticationPresentation.title;
-            const subtitle = isNewHere
+                : isLoginDoor ? t('welcome.welcomeReturningLoginButton') : authenticationPresentation.title;
+            const subtitle = isLoginDoor
+                ? action.lastUsed ? lastTimeSubtitle(request.execution, provider) : authenticationPresentation.title
+                : isNewHere && startsWithKey
+                ? t(isReturningUser ? 'welcome.welcomeReturningStartFreshSubtitle' : 'welcome.welcomePrimarySubtitle')
+                : isNewHere
                 ? isService
                     ? t('welcome.newHereServiceSubtitle', { service: serviceName ?? t('welcome.yourSignInService') })
                     : t('welcome.newHereHomeSubtitle', { home: options.homeLabel ?? t('settingsAccount.thisHomeTitle') })
@@ -307,10 +336,16 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 {doors.map((row) => renderAction(row, model.actions.indexOf(row)))}
                 {quietWays.length > 0 ? (
                     <View testID="welcome-quiet-ways" style={styles.quietWays}>
-                        {!isReturningUser ? (
+                        {!isReturningUser && !hasLoginDoor ? (
                             <Text accessibilityRole="header" style={styles.quietWaysTitle}>{t('homesJourneys.alreadyUseTitle')}</Text>
                         ) : null}
                         {quietWays.map((row) => renderAction(row, model.actions.indexOf(row)))}
+                    </View>
+                ) : null}
+                {selfHostingFooter && model.actions.some(({ action }) => action.kind === 'choose_home') ? (
+                    <View style={styles.selfHosting}>
+                        <Text style={styles.selfHostingLabel}>{t('welcome.welcomeFooterRelay')}</Text>
+                        <WelcomeActionCard testID="welcome-self-hosting" presentation="link" title={t('welcome.welcomeFooterRelayAction')} onPress={props.onChangeRelay} />
                     </View>
                 ) : null}
                 {showHomeStatus && options.authEntryUnavailable ? (
@@ -341,6 +376,11 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     {terminalWaiting ? t('welcome.terminalContinuationSubtitle')
                         : isReturningUser ? returningGreeting.subtitle : t('welcome.welcomeQuestionSubtitle')}
                 </Text>
+                {!terminalWaiting && !isReturningUser ? (
+                    <Text testID="welcome-intro" style={styles.intro}>
+                        {t(newHereCreatesKey ? 'welcome.welcomeQuestionBodyWithKey' : 'welcome.welcomeQuestionBody')}
+                    </Text>
+                ) : null}
             </View> : null}
             <OrganizationPolicyFieldNotice field={homePolicy.lock ? 'home' : servicePolicy.lock ? 'accountService' : 'personalHome'} />
             <OrganizationPolicyInvalidNextStep />
@@ -402,6 +442,19 @@ const stylesheet = StyleSheet.create((theme) => ({
     quietWays: {
         marginTop: theme.space.s8,
         gap: theme.space.s2,
+    },
+    intro: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.secondary,
+        marginTop: theme.space.s16,
+    },
+    selfHosting: {
+        paddingHorizontal: WELCOME_ACTION_TEXT_INSET,
+        marginTop: theme.space.s8,
+    },
+    selfHostingLabel: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
     },
     quietWaysTitle: {
         ...Typography.variant('meta'),

@@ -12,6 +12,7 @@ import { renderScreen } from '@/dev/testkit';
 import type { AccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
+import { lastSignInMethodState, onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { t } from '@/text';
 
 import { WelcomeDecisionPanel } from './WelcomeDecisionPanel';
@@ -403,8 +404,8 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findByTestId('welcome-scan-existing-home-title')).toBeTruthy();
         expect(screen.findByTestId('welcome-scan-existing-home-icon')).toBeTruthy();
         expect(screen.findByTestId('welcome-use-different-home-title')).toBeTruthy();
-        expect(screen.findByTestId('welcome-primary-start-title')?.props.children).toBe('New here?');
-        expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children).toBe('Scan a QR or paste a Home link');
+        expect(screen.findByTestId('welcome-primary-start-title')?.props.children).toBe(t('welcome.welcomePrimaryButton'));
+        expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children).toBe(t('welcome.welcomeSecondaryButton'));
         expect(screen.findByTestId('welcome-use-different-home-title')?.props.children).toBe('Use a different Home');
         // The card chrome is the animated frame inside the pressable hit area.
         const primaryStyle = flattenStyle(screen.findByTestId('welcome-primary-start-text')?.parent?.props.style);
@@ -414,7 +415,7 @@ describe('WelcomeDecisionPanel', () => {
         expect(primaryStyle.paddingVertical).toBe(10);
         expect(textBlockStyle.gap).toBe(0);
         expect(screen.findByTestId('welcome-primary-start')?.props.accessibilityHint)
-            .toBe('Create a private account on Home A.');
+            .toBe(t('welcome.welcomePrimarySubtitle'));
 
         await screen.pressByTestIdAsync('welcome-primary-start');
         await screen.pressByTestIdAsync('welcome-scan-existing-home');
@@ -590,6 +591,8 @@ describe('WelcomeDecisionPanel', () => {
             canScanQr={false}
         />);
 
+        // The Login door opens the same restore surface, which starts on its pairing-link field here.
+        expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children).toBe(t('welcome.welcomeSecondaryButton'));
         await screen.pressByTestIdAsync('welcome-scan-existing-home');
         expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
         expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
@@ -673,7 +676,7 @@ describe('WelcomeDecisionPanel', () => {
         const screen = await screenPromise;
         const action = screen.findByTestId('welcome-account-service-provider-github');
 
-        expect(action?.props.accessibilityLabel).toBe('New here?');
+        expect(action?.props.accessibilityLabel).toBe(t('welcome.welcomePrimaryButton'));
         expect(action?.props.accessibilityHint).toBe('Create an account with Happier Cloud, then find or add your Home.');
         await screen.pressByTestIdAsync('welcome-account-service-provider-github');
         expect(callbacks.onContinueWithAccountServiceProvider).toHaveBeenCalledWith(expect.objectContaining({
@@ -821,6 +824,130 @@ describe('WelcomeDecisionPanel', () => {
         await screen.pressByTestIdAsync('welcome-scan-existing-home');
 
         expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
+    });
+
+    // Owner decisions 11-15 (WF-BUILD-1115): 0.2's Welcome behaviours on the 0.3 layout.
+    describe('0.2 doors and device history', () => {
+        const keyAndEmail: AuthEntryOptions['authenticationActions'] = [
+            ...baseOptions.authenticationActions!,
+            {
+                method: { id: 'key_challenge', enabledActions: [{ id: 'login', mode: 'keyed' }] },
+                action: { id: 'login', mode: 'keyed' },
+                execution: { kind: 'key_entry' },
+            },
+            {
+                method: { id: 'email_password', enabledActions: [{ id: 'login', mode: 'either' }] },
+                action: { id: 'login', mode: 'either' },
+                execution: { kind: 'email_password', action: 'login', mode: 'either' },
+            },
+        ];
+        const withHistory = async (history: Readonly<{ returning: boolean; method?: string }>, run: () => Promise<void>) => {
+            onboardingAuthHistoryState.set('completed', history.returning);
+            if (history.method) lastSignInMethodState.set('method', history.method);
+            else lastSignInMethodState.remove('method');
+            try { await run(); } finally {
+                onboardingAuthHistoryState.remove('completed');
+                lastSignInMethodState.remove('method');
+            }
+        };
+        const titles = (screen: Awaited<ReturnType<typeof renderPanel>['screenPromise']>) => screen
+            .findAll((node) => typeof node.props.testID === 'string' && node.props.testID.endsWith('-title')
+                && typeof node.props.children === 'string')
+            .map((node) => node.props.children as string)
+            .filter((title, index, all) => all.indexOf(title) === index);
+
+        it('first time: the intro line, First time here and its Login peer, with no email needed for a generated key', async () => {
+            await withHistory({ returning: false }, async () => {
+                const { callbacks, screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
+                const screen = await screenPromise;
+                const text = screen.getTextContent();
+                expect(text).toContain(t('welcome.welcomeQuestionBodyWithKey'));
+                expect(titles(screen).slice(0, 2)).toEqual([t('welcome.welcomePrimaryButton'), t('welcome.welcomeSecondaryButton')]);
+                expect(screen.findByTestId('welcome-primary-start-subtitle')?.props.children).toBe(t('welcome.welcomePrimarySubtitle'));
+                expect(screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children).toBe(t('welcome.welcomeSecondarySubtitle'));
+                // Login is the door for the key; "Already use Happier?" is its title now, not a label over rows.
+                expect(titles(screen)).not.toContain(t('welcome.continueWithKey'));
+                expect(text).not.toContain(t('homesJourneys.alreadyUseTitle'));
+                await screen.pressByTestIdAsync('welcome-scan-existing-home');
+                expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
+                await screen.unmount();
+            });
+        });
+
+        it('first time on a Home whose new account needs an email: the intro never says no email is needed', async () => {
+            await withHistory({ returning: false }, async () => {
+                const { screenPromise } = renderPanel({
+                    authenticationActions: [{
+                        method: { id: 'email_password', enabledActions: [{ id: 'provision', mode: 'either' }] },
+                        action: { id: 'provision', mode: 'either' },
+                        execution: { kind: 'email_password', action: 'provision', mode: 'either' },
+                    }],
+                });
+                const screen = await screenPromise;
+                expect(screen.getTextContent()).toContain(t('welcome.welcomeQuestionBody'));
+                expect(screen.getTextContent()).not.toContain(t('welcome.welcomeQuestionBodyWithKey'));
+                expect(screen.findByTestId('welcome-primary-start-subtitle')?.props.children)
+                    .toBe(t('welcome.newHereHomeSubtitle', { home: 'Home A' }));
+                await screen.unmount();
+            });
+        });
+
+        it('returning with email last time: Login leads with email, then Start fresh with a new key', async () => {
+            await withHistory({ returning: true, method: 'email_password' }, async () => {
+                const { callbacks, screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
+                const screen = await screenPromise;
+                const text = screen.getTextContent();
+                expect(titles(screen).slice(0, 2)).toEqual([t('welcome.welcomeReturningLoginButton'), t('welcome.welcomeReturningStartFreshButton')]);
+                expect(text).toContain(t('welcome.lastTimeEmail'));
+                expect(text).toContain(t('welcome.welcomeReturningStartFreshSubtitle'));
+                expect(text).not.toContain(t('welcome.welcomeQuestionBody'));
+                expect(titles(screen)).toContain(t('welcome.continueWithKey'));
+                await screen.pressByTestIdAsync('welcome-email-password-login');
+                expect(callbacks.onContinueWithHomeAuthentication).toHaveBeenCalledWith(expect.objectContaining({
+                    execution: expect.objectContaining({ kind: 'email_password', action: 'login' }),
+                }));
+                await screen.unmount();
+            });
+        });
+
+        it('returning with a key last time names the key', async () => {
+            await withHistory({ returning: true, method: 'key_challenge' }, async () => {
+                const { screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
+                const screen = await screenPromise;
+                expect(titles(screen)[0]).toBe(t('welcome.welcomeReturningLoginButton'));
+                expect(screen.getTextContent()).toContain(t('welcome.lastTimeKey'));
+                await screen.unmount();
+            });
+        });
+
+        it('returning with nothing recorded: Login is the QR or key door', async () => {
+            await withHistory({ returning: true }, async () => {
+                const { callbacks, screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
+                const screen = await screenPromise;
+                expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children).toBe(t('welcome.welcomeReturningLoginButton'));
+                expect(screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children).toBe(t('welcome.welcomeSecondarySubtitle'));
+                await screen.pressByTestIdAsync('welcome-scan-existing-home');
+                expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
+                await screen.unmount();
+            });
+        });
+
+        it('offers self-hosting on the build\'s own Home and the Home switch on a chosen one', async () => {
+            await withHistory({ returning: true }, async () => {
+                const { callbacks, screenPromise } = renderPanel({ requestedHomeTarget: undefined });
+                const screen = await screenPromise;
+                expect(screen.getTextContent()).toContain(t('welcome.welcomeFooterRelay'));
+                expect(screen.findByTestId('welcome-use-different-home')).toBeFalsy();
+                await screen.pressByTestIdAsync('welcome-self-hosting');
+                expect(callbacks.onChangeRelay).toHaveBeenCalledTimes(1);
+                await screen.unmount();
+
+                const chosen = await renderPanel().screenPromise;
+                expect(chosen.getTextContent()).not.toContain(t('welcome.welcomeFooterRelay'));
+                expect(chosen.findByTestId('welcome-use-different-home')).toBeTruthy();
+                await chosen.unmount();
+            });
+        });
     });
 
     it('explains closed signup as an intentional Personal Home policy without redirecting the owner to an admin', async () => {

@@ -14420,10 +14420,12 @@ settingsSession: {
         // Unified onboarding redesign — welcome decision (right pane)
         welcomeQuestionTitle: 'Et donem la benvinguda.',
         welcomeQuestionSubtitle: 'És el teu primer cop aquí?',
+        welcomeQuestionBody: "Happier és el centre de control dels teus agents de codificació amb IA.",
+        welcomeQuestionBodyWithKey: "Happier és el centre de control dels teus agents de codificació amb IA. No cal correu electrònic. El teu compte és una clau privada, generada en aquest dispositiu.",
         terminalContinuationTitle: 'Connecta el teu terminal.',
         terminalContinuationSubtitle: 'Inicia la sessió per acabar.',
 
-        welcomePrimaryButton: 'Ets nou aquí?',
+        welcomePrimaryButton: "Primera vegada aquí — comencem",
         welcomePrimarySubtitle: 'Un toc. Sense formulari. La teva clau viu aquí.',
         newHereHomeSubtitle: ({ home }: { home: string }) => `Crea un compte privat a ${home}.`,
         newHereServiceSubtitle: ({ service }: { service: string }) => `Crea un compte amb ${service} i després troba o afegeix el teu Home.`,
@@ -14450,7 +14452,12 @@ settingsSession: {
         emailCreateDescription: 'Crea un compte amb la teva adreça de correu.',
         emailConnectDescription: 'Afegeix-los al compte que ja fas servir.',
         useDifferentHomeSubtitle: ({ home }: { home: string }) => `En lloc de ${home}`,
-        welcomeSecondarySubtitle: 'Escaneja un codi QR o introdueix la teva clau de recuperació',
+        welcomeSecondaryButton: "Inicia sessió — ja faig servir Happier",
+        welcomeSecondarySubtitle: "Escaneja un codi QR o introdueix la teva clau secreta",
+        lastTimeKey: "Fes servir la teva clau, com l’última vegada",
+        lastTimeEmail: "Inicia sessió amb el correu, com l’última vegada",
+        lastTimeCertificate: "Fes servir el teu certificat, com l’última vegada",
+        lastTimeProvider: ({ provider }: { provider: string }) => `Continua amb ${provider}, com l’última vegada`,
 
         // Unified onboarding redesign — returning-user copy variants.
         // Shown when localSettings.hasCompletedAuthOnce === true, i.e. the

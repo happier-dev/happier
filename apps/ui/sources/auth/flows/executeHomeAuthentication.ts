@@ -301,7 +301,8 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
             if (mode === 'e2ee') await createEncryptionFromAuthCredentials(committedCredentials);
             if (options.signal?.aborted) return;
             await presentFirstKeyCredentialLifecycle({
-                run: () => options.loginWithCredentials(committedCredentials, { target: persistenceTarget }),
+                // A generated key is how this device signs in from now on.
+                run: () => options.loginWithCredentials(committedCredentials, { target: persistenceTarget, signInMethodId: request.method.id }),
                 onCompleted: async () => {
                     await options.onProvisioned?.();
                     await authenticated(committedCredentials, options.teamAdmission?.teamId);
@@ -555,7 +556,7 @@ async function runExecutableHomeAuthentication(options: ExecuteHomeAuthenticatio
             if (options.signal?.aborted) return;
             const credentials = { token: String(payload.token) };
             await presentFirstKeyCredentialLifecycle({
-                run: () => options.loginWithCredentials(credentials, { target: persistenceTarget }),
+                run: () => options.loginWithCredentials(credentials, { target: persistenceTarget, signInMethodId: request.method.id }),
                 onCompleted: () => authenticated(credentials, options.teamAdmission?.teamId),
             });
         } finally {

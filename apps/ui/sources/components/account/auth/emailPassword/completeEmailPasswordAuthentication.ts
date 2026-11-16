@@ -7,6 +7,8 @@ import { presentFirstKeyCredentialLifecycle } from '@/components/account/present
 
 import type { EmailPasswordAuthOutcome } from './EmailPasswordAuthPanel';
 
+const EMAIL_PASSWORD_METHOD_ID = 'email_password';
+
 export type EmailPasswordAuthenticationCompletion = 'completed' | 'retired';
 
 async function discloseProvisionedRecoveryKey(
@@ -85,7 +87,7 @@ export async function completeEmailPasswordAuthentication(params: Readonly<{
     signal?: AbortSignal;
     loginWithCredentials: (
         credentials: AuthCredentials,
-        options: Readonly<{ target: HomeCredentialTarget }>,
+        options: Readonly<{ target: HomeCredentialTarget; signInMethodId: string }>,
     ) => Promise<AuthCredentialLifecycleResult>;
     onCompleted: () => void | Promise<void>;
 }>): Promise<EmailPasswordAuthenticationCompletion> {
@@ -94,6 +96,7 @@ export async function completeEmailPasswordAuthentication(params: Readonly<{
     try {
         persistence = await params.loginWithCredentials(params.outcome.credentials, {
             target: params.target,
+            signInMethodId: EMAIL_PASSWORD_METHOD_ID,
         });
     } catch (cause) {
         params.outcome.recoverySecret?.fill(0);
@@ -113,7 +116,7 @@ export async function completeEmailPasswordAuthentication(params: Readonly<{
                         return pending;
                     }
                     if (params.signal?.aborted) return { kind: 'recovery_failed' };
-                    return await params.loginWithCredentials(params.outcome.credentials, { target: params.target });
+                    return await params.loginWithCredentials(params.outcome.credentials, { target: params.target, signInMethodId: EMAIL_PASSWORD_METHOD_ID });
                 },
                 onCompleted: () => { adopted = true; },
             }).catch((cause: unknown) => {

@@ -14,7 +14,9 @@ const method = (id: string, actionId: 'login' | 'provision', mode: 'keyed' | 'ke
         ? actionId === 'provision' ? { kind: 'generated_key' } : { kind: 'key_entry' }
         : id === 'mtls'
             ? { kind: 'mtls' }
-            : { kind: 'oauth', providerId: id, mode },
+            : id === 'email'
+                ? { kind: 'email_password', action: actionId === 'provision' ? 'provision' : 'login', mode }
+                : { kind: 'oauth', providerId: id, mode },
     authority: { purpose: 'home', target },
     intendedHome: target,
 });
@@ -31,7 +33,7 @@ describe('composeWelcomeEntryModel', () => {
         });
 
         expect(model.actions.map((row) => row.action.kind)).toEqual([
-            'authenticate', 'authenticate', 'scan_or_paste_home', 'choose_home',
+            'authenticate', 'scan_or_paste_home', 'authenticate', 'choose_home',
         ]);
         expect(model.actions.filter((row) => row.emphasis === 'primary')).toHaveLength(1);
         expect(model.notice).toEqual({ kind: 'service_loading', serviceName: 'Happier', hasUsableHomeMethods: true });
@@ -50,7 +52,8 @@ describe('composeWelcomeEntryModel', () => {
         } as WelcomeAuthenticationMethod);
         const shape = (model: ReturnType<typeof composeWelcomeEntryModel>) => model.actions.map((row) => [
             row.action.kind === 'authenticate'
-                ? (row.action.labelRole === 'new_here' ? 'new_here' : row.action.request.method.id)
+                ? (row.action.labelRole === 'new_here' ? 'new_here'
+                    : row.action.labelRole === 'login' ? `login:${row.action.request.method.id}` : row.action.request.method.id)
                 : row.action.kind,
             row.emphasis,
         ]);
@@ -121,15 +124,92 @@ describe('composeWelcomeEntryModel', () => {
                 allowedNavigation: { ...navigation, selectService: false },
                 serviceCatalogState: { kind: 'not_offered' },
                 userHistory: 'returning',
+                lastSignInMethodId: 'github',
             });
 
             expect(shape(model)).toEqual([
-                ['github', 'primary'],
+                ['login:github', 'primary'],
+                ['new_here', 'secondary'],
+                ['create_personal_home', 'secondary'],
                 ['scan_or_paste_home', 'tertiary'],
                 ['choose_home', 'tertiary'],
-                ['create_personal_home', 'secondary'],
-                ['new_here', 'secondary'],
             ]);
+        });
+    });
+
+    // Owner decisions 11-15 (WF-BUILD-1115): 0.2's two peer doors on the 0.3 layout, flipped by this device's history.
+    describe('Login and First time doors', () => {
+        const homeMethods = [
+            method('key_challenge', 'provision', 'keyed'),
+            method('key_challenge', 'login', 'keyed'),
+            method('email', 'login', 'keyless'),
+            method('email', 'provision', 'keyless'),
+        ];
+        const navigation = { changeHome: true, selectService: false, scanOrPasteHome: true, createPersonalHome: false };
+        const compose = (input: Partial<Parameters<typeof composeWelcomeEntryModel>[0]>) => composeWelcomeEntryModel({
+            target: { kind: 'selected_home', home: target, label: 'Home A' },
+            homeMethods,
+            context: { kind: 'home' },
+            allowedNavigation: navigation,
+            serviceCatalogState: { kind: 'not_offered' },
+            userHistory: 'returning',
+            ...input,
+        });
+        const shape = (model: ReturnType<typeof composeWelcomeEntryModel>) => model.actions.map((row) => {
+            const action = row.action;
+            const name = action.kind !== 'authenticate' ? action.kind
+                : action.labelRole === 'new_here' ? 'new_here'
+                    : `${action.request.method.id}:${action.request.action.id}`;
+            const loginDoor = 'labelRole' in action && action.labelRole === 'login';
+            return [loginDoor ? `login:${name}` : name, row.emphasis];
+        });
+
+        it('first time: First time here leads, Login is its outlined peer and carries the key, the rest stay quiet', () => {
+            expect(shape(compose({ userHistory: 'first_time' }))).toEqual([
+                ['new_here', 'primary'],
+                ['login:scan_or_paste_home', 'secondary'],
+                ['email:login', 'tertiary'],
+                ['email:provision', 'tertiary'],
+                ['choose_home', 'tertiary'],
+            ]);
+        });
+
+        it('returning with email last time: Login leads with email, First time follows, email is not listed twice', () => {
+            const model = compose({ lastSignInMethodId: 'email' });
+            expect(shape(model)).toEqual([
+                ['login:email:login', 'primary'],
+                ['new_here', 'secondary'],
+                ['key_challenge:login', 'tertiary'],
+                ['email:provision', 'tertiary'],
+                ['scan_or_paste_home', 'tertiary'],
+                ['choose_home', 'tertiary'],
+            ]);
+            expect(model.actions[0]?.action).toMatchObject({ kind: 'authenticate', labelRole: 'login', lastUsed: true });
+        });
+
+        it('returning with a key last time: Login leads with the key', () => {
+            expect(shape(compose({ lastSignInMethodId: 'key_challenge' })).slice(0, 3)).toEqual([
+                ['login:key_challenge:login', 'primary'],
+                ['new_here', 'secondary'],
+                ['email:login', 'tertiary'],
+            ]);
+        });
+
+        it('returning with nothing recorded: Login is the QR or key door', () => {
+            const expected = [
+                ['login:scan_or_paste_home', 'primary'],
+                ['new_here', 'secondary'],
+                ['email:login', 'tertiary'],
+                ['email:provision', 'tertiary'],
+                ['choose_home', 'tertiary'],
+            ];
+            expect(shape(compose({}))).toEqual(expected);
+        });
+
+        it('returning with a method this Home no longer offers: Login falls back to the server order, not marked as last time', () => {
+            const model = compose({ lastSignInMethodId: 'github' });
+            expect(shape(model)[0]).toEqual(['login:key_challenge:login', 'primary']);
+            expect(model.actions[0]?.action).toMatchObject({ labelRole: 'login', lastUsed: false });
         });
     });
 
@@ -201,9 +281,10 @@ describe('composeWelcomeEntryModel', () => {
             userHistory: 'returning',
         });
 
-        expect(model.actions.slice(1).map((row) => row.action.kind === 'authenticate' ? row.action.request.method.id : row.action.kind))
-            .toEqual(['github', 'google']);
-        expect(model.actions[1]?.id).toContain('service:service-a:https://accounts.example.test|account_service|github|login|keyless');
+        // Returning with nothing recorded and no Home methods: Login is the service's first way in.
+        expect(model.actions.map((row) => row.action.kind === 'authenticate' ? row.action.request.method.id : row.action.kind))
+            .toEqual(['github', 'google', 'scan_or_paste_home']);
+        expect(model.actions[0]?.id).toContain('service:service-a:https://accounts.example.test|account_service|github|login|keyless');
     });
 
     describe('same-server dual-role dedupe', () => {
@@ -345,9 +426,9 @@ describe('composeWelcomeEntryModel', () => {
             });
             expect(methodIds(distinct)).toEqual([
                 'home:key_challenge:login',
+                'home:github:provision',
                 'account_service:key_challenge:provision',
                 'account_service:github:provision',
-                'home:github:provision',
             ]);
         });
     });

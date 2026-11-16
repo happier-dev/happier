@@ -43,6 +43,20 @@ export function useHasCompletedAuthOnce(): boolean {
     return usePersistentUiStateValue(onboardingAuthHistoryState, 'completed') ?? false;
 }
 
+const MethodIdSchema = z.string().check(z.minLength(1));
+
+/**
+ * The catalog method id (`key_challenge`, `email_password`, `mtls`, an OAuth provider id) this device
+ * last signed in with, so the returning Welcome can lead with it. Device history, never a setting:
+ * the auth success owner writes it, and it survives logout like `onboardingAuthHistoryState`.
+ */
+export const lastSignInMethodState = createPersistentUiState('last-sign-in-method-v1',
+    value => z.catch(z.nullable(MethodIdSchema), null).parse(value));
+
+export function useLastSignInMethod(): string | null {
+    return usePersistentUiStateValue(lastSignInMethodState, 'method') ?? null;
+}
+
 export function useHomesJourneyAcknowledgements(): readonly string[] {
     return usePersistentUiStateValue(homesJourneyAcknowledgementsState, 'acknowledged') ?? EMPTY_IDS;
 }

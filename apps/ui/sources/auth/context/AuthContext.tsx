@@ -3,7 +3,7 @@ import { getCurrentAuth, setCurrentAuth } from './currentAuth';
 export { getCurrentAuth, setCurrentAuth } from './currentAuth';
 import { readCredentialAuthorityKind, type CredentialAuthorityKind } from './credentialAuthority';
 import { TokenStorage, replayHomeCredentialMutation, type AuthCredentials } from '@/auth/storage/tokenStorage';
-import { onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
+import { lastSignInMethodState, onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { forgetPluginAccountAvailabilityArtifacts } from '@/sync/domains/plugins/availability/projection';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -84,6 +84,11 @@ export type AuthCredentialPersistenceOptions = Readonly<{
         expectedCredentials?: AuthCredentials;
         /** Used only after the historical-key Forget action confirms destructive discard. */
         discardHistoricalEncryption?: boolean;
+        /**
+         * The catalog method id the person signed in with. Recorded as device history on success so the
+         * returning Welcome leads with it; absent for credential replacements that are not a sign-in.
+         */
+        signInMethodId?: string;
     }>;
 
 export interface AuthContextType {
@@ -255,6 +260,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
         if (onboardingAuthHistoryState.read('completed') !== true) {
             onboardingAuthHistoryState.set('completed', true);
         }
+        if (options?.signInMethodId) lastSignInMethodState.set('method', options.signInMethodId);
         if (!isSameServerTarget(target, getActiveServerSnapshot())) {
             // The credential belongs to a Home that is no longer focused. It is
             // persisted there; publishing it as the focused runtime's auth state

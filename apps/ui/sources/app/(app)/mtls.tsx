@@ -210,7 +210,7 @@ export default function MtlsCallbackScreen() {
                     };
                     await presentFirstKeyCredentialLifecycle({
                         run: async () =>
-                            await auth.loginWithCredentials({ token }, { target }),
+                            await auth.loginWithCredentials({ token }, { target, signInMethodId: 'mtls' }),
                         onCompleted: finishCredentialCustody,
                         onFinishCompleted: finishCredentialCustody,
                     });
