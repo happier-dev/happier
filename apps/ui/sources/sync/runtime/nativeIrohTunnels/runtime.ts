@@ -72,14 +72,14 @@ export function createIrohHomeTunnelRuntime(params: Readonly<{
             return;
         }
         if (event.type === 'degraded' || event.type === 'closed') {
-            if (published) {
-                releaseActiveServerRuntimeOrigin({ target: published.target, leaseId: event.lease.leaseId });
-            }
-            if (event.type === 'closed') {
+            const releasedPublication = published
+                ? releaseActiveServerRuntimeOrigin({ target: published.target, leaseId: event.lease.leaseId })
+                : false;
+            if (event.type === 'closed' || releasedPublication) {
                 notifyRecoveryRequired({
                     leaseId: event.lease.leaseId,
                     homeServerIdentityId: event.lease.homeServerIdentityId,
-                    reason: 'terminal',
+                    reason: event.type === 'closed' ? 'terminal' : 'degraded',
                     activePublication: published !== undefined,
                 });
             }

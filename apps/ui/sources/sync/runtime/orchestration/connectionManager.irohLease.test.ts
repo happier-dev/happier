@@ -487,13 +487,16 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
     });
 
     /** The declared origin at the fetch boundary, recording every credential it receives. */
-    async function serveDeclaredHome(serverIdentityId: string): Promise<Array<string | null>> {
+    async function serveDeclaredHome(serverIdentityId: string, declaredOrigin?: string): Promise<Array<string | null>> {
         const authorizations: Array<string | null> = [];
         const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         setRuntimeFetch(async (input, init) => {
-            authorizations.push(new Headers(init?.headers).get('Authorization'));
+            const isDeclaredOrigin = !declaredOrigin || new URL(String(input)).origin === declaredOrigin;
+            // Recovery may probe the saved canonical Home; it is distinct from
+            // the reassigned fallback whose credential isolation this fixture observes.
+            if (isDeclaredOrigin) authorizations.push(new Headers(init?.headers).get('Authorization'));
             return new Response(JSON.stringify(String(input).endsWith('/v1/features')
-                ? { features: {}, capabilities: { serverIdentity: { serverIdentityId } } }
+                ? { features: {}, capabilities: { serverIdentity: { serverIdentityId: isDeclaredOrigin ? serverIdentityId : 'srv_home_a' } } }
                 : { ok: true }), { status: 200, headers: { 'content-type': 'application/json' } });
         });
         return authorizations;
@@ -619,7 +622,7 @@ describe('switchConnectionToActiveServer Iroh lease acquisition', () => {
         vi.doMock('@/sync/runtime/nativeLoopbackTunnels/runtime', () => ({
             startNativeLoopbackTunnelRuntimeAppStateLifecycle: startLifecycleSpy,
         }));
-        const authorizations = await serveDeclaredHome('srv_reassigned_home');
+        const authorizations = await serveDeclaredHome('srv_reassigned_home', 'https://public-iroh-fail.example.test');
 
         const { switchConnectionToActiveServer } = await import('./connectionManager');
         await expect(switchConnectionToActiveServer()).rejects.toThrow();

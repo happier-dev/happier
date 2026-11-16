@@ -26,6 +26,7 @@ import {
 import { startNativeLoopbackTunnelRuntimeAppStateLifecycle } from '@/sync/runtime/nativeLoopbackTunnels/runtime';
 import type { IrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/types';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { refreshDegradedHomeDescriptor } from './refreshDegradedHomeDescriptor';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import {
@@ -104,6 +105,9 @@ function recoverFailedApplyWhenHomeAnswers(
     snapshot: Readonly<ReturnType<typeof getActiveServerSnapshot>>,
     credentials: AuthCredentials | null,
 ): void {
+    // Retry owns this failed attempt; do not arm another automatic admission.
+    // A pre-existing offline subscription remains available to a manual Retry.
+    if (activeRecoveryPromise) return;
     stopFailedApplyRecovery?.();
     stopFailedApplyRecovery = null;
     const token = credentials?.token?.trim();
@@ -118,8 +122,8 @@ function recoverFailedApplyWhenHomeAnswers(
     };
     const unsubscribe = subscribeServerReachabilityState(snapshot.serverUrl, (state) => {
         if (!subscribed || state.phase !== 'online') return;
-        // The socket owner joins this entry during the retry, so its verdict stays valid.
-        fireAndForget(retryActiveServerConnection().finally(stop), {
+        stop();
+        fireAndForget(retryActiveServerConnection(), {
             tag: 'connectionManager.failedApplyRecovery.retry',
         });
     }, credentials?.token ?? null);
@@ -156,7 +160,16 @@ function startActiveIrohRecoveryLifecycle(runtime: IrohHomeTunnelRuntime): void 
         const snapshot = getActiveServerSnapshot();
         const profile = getServerProfileById(snapshot.serverId);
         if (profile?.serverIdentityId?.trim() !== event.homeServerIdentityId) return;
-        fireAndForget(retryActiveServerConnection(), {
+        fireAndForget((async () => {
+            if (event.reason === 'degraded') {
+                const credentials = await resolveCredentialsForActiveServer(snapshot);
+                if (!credentials || !capturePublicationTargetForSnapshot(snapshot)) return;
+                if (!await refreshDegradedHomeDescriptor(profile, credentials)) return;
+                if (getActiveServerSnapshot().serverId !== snapshot.serverId) return;
+                await runtime.releaseLeasesForStaleTargets();
+            }
+            await retryActiveServerConnection();
+        })(), {
             tag: 'connectionManager.retryActiveServerConnection.nativeIrohRecovery',
         });
     });

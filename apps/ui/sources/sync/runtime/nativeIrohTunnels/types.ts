@@ -53,7 +53,7 @@ export type IrohHomeRuntimeOriginLease = IrohHomeTunnelLease & Readonly<{
 export type IrohHomeTunnelRecoveryRequired = Readonly<{
     leaseId: string;
     homeServerIdentityId: string;
-    reason: 'terminal' | 'foreground_probe_failed' | 'stale_generation';
+    reason: 'terminal' | 'degraded' | 'foreground_probe_failed' | 'stale_generation';
     /** True only when this lease owned the focused Home runtime-origin publication. */
     activePublication: boolean;
 }>;

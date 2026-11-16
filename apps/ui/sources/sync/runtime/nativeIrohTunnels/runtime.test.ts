@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 import type { IrohHomeTunnelAcquireInput, IrohHomeTunnelLease, IrohHomeTunnelRequest } from './types';
 import type { IrohHomeTunnelSupervisor } from './supervisor';
@@ -219,7 +220,7 @@ describe('Iroh Home tunnel lifecycle runtime', () => {
         vi.useRealTimers();
     });
 
-    it('reports retained native QUIC death once and replaces that handle through the existing supervisor', async () => {
+    it('retains the native listener across QUIC loss and republishes its recovered connection', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
         const home = await profiles.upsertServerProfile({ serverUrl: 'https://terminal.example.test', source: 'manual' });
         await profiles.setActiveServerId(home.id, { scope: 'device' });
@@ -239,23 +240,58 @@ describe('Iroh Home tunnel lifecycle runtime', () => {
         try {
             const recovery = vi.fn();
             runtime.subscribeRecoveryRequired(recovery);
-            await runtime.ensureHomeTunnel(request);
+            const retained = await runtime.ensureHomeTunnel(request);
             connectionActive = false;
             await vi.advanceTimersByTimeAsync(2_000);
             expect(recovery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
-                homeServerIdentityId: HOME_IDENTITY_A, reason: 'terminal', activePublication: true,
+                homeServerIdentityId: HOME_IDENTITY_A, reason: 'degraded', activePublication: true,
             }));
             expect(profiles.getActiveServerSnapshot().runtimeOrigin).toBeUndefined();
             await vi.advanceTimersByTimeAsync(4_000);
             expect(recovery).toHaveBeenCalledTimes(1);
             connectionActive = true;
-            const replacement = await runtime.ensureHomeTunnel(request);
-            expect(native.startCount()).toBe(2);
-            expect(native.stops).toEqual(['native-lease-1']);
-            expect(profiles.getActiveServerSnapshot().runtimeOrigin).toBe(replacement.runtimeOrigin);
+            await vi.advanceTimersByTimeAsync(2_000);
+            expect(native.startCount()).toBe(1);
+            expect(native.stops).toEqual([]);
+            expect(profiles.getActiveServerSnapshot().runtimeOrigin).toBe(retained.runtimeOrigin);
         } finally {
             await runtime.dispose();
         }
+    });
+
+    it.each(['active', 'secondary'] as const)('requests recovery only for a degraded active publication without restarting its native handle: %s', async (publication) => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        const home = await profiles.upsertServerProfile({ serverUrl: 'https://degraded.example.test', source: 'manual' });
+        await profiles.setActiveServerId(home.id, { scope: 'device' });
+        const native = createRecordingNativeLifecycle();
+        let active = true;
+        setRuntimeFetch(async (input) => String(input).endsWith('/v1/features')
+            ? jsonResponse(200, createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId: HOME_IDENTITY_A } } }))
+            : jsonResponse(200, { ok: true }));
+        const runtime = createIrohHomeTunnelRuntime({
+            native: { ...native.module, getTunnelStatus: async () => ({ active, observedPath: 'direct' }) },
+        });
+        const recovery = vi.fn();
+        runtime.subscribeRecoveryRequired(recovery);
+        vi.useFakeTimers();
+        try {
+            const acquire = publication === 'active' ? runtime.ensureHomeTunnel : runtime.acquireHomeRuntimeOrigin;
+            await acquire({ homeServerIdentityId: HOME_IDENTITY_A,
+                endpoint: { endpointId: 'endpoint-a' }, canonicalServerUrl: home.serverUrl,
+                verification: { kind: 'authenticated', token: 'token-a' } });
+            await vi.advanceTimersByTimeAsync(0);
+            active = false;
+            await vi.advanceTimersByTimeAsync(2_000);
+            if (publication === 'active') {
+                expect(recovery).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+                    reason: 'degraded', activePublication: true, homeServerIdentityId: HOME_IDENTITY_A,
+                }));
+            }
+            await vi.advanceTimersByTimeAsync(4_000);
+            expect(recovery).toHaveBeenCalledTimes(publication === 'active' ? 1 : 0);
+            expect(native.startCount()).toBe(1);
+            expect(native.stops).toEqual([]);
+        } finally { await runtime.dispose(); }
     });
 
     it('publishes the runtime origin only after native acquire, authenticated readiness, and identity proof', async () => {

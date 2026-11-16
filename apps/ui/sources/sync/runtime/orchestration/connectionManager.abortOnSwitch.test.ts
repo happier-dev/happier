@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
@@ -164,6 +165,42 @@ describe('switchConnectionToActiveServer', () => {
         expect(homes.requestsFor('/v1/scoped-probe')).toEqual([
             expect.objectContaining({ serverId: homeA.serverId, token: homeA.credentials?.token }),
         ]);
+    });
+
+    it('consumes failed-apply recovery once when another online event arrives during its retry', async () => {
+        const home = await addHome('failed-apply-signal');
+        const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
+        await adoptHomeProfile({ source: 'manual', descriptorAuthority: 'current_connection_observation',
+            descriptor: { v: 1, homeServerIdentityId: 'srv_failed_apply',
+                canonicalServerUrl: home.serverUrl, revision: 1,
+                endpoints: [{ kind: 'iroh', endpointId: 'a'.repeat(64) }, { kind: 'https', url: home.serverUrl }] } });
+        await selectHome(home);
+        const enteredRetry = createDeferred<void>();
+        const releasedRetry = createDeferred<void>();
+        releases.add(() => releasedRetry.resolve());
+        let carrierProbes = 0;
+        homes.answer(home.serverId, '/v1/features', { select: () => {
+            carrierProbes += 1;
+            if (carrierProbes === 2) enteredRetry.resolve();
+            return { ...(carrierProbes === 2 ? { respondAfter: releasedRetry.promise } : {}),
+                body: createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: {
+                    // An erroneous third admission succeeds so a failing test cannot spin indefinitely.
+                    serverIdentityId: carrierProbes > 2 ? 'srv_failed_apply' : 'srv_wrong_home',
+                } } }) };
+        } });
+        await expect(connection.switchConnectionToActiveServer()).rejects.toThrow('identity-mismatch');
+        await enteredRetry.promise;
+        const reachability = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
+        await reachability.startServerReachabilitySupervisor({ serverUrl: home.serverUrl, token: home.credentials!.token });
+        await reachability.invalidateAllServerReachabilitySupervisors();
+        await reachability.waitForServerReachable({ serverUrl: home.serverUrl, token: home.credentials!.token });
+        expect(carrierProbes).toBe(2);
+        const retry = connection.retryActiveServerConnection();
+        releasedRetry.resolve();
+        await expect(retry).rejects.toThrow('identity-mismatch');
+        await flushHookEffects();
+        expect(carrierProbes).toBe(2);
+        expect(connection.isAppliedActiveServerRuntimeAvailable()).toBe(false);
     });
 
     it('aborts in-flight server fetches before switching sync server', async () => {
