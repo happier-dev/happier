@@ -190,13 +190,15 @@ function resolveSourceBundleAuthorNodeModulesRoot(runtimeRoot: string): string |
     if (error && typeof error === 'object' && Reflect.get(error, 'code') === 'ENOENT') return null;
     throw error;
   }
-  // Source-runtime provenance remains unchanged. The finite producer record,
-  // not a repository search or a moving dependency tree, owns author packages.
+  // Validate the producer record before choosing the author preparation mode.
   if (typeof record.runtimeDir !== 'string' || typeof record.cliDir !== 'string'
     || realpathSync(record.runtimeDir) !== realpathSync(runtimeRoot)
     || realpathSync(record.cliDir) !== realpathSync(runtimeRoot)) {
     throw new Error('The source CLI bundle record does not own its runtime root');
   }
+  // Revision trees retain a workspace install; explicit pack prepares its
+  // author packages through the existing source-workspace preparation path.
+  if (isRecord(record.sourceTree)) return null;
   return join(runtimeRoot, 'authoring', 'node_modules');
 }
 
