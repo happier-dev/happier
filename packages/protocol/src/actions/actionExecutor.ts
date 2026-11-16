@@ -15,7 +15,7 @@ import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.
 import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
 import { admitPresentUserConfirmationV1, bindPresentUserActionConfirmationV1, recordPresentUserApprovalV1 } from './executor/approvalReview.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
-import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
+import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedChildPlanV1,
@@ -3776,13 +3776,19 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 
       if (prepareExecutionContext) ctx = await prepareExecutionContext(ctx);
       ctx = withHostReviewedChildAction(ctx);
-      ctx = { ...ctx, hostReviewedChild: existingAdmission?.context.hostReviewedChild
-        ?? (hostReviewedChildren || reviewAdmitted ? createHostReviewedChildPortV1({ actionId,
+      const retainedChildPort = existingAdmission?.context.hostReviewedChild ?? ctx.hostReviewedChild;
+      const retainedChildParent = readHostAdmittedReviewedParentV1(retainedChildPort);
+      // Admitted nested children retain their original sibling plan. A new
+      // root carries reviewed authority only after its exact person approval.
+      ctx = { ...ctx, hostReviewedChild: retainedChildParent
+        && (admittedReviewedChild || retainedChildParent.actionId === actionId
+          && sameStrictJsonValue(retainedChildParent.input, admittedInput)) ? retainedChildPort
+        : hostReviewedChildren || reviewAdmitted ? createHostReviewedChildPortV1({ actionId,
           input: admittedInput, context: ctx, ...(hostReviewedChildren ? { plan: hostReviewedChildren } : {}),
           ...(childPolicies ? { policies: childPolicies } : {}),
           ...(reviewAdmitted || admittedReviewedChild ? { reviewAdmitted: true as const } : {}),
           execute: (childInput, childContext, childActionId) => executeHostChild(childActionId, childInput, childContext) })
-          : admittedReviewedChild ? ctx.hostReviewedChild : undefined) };
+          : admittedReviewedChild ? ctx.hostReviewedChild : undefined };
       const dispatchAdmission: PreparedCoreAdmission = {
         // Continuations and operations consume every fact already admitted by this owner.
         ...existingAdmission,

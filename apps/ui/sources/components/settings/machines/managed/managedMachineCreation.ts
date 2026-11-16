@@ -26,13 +26,13 @@ import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode, homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { awaitActionApprovalResult, createActionApprovalContinuation, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
-import { managedCreationSetup } from '@/components/settings/machines/managed/managedCreationPresentation';
+import { canRetryManagedInstallation, managedCreationSetup } from '@/components/settings/machines/managed/managedCreationPresentation';
 import { buildReviewedManagedMachineDeleteInput, qualifyManagedMachineDeleteReview } from '@/components/settings/machines/managed/managedMachineDeleteReview';
 import { supportedMachineRetentionEffectsV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { prepareMachineSetupPresetApplyInput } from './machineSetupApply';
-import { managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
+import { isManagedMachineBootstrapIncomplete, managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { answerManagedCreationEstablish, answerManagedCreationPrompt } from './managedCreationPrompt';
-import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePresentation';
+import { describeManagedActionFailureDiagnostic, describeManagedObservationDiagnostic } from './managedNativeFailurePresentation';
 
 export type ManagedMachineCreationProgress =
     | Readonly<{ kind: 'idle' }>
@@ -214,10 +214,9 @@ export async function runManagedMachineCreation(input: Readonly<{
             signal: input.signal,
             execute: async callbacks => {
                 input.onProgress({ kind: 'acquiring', ...(acquisition.managedId ? { managedId: acquisition.managedId } : {}) });
-                // New's Send/Run confirms this reviewed creation. Retain that
-                // confirmation rather than dropping it before Account dispatch.
-                const dispatch = input.retryInstallation ? execute : execute.confirmed;
-                const result = await dispatch(actionId, actionInput, {
+                // Send/Run and Retry installation are explicit confirmation of
+                // this reviewed work. Preserve it through Account dispatch.
+                const result = await execute.confirmed(actionId, actionInput, {
                     ...context, actionRequestId: input.retryInstallation ? `${acquisition.requestId}:bootstrap:${alreadyAdmitted?.intentRevision}` : acquisition.requestId,
                     ...(actionId === 'machines.managed.acquire' && input.draft.presetOrigin
                         ? { managedPresetOrigin: input.draft.presetOrigin } : {}),
@@ -329,17 +328,11 @@ export async function runManagedMachineCreation(input: Readonly<{
     if (!machine) return fail(readFailureCode, undefined, undefined, readFailure);
     if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent') return fail('enrollment_retired');
     setupMachine = machine;
-    if (operationFailure) return fail(machine.machineSetup?.state === 'failed' ? machine.machineSetup.errorCode ?? operationFailure : operationFailure,
-        Boolean(!machine.enrolledMachineId && machine.resource && machine.allocation === 'bound'));
-    if (!machine.enrolledMachineId) {
-        input.onProgress({ kind: 'enrollment_pending', managedId: machine.id });
-        return { kind: 'pending', managedId: machine.id };
-    }
-    setupMachine = machine;
-    const enrolledMachineId = machine.enrolledMachineId;
+    const bootstrapFailure = isManagedMachineBootstrapIncomplete(machine) ? machine.observation : undefined;
+    const bootstrapFailureCode = bootstrapFailure ? bootstrapFailure.reason?.slice('bootstrap.'.length) || 'installation_failed' : undefined;
     let setup = managedCreationSetup(machine);
     if (input.setupRecovery === 'delete') {
-        if (!setup?.recoveryActions.includes('delete')) return fail('setup_recovery_unavailable');
+        if (!bootstrapFailure && !setup?.recoveryActions.includes('delete')) return fail('setup_recovery_unavailable');
         const census = await executeApproved('machines.managed.references.get', { homeId: machine.homeId, managedId: machine.id });
         if (!current()) return fail('continuation_retired');
         if (census.kind === 'failed') return fail(census.code, undefined, undefined, census.failure);
@@ -348,7 +341,7 @@ export async function runManagedMachineCreation(input: Readonly<{
         if (!input.reviewDelete) return fail('review_required');
         const confirmed = await input.reviewDelete(review.census);
         if (!current()) return fail('continuation_retired');
-        if (!confirmed) return fail(setup.errorCode ?? 'setup_failed');
+        if (!confirmed) return fail(setup?.errorCode ?? bootstrapFailureCode ?? 'setup_failed');
         const currentMachine = await read();
         if (!current()) return fail('continuation_retired');
         if (!currentMachine) return fail(readFailureCode, undefined, undefined, readFailure);
@@ -364,6 +357,15 @@ export async function runManagedMachineCreation(input: Readonly<{
         input.onProgress({ kind: 'idle' });
         return { kind: 'delete_requested', managedId: machine.id };
     }
+    if (operationFailure) return fail(machine.machineSetup?.state === 'failed' ? machine.machineSetup.errorCode ?? operationFailure : operationFailure,
+        canRetryManagedInstallation(machine));
+    if (bootstrapFailureCode) return fail(bootstrapFailureCode, canRetryManagedInstallation(machine),
+        bootstrapFailure ? describeManagedObservationDiagnostic(bootstrapFailure) : undefined);
+    if (!machine.enrolledMachineId) {
+        input.onProgress({ kind: 'enrollment_pending', managedId: machine.id });
+        return { kind: 'pending', managedId: machine.id };
+    }
+    const enrolledMachineId = machine.enrolledMachineId;
     if (input.setupRecovery) {
         if (!setup?.recoveryActions.includes(input.setupRecovery === 'retry' ? 'retrySetup' : 'continueWithoutSetup')) {
             return fail('setup_recovery_unavailable');

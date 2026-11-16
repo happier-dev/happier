@@ -96,6 +96,8 @@ export type ManagedMachineReconciliation = Readonly<{
     }>;
     waitForObservation(): Promise<unknown>;
     onResource?(machine: ManagedMachineFullV1): void;
+    /** Foreground acquisition may acknowledge the retained creation; its row still records bootstrap failure. */
+    settleBootstrapFailure?(machine: ManagedMachineFullV1): ManagedMachineFullV1;
     onProgress?(progress: ActionOperationProgressV1): void;
 }>;
 
@@ -487,10 +489,12 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
             ? error.details.nativeCause : undefined;
         const carrierFailure = (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError)
             && error.details?.kind === 'managedGuestHome' ? error.details.carrierFailure : undefined;
-        await input.home.row('report', { ...input.home.correlation(machine),
+        const retained = await input.home.row('report', { ...input.home.correlation(machine),
             result: { kind: 'bound', resource: machine.resource },
             observation: { observedAt: Date.now(), availability: 'unavailable', reason: `bootstrap.${code}`,
                 ...(nativeCause ? { nativeCause } : {}), ...(carrierFailure ? { carrierFailure } : {}) } }, null);
+        if (input.settleBootstrapFailure && retained.creationState === 'active' && retained.allocation === 'bound'
+            && !input.signal?.aborted) return input.settleBootstrapFailure(retained);
         throw error;
     }
 }

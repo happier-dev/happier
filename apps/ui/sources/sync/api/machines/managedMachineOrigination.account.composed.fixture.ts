@@ -29,6 +29,8 @@ import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessi
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';
+import type { ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
+import type { ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 
 const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [] as unknown[],
     files: new Map<number, Uint8Array>(), reads: 0 }));
@@ -116,6 +118,8 @@ const cases: ReadonlyArray<[string, boolean, 'machines.managed.delete' | 'machin
     ['native authored failure', false, null, false, false, false, false],
 ] : [
     ['browser', true, null, false, false, false, false],
+    ['browser bootstrap failure recovery', true, null, false, false, false, false],
+    ['browser bootstrap failure recovery Delete', true, 'machines.managed.delete', false, false, false, false],
     ['browser refused roles seed', true, null, false, false, false, false],
     ['browser delete', false, 'machines.managed.delete', false, false, false, false],
     ['browser cancel', false, 'machines.managed.cancel', false, false, false, false],
@@ -200,6 +204,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     let guestContinuation: unknown;
     let acquireDigest = '';
     let interruptJoin = !startAgent;
+    let interruptBootstrap = label.startsWith('browser bootstrap failure recovery');
     let vendorAbsent = false;
     let vendorStopped = false;
     let deletes = 0;
@@ -353,6 +358,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                         ...admittedPresetContent, recipientAccountId: accountId }) }
                     : managed);
             }
+            if (path === '/v1/machines/managed/actions/list') return Response.json({ machines: managed ? [managed] : [] });
             if (path === '/v1/machines/managed/actions/cancel') {
                 managed = ManagedMachineV1Schema.parse({ ...managed, creationState: 'canceled', desired: 'delete',
                     intentRevision: managed!.intentRevision + 1, cleanup: { disposition: 'pending', reason: 'creation_canceled' } });
@@ -818,6 +824,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 let stdout = '';
                 if (command.includes('uname -s')) {
                     await readCreationStage?.('installing');
+                    if (interruptBootstrap) return Response.json({ error: 'Guest transport interrupted after allocation' }, { status: 503 });
                     stdout = 'Linux\nx86_64\n/home/guest\n';
                 }
                 else if (command.includes(signedRelease.source) && command.includes('checksums-happier-')) {
@@ -968,13 +975,56 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         let interrupted: ActionExecuteResult;
         if (startAgent) {
             const { runManagedMachineCreation } = await import('@/components/settings/machines/managed/managedMachineCreation');
+            let acquisition: ManagedMachineAcquisitionDraft = { requestId: 'native-managed-create', selection: input.selection };
+            const progress: ManagedMachineCreationProgress[] = [];
             const created = await runManagedMachineCreation({
                 draft: { selection: input.selection, receipt: reviewedFacts, enrollmentIdentity },
-                acquisition: { requestId: 'native-managed-create', selection: input.selection },
+                acquisition,
                 agentStart: input.agentStart, scope: lifetime.scope, signal: new AbortController().signal,
-                isCurrent: () => lifetime.isCurrent(), onAcquisitionChange: () => {}, onProgress: () => {},
+                isCurrent: () => lifetime.isCurrent(), onAcquisitionChange: value => { acquisition = value; }, onProgress: value => { progress.push(value); },
                 onApprovalPending: () => { throw new Error('The designed review must answer default confirmation'); },
             });
+            if (label.startsWith('browser bootstrap failure recovery')) {
+                expect(created).toMatchObject({ kind: 'failed' });
+                expect(progress.at(-1), JSON.stringify(progress)).toMatchObject({ kind: 'failed', managedId: 'managed-1', retryInstallationAvailable: true });
+                expect(acquisition.managedId).toBe('managed-1');
+                expect(managed).toMatchObject({ id: 'managed-1', allocation: 'bound', observation: { availability: 'unavailable' } });
+                expect(managed?.enrolledMachineId).toBeUndefined();
+                expect(allocations).toBe(1);
+                const listed = await executor.execute('machines.managed.list', { homeId }, context);
+                expect(listed, JSON.stringify(listed)).toMatchObject({ ok: true, result: { machines: [
+                    { id: 'managed-1', allocation: 'bound', observation: { availability: 'unavailable' } },
+                ] } });
+                if (cleanupAction) {
+                    let reviewed = false;
+                    const deleted = await runManagedMachineCreation({
+                        draft: { selection: input.selection, receipt: reviewedFacts, enrollmentIdentity }, acquisition,
+                        scope: lifetime.scope, signal: new AbortController().signal, setupRecovery: 'delete',
+                        reviewDelete: async census => { expect(census.machineId).toBeNull(); reviewed = true; return true; },
+                        isCurrent: () => lifetime.isCurrent(), onAcquisitionChange: value => { acquisition = value; },
+                        onProgress: value => { progress.push(value); },
+                        onApprovalPending: () => { throw new Error('The in-page Delete review must be sufficient'); },
+                    });
+                    expect(deleted, JSON.stringify(deleted)).toEqual({ kind: 'delete_requested', managedId: 'managed-1' });
+                    expect(reviewed).toBe(true);
+                    expect(managed).toMatchObject({ allocation: 'confirmed-absent', observation: { availability: 'absent' } });
+                    expect(managed?.controller).toBeUndefined();
+                    expect({ allocations, admissions, stops, deletes }).toEqual({ allocations: 1, admissions: 1, stops: 1, deletes: 1 });
+                    return;
+                }
+                interruptBootstrap = false;
+                const retried = await runManagedMachineCreation({
+                    draft: { selection: input.selection, receipt: reviewedFacts, enrollmentIdentity }, acquisition,
+                    agentStart: input.agentStart, scope: lifetime.scope, signal: new AbortController().signal,
+                    retryInstallation: true, isCurrent: () => lifetime.isCurrent(),
+                    onAcquisitionChange: value => { acquisition = value; }, onProgress: value => { progress.push(value); },
+                    onApprovalPending: () => { throw new Error('The designed review must answer default confirmation'); },
+                });
+                expect(homeBoundaryFailures).toEqual([]);
+                expect(retried, JSON.stringify({ retried, progress, homePaths })).toMatchObject({ kind: 'enrolled', machine: { id: 'managed-1', enrolledMachineId: 'joined' } });
+                expect({ allocations, admissions, guestDispatches }).toEqual({ allocations: 1, admissions: 1, guestDispatches: 0 });
+                return;
+            }
             const code = created.kind === 'failed' ? created.code : created.kind;
             interrupted = created.kind === 'enrolled' ? { ok: true, result: { managedId: created.machine.id } }
                 : { ok: false, errorCode: code, error: code };

@@ -210,12 +210,13 @@ describe('buildNewSessionScreenVariantModel', () => {
 
     it('offers installation retry only when the creation owner confirmed a retained native resource', async () => {
         const retryInstallation = vi.fn();
+        const deleteMachine = vi.fn();
         const failedOperation: ActionOperationSnapshotV1 = { ...operation, state: 'failed', settledAt: 2,
             error: { errorCode: 'installation_failed', error: 'Native install failed' } };
         for (const available of [false, true]) {
             const draft: NewSessionManagedMachineDraftModel = {
                 selection, acquisition: { requestId: 'send', managedId: 'paid', selection: selection.selection },
-                select: vi.fn(), retryInstallation,
+                select: vi.fn(), retryInstallation, deleteMachine,
                 progress: { kind: 'failed', code: 'installation_failed', managedId: 'paid',
                     operation: failedOperation, retryInstallationAvailable: available },
             };
@@ -226,9 +227,13 @@ describe('buildNewSessionScreenVariantModel', () => {
             const retry = screen.findByTestId('managed-machine-progress-retry');
             expect(Boolean(retry)).toBe(available);
             if (retry) await act(async () => retry.props.onPress());
+            const remove = screen.findByTestId('managed-machine-progress-delete');
+            expect(Boolean(remove)).toBe(available);
+            if (remove) await act(async () => remove.props.onPress());
             await screen.unmount();
         }
         expect(retryInstallation).toHaveBeenCalledOnce();
+        expect(deleteMachine).toHaveBeenCalledOnce();
     });
 
     it.each([false, true])('removes creation progress after retirement or real enrollment (wizard=%s)', (wizard) => {

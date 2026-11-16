@@ -408,6 +408,7 @@ normalizer?: UiManagedAccountMachineNormalizer) {
     return reconcileManagedMachine({
             machine, action, requestId: params.requestId, signal: params.signal,
             provisioner: admitted.provisioner, home: client.home,
+            settleBootstrapFailure: retained => retained,
             createNative: (readMachine, readRevision) => createUiManagedAccountNative(params, admitted, readMachine, readRevision, credential),
             waitForObservation: createManagedNativeObservationWait(params.signal),
             bootstrap: {

@@ -504,6 +504,27 @@ describe('portable managed reconciliation', () => {
         expect(run.read().observation).not.toHaveProperty('reason');
     });
 
+    it.each([false, true])('acknowledges a foreground bootstrap failure only after Home retains it (report fails: %s)', async reportFails => {
+        const run = boundary({ ...machine, allocation: 'bound', resource });
+        const failure = new SystemTaskExecutionError('remote_command_failed', 'private guest output');
+        const reportFailure = new ManagedMachineControllerError('database_transaction_timeout');
+        const work = reconcileManagedMachine({ ...run.input,
+            bootstrap: { ...run.input.bootstrap, enroll: async () => { throw failure; } },
+            home: { ...run.input.home, row: async (...args: Parameters<typeof run.input.home.row>) => {
+                const report = args[0] === 'report' ? ManagedControllerReportV1Schema.parse(args[1]) : null;
+                if (reportFails && report?.observation?.availability === 'unavailable'
+                    && report.observation.reason === 'bootstrap.remote_command_failed') throw reportFailure;
+                return run.input.home.row(...args);
+            } },
+            settleBootstrapFailure: retained => retained,
+        });
+        if (reportFails) await expect(work).rejects.toBe(reportFailure);
+        else expect(await work).toEqual(run.read());
+        expect(run.read()).toMatchObject({ allocation: 'bound', resource,
+            observation: { reason: reportFails ? 'bootstrap.incomplete' : 'bootstrap.remote_command_failed' } });
+        expect(run.read().enrolledMachineId).toBeUndefined();
+    });
+
     it.each<import('@happier-dev/protocol/machines/managed/providerFactsV1').ProviderObservationV1>([
         { observedAt: 2, availability: 'present', power: 'running' },
         { observedAt: 2, availability: 'present', power: 'stopped' },
@@ -672,6 +693,23 @@ describe('portable managed reconciliation', () => {
         expect(run.events[0]).toBe('accepted');
         expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
     });
+    it.each(['browser', 'native'] as const)('refuses an undeliverable Home payload before paid admission on %s', async host => {
+        const run = boundary();
+        let admissions = 0;
+        const acquire = { host, provisioner: { ...provisioner, browserReachable: true },
+            guestCli: { source: 'home-payload' as const }, localPayloadAvailable: false,
+            admit: async () => { admissions++; return machine; }, onAccepted: () => {},
+            run: (row: ManagedMachineFullV1) => reconcileManagedMachine({ ...run.input, machine: row }),
+        };
+        await expect(executeManagedMachineAcquire(acquire)).rejects.toMatchObject({ code: 'provider_unavailable' });
+        expect(admissions).toBe(0);
+        expect(run.roles).toEqual([]);
+        expect(run.events).toEqual([]);
+        const result = await executeManagedMachineAcquire({ ...acquire, localPayloadAvailable: true });
+        expect(result.result.enrolledMachineId).toBe('guest');
+        expect(admissions).toBe(1);
+        expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
+    });
     it('retains the submitted and bound identities before allocation and enrollment', async () => {
         const run = boundary();
         expect((await reconcileManagedMachine(run.input)).enrolledMachineId).toBe('guest');
@@ -721,23 +759,6 @@ describe('portable managed reconciliation', () => {
             provisioner: { ...provisioner, bootstrapTransport: undefined }, action: 'machines.managed.bootstrap.retry' });
         expect(recovered).toMatchObject({ enrolledMachineId: 'guest', resource, observation: { availability: 'present' } });
         expect(recovered.observation?.reason).toBeUndefined();
-    it.each(['browser', 'native'] as const)('refuses an undeliverable Home payload before paid admission on %s', async host => {
-        const run = boundary();
-        let admissions = 0;
-        const acquire = { host, provisioner: { ...provisioner, browserReachable: true },
-            guestCli: { source: 'home-payload' as const }, localPayloadAvailable: false,
-            admit: async () => { admissions++; return machine; }, onAccepted: () => {},
-            run: (row: ManagedMachineFullV1) => reconcileManagedMachine({ ...run.input, machine: row }),
-        };
-        await expect(executeManagedMachineAcquire(acquire)).rejects.toMatchObject({ code: 'provider_unavailable' });
-        expect(admissions).toBe(0);
-        expect(run.roles).toEqual([]);
-        expect(run.events).toEqual([]);
-        const result = await executeManagedMachineAcquire({ ...acquire, localPayloadAvailable: true });
-        expect(result.result.enrolledMachineId).toBe('guest');
-        expect(admissions).toBe(1);
-        expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
-    });
         expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);
         expect(run.events.filter(event => event === 'enroll')).toHaveLength(1);
     });
