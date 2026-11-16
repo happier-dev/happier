@@ -3,6 +3,7 @@ import { projectPrepareResultSchema } from './platform/prepare.js';
 import { accountActions, pluginIdentity } from './platform/accountActions.js';
 import { uploadAction } from './platform/upload.js';
 import { targetInputTypes, targetOptionsResources } from './platform/options.js';
+import { vercelGitIntegrations } from './platform/operations.js';
 
 export const plugin = definePlugin({
   ...pluginIdentity,
@@ -21,6 +22,7 @@ export const plugin = definePlugin({
   // Vercel client getPollingDelay starts at one second; only demanded pending receipts use this cadence.
   deploymentTargets: { runtime: { statusIntervalMs: 1000, role: 'runtime', title: 'Vercel', targetKind: 'vercel', icon: 'server-outline',
     accepts: ['static', 'server'], needs: ['repository', 'stateless'],
+    sources: { gitIntegration: vercelGitIntegrations.map(provider => provider.kind), upload: true },
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: projectPrepareResultSchema,
     actions: { inspect: 'targets-inspect-v1', link: 'project-link', create: 'project-create', deploy: 'deploy', uploadDeploy: 'deploy-upload-v1', observe: 'observe', cancel: 'cancel', promote: 'promote', rollback: 'rollback', teardown: 'teardown',
       logs: { build: 'build-logs-read', runtime: 'runtime-logs-read' }, variables: { read: 'variables-read', sync: 'variables-sync' },

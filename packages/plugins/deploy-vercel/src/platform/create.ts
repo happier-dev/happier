@@ -6,7 +6,7 @@ import { normalizeScmBranchSourceRef } from '@happier-dev/plugin-sdk/scm';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginAccountActionContext, PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
 import type { HttpResponse } from '@happier-dev/plugin-sdk/http';
-import { githubAppGrantUrl, readVercelGitLink, vercelEndpoint, vercelRequest } from './operations.js';
+import { vercelGitGrantUrl, supportsVercelGitRepository, readVercelGitLink, vercelEndpoint, vercelRequest } from './operations.js';
 import { targetInputHints } from './options.js';
 
 type CreateInput = ReturnType<typeof inputs.create.parse>;
@@ -38,7 +38,7 @@ export const projectCreateAction: AccountAction = {
   inputHints: { fields: [targetInputHints.fields[0],
     { path: 'resourceName', title: 'Project name', widget: 'text', required: true },
     { path: 'sourceMethod', title: 'Source method', widget: 'select', required: true, defaultValue: 'upload',
-      options: [{ value: 'upload', label: 'Upload' }, { value: 'gitIntegration', label: 'GitHub integration' }] },
+      options: [{ value: 'upload', label: 'Upload' }, { value: 'gitIntegration', label: 'Git integration' }] },
     { path: 'productionBranch', title: 'Production branch', widget: 'text',
       visibleWhen: { op: 'eq', path: 'sourceMethod', value: 'gitIntegration' } },
     { path: 'providerEnvironment', title: 'Environment', widget: 'json', required: true,
@@ -48,8 +48,8 @@ export const projectCreateAction: AccountAction = {
     const input = value as unknown as CreateInput;
     if (input.sourceMethod === 'gitIntegration') {
       if (!input.repository) throw new PluginError({ code: 'repository_required', details: { phase: 'source' } });
-      if (input.repository.kind !== 'github' || input.repository.deployment !== 'https://github.com') {
-        throw new PluginError({ code: 'unsupported_action', details: { phase: 'source', reason: 'vercel_create_requires_github' } });
+      if (!supportsVercelGitRepository(input.repository)) {
+        throw new PluginError({ code: 'unsupported_action', details: { phase: 'source', reason: 'vercel_git_provider_unsupported' } });
       }
     } else if (input.sourceMethod !== 'upload') throw new PluginError({ code: 'unsupported_action',
       details: { phase: 'source', reason: 'unsupported_source_method' } });
@@ -62,7 +62,7 @@ export const projectCreateAction: AccountAction = {
       response = await vercelRequest({ http, signal: context.signal, now: Date.now },
         vercelEndpoint('/v11/projects', input.providerAccountId), 'POST',
         { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ name: input.resourceName,
-          ...(input.sourceMethod === 'gitIntegration' ? { gitRepository: { type: 'github', repo: input.repository!.repository } } : {}) })) }, 'link');
+          ...(input.sourceMethod === 'gitIntegration' ? { gitRepository: { type: input.repository!.kind, repo: input.repository!.repository } } : {}) })) }, 'link', input.repository?.kind);
     } catch (error) { if (isPluginError(error)) throw error; return unknownOutcome(); }
     let body: unknown;
     try { body = JSON.parse(new TextDecoder().decode(response.body)); } catch { body = undefined; }
@@ -99,7 +99,7 @@ export const projectCreateAction: AccountAction = {
         }
       }
     }
-    // Vercel links `gitRepository` only through a GitHub integration that can read it and refuses
+    // Vercel links `gitRepository` only through an integration that can read it and refuses
     // Create otherwise, so the acknowledged link is the same deployable fact Inspect observes.
     const gitLink = input.sourceMethod === 'gitIntegration' ? readVercelGitLink(body.link, input.repository!) : null;
     return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,
@@ -107,8 +107,8 @@ export const projectCreateAction: AccountAction = {
       providerEnvironment: { kind: 'production' }, sourceMethod: input.sourceMethod,
       ...(input.sourceMethod === 'gitIntegration' ? { repositoryAccess: gitLink
         ? { status: 'ready', repository: input.repository! }
-        : { status: 'needsGitAccess', repository: input.repository!, grantUrl: githubAppGrantUrl } } : {}),
+        : { status: 'needsGitAccess', repository: input.repository!, grantUrl: vercelGitGrantUrl(input.repository!.kind) } } : {}),
       preparedNative: { projectName: body.name, ...(productionBranchOutcome ? { productionBranchOutcome } : {}),
-        ...(gitLink ? { gitSource: { type: 'github', repoId: gitLink.repoId } } : {}) } });
+        ...(gitLink ? { gitSource: gitLink.gitSource } : {}) } });
   },
 };

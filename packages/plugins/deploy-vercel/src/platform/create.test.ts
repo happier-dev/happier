@@ -130,7 +130,7 @@ it.each([{ code: 'repo_not_found' }, { code: 'git_integration_required', action:
 
 it.each([
   { sourceMethod: 'gitIntegration', code: 'repository_required' },
-  { sourceMethod: 'gitIntegration', repository: { ...repository, kind: 'gitlab', deployment: 'https://gitlab.com' }, code: 'unsupported_action' },
+  { sourceMethod: 'gitIntegration', repository: { ...repository, kind: 'gitlab', deployment: 'https://gitlab.example.com' }, code: 'unsupported_action' },
 ])('refuses unsupported Git inputs before provider mutation ($code)', async sample => {
   let requests = 0;
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {

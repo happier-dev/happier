@@ -331,9 +331,13 @@ Platform deployment targets expose their declared Git integration and Upload met
 
 Provider Create, Inspect and Link Actions return the authored `sourceMethod` in the TargetLink's existing protected provider content; UI, CLI and agent callers consume that returned choice. Reopening the Environment reads that selected runtime link with the Environment's Artifact batch. UI and daemon use one resolution rule: an explicit invocation method overrides the recorded link method; links without the optional field retain the legacy Git default. Compact retries retain their already admitted method. Previously created links whose choice was lost are not inferred or backfilled: choose Upload explicitly or link the target again.
 
-Vercel Create supports Upload and GitHub integration. Git creation uses the
-reviewed repository through Vercel's existing GitHub installation; a provider
-refusal retains its typed reason and installation link. An explicitly requested
+Vercel Create supports Upload and Git integration on github.com, gitlab.com and
+bitbucket.org. GitLab repository paths retain subgroups (`group/subgroup/repo`);
+Bitbucket uses `workspace/repo`. Create and Inspect share one native link reader
+and retain each forge's deployment IDs. Git creation uses the reviewed repository
+through Vercel's existing forge connection; a provider refusal retains its typed
+reason and grant link (GitHub App installation, or Vercel Account Authentication
+for GitLab and Bitbucket). Self-managed forge hosts remain upload-only. An explicitly requested
 production branch is applied within the same Create Action. If that branch
 update fails or its acknowledgement is uncertain, the created project identity is
 retained and the result shows the branch outcome and provider cause. The person

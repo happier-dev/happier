@@ -31,7 +31,7 @@ export type VercelProjectPreparation = Readonly<{
   repositoryAccess?: DeploymentTargetRepositoryAccessV1;
   projectName: string;
   reviewNotice?: string;
-  gitSource?: Readonly<{ type: 'github'; repoId: string }>;
+  gitSource?: VercelGitSource;
 }>;
 type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
 type Phase = DeploymentTargetRoleFailureV1['phase'];
@@ -44,14 +44,51 @@ function failure(code: DeploymentTargetRoleFailureV1['code'], phase: Phase, caug
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-/**
- * The one reader of a Vercel project's documented GitHub `link` (GET /v9/projects and
- * POST /v11/projects responses): it names the deployable repository only when it is the selected one.
+type VercelGitSource = NonNullable<NonNullable<DeploymentTargetDeployInputV1['preparedNative']>['gitSource']>;
+
+export const vercelGitIntegrations = [
+  { kind: 'github', deployment: 'https://github.com' },
+  { kind: 'gitlab', deployment: 'https://gitlab.com' },
+  { kind: 'bitbucket', deployment: 'https://bitbucket.org' },
+] as const;
+
+/** Vercel supports the public hosted forges; self-managed hosts remain upload-only. */
+export function supportsVercelGitRepository(repository: Repository): boolean {
+  return vercelGitIntegrations.some(provider => provider.kind === repository.kind && provider.deployment === repository.deployment);
+}
+
+/** Vercel Account Authentication owns GitLab/Bitbucket login connection grants.
+ * https://vercel.com/docs/accounts#login-methods-and-connections
  */
-export function readVercelGitLink(link: unknown, repository: Repository): Readonly<{ repo: string; repoId: string }> | null {
-  return record(link) && link.type === 'github' && text(link.org) && text(link.repo)
+export function vercelGitGrantUrl(kind: Repository['kind']): string {
+  return kind === 'github' ? githubAppGrantUrl : 'https://vercel.com/account/settings/authentication';
+}
+
+/** One reader for the documented POST /v11/projects and GET /v9/projects link union.
+ * https://openapi.vercel.sh (2026-11-16). Match URL paths, never human display names.
+ */
+export function readVercelGitLink(link: unknown, repository: Repository)
+  : Readonly<{ repo: string; repoId: string; gitSource: VercelGitSource }> | null {
+  if (!record(link) || link.type !== repository.kind) return null;
+  if (link.type === 'github' && text(link.org) && text(link.repo)
     && (text(link.repoId) || typeof link.repoId === 'number' && Number.isSafeInteger(link.repoId))
-    && `${link.org}/${link.repo}`.toLowerCase() === repository.repository ? { repo: link.repo, repoId: String(link.repoId) } : null;
+    && `${link.org}/${link.repo}`.toLowerCase() === repository.repository) {
+    const repoId = String(link.repoId);
+    return { repo: link.repo, repoId, gitSource: { type: 'github', repoId } };
+  }
+  if (link.type === 'gitlab' && text(link.projectUrl) && text(link.projectId)) {
+    let url: URL;
+    try { url = new URL(link.projectUrl); } catch { return null; }
+    if (url.origin !== repository.deployment || url.pathname.slice(1).toLowerCase() !== repository.repository) return null;
+    return { repo: repository.repository.slice(repository.repository.lastIndexOf('/') + 1), repoId: link.projectId,
+      gitSource: { type: 'gitlab', projectId: link.projectId } };
+  }
+  if (link.type === 'bitbucket' && text(link.owner) && text(link.slug) && text(link.uuid) && text(link.workspaceUuid)
+    && `${link.owner}/${link.slug}`.toLowerCase() === repository.repository) {
+    return { repo: link.slug, repoId: link.uuid,
+      gitSource: { type: 'bitbucket', repoUuid: link.uuid, workspaceUuid: link.workspaceUuid } };
+  }
+  return null;
 }
 
 /** Options consume partial drafts; preparation consumes the admitted native-or-complete selection. */
@@ -78,7 +115,7 @@ function endpoint(path: string, accountId: string) {
 }
 
 async function send(context: VercelPlatformContext, url: string, method: HttpMethod,
-  content?: Readonly<{ headers: Readonly<Record<string, string>>; body: Uint8Array }>, phase?: Phase | 'branch') {
+  content?: Readonly<{ headers: Readonly<Record<string, string>>; body: Uint8Array }>, phase?: Phase | 'branch', repositoryKind: Repository['kind'] = 'github') {
   context.signal.throwIfAborted();
   const response = await context.http.request({ url, method, redirect: 'error',
     credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method,
@@ -88,12 +125,12 @@ async function send(context: VercelPlatformContext, url: string, method: HttpMet
   // A received response remains evidence even if cancellation arrives with it.
   const value = response.status < 200 || response.status >= 300 ? body(response) : null;
   if (record(value) && record(value.error)) {
-    // Vercel owns repository access; its GitHub app is installed once outside Happier.
-    const needsGitAccess = value.error.action === 'Install GitHub App' || value.error.code === 'repo_not_found';
+    // Vercel owns repository access and the one-time provider connection grant.
+    const needsGitAccess = value.error.action === 'Install GitHub App' || value.error.action === 'Add a Login Connection' || value.error.code === 'repo_not_found';
     throw withActionFailureDiagnostic(new PluginError({ code: needsGitAccess ? 'needsGitAccess' : response.status === 401 || response.status === 403 ? 'deployment_access_denied'
       : response.status === 404 ? 'deployment_unavailable' : 'provider_request_failed', retryable: false,
       details: { ...(phase === undefined ? {} : { phase }),
-        ...(needsGitAccess ? { reason: 'vercel_github_app_required', grantUrl: githubAppGrantUrl } : {}) },
+        ...(needsGitAccess ? { reason: repositoryKind === 'github' ? 'vercel_github_app_required' : 'vercel_git_connection_required', grantUrl: vercelGitGrantUrl(repositoryKind) } : {}) },
       failureCause: { phase: phase === undefined ? 'deployment.provider' : `deployment.provider.${phase}`, errorClass: 'Error',
         errorCode: text(value.error.code) ? value.error.code : null, httpStatus: response.status } }), { phase: `deployment.vercel.provider.${phase ?? 'request'}`, causeKind: response.status === 404 ? 'not_found' : response.status === 401 || response.status === 403 ? 'access_denied' : 'native_failure' });
   }
@@ -118,23 +155,19 @@ function scope(environment: VercelEnvironment): string {
  * Exact existing-project inspection; no link or receipt persistence occurs here.
  * Primary contract, checked 2026-10-30:
  * https://vercel.com/docs/rest-api/projects/find-a-project-by-id-or-name
- * The documented GitHub link identifies the provider repository. Other Git
- * products need their own characterized native mapping before use here.
+ * The documented link union identifies the selected provider repository.
  */
 export async function prepareVercelProject(input: Selection, context: VercelPlatformContext)
   : Promise<VercelProjectPreparation | DeploymentTargetRoleFailureV1> {
   context.signal.throwIfAborted();
   let environment = input.providerEnvironment;
   if ('scriptName' in environment) return failure('unsupported_action', 'link');
-  // Vercel's native GitHub integration does not support GitHub Enterprise Server
-  // or other Git providers through this producer. Return the existing typed UI
-  // refusal rather than a needsGitAccess result with no supported remedy.
-  if (input.sourceMethod !== 'upload' && (input.repository.kind !== 'github' || input.repository.deployment !== 'https://github.com')) {
+  if (input.sourceMethod !== 'upload' && !supportsVercelGitRepository(input.repository)) {
     return failure('unsupported_action', 'link');
   }
   let response: HttpResponse;
   try { response = await send(context, endpoint(`/v9/projects/${encodeURIComponent(input.providerIdentity.providerResourceId)}`,
-    input.providerIdentity.providerAccountId), 'GET'); }
+    input.providerIdentity.providerAccountId), 'GET', undefined, 'link', input.repository.kind); }
   catch (error) {
     if (isPluginError(error)) throw error;
     context.signal.throwIfAborted();
@@ -198,12 +231,12 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
   let ready = false;
   if (linked) {
     const url = new URL(endpoint('/v1/integrations/search-repo', project.accountId));
-    url.searchParams.set('provider', 'github');
+    url.searchParams.set('provider', input.repository.kind);
     // Vercel searches repository names; owner/repo can return an empty list.
     // Qualify the identity using the namespace and repository id below.
     url.searchParams.set('query', linked.repo);
     let access: HttpResponse;
-    try { access = await send(context, url.href, 'GET'); }
+    try { access = await send(context, url.href, 'GET', undefined, 'link', input.repository.kind); }
     catch (error) {
       if (isPluginError(error)) throw error;
       context.signal.throwIfAborted();
@@ -216,19 +249,17 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
     if (record(result.error) && result.error.code === 'installation_not_found') ready = false;
     else if (!Array.isArray(result.repos)) return failure('provider_response_invalid', 'link');
     else ready = result.repos.some(repo => record(repo) && String(repo.id) === linked.repoId
-      && repo.provider === 'github' && text(repo.namespace) && text(repo.slug)
+      && repo.provider === input.repository.kind && text(repo.namespace) && text(repo.slug)
       && `${repo.namespace}/${repo.slug}`.toLowerCase() === input.repository.repository);
   }
   return { providerIdentity: identity,
     providerEnvironment: environment, projectName: project.name,
     ...(reviewNotice ? { reviewNotice } : {}),
-    // Official installation entry: choose the GitHub account/organization and
-    // repository there; a Vercel team id is not a GitHub installation scope.
-    // https://vercel.com/docs/code-owners/getting-started#install-the-github-app-into-a-repository
+    // The provider owns its connection grant; a Vercel team id is not a forge scope.
     repositoryAccess: ready ? { status: 'ready', repository: input.repository }
       : { status: 'needsGitAccess', repository: input.repository,
-        grantUrl: githubAppGrantUrl },
-    ...(ready && linked ? { gitSource: { type: 'github' as const, repoId: linked.repoId } } : {}),
+        grantUrl: vercelGitGrantUrl(input.repository.kind) },
+    ...(ready && linked ? { gitSource: linked.gitSource } : {}),
   };
 }
 
@@ -287,7 +318,7 @@ export async function deployVercelCommit(input: VercelProjectPreparation & Pick<
   if (input.repositoryAccess?.status !== 'ready' || !input.gitSource) return failure('needsGitAccess', 'source');
   return createVercelDeployment(input, { gitSource: { ...input.gitSource,
     ref: input.providerEnvironment.kind === 'preview' && input.providerEnvironment.gitBranch
-      ? input.providerEnvironment.gitBranch : input.sourceIntent.sha, sha: input.sourceIntent.sha } }, context);
+      ? input.providerEnvironment.gitBranch : input.sourceIntent.sha, sha: input.sourceIntent.sha } }, context, input.gitSource.type);
 }
 
 export type VercelUploadedFile = Readonly<{ file: string; sha: string; size: number; mode: number }>;
@@ -319,7 +350,8 @@ export async function deployVercelFiles(input: UploadSelection & Readonly<{
     gitMetadata: { commitSha: input.sha, ...(branch ? { commitRef: branch } : {}) } }, context);
 }
 
-async function createVercelDeployment(input: UploadSelection, source: Readonly<Record<string, unknown>>, context: VercelPlatformContext): Promise<Outcome> {
+async function createVercelDeployment(input: UploadSelection, source: Readonly<Record<string, unknown>>, context: VercelPlatformContext,
+  repositoryKind?: Repository['kind']): Promise<Outcome> {
   const environment = input.providerEnvironment;
   const target = environment.kind === 'production' ? { target: 'production' }
     : environment.kind === 'custom' ? { customEnvironmentSlugOrId: environment.id } : {};
@@ -332,7 +364,7 @@ async function createVercelDeployment(input: UploadSelection, source: Readonly<R
       { headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({
         name: input.projectName, project: input.providerIdentity.providerResourceId, ...target,
         ...source,
-      })) });
+      })) }, 'send', repositoryKind);
     return observation(response, context, 'send', undefined, input.providerIdentity.providerResourceId);
   } catch (error) {
     if (isPluginError(error)) throw error;

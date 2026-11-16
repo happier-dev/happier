@@ -204,7 +204,8 @@ describe('Vercel internal platform producer', () => {
 
   it.each([
     { ...repository, deployment: 'https://github.example.test' },
-    { kind: 'gitlab' as const, deployment: 'https://gitlab.com', repository: 'example/app' },
+    { kind: 'gitlab' as const, deployment: 'https://gitlab.example.test', repository: 'example/app' },
+    { kind: 'bitbucket' as const, deployment: 'https://bitbucket.example.test', repository: 'example/app' },
   ])('returns a typed refusal instead of an empty Git grant for unsupported repository %j', async repository => {
     const h = boundary([{ body: project }]);
     expect(await provider.prepareVercelProject({ ...selection, repository }, h.context))
