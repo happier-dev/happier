@@ -6073,6 +6073,7 @@ export function useSessionComposerController({
                         title={cliVersionNotice.title}
                         body={cliVersionNotice.reason}
                         actionLabel={t('common.copy')}
+                        actionTestID="session-cliVersion-notice-copy"
                         onActionPress={() => { void writeCliUpdateCommand(cliVersionNotice.command); }}
                         secondaryActions={[buildComposerBannerHideAction({
                             bannerTestID: 'session-cliVersion-notice',

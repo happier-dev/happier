@@ -13,6 +13,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
 import { MENU_ROW_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -314,23 +315,66 @@ export function SessionCapabilitiesContent(
     </View>
   );
 
+  const addControl = adding ? (
+    <SessionCapabilityAddField
+      items={props.kind ? model.addItems.filter(item => item.kind === 'skill') : model.addItems}
+      onChange={props.onChange}
+      onDone={() => setAdding(false)}
+      testID={`${props.testID}:add`}
+    />
+  ) : (
+    <AddRow
+      onPress={() => setAdding(true)}
+      disabled={model.state === 'resolving' && !hasRows}
+      testID={`${props.testID}:add`}
+    />
+  );
+
+  const undoLine = props.undo ? (
+    <View style={styles.undoLine}>
+      <SurfaceStateCard
+        testID={`${props.testID}:undo`}
+        kind="success"
+        size="line"
+        accessibilitySemantics="status"
+        title={
+          props.undo.change === 'added'
+            ? t('capabilities.session.sheet.itemAdded', { item: props.undo.title })
+            : t('capabilities.session.sheet.itemRemoved', { item: props.undo.title })
+        }
+        action={{ label: t('capabilities.session.ask.undo'), onPress: props.undo.onUndo }}
+      />
+    </View>
+  ) : null;
+
+  if (embedded) {
+    // Hosted in a page row: the menu-anatomy parts (rows, state lines, the add row) move onto the host's text
+    // edge and value column; "All your skills" is already a page row.
+    return (
+      <View testID={props.testID}>
+        <View style={styles.embeddedColumn}>
+          {body}
+          {undoLine}
+          {addControl}
+        </View>
+        {props.onOpen ? (
+          <Item
+            testID={`${props.testID}:open:skills`}
+            title={t(props.kind ? 'capabilities.skills.pane.allSkills' : 'capabilities.skills.title')}
+            subtitle={props.openUnavailableReason ?? undefined}
+            disabled={Boolean(props.openUnavailableReason)}
+            density="compact"
+            onPress={() => props.onOpen?.('skills')}
+          />
+        ) : null}
+      </View>
+    );
+  }
+
   const footer = (
-    <View style={embedded ? undefined : styles.footer}>
-      {adding ? (
-        <SessionCapabilityAddField
-          items={props.kind ? model.addItems.filter(item => item.kind === 'skill') : model.addItems}
-          onChange={props.onChange}
-          onDone={() => setAdding(false)}
-          testID={`${props.testID}:add`}
-        />
-      ) : (
-        <AddRow
-          onPress={() => setAdding(true)}
-          disabled={model.state === 'resolving' && !hasRows}
-          testID={`${props.testID}:add`}
-        />
-      )}
-      {embedded ? null : <View style={styles.costLine}>
+    <View style={styles.footer}>
+      {addControl}
+      <View style={styles.costLine}>
         <Text
           variant="meta"
           numberOfLines={1}
@@ -339,7 +383,7 @@ export function SessionCapabilitiesContent(
         >
           {props.kind ? null : model.costLine}
         </Text>
-        {props.onOpen && !embedded ? (
+        {props.onOpen ? (
           <View style={styles.destinations}>
             <TextLinkButton
               size="meta"
@@ -362,44 +406,9 @@ export function SessionCapabilitiesContent(
             />}
           </View>
         ) : null}
-      </View>}
-      {props.onOpen && embedded ? (
-        <Item
-          testID={`${props.testID}:open:skills`}
-          title={t(props.kind ? 'capabilities.skills.pane.allSkills' : 'capabilities.skills.title')}
-          subtitle={props.openUnavailableReason ?? undefined}
-          disabled={Boolean(props.openUnavailableReason)}
-          density="compact"
-          onPress={() => props.onOpen?.('skills')}
-        />
-      ) : null}
+      </View>
     </View>
   );
-
-  if (embedded) {
-    return (
-      <View testID={props.testID}>
-        {body}
-        {props.undo ? (
-          <View style={styles.undoLineEmbedded}>
-            <SurfaceStateCard
-              testID={`${props.testID}:undo`}
-              kind="success"
-              size="line"
-              accessibilitySemantics="status"
-              title={
-                props.undo.change === 'added'
-                  ? t('capabilities.session.sheet.itemAdded', { item: props.undo.title })
-                  : t('capabilities.session.sheet.itemRemoved', { item: props.undo.title })
-              }
-              action={{ label: t('capabilities.session.ask.undo'), onPress: props.undo.onUndo }}
-            />
-          </View>
-        ) : null}
-        {footer}
-      </View>
-    );
-  }
 
   return (
     <View
@@ -418,25 +427,7 @@ export function SessionCapabilitiesContent(
       >
         {body}
       </ScrollView>
-      {props.undo ? (
-        <View style={styles.undoLine}>
-          <SurfaceStateCard
-            testID={`${props.testID}:undo`}
-            kind="success"
-            size="line"
-            accessibilitySemantics="status"
-            title={
-              props.undo.change === 'added'
-                ? t('capabilities.session.sheet.itemAdded', { item: props.undo.title })
-                : t('capabilities.session.sheet.itemRemoved', { item: props.undo.title })
-            }
-            action={{
-              label: t('capabilities.session.ask.undo'),
-              onPress: props.undo.onUndo,
-            }}
-          />
-        </View>
-      ) : null}
+      {undoLine}
       {footer}
     </View>
   );
@@ -707,15 +698,16 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.border.subtle,
     marginTop: theme.space.s8,
   },
-  // Hosted in a page row, a rule between groups starts on the rows' text edge, as the host's dividers do.
+  // Hosted in a page row, a rule between groups runs on the rows' text edge to the value column, as the host's do.
   groupDividerEmbedded: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.colors.border.subtle,
     marginTop: theme.space.s8,
-    marginLeft: MENU_ROW_METRICS.paddingHorizontalPx,
+    marginHorizontal: MENU_ROW_METRICS.paddingHorizontalPx,
   },
-  undoLineEmbedded: {
-    paddingVertical: theme.space.s4,
+  // The host's page rows sit their text further in than menu rows; this column makes up the difference.
+  embeddedColumn: {
+    paddingHorizontal: PAGE_LIST_METRICS.rowPaddingHorizontalPx - MENU_ROW_METRICS.paddingHorizontalPx,
   },
   trailing: { color: theme.colors.text.tertiary },
   reserved: { opacity: 0 },

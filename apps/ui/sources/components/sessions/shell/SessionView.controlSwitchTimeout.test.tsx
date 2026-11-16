@@ -700,7 +700,8 @@ describe('SessionView (control switch timeout)', () => {
     const notice = getWarningActionBannerPropsByTestId('session-cliVersion-notice');
     expect(notice.title).toBe('sessionPages.info.cliNoticeTitle');
     expect(notice.body).toBe('sessionPages.info.cliNoticeReason');
-    expect(notice.actionLabel).toBe('common.copy');
+    // WarningActionBanner draws its primary action only with a label, handler and test id.
+    expect(notice).toEqual(expect.objectContaining({ actionLabel: 'common.copy', actionTestID: expect.any(String), onActionPress: expect.any(Function) }));
 
     await act(async () => {
       getBannerHideAction('session-cliVersion-notice').onPress();
