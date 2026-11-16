@@ -3,7 +3,7 @@ import { getActionSpec, type SignedRootActionId } from '@happier-dev/protocol/ac
 import type { ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 
-/** Private operands remain with the daemon; the terminal receives their approval id. */
+/** Private operands and results retain the original daemon invocation. */
 export function createSignedRootActionApprovalAcknowledgement() {
   const shutdown = new AbortController();
   const retained = new Set<Promise<ActionExecuteResult>>();
@@ -16,7 +16,7 @@ export function createSignedRootActionApprovalAcknowledgement() {
       run(signal: AbortSignal, progress?: ActionExecutorContext['operationOwnerUpdate']): Promise<ActionExecuteResult>;
     }>): Promise<ActionExecuteResult> {
       const spec = getActionSpec(args.actionId);
-      if (args.surface !== 'cli' || spec.approvalInputCustody !== 'live_only') return await args.run(args.signal);
+      if (args.surface !== 'cli' || spec.approvalInputCustody !== 'live_only' && spec.approvalResultCustody !== 'live_only') return await args.run(args.signal);
       if (spec.approvalResultCustody === 'live_only') {
         // A receipt cannot recover this output. Report Ask without giving up
         // the original request that owns the native completion and result.
