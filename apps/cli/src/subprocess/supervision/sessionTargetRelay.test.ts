@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Duplex } from 'node:stream';
 
@@ -11,6 +10,12 @@ import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/nod
 
 import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createStablePluginExecService, installManagedProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createTerminalRuntimeProcessService } from '@/agent/runtime/session/terminal/launchProcess';
+import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
+import { probeAcpAgentCapabilities } from '@/capabilities/probes/acpProbe';
+import { registerBashHandler } from '@/rpc/handlers/bash';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import { resolveProcessCustodySupportExecutable } from './processCustody';
 
 import { SESSION_HOLDER_ADOPT_ENV_KEY, resolveAgentSessionHolderLaunch, type SessionHolderChild } from './sessionHolder';
@@ -56,13 +61,168 @@ function shellOperations(channels: ChildProcess[]): SessionTargetOperations {
 describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session target relay (daemon custody, runner launch)', () => {
     let directory: string;
     beforeAll(async () => {
-        directory = await mkdtemp(join(tmpdir(), 'target-relay-'));
+        // Provider sockets must fit Unix SUN_LEN even when the executor's TMPDIR is deep.
+        directory = await mkdtemp('/tmp/target-relay-');
         await writeFile(join(directory, 'agent.mjs'), AGENT_SOURCE);
     });
     afterAll(async () => {
         delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
         delete sessionProcessEnvironment()[SESSION_HOLDER_ADOPT_ENV_KEY];
         await rm(directory, { recursive: true, force: true });
+    });
+
+    it.each([true, false])('places a managed service through Exec; mapped executable available: %s', async (available) => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        const { socketPath } = await serveSessionTargetRelay({ operations: shellOperations(channels), lifetime: session.signal,
+            readTrustedCallerPid: () => process.pid, socketPath: join(directory, `managed-${available}.sock`) });
+        const targetRoot = join(directory, `managed-workspace-${available}`);
+        await mkdir(targetRoot);
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:service', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            launch: { executables: available ? { [process.execPath]: process.execPath } : {},
+                env: { HAPPIER_TEST_AGENT_HOME: '/target/service-home' }, workspace: { hostRoot: directory, targetRoot } } });
+        const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory });
+        const request = { executable: { kind: 'systemTool', id: 'fixture.node' } as const,
+            cwd: { root: 'workspace', relativePath: '' } as const,
+            args: ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),home:process.env.HAPPIER_TEST_AGENT_HOME??null}))'] };
+        const custody = installManagedProcessCustodyForHost(exec, request, null);
+        let handle: Awaited<ReturnType<typeof exec.spawn>> | undefined;
+        try {
+            handle = await exec.spawn(request);
+            if (!available) {
+                await expect(handle.wait()).resolves.toMatchObject({ termination: { observed: {
+                    kind: 'failed', diagnostic: { details: { errorCode: 'agent_cli_target_unavailable' } },
+                } } });
+                expect(channels).toHaveLength(0);
+            } else {
+                let output = '';
+                const subscription = handle.onOutput(chunk => { output += Buffer.from(chunk.data).toString(); });
+                try {
+                    await expect.poll(() => output).not.toBe('');
+                    expect(JSON.parse(output)).toEqual({ cwd: targetRoot, home: '/target/service-home' });
+                    expect(channels.length).toBeGreaterThan(0);
+                } finally { subscription.dispose(); }
+            }
+        } finally {
+            custody.dispose();
+            await handle?.dispose();
+            await handle?.wait().catch(() => undefined);
+            session.abort();
+            delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
+        }
+    });
+
+    it('refuses host managed custody for a target instead of promising a host job handshake', async () => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        const { socketPath } = await serveSessionTargetRelay({ operations: shellOperations(channels), lifetime: session.signal,
+            readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'managed-host-custody.sock') });
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:host-custody', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            launch: { executables: { [process.execPath]: process.execPath }, env: {},
+                workspace: { hostRoot: directory, targetRoot: directory } } });
+        const exec = createStablePluginExecService({ signal: session.signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: process.execPath }), resolvePath: async () => directory });
+        const request = { executable: { kind: 'systemTool', id: 'fixture.node' } as const,
+            args: ['-e', 'process.stdout.write("target ran without required host job custody")'] };
+        // Windows service custody requires its local helper handshake. It cannot own a target process.
+        const custody = installManagedProcessCustodyForHost(exec, request, {
+            executablePath: '/unavailable/host-custody', jobName: 'fixture-target-job',
+            handshakePath: join(directory, 'host-job.handshake'),
+        });
+        let handle: Awaited<ReturnType<typeof exec.spawn>> | undefined;
+        try {
+            await expect((async () => { handle = await exec.spawn(request); })())
+                .rejects.toMatchObject({ code: 'agent_cli_target_unavailable' });
+            expect(channels).toHaveLength(0);
+        } finally {
+            custody.dispose(); await handle?.dispose(); session.abort();
+            delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
+        }
+    });
+
+    it('places a terminal Agent through the same Session process owner', async () => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        const { socketPath } = await serveSessionTargetRelay({ operations: shellOperations(channels), lifetime: session.signal,
+            readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'terminal-relay.sock') });
+        const targetRoot = join(directory, 'terminal-workspace');
+        await mkdir(targetRoot);
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:terminal', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            launch: { executables: { [process.execPath]: process.execPath }, env: { HAPPIER_TEST_AGENT_HOME: '/target/terminal-home' },
+                workspace: { hostRoot: directory, targetRoot } } });
+        try {
+            const terminal = createTerminalRuntimeProcessService({ verifyExecutableGrant: () => true });
+            const handle = await terminal.launch({ executable: { path: process.execPath,
+                hostGrant: { kind: 'agent-cli', grantId: 'fixture' } }, cwd: directory,
+                args: ['-e', 'process.stderr.write(JSON.stringify({cwd:process.cwd(),home:process.env.HAPPIER_TEST_AGENT_HOME??null}))'] });
+            expect(await handle.waitForTermination()).toMatchObject({ type: 'exited', code: 0 });
+            expect(JSON.parse(handle.readBufferedStderr())).toEqual({ cwd: targetRoot, home: '/target/terminal-home' });
+        } finally { session.abort(); delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY]; }
+    });
+
+    it('runs pre-launch command and ACP readiness probes in the Session target', async () => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        const { socketPath } = await serveSessionTargetRelay({ operations: shellOperations(channels), lifetime: session.signal,
+            readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'readiness-relay.sock') });
+        const targetRoot = join(directory, 'readiness-workspace');
+        await mkdir(targetRoot);
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:readiness', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            launch: { executables: { [process.execPath]: process.execPath }, env: { HAPPIER_TEST_AGENT_HOME: '/target/readiness-home' },
+                workspace: { hostRoot: directory, targetRoot } } });
+        try {
+            const command = await runCliCommandBestEffort({ resolvedPath: process.execPath, cwd: directory, timeoutMs: null,
+                args: ['-e', 'process.stdout.write(JSON.stringify({cwd:process.cwd(),home:process.env.HAPPIER_TEST_AGENT_HOME??null}))'] });
+            expect(command.ok).toBe(true);
+            expect(JSON.parse(command.stdout)).toEqual({ cwd: targetRoot, home: '/target/readiness-home' });
+            const probe = await probeAcpAgentCapabilities({ command: process.execPath, cwd: directory, env: {}, timeoutMs: null,
+                transport: { agentName: 'placement-readiness', getInitTimeout: () => 0, getToolPatterns: () => [], filterStdoutLine: line => line },
+                args: ['-e', `require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+                    const request=JSON.parse(line); if(request.method==='initialize') process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:request.id,
+                    result:{protocolVersion:request.params.protocolVersion,agentCapabilities:{loadSession:process.cwd()===${JSON.stringify(targetRoot)}},authMethods:[]}})+'\\n');
+                })`] });
+            expect(probe).toMatchObject({ ok: true, agentCapabilities: { loadSession: true } });
+        } finally { session.abort(); delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY]; }
+    });
+
+    it('places Session Bash RPC argv and shell commands in the target workspace', async () => {
+        const session = new AbortController();
+        const channels: ChildProcess[] = [];
+        const { socketPath } = await serveSessionTargetRelay({ operations: shellOperations(channels), lifetime: session.signal,
+            readTrustedCallerPid: () => process.pid, socketPath: join(directory, 'bash-relay.sock') });
+        const targetRoot = join(directory, 'bash-workspace');
+        await mkdir(targetRoot);
+        sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({
+            id: 'managed:bash', holderPath: holderExecutable, socketDirectory: directory, relaySocketPath: socketPath,
+            primarySocketPath: join(directory, 'bash-primary.sock'),
+            launch: { executables: { [process.execPath]: process.execPath }, env: {}, workspace: { hostRoot: directory, targetRoot } } });
+        const primary = spawnSupervisedPluginProcess({ command: process.execPath,
+            args: ['-e', 'setInterval(()=>{},1000)'], cwd: directory,
+            sessionHolder: resolveAgentSessionHolderLaunch({ role: 'primary' }) });
+        await new Promise<void>((resolve, reject) => { primary.child.once('spawn', resolve); primary.child.once('error', reject); });
+        const context: RpcHandlerContext = { signal: session.signal, callerAuthority: 'present_user',
+            machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+                installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+        let run: (request: { argv?: string[]; command?: string; cwd?: string; timeout: number }) => Promise<unknown> = async () => { throw new Error('Bash not registered'); };
+        registerBashHandler({ registerHandler(_method, handler) { run = request => handler(request as Parameters<typeof handler>[0], context); } },
+            directory, { resolveHostHomeServerIdentityId: async () => 'home' });
+        try {
+            expect(await run({ argv: [process.execPath, '-e', 'process.stdout.write(process.cwd())'], timeout: 0 }))
+                .toMatchObject({ success: true, stdout: targetRoot });
+            expect(await run({ command: 'pwd', timeout: 0 })).toMatchObject({ success: true, stdout: targetRoot + '\n' });
+            expect(await run({ command: 'pwd', cwd: targetRoot, timeout: 0 })).toMatchObject({ success: true, stdout: targetRoot + '\n' });
+            await primary.dispose();
+            expect(await run({ argv: [process.execPath, '-e', 'process.stdout.write("host fallback")'], timeout: 0 }))
+                .toMatchObject({ success: false, errorCode: 'agent_cli_target_unavailable', stdout: '' });
+        } finally {
+            await primary.dispose(); session.abort();
+            delete sessionProcessEnvironment()[SESSION_TARGET_PLACEMENT_ENV_KEY];
+        }
     });
 
     it('starts the Agent in the target through the relay; the Session end closes the relay and every channel', async () => {

@@ -2088,6 +2088,15 @@ service custody retain their existing confirmed-settlement requirements.
 
 In development source, long-lived Agent processes run under the per-Session
 holder ([CLI architecture](cli-architecture.md#per-session-agent-holder-03-development-source)).
+A placed Session also routes managed services, MCP subprocesses, readiness probes
+and native terminal Agents through that placement owner. Host process custody
+and output wrappers cannot override the target. The target launch mapping owns
+executable paths, workspace paths and delivered credentials; an unmapped executable
+refuses with `agent_cli_target_unavailable`, without falling back to this Machine.
+Workspace commands (including Git, language servers and terminal shells) use the
+same target holder through the admitted workspace source. Machine control-plane
+processes and the provider's transport carrier remain on their owning Machine.
+Unplaced Session helpers retain their local launch behavior.
 A runner crash therefore leaves the Agent and its in-flight turn running; the
 holder keeps unacknowledged output for the next runner that attaches. Stop is
 unchanged: the supervisor ends the Agent's process group through the canonical

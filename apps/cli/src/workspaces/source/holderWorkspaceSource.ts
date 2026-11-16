@@ -7,7 +7,6 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 // The confined helper's one read budget (its preview owner); a larger file is the typed `too_large`.
 import { WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
-import { PROCESS_TERMINATION_GRACE_MS } from '@/plugins/runtime/exec/processSupervisor';
 import type { SessionHolderChild, SessionHolderStreamProcess } from '@/subprocess/supervision/sessionHolder';
 import {
   runNativeConfinedWorkspaceSyncDelete,
@@ -17,6 +16,9 @@ import {
 } from '@/workspaces/sync/workspaceSyncNativeConfinedFileSystem';
 
 import type { WorkspaceChildProcess, WorkspaceDirent, WorkspaceEntryStats, WorkspaceReadHandle, WorkspaceSource } from './workspaceSource';
+import { holderWorkspaceRelativePath, resolveHolderWorkspaceCommand } from './holderWorkspaceCommand';
+
+export { resolveHolderWorkspaceCommand } from './holderWorkspaceCommand';
 
 type TargetEntry = Readonly<{ kind: string; size: number; mtimeMs: number; ctimeMs: number; mode: number; dev: number; ino: number }>;
 type TargetResult = Readonly<{ status: string; entry?: TargetEntry; entries?: readonly Readonly<{ name: string; kind: string }>[];
@@ -55,14 +57,6 @@ function entryStats(entry: TargetEntry): WorkspaceEntryStats {
  * - Creating symbolic links has no helper operation and rejects with the typed
  *   `workspace_source_operation_unavailable`; nothing falls back to local.
  */
-/**
- * The environment a workspace command may carry into a target: Git identity and
- * behaviour flags plus locale/terminal. Everything else (tokens, askpass, SSH
- * agents, Git config injection, Happier state) stays on this Machine; a target
- * command authenticates with the target's own credentials.
- */
-const TARGET_COMMAND_ENV = /^(?:GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL|DATE)|GIT_(?:TERMINAL_PROMPT|OPTIONAL_LOCKS|NO_REPLACE_OBJECTS|NO_LAZY_FETCH|LITERAL_PATHSPECS|CONFIG_NOSYSTEM|CONFIG_GLOBAL|CONFIG_SYSTEM)|LANG|LANGUAGE|LC_[A-Z]+|TERM|NO_COLOR|COLUMNS)$/u;
-
 export function createHolderWorkspaceSource(input: Readonly<{
   /** Stable target identity (keys watches and caches per source). */
   id: string;
@@ -81,14 +75,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
 }>): WorkspaceSource {
   const root = path.posix.resolve(input.rootPath);
   const guestRoot = path.posix.resolve(input.guestRootPath ?? input.rootPath);
-  const relative = (target: string) => {
-    const resolved = path.posix.resolve(root, target);
-    const inside = path.posix.relative(root, resolved);
-    if (inside === '..' || inside.startsWith('../') || path.posix.isAbsolute(inside)) {
-      throw new PluginError({ code: 'workspace_root_unsafe', message: 'Path is outside the Session workspace', retryable: false });
-    }
-    return inside;
-  };
+  const relative = (target: string) => holderWorkspaceRelativePath(root, target);
   const helper: WorkspaceSyncNativeConfinedDependencies = {
     platform: 'linux',
     resolveExecutable: () => input.helperPath,
@@ -129,14 +116,9 @@ export function createHolderWorkspaceSource(input: Readonly<{
     return result;
   };
   const spawn = (request: Parameters<WorkspaceSource['spawn']>[0]): WorkspaceChildProcess => {
-    const cwd = request.cwd === undefined ? '' : relative(request.cwd);
-    // This Machine's environment is not the target's: only allowlisted entries the caller changed cross.
-    const env = request.env ? Object.fromEntries(Object.entries(request.env)
-      .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1] !== process.env[entry[0]]
-        && TARGET_COMMAND_ENV.test(entry[0]))) : undefined;
-    const child = input.holder.spawnStream({ argv: [request.command, ...request.args], ...(cwd ? { cwd } : {}), ...(env && Object.keys(env).length ? { env } : {}) });
+    const child = input.holder.spawnStream(resolveHolderWorkspaceCommand(root, request));
     if (request.stdoutFd !== undefined) child.stdout.pipe(createWriteStream('', { fd: request.stdoutFd, autoClose: false }));
-    return Object.assign(child, { terminateTree: () => child.terminateTree(PROCESS_TERMINATION_GRACE_MS) }) as unknown as WorkspaceChildProcess;
+    return child as unknown as WorkspaceChildProcess;
   };
   const readFile = async (target: string): Promise<Buffer> => {
     const outcome = await runNativeConfinedWorkspaceSyncRead({ rootPath: guestRoot, relativePath: relative(target), maxBytes: WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES }, helper);

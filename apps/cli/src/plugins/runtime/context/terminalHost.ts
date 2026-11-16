@@ -33,6 +33,8 @@ import { createNativeProcessExitObserver } from '@/terminal/host/nativeProcessEx
 import { matchesTerminalClientInvocation } from '@/terminal/host/terminalClientCustody';
 import { resolveTerminalHostCreationFailure, TerminalHostCreationError } from '@/integrations/terminal/host/errors';
 import { createDefaultTerminalHostAdapterInventory } from '@/integrations/terminal/host/defaultAdapters';
+import { createPtyTerminalHostAdapter } from '@/terminal/pty/hostAdapter';
+import { resolveSessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
 import {
     readTerminalHostAttachmentInfo,
     readTerminalHostAttachmentState,
@@ -763,15 +765,19 @@ export function createDefaultPreparedTerminalHostOwner(
 }
 
 function createDefaultTerminalHostOwner(params: CreateDefaultPluginTerminalHostServiceParams) {
+    const sessionTarget = resolveSessionProcessPtyTarget();
+    const targetAdapter = sessionTarget ? createPtyTerminalHostAdapter({ sessionTarget }) : null;
     return createPluginTerminalHostOwner({
         ...(params.executionRunId ? { executionRunId: params.executionRunId } : {}),
         hasCapability: params.hasCapability,
-        resolveTerminalHost: (preference) => resolveDefaultTerminalHost(params, preference),
+        resolveTerminalHost: (preference) => targetAdapter
+            ? { status: 'resolved', adapter: targetAdapter, reason: 'windows_console_available' }
+            : resolveDefaultTerminalHost(params, preference),
         resolveAgentCliLaunch: (launch) => requireAgentCliLaunchSpec(launch.agentId as CatalogAgentLookupId, {
             processEnv: buildProviderCliProcessEnv(launch),
         }),
         resolveCurrentHost: async () => {
-            if (params.executionRunId) return null;
+            if (sessionTarget || params.executionRunId) return null;
             const metadata = params.currentTerminalMetadata;
             const handle = metadata?.terminal
                 ? buildActiveTerminalHostHandleFromMetadata(metadata.terminal)
@@ -787,7 +793,7 @@ function createDefaultTerminalHostOwner(params: CreateDefaultPluginTerminalHostS
             };
         },
         resolveExistingHostForAdoption: async () => {
-            if (params.executionRunId) return null;
+            if (sessionTarget || params.executionRunId) return null;
             // A foreground launch in a user's current terminal takes the existing
             // borrowing path, never historical owned-host adoption.
             if (params.currentTerminalMetadata?.terminal

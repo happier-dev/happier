@@ -34,6 +34,8 @@ import type { Disposable, PtyProcess, PtyProvider } from './provider';
 import { createNodePtyProvider } from './provider';
 import { delay } from '@/utils/time';
 import { createVirtualTerminalScreen, type VirtualTerminalScreen } from './virtualTerminalScreen';
+import { resolveSessionProcessPtyTarget, type SessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
+import { spawnHolderPtyProcess } from './holderProcess';
 
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
@@ -130,8 +132,11 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
   postWriteLivenessDelayMs?: number;
   promptSubmitVerification?: TerminalPromptSubmitVerificationPolicy;
   now?: () => number;
+  /** The terminal service retains the canonical lazy placement selected for this Session. */
+  sessionTarget?: SessionProcessPtyTarget | null;
 }>): TerminalHostAdapter {
   const environment = sessionProcessEnvironment();
+  const sessionTarget = params?.sessionTarget === undefined ? resolveSessionProcessPtyTarget() : params.sessionTarget;
   const ptyProvider = params?.ptyProvider ?? createNodePtyProvider({ env: environment });
   const cols = Math.max(2, Math.trunc(params?.cols ?? DEFAULT_COLS));
   const rows = Math.max(2, Math.trunc(params?.rows ?? DEFAULT_ROWS));
@@ -304,24 +309,31 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       });
       const term = spawnEnv.TERM ?? 'xterm-256color';
       const screen = createVirtualTerminalScreen({ cols, rows });
-      await ptyProvider.prepare?.();
-      const pty = ptyProvider.spawn({
-        file: command,
-        args: process.platform === 'win32' && opts.windowsVerbatimArguments
-          ? opts.spawnArgv.slice(1).join(' ')
-          : [...opts.spawnArgv.slice(1)],
-        options: {
-          name: 'xterm-256color',
-          cols,
-          rows,
-          cwd: opts.workingDirectory,
-          env: {
-            ...spawnEnv,
-            TERM: term,
+      let pty: PtyProcess;
+      if (sessionTarget) {
+        const launch = sessionTarget.prepareAgentLaunch({ command, args: opts.spawnArgv.slice(1), cwd: opts.workingDirectory });
+        const holder = sessionTarget.openHolder();
+        pty = await spawnHolderPtyProcess(holder, { ...launch, cols, rows }, () => holder.detach());
+      } else {
+        await ptyProvider.prepare?.();
+        pty = ptyProvider.spawn({
+          file: command,
+          args: process.platform === 'win32' && opts.windowsVerbatimArguments
+            ? opts.spawnArgv.slice(1).join(' ')
+            : [...opts.spawnArgv.slice(1)],
+          options: {
+            name: 'xterm-256color',
+            cols,
+            rows,
+            cwd: opts.workingDirectory,
+            env: {
+              ...spawnEnv,
+              TERM: term,
+            },
+            encoding: 'utf8',
           },
-          encoding: 'utf8',
-        },
-      });
+        });
+      }
       const session: PtyTerminalHostSession = {
         pty,
         disposables: [],
@@ -334,7 +346,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
       }));
       session.disposables.push(pty.onExit((event) => {
         session.ended = true;
-        session.exitCode = event.exitCode;
+        session.exitCode = event.exitCode ?? undefined;
         if (typeof event.signal === 'number') session.signal = event.signal;
         cleanupSession(opts.sessionName, session, { kill: false, retainExitState: true });
       }));
@@ -526,6 +538,7 @@ export function createPtyTerminalHostAdapter(params?: Readonly<{
     async dispose(handle) {
       const session = readSession(handle);
       if (session) {
+        if (!session.ended && session.pty.terminateTree) await session.pty.terminateTree();
         cleanupSession(handle.sessionName, session, { kill: true, retainExitState: false });
       }
       endedSessions.delete(handle.sessionName);

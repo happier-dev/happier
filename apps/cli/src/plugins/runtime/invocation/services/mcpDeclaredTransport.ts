@@ -34,6 +34,7 @@ import {
 } from './interactions';
 import type { DeclaredTransportConnector } from './mcp';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
+import { prepareHostMcpStdioTransport, type PreparedMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
 
 type ResolvedMcpExecutable = Readonly<{
     command: string;
@@ -244,18 +245,19 @@ export function createStableDeclaredMcpTransportConnector(params?: Readonly<{
         };
         assertCurrent();
         const [
-            { Client }, { StdioClientTransport }, { StreamableHTTPClientTransport },
+            { Client }, { StreamableHTTPClientTransport },
             { ElicitRequestSchema, ResourceUpdatedNotificationSchema },
             { mcpElicitationFormContent, mcpElicitationFormRequest },
         ] = await Promise.all([
             import('@modelcontextprotocol/sdk/client/index.js'),
-            import('@modelcontextprotocol/sdk/client/stdio.js'),
             import('@modelcontextprotocol/sdk/client/streamableHttp.js'),
             import('@modelcontextprotocol/sdk/types.js'),
             import('./mcpElicitationForm'),
         ]);
         assertCurrent();
         const transportDefinition = declaration.definition.transport;
+        const lifetimeSignal = composeSignals(seed.signal, signal);
+        let preparedStdio: PreparedMcpStdioTransport | undefined;
         let releaseExecutable: (() => void) | null = null;
         const release = () => {
             const current = releaseExecutable;
@@ -274,17 +276,30 @@ export function createStableDeclaredMcpTransportConnector(params?: Readonly<{
                 declaration.pluginId,
             );
             releaseExecutable = executable.release ?? null;
-            return new StdioClientTransport({
-                command: executable.command,
-                args: [...(executable.args ?? []), ...(transportDefinition.args ?? [])],
-                ...(executable.env === undefined ? {} : { env: { ...executable.env } }),
-            });
+            try {
+                preparedStdio = prepareHostMcpStdioTransport({
+                    command: executable.command,
+                    args: [...(executable.args ?? []), ...(transportDefinition.args ?? [])],
+                    environment: executable.env ?? {}, signal: lifetimeSignal,
+                });
+                preparedStdio.stderr?.resume();
+                return preparedStdio.transport;
+            } catch (error) {
+                release();
+                throw error;
+            }
         })();
-        const lifetimeSignal = composeSignals(seed.signal, signal);
         const client = new Client(
             { name: 'happier-plugin-mcp', version: '1.0.0' },
             { capabilities: elicitation.mode === 'hostMediated' ? { elicitation: { form: {} } } : {} },
         );
+        const close = async () => {
+            try { await client.close(); }
+            finally {
+                try { await preparedStdio?.transport.close(); }
+                finally { release(); }
+            }
+        };
         const subscriptions = new Set<McpResourceSubscriptionRecord>();
         client.onclose = () => {
             for (const subscription of subscriptions) {
@@ -366,8 +381,7 @@ export function createStableDeclaredMcpTransportConnector(params?: Readonly<{
             assertCurrent();
             await client.connect(transport, lifetimeSignal ? { signal: lifetimeSignal } : undefined);
         } catch (error) {
-            await client.close().catch(() => {});
-            release();
+            await close().catch(() => {});
             throw error;
         }
         let connectionDisposePromise: Promise<void> | null = null;
@@ -469,9 +483,8 @@ export function createStableDeclaredMcpTransportConnector(params?: Readonly<{
                 connectionDisposePromise = (async () => {
                     try {
                         await Promise.allSettled([...subscriptions].map((subscription) => subscription.dispose()));
-                        await client.close();
                     } finally {
-                        release();
+                        await close();
                     }
                 })();
                 return connectionDisposePromise;

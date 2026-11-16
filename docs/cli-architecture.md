@@ -7365,12 +7365,18 @@ owner-only DACL that rejects remote clients). No network port is opened.
 `happier-session-holder attach --socket <path>` bridges a holder to stdio for exec
 channels and exits when the holder closes that connection.
 
-- One decision: `resolveAgentSessionHolderLaunch`
-  (`src/subprocess/supervision/sessionHolder.ts`) decides whether a launch is held.
-  The Exec owner (`spawnAuthorizedHostExecLaunchForHost`) asks it for Agent launches
-  (`nativeLaunch` qualifier on a long-lived spawn or protocol client, not finite runs,
-  managed services or native-tool handoffs). The ACP transport asks it for
-  host-finalized launches. A missing holder executable is the typed launch refusal
+- One placement decision: `resolveSessionProcessHolderLaunch`
+  (`src/subprocess/supervision/sessionHolder.ts`) routes every placed Session Exec
+  launch through the target, including managed services and finite helpers.
+  `resolveAgentSessionHolderLaunch` retains the unplaced long-lived Agent holder
+  qualification; ordinary unplaced helpers keep their local behavior. The Exec
+  owner (`spawnAuthorizedHostExecLaunchForHost`), native Agent terminals, MCP stdio
+  adapters and pre-launch probes consume this decision. Workspace shells and
+  tools use the admitted holder workspace source; native Agent PTYs consume the
+  same target executable, credential and cwd mapping. A native Agent PTY needs an
+  existing primary target holder; without one, it refuses with
+  `agent_cli_target_unavailable`. Host jobs, cgroups and
+  service-output wrappers cannot replace target custody. A missing holder executable is the typed launch refusal
   `session_holder_unavailable`; there is no direct-spawn path. A Windows verbatim
   command line is passed with `serve --windows-verbatim` and appended unquoted.
 - One spawn owner: the ACP transport (`AcpBackend`) starts its Agent through
@@ -7379,7 +7385,8 @@ channels and exits when the holder closes that connection.
   recovery dispose that supervised handle instead of a separate tree kill.
 - `SessionHolderChild` is a `ChildProcess` whose pipes run over the holder socket,
   so the process supervisor, protocol clients, Stop and tree termination are
-  unchanged. Its `pid` is the Agent's pid.
+  unchanged. Its `pid` is the Agent's pid for local holders; target process IDs
+  never enter this Machine's process census or tree terminator.
 - Replay: holder output frames carry a sequence number and stay in the holder until
   the runner acknowledges them; the runner acknowledges once the bytes left its
   stream buffers for their consumers, which hand Agent output to the Session's own

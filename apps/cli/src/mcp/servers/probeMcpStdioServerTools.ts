@@ -10,6 +10,8 @@ import { withMcpTimeout } from '@/mcp/runtime/withMcpTimeout';
 import { appendBoundedStderrTail, sanitizeChildStderrTail } from '@/daemon/spawn/childStderrDiagnostic';
 import type { ProviderStreamingSanitizer } from '@/providers/spawn/redaction';
 import { StdioMcpServerStartupFailureSchema, type StdioMcpServerStartupFailure } from '@/mcp/launchers/stdioMcpServerStartupFailure';
+import { prepareHostMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 
 export type McpServerProbeTool = Readonly<{
   name: string; title?: string; description?: string; annotations?: McpToolAnnotationsV1;
@@ -36,15 +38,6 @@ export class McpServerProbeError extends Error {
   }
 }
 
-function resolveEnvRecord(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const key of Object.keys(env)) {
-    const value = env[key];
-    if (typeof value === 'string') out[key] = value;
-  }
-  return out;
-}
-
 export async function probeMcpStdioServerTools(params: Readonly<{
   config: McpServerConfig;
   baseEnv?: NodeJS.ProcessEnv;
@@ -59,15 +52,14 @@ export async function probeMcpStdioServerTools(params: Readonly<{
   prepareTransport?: () => Promise<Readonly<{ transport: Transport; stderr?: Readable }>>;
 }>): Promise<McpServerProbeResult> {
   params.signal?.throwIfAborted();
-  const [{ Client }, { StdioClientTransport }, { McpError }, { getDisplayName }] = await Promise.all([
+  const [{ Client }, { McpError }, { getDisplayName }] = await Promise.all([
     import('@modelcontextprotocol/sdk/client/index.js'),
-    import('@modelcontextprotocol/sdk/client/stdio.js'),
     import('@modelcontextprotocol/sdk/types.js'),
     import('@modelcontextprotocol/sdk/shared/metadataUtils.js'),
   ]);
   params.signal?.throwIfAborted();
   const baseEnv = params.baseEnv ?? sessionProcessEnvironment();
-  const env = params.config.env ? { ...resolveEnvRecord(baseEnv), ...params.config.env } : resolveEnvRecord(baseEnv);
+  const env = buildScopedProcessEnv({ baseEnv, explicitEnv: params.config.env });
 
   let protocolVersion: string | undefined;
   let transport: Transport | undefined;
@@ -104,11 +96,11 @@ export async function probeMcpStdioServerTools(params: Readonly<{
     // still within its startup and per-request credential lookup lifetimes.
     await params.assertCurrent?.();
     params.signal?.throwIfAborted();
-    prepared = await params.prepareTransport?.();
-    transport = Object.assign(params.prepareTransport ? prepared!.transport : new StdioClientTransport({
-      command: params.config.command, args: params.config.args ?? [], env, stderr: 'pipe',
-    }), { setProtocolVersion: (version: string) => { protocolVersion = version; } });
-    stderr = prepared?.stderr ?? (transport instanceof StdioClientTransport ? transport.stderr ?? undefined : undefined);
+    prepared = params.prepareTransport ? await params.prepareTransport()
+      : prepareHostMcpStdioTransport({ command: params.config.command, args: params.config.args,
+        environment: env, signal: params.signal });
+    transport = Object.assign(prepared.transport, { setProtocolVersion: (version: string) => { protocolVersion = version; } });
+    stderr = prepared.stderr;
     stderr?.on('data', onStderr);
     await params.assertCurrent?.();
     params.signal?.throwIfAborted();

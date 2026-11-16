@@ -48,16 +48,28 @@ export function registerSessionTargetWorkspace(input: Readonly<{
     }, { once: true });
 }
 
-/** `resolveWorkspaceTarget` for the daemon's filesystem admission. */
-export function resolveSessionTargetWorkspace(placement: WorkspaceSourcePlacement): WorkspaceSource | null {
-    const entry = placement.sessionId ? entries.get(placement.sessionId) : undefined;
-    if (!entry) return null;
+function workspaceClient(entry: Entry): SessionHolderChild {
     // A client that never reached the holder (Agent not started yet) or lost it is replaced on the next request.
     if (!entry.client || entry.client.holderConnectionFailed) {
         entry.client?.detach();
         entry.client = openSessionHolderWorkspaceClient(entry.primarySocketPath, entry.target);
-        entry.source = createHolderWorkspaceSource({ id: `${entry.target.id}:${placement.sessionId}`, rootPath: entry.workspace.hostRoot,
-            guestRootPath: entry.workspace.targetRoot, holder: entry.client, helperPath: entry.target.helperPath });
+        entry.source = undefined;
     }
+    return entry.client;
+}
+
+/** Terminals consume the same live Session placement as Files/Git; the Session owns this shared client. */
+export function resolveSessionTargetPtyTarget(sessionId: string): Readonly<{ rootPath: string; openHolder(): SessionHolderChild }> | null {
+    const entry = entries.get(sessionId);
+    return entry ? { rootPath: entry.workspace.hostRoot, openHolder: () => workspaceClient(entry) } : null;
+}
+
+/** `resolveWorkspaceTarget` for the daemon's filesystem admission. */
+export function resolveSessionTargetWorkspace(placement: WorkspaceSourcePlacement): WorkspaceSource | null {
+    const entry = placement.sessionId ? entries.get(placement.sessionId) : undefined;
+    if (!entry) return null;
+    const client = workspaceClient(entry);
+    entry.source ??= createHolderWorkspaceSource({ id: `${entry.target.id}:${placement.sessionId}`, rootPath: entry.workspace.hostRoot,
+        guestRootPath: entry.workspace.targetRoot, holder: client, helperPath: entry.target.helperPath });
     return entry.source!;
 }

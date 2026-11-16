@@ -1,21 +1,8 @@
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import type { PrepareMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
+import { prepareHostMcpStdioTransport, type PrepareMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 
 import type { McpServerConfig } from '@/agent';
-
-function resolveEnvRecord(env: NodeJS.ProcessEnv): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const key of Object.keys(env)) {
-    const value = env[key];
-    if (typeof value === 'string') out[key] = value;
-  }
-  return out;
-}
-
-function hasResume(value: unknown): value is Readonly<{ resume: () => void }> {
-  return typeof value === 'object' && value !== null && 'resume' in value && typeof value.resume === 'function';
-}
 
 export async function createCustomMcpClientTransport(
   config: McpServerConfig,
@@ -23,26 +10,15 @@ export async function createCustomMcpClientTransport(
   options: Readonly<{ signal?: AbortSignal; prepareTransport?: PrepareMcpStdioTransport }> = {},
 ): Promise<Transport> {
   options.signal?.throwIfAborted();
-  if (options.prepareTransport) {
-    const prepared = await options.prepareTransport(config, options.signal);
-    try {
-      options.signal?.throwIfAborted();
-      prepared.stderr?.resume();
-      return prepared.transport;
-    } catch (error) {
-      await prepared.transport.close();
-      throw error;
-    }
+  const prepared = options.prepareTransport ? await options.prepareTransport(config, options.signal)
+    : prepareHostMcpStdioTransport({ command: config.command, args: config.args,
+      environment: buildScopedProcessEnv({ baseEnv: processEnv, explicitEnv: config.env }), signal: options.signal });
+  try {
+    options.signal?.throwIfAborted();
+    prepared.stderr?.resume();
+    return prepared.transport;
+  } catch (error) {
+    await prepared.transport.close();
+    throw error;
   }
-  const transport = new StdioClientTransport({
-    command: config.command,
-    args: config.args ?? [],
-    env: config.env ? { ...resolveEnvRecord(processEnv), ...config.env } : resolveEnvRecord(processEnv),
-    stderr: 'pipe',
-  });
-  const stderr = transport.stderr;
-  if (hasResume(stderr)) {
-    stderr.resume();
-  }
-  return transport;
 }

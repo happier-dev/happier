@@ -2,16 +2,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 const connectMock = vi.fn();
 const callToolMock = vi.fn();
 const closeMock = vi.fn();
-const stderrResumeMock = vi.fn();
-const constructedTransports: Array<{ command: string; stderr?: string }> = [];
 
+// The external SDK request boundary captures timeout options; transport and OS
+// process supervision remain real, including physical close on cleanup.
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: class MockClient {
-    async connect(transport: { command: string }) {
+    transport?: Transport;
+    async connect(transport: Transport) {
+      this.transport = transport;
+      await transport.start();
       return await connectMock(transport);
     }
 
@@ -20,24 +24,8 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
     }
 
     async close() {
+      await this.transport?.close();
       return await closeMock();
-    }
-  },
-}));
-
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  StdioClientTransport: class MockStdioClientTransport {
-    command: string;
-    args: string[];
-    env: Record<string, string>;
-    stderr = { resume: stderrResumeMock };
-    async close() {}
-
-    constructor(config: { command: string; args?: string[]; env?: Record<string, string>; stderr?: string }) {
-      this.command = config.command;
-      this.args = config.args ?? [];
-      this.env = config.env ?? {};
-      constructedTransports.push({ command: this.command, stderr: config.stderr });
     }
   },
 }));
@@ -56,8 +44,6 @@ describe('callResolvedCustomHappierTool', () => {
     connectMock.mockReset();
     callToolMock.mockReset();
     closeMock.mockReset();
-    stderrResumeMock.mockReset();
-    constructedTransports.length = 0;
   });
 
   afterEach(() => {
@@ -65,7 +51,7 @@ describe('callResolvedCustomHappierTool', () => {
     envScope = createEnvKeyScope(envKeys);
   });
 
-  it('pipes and drains child stderr before calling the MCP tool', async () => {
+  it('uses the configured MCP request lifetime for a supervised stdio tool', async () => {
     callToolMock.mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] });
     delete process.env.HAPPIER_MCP_TOOL_CALL_TIMEOUT_MS;
     delete process.env.HAPPIER_MCP_EXECUTION_RUN_WAIT_TIMEOUT_GRACE_MS;
@@ -79,7 +65,7 @@ describe('callResolvedCustomHappierTool', () => {
       args: {},
       operationContext,
       mcpServers: {
-        qa_marker_stdio_20260306: { command: 'ok-server', args: ['--stdio'], env: { TOKEN: '1' } },
+        qa_marker_stdio_20260306: { command: process.execPath, args: ['-e', 'process.stdin.resume()'] },
       },
       processEnv: { PATH: '/usr/bin' },
     });
@@ -88,8 +74,6 @@ describe('callResolvedCustomHappierTool', () => {
       ok: true,
       result: { content: [{ type: 'text', text: 'ok' }] },
     });
-    expect(constructedTransports).toEqual([{ command: 'ok-server', stderr: 'pipe' }]);
-    expect(stderrResumeMock).toHaveBeenCalledTimes(1);
     expect(callToolMock).toHaveBeenCalledWith(
       { name: 'get_marker', arguments: {} },
       undefined,
@@ -115,7 +99,7 @@ describe('callResolvedCustomHappierTool', () => {
       args: { runId: 'run_123', timeoutSeconds: 120 },
       operationContext,
       mcpServers: {
-        qa_marker_stdio_20260306: { command: 'ok-server', args: ['--stdio'] },
+        qa_marker_stdio_20260306: { command: process.execPath, args: ['-e', 'process.stdin.resume()'] },
       },
       processEnv: {
         PATH: '/usr/bin',

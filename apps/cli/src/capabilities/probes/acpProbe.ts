@@ -1,4 +1,5 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { spawnSessionProcess } from '@/subprocess/supervision/sessionHolder';
 import type { InitializeRequest, InitializeResponse } from '@agentclientprotocol/sdk';
 
 import { logger } from '@/ui/logger';
@@ -90,7 +91,7 @@ export async function probeAcpAgentCapabilities(params: {
         });
 
         params.signal?.throwIfAborted();
-        child = spawn(invocation.command, invocation.args, {
+        child = spawnSessionProcess(invocation.command, invocation.args, {
             cwd: params.cwd,
             // OS environments may be sparse despite ambient ProcessEnv fields required by UI types.
             env: env as NodeJS.ProcessEnv,

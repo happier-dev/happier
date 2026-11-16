@@ -6,7 +6,6 @@ const sdk = vi.hoisted(() => ({
     close: vi.fn(async () => {}),
     connect: vi.fn(async (_options?: Readonly<{ signal?: AbortSignal }>) => {}),
     transportUrl: null as URL | null,
-    stdioOptions: null as Readonly<Record<string, unknown>> | null,
     notificationHandler: null as null | ((notification: Readonly<{ params: Readonly<{ uri: string }> }>) => void | Promise<void>),
     subscribeResource: vi.fn(async () => ({})),
     unsubscribeResource: vi.fn(async () => ({})),
@@ -76,11 +75,6 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
 vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
     StreamableHTTPClientTransport: class {
         constructor(url: URL) { sdk.transportUrl = url; }
-    },
-}));
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-    StdioClientTransport: class {
-        constructor(options: Readonly<Record<string, unknown>>) { sdk.stdioOptions = options; }
     },
 }));
 vi.mock('@modelcontextprotocol/sdk/types.js', () => ({ ElicitRequestSchema: {}, ResourceUpdatedNotificationSchema: {} }));
@@ -359,57 +353,6 @@ describe('stable declared MCP transport connector', () => {
 
         seedAbort.abort(new Error('occurrenceId retired'));
         expect(connectSignal?.aborted).toBe(true);
-    });
-
-    it('resolves a static stdio executable through the host owner and releases it on cleanup', async () => {
-        const release = vi.fn();
-        const resolveExecutable = vi.fn(async () => Object.freeze({
-            command: '/host/bin/acme-mcp',
-            args: Object.freeze(['host-owned']),
-            env: Object.freeze({ HOST_SECRET: 'attached-by-host' }),
-            release,
-        }));
-        const declaration: ResolvedMcpServerContribution = {
-            provenance: 'external', source: { kind: 'path' }, pluginId: 'acme.static',
-            manifestPath: '/plugins/acme.static/plugin.json', daemonEntryPath: '/plugins/acme.static/daemon.js',
-            definition: {
-                id: 'local', title: 'Local', kind: 'static',
-                transport: {
-                    kind: 'stdio',
-                    executable: { kind: 'systemTool', id: 'acme-mcp' },
-                    args: ['serve'],
-                },
-                sessionScope: 'session',
-            },
-        };
-        const connector = createStableDeclaredMcpTransportConnector({ resolveExecutable });
-        const client = await connector({
-            declaration,
-            ref: { pluginId: 'acme.static', localId: 'local' },
-            sessionId: 'session-1',
-            elicitation: { mode: 'reject' },
-            seed: {
-                plugin: { id: 'caller.plugin', version: '1.0.0' },
-                contribution: { id: 'run', qualifiedId: 'caller.plugin/actions/run' },
-                occurrenceId: 'occurrenceId-1', correlationId: 'correlation-1', surface: 'agent',
-                session: { id: 'session-1' },
-                signal: new AbortController().signal,
-                isOccurrenceCurrent: () => true,
-            },
-        });
-
-        expect(resolveExecutable).toHaveBeenCalledWith(
-            { kind: 'systemTool', id: 'acme-mcp' },
-            'acme.static',
-        );
-        expect(sdk.stdioOptions).toEqual({
-            command: '/host/bin/acme-mcp',
-            args: ['host-owned', 'serve'],
-            env: { HOST_SECRET: 'attached-by-host' },
-        });
-
-        await client.dispose();
-        expect(release).toHaveBeenCalledOnce();
     });
 
     it('projects resources and prompts through the connected client and owns subscription cleanup', async () => {

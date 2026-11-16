@@ -9,6 +9,7 @@ import { descendantsOf, indexCensus, protectedSet, membersOfCgroup, membersOfJob
 
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { taskkillWindowsProcessTree } from '@/subprocess/supervision/taskkillWindowsProcessTree';
+import { SessionHolderChild, SessionHolderStreamProcess } from '@/subprocess/supervision/sessionHolder';
 
 export type ProcessTreeRoot = Readonly<{
   pid?: number;
@@ -76,6 +77,7 @@ type ProcessTreeAdapters = Readonly<{
 }>;
 
 type ProcessTreeModule = {
+  DEFAULT_PROCESS_TREE_GRACE_MS: number;
   createProcessTreeOwner(adapters: ProcessTreeAdapters): {
     terminateProcessTree(proc: ProcessTreeRoot, opts?: ProcessTreeOptions): Promise<void>;
     terminateTargets(input: ProcessTreeTerminationInput): Promise<ProcessTreeTerminationResult>;
@@ -148,6 +150,15 @@ export function createProcessTreeTerminator(input: Readonly<{
 export function terminateProcessTree(input: ProcessTreeTerminationInput): Promise<ProcessTreeTerminationResult>;
 export function terminateProcessTree(proc: ProcessTreeRoot, opts?: ProcessTreeOptions): Promise<void>;
 export async function terminateProcessTree(proc: ProcessTreeRoot | ProcessTreeTerminationInput, opts?: ProcessTreeOptions): Promise<void | ProcessTreeTerminationResult> {
+  if (proc instanceof SessionHolderStreamProcess) {
+    await proc.terminateTree(opts?.graceMs ?? loadModuleOwner().DEFAULT_PROCESS_TREE_GRACE_MS);
+    return;
+  }
+  if (proc instanceof SessionHolderChild && proc.target) {
+    await proc.terminateGroup({ graceMs: opts?.graceMs ?? loadModuleOwner().DEFAULT_PROCESS_TREE_GRACE_MS,
+      ...(opts?.firstSignal ? { firstSignal: opts.firstSignal } : {}) });
+    return;
+  }
   try {
     if ('targets' in proc) return await getDefaultOwner().terminateTargets(proc);
     await getDefaultOwner().terminateProcessTree(proc, opts);

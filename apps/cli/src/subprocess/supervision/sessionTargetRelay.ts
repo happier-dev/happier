@@ -165,7 +165,9 @@ export function prepareTargetAgentLaunch(launch: SessionTargetLaunch | undefined
     request: Readonly<{ command: string; args: readonly string[]; cwd?: string }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }> {
     const command = launch?.executables[request.command];
     if (!command) throw targetLaunchError('agent_cli_target_unavailable', 'This Agent CLI was not placed in the Session target');
-    const cwd = request.cwd === undefined ? undefined : toSessionTargetPath(launch?.workspace, request.cwd);
+    const hostCwd = request.cwd === undefined ? undefined
+        : launch?.workspace ? toSessionHostPath(launch.workspace, request.cwd) ?? request.cwd : request.cwd;
+    const cwd = hostCwd === undefined ? launch?.workspace?.targetRoot : toSessionTargetPath(launch?.workspace, hostCwd);
     const locked = launch?.lockPath ? launch.lockExecutable
         ? { command: launch.lockExecutable, args: ['file-lock', '-s', launch.lockPath, '--', command, ...request.args] }
         : { command: 'flock', args: ['-s', launch.lockPath, command, ...request.args] } : { command, args: request.args };

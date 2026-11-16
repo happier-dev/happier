@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/cli-common/agents/resolution';
 import { ExecFileTerminationError, execFileWithDeadline, resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
+import { spawnPlacedSessionProcess } from '@/subprocess/supervision/sessionHolder';
 
 export function resolveCliAuthHomeDir(): string {
   const envHome =
@@ -42,6 +43,7 @@ export async function runCliCommandBestEffort(params: Readonly<{
     timeout: timeoutMs,
     signal: params.signal,
     terminateOnAbort: terminateProcessTree,
+    spawnChild: spawnPlacedSessionProcess,
     // Native process environments can be sparse despite required ambient UI fields.
     env: execEnv as NodeJS.ProcessEnv,
     cwd: params.cwd,

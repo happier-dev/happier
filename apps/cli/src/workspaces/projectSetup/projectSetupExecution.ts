@@ -34,7 +34,7 @@ export type ProjectSetupExecutionInput = Readonly<{
     requesterAccountId: string;
     terminalCustody?: TerminalPtyCustody;
     operation: ProjectSetupOperationContext;
-    terminalSessions: Pick<TerminalPtySessionManager, 'prepare' | 'ensure' | 'waitForExit' | 'requestStop' | 'observeOutput'>;
+    terminalSessions: Pick<TerminalPtySessionManager, 'ensure' | 'waitForExit' | 'requestStop' | 'observeOutput'>;
     environmentIo: ProjectNativeToolchainIoForHost;
     hostEnvironment?: ProcessEnvInput;
     agentIsolation?: import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;

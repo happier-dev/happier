@@ -1,4 +1,4 @@
-import { execFile, spawn, type ChildProcess, type ExecFileOptions } from 'node:child_process';
+import { execFile, spawn, type ChildProcess, type ExecFileOptions, type SpawnOptions } from 'node:child_process';
 
 import { closeStdioWhenCommandExits } from './closeStdioWhenCommandExits.js';
 
@@ -16,6 +16,8 @@ export type ExecFileWithDeadlineOptions =
     onStdoutChunk?: (chunk: string) => void;
     /** Transient bytes delivered only through the child's stdin, followed by EOF. Caller owns clearing. */
     inputBytes?: Uint8Array;
+    /** A host-owned placement adapter; null preserves the ordinary local execution path. */
+    spawnChild?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess | null;
   }>;
 
 export class ExecFileTerminationError extends Error {
@@ -70,7 +72,7 @@ export function execFileWithDeadline(
   args: readonly string[],
   options: ExecFileWithDeadlineOptions,
 ): Promise<ExecFileWithDeadlineResult> {
-  const { timeout, terminateOnAbort, outputTailMaxBytes: requestedTailMaxBytes, onStdoutChunk, inputBytes, ...commandOptions } = options;
+  const { timeout, terminateOnAbort, outputTailMaxBytes: requestedTailMaxBytes, onStdoutChunk, inputBytes, spawnChild, ...commandOptions } = options;
   const outputTailMaxBytes = requestedTailMaxBytes ?? (onStdoutChunk ? 0 : undefined);
   if (outputTailMaxBytes !== undefined && (!Number.isSafeInteger(outputTailMaxBytes) || outputTailMaxBytes < 0)) {
     throw new TypeError('outputTailMaxBytes must be a nonnegative safe integer');
@@ -98,7 +100,11 @@ export function execFileWithDeadline(
       if (deadline) clearTimeout(deadline);
       complete = () => {
         if (terminationError) { reject(terminationError); return; }
-        if (terminateOnAbort && signal?.aborted) { reject(signal.reason); return; }
+        if (terminateOnAbort && signal?.aborted) {
+          const reason = signal.reason instanceof Error ? signal.reason : new Error('Command cancelled', { cause: signal.reason });
+          reject(Object.assign(reason, { stdout, stderr }, captureEvidence));
+          return;
+        }
         if (error || stdinError) {
           reject(Object.assign(error ?? stdinError!, { stdout, stderr }, captureEvidence, deadlineTermination ? { killed: true } : {}));
           return;
@@ -114,15 +120,17 @@ export function execFileWithDeadline(
       finish();
     };
     const effectiveOptions = terminateOnAbort ? { ...spawnOptions, signal: undefined } : spawnOptions;
-    const child = outputTailMaxBytes === undefined
+    const placedChild = spawnChild?.(command, args, effectiveOptions);
+    const child = placedChild ?? (outputTailMaxBytes === undefined
       ? execFile(command, [...args], effectiveOptions, onCommandResult)
-      : spawn(command, [...args], effectiveOptions);
-    if (outputTailMaxBytes !== undefined) {
+      : spawn(command, [...args], effectiveOptions));
+    if (placedChild || outputTailMaxBytes !== undefined) {
       let stdout = '';
       let stderr = '';
       let processError: Error | null = null;
       const append = (previous: string, chunk: string, key: 'stdoutTruncated' | 'stderrTruncated') => {
         const combined = previous + chunk;
+        if (outputTailMaxBytes === undefined) return combined;
         if (Buffer.byteLength(combined, 'utf8') <= outputTailMaxBytes) return combined;
         captureEvidence[key] = true;
         // Search by UTF-16 index, then skip a split surrogate pair. Stream decoding

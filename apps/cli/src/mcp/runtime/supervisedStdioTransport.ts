@@ -1,15 +1,37 @@
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Readable } from 'node:stream';
+import { getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import type { McpServerConfig } from '@/agent';
 import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
 import type { AgentLaunchMaterializationTarget } from '@/daemon/agentIsolation/agentLaunchMaterials';
-import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
+import { buildScopedProcessEnv, type ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { SupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
+import { spawnAuthorizedHostExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 
 /** Supplied by the admitted host operation. Config is data, never authority. */
 export type PreparedMcpStdioTransport = Readonly<{ transport: Transport; stderr?: Readable }>;
 export type PrepareMcpStdioTransport = (config: McpServerConfig, signal?: AbortSignal) => Promise<PreparedMcpStdioTransport>;
+
+/** Host-resolved MCP configuration consumes the same final launch owner as Exec.
+ * SDK default environment inheritance remains underneath authored values. */
+export function prepareHostMcpStdioTransport(input: Readonly<{
+  command: string;
+  args?: readonly string[];
+  environment: ProcessEnvInput;
+  cwd?: string;
+  signal?: AbortSignal;
+}>): PreparedMcpStdioTransport {
+  input.signal?.throwIfAborted();
+  const environment = buildScopedProcessEnv({ baseEnv: getDefaultEnvironment(), explicitEnv: input.environment });
+  const invocation = resolveWindowsCommandInvocation({ command: input.command, args: input.args ?? [], env: environment });
+  const process = spawnAuthorizedHostExecLaunchForHost({ command: invocation.command, args: invocation.args,
+    env: environment, ...(input.cwd === undefined ? {} : { cwd: input.cwd }), maxStdoutBytes: 0, maxStderrBytes: 0,
+    ...(invocation.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: invocation.windowsVerbatimArguments }),
+    release: () => undefined }, { signal: input.signal });
+  return { transport: createSupervisedMcpStdioTransport(process), stderr: process.child.stderr };
+}
 
 /** One admitted native/material owner, shared by Agent-side launch config and
  * runner-side custom tools. No caller chooses identity through this port. */

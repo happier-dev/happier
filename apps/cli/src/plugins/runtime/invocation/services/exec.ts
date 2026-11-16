@@ -34,7 +34,7 @@ import {
     type SupervisedPluginGracefulStop,
 } from '../../exec/processSupervisor';
 import { resolveProcessCustodySupportExecutable, type ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCustody';
-import { resolveAgentSessionHolderLaunch, trackSessionManagedProcess, type SessionHolderRole } from '@/subprocess/supervision/sessionHolder';
+import { resolveSessionProcessHolderLaunch, trackSessionManagedProcess, type SessionHolderRole } from '@/subprocess/supervision/sessionHolder';
 import { resolveSessionHostCwd } from '@/subprocess/supervision/sessionTargetRelay';
 import { createSessionHolderAdoption, JSON_RPC_INITIALIZE_HANDSHAKE, JSON_STREAM_ADOPT_HANDSHAKES } from '@/subprocess/supervision/sessionHolderAdoption';
 import {
@@ -457,7 +457,6 @@ export function spawnAuthorizedHostExecLaunchForHost(
         sessionHolder?: SessionHolderRole;
     }> = {},
 ): SupervisedPluginProcess {
-    const custody = options.processCustody;
     const environment = withHostProcessOwnerEnvironment(launch.env, launch.processOwnerTag ?? readHostProcessOwnerTag());
     if (options.descendantDisposition === 'preserve-on-success') {
         // Stack lifecycle markers describe the daemon, not the native supervisor
@@ -472,20 +471,28 @@ export function spawnAuthorizedHostExecLaunchForHost(
     // preparation may already own resources when the final spawn fails.
     options.retainLaunch?.(launch.release);
     try {
+        const holder = resolveSessionProcessHolderLaunch({ role: options.sessionHolder });
+        // Target custody is owned by the target holder, never a host job/cgroup wrapper.
+        const placed = holder?.target !== undefined;
+        if (placed && options.processCustody) {
+            // The managed owner requires this host job's handshake before it can expose the service.
+            // A target process cannot establish that host-owned custody contract.
+            throw new PluginError({ code: 'agent_cli_target_unavailable', retryable: false,
+                message: 'The Session target cannot establish the required host process custody' });
+        }
+        const custody = options.processCustody;
         const unit = createHappierLinuxScopeName(launch.processOwnerTag ?? readHostProcessOwnerTag());
-        const scopedLaunch = options.linuxProcessLaunchScope && unit
+        const scopedLaunch = !placed && options.linuxProcessLaunchScope && unit
             ? buildCgroupProcessLaunchSpec({ scope: options.linuxProcessLaunchScope, unit,
                 launchSpec: { filePath: launch.command, args: [...launch.args], env: { ...environment } } })
             : null;
-        const holder = options.sessionHolder && !custody && !scopedLaunch
-            ? resolveAgentSessionHolderLaunch({ role: options.sessionHolder }) : null;
         let command = custody ? custody.executablePath : scopedLaunch?.filePath ?? launch.command;
         let args = custody ? [
             'run', `--job=${custody.jobName}`, `--handshake=${custody.handshakePath}`,
             ...(launch.windowsVerbatimArguments ? ['--target-windows-verbatim'] : []),
             '--', launch.command, ...launch.args,
         ] : scopedLaunch?.args ?? launch.args;
-        if (options.serviceOutputLifetime) {
+        if (options.serviceOutputLifetime && !placed) {
             const executable = resolveProcessCustodySupportExecutable();
             if (!executable) throw new PluginError({ code: 'plugin_managed_service_unavailable',
                 message: 'Service output runtime is unavailable' });
@@ -494,7 +501,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
         }
         spawnAttempted = true;
         supervised = spawnSupervisedPluginProcess({
-            ...(holder ? { sessionHolder: holder } : {}),
+            sessionHolder: holder && (placed || (!custody && !scopedLaunch)) ? holder : null,
             command,
             args,
             ...((launch.launcherCwd ?? launch.cwd) ? { cwd: launch.launcherCwd ?? launch.cwd } : {}),

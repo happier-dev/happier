@@ -62,7 +62,7 @@ describe('terminal host final native launch', () => {
             await expect(service.createOrAttachHost({ preference: 'windows_console', sessionName: 'isolation-refused',
                 workingDirectory: root, isolatedEnv: true, launch: { kind: 'agent-cli', agentId: 'claude' } }))
                 .rejects.toMatchObject({ code: 'agent_isolation_unavailable', execLaunch: 'notStarted', retryable: false,
-                    data: { details: { reason: process.platform === 'linux' ? 'launch_probe_failed' : 'unsupported_platform', launchKind: 'terminal' } } });
+                    data: { details: { reason: 'isolation_not_ready', launchKind: 'terminal' } } });
             expect(physical).toEqual([]);
         } finally { binding.dispose(); }
     });

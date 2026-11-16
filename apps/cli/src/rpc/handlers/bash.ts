@@ -14,6 +14,9 @@ import { isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity,
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { AgentLaunchOperationMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import { authorizeResolvedProjectExecLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
+import { spawnPlacedSessionWorkspaceProcess } from '@/subprocess/supervision/sessionHolder';
+import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
+import { resolveSessionHostCwd } from '@/subprocess/supervision/sessionTargetRelay';
 
 interface BashRequest {
     command?: string;
@@ -39,8 +42,9 @@ interface BashResponse {
     stderrTruncated?: boolean;
 }
 
-function captureEvidence(output: { stdoutTruncated?: boolean; stderrTruncated?: boolean }) {
+function captureEvidence(output: { stdoutTruncated?: boolean; stderrTruncated?: boolean; code?: string | number }) {
     return { ...(output.stdoutTruncated ? { stdoutTruncated: true } : {}),
+        ...(output.code === 'agent_cli_target_unavailable' ? { errorCode: output.code } : {}),
         ...(output.stderrTruncated ? { stderrTruncated: true } : {}) };
 }
 
@@ -151,7 +155,7 @@ export function registerBashHandler(
                 cwd = undefined;
             } else {
                 const validation = authorizeFilesystemPath({
-                    targetPath: data.cwd,
+                    targetPath: resolveSessionHostCwd(data.cwd),
                     defaultDirectory: workingDirectory,
                     accessPolicy,
                 });
@@ -171,6 +175,8 @@ export function registerBashHandler(
             const environment = mergeProcessEnv({ baseEnv: sessionProcessEnvironment(), explicitEnv: data.env });
             const options: ExecFileWithDeadlineOptions = {
                 cwd,
+                spawnChild: spawnPlacedSessionWorkspaceProcess,
+                terminateOnAbort: terminateProcessTree,
                 ...(timeout > 0 ? { timeout } : {}),
                 env: environment,
                 ...(context?.signal ? { signal: context.signal } : {}),

@@ -30,7 +30,6 @@ export async function consumeServiceShellTerminal(input: Readonly<{
     // The admitted native owner supplies cwd. No terminal-selected fallback.
     if (!input.launch.cwd) return refuse('terminal_unavailable');
     try {
-        await input.terminalSessions.prepare?.();
         await input.launch.recheckInputs?.();
         if (input.signal?.aborted) return refuse('terminal_forbidden');
     } catch (error) {

@@ -1,4 +1,5 @@
 // One identity-safe process-tree owner for CLI callers and the standalone terminal launcher.
+const DEFAULT_PROCESS_TREE_GRACE_MS = 1000;
 async function taskkillWindowsProcessTree(input, windowsSystemToolCommand, execFileWithDeadline) {
     const args = ['/PID', String(input.pid), ...(input.tree === false ? [] : ['/T']), ...(input.force ? ['/F'] : [])];
     try {
@@ -94,7 +95,7 @@ function createProcessTreeOwner({ readProcessCensus, indexCensus, descendantsOf,
         };
         // Preserve the existing listener and ordinary-tree budgets at their canonical owner.
         const graceMs = Math.max(1, options.graceMs ?? input.graceMs
-            ?? (input.rootKind === 'service' || input.rootKind === 'dev_server' ? 4000 : 1000));
+            ?? (input.rootKind === 'service' || input.rootKind === 'dev_server' ? 4000 : DEFAULT_PROCESS_TREE_GRACE_MS));
         const first = await read();
         const requested = input.targets ?? [];
         if (!first) return { status: 'unavailable', outcomes: requested.map(target => ({ pid: target.pid, outcome: 'refused', reason: 'census_unavailable' })) };
@@ -364,4 +365,4 @@ async function terminateProcessTree(proc, options) {
     await owner.terminateProcessTree(proc, options);
 }
 
-module.exports = { createProcessTreeOwner, terminateProcessTree, taskkillWindowsProcessTree };
+module.exports = { createProcessTreeOwner, terminateProcessTree, taskkillWindowsProcessTree, DEFAULT_PROCESS_TREE_GRACE_MS };

@@ -20,7 +20,7 @@ import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessi
 export type Disposable = Readonly<{ dispose: () => void }>;
 
 export type PtyExitEvent = Readonly<{
-  exitCode: number;
+  exitCode: number | null;
   signal?: number;
 }>;
 
@@ -51,6 +51,8 @@ export type PtyProcess = Readonly<{
   write: (data: string) => void;
   resize: (cols: number, rows: number) => void;
   kill: (signal?: string) => void;
+  /** Target-owned group stop; its stream exit does not prove target descendants absent. */
+  terminateTree?: () => Promise<void>;
   onData: (listener: (data: string) => void) => Disposable;
   onDataBytes?: (listener: (data: Buffer | string) => void) => Disposable;
   onExit: (listener: (e: PtyExitEvent) => void) => Disposable;

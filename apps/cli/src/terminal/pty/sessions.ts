@@ -43,6 +43,10 @@ import { createTerminalNativeLaunch } from './nativeLaunch';
 import type { AgentIsolationMemberNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 import { createTerminalUrlDetector, type DetectedTerminalUrl } from './urlDetection';
 import { classifySpawnFailure, spawnFailureMessage, type SpawnFailure, type SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
+import { resolveSessionTargetPtyTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { resolveSessionProcessPtyTarget } from '@/subprocess/supervision/sessionHolder';
+import { resolveHolderWorkspaceCommand } from '@/workspaces/source/holderWorkspaceCommand';
+import { spawnHolderPtyProcess } from './holderProcess';
 
 type ErrorResult = Readonly<{
   ok: false;
@@ -176,7 +180,6 @@ export type TerminalByteStreamAckRequest = Readonly<{
 export type TerminalByteStreamAckResponse = Readonly<{ ok: true }> | Readonly<{ ok: false; code: string; message: string }>;
 
 export type TerminalPtySessionManager = Readonly<{
-  prepare?: () => Promise<void>;
   list: () => DaemonTerminalListEntryV1[];
   getLiveWorkProducer: () => LiveWorkProducerV1;
   readGuardResources(): readonly TerminalGuardResource[];
@@ -674,26 +677,39 @@ export function createTerminalPtySessionManager(params: Readonly<{
       // Removing a prior terminal publishes an owner edge; recheck the same
       // admission decision at the actual native effect boundary.
       if (input.admissionDrain?.isQuiescing()) return okDisabled('terminal_busy');
-      pty = params.ptyProvider.spawn({
-        file: process.file,
-        args: platform === 'win32' && process.windowsVerbatimArguments
-          ? process.args.join(' ')
-          : [...process.args],
-        options: {
-          name: 'xterm-256color',
-          cols,
-          rows,
-          cwd: authorizedProjectLaunch?.launcherCwd ?? cwd,
-          // Finalized Project launches preserve native unsets without acquiring a
-          // finite hold. Ordinary shell/login launch overlays remain unchanged.
-          env: withProcessOwnerEnvironment(input.holdUntilExit
-            ? stripCliApiTokenEnvironment(process.env ?? env)
-            : resolveTerminalSpawnEnv(authorizedProjectLaunch ? authorizedProjectLaunch.env : { ...env, ...process.env }),
-            { kind: 'terminal', terminalId }, env.HAPPIER_HOME_DIR),
-          encoding: byteCapablePlatform ? null : 'utf8',
-        },
-        ...(input.holdUntilExit ? { finiteProcess: true } : {}),
-      });
+      const daemonTarget = input.sessionId ? resolveSessionTargetPtyTarget(input.sessionId) : null;
+      const scopedTarget = daemonTarget ? null : resolveSessionProcessPtyTarget();
+      const target = daemonTarget ?? scopedTarget;
+      if (target) {
+        const launch = resolveHolderWorkspaceCommand(target.rootPath, { command: process.file, args: process.args, cwd,
+          env: process.env });
+        const holder = target.openHolder();
+        pty = await spawnHolderPtyProcess(holder, {
+          ...launch, cols, rows,
+        }, scopedTarget ? () => holder.detach() : undefined);
+      } else {
+        await params.ptyProvider.prepare?.();
+        pty = params.ptyProvider.spawn({
+          file: process.file,
+          args: platform === 'win32' && process.windowsVerbatimArguments
+            ? process.args.join(' ')
+            : [...process.args],
+          options: {
+            name: 'xterm-256color',
+            cols,
+            rows,
+            cwd: authorizedProjectLaunch?.launcherCwd ?? cwd,
+            // Finalized Project launches preserve native unsets without acquiring a
+            // finite hold. Ordinary shell/login launch overlays remain unchanged.
+            env: withProcessOwnerEnvironment(input.holdUntilExit
+              ? stripCliApiTokenEnvironment(process.env ?? env)
+              : resolveTerminalSpawnEnv(authorizedProjectLaunch ? authorizedProjectLaunch.env : { ...env, ...process.env }),
+              { kind: 'terminal', terminalId }, env.HAPPIER_HOME_DIR),
+            encoding: byteCapablePlatform ? null : 'utf8',
+          },
+          ...(input.holdUntilExit ? { finiteProcess: true } : {}),
+        });
+      }
     } catch (error) {
       const spawnFailure = classifySpawnFailure(error, { platform, limits: params.readSpawnFailureLimits?.() });
       return { ...okDisabled('terminal_spawn_failed'), error: spawnFailureMessage(spawnFailure, 'terminal_spawn_failed'), spawnFailure };
@@ -1356,6 +1372,23 @@ export function createTerminalPtySessionManager(params: Readonly<{
       notifyLiveWorkChanged();
       return { kind: 'exited' };
     }
+    if (session.pty.terminateTree) {
+      session.stopRequested = true;
+      session.stopPending = true;
+      notifyLiveWorkChanged();
+      try {
+        await session.pty.terminateTree();
+        // The target reports PTY closure, not descendant-group absence.
+        session.stopUnconfirmed = true;
+        return { kind: 'unconfirmed' };
+      } catch {
+        session.stopUnconfirmed = true;
+        return { kind: 'unconfirmed' };
+      } finally {
+        session.stopPending = false;
+        notifyLiveWorkChanged();
+      }
+    }
     if (!session.pty.pid) {
       session.stopUnconfirmed = true;
       notifyLiveWorkChanged();
@@ -1404,7 +1437,6 @@ export function createTerminalPtySessionManager(params: Readonly<{
   };
 
   return {
-    ...(params.ptyProvider.prepare ? { prepare: params.ptyProvider.prepare } : {}),
     getLiveWorkProducer,
     readGuardResources: () => Array.from(sessionsById.values(), session => ({
       terminalId: session.terminalId, terminalKey: session.terminalKey, pid: session.pty.pid, cwd: session.cwd,

@@ -74,7 +74,7 @@ function isolateTestExecutables(root) {
   const tools = ['node', 'git', 'sh', 'bash', 'env', 'ps', 'stat', 'date', 'sed', 'awk', 'grep',
     'cat', 'readlink', 'realpath', 'sleep', 'mkdir', 'mkfifo', 'rm', 'chmod', 'dirname', 'basename',
     'head', 'tail', 'tr', 'cut', 'sort', 'uniq', 'find', 'xargs', 'wc', 'cp', 'mv', 'tar', 'gzip', 'which', 'id', 'uname', 'getent',
-    'nohup', 'true', 'flock', 'sha256sum', 'shasum'];
+    'nohup', 'true', 'flock', 'sha256sum', 'shasum', 'rg', 'stty'];
   for (const name of tools) {
     const extensions = process.platform === 'win32' ? ['.exe', '.cmd', '.bat'] : [''];
     const executable = name === 'node' ? process.execPath : hostPath

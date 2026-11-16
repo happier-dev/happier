@@ -31,6 +31,7 @@ import { finalizeSessionChildEnvironment } from '@/session/runtime/control/final
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { withHostProcessOwnerEnvironment } from '@/processes/ownerTag';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { spawnSessionProcess } from '@/subprocess/supervision/sessionHolder';
 
 type SpawnLike = (
     command: string,
@@ -225,13 +226,13 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
                 enableCgroupSelfMigration: false,
                 stackProcessKind: null,
             });
-            const child = spawn(request.executable.path, [...(request.args ?? [])], {
+            const child = spawnSessionProcess(request.executable.path, [...(request.args ?? [])], {
                 cwd: request.cwd,
                 env: withHostProcessOwnerEnvironment(childEnvironment),
                 stdio: request.stdio ?? 'pipe',
                 windowsHide: request.windowsHide,
                 windowsVerbatimArguments: request.windowsVerbatimArguments,
-            });
+            }, spawn);
             const stopProcess = createProcessTreeStopper(async options => {
                 await terminateProcessTree(child, options);
                 request.signal?.removeEventListener('abort', abortListener);

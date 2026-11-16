@@ -1,10 +1,9 @@
-import { ChildProcess, spawn, type SpawnOptionsWithoutStdio } from 'node:child_process';
+import { ChildProcess, spawn, type SpawnOptions, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
-import { basename, dirname, join } from 'node:path';
-import { EventEmitter } from 'node:events';
+import { basename, dirname, join, posix } from 'node:path';
 import { Readable, Writable, type Duplex } from 'node:stream';
 import { constants as osConstants } from 'node:os';
 import { clearTimeout, setTimeout } from 'node:timers';
@@ -17,6 +16,8 @@ import { isOwnerOnlyPath, resolveOwnerOnlySocketRoot } from '@/utils/ipc/ownerOn
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { connectSessionTarget, createTargetHolderSocketPath, readSessionTargetPlacement } from './sessionTargetRelay';
+import { PROCESS_TERMINATION_GRACE_MS } from './terminationPolicy';
+import { resolveHolderWorkspaceCommand } from '@/workspaces/source/holderWorkspaceCommand';
 
 /**
  * Client side of the per-Session holder (`happier-session-holder`, built and
@@ -208,6 +209,11 @@ export type SessionHolderLaunch = Readonly<{
  *   `session_holder_unavailable`, never a direct spawn without custody.
  */
 export function resolveAgentSessionHolderLaunch(input: Readonly<{ role: SessionHolderRole }>): AgentSessionHolderLaunch {
+    return resolveSessionProcessHolderLaunch(input)!;
+}
+
+/** Placement owns every Session process; only unplaced ordinary helpers remain direct. */
+export function resolveSessionProcessHolderLaunch(input: Readonly<{ role?: SessionHolderRole }> = {}): AgentSessionHolderLaunch | null {
     // Placement "target": the daemon placed the holder in the target and relays its provider operations.
     const placement = readSessionTargetPlacement(sessionProcessEnvironment());
     if (input.role === 'primary') {
@@ -225,10 +231,79 @@ export function resolveAgentSessionHolderLaunch(input: Readonly<{ role: SessionH
     if (placement) {
         return Object.freeze({ kind: 'spawn', executablePath: placement.holderPath,
             socketPath: input.role === 'primary' && placement.primarySocketPath ? placement.primarySocketPath : createTargetHolderSocketPath(placement),
-            role: input.role, target: connectSessionTarget(placement) });
+            role: input.role ?? 'auxiliary', target: connectSessionTarget(placement) });
     }
+    if (!input.role) return null;
     return Object.freeze({ kind: 'spawn', executablePath: requireSessionHolderExecutablePath(),
         socketPath: createSessionHolderSocketPath(), role: input.role });
+}
+
+export type SessionProcessPtyTarget = Readonly<{
+    rootPath: string;
+    openHolder(): SessionHolderChild;
+    /** Agent PTYs use the same executable/credential mapping as other Agent launches. */
+    prepareAgentLaunch(request: Readonly<{ command: string; args: readonly string[]; cwd?: string }>): Readonly<{
+        argv: readonly string[]; cwd?: string; env: Readonly<Record<string, string>>;
+    }>;
+}>;
+
+/** Workspace PTYs attach beside the Session Agent, under the same admitted placement. */
+export function resolveSessionProcessPtyTarget(): SessionProcessPtyTarget | null {
+    const placement = readSessionTargetPlacement(sessionProcessEnvironment());
+    if (!placement) return null;
+    if (!placement.primarySocketPath || !placement.launch?.workspace) {
+        throw new PluginError({ code: 'agent_cli_target_unavailable', retryable: false,
+            message: 'The placed Session has no target workspace holder for its terminal' });
+    }
+    const socketPath = placement.primarySocketPath;
+    const workspace = placement.launch.workspace;
+    const target = connectSessionTarget(placement);
+    return { rootPath: workspace.hostRoot,
+        openHolder: () => openSessionHolderWorkspaceClient(socketPath, target),
+        prepareAgentLaunch: request => {
+            const launch = target.prepareLaunch!(request);
+            return { argv: [launch.command, ...launch.args], env: launch.env,
+                ...(launch.cwd === undefined ? {} : { cwd: posix.relative(workspace.targetRoot, launch.cwd) }) };
+        } };
+}
+
+/** Native process adapters share Exec's placement decision; the OS spawn is only for unplaced work. */
+export function spawnSessionProcess(command: string, args: readonly string[], options: SpawnOptions,
+    localSpawn: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess = spawn): ChildProcess {
+    return spawnPlacedSessionProcess(command, args, options) ?? localSpawn(command, args, options);
+}
+
+/** The deadline/output owner can retain its local execFile path when placement is absent. */
+export function spawnPlacedSessionProcess(command: string, args: readonly string[], options: SpawnOptions): ChildProcess | null {
+    const holder = resolveSessionProcessHolderLaunch();
+    if (!holder || holder.kind !== 'spawn') return null;
+    const child = spawnSessionHolderChild({ ...holder, command, args,
+        ...(typeof options.cwd === 'string' ? { cwd: options.cwd } : {}),
+        ...(options.env ? { env: options.env } : {}),
+        ...(options.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}) });
+    if (options.stdio === 'inherit') {
+        process.stdin.pipe(child.stdin);
+        child.stdout.pipe(process.stdout, { end: false });
+        child.stderr.pipe(process.stderr, { end: false });
+        child.once('close', () => process.stdin.unpipe(child.stdin));
+    }
+    return child;
+}
+
+/** Session Bash/workspace commands share the admitted holder source's cwd and environment policy. */
+export function spawnPlacedSessionWorkspaceProcess(command: string, args: readonly string[], options: SpawnOptions): ChildProcess | null {
+    const target = resolveSessionProcessPtyTarget();
+    if (!target) return null;
+    const request = resolveHolderWorkspaceCommand(target.rootPath, {
+        command: options.shell ? typeof options.shell === 'string' ? options.shell : 'sh' : command,
+        args: options.shell ? ['-c', [command, ...args].join(' ')] : args,
+        ...(typeof options.cwd === 'string' ? { cwd: options.cwd } : {}),
+        ...(options.env ? { env: options.env } : {}),
+    });
+    const holder = target.openHolder();
+    const child = holder.spawnStream(request);
+    child.once('close', () => holder.detach());
+    return child;
 }
 
 /**
@@ -356,13 +431,14 @@ function spawnFailureError(ready: Readonly<{ code?: string; kind?: string; errno
  * channel as numbered `O`/`E`/`X` frames and replay under the same ack rule.
  * Shaped like a child process for the workspace source's consumers.
  */
-export class SessionHolderStreamProcess extends EventEmitter {
-    readonly stdin: Writable;
-    readonly stdout = new Readable({ read() {} });
-    readonly stderr = new Readable({ read() {} });
+export class SessionHolderStreamProcess extends ChildProcess {
+    override readonly stdin: Writable;
+    override readonly stdout = new Readable({ read() {} });
+    override readonly stderr = new Readable({ read() {} });
+    declare readonly stdio: [Writable, Readable, Readable, undefined, undefined];
     streamId: number | undefined;
-    exitCode: number | null = null;
-    signalCode: NodeJS.Signals | null = null;
+    override exitCode: number | null = null;
+    override signalCode: NodeJS.Signals | null = null;
     private exited = false;
 
     constructor(private readonly holder: SessionHolderChild) {
@@ -371,6 +447,7 @@ export class SessionHolderStreamProcess extends EventEmitter {
             write: (chunk: Buffer, _encoding, callback) => this.whenStarted(id => holder.sendStreamFrame('I', id, chunk, callback), callback),
             final: (callback) => this.whenStarted(id => holder.sendStreamFrame('C', id, new Uint8Array(), callback), callback),
         });
+        Object.defineProperty(this, 'stdio', { value: [this.stdin, this.stdout, this.stderr, undefined, undefined], configurable: true });
     }
 
     private whenStarted(send: (id: number) => void, callback: (error?: Error | null) => void): void {
@@ -387,15 +464,23 @@ export class SessionHolderStreamProcess extends EventEmitter {
     }
 
     /** Signals the stream's process group in the target. */
-    kill(signal: NodeJS.Signals | number = 'SIGTERM'): boolean {
+    override kill(signal: NodeJS.Signals | number = 'SIGTERM'): boolean {
         if (this.streamId === undefined || this.exited) return false;
         void this.holder.request({ op: 'kill', stream: this.streamId, signal: holderSignalName(signal) });
         return true;
     }
 
     /** TERM, then KILL after `graceMs`, settled by the stream's exit frame. */
-    async terminateTree(graceMs: number): Promise<void> {
-        if (this.exited || this.streamId === undefined) return;
+    async terminateTree(graceMs: number = PROCESS_TERMINATION_GRACE_MS): Promise<void> {
+        if (this.exited) return;
+        if (this.streamId === undefined) {
+            await new Promise<void>(resolve => {
+                const ready = () => { this.off('spawn', ready); this.off('exit', ready); resolve(); };
+                this.once('spawn', ready);
+                this.once('exit', ready);
+            });
+        }
+        if (this.exited) return;
         const exited = new Promise<void>(resolve => this.once('exit', () => resolve()));
         this.kill('SIGTERM');
         let timer: NodeJS.Timeout | undefined;
@@ -523,7 +608,7 @@ export class SessionHolderChild extends ChildProcess {
      * target pids): TERM to the Agent's process group through the holder, KILL
      * after the supervisor's grace, settled by the holder's exit frame.
      */
-    async terminateGroup(options: Readonly<{ graceMs: number; firstSignal?: 'SIGKILL' }>): Promise<void> {
+    async terminateGroup(options: Readonly<{ graceMs: number; firstSignal?: 'SIGHUP' | 'SIGINT' | 'SIGTERM' | 'SIGKILL' }>): Promise<void> {
         if (this.exitSeen) return;
         const exited = new Promise<void>(resolve => this.once('exit', () => resolve()));
         await this.request({ op: 'signal', signal: holderSignalName(options.firstSignal ?? 'SIGTERM') });
@@ -549,13 +634,19 @@ export class SessionHolderChild extends ChildProcess {
         const body = 'op' in request ? { ...request, ...('argv' in request ? { argv: [...request.argv] } : {}) }
             : { op: 'spawn', argv: [...request.argv], ...(request.cwd ? { cwd: request.cwd } : {}), ...(request.env ? { env: request.env } : {}) };
         const label = 'argv' in request ? request.argv[0] : 'watch';
+        const refuseStart = (error: unknown) => {
+            process.emit('error', error instanceof Error ? error : new Error(String(error)));
+            process.observeExit(null, null);
+        };
         void this.request(body)
             .then((reply) => {
                 const value = reply.value as { stream?: unknown } | undefined;
                 if (reply.ok !== true || typeof value?.stream !== 'number') {
                     const code = typeof reply.code === 'string' ? reply.code : typeof reply.error === 'string' ? reply.error : 'spawn_failed';
-                    process.observeExit(null, null);
-                    process.emit('error', Object.assign(new Error(`Session holder could not start ${label}`), { code, syscall: 'spawn' }));
+                    refuseStart(this.target && code === 'holder_disconnected'
+                        ? new PluginError({ code: 'agent_cli_target_unavailable', retryable: false,
+                            message: 'The Session target workspace holder is unavailable' })
+                        : Object.assign(new Error(`Session holder could not start ${label}`), { code, syscall: 'spawn' }));
                     return;
                 }
                 process.streamId = value.stream;
@@ -564,7 +655,7 @@ export class SessionHolderChild extends ChildProcess {
                 process.emit('spawn');
                 for (const [kind, body] of this.unclaimedStreamFrames.get(value.stream) ?? []) process.deliver(kind, body);
                 this.unclaimedStreamFrames.delete(value.stream);
-            });
+            }, refuseStart);
         return process;
     }
 
@@ -700,7 +791,12 @@ export class SessionHolderChild extends ChildProcess {
     /** The Agent never started: queued input fails instead of waiting forever. */
     abandonPendingInput(error: Error): void {
         this.closed = true;
+        this.exitSeen = true;
         for (const [, , callback] of this.pendingFrames.splice(0)) callback(error);
+        this.stdoutStream.push(null);
+        this.stderrStream.push(null);
+        // Match a failed OS spawn: error first, then closed pipes and close.
+        process.nextTick(() => this.emit('close', null, null));
     }
 
     /** An adopting caller wires its listeners first, then starts delivery. */
@@ -1031,7 +1127,8 @@ export function openSessionHolderWorkspaceClient(socketPath: string, target?: Se
     const client = new SessionHolderChild(`${socketPath}.ops`, 'auxiliary', target);
     connectHolder(client, (hello) => { client.holderPid = hello.holderPid; }, (error) => {
         client.holderConnectionFailed = true;
-        client.abandonPendingInput(error);
+        client.abandonPendingInput(target ? new PluginError({ code: 'agent_cli_target_unavailable', retryable: false,
+            message: 'The Session target workspace holder is unavailable' }, { cause: error }) : error);
     });
     return client;
 }

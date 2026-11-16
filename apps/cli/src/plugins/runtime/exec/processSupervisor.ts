@@ -22,14 +22,14 @@ import { classifySpawnFailure, spawnFailureMessage, type SpawnFailure, type Spaw
 import type { OwnerRemainderPort } from '@/daemon/processes/endOwnerRemainder';
 import { parseProcessOwnerTag, PROCESS_OWNER_ENV_KEY, type ProcessOwnerRef } from '@/processes/ownerTag';
 import { observeProcessLaunch } from '@/processes/launchNotification';
-import { adoptSessionHolderChild, SessionHolderChild, spawnSessionHolderChild, type AgentSessionHolderLaunch } from '@/subprocess/supervision/sessionHolder';
+import { adoptSessionHolderChild, resolveSessionProcessHolderLaunch, SessionHolderChild, spawnSessionHolderChild, type AgentSessionHolderLaunch } from '@/subprocess/supervision/sessionHolder';
 import { logger } from '@/ui/logger';
+import { PROCESS_TERMINATION_GRACE_MS } from '@/subprocess/supervision/terminationPolicy';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 
 type DisposeReason = Extract<PluginProcessTerminationRequest, { kind: 'dispose' }>['reason'];
 export type SupervisedPluginGracefulStop = (signal: AbortSignal) => Promise<void>;
-/** Graceful-stop budget before termination; shared by every host-owned process stop. */
-export const PROCESS_TERMINATION_GRACE_MS = 100;
+export { PROCESS_TERMINATION_GRACE_MS } from '@/subprocess/supervision/terminationPolicy';
 
 // Host-internal workload guard pending RA21 traffic/platform measurement. Authors may
 // select a smaller result buffer, but cannot turn process supervision into an
@@ -151,7 +151,7 @@ type SpawnSupervisedPluginProcessInput = Readonly<{
      * `adopt` attaches to an Agent a previous runner started (by holder address
      * from the launch decision, or an already attached child).
      */
-    sessionHolder?: AgentSessionHolderLaunch
+    sessionHolder?: AgentSessionHolderLaunch | null
         | Readonly<{ kind: 'spawn'; executablePath: string; socketPath: string }>
         | Readonly<{ kind: 'adopt'; child: SessionHolderChild }>;
 }>;
@@ -230,7 +230,7 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
     );
     const recordRuntimeLimitMeasurement = input.recordRuntimeLimitMeasurement;
     const spawnStartedAt = performance.now();
-    const holder = input.sessionHolder;
+    const holder = input.sessionHolder === undefined ? resolveSessionProcessHolderLaunch() : input.sessionHolder;
     const child: ChildProcessWithoutNullStreams = holder?.kind === 'adopt'
         ? 'child' in holder ? holder.child : adoptSessionHolderChild({ socketPath: holder.socketPath, role: holder.role,
             ...('turnId' in holder && holder.turnId ? { turnId: holder.turnId } : {}),

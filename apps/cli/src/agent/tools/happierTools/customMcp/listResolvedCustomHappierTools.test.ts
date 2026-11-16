@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 const connectMock = vi.fn();
 const listToolsMock = vi.fn();
 const closeMock = vi.fn();
-const stderrResumeMock = vi.fn();
-const constructedTransports: Array<{ command: string; stderr?: string }> = [];
 
+// Failure is injected at the external SDK connection boundary; the transport
+// and subprocess cleanup use their production owners.
 vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
   Client: class MockClient {
-    async connect(transport: { command: string }) {
+    transport?: Transport;
+    async connect(transport: Transport) {
+      this.transport = transport;
+      await transport.start();
       return await connectMock(transport);
     }
 
@@ -17,24 +21,8 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
     }
 
     async close() {
+      await this.transport?.close();
       return await closeMock();
-    }
-  },
-}));
-
-vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
-  StdioClientTransport: class MockStdioClientTransport {
-    command: string;
-    args: string[];
-    env: Record<string, string>;
-    stderr = { resume: stderrResumeMock };
-    async close() {}
-
-    constructor(config: { command: string; args?: string[]; env?: Record<string, string>; stderr?: string }) {
-      this.command = config.command;
-      this.args = config.args ?? [];
-      this.env = config.env ?? {};
-      constructedTransports.push({ command: this.command, stderr: config.stderr });
     }
   },
 }));
@@ -44,19 +32,10 @@ describe('listResolvedCustomHappierTools', () => {
     connectMock.mockReset();
     listToolsMock.mockReset();
     closeMock.mockReset();
-    stderrResumeMock.mockReset();
-    constructedTransports.length = 0;
   });
 
   it('skips failed MCP sources and keeps listing remaining tools', async () => {
-    const listedSources: string[] = [];
-
-    connectMock.mockImplementation(async (transport: { command: string }) => {
-      listedSources.push(transport.command);
-      if (transport.command === 'fail-server') {
-        throw new Error('Connection closed');
-      }
-    });
+    connectMock.mockRejectedValueOnce(new Error('Connection closed'));
 
     listToolsMock.mockResolvedValue({
       tools: [{ name: 'get_marker', description: 'Read QA marker', inputSchema: { type: 'object' } }],
@@ -66,13 +45,12 @@ describe('listResolvedCustomHappierTools', () => {
 
     const result = await listResolvedCustomHappierTools({
       mcpServers: {
-        failing: { command: 'fail-server', args: [], env: {} },
-        qa_marker_stdio_20260306: { command: 'ok-server', args: [], env: {} },
+        failing: { command: process.execPath, args: ['-e', 'process.stdin.resume()'] },
+        qa_marker_stdio_20260306: { command: process.execPath, args: ['-e', 'process.stdin.resume()'] },
       },
       processEnv: {},
     });
 
-    expect(listedSources).toEqual(['fail-server', 'ok-server']);
     expect(result.tools).toEqual([
       expect.objectContaining({
         source: 'qa_marker_stdio_20260306',
@@ -86,11 +64,6 @@ describe('listResolvedCustomHappierTools', () => {
         error: 'Connection closed',
       },
     ]);
-    expect(constructedTransports).toEqual([
-      { command: 'fail-server', stderr: 'pipe' },
-      { command: 'ok-server', stderr: 'pipe' },
-    ]);
-    expect(stderrResumeMock).toHaveBeenCalledTimes(2);
     expect(closeMock).toHaveBeenCalledTimes(2);
   });
 });

@@ -731,7 +731,6 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       && terminal.terminalKey === parsed.data.terminalKey && terminal.sessionId === sessionId
       && sameTerminalCustody(getSessionManager().getCustody(terminal.terminalId), projectCustody));
     if (projectCustody && !warm && params.deps?.admissionDrain?.isQuiescing()) return err('terminal_busy');
-    await getSessionManager().prepare?.();
     let nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
     let prepared: Extract<Awaited<ReturnType<typeof prepareProjectShell>>, { ok: true }> | undefined;
     try {
@@ -922,7 +921,6 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       ?? ('custody' in cwd && cwd.custody?.kind === 'session' ? cwd.custody.sessionId : undefined);
 
     const projectCustody = 'custody' in cwd && cwd.custody?.kind === undefined ? cwd.custody : undefined;
-    await getSessionManager().prepare?.();
     let nativeOperation: Awaited<ReturnType<ApiMachineClient['prepareNativeOperation']>> | undefined;
     let prepared: Extract<Awaited<ReturnType<typeof prepareProjectShell>>, { ok: true }> | undefined;
     try {
