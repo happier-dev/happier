@@ -876,6 +876,7 @@ jobs:
     if: always() && needs.resolve_resume.result == 'success' && needs.deploy_plan.outputs.deploy_ui_resume_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_ui_requested == 'true' && (needs.deploy_plan.outputs.deploy_ui_desktop_mode != 'none' || needs.deploy_plan.outputs.deploy_ui_expo_action == 'ota' || needs.deploy_plan.outputs.deploy_ui_expo_action == 'full')
     needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate]
     permissions:
+      packages: write
       contents: write
       actions: write
     uses: ./.github/workflows/promote-ui.yml
@@ -901,6 +902,7 @@ jobs:
     if: always() && (needs.prepare_ui.result == 'success' || needs.prepare_ui.result == 'skipped') && needs.resolve_resume.result == 'success' && needs.deploy_plan.outputs.deploy_ui_resume_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_ui_requested == 'true' && (needs.deploy_plan.outputs.deploy_ui_web != 'true' || needs.verify_ui_web_candidate.result == 'success')
     needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate, publish_cli_binaries, prepare_ui, verify_ui_web_candidate]
     permissions:
+      packages: write
       contents: write
       actions: write
     uses: ./.github/workflows/promote-ui.yml
@@ -931,6 +933,7 @@ jobs:
     if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.deploy_server_complete != 'true' && needs.plan.result == 'success' && needs.prepare_release_candidate.result == 'success' && needs.promote_server_runtime.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_server_requested == 'true'
     needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate, promote_server_runtime]
     permissions:
+      packages: write
       contents: write
       actions: read
     uses: ./.github/workflows/promote-server.yml
@@ -942,6 +945,7 @@ jobs:
       allow_cross_promote: true
       bump: none
       publish_runtime_release: false
+      server_version: ${{ needs.promote_server_runtime.outputs.version }}
       run_tests: false
 
   publish_server_runtime:

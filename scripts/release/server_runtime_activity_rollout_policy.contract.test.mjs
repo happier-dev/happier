@@ -163,9 +163,10 @@ test('promote-server performs the write-capable deploy-ref mutation only from a 
   assert.match(promotionStep, /node "\$RUNNER_TEMP\/promote-server-deploy-ref\.mjs"/);
   assert.doesNotMatch(promotionStep, /scripts\/pipeline\/run\.mjs/);
   assert.doesNotMatch(promotionStep, /git rev-parse HEAD/);
-  const webhookStep = workflowStep(workflow, 'Trigger trusted deploy webhook(s) (force_deploy, no branch change)');
-  assert.match(webhookStep, /--sha "\$\{\{ steps\.promote_ref\.outputs\.new_sha \}\}"/);
-  assert.doesNotMatch(webhookStep, /git rev-parse|needs\.validate_candidate\.outputs/);
+  const deployStep = workflowStep(workflow, 'Deploy exact hosted images');
+  assert.match(deployStep, /node "\$RUNNER_TEMP\/deploy-hosted-images\.mjs" --images "\$HOSTED_IMAGES"/);
+  assert.match(deployStep, /needs\.publish_hosted\.outputs\.hosted_images/);
+  assert.doesNotMatch(deployStep, /git rev-parse|needs\.validate_candidate\.outputs/);
 });
 
 test('trusted server deploy mutation ignores a candidate-controlled helper and rejects stale ref state', () => {

@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { resolveUiConfig } from './uiConfig';
 
 describe('resolveUiConfig', () => {
+    it('disables the bundled UI and its required check through runtime overrides', () => {
+        expect(resolveUiConfig({ HAPPIER_SERVER_UI_DIR: '', HAPPIER_SERVER_UI_REQUIRED: '0',
+            HAPPIER_SERVER_LIGHT_UI_DIR: '/bundled-ui', HAPPIER_SERVER_LIGHT_UI_REQUIRED: '1' })).toMatchObject({ dir: null, required: false });
+    });
     it('returns null dir when UI is not configured', () => {
         const cfg = resolveUiConfig({});
         expect(cfg.dir).toBeNull();

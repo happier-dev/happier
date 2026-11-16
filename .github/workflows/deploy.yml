@@ -15,8 +15,18 @@ on:
         description: "Confirm — Choose the exact deploy action (mobile-friendly)"
         required: true
         type: string
+      hosted_images:
+        description: "Exact GHCR image map for server/UI redeployment or rollback"
+        required: false
+        default: "{}"
+        type: string
   workflow_dispatch:
     inputs:
+      hosted_images:
+        description: "Exact GHCR image map for server/UI redeployment or rollback (from publisher output)"
+        required: false
+        default: "{}"
+        type: string
       environment:
         description: "Target — Environment (used for Environment-scoped vars/secrets)"
         required: true
@@ -203,6 +213,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Trigger deploy webhook(s)
+        if: inputs.component != 'server' && inputs.component != 'ui'
         env:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_ENVIRONMENT: ${{ steps.target.outputs.environment }}
@@ -224,3 +235,18 @@ jobs:
             --component "$DEPLOY_COMPONENT" \
             --repository "$DEPLOY_REPOSITORY" \
             --ref-name "$DEPLOY_REF_NAME"
+
+      - name: Deploy exact hosted images
+        if: inputs.component == 'server' || inputs.component == 'ui'
+        env:
+          HOSTED_IMAGES: ${{ inputs.hosted_images }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DOKPLOY_API_URL: ${{ vars.DOKPLOY_API_URL }}
+          DOKPLOY_UI_SERVER_URL: ${{ vars[format('HAPPIER_{0}_SERVER_URL', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          DOKPLOY_API_APPLICATION_ID: ${{ inputs.component == 'server' && vars[format('DOKPLOY_{0}_API_APPLICATION_ID', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] || '' }}
+          DOKPLOY_WORKER_APPLICATION_ID: ${{ inputs.component == 'server' && vars[format('DOKPLOY_{0}_WORKER_APPLICATION_ID', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] || '' }}
+          DOKPLOY_UI_APPLICATION_ID: ${{ inputs.component == 'ui' && vars[format('DOKPLOY_{0}_UI_APPLICATION_ID', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] || '' }}
+          CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
+          CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
+        run: node scripts/pipeline/deploy/deploy-hosted-images.mjs --images "$HOSTED_IMAGES"

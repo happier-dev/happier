@@ -11,7 +11,7 @@ on:
           - preview
           - production
       force_deploy:
-        description: "Deploy — Force deploy webhook trigger even if deploy branch is already up to date"
+        description: "Deploy — Force the exact image deployment even if deploy branch is already up to date"
         required: true
         default: false
         type: boolean
@@ -40,6 +40,11 @@ on:
           - patch
           - minor
           - major
+      server_version:
+        description: "Exact verified server artifact version (required unless publishing runtime)"
+        required: false
+        default: ""
+        type: string
       publish_runtime_release:
         description: "Publish — Build + publish server runtime binaries/manifests to GitHub Releases (server-preview/server-stable)"
         required: true
@@ -52,7 +57,7 @@ on:
         required: true
         type: string
       force_deploy:
-        description: "Deploy — Force deploy webhook trigger even if deploy branch is already up to date"
+        description: "Deploy — Force the exact image deployment even if deploy branch is already up to date"
         required: false
         default: false
         type: boolean
@@ -75,6 +80,10 @@ on:
         description: "Versions — Version bump on source ref (server)"
         required: false
         default: none
+        type: string
+      server_version:
+        required: false
+        default: ""
         type: string
       publish_runtime_release:
         description: "Publish — Build + publish server runtime binaries/manifests to GitHub Releases (server-preview/server-stable)"
@@ -420,9 +429,27 @@ jobs:
       release_message: ""
     secrets: inherit
 
-  promote_deploy_ref:
+  publish_hosted:
     if: always() && needs.finalize_source.result == 'success' && (needs.publish_runtime_release.result == 'success' || needs.publish_runtime_release.result == 'skipped')
-    needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate, finalize_source, publish_runtime_release]
+    needs: [finalize_source, validate_candidate, publish_runtime_release]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-docker.yml
+    secrets: inherit
+    with:
+      channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+      source_ref: ${{ needs.finalize_source.outputs.authorized_sha }}
+      authorized_sha: ${{ needs.finalize_source.outputs.authorized_sha }}
+      registries: ghcr
+      build_relay: false
+      build_dev_box: false
+      hosted_services: api,worker
+      server_version: ${{ needs.publish_runtime_release.outputs.version || inputs.server_version }}
+
+  promote_deploy_ref:
+    if: always() && needs.publish_hosted.result == 'success' && needs.finalize_source.result == 'success' && (needs.publish_runtime_release.result == 'success' || needs.publish_runtime_release.result == 'skipped')
+    needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate, finalize_source, publish_runtime_release, publish_hosted]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release-shared
@@ -448,8 +475,8 @@ jobs:
             "$RUNNER_TEMP/deploy-ref-cas.mjs"
           cp scripts/pipeline/github/promote-server-deploy-ref.mjs \
             "$RUNNER_TEMP/promote-server-deploy-ref.mjs"
-          cp scripts/pipeline/deploy/trigger-webhooks.mjs \
-            "$RUNNER_TEMP/trigger-server-deploy-webhooks.mjs"
+          cp scripts/pipeline/deploy/deploy-hosted-images.mjs \
+            "$RUNNER_TEMP/deploy-hosted-images.mjs"
           cp scripts/pipeline/github/resolve-server-promotion-inputs.mjs \
             "$RUNNER_TEMP/resolve-server-promotion-inputs.mjs"
 
@@ -547,19 +574,15 @@ jobs:
             --summary-file "$GITHUB_STEP_SUMMARY" \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Trigger trusted deploy webhook(s) (force_deploy, no branch change)
-        if: inputs.force_deploy && steps.promote_ref.outputs.changed == 'false'
+      - name: Deploy exact hosted images
+        if: steps.promote_ref.outputs.changed == 'true' || inputs.force_deploy
         env:
+          HOSTED_IMAGES: ${{ needs.publish_hosted.outputs.hosted_images }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DOKPLOY_API_URL: ${{ vars.DOKPLOY_API_URL }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          DOKPLOY_API_APPLICATION_ID: ${{ vars[format('DOKPLOY_{0}_API_APPLICATION_ID', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}
+          DOKPLOY_WORKER_APPLICATION_ID: ${{ vars[format('DOKPLOY_{0}_WORKER_APPLICATION_ID', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
-          DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
-          HAPPIER_SERVER_API_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS }}
-          HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-        run: |
-          node "$RUNNER_TEMP/trigger-server-deploy-webhooks.mjs" \
-            --environment "$DEPLOY_ENVIRONMENT" \
-            --component server \
-            --repository "${{ job.workflow_repository }}" \
-            --ref-name "deploy/${DEPLOY_ENVIRONMENT}/server" \
-            --sha "${{ steps.promote_ref.outputs.new_sha }}"
+        run: node "$RUNNER_TEMP/deploy-hosted-images.mjs" --images "$HOSTED_IMAGES"

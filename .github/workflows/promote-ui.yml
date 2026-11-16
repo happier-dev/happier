@@ -11,7 +11,7 @@ on:
           - preview
           - production
       force_deploy:
-        description: "Deploy — Force deploy webhook trigger even if deploy branch is already up to date"
+        description: "Deploy — Force the exact image deployment even if deploy branch is already up to date"
         required: true
         default: false
         type: boolean
@@ -41,7 +41,7 @@ on:
           - minor
           - major
       deploy_web:
-        description: "Deploy — Promote deploy/<env>/ui (web deploy on push)"
+        description: "Deploy — Promote deploy/<env>/ui and deploy its exact web image"
         required: true
         default: true
         type: boolean
@@ -86,7 +86,7 @@ on:
         required: true
         type: string
       force_deploy:
-        description: "Deploy — Force deploy webhook trigger even if deploy branch is already up to date"
+        description: "Deploy — Force the exact image deployment even if deploy branch is already up to date"
         required: false
         default: false
         type: boolean
@@ -111,7 +111,7 @@ on:
         default: none
         type: string
       deploy_web:
-        description: "Deploy — Promote deploy/<env>/ui (web deploy on push)"
+        description: "Deploy — Promote deploy/<env>/ui and deploy its exact web image"
         required: false
         default: true
         type: boolean
@@ -521,9 +521,26 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  publish_hosted:
+    if: inputs.deploy_web && !inputs.preparation_only
+    needs: [apply_bump, validate_candidate]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-docker.yml
+    secrets: inherit
+    with:
+      channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+      source_ref: ${{ needs.apply_bump.outputs.release_sha }}
+      authorized_sha: ${{ needs.apply_bump.outputs.release_sha }}
+      registries: dockerhub,ghcr
+      build_relay: false
+      build_dev_box: false
+      hosted_services: ui
+
   promote:
-    if: ${{ !inputs.preparation_only }}
-    needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate]
+    if: ${{ !cancelled() && !inputs.preparation_only && needs.validate_candidate.result == 'success' && (needs.publish_hosted.result == 'success' || needs.publish_hosted.result == 'skipped') }}
+    needs: [release_actor_guard, resolve_source, apply_bump, validate_candidate, publish_hosted]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release-shared
@@ -635,29 +652,18 @@ jobs:
           node scripts/pipeline/github/promote-deploy-branch.mjs \
             --deploy-environment "$DEPLOY_ENVIRONMENT" --component ui --sha "$RELEASE_SHA" \
             --summary-file "$GITHUB_STEP_SUMMARY" --github-output "$GITHUB_OUTPUT"
-      - name: Trigger deploy webhooks when forced without branch change
-        if: inputs.deploy_web && inputs.force_deploy && steps.promote_ref.outputs.changed == 'false'
+      - name: Deploy exact hosted images
+        if: inputs.deploy_web && (steps.promote_ref.outputs.changed == 'true' || inputs.force_deploy)
         env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          HOSTED_IMAGES: ${{ needs.publish_hosted.outputs.hosted_images }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          DOKPLOY_API_URL: ${{ vars.DOKPLOY_API_URL }}
+          DOKPLOY_UI_SERVER_URL: ${{ vars[format('HAPPIER_{0}_SERVER_URL', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          DOKPLOY_UI_APPLICATION_ID: ${{ vars[format('DOKPLOY_{0}_UI_APPLICATION_ID', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
-          DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
-          HAPPIER_UI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_UI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_UI_DEPLOY_WEBHOOKS || secrets.HAPPIER_UI_DEPLOY_WEBHOOKS }}
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          DEPLOY_SHA: ${{ steps.promote_ref.outputs.new_sha }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          node scripts/pipeline/deploy/trigger-webhooks.mjs \
-            --environment "$DEPLOY_ENVIRONMENT" --component ui --repository "$REPOSITORY" \
-            --ref-name "deploy/$DEPLOY_ENVIRONMENT/ui" --sha "$DEPLOY_SHA"
-      - name: Deploy note
-        if: inputs.deploy_web
-        env:
-          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          DEPLOY_SHA: ${{ steps.promote_ref.outputs.new_sha }}
-        run: |
-          echo "Web deployment is triggered automatically by pushes to deploy/$DEPLOY_ENVIRONMENT/ui." >> "$GITHUB_STEP_SUMMARY"
-          echo "- deploy_branch_sha: $DEPLOY_SHA" >> "$GITHUB_STEP_SUMMARY"
+        run: node scripts/pipeline/deploy/deploy-hosted-images.mjs --images "$HOSTED_IMAGES"
 
   mobile_native:
     name: Mobile native (local runner)
