@@ -14,6 +14,7 @@ type NativeReviewInput = Readonly<{ exec: Pick<ExecService, 'run'>; docker: Mana
 type Effect = DevcontainerEffectReviewV1['effects'][number];
 const reviewComposeNamespace = 'happierreview';
 const namespaceParameter = '${managedMachineNamespace}';
+export const DEVCONTAINER_PREPARATION_HOME = '/opt/happier';
 /** Native Compose accepts the existing managed row identity as its namespace. */
 export function devcontainerComposeProjectName(managedMachineId: string): string {
   return `happier${Buffer.from(managedMachineId).toString('hex')}`;
@@ -124,7 +125,11 @@ export async function readDevcontainerEffectReview(input: NativeReviewInput, raw
     const keys = strings(imageConfig.Env).map(value => value.split('=', 1)[0]!).filter(Boolean);
     if (keys.length) effects.push({ scope: 'child', kind: 'environment', title: 'Image environment', details: keys });
     const reviewedEffectDigest = createHash('sha256').update(canonical({ ...materialized, runtime: materialized.runtime ?? 'docker', imageId: nativeImage.Id, imageConfig })).digest('hex');
-    return { launch: DevcontainerLaunchSchema.parse({ ...materialized, reviewedEffectDigest }), effectReview: { kind: 'devcontainer' as const, reviewedEffectDigest, effects } };
+    const arch = nativeImage.Architecture === 'amd64' ? 'x64' as const : nativeImage.Architecture === 'arm64' ? 'arm64' as const : undefined;
+    return { launch: DevcontainerLaunchSchema.parse({ ...materialized, reviewedEffectDigest }),
+      ...(nativeImage.Os === 'linux' && arch ? { preparationGuest: {
+        target: { os: 'linux' as const, arch }, remoteHomeDir: DEVCONTAINER_PREPARATION_HOME,
+      } } : {}), effectReview: { kind: 'devcontainer' as const, reviewedEffectDigest, effects } };
   }
   const { workspaceFolder, configPath } = materialized;
   if (!workspaceFolder || !configPath || !input.devcontainer) fail('invalid_request');

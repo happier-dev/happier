@@ -397,6 +397,29 @@ describe('Devcontainer native roles', () => {
     expect(await native().provider.rebuild({ ...resource, ...launch }, launch.reviewedEffectDigest)).toMatchObject({ kind: 'bound',
       resource: { value: { configuration, containerId: 'b'.repeat(64) } } });
   });
+  it.each(['docker', 'podman'] as const)('keeps the %s holder carrier bound to invocation cancellation', async runtime => {
+    const h = imageNative(runtime);
+    const controller = new AbortController();
+    const spawn = vi.fn(h.tools.exec.spawn);
+    const provider = createDevcontainerProvider({ ...h.tools, signal: controller.signal,
+      exec: { ...h.tools.exec, spawn } });
+    const query = { runtime, configuration: { kind: 'image' as const, image: 'example:latest' } };
+    const reviewed = await readDevcontainerEffectReview(h.tools, query);
+    const acquired = await provider.acquire(reviewed.launch, 'managed-a');
+    if (acquired.kind !== 'bound') throw new Error('Expected a retained image resource');
+    const channel = await provider.stream(acquired.resource.value, ['hshim', 'attach', '--socket', '/s']);
+    try {
+      expect(spawn).toHaveBeenCalledWith(expect.objectContaining({ args: expect.arrayContaining([
+        'exec', '--interactive', containerId, 'hshim', 'attach', '--socket', '/s',
+      ]) }), { signal: controller.signal, outputDelivery: 'invocation' });
+      controller.abort();
+      expect(spawn.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+      // The existing Exec host owns process termination. Carrier cancellation
+      // must not delete or stop a shared-kept sandbox behind its lifecycle owner.
+      expect(h.requests.some(request => ['stop', 'rm'].includes(request.args?.[0] ?? ''))).toBe(false);
+    } finally { await channel.dispose(); }
+  });
+
   it.each(['docker', 'podman'] as const)('creates an image with retained volume through %s and enrolls guest commands without the Dev Containers CLI', async runtime => {
     const { requests, spawns, tools, volume } = imageNative(runtime);
     const dependencies: string[] = [];

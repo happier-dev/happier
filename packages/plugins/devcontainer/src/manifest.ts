@@ -1,10 +1,11 @@
 import { Buffer } from 'node:buffer';
+import { platform } from 'node:os';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolJsonValue, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import {
-  defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
+  defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, defineMachineProvisionerPreparationSchemas, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerNativeStreamResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
   MachineProvisionerOptionsResultV1Schema,
   MachineProvisionerResizeResultV1Schema,
@@ -13,10 +14,14 @@ import type { MachineProvisionerAuthorDefinitionV1, MachineProvisionerCheckResul
 import { createDevcontainerProvider, DEVCONTAINER_PLUGIN_ID, DEVCONTAINER_PROVISIONER_ID } from './machine/provider.js';
 import { DevcontainerResourceSchema, DevcontainerReviewQuerySchema, DevcontainerNativeOperationSchema, DevcontainerRuntimeSchema } from './machine/schemas.js';
 import { readDevcontainerEffectReview, readDevcontainerNativeEnvironment } from './machine/effectReview.js';
+import { DockerRuntimeRepairInputSchema, dockerRuntimeRepairSources, installDockerRuntime, type DockerRuntimeRepairInput } from './machine/runtimeRepair.js';
+import { createDevcontainerPreparation, devcontainerPreparationOperation, resolveDevcontainerPreparationInput, DevcontainerPreparationInputSchema, DevcontainerPreparedImageSchema, DevcontainerPreparationOperationSchema } from './machine/preparation.js';
 
 export const DEVCONTAINER_ROLE_SCHEMAS = defineMachineProvisionerSchemas({ launch: DevcontainerReviewQuerySchema, resource: DevcontainerResourceSchema });
 export const DEVCONTAINER_RECONCILIATION_SCHEMAS = defineMachineProvisionerReconciliationSchemas({ launch: DevcontainerReviewQuerySchema, resource: DevcontainerResourceSchema,
   nativeOperation: DevcontainerNativeOperationSchema });
+const preparationSchemas = defineMachineProvisionerPreparationSchemas({ input: DevcontainerPreparationInputSchema, launch: DevcontainerReviewQuerySchema,
+  artifact: DevcontainerPreparedImageSchema, nativeOperation: DevcontainerPreparationOperationSchema });
 const processAccess = 'devcontainer-process';
 const devcontainerDependencyId = 'devcontainer-cli';
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess] } as const;
@@ -29,16 +34,21 @@ class MissingDependency extends Error {
 function unavailable(error: unknown): MachineProvisionerCheckResultV1 {
   const failure = { available: false, code: code(error) };
   if (!(error instanceof MissingDependency)) return failure;
+  const recipeRepair = error.dependencyId === 'docker' && platform() === 'linux';
   return { ...failure, prerequisites: [{
     requirement: { kind: 'managedDependency' as const, id: { pluginId: DEVCONTAINER_PLUGIN_ID, localId: error.dependencyId } },
     status: 'unavailable' as const,
+    ...(recipeRepair ? { setupSources: dockerRuntimeRepairSources() } : {}),
     repairAction: { action: { pluginId: DEVCONTAINER_PLUGIN_ID,
-      localId: error.dependencyId === devcontainerDependencyId ? 'install-cli' : 'runtime-install-docs' },
-      input: error.dependencyId === devcontainerDependencyId ? {} : { runtime: error.dependencyId } },
+      localId: error.dependencyId === devcontainerDependencyId ? 'install-cli' : recipeRepair ? 'install-runtime' : 'runtime-install-docs' },
+      input: error.dependencyId === devcontainerDependencyId || recipeRepair ? {} : { runtime: error.dependencyId } },
   }] };
 }
 async function provider(context: PluginInvocationContext, selection?: NativeSelection) {
   return createDevcontainerProvider(await nativeTools(context, selection));
+}
+async function preparation(context: PluginInvocationContext, runtime?: 'docker' | 'podman') {
+  return createDevcontainerPreparation(await nativeTools(context, { runtime }));
 }
 async function nativeTools(context: PluginInvocationContext, selection?: NativeSelection) {
   const executable = async (id: 'docker' | 'podman' | 'devcontainer-cli') => {
@@ -62,6 +72,9 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
   enrollmentRole: 'sandbox',
   launchSchema: DevcontainerReviewQuerySchema.jsonSchema, resourceSchema: DevcontainerResourceSchema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'],
+  // Arbitrary images and authored devcontainers do not guarantee the kernel
+  // privileges needed by an Agent's nested native sandbox.
+  sessionPlacement: { kind: 'controller-local', supportsAgentNativeSandbox: false },
   prerequisites: [],
   billing: { location: 'local', stoppedBilling: 'not-billed' },
   retention: { supportedIntents: ['start', 'stop', 'delete', 'rebuild'] },
@@ -71,6 +84,10 @@ export const DEVCONTAINER_MACHINE_PROVISIONER = {
   actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy', rebuild: 'rebuild', resize: 'resize' },
   bootstrapTransport: { kind: 'native', exec: 'exec', putFile: 'put-file', stream: 'stream' },
   reconciliation: { nativeOperationSchema: DevcontainerNativeOperationSchema.jsonSchema, action: 'reconcile' },
+  preparation: { inputSchema: DevcontainerPreparationInputSchema.jsonSchema, artifactSchema: DevcontainerPreparedImageSchema.jsonSchema,
+    nativeOperationSchema: DevcontainerPreparationOperationSchema.jsonSchema,
+    artifactLaunchPath: 'launch',
+    actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
 export const DEVCONTAINER_PLUGIN = definePlugin({
@@ -86,6 +103,42 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
   },
   machineProvisioners: { [DEVCONTAINER_PROVISIONER_ID]: DEVCONTAINER_MACHINE_PROVISIONER },
   actions: {
+    'prepare-build': { ...defaults, title: 'Prepare container image', dangerLevel: 'writesLocal',
+      confirmation: { title: 'Build this prepared container image?' },
+      inputSchema: preparationSchemas.buildInput, resultSchema: preparationSchemas.buildResult,
+      async run(input, context) {
+        try {
+          const resolved = resolveDevcontainerPreparationInput(input.input);
+          return await (await preparation(context, resolved.launch.runtime)).build(input.operationId, resolved);
+        }
+        catch (error) { return { kind: 'refused' as const, code: code(error) }; }
+      } },
+    'prepare-inspect': { ...defaults, title: 'Inspect prepared container image', dangerLevel: 'safe',
+      inputSchema: preparationSchemas.inspectInput, resultSchema: preparationSchemas.inspectResult,
+      async run(input, context) {
+        const operation = 'nativeOperation' in input ? input.nativeOperation.value
+          : devcontainerPreparationOperation(input.operationId, { launch: input.launch });
+        try { return await (await preparation(context, operation.runtime)).inspect(operation); }
+        catch (error) { return { kind: 'unknown' as const, code: code(error), nativeOperationRef: {
+          contributionRef: { pluginId: DEVCONTAINER_PLUGIN_ID, localId: DEVCONTAINER_PROVISIONER_ID }, schemaVersion: 1, value: operation,
+        } }; }
+      } },
+    'prepare-destroy': { ...defaults, title: 'Delete owned prepared container image', dangerLevel: 'destructive',
+      confirmation: { title: 'Delete this prepared container image?' },
+      inputSchema: preparationSchemas.destroyInput, resultSchema: preparationSchemas.destroyResult,
+      async run(input, context) {
+        const reference = input.artifact ?? input.nativeOperation!;
+        try { return await (await preparation(context, reference.value.runtime)).destroy(reference.value); }
+        catch (error) { return { kind: 'unknown' as const, code: code(error), nativeOperationRef: reference }; }
+      } },
+    'install-runtime': { title: 'Set up Docker Engine', scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
+      execution: { target: 'daemon' }, dangerLevel: 'writesLocal',
+      confirmation: { title: 'Set up Docker Engine on this computer?', confirmLabel: 'Set up' },
+      inputSchema: DockerRuntimeRepairInputSchema, resultSchema: defineProtocolJsonValue(),
+      async run(input, context) {
+        // The host validates this JSON input against the recipe-owned mode schema.
+        return installDockerRuntime(context, input as DockerRuntimeRepairInput);
+      } },
     'runtime-install-docs': { title: 'Install a container runtime', surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], dangerLevel: 'safe',
       execution: { target: 'client', client: { artifactId: 'runtime-install', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] },
       inputSchema: defineProtocolObject({ runtime: DevcontainerRuntimeSchema }, { policy: 'closed' }),
@@ -125,7 +178,8 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
           const image = input.configuration?.kind === 'image' ? input.configuration.image : undefined;
           return { base: { available: true, prerequisites: [], guestPlatform: 'linux' as const,
             launch: input, effectReview: reviewed.effectReview,
-            ...(image ? { nativeFacts: { image: { id: image, title: image } } } : {}) }, dimensions };
+            ...(image ? { nativeFacts: { image: { id: image, title: image },
+              ...('preparationGuest' in reviewed && reviewed.preparationGuest ? { preparationGuest: reviewed.preparationGuest } : {}) } } : {}) }, dimensions };
         } catch (error) {
           if (!(error instanceof MissingDependency)) throw error;
           return { base: { launch: input, available: false,

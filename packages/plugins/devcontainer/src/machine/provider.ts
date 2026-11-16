@@ -52,6 +52,35 @@ function commandFailure(result: PluginProcessResult,
     ...(result.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}) };
 }
 
+/** One diagnosis for image acquire and clean CLI-image builds on Lima. */
+export async function devcontainerImageNeedsHostDns(image: string,
+  run: (args: readonly string[]) => Promise<PluginProcessResult>,
+  current?: Readonly<{ native: Record<string, unknown>; probeBridge: (argv: readonly string[]) => Promise<PluginProcessResult> }>): Promise<boolean> {
+  // Lima's boot marker identifies the reproduced VM topology. Probe only here,
+  // never impose DNS work on other hosts or an already selected host network.
+  try { await access('/run/lima-boot-done'); } catch { return false; }
+  if (current) {
+    const mode = record(current.native.HostConfig).NetworkMode;
+    if (mode !== 'bridge' && mode !== 'default') {
+      if (typeof mode !== 'string' || mode === 'host' || mode === 'none' || mode.startsWith('container:')) return false;
+      const inspected = await run(['network', 'inspect', mode]);
+      if (!completed(inspected) || inspected.stdoutTruncated) return false;
+      const networks = json(inspected);
+      if (!Array.isArray(networks) || record(networks[0]).Driver !== 'bridge') return false;
+    }
+  }
+  // GitHub is the reproduced failing download origin, not another DNS server.
+  // Probes use the image's own resolver; --rm owns their native cleanup.
+  const probe = ['sh', '-c', 'getent hosts github.com'];
+  const bridge = current ? await current.probeBridge(probe)
+    : await run(['run', '--rm', '--network', 'bridge', '--entrypoint', probe[0]!, '--', image, ...probe.slice(1)]);
+  // Missing tooling, cancellation and transport failures are not DNS evidence.
+  if (bridge.termination.requestedBy.kind !== 'none' || bridge.termination.observed.kind !== 'exit'
+    || bridge.termination.observed.exitCode !== 2) return false;
+  const host = await run(['run', '--rm', '--network', 'host', '--entrypoint', probe[0]!, '--', image, ...probe.slice(1)]);
+  return completed(host) && !host.stdoutTruncated && host.stdout.length > 0;
+}
+
 /** Docker effects exist only behind this provisioner's admitted native roles.
  * Enrollment, credentials, revision and Session custody remain host-owned. */
 export function createDevcontainerProvider(input: Readonly<{
@@ -71,32 +100,10 @@ export function createDevcontainerProvider(input: Readonly<{
         // Failed and cancelled launches retain the ordinary Exec cleanup policy.
         ...(args[0] === 'up' ? { descendantDisposition: 'preserve-on-success' as const } : {}) });
   async function bridgeNeedsHostDns(image: string, current?: Readonly<{ resource: DevcontainerResource; native: Record<string, unknown> }>) {
-    // Lima's boot marker identifies the reproduced VM topology. Probe only here,
-    // never impose DNS work on other hosts or an already selected host network.
-    try { await access('/run/lima-boot-done'); } catch { return false; }
-    if (current && !await usesBridge(current.native)) return false;
-    // GitHub is the failing Agent download origin, not an alternate DNS server.
-    // Both probes use the image's own resolver and NSS configuration. --rm lets
-    // the native runtime own probe cleanup; no mount, hook or guest setup runs.
-    const probe = ['sh', '-c', 'getent hosts github.com'];
-    const bridge = current
-      ? await childExec(current.resource, current.resource.containerId, probe, undefined, false, current.resource.managedMachineId)
-      : await run(input.docker, ['run', '--rm', '--network', 'bridge', '--entrypoint', probe[0]!, '--', image, ...probe.slice(1)]);
-    // getent 2 means the lookup key was not found. Missing tooling (127),
-    // cancellation and transport failures do not establish a DNS diagnosis.
-    if (bridge.termination.requestedBy.kind !== 'none' || bridge.termination.observed.kind !== 'exit'
-      || bridge.termination.observed.exitCode !== 2) return false;
-    const host = await run(input.docker, ['run', '--rm', '--network', 'host', '--entrypoint', probe[0]!, '--', image, ...probe.slice(1)]);
-    return completed(host) && !host.stdoutTruncated && host.stdout.length > 0;
-  }
-  async function usesBridge(native: Record<string, unknown>) {
-    const mode = record(native.HostConfig).NetworkMode;
-    if (mode === 'bridge' || mode === 'default') return true;
-    if (typeof mode !== 'string' || mode === 'host' || mode === 'none' || mode.startsWith('container:')) return false;
-    const inspected = await run(input.docker, ['network', 'inspect', mode]);
-    if (!completed(inspected) || inspected.stdoutTruncated) return false;
-    const networks = json(inspected);
-    return Array.isArray(networks) && record(networks[0]).Driver === 'bridge';
+    return devcontainerImageNeedsHostDns(image, args => run(input.docker, args), current ? {
+      native: current.native,
+      probeBridge: probe => childExec(current.resource, current.resource.containerId, probe, undefined, false, current.resource.managedMachineId),
+    } : undefined);
   }
   async function inspectContainer(containerId: string, launch: DevcontainerLaunch, managedMachineId: string) {
     const inspected = await run(input.docker, ['inspect', '--type', 'container', containerId], undefined, false, managedMachineId, launch.workspaceFolder);
