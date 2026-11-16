@@ -174,6 +174,14 @@ export async function readSourcePluginUiBuildInputRecord({ repoDir, files, insta
 /** Finite source consumers and their repair watchers share membership. Code
  * consumption remains the compiler's authority; this owner includes resolver
  * configuration and copied/native/Plugin UI resources that it cannot observe. */
+/** The `[workspace] members` a Cargo.toml declares (literal member paths; this repository uses no globs). */
+function readCargoWorkspaceMembers(cargoDir) {
+  let manifest;
+  try { manifest = readFileSync(join(cargoDir, 'Cargo.toml'), 'utf8'); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  const members = /\[workspace\][^[]*?members\s*=\s*\[([^\]]*)\]/su.exec(manifest)?.[1] ?? '';
+  return [...members.matchAll(/"([^"]+)"/gu)].map(match => match[1]);
+}
+
 export async function readSourceComponentBuildInputs({ repoDir, component }) {
   const packages = await readWorkspacePackages(repoDir);
   const project = component === 'expo' ? 'ui' : component === 'daemon' ? 'cli' : 'server';
@@ -227,9 +235,9 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
             ? resolveBundledPluginUiProjectionInputPaths(repoDir).map(input => relative(root, input))
           : path === 'apps/cli' ? ['native/processcustody', 'assets']
             : path === 'apps/server' ? ['prisma']
-              // Cargo resolves every declared workspace member, including the
-              // WASM manifest which is not part of the Node package's files.
-              : path === 'packages/iroh-native' ? ['rust/happier-iroh-wasm']
+              // Cargo resolves every declared workspace member, so the capture holds
+              // each one, shipped in the Node package's files or not (WASM, the holder).
+              : path === 'packages/iroh-native' ? readCargoWorkspaceMembers(join(root, 'rust')).map(member => `rust/${member}`)
                 : component === 'daemon' && path.startsWith('packages/plugins/') ? ['managed-runtime'] : [],
     };
     // The first-party addon is built from captured Rust, never captured from a

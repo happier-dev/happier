@@ -296,3 +296,27 @@ test('source plugin UI inputs admit shipped author Resources and exclude their g
   await writeFile(join(root, '.happier-plugin-build/.happier-daemon-outputs.json'), 'daemon-record-changed');
   assert.equal(await readBuildInputIdentity({ sourceDir: fixture.root, files }), changed);
 });
+
+test('daemon capture holds every declared Cargo workspace member of iroh-native, shipped or not', async t => {
+  // 2026-11-16 (P03-LONG-TRANSCRIPT): a HEAD source tree lacked rust/happier-session-holder (a declared
+  // member missing from the package's `files`), so the guest payload's cargo build refused with code 101.
+  const fixture = await createTempFixture(t, { prefix: 'happier-cargo-member-inputs-' });
+  await writeFile(fixture.path('package.json'), '{}');
+  const files = {
+    'apps/cli/package.json': JSON.stringify({ name: '@happier-dev/cli', dependencies: { '@happier-dev/iroh-native': 'workspace:*' } }),
+    'apps/cli/src/index.ts': 'export {};',
+    'packages/iroh-native/package.json': JSON.stringify({ name: '@happier-dev/iroh-native',
+      files: ['rust/Cargo.toml', 'rust/shipped'] }),
+    'packages/iroh-native/rust/Cargo.toml': '[workspace]\nmembers = ["shipped", "holder"]\nresolver = "2"\n',
+    'packages/iroh-native/rust/shipped/Cargo.toml': '[package]\nname = "shipped"\n',
+    'packages/iroh-native/rust/holder/Cargo.toml': '[package]\nname = "holder"\n',
+    'packages/iroh-native/rust/holder/src/main.rs': 'fn main() {}\n',
+  };
+  for (const [path, contents] of Object.entries(files)) {
+    await mkdir(dirname(fixture.path(path)), { recursive: true });
+    await writeFile(fixture.path(path), contents);
+  }
+  const inputs = await readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'daemon' });
+  for (const path of ['packages/iroh-native/rust/shipped/Cargo.toml', 'packages/iroh-native/rust/holder/Cargo.toml',
+    'packages/iroh-native/rust/holder/src/main.rs']) assert.ok(inputs.files.includes(path), `${path} must be captured`);
+});
