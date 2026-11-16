@@ -144,10 +144,14 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
             }
         }
         const coverageReasons: UsageAccountingCoverageReason[] = missingBaseline ? ['missing_baseline'] : [];
+        // Only a complete cumulative population can witness its model. Partial
+        // counters and final summaries may carry merely the current/last model.
+        const residualModelId = row.scope === 'session_cumulative'
+            && row.accountingEvidence?.accounting?.historyComplete === true ? row.modelId : null;
         if (coveredIds.length > 0) {
             if (hasResidual) {
                 coveredIds.push(row.id);
-                const residual = contribution({ ...row, modelId: null, turnId: null }, tokens,
+                const residual = contribution({ ...row, modelId: residualModelId, turnId: null }, tokens,
                     { ...cost, reportedUsd: 0, invoiceUsd: 0,
                         costSource: cost.estimatedUsd !== null && cost.estimatedUsd > 0 ? 'pricing_estimate' : 'none', reportedTotalId: totalId });
                 const item = { ...residual, coverageReasons };
@@ -167,7 +171,7 @@ export function foldScopedUsageContributions(rows: readonly ScopedUsageEventRow[
             || cost.reportedUsd !== null && previousSnapshot?.cost.reportedUsd == null
             || cost.estimatedUsd !== null && previousSnapshot?.cost.estimatedUsd == null
             || cost.invoiceUsd != null && previousSnapshot?.cost.invoiceUsd == null) {
-            const residual = contribution({ ...row, modelId: null, turnId: null }, tokens, cost);
+            const residual = contribution({ ...row, modelId: residualModelId, turnId: null }, tokens, cost);
             const item = { ...residual, coverageReasons };
             base.push(item);
         }

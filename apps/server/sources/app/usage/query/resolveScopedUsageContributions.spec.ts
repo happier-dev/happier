@@ -5,6 +5,9 @@ import { prepareScopedUsageReplayContext, resolveScopedUsageContributions, toSco
     updateScopedUsageReplaySessionEligibility, isScopedUsageReplayFactEligible, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
 import { readScopedUsageAccountingEvidence } from './scopedUsageEventRow';
 import { resolveEffectiveUsageCostUsd } from "./resolveUsageCostMode";
+import { buildUsageResultProjection } from './buildUsageResultProjection';
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
+import { buildUsagePricingPopulation, priceUsagePricingPopulation } from '@happier-dev/protocol/usage/usagePricingPopulation';
 
 function row(id: string, time: number, scope: string, total: number): ScopedUsageEventRow {
     return {
@@ -24,6 +27,62 @@ function requireMeasurement(value: number | null): number {
 }
 
 describe("resolveScopedUsageContributions", () => {
+    it('retains the witnessed Pi cumulative model through accounting coverage and catalog pricing', () => {
+        // Captured r177 paid counters and attribution; identity, time and occupancy are synthetic.
+        const snapshot: ScopedUsageEventRow = { ...row('pi-snapshot', 100, 'session_cumulative', 3309),
+            agentId: 'pi', source: 'pi-session-stats', modelId: 'openai/gpt-4.1-mini',
+            contextUsedTokens: 3309, contextWindowTokens: 1047576,
+            tokens: { input: 3305, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 3309 },
+            cost: createEmptyUsageCost(),
+            metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true,
+                inputIncludesCache: false, outputIncludesReasoning: true } },
+        };
+        const folded = resolveScopedUsageContributions([snapshot]);
+        const projection = buildUsageResultProjection({ contributions: folded.totalContributions,
+            evidenceRows: [snapshot], coverageReasons: folded.coverageReasons,
+            request: { granularity: 'day', timeZoneOffsetMinutes: 0, includeSeries: false, topLimit: 20 } });
+        const priced = priceUsagePricingPopulation(buildUsagePricingPopulation(projection.contributions),
+            bundledUsageModelPriceCatalog, {}, 'api_equivalent');
+        expect(projection.contributions).toHaveLength(1);
+        expect(projection.contributions[0]).toMatchObject({ modelId: snapshot.modelId, tokenCategories: snapshot.tokens });
+        expect(projection.coverage.missingDimensions).not.toContain('model');
+        expect(projection.coverage.reasons).not.toContain('unattributed_model');
+        expect(priced.apiEquivalentUsd).toBeGreaterThan(0);
+        expect(priced.facts.some(fact => fact.kind === 'unpriced')).toBe(false);
+    });
+
+    it('retains cumulative model witnesses across counter differences without filling a mixed-model snapshot', () => {
+        const snapshot = (id: string, time: number, total: number, modelId: string | null) => ({
+            ...row(id, time, 'session_cumulative', total), modelId,
+            metadata: { usageAccounting: { historyComplete: true } },
+        });
+        const result = resolveScopedUsageContributions([
+            snapshot('first', 100, 10, 'A'), snapshot('same-model', 200, 20, 'A'),
+            snapshot('mixed-model', 300, 30, null),
+        ]);
+        expect(result.totalContributions.map(event => [event.modelId, event.tokens.total]))
+            .toEqual([['A', 10], ['A', 10], [null, 10]]);
+    });
+
+    it('retains the cumulative residual model when a reported total covers an earlier inference', () => {
+        const result = resolveScopedUsageContributions([
+            { ...row('inference', 100, 'turn_delta', 10), modelId: 'A' },
+            { ...row('snapshot', 200, 'session_cumulative', 20), modelId: 'A',
+                metadata: { usageAccounting: { historyComplete: true } },
+                cost: { ...createEmptyUsageCost(), reportedUsd: 0.1, costSource: 'provider_reported' } },
+        ]);
+        expect(result.totalContributions.map(event => [event.modelId, event.tokens.total]))
+            .toEqual([['A', 10], ['A', 10], [null, null]]);
+    });
+
+    it('does not attribute incomplete cumulative history to its current model hint', () => {
+        const result = resolveScopedUsageContributions([
+            { ...row('partial', 100, 'session_cumulative', 10), modelId: 'current-model',
+                metadata: { usageAccounting: { historyComplete: false } } },
+        ]);
+        expect(result.totalContributions[0]?.modelId).toBeNull();
+    });
+
     it('keeps child native counters independent from the parent sharing the Happier Session', () => {
         const native = (id: string, time: number, total: number, nativeSessionId: string) => ({ ...row(id, time, 'session_cumulative', total),
             metadata: { usageAccounting: { path: 'runtime', nativeSessionId, status: 'available', historyComplete: true } } });

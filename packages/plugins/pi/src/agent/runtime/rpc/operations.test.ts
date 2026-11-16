@@ -2030,8 +2030,9 @@ describe('createPiRuntimeOperations', () => {
   it('publishes paid session stats through the canonical ingest request boundary', async () => {
     const capture: Capture = { specs: [], written: [], sessionStats: {
       sessionId: 'native-pi-paid',
-      tokens: { input: 50_000, output: 10_000, cacheRead: 40_000, cacheWrite: 5_000, total: 105_000 },
-      cost: 0.45,
+      tokens: { input: 3305, output: 4, cacheRead: 0, cacheWrite: 0, total: 3309 },
+      contextUsage: { tokens: 3309, contextWindow: 1047576 },
+      cost: 0,
     } };
     const runtime = await createRuntime(capture);
     const events: AgentSessionRuntimeEvent[] = [];
@@ -2048,7 +2049,7 @@ describe('createPiRuntimeOperations', () => {
       await ackLastCommand(capture);
       await prompt;
       await emit(capture, { type: 'message_end', message: { role: 'assistant', model: 'openai/gpt-4.1-mini',
-        usage: { input: 50_000, output: 10_000, reasoning: 0, cacheRead: 40_000, cacheWrite: 5_000, totalTokens: 105_000 } } });
+        usage: { input: 3305, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 3309 } } });
       await emit(capture, { type: 'agent_end', willRetry: false });
       await vi.waitFor(() => expect(events.some(event => event.kind === 'usage-observed') || rejected.length > 0).toBe(true));
       expect(rejected).toEqual([]);
@@ -2061,9 +2062,8 @@ describe('createPiRuntimeOperations', () => {
         metadata: buildNativeAgentUsageAccountingMetadata(event),
       });
       expect(request).toMatchObject({ sessionId: 'happier-session-1',
-        scope: 'session_cumulative', modelId: 'openai/gpt-4.1-mini', tokens: { total: 105_000, reasoning: 0 },
-        cost: { estimatedUsd: 0.45 },
-        metadata: { usageAccounting: { nativeSessionId: 'native-pi-paid', historyComplete: false } },
+        scope: 'session_cumulative', modelId: 'openai/gpt-4.1-mini', tokens: { total: 3309, reasoning: 0 },
+        metadata: { usageAccounting: { nativeSessionId: 'native-pi-paid', historyComplete: true } },
       });
       expect(capture.sessionStatsRequestCount).toBe(1);
     } finally {

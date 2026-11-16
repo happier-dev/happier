@@ -12,11 +12,13 @@ describe('projectPiSessionStatsUsage', () => {
     projector.observeRecord({ type: 'message_end', message: { role: 'assistant', model: 'openai/gpt-4.1-mini',
       usage: { input: 3245, output: 4, reasoning: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 3249 } } });
     const event = projector.project(params);
-    expect(event).toMatchObject({ modelId: 'openai/gpt-4.1-mini', tokens: { reasoning: 0, total: 3249 } });
+    expect(event).toMatchObject({ modelId: 'openai/gpt-4.1-mini', tokens: { reasoning: 0, total: 3249 },
+      accounting: { historyComplete: true } });
     expect(estimateUsageModelCost(event?.modelId, event?.tokens ?? null)?.total).toBeGreaterThan(0);
     const unseen = projector.project({ ...params, stats: { tokens: { ...stats.tokens, input: 3250, total: 3254 } } });
     expect(unseen?.modelId).toBeUndefined();
     expect(unseen?.tokens?.reasoning).toBeNull();
+    expect(unseen?.accounting?.historyComplete).toBe(false);
     projector.observeRecord({ type: 'message_end', message: { role: 'assistant', model: 'other-model',
       usage: { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 5 } } });
     const mixed = projector.project({ ...params, stats: { tokens: { ...stats.tokens, input: 3250, total: 3254 } } });

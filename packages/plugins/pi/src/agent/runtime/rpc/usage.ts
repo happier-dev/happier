@@ -38,7 +38,8 @@ export function createPiSessionStatsUsageProjector() {
       // Keep constant-size totals, never retain or re-read message bodies.
       if (!event?.tokens || modelId === undefined || !(['input', 'output', 'cacheRead', 'cacheWrite', 'total'] as const)
         .every(field => totals[field] !== null && event.tokens![field] === totals[field])) return event;
-      return { ...event, ...(modelId ? { modelId } : {}), tokens: { ...event.tokens, reasoning: totals.reasoning } };
+      return { ...event, ...(modelId ? { modelId } : {}), tokens: { ...event.tokens, reasoning: totals.reasoning },
+        accounting: { ...event.accounting, historyComplete: true } };
     },
   };
 }
