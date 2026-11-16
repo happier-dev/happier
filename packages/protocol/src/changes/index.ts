@@ -527,6 +527,11 @@ export type SessionAccessProbeV1 = z.infer<typeof SessionAccessProbeV1Schema>;
 export const ChangesResponseSchema = lazyZodSchema(() => z.strictObject({
   changes: z.array(ChangeEntrySchema),
   nextCursor: z.number().check(z.int(), z.minimum(0)),
+  /**
+   * More stored rows follow `nextCursor`: the reader reads on. Judged by the server on the rows it
+   * read, before any filter, so a filtered page with fewer `changes` than the limit is not "done".
+   */
+  full: z.optional(z.boolean()),
   sessionAccessWitness: z.optional(SessionAccessWitnessV1Schema),
   sessionAccessProbe: z.optional(SessionAccessProbeV1Schema),
 }).check(z.superRefine((response, context) => {
@@ -577,8 +582,13 @@ export type CursorGoneError = z.infer<typeof CursorGoneErrorSchema>;
  */
 export const ACCOUNT_CHANGE_ROWS_SOCKET_AUTH_KEY_V1 = 'accountChangeRows' as const;
 
-/** The feed's default page size; a pushed page is read with it, so a full pushed page means "read on". */
+/** The feed's default page size; also the most rows one pushed page carries (more rows: `full`, read on). */
 export const ACCOUNT_CHANGES_PAGE_LIMIT_V1 = 200;
+
+/** Whether a page has more rows after `nextCursor`: the server's explicit `full`, else (older server) a page of `limit` rows. */
+export function isChangesPageFull(page: Pick<ChangesResponse, 'changes' | 'full'>, limit: number): boolean {
+  return page.full ?? page.changes.length >= limit;
+}
 
 export const AccountChangeRowsDemandV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -618,3 +628,27 @@ export const PushedAccountChangesPageV1Schema = lazyZodSchema(() => z.strictObje
 })));
 
 export type PushedAccountChangesPageV1 = z.infer<typeof PushedAccountChangesPageV1Schema>;
+
+/**
+ * What a consumer at `cursor` applies from one pushed page, or null when the page does not cover
+ * that cursor (`after <= cursor < nextCursor`): a gap the feed read covers, or a page already
+ * applied. The page is the server's read of `(after, nextCursor]` for this socket, so a consumer
+ * already past `after` applies only its rows after `cursor`, which is what a read from `cursor`
+ * at that snapshot returns.
+ */
+export function projectPushedChangesPageAt(
+  pushed: PushedAccountChangesPageV1, cursor: number,
+): Readonly<{ page: ChangesResponse; full: boolean }> | null {
+  if (cursor < pushed.after || cursor >= pushed.page.nextCursor) return null;
+  const full = isChangesPageFull(pushed.page, ACCOUNT_CHANGES_PAGE_LIMIT_V1);
+  if (pushed.after === cursor) return { page: pushed.page, full };
+  const witness = pushed.page.sessionAccessWitness;
+  return {
+    page: {
+      ...pushed.page,
+      changes: pushed.page.changes.filter(change => change.cursor > cursor),
+      ...(witness ? { sessionAccessWitness: { ...witness, entries: witness.entries.filter(entry => entry.cursor > cursor) } } : {}),
+    },
+    full,
+  };
+}
