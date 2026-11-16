@@ -84,6 +84,7 @@ import { resolveToolRowPinAction } from '@/components/sessions/transcript/toolCa
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { StreamingTextContent } from '@/components/sessions/transcript/streaming/StreamingTextContent';
+import { useStreamedAgentMessage } from '@/components/sessions/transcript/streaming/streamedAgentText';
 import { readStreamSegmentMetaV1 } from "@happier-dev/session-core/reducer";
 import { resolveTranscriptMessageServerId } from '@/components/sessions/transcript/source/resolveTranscriptMessageServerId';
 import { useTranscriptFileLinks } from '@/components/sessions/transcript/useTranscriptFileLinks';
@@ -1295,6 +1296,35 @@ function UserTextBlock(props: {
   );
 }
 
+/** The one part of an agent row that follows its streamed text; the row draws the message it holds. */
+function AgentStreamedText(props: Readonly<{
+  message: AgentTextMessage;
+  sessionId: string;
+  resolveMarkdown: (message: AgentTextMessage) => string;
+  hidePartialOutput: boolean;
+  streamedMessageRef: React.MutableRefObject<AgentTextMessage | null>;
+  enabled: boolean;
+  settleDelayMs: number;
+  onStreamingChange: (streaming: boolean) => void;
+  children: (streaming: Parameters<React.ComponentProps<typeof StreamingTextContent>['children']>[0], markdown: string) => React.ReactNode;
+}>) {
+  const message = useStreamedAgentMessage(props.message, props.sessionId);
+  const markdown = React.useMemo(() => props.resolveMarkdown(message), [message, props.resolveMarkdown]);
+  React.useLayoutEffect(() => {
+    props.streamedMessageRef.current = message;
+  }, [message, props.streamedMessageRef]);
+  return (
+    <StreamingTextContent
+      enabled={props.enabled}
+      targetText={props.hidePartialOutput ? '...' : markdown}
+      settleDelayMs={props.settleDelayMs}
+      onStreamingChange={props.onStreamingChange}
+    >
+      {(streaming) => props.children(streaming, markdown)}
+    </StreamingTextContent>
+  );
+}
+
 function AgentTextBlock(props: {
   message: AgentTextMessage;
   metadata: Metadata | null;
@@ -1343,6 +1373,13 @@ function AgentTextBlock(props: {
     debugInformationEnabled: props.messageDisplayCommon.debugInformationEnabled,
     thinkingDisplayMode: props.messageDisplayCommon.sessionThinkingDisplayMode,
   }), [props.message, props.messageDisplayCommon.debugInformationEnabled, props.messageDisplayCommon.sessionThinkingDisplayMode]);
+  // While the message streams the row holds it (`holdsStreamedAgentTextDelta`): the text leaf follows the
+  // streamed text, and Copy reads the message that leaf last drew.
+  const resolveMarkdown = React.useCallback((message: AgentTextMessage) => resolveTranscriptMessageDisplayText(message, {
+    debugInformationEnabled: props.messageDisplayCommon.debugInformationEnabled,
+    thinkingDisplayMode: props.messageDisplayCommon.sessionThinkingDisplayMode,
+  }).text ?? message.text, [props.messageDisplayCommon.debugInformationEnabled, props.messageDisplayCommon.sessionThinkingDisplayMode]);
+  const streamedMessageRef = React.useRef<AgentTextMessage | null>(null);
   const {
     sessionThinkingDisplayMode,
     sessionThinkingInlineChrome,
@@ -1384,16 +1421,22 @@ function AgentTextBlock(props: {
     if (cleaned.length <= 120) return cleaned;
     return cleaned.slice(0, 117) + '…';
   };
-  const selectableMessage = (() => {
+  const resolveSelectableText = (message: AgentTextMessage) => {
     const base = resolveSelectableMessageText({
-      message: props.message,
+      message,
       isStructuredOnly,
       hasAttachmentBlockToStrip: false,
     });
     return base && agentUnsupportedContentText != null ? { ...base, text: agentUnsupportedContentText } : base;
-  })();
+  };
+  const selectableMessage = resolveSelectableText(props.message);
   const selectionEnabled = props.messageDisplayCommon.transcriptMessageSelectionEnabled === true && selectableMessage != null;
   const copyText = selectableMessage?.text ?? (isStructuredOnly ? props.message.text : markdown);
+  const readCopyText = () => {
+    const streamed = streamedMessageRef.current;
+    if (streamed === null || streamed === props.message || streamed.id !== props.message.id) return copyText;
+    return resolveSelectableText(streamed)?.text ?? (isStructuredOnly ? streamed.text : resolveMarkdown(streamed));
+  };
   const handleOptionPress = React.useCallback((option: Option) => {
     fireAndForget((async () => {
       try {
@@ -1504,8 +1547,6 @@ function AgentTextBlock(props: {
       transcriptStreamingPartialOutputEnabled !== true &&
       shouldRenderActiveStreamSegmentPlain;
 
-  const renderText = shouldHidePartialStreamingOutput ? '...' : markdown;
-
   // Thinking text streams append-only exactly like assistant text and shares
   // the one pacer instance; only the render-path swap below stays
   // assistant-only (thinking keeps its own renderers).
@@ -1585,7 +1626,7 @@ function AgentTextBlock(props: {
   return (
     <CommittedMessageActions
       message={props.message} sessionId={props.sessionId} serverId={props.serverId}
-      selectableText={selectableMessage} copyText={copyText} isStructuredOnly={isStructuredOnly}
+      selectableText={selectableMessage} copyText={copyText} readCopyText={readCopyText} isStructuredOnly={isStructuredOnly}
       openDiscussionSource={navigateFromTranscript ? openDiscussionSource : undefined}
       canFork={props.canFork} forkCommon={props.forkCommon} isForkAllowed={props.isForkAllowed}
       settings={props.messageDisplayCommon} rollbackAction={props.rollbackAction}
@@ -1625,13 +1666,17 @@ function AgentTextBlock(props: {
         ) : null}
         {structuredNode}
         {isStructuredOnly ? null : (
-          <StreamingTextContent
+          <AgentStreamedText
+            message={props.message}
+            sessionId={props.sessionId}
+            resolveMarkdown={resolveMarkdown}
+            hidePartialOutput={shouldHidePartialStreamingOutput}
+            streamedMessageRef={streamedMessageRef}
             enabled={streamingSmoothingEligible}
-            targetText={renderText}
             settleDelayMs={transcriptStreamingSettleDelayMs}
             onStreamingChange={setStreamingActive}
           >
-          {(streaming) => {
+          {(streaming, markdown) => {
             const thinkingRenderMarkdown = props.message.isThinking === true && streamingSmoothingEligible
               ? streaming.displayText : markdown;
             const thinkingStreamingActive = props.message.isThinking === true && streamingSmoothingEligible && streaming.isStreaming;
@@ -1759,7 +1804,7 @@ function AgentTextBlock(props: {
             )
           );
           }}
-          </StreamingTextContent>
+          </AgentStreamedText>
         )}
         {structuredReferencesDeferred.length > 0 ? (
           <StructuredReferencesRow

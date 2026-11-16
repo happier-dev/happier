@@ -311,6 +311,14 @@ function coerceSessionMessages(input: unknown): SessionMessages {
         : normalized;
 }
 
+/**
+ * A streamed agent text delta: only the text and its stream tick moved, so readers of the transcript's
+ * structure (`transcriptStructureVersion`) are not notified. The one classifier for text-only changes.
+ */
+export function isTranscriptTextOnlyChange(previous: Message, next: Message): boolean {
+    return previous !== next && !transcriptStructureChanged(previous, next);
+}
+
 function transcriptStructureChanged(previous: Message | undefined, next: Message): boolean {
     if (previous === next) return false;
     if (previous?.kind !== 'agent-text' || next.kind !== 'agent-text') return true;

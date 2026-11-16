@@ -33,7 +33,7 @@ export function readTestRendererRoot(instance: unknown): () => CountedFiber {
 
 /** Observe committed React DOM work without replacing any component or subscription owner. */
 export function createCommittedFiberRenderCounter() {
-    const state = { enabled: false, commits: 0, renders: new Map<string, number>(), componentCommits: new Map<unknown, number>(), renderedMessageIds: new Map<string, number>(), changedProps: new Map<string, number>() };
+    const state = { enabled: false, commits: 0, renders: new Map<string, number>(), componentCommits: new Map<unknown, number>(), componentRenders: new Map<unknown, number>(), renderedMessageIds: new Map<string, number>(), changedProps: new Map<string, number>() };
     const componentTags = new Set([0, 1, 11, 14, 15]);
     const performedWork = 1;
     const isUntouched = (parent: CountedFiber, child: CountedFiber) => {
@@ -62,6 +62,7 @@ export function createCommittedFiberRenderCounter() {
                     if (child.alternate && fiber.alternate && isUntouched(fiber.alternate, child)) continue;
                     if (componentTags.has(child.tag) && child.alternate && (child.flags & performedWork)) {
                         committedComponents.add(componentIdentity(child.type));
+                        state.componentRenders.set(componentIdentity(child.type), (state.componentRenders.get(componentIdentity(child.type)) ?? 0) + 1);
                         const name = componentName(child.type);
                         state.renders.set(name, (state.renders.get(name) ?? 0) + 1);
                         const message = child.memoizedProps?.message as { id?: unknown } | undefined;
@@ -83,12 +84,15 @@ export function createCommittedFiberRenderCounter() {
             for (const component of committedComponents) state.componentCommits.set(component, (state.componentCommits.get(component) ?? 0) + 1);
             for (const id of renderedMessageIds) state.renderedMessageIds.set(id, (state.renderedMessageIds.get(id) ?? 0) + 1);
         },
-        start() { state.enabled = true; state.commits = 0; state.renders.clear(); state.componentCommits.clear(); state.renderedMessageIds.clear(); state.changedProps.clear(); },
+        start() { state.enabled = true; state.commits = 0; state.renders.clear(); state.componentCommits.clear(); state.componentRenders.clear(); state.renderedMessageIds.clear(); state.changedProps.clear(); },
         stop() { state.enabled = false; },
         read() {
             const componentCommits = new Map(state.componentCommits);
+            const componentRenders = new Map(state.componentRenders);
             return { commits: state.commits, renders: new Map(state.renders),
                 commitsFor: (component: unknown) => componentCommits.get(componentIdentity(component)) ?? 0,
+                /** Every re-render of that component's mounted instances (one per instance per commit). */
+                rendersFor: (component: unknown) => componentRenders.get(componentIdentity(component)) ?? 0,
                 renderedMessageIds: new Map(state.renderedMessageIds), changedProps: new Map(state.changedProps) };
         },
     };

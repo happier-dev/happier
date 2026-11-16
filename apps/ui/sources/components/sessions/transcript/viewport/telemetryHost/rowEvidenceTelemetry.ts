@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { sync } from '@/sync/sync';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import {
     configureTranscriptViewportTelemetryFromTuning,
     transcriptViewportTelemetry,
@@ -77,7 +78,9 @@ export function useTranscriptRowEvidenceTelemetry(params: Readonly<{
         });
     }, [listDataRef, listLayoutHeightRef, listRef]);
 
-    const handleRowShellMeasured = React.useCallback((row: Readonly<{
+    // A row reports its height from its own layout, an event: a stable handler keeps every mounted cell's
+    // element unchanged while the list's telemetry inputs move.
+    const handleRowShellMeasured = useEventCallback((row: Readonly<{
         itemId: string;
         rowKind: string;
         heightPx: number;
@@ -97,12 +100,7 @@ export function useTranscriptRowEvidenceTelemetry(params: Readonly<{
             rowMeasurePhase: previousHeightPx === undefined ? 'first' : 'remeasure',
             rowViewportRelation: resolveRowEvidenceViewportRelation(row.itemId),
         });
-    }, [
-        isViewportEvidenceTelemetryEnabled,
-        recordViewportTelemetryEvent,
-        resolveViewportTelemetryMode,
-        resolveRowEvidenceViewportRelation,
-    ]);
+    });
 
     const recordRowContentMutations = React.useCallback((
         items: readonly ChatTranscriptListItem[],

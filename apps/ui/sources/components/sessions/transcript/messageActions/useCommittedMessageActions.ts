@@ -63,6 +63,8 @@ export type CommittedMessageActionInput = Readonly<{
     serverId?: string | null;
     selectableText: TranscriptSelectableMessageText | null;
     copyText: string;
+    /** The text Copy writes when pressed, where the row holds its message while the text streams. */
+    readCopyText?: () => string;
     isStructuredOnly: boolean;
     hasUnsupportedContent?: boolean;
     canFork: boolean;
@@ -153,7 +155,7 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput, p
     const memoryEnabled = useSessionSelector(input.sessionId, input.serverId,
         (session) => session !== null && readSessionMemoryEnabledV1(readSessionOwnerMetadataView(session)));
     const copy = async () => {
-        if (!await copyWithFeedback(() => writeClipboard(input.copyText), copyKey)) {
+        if (!await copyWithFeedback(() => writeClipboard(input.readCopyText?.() ?? input.copyText), copyKey)) {
             Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
         }
     };

@@ -7,6 +7,7 @@ import type { Message } from "@happier-dev/session-core/messages";
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import type { PersistedSessionMessagePinV1 } from "@happier-dev/session-core/pins";
 import { MessageView, MessageViewWithSessionCommon } from './MessageView';
+import { STREAMED_AGENT_TEXT_ROW_SELECTION } from './streaming/streamedAgentText';
 import { deriveReadOnlyTranscriptInteraction } from '@/components/sessions/transcript/forkContext/deriveReadOnlyTranscriptInteraction';
 import {
     hasTranscriptSessionCommonProps,
@@ -67,7 +68,8 @@ export const ChatListMessageRow = React.memo(function ChatListMessageRow(props: 
     style?: StyleProp<ViewStyle>;
 } & Partial<TranscriptSessionCommonProps>) {
     const originSessionId = props.originSessionId ?? props.sessionId;
-    const committedMessage = useTranscriptMessage(props.messageId, originSessionId);
+    // A streamed text delta reaches only the row's text leaf; the row and its chrome keep the held message.
+    const committedMessage = useTranscriptMessage(props.messageId, originSessionId, STREAMED_AGENT_TEXT_ROW_SELECTION);
     const message = props.messageOverride ?? committedMessage;
     const messageRevision = props.getMessageRevisionById?.(props.messageId) ?? null;
     if (!message) return null;

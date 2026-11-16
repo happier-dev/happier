@@ -70,6 +70,7 @@ import { useLegendHeldIntent } from './legend/useLegendHeldIntent';
 import { useLegendRevealRevalidation } from './legend/useLegendRevealRevalidation';
 import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
 import { usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { areReactNodesStructurallyEqual } from '@/utils/react/areReactNodesStructurallyEqual';
 
 export { resolveLegendRendererAtEndStateFromWebMetrics } from './legend/atEnd';
 
@@ -90,6 +91,11 @@ const LEGEND_TRANSCRIPT_ESTIMATED_ITEM_SIZE_PX = 240;
 // descends to the scrollable, so the adapter must own the identity on a wrapper
 // View that is an ancestor of the Legend scroller.
 const LEGEND_IDENTITY_HOST_STYLE = { flex: 1, minHeight: 0 } as const;
+const TRANSCRIPT_ROW_SEPARATORS = {
+    highlight: () => undefined,
+    unhighlight: () => undefined,
+    updateProps: () => undefined,
+} as const;
 
 type RetainedViewport = Readonly<
     | { isPinned: true; anchor: null }
@@ -1400,26 +1406,32 @@ function LegendListTranscriptRendererInner<TItem>(
         return () => { cancelled = true; };
     }, [isWebFrame]);
 
-    const renderItem: LegendListProps<TItem>['renderItem'] = (info) => (
-        <TranscriptRendererRowContentDemandProvider itemKey={props.keyExtractor(
-            info.item, toSourceIndex(info.index, dataLength, projectChronologicalIndex),
-        )}>
-          <TranscriptNativeItemRevealProvider
-            index={toSourceIndex(info.index, dataLength, projectChronologicalIndex)}
-            reveal={revealNativeItem}
-          >
-            {props.renderItem({
-                item: info.item,
-                index: toSourceIndex(info.index, dataLength, projectChronologicalIndex),
-                separators: {
-                    highlight: () => undefined,
-                    unhighlight: () => undefined,
-                    updateProps: () => undefined,
-                },
-            })}
-          </TranscriptNativeItemRevealProvider>
-        </TranscriptRendererRowContentDemandProvider>
-    );
+    // The row host keeps an unchanged cell's element; the wrapper keeps its own element around it, so
+    // a list-wide re-render (new data, a new row renderer) draws only the cells that changed.
+    const cellElementsRef = React.useRef(new Map<string, React.ReactElement>());
+    React.useEffect(() => {
+        const liveKeys = new Set(props.data.map((item, index) => props.keyExtractor(item, index)));
+        for (const key of cellElementsRef.current.keys()) if (!liveKeys.has(key)) cellElementsRef.current.delete(key);
+    }, [props.data, props.keyExtractor]);
+    const renderItem: LegendListProps<TItem>['renderItem'] = (info) => {
+        const sourceIndex = toSourceIndex(info.index, dataLength, projectChronologicalIndex);
+        const itemKey = props.keyExtractor(info.item, sourceIndex);
+        const next = (
+            <TranscriptRendererRowContentDemandProvider itemKey={itemKey}>
+              <TranscriptNativeItemRevealProvider index={sourceIndex} reveal={revealNativeItem}>
+                {props.renderItem({
+                    item: info.item,
+                    index: sourceIndex,
+                    separators: TRANSCRIPT_ROW_SEPARATORS,
+                })}
+              </TranscriptNativeItemRevealProvider>
+            </TranscriptRendererRowContentDemandProvider>
+        );
+        const previous = cellElementsRef.current.get(itemKey);
+        if (previous !== undefined && areReactNodesStructurallyEqual(previous, next)) return previous;
+        cellElementsRef.current.set(itemKey, next);
+        return next;
+    };
     const handleLegendViewableItemsChanged = React.useCallback<NonNullable<LegendListProps<TItem>['onViewableItemsChanged']>>((info) => {
         contentDemand.publish(info.viewableItems.filter((token) => token.isViewable).map((token) => token.key));
         props.onViewableItemsChanged?.({

@@ -809,6 +809,39 @@ describe('MessageView (streaming smoothing)', () => {
         expect(captured.markdownProps).toHaveLength(0);
     });
 
+    it('draws a held streaming message from its text leaf, and Copy reads the streamed text', async () => {
+        // The transcript row holds the message through text-only stream deltas (holdsStreamedAgentTextDelta).
+        captured.streamingSmoothingEnabled = false;
+        const { MessageView } = await import('./MessageView');
+        const { CommittedMessageActions } = await import('./messageActions/CommittedMessageActions');
+        const meta = (updatedAtMs: number) => ({ happierStreamSegmentV1: { v: 1, segmentKind: 'assistant',
+            segmentLocalId: 'segment-1', segmentState: 'streaming', startedAtMs: 1_000, updatedAtMs } }) satisfies AgentTextMessage['meta'];
+        const held = createAgentMessage({ localId: 'segment-1', text: 'Hello', meta: meta(1_000) });
+        const source = createTestSessionTranscriptSource({ messages: [held] });
+        applyTranscriptSettings();
+        const screen = await renderSourceScreen(withMotion(<MessageView message={held} metadata={null} sessionId="s1"
+            interaction={{ canSendMessages: true, canApprovePermissions: true }} />), source);
+        currentTree = screen;
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(String(captured.markdownProps.at(-1)?.markdown)).toBe('Hello');
+        await act(async () => {
+            source.update({ messages: [{ ...held, text: 'Hello streamed world', meta: meta(1_050) }],
+                agentState: null, metadata: null, reducerState: null });
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(String(captured.markdownProps.at(-1)?.markdown)).toBe('Hello streamed world');
+        const actions = screen.root.find(node => node.type === CommittedMessageActions);
+        expect(actions.props.readCopyText()).toBe('Hello streamed world');
+        // A structural change (the segment's end) is the row's to redraw: the leaf does not follow it.
+        await act(async () => {
+            source.update({ messages: [{ ...held, text: 'Hello streamed world, done', meta: { happierStreamSegmentV1: {
+                ...meta(1_100).happierStreamSegmentV1, segmentState: 'completed' } } }],
+                agentState: null, metadata: null, reducerState: null });
+        });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(String(captured.markdownProps.at(-1)?.markdown)).toBe('Hello');
+    });
+
     it('suppresses the iOS native copy menu for active plain streaming transcript text', async () => {
         captured.platformOS = 'ios';
         captured.streamingMarkdownEnabled = false;

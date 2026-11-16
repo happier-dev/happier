@@ -45,6 +45,10 @@ const { ChatList } = await import('./ChatList');
 const { ChatListInternal } = await import('./ChatListInternal');
 const { AppSessionTranscriptSourceProvider } = await import('./source/appSessionTranscriptSource');
 const { PermissionPromptCard } = await import('@/components/tools/shell/permissions/PermissionPromptCard');
+const { ChatListMessageRow, TranscriptRowShell } = await import('./ChatListRows');
+const { MessageViewWithSessionCommon } = await import('./MessageView');
+const { CommittedMessageActions } = await import('./messageActions/CommittedMessageActions');
+const { StreamingTextContent } = await import('./streaming/StreamingTextContent');
 
 let root: Root | null = null;
 let container: HTMLDivElement | null = null;
@@ -214,7 +218,12 @@ describe('streaming transcript render cost', () => {
                 totalRenders: [...measured.renders.values()].reduce((x, y) => x + y, 0),
                 top: [...measured.renders].sort((x, y) => y[1] - x[1]).slice(0, 12), changedProps: [...measured.changedProps] };
             return { finished: finishedRenders, root: measured.commitsFor(ChatList) + measured.commitsFor(ChatListInternal),
-                permission: measured.commitsFor(PermissionPromptCard) };
+                permission: measured.commitsFor(PermissionPromptCard),
+                // The streaming row's own chrome, every mounted cell's wrapper, and the text leaf.
+                rowChrome: measured.rendersFor(ChatListMessageRow) + measured.rendersFor(MessageViewWithSessionCommon)
+                    + measured.rendersFor(CommittedMessageActions),
+                cells: measured.rendersFor(TranscriptRowShell),
+                textLeaf: measured.rendersFor(StreamingTextContent) };
         };
         const apply = (message: NormalizedMessage) => storage.getState().applyMessages(session.id, [message]);
         let text = 'Starting';
@@ -222,7 +231,11 @@ describe('streaming transcript render cost', () => {
         const textFinished = await measure('text', Array.from({ length: 100 }, (_, delta) => () => {
             text += ` token${delta}`; apply(streamChunk(text, 3 + delta));
         }));
-        expect([...counts.read().renderedMessageIds]).toEqual([[streamingMessageId, 100]]);
+        // A delta reaches only the streaming row's text leaf: no message view (finished or streaming) redraws.
+        expect([...counts.read().renderedMessageIds]).toEqual([]);
+        expect(textFinished.cells).toBe(0);
+        expect(textFinished.rowChrome).toBeLessThanOrEqual(1);
+        expect(textFinished.textLeaf).toBeGreaterThanOrEqual(100);
         expect(storage.getState().sessionMessages[session.id]!.messagesById[streamingMessageId])
             .toMatchObject({ kind: 'agent-text', localId: 'stream-segment', text });
         // Delta commits and the paced reveal are separate work. Drain using the
@@ -271,7 +284,14 @@ describe('streaming transcript render cost', () => {
         // Finished rows never re-render for another message's delta or tool event, and text/thinking
         // deltas (no structural change) never re-render the transcript root.
         expect({ text: textFinished, reveal: revealFinished, thinking: thinkingFinished, tool: toolFinished.finished, turnEnd: endFinished.finished })
-            .toEqual({ text: { finished: 0, root: 0, permission: 0 }, reveal: { finished: 0, root: 0, permission: 0 },
+            .toMatchObject({ text: { finished: 0, root: 0, permission: 0 }, reveal: { finished: 0, root: 0, permission: 0 },
                 thinking: { finished: 0, root: 0, permission: 0 }, tool: 0, turnEnd: 0 });
+        // A new row, a tool result and the turn end redraw only the cells they change, never the wrappers of the
+        // 1,000 finished cells (each list-wide pass used to redraw every mounted cell's wrapper chain).
+        // Measured: the tool and result steps redraw 5 cell wrappers, the turn end 3 (before: 2,009 and 1,005).
+        expect(toolFinished.cells).toBeLessThanOrEqual(6);
+        expect(endFinished.cells).toBeLessThanOrEqual(4);
+        // The segment's end is a structural change: it reaches the row the deltas did not.
+        expect(endFinished.rowChrome).toBeGreaterThan(0);
     });
 });

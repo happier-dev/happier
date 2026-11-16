@@ -1,4 +1,5 @@
 import type { Message, TranscriptOlderPageLoadResult } from '@happier-dev/session-core/messages';
+import type { MessagesByRefsSelectorOptions } from '@/sync/store/messageSelection';
 import type { ReducerState } from '@happier-dev/session-core/reducer';
 import type { AgentState, Metadata } from '@happier-dev/session-core/state';
 import type { SessionPendingRequestLists } from '@happier-dev/session-core/pending';
@@ -48,7 +49,8 @@ export type SessionTranscriptSource = Readonly<{
     /** Structure consumers leave streaming text to the rendered row subscriptions. */
     useMessagesById(options?: Readonly<{ textUpdates?: boolean }>): Readonly<Record<string, Message>>;
     useMessage(messageId: string): Message | null;
-    useMessagesByIds(ids: readonly string[]): readonly (Message | null)[];
+    /** `retain` keeps a held message across a change this reader does not present (see `createMessagesByRefsSelector`). */
+    useMessagesByIds(ids: readonly string[], options?: MessagesByRefsSelectorOptions): readonly (Message | null)[];
     useReducerState(options?: Readonly<{ textUpdates?: boolean }>): ReducerState | null;
     useAwareness(): SessionAwarenessProjectionV1 | null;
     /** Runtime observation time for offline labels; static datasets have no runtime. */

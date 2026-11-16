@@ -24,6 +24,7 @@ import {
 } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { StorageState } from '@/sync/store/types';
+import type { MessagesByRefsSelectorOptions } from '@/sync/store/messageSelection';
 import { deriveTranscriptInteractionFromSession, type TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useSessionMessageAuthorshipScope } from '../useSessionMessageAuthorshipScope';
 import { deriveReadOnlyTranscriptInteraction } from '../forkContext/deriveReadOnlyTranscriptInteraction';
@@ -132,14 +133,18 @@ export function useTranscriptMachineId(): string | null {
 }
 
 /** Ancestor rows belong to this presentation but legitimately read another Session (plan I1). */
-export function useTranscriptMessage(messageId: string, originSessionId?: string): Message | null {
+export function useTranscriptMessage(
+    messageId: string,
+    originSessionId?: string,
+    options?: MessagesByRefsSelectorOptions,
+): Message | null {
     const source = useSessionTranscriptSource();
     if (source.kind !== 'app') return source.useMessage(messageId);
     const foreign = Boolean(originSessionId && originSessionId !== source.sessionId);
     const ownIds = React.useMemo(() => foreign ? EMPTY_IDS : [messageId], [foreign, messageId]);
     const foreignRefs = React.useMemo(() => foreign && originSessionId ? [{ sessionId: originSessionId, messageId }] : [], [foreign, messageId, originSessionId]);
-    const ownMessages = source.useMessagesByIds(ownIds);
-    const foreignMessages = useMessagesByRefs(foreignRefs);
+    const ownMessages = source.useMessagesByIds(ownIds, options);
+    const foreignMessages = useMessagesByRefs(foreignRefs, options);
     return (foreign ? foreignMessages[0] : ownMessages[0]) ?? null;
 }
 
@@ -181,10 +186,10 @@ function createAppSessionTranscriptReads(sessionId: string, serverId: string | n
     function useMessageScope(): boolean {
         return useSessionField((session) => !serverId || session !== null);
     }
-    function useSelectedMessages(ids: readonly string[]): readonly (Message | null)[] {
+    function useSelectedMessages(ids: readonly string[], options?: MessagesByRefsSelectorOptions): readonly (Message | null)[] {
         const scoped = useMessageScope();
         const refs = React.useMemo(() => scoped ? ids.map((messageId) => ({ sessionId, messageId })) : [], [ids, scoped]);
-        const selected = useMessagesByRefs(refs);
+        const selected = useMessagesByRefs(refs, options);
         // Live rows keep their revision-local subscription. Only a row absent
         // from the live map reads the same retained snapshot as the list's ids.
         const needsRetained = scoped && selected.some((message) => message === null);

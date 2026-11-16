@@ -132,6 +132,7 @@ import {
   buildMessageRefsSelectionKey,
   createMessagesByRefsSelector,
   type MessageStoreRef,
+  type MessagesByRefsSelectorOptions,
 } from './messageSelection';
 import {
   useApplyLocalSettings,
@@ -2209,14 +2210,18 @@ export function useMessage(sessionId: string, messageId: string): Message | null
   ).message;
 }
 
-export function useMessagesByRefs(messageRefs: readonly MessageStoreRef[]): readonly (Message | null)[] {
+export function useMessagesByRefs(
+  messageRefs: readonly MessageStoreRef[],
+  options?: MessagesByRefsSelectorOptions,
+): readonly (Message | null)[] {
   const selectionKey = React.useMemo(
     () => buildMessageRefsSelectionKey(messageRefs),
     [messageRefs],
   );
+  const retain = options?.retain;
   const selector = React.useMemo(
-    () => createMessagesByRefsSelector(messageRefs.slice()),
-    [selectionKey],
+    () => createMessagesByRefsSelector(messageRefs.slice(), retain ? { retain } : undefined),
+    [selectionKey, retain],
   );
   return getStorage()(selector, { sessionMessages: messageRefs.map(ref => ref.sessionId) }).messages;
 }

@@ -64,6 +64,7 @@ import { QuietWorkflowTurn } from '../turns/QuietWorkflowTurn';
 import { WorkflowRunFold } from '../turns/WorkflowRunFold';
 import { collectMessageIdsFromTurn } from '../measurement/transcriptRowShellSignature';
 import { useCommittedTranscriptRef } from '../viewport/lifecycle/host/useCommittedTranscriptRef';
+import { areReactNodesStructurallyEqual } from '@/utils/react/areReactNodesStructurallyEqual';
 
 type Ref<T> = { current: T };
 
@@ -818,7 +819,7 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
         toolTimelineChromeMode,
         wrapTranscriptItemForAnchor,
     ]);
-    const renderItem = React.useCallback((info: { item: ChatTranscriptListItem; index: number }) => {
+    const renderItemElement = React.useCallback((info: { item: ChatTranscriptListItem; index: number }) => {
         const item = info.item;
         if (!('isReadOnlyContext' in item) || item.isReadOnlyContext !== true) {
             return renderItemContent(info);
@@ -838,6 +839,21 @@ export function useTranscriptItemRenderer(deps: TranscriptItemRendererDeps) {
             </TranscriptOriginSourceProvider>
         );
     }, [forkMessageMetadataById, renderItemContent]);
+    // A new row, a tool call or a turn end gives the renderer a new identity, and the list then asks
+    // every mounted cell for its element again. A cell whose element is equivalent to the one it holds
+    // keeps that element, so React redraws only the cells whose own inputs moved.
+    const cellElementsRef = React.useRef(new Map<string, React.ReactNode>());
+    React.useEffect(() => {
+        const liveIds = new Set(listData.map((item) => item.id));
+        for (const id of cellElementsRef.current.keys()) if (!liveIds.has(id)) cellElementsRef.current.delete(id);
+    }, [listData]);
+    const renderItem = React.useCallback((info: { item: ChatTranscriptListItem; index: number }) => {
+        const next = renderItemElement(info);
+        const previous = cellElementsRef.current.get(info.item.id);
+        if (previous !== undefined && areReactNodesStructurallyEqual(previous, next)) return previous;
+        cellElementsRef.current.set(info.item.id, next);
+        return next;
+    }, [renderItemElement]);
     const renderTranscriptItemAtIndex = React.useCallback((item: ChatTranscriptListItem, index: number) => {
         return renderItem({ item, index });
     }, [renderItem]);

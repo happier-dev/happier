@@ -48,43 +48,64 @@ function areMessageRefsEqual(
   return previous.every((message, index) => message === next[index]);
 }
 
+/**
+ * `retain(previous, next)` lets a reader keep the message it already holds across a change it does not
+ * present (a streamed text delta for a row whose text leaf follows it): that reader is not notified.
+ */
+export type MessagesByRefsSelectorOptions = Readonly<{
+  retain?: (previous: Message, next: Message) => boolean;
+}>;
+
 export function createMessagesByRefsSelector(
   selectedRefs: readonly MessageStoreRef[],
+  options?: MessagesByRefsSelectorOptions,
 ): (state: StorageState) => MessagesByRefsSelectorSnapshot {
-  let previousSignature: string | null = null;
+  let previousSignatureParts: readonly string[] | null = null;
   let previousMessageRefs: readonly (Message | null)[] | null = null;
   let previousSnapshot: MessagesByRefsSelectorSnapshot | null = null;
+  const retain = options?.retain;
 
   return (state) => {
     if (selectedRefs.length === 0) return EMPTY_MESSAGES_BY_REFS_SELECTOR_SNAPSHOT;
 
     const messages: Array<Message | null> = [];
     const signatureParts: string[] = [];
-    for (const ref of selectedRefs) {
+    selectedRefs.forEach((ref, index) => {
       const session = state.sessionMessages[ref.sessionId];
       const message = session?.messagesById?.[ref.messageId] ?? null;
+      const previous = previousMessageRefs?.[index] ?? null;
+      if (retain && previous && message && previous !== message && previous.id === message.id
+        && retain(previous, message)) {
+        // The retained message keeps its own revision part: a later in-place write still notifies.
+        messages.push(previous);
+        signatureParts.push(previousSignatureParts![index]!);
+        return;
+      }
       const revision = session?.messageRevisionsById?.[ref.messageId];
       messages.push(message);
-      signatureParts.push(ref.sessionId, ref.messageId);
       if (typeof revision === 'number' && Number.isFinite(revision)) {
-        signatureParts.push(`r:${Math.trunc(revision)}`);
+        signatureParts.push(`${ref.sessionId}\u0000${ref.messageId}\u0000r:${Math.trunc(revision)}`);
       } else {
-        signatureParts.push(`l:${buildMessageLegacySignature(message, session?.messagesVersion ?? 0)}`);
+        signatureParts.push(`${ref.sessionId}\u0000${ref.messageId}\u0000l:${buildMessageLegacySignature(message, session?.messagesVersion ?? 0)}`);
       }
-    }
+    });
 
-    const signature = signatureParts.join('\u0000');
     if (
       previousSnapshot !== null
-      && previousSignature === signature
+      && previousSignatureParts !== null
+      && areSignaturePartsEqual(previousSignatureParts, signatureParts)
       && areMessageRefsEqual(previousMessageRefs, messages)
     ) {
       return previousSnapshot;
     }
 
-    previousSignature = signature;
+    previousSignatureParts = signatureParts;
     previousMessageRefs = messages;
     previousSnapshot = { messages };
     return previousSnapshot;
   };
+}
+
+function areSignaturePartsEqual(previous: readonly string[], next: readonly string[]): boolean {
+  return previous.length === next.length && previous.every((part, index) => part === next[index]);
 }
