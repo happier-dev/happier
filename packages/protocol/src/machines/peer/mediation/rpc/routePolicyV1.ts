@@ -784,6 +784,8 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'custodian_only', undefined, undefined, true),
   serverRequired(RPC_METHODS.DAEMON_SPAWN_SESSION_ABANDON, 'durable_session_write',
     'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'custodian_only', undefined, undefined, true),
+  serverRequired(RPC_METHODS.DAEMON_SESSION_CREATION_INTENT, 'durable_session_write',
+    'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'custodian_only', undefined, undefined, true),
   serverRequired(RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, 'durable_session_write',
     'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'custodian_only', undefined, undefined, true),
   serverRequired(RPC_METHODS.SESSION_FORK, 'durable_session_write',

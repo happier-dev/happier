@@ -355,6 +355,7 @@
   ["session.spawnNew","custodian_only"],
   ["daemon.sessionCreation.prepare.v1","custodian_only"],
   ["daemon.spawnSession.abandon","custodian_only"],
+  ["daemon.sessionCreation.intent.v1","custodian_only"],
   ["session.continueWithReplay","custodian_only"],
   ["session.fork","custodian_only"],
   ["session.fork.provider-safe.v1","custodian_only"],

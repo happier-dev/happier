@@ -265,6 +265,8 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
 const SESSION_SPAWN_PRIVATE_INTERNAL_METHODS = new Set<string>([
   RPC_METHODS.SPAWN_HAPPY_SESSION,
   RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
+  // The New Session screen's own intent transport (prestarts the session host); no Action owns it.
+  RPC_METHODS.DAEMON_SESSION_CREATION_INTENT,
 ]);
 
 // Action-bound methods derive effects from their ActionSpec. These transports

@@ -5254,6 +5254,21 @@ exports[`preserves every declared method and complete effective policy through d
     "sharedMachineAccess": "custodian_only",
   },
   {
+    "method": "daemon.sessionCreation.intent.v1",
+    "ownerPacket": "PMS-5",
+    "rationale": "Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.",
+    "requesterExecutionIsolationRequired": true,
+    "routeClass": "server_required",
+    "rpcClassification": "internal_only",
+    "scope": {
+      "accountRequired": true,
+      "machineRequired": true,
+      "serverRequired": true,
+    },
+    "serverRequiredReason": "durable_session_write",
+    "sharedMachineAccess": "custodian_only",
+  },
+  {
     "actionSpecId": "session.continue_with_replay",
     "method": "session.continueWithReplay",
     "ownerPacket": "PMS-5",

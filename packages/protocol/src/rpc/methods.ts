@@ -52,6 +52,8 @@ export const RPC_METHODS = {
   DAEMON_SESSION_CREATION_PREPARE: 'daemon.sessionCreation.prepare.v1',
   /** Read-only directory approval facts; registration is the mixed-version support boundary. */
   DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT: 'daemon.sessionCreation.directoryPreflight.v1',
+  /** New Session is open on this Machine: held while the intent lasts; the daemon prepares for the Session. */
+  DAEMON_SESSION_CREATION_INTENT: 'daemon.sessionCreation.intent.v1',
   STOP_SESSION: 'stop-session',
   STOP_DAEMON: 'stop-daemon',
   DAEMON_EXECUTION_RUNS_LIST: 'daemon.executionRuns.list',
