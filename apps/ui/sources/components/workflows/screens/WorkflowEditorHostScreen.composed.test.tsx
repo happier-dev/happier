@@ -870,7 +870,8 @@ it('opens a saved definition entered before Account readiness without a library 
 async function serveMountedDraftActionHome(definition = createWorkflowDefinitionFixture({ defaults: {
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
 } }), includeSavedArtifact = true, serverIdentityId?: string, settings?: Readonly<Record<string, unknown>>, accountMode: 'plain' | 'e2ee' = 'plain',
-    triggerEvents: readonly Readonly<{ event: { pluginId: string; localId: string }; payloadSchema: PluginJsonSchemaV2 }>[] = []) {
+    triggerEvents: readonly Readonly<{ event: { pluginId: string; localId: string }; payloadSchema: PluginJsonSchemaV2 }>[] = [],
+    sourceRuns: readonly ReturnType<typeof createWorkflowRunSummaryFixture>[] = []) {
     // The memory writer has a prepared HTTP boundary as well as the Home's
     // ordinary transport. Both consume this fixture's same explicit policy.
     if (settings) preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 });
@@ -928,6 +929,13 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         if (memoryResponse) return memoryResponse;
         const sessionResponse = await sessionBoundary.handle(request);
         if (sessionResponse) return sessionResponse;
+        if (request.path === '/v3/automations/runs/workflow-storage' && request.method === 'POST'
+            && request.body !== null && typeof request.body === 'object' && 'operation' in request.body
+            && request.body.operation === 'get' && 'runId' in request.body) {
+            const runId = request.body.runId;
+            const run = sourceRuns.find(value => value.id === runId);
+            if (run) return Response.json({ run });
+        }
         if (request.method === 'POST' && request.path === '/v1/machines/read-batch') {
             return createMachineReadBatchResponseFixture(request.body,
                 id => id === 'machine-a' ? createPlainMachineRowFixture({ id, accountId: 'account-a' }) : null);
@@ -1051,6 +1059,45 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 }
 
 describe('WorkflowEditorHostScreen composition', () => {
+    it('keeps a managed Run source and target in the ordinary sentence draft through edit and Save', async () => {
+        const boundary = await serveMountedDraftActionHome(undefined, false, undefined, undefined, 'plain', [], [
+            createWorkflowRunSummaryFixture({ id: 'source-task-run', ownerAccountId: 'account-a', machineId: 'machine-a' }),
+        ]);
+        const { buildManagedCreationScopeTriggerTarget } = await import('@/sync/domains/machines/managedCreationScopeTrigger');
+        const { prepareWorkflowSentenceEditorEntry } = await import('@/components/workflows/authoring/workflowSentenceAuthoring');
+        const targets = (['stop', 'delete'] as const).map(effect => buildManagedCreationScopeTriggerTarget({
+            homeId: 'source-home', managedId: 'source-managed', effect, supportedIntents: ['stop', 'delete'],
+        }));
+        const stop = targets[0];
+        const remove = targets[1];
+        if (stop?.kind !== 'inline' || remove?.kind !== 'inline') throw new Error('Expected ordinary managed Action definitions');
+        const step = stop.definition.blocks[0];
+        if (step?.kind !== 'action') throw new Error('Expected the managed Action leaf');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected the source Account');
+        const source = { kind: 'workflow_run', runId: 'source-task-run' } as const;
+        const trigger = { kind: 'runLifecycle', source, condition: 'terminal', enabled: true } as const;
+        const entry = prepareWorkflowSentenceEditorEntry({ name: 'Keep task', step, trigger,
+            project: { machineId: 'machine-a', directory: '/repo' }, executionTarget: 'detached_run' }, lifetime);
+        if (!entry) throw new Error('Expected a current source entry');
+        await renderScreen(<WorkflowEditorHostScreen accountLifetime={lifetime}
+            source={{ kind: 'new', definitionDraftSeedId: entry.params.definitionDraftSeedId }} />);
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.settings.triggers.rows).toMatchObject([{ trigger }]);
+        expect(boundary.creates).toHaveLength(0);
+        expect(boundary.automationCreates).toHaveLength(0);
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), blocks: remove.definition.blocks }); });
+        let result: unknown;
+        await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
+        expect(result, JSON.stringify({ result, saveStatus: readBodyProps()!.saveStatus,
+            requests: boundary.requests.filter(request => request.path.startsWith('/v3/automations')
+                || request.path.startsWith('/v1/machines/managed')).map(request => ({ path: request.path, body: request.body })),
+        })).toMatchObject({ status: 'applied' });
+        expect(boundary.creates).toHaveLength(1);
+        expect(readArtifactMutation(boundary.creates[0]).request.definition.blocks).toEqual(remove.definition.blocks);
+        expect(boundary.automationCreates).toHaveLength(1);
+        expect(boundary.automationCreates[0]).toMatchObject({ triggers: [{ trigger }] });
+    });
+
     it('adds an event and Only-when through the mounted Action without losing edits or splitting undo', async () => {
         const event = { pluginId: 'com.acme.events', localId: 'health' };
         const payloadSchema: PluginJsonSchemaV2 = { type: 'object', properties: { outcome: { type: 'string' } } };

@@ -5,7 +5,6 @@ import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presenta
 import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
-import type { AutomationEventAuthoringSeed } from '@/sync/domains/workflows/automationEventAuthoringSeed';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
@@ -429,7 +428,7 @@ function AccountTriggerPopover(props: Readonly<{
 type NewAccountTriggerPopoverProps = Readonly<{
     anchorRef: React.RefObject<View | null>;
     onRequestClose: () => void;
-    eventSeed?: AutomationEventAuthoringSeed;
+    eventSeed?: PluginUiOpenAutomationEventRequestV1;
     accountLifetime?: ServerAccountScopeLifetime | null;
     /** Opened from a Machine's own Triggers section: Runs on starts at that Machine. */
     initialProject?: WorkflowProjectTargetV1;
@@ -437,7 +436,7 @@ type NewAccountTriggerPopoverProps = Readonly<{
 }>;
 
 export function NewAccountTriggerPopover(props: NewAccountTriggerPopoverProps): React.ReactElement {
-    const eventSeed = props.eventSeed && !('kind' in props.eventSeed) ? props.eventSeed : undefined;
+    const eventSeed = props.eventSeed;
     return eventSeed?.sourceInstanceId
         ? <ExistingAccountEventSourceIntake {...props} eventSeed={eventSeed} sourceInstanceId={eventSeed.sourceInstanceId} />
         : <NewAccountTriggerDraftPopover {...props} />;
@@ -504,9 +503,8 @@ function ExistingAccountEventSourceIntake(props: Omit<NewAccountTriggerPopoverPr
 
 function NewAccountTriggerDraftPopover(props: NewAccountTriggerPopoverProps): React.ReactElement {
     const thenOptions = useTriggerThenOptions(props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
-    const runSeed = props.eventSeed && 'kind' in props.eventSeed && props.eventSeed.kind === 'managedRunLifecycle' ? props.eventSeed : null;
-    const eventSeed = props.eventSeed && !('kind' in props.eventSeed) ? props.eventSeed : undefined;
-    const [project, setProject] = React.useState<WorkflowProjectTargetV1 | null>(() => runSeed?.project ?? props.initialProject ?? null);
+    const eventSeed = props.eventSeed;
+    const [project, setProject] = React.useState<WorkflowProjectTargetV1 | null>(() => props.initialProject ?? null);
     return (
         <TriggerPopover
             testID="workflows-column-new-trigger-popover"
@@ -518,10 +516,9 @@ function NewAccountTriggerDraftPopover(props: NewAccountTriggerPopoverProps): Re
             whenKinds={['schedule', 'pluginEvent']}
             sessionId={null}
             initial={null}
-            initialWhen={runSeed ? { kind: 'runLifecycle', source: runSeed.source, condition: 'terminal' }
-                : eventSeed ? { kind: 'pluginEvent', value: null, eventRef: eventSeed.eventRef } : undefined}
+            initialWhen={eventSeed ? { kind: 'pluginEvent', value: null, eventRef: eventSeed.eventRef } : undefined}
             initialEventSeed={eventSeed}
-            initialActionTargets={runSeed?.actionTargets ?? props.initialActionTargets}
+            initialActionTargets={props.initialActionTargets}
             accountLifetime={props.accountLifetime}
             serverId={props.accountLifetime?.scope.serverId}
             workflowOptions={thenOptions.workflowOptions}
@@ -549,7 +546,7 @@ function NewAccountTriggerDraftPopover(props: NewAccountTriggerPopoverProps): Re
                     target: write.target,
                     project,
                     trigger: write.trigger,
-                    executionTarget: buildTriggerExecutionTarget(value.then, runSeed || props.initialActionTargets ? { kind: 'detached_run' } : undefined),
+                    executionTarget: buildTriggerExecutionTarget(value.then, props.initialActionTargets ? { kind: 'detached_run' } : undefined),
                     inputs: write.inputs,
                 }, props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime });
                 fireAndForget(sync.refreshAutomations());

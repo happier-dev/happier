@@ -23,7 +23,9 @@ import { createAutomationPluginEventTriggerDefinitionV1, sealAutomationTriggerDe
 function createdTriggerDetail(automationId: string, row: AutomationTriggerCreateRequest) {
     const trigger = row.trigger;
     if (trigger.kind !== 'pluginEvent') return AutomationTriggerDetailSchema.parse({ ...trigger, id: row.triggerId,
-        revision: 1, createdAt: 1, updatedAt: 1, nextRunAt: null, triggerDefinitionEnvelope: null });
+        revision: 1, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
+        ...(trigger.kind === 'runLifecycle' ? { remainingOccurrences: 1, status: { state: 'waiting', runId: null } }
+            : { nextRunAt: null }) });
     const transport = trigger.observationTransport;
     const sourceSelectorId = 'sourceSelectorId' in trigger ? trigger.sourceSelectorId
         : AutomationSourceSelectorIdV1Schema.parse('00000000-0000-4000-8000-000000000001');

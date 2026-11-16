@@ -164,6 +164,7 @@ function resetTriggerSets() {
     state.resetWorkflowTriggerSets();
 }
 beforeEach(async () => {
+    installDisconnectedServerSocketBoundary();
     previous = storage.getState();
     previousSnapshot = getAppliedActiveServerSnapshot();
     previousRuntimeAvailable = isAppliedActiveServerRuntimeAvailable();
@@ -245,7 +246,7 @@ function serve(set: ReturnType<typeof fixture>) {
             enabled: true, priority: 0, updatedAt: 1 })), triggers: set.triggers,
         ...(set.legacy ? { templateCiphertext: set.legacy.lockedReason ? AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED : AUTOMATION_TEMPLATE_V02_EXISTING_PLAIN } : {
             executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: set.revision,
-                workflow: { t: 'plain', v: { workspace: { directory: set.project?.directory ?? '/repo' }, executionTarget: { kind: 'session' },
+                workflow: { t: 'plain', v: { workspace: { directory: set.project?.directory ?? '/repo' }, executionTarget: set.context?.executionTarget ?? { kind: 'session' },
                     ...(set.target?.kind === 'inline' ? { inlineDefinition: set.target.definition } : {}) } }, triggerEvidence: null }),
         }) });
     rows = [row];
@@ -325,48 +326,61 @@ describe('Account Workflow Library and settings', () => {
         await waitForHomeGovernance(() => expect(workflowReads().length).toBeGreaterThan(0));
         expect(screen.findAllByType(TriggerPopover)).toHaveLength(1);
     });
-    it.each(['managedRunLifecycle', 'pluginEvent'] as const)('keeps %s destination intake bound to its source Home after focus changes', async kind => {
-        const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
-        const { WorkflowsDestinationIndex } = await import('../library/WorkflowsDestinationIndex');
+    it.each(['managedRunLifecycle', 'pluginEvent'] as const)('keeps %s sentence intake bound to its source Home after focus changes', async kind => {
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
-        const { storeAutomationEventAuthoringSeed } = await import('@/sync/domains/workflows/automationEventAuthoringSeed');
+        const { prepareWorkflowSentenceEditorEntry } = await import('../authoring/workflowSentenceAuthoring');
+        const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
         const { buildManagedCreationScopeTriggerTarget } = await import('@/sync/domains/machines/managedCreationScopeTrigger');
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime) throw new Error('Expected source Account lifetime');
         const source = { kind: 'workflow_run', runId: 'addressed-task-run' } as const;
-        const seedId = storeAutomationEventAuthoringSeed(kind === 'managedRunLifecycle'
-            ? { kind, source, project, actionTargets: [buildManagedCreationScopeTriggerTarget({
-                homeId: 'source-home', managedId: 'source-managed', effect: 'stop', supportedIntents: ['stop'],
-            })] }
-            : { eventRef: { pluginId: 'acme.events', localId: 'completed' }, setupInput: {} }, lifetime);
+        const target = buildManagedCreationScopeTriggerTarget({
+            homeId: 'source-home', managedId: 'source-managed', effect: 'stop', supportedIntents: ['stop'],
+        });
+        const step = target.kind === 'inline' ? target.definition.blocks[0] : null;
+        if (step?.kind !== 'action') throw new Error('Expected the managed Action leaf');
+        const eventSeed = { eventRef: { pluginId: 'acme.events', localId: 'completed' }, setupInput: {} };
+        const entry = prepareWorkflowSentenceEditorEntry(kind === 'managedRunLifecycle'
+            ? { name: 'Task', step, project, executionTarget: 'detached_run',
+                trigger: { kind: 'runLifecycle', source, condition: 'terminal', enabled: true } }
+            : { name: 'Event', eventSeed }, lifetime);
+        if (!entry) throw new Error('Expected the source sentence entry');
         const otherServerId = await home.addHome({ name: 'Focused Home', serverUrl: `https://focused-trigger-${crypto.randomUUID()}.test`, accountId: 'account-b' });
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
-        storage.setState({ profileScope: { serverId: otherServerId, accountId: 'account-b' },
-            settingsScope: { serverId: otherServerId, accountId: 'account-b' } });
-        storage.getState().applySettingsLocal({ featureToggles: { automations: true, workflows: true } });
-        routeState.params = { serverId, automationEventSeedId: seedId };
-        const screen = await renderAccountScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
-            <WorkflowsDestinationIndex />
-        </AppShellColumnContext.Provider>);
-        if (kind === 'pluginEvent') {
-            await waitForHomeGovernance(() => expect(screen.findByTestId('automation-event-authoring-unavailable')).not.toBeNull());
-            expect(screen.findAllByType(NewAccountTriggerPopover)).toHaveLength(0);
-        } else {
-            await waitForHomeGovernance(() => expect(screen.findAllByType(TriggerPopover)).toHaveLength(1));
-            const editor = screen.findByType(TriggerPopover);
-            expect(editor.props.initialWhen).toEqual({ kind: 'runLifecycle', source, condition: 'terminal' });
-            expect(editor.props.accountLifetime.scope).toEqual(lifetime.scope);
-            expect(editor.props.serverId).toBe(lifetime.scope.serverId);
-            expect(rows).toHaveLength(0);
-        }
+        const focusedScope = { serverId: otherServerId, accountId: 'account-b' };
+        storage.setState({ profileScope: focusedScope, settingsScope: focusedScope });
+        expect(entry.params.serverId).toBe(lifetime.scope.serverId);
+        expect(readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, focusedScope)).toBeNull();
+        const seed = readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, lifetime.scope);
+        expect(seed).toMatchObject(kind === 'managedRunLifecycle'
+            ? { initialView: 'sentence', definition: { blocks: [step] }, project, executionTarget: 'detached_run',
+                trigger: { kind: 'runLifecycle', source, condition: 'terminal', enabled: true } }
+            : { initialView: 'sentence', eventSeed });
+        expect(rows).toHaveLength(0);
     });
-    it('opens a task Keep draft with its exact Run and preserves the managed target when changing Stop to Delete', async () => {
+    it('edits a saved task target from Stop to Delete while preserving its exact Run and trigger removal', async () => {
         const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
         const { buildManagedCreationScopeTriggerTarget } = await import('@/sync/domains/machines/managedCreationScopeTrigger');
         const { readManagedMachineTriggerAction } = await import('@happier-dev/protocol/actions/executor/workflowTriggerActions');
         const { createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
         const { setServerProfileIdentityForUrl, resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { installSessionActionRpcBoundary } = await import('@/dev/testkit/harness/sessionActionRpcBoundary');
+        const { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+        const projection = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projectionDigest: 'a'.repeat(64), projection: { v: 2, generation: 1,
+                installedPackagesById: {}, actionsById: {}, agentsById: {}, familiesById: {} },
+        }));
+        // Only the daemon wire is substituted; native Action discovery and its input hints stay real.
+        installSessionActionRpcBoundary(request => {
+            if (!request.method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)) {
+                throw new Error(`Unexpected managed-target fixture RPC: ${request.method}`);
+            }
+            const read = (request.params as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
+            return read ? projection.read(read.digest, read.offset, read.includeDigests) : projection.manifest;
+        });
+        home.answer(serverId, '/v1/auth/ping', { body: { ok: true } });
         const homeId = 'srv_managed_keep';
         expect(await setServerProfileIdentityForUrl(getActiveServerSnapshot().serverUrl, homeId))
             .toMatchObject({ serverIdentityId: homeId });
@@ -387,22 +401,28 @@ describe('Account Workflow Library and settings', () => {
         home.answer(serverId, 'POST /v3/automations/runs/workflow-storage', { body: { run: createWorkflowRunSummaryFixture({
             id: source.runId, ownerAccountId: 'account-a', machineId: project.machineId,
         }) } });
-        const screen = await renderAccountScreen(<NewAccountTriggerPopover anchorRef={React.createRef()}
-            eventSeed={{ kind: 'managedRunLifecycle', source, project, actionTargets }} onRequestClose={() => undefined} />);
+        serve(WorkflowTriggerSetV1Schema.parse({ ...fixture(), target: actionTargets[0], context: { workspace: { directory: project.directory }, executionTarget: { kind: 'detached_run' } }, triggers: [{ id: 'task-terminal',
+            revision: 1, createdAt: 1, updatedAt: 1, enabled: true, kind: 'runLifecycle', source, condition: 'terminal',
+            triggerDefinitionEnvelope: null, remainingOccurrences: 1, status: { state: 'waiting', runId: null } }] }));
+        const screen = await renderAccountScreen(<AccountTriggersSection />);
+        await waitForHomeGovernance(() => expect(screen.findByTestId('workflows-column:trigger:digest')).not.toBeNull());
+        await screen.pressByTestIdAsync('workflows-column:trigger:digest');
         const editor = screen.findByType(TriggerPopover);
-        expect(editor.props.initialWhen).toEqual({ kind: 'runLifecycle', source, condition: 'terminal' });
-        expect(rows).toHaveLength(0);
-        const menus = screen.findAllByType(DropdownMenu);
-        const actionMenu = menus.find(menu => menu.props.testID === 'workflows-column-new-trigger-popover-action');
-        expect(actionMenu).toBeDefined();
-        await act(async () => actionMenu!.props.onSelect('machines.managed.delete'));
+        expect(editor.props.initial.when).toEqual({ kind: 'runLifecycle', source, condition: 'terminal' });
+        expect(rows).toHaveLength(1);
+        const actionMenu = () => screen.findAllByType(DropdownMenu)
+            .find(menu => menu.props.testID === 'workflows-column-trigger-popover-action');
+        await waitForHomeGovernance(() => expect(actionMenu()?.props.items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'machines.managed.delete' }),
+        ])));
+        await act(async () => actionMenu()!.props.onSelect('machines.managed.delete'));
         const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
         const fields = screen.findByType(ActionInputFields);
         expect(fields.props.input).toMatchObject({ homeId, managedId: 'managed-exact',
             intent: 'delete', when: 'after-idle', reviewedDependencies: true });
-        expect(rows).toHaveLength(0);
-        await screen.pressByTestIdAsync('workflows-column-new-trigger-popover-submit');
-        await waitForHomeGovernance(() => expect(rows, screen.getTextContent()).toHaveLength(1));
+        expect(rows).toHaveLength(1);
+        await screen.pressByTestIdAsync('workflows-column-trigger-popover-submit');
+        await waitForHomeGovernance(() => expect(mutations, screen.getTextContent()).toHaveLength(1));
         const saved = rows[0]!;
         expect(saved.triggers).toMatchObject([{ kind: 'runLifecycle', source, condition: 'terminal' }]);
         const recipe = saved.executionRecipe;
