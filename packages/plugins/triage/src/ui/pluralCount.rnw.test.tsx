@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { URL as NodeURL } from 'node:url';
 import * as React from 'react';
 import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
@@ -12,7 +13,7 @@ import { useTriagePluralCount } from './pluralCount.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const catalogs = readPluginTranslationResources(new URL('../../', import.meta.url));
+const catalogs = readPluginTranslationResources(new NodeURL('../../', import.meta.url));
 const mounted: PluginUiTestkit[] = [];
 afterEach(async () => {
   for (const fixture of mounted.splice(0)) await fixture.dispose();
