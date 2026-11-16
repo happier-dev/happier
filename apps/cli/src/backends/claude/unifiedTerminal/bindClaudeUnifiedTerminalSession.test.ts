@@ -405,7 +405,7 @@ describe('bindClaudeUnifiedTerminalSession', () => {
     expect(onPromptTurnStarted).not.toHaveBeenCalled();
   });
 
-  it('suppresses a steered prompt echo that arrives at turn end, beyond the fixed echo window', async () => {
+  it.each(['string', 'text-blocks'] as const)('suppresses a %s steered prompt echo at turn end without hiding a later native prompt', async (format) => {
     let nowMs = 1_000;
     const { binding, consumedMessages, observedMessages } = createBinding({ nowMs: () => nowMs });
 
@@ -421,10 +421,23 @@ describe('bindClaudeUnifiedTerminalSession', () => {
     // for the queued prompt only appears once the turn ends.
     nowMs = 120_000;
     await binding.sessionOptions.onReady?.();
-    binding.sessionOptions.onMessage?.(userMessage('steer the long turn', new Date(120_010).toISOString()));
+    const echo: RawJSONLines = {
+      ...userMessage('steer the long turn', new Date(120_010).toISOString()),
+      message: {
+        content: format === 'string'
+          ? 'steer the long turn'
+          : [{ type: 'text', text: 'steer the long turn' }],
+      },
+    };
+    await binding.sessionOptions.onMessage?.(echo);
 
     expect(observedMessages).toEqual([]);
     expect(consumedMessages).toEqual([expect.objectContaining({ type: 'user' })]);
+
+    const nativePrompt = { ...echo, uuid: 'later-native-prompt' };
+    await binding.sessionOptions.onMessage?.(nativePrompt);
+    expect(observedMessages).toEqual([nativePrompt]);
+    expect(consumedMessages).toEqual([echo]);
   });
 
   it('suppresses a steered prompt echo using the canonical prompt identity, not raw bytes', async () => {

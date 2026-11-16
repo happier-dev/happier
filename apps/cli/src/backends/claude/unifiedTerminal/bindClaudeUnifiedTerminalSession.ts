@@ -5,6 +5,7 @@ import { TERMINAL_INPUT_QUIET_PERIOD_MS } from '@/agent/runtime/terminal/injecti
 
 import type { EnhancedMode } from '../loop';
 import type { RawJSONLines } from '../types';
+import { readClaudeUserMessageText } from '../utils/readClaudeUserMessageText';
 import type { ClaudeUnifiedTerminalSessionOptions } from './runClaudeUnifiedTerminalSession';
 import {
   createClaudeUnifiedPromptEchoSuppressor,
@@ -138,9 +139,9 @@ export function bindClaudeUnifiedTerminalSession<Mode extends EnhancedMode = Enh
   }
 
   function consumePendingSteerEcho(message: RawJSONLines): boolean {
-    if (pendingSteerEchoes.length === 0 || message.type !== 'user') return false;
-    const content = message.message?.content;
-    if (typeof content !== 'string') return false;
+    if (pendingSteerEchoes.length === 0) return false;
+    const content = readClaudeUserMessageText(message);
+    if (content === null) return false;
     const normalizedContent = normalizeClaudeUnifiedPromptIdentityText(content);
     if (normalizedContent.length === 0) return false;
     const referenceMs = nowMs();
