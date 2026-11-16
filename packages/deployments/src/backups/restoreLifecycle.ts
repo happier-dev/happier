@@ -454,7 +454,10 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
         const roleCommand = async (statement: string) => completed(await execute({ kind: 'service', mode: 'exec',
             service: destination.service, argv: ['psql', '-X', '-v', 'ON_ERROR_STOP=1', '--dbname=postgres'],
             stdin: statement, sensitiveValues: [password] }));
-        await roleCommand(`CREATE ROLE ${identifier(role)} LOGIN PASSWORD ${literal(password)} NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;`);
+        // PostgreSQL 16 lets a non-superuser create a database for an owner only
+        // after it can SET ROLE to that owner. The grant runs one way: the native
+        // actor may act as the restricted owner, and the owner gains nothing.
+        await roleCommand(`CREATE ROLE ${identifier(role)} LOGIN PASSWORD ${literal(password)} NOSUPERUSER NOINHERIT NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS; GRANT ${identifier(role)} TO CURRENT_USER;`);
         try {
             completed(await execute(service(destination, ['createdb', '--maintenance-db=postgres', '--template=template0',
                 `--owner=${role}`, '--', destination.stagingDatabase])));
@@ -476,9 +479,10 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             if (input.source.kind !== 'upload' && (restored.producer?.exitCode !== 0
                 || restored.producer.checksumSha256 !== input.source.producerChecksumSha256
                 || restored.producer.bytes !== input.source.totalBytesProcessed)) refuse('backup_integrity_failed');
-            // Existing administration/app identity can inherit the restored objects;
-            // functions retain the restricted owner, including on later re-backup.
-            await roleCommand(`ALTER ROLE ${identifier(role)} NOLOGIN PASSWORD NULL; GRANT ${identifier(role)} TO CURRENT_USER;`);
+            // Existing administration/app identity inherits the restored objects
+            // through the grant above; functions retain the restricted owner,
+            // including on later re-backup.
+            await roleCommand(`ALTER ROLE ${identifier(role)} NOLOGIN PASSWORD NULL;`);
         } catch (error) {
             // Keep failed stage and its restricted owner for visible inspection.
             // Retire the temporary login even when parsing/import failed.
