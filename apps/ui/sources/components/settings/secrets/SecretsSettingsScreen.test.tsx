@@ -198,36 +198,42 @@ async function initializeRemovalSettings(scope: ServerAccountScope, waiveApprova
 }
 
 describe('Shared Saved Secret person disclosure controller', () => {
-    it('reads no disclosure history while retained hidden and refreshes once on each presentation', async () => {
+    it.each([false, true])('reads visible disclosure history and pauses while retained hidden (initially presented: %s)', async initiallyPresented => {
         const { scope } = await mount(false);
         const { useSharedSavedSecretActivity } = await import('@/components/secrets/useSharedSavedSecretActivity');
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
         const { savedSecretDisclosureActivityEntityIdV1 } = await import('@happier-dev/protocol/account/settings/savedSecretReferenceV1');
         const path = '/v1/account/saved-secrets/resources/activity/read';
         harness.answer(scope.serverId, path, { body: { items: [], nextCursor: null } });
-        let presented = false;
+        let presented = initiallyPresented;
         function Wrapper({ children }: React.PropsWithChildren) {
             return <PluginSurfaceFocusEligibilityProvider active={false} presentationActive={presented}>{children}</PluginSurfaceFocusEligibilityProvider>;
         }
         const hook = await renderHook(() => useSharedSavedSecretActivity({ scope, resourceId: 'secret-a', enabled: true }), { wrapper: Wrapper });
-        expect(harness.requestsFor(path)).toHaveLength(0);
+        const initialReads = initiallyPresented ? 1 : 0;
+        if (initiallyPresented) {
+            await vi.waitFor(() => expect(hook.getCurrent().state.status).toBe('ready'));
+            presented = false;
+            await hook.rerender();
+        }
+        expect(harness.requestsFor(path)).toHaveLength(initialReads);
         const push = () => publishHomeAccountChange(scope.serverId, [savedSecretDisclosureActivityEntityIdV1('secret-a')],
             { source: 'socket', changeKinds: ['account'] });
         await act(async () => { for (let index = 0; index < 5; index++) push(); });
-        expect(harness.requestsFor(path)).toHaveLength(0);
+        expect(harness.requestsFor(path)).toHaveLength(initialReads);
         presented = true;
         await hook.rerender();
         await vi.waitFor(() => expect(hook.getCurrent().state.status).toBe('ready'));
-        expect(harness.requestsFor(path)).toHaveLength(1);
+        expect(harness.requestsFor(path)).toHaveLength(initialReads + 1);
         const settled = hook.getCurrent().state;
         presented = false;
         await hook.rerender();
         await act(async () => { for (let index = 0; index < 5; index++) push(); });
-        expect(harness.requestsFor(path)).toHaveLength(1);
+        expect(harness.requestsFor(path)).toHaveLength(initialReads + 1);
         expect(hook.getCurrent().state).toBe(settled);
         presented = true;
         await hook.rerender();
-        await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(2));
+        await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(initialReads + 2));
     });
     it('projects the old value hidden on the first new-subject layout before passive cleanup', async () => {
         const { scope, entries } = await mount(false);

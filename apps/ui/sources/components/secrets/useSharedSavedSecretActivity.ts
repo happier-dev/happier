@@ -115,13 +115,13 @@ export function useSharedSavedSecretActivity(input: Readonly<{
                 releaseRetirement?.();
             };
         };
-        let current = presentedSignal.get();
-        let stop = start(current);
+        let presented = presentedSignal.get();
+        let stop = start(presented);
         const unsubscribe = presentedSignal.subscribe(() => {
-            if (presentedSignal.get() === current) return;
-            current = presentedSignal.get();
+            if (presentedSignal.get() === presented) return;
+            presented = presentedSignal.get();
             stop?.();
-            stop = start(current);
+            stop = start(presented);
         });
         return () => { unsubscribe(); stop?.(); };
     }, [input.scope.serverId, input.scope.accountId, input.resourceId, input.enabled, presentedSignal]);
