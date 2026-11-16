@@ -14,7 +14,7 @@ import { DeploymentProjectChoiceGroups, type DeploymentProjectChoiceModel } from
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentEnvironmentCopyChoicesV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentCopyV1';
 import type { DeploymentEnvironmentDeployerPrincipalV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentDeployerV1';
-import { environmentSecretBindingIdentityV1, projectEnvironmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { environmentSecretBindingIdentityV1, projectEnvironmentSecretBindingIdentityV1, type DeploymentTemplateRefV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ProjectRefSelect } from '@/components/projects/ProjectRefSelect';
@@ -39,6 +39,8 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { Text } from '@/components/ui/text/Text';
+import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useMachineListForServer } from '@/sync/store/hooks';
@@ -122,6 +124,10 @@ export const DeploymentEnvironmentDraft = React.memo(
       copyFrom?: DeploymentEnvironmentDetailV1 | null;
       /** A door that names what it starts from (Store → Apps): a stored definition, in any Project. */
       definitionKind?: 'compose' | 'image' | null;
+      /** A catalog app (Deploy an app → From the catalog): its exact registry pin is what runs, in any Project. */
+      catalogApp?: Readonly<{ templateRef: DeploymentTemplateRefV1; title: string }> | null;
+      /** Where a door already chose (a suggested platform); the recommendation owner still decides what is offered. */
+      initialTargetKey?: string | null;
       onApprovalRequested: (artifactId: string) => void;
       onSaved: (environmentId: string, next?: Readonly<{ tab?: DeploymentEnvironmentTabV1; projectSourceId?: string }>) => void;
       /** Whether this viewer can link a platform; without it the draft offers machines only. */
@@ -169,7 +175,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     // Provider choices are prepared in the existing platform editor; Create links that exact result.
     const platforms = useDeploymentPlatformTargets(props.platformAvailable === true ? props.lifetime : null);
     const platformTargets = platforms.state.status === 'ready' ? platforms.state.targets : NO_PLATFORM_TARGETS;
-    const [targetKey, setTargetKey] = React.useState<string>(MACHINE_TILE);
+    const [targetKey, setTargetKey] = React.useState<string>(props.initialTargetKey ?? MACHINE_TILE);
     const platformTarget = props.platformAvailable === true ? platformTargets.find((target) => target.key === targetKey) ?? null : null;
     const [platformProvider, setPlatformProvider] = React.useState<PreparedPlatformTargetLink | null>(null);
     const [composePath, setComposePath] = React.useState(DEFAULT_COMPOSE_PATH);
@@ -224,7 +230,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     const definitionKind = props.definitionKind ?? (source !== null && source.repository === undefined ? 'compose' : null);
     const storedDefinition = definitionKind !== null;
     const recommendation = resolvePublishTargetRecommendation({
-      definition: props.copyFrom?.content.definition ?? (definitionKind ? { from: definitionKind } : { kind: 'repository' }),
+      definition: props.copyFrom?.content.definition ?? (props.catalogApp ? { from: 'catalogApp' }
+        : definitionKind ? { from: definitionKind } : { kind: 'repository' }),
       explicitTarget: targetKey !== MACHINE_TILE ? { id: targetKey, targetClass: 'platform' } : undefined,
       targets: [{ id: MACHINE_TILE, targetClass: 'ownServer', availability: allMachines == null ? 'unknown'
         : chosen && answers(chosen) ? 'available' : 'unavailable' },
@@ -270,7 +277,7 @@ export const DeploymentEnvironmentDraft = React.memo(
         : choice.kind !== 'reuse' || Boolean(choice.bindings?.length && choice.bindings.every(binding =>
           reusableBindings.some(eligible => environmentSecretBindingIdentityV1(eligible) === environmentSecretBindingIdentityV1(binding))))) ?? true) &&
       chosen !== null && platformDefinitionAccepted && (!onPlatform || platformProvider !== null) &&
-      (props.copyFrom !== undefined && props.copyFrom !== null || (definitionKind === 'image'
+      (props.copyFrom !== undefined && props.copyFrom !== null || props.catalogApp != null || (definitionKind === 'image'
         ? imageName.trim().length > 0 && imagePortValid
         : storedDefinition
         ? composeDocument.trim().length > 0
@@ -315,7 +322,8 @@ export const DeploymentEnvironmentDraft = React.memo(
               environmentId: props.copyFrom.environment.id, expectedRevision: props.copyFrom.environment.revision,
               choices: { ...copyChoices, data: copyChoices.data.map(choice => choice.kind === 'createEmpty'
                 ? { targetLinkId: choice.targetLinkId, kind: 'createEmpty' as const, provision: provisionDrafts[choice.targetLinkId]! } : choice) },
-            } } : { definition: definitionKind === 'image' ? {
+            } } : { definition: props.catalogApp ? { from: 'catalogApp', templateRef: props.catalogApp.templateRef }
+              : definitionKind === 'image' ? {
               from: 'image', image: imageName.trim(), port: imagePortNumber,
             } : storedDefinition ? {
               from: 'compose', document: composeDocument, profiles: [], services: [],
@@ -399,9 +407,27 @@ export const DeploymentEnvironmentDraft = React.memo(
                 subtitle: t('projects.deployments.platformLink.emptyBody') } satisfies SelectionTile<string>]
             : []),
     ];
+    // Stepped (journey-deploy where): the targets read as cards. The recommended one carries its reason and badge,
+    // and More platforms always closes the grid, also where a stored definition runs on a Machine only.
+    const recommendedId = recommendation.evidence.length > 0 ? recommendation.target?.id ?? null : null;
+    const recommendationReason = recommendedId ? deploymentRecommendationDescription(recommendation) : null;
+    const stepTiles: Array<SelectionTile<string>> = stepped ? [
+      ...targetTiles.filter(tile => tile.id !== PLUGINS_TILE).map((tile): SelectionTile<string> => tile.id === recommendedId
+        ? { ...tile, badge: t('newApp.deploy.recommended'),
+          subtitle: [recommendationReason, tile.subtitle].filter(Boolean).join('\n') }
+        : tile),
+      { id: PLUGINS_TILE, icon: 'plus', title: t('newApp.deploy.morePlatforms'), subtitle: t('newApp.deploy.morePlatformsBody') },
+    ] : targetTiles;
+    // A platform the definition can't use leaves the grid for one muted list with the one shared reason (whereM).
+    const unusablePlatforms = stepped ? platformTargets.filter(target => !recommendation.offeredTargetIds.includes(target.key)) : [];
     const chooseTarget = (next: string | null) => {
       if (next === null || next === LOADING_TILE) return;
-      if (next === PLUGINS_TILE) { router.push(PLUGINS_APP_ROUTE); return; }
+      if (next === PLUGINS_TILE) {
+        // Turning on a plugin happens in Plugins; a hosted flow steps aside first.
+        if (stepped) props.onDiscard();
+        router.push(PLUGINS_APP_ROUTE);
+        return;
+      }
       if (next === RETRY_TILE) { platforms.retry(); return; }
       setTargetKey(next);
     };
@@ -421,7 +447,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     };
 
     const draftStep: DeploymentDraftStep = stepReview || prepared || partial ? 'review' : formStep;
-    const whereReady = chosen !== null && platformDefinitionAccepted;
+    // Where continues only on a Machine that answers (whereErr): an away one says so in its tile instead.
+    const whereReady = chosen !== null && answers(chosen) && platformDefinitionAccepted;
     const pressStep = useEventCallback(() => {
       if (draftStep !== 'where') { void save(); return; }
       if (!whereReady) return;
@@ -501,7 +528,18 @@ export const DeploymentEnvironmentDraft = React.memo(
     );
     const partialProgress = partial && refusal?.kind === 'refused' && refusal.failure
       ? <DeploymentPartialProgress testID="project-deployments.draft.progress" progress={partial} failure={refusal.failure} /> : null;
-    const refusalBanner = refusal && refusal.kind === 'approval' ? (
+    // One notice per cause: a chosen Machine that stopped answering is said once, by its own notice, in place of the
+    // target refusal and the setup failure that both come from it (journey-deploy revFail).
+    const awayMachine = chosen !== null && !answers(chosen) ? chosen : null;
+    const machineAwayNotice = awayMachine ? (
+      <AttentionBanner testID="project-deployments.draft.machineAwayNotice" tone="warning"
+        title={machineName(awayMachine.id)} description={t('errors.machineNotAnswering')} />
+    ) : null;
+    // The recovery owner names where a refusal is fixed: a Machine cause, or the unavailable target, is that Machine.
+    const machineCausedRefusal = awayMachine !== null && refusal?.kind === 'refused' && (refusal.code === 'target_unavailable'
+      || readDeploymentRefusalRecoveryV1(refusal.code)?.nextAction.destination === 'machines');
+    const refusalBanner = machineCausedRefusal ? machineAwayNotice
+      : refusal && refusal.kind === 'approval' ? (
             <AttentionBanner
               testID="project-deployments.draft.approval"
               tone="neutral"
@@ -586,6 +624,63 @@ export const DeploymentEnvironmentDraft = React.memo(
           {!platformDefinitionAccepted ? <SurfaceStateCard kind="unavailable" size="line"
             title={t('common.unavailable')} /> : null}
     </>;
+    const machineAway = chosen !== null && !answers(chosen);
+    // The Machine choice lives in the Machine card (whereM): its picker with the presence owner's line, and when that
+    // Machine is away, the one next step on its own line.
+    // Until the Machine list has answered, the field holds its place; "no Machine" is said only once it is known.
+    const machineCard = allMachines != null && machines.length === 0 && machineId === null ? (
+      <DeploymentMachinesEmpty serverId={props.lifetime?.scope.serverId ?? ''} testID="project-deployments.draft" empty={
+        <Item testID="project-deployments.draft.noMachine.create" title={t('managedMachines.add.createPath')}
+          subtitle={t('projects.deployments.noMachineBody')} onPress={() => setCreatingMachine(true)} disabled={!props.lifetime} />} />
+    ) : (
+      <View style={styles.machineCard}>
+        {/* A bare section, so the field's row lands on the tile's text column like the title above it. */}
+        <ItemGroup surface="none">
+        <SessionMachineField
+          testID="project-deployments.draft.machine"
+          serverId={props.lifetime?.scope.serverId ?? ''}
+          machines={machines}
+          machineId={machineId ?? chosen?.id ?? null}
+          machineName={t('approvals.machineNotKnown')}
+          title={onPlatform ? t('projects.deployments.platformLink.deploysFrom') : t('projects.deployments.machine')}
+          {...(chosen ? { subtitle: presence.get(chosen.id)?.label } : {})}
+          awayMachinesChoosable
+          onSelectMachine={(machine) => setMachineId(machine.id)}
+        />
+        {machineAway ? (
+          <BareSectionContent>
+            <Text testID="project-deployments.draft.machineAway" variant="meta" style={{ color: theme.colors.text.secondary }}>
+              {t('newApp.deploy.machineOfflineGuide')}
+            </Text>
+          </BareSectionContent>
+        ) : null}
+        </ItemGroup>
+      </View>
+    );
+    const stepWhere = stepped ? <>
+          <ItemGroup surface="none">
+            <BareSectionContent>
+            <SelectionTiles<string>
+              accessibilityLabel={t('projects.deployments.whereTitle')}
+              testIdPrefix="project-deployments.draft.target"
+              options={stepTiles}
+              value={targetKey}
+              onChange={chooseTarget}
+              minimumColumns={1}
+              maximumColumns={props.phone ? 1 : 2}
+              renderOptionFooter={({ option }) => option.id === MACHINE_TILE ? machineCard : null}
+            />
+            </BareSectionContent>
+          </ItemGroup>
+          {unusablePlatforms.length > 0 ? (
+            <ItemGroup testID="project-deployments.draft.cantRun"
+              title={sourceTitle || appName ? t('newApp.deploy.cantRun', { name: appName ?? sourceTitle ?? '' }) : t('newApp.deploy.cantRunUnnamed')}
+              titleRole="label" description={t('newApp.deploy.cantRunStored')}>
+              {unusablePlatforms.map(target => <Item key={target.key} mode="info" dimmed showChevron={false} title={target.title}
+                icon={<PluginMark title={target.title} pluginId={target.pluginId} />} />)}
+            </ItemGroup>
+          ) : null}
+    </> : null;
     const configureGroups = <>
           {platformTarget && platformDefinitionAccepted && platformEnvironment && props.lifetime && actions ? (
             <DeploymentPlatformTargetEditor key={`${platformTarget.key}:${chosen?.id ?? ''}:${source?.revision ?? ''}`}
@@ -624,7 +719,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             />
             <MachineSetupPlanReview testID="project-deployments.draft.hostSetup.review" prepared={host.prepared}
               nameOf={machineName} disabled={hostApply.pending} />
-          </> : !onPlatform && host.prepared?.ok === false ? (
+          </> : !onPlatform && host.prepared?.ok === false ? awayMachine ? (refusalBanner === machineAwayNotice ? null : machineAwayNotice) : (
             <AttentionBanner testID="project-deployments.draft.hostSetup.failed" tone="warning" title={t('machinePresets.setup.title')}
               description={describeMachineSetupPlanFailure(host.prepared, machineName)} />
           ) : !onPlatform && chosen && host.readiness === 'unknown' && !host.setup ? (
@@ -635,12 +730,13 @@ export const DeploymentEnvironmentDraft = React.memo(
           ) : null}
           <ItemGroup
             title={t('projects.deployments.whatRunsTitle')}
-            description={props.copyFrom || storedDefinition ? undefined : onPlatform
+            description={props.copyFrom || storedDefinition || props.catalogApp ? undefined : onPlatform
               ? t('projects.deployments.platformLink.platformBuilds')
               : t('projects.deployments.whatRunsDescription')}
           >
             {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.whatRunsTitle')}
-              subtitle={props.copyFrom.content.name} mode="info" /> : definitionKind === 'image' ? <>
+              subtitle={props.copyFrom.content.name} mode="info" /> : props.catalogApp ? <Item testID="project-deployments.draft.catalogApp"
+              title={props.catalogApp.title} mode="info" showChevron={false} /> : definitionKind === 'image' ? <>
               <Item title={t('managedMachines.config.image')} accessoryLayout="stacked" showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.imageName"
                   accessibilityLabel={t('managedMachines.config.image')} value={imageName}
@@ -805,7 +901,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       // editor's resource, a typed document) are there when the person comes back.
       return (
         <View testID="project-deployments.draft">
-          <View style={draftStep === 'where' ? null : styles.hiddenStep}>{whereGroup}</View>
+          <View style={draftStep === 'where' ? null : styles.hiddenStep}>{stepWhere}</View>
           {!configureVisited ? null : (
             <View style={draftStep === 'configure' ? null : styles.hiddenStep}>
               {refusalBanner}
@@ -908,10 +1004,11 @@ function initialCopyChoices(source: DeploymentEnvironmentDetailV1): DraftCopyCho
   };
 }
 
-const styles = StyleSheet.create(() => ({
+const styles = StyleSheet.create((theme) => ({
   page: { flex: 1, minHeight: 0 },
   // A visited step that another step covers: kept mounted with its choices, out of layout and out of the tab order.
   hiddenStep: { display: 'none' },
+  machineCard: { gap: theme.space.s4 },
 }));
 
 function DeploymentCopyProvisionEditor(props: Readonly<{

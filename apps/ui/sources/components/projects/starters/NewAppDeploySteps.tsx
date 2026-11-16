@@ -18,17 +18,23 @@ import { FieldLayout, FieldValue } from '@/components/ui/lists/FieldRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { readStoreAppTemplateRef } from '@/components/store/presets/storePresetDoor';
+import { useRegistryItem } from '@/registries/useRegistryItem';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
 
-/** What Deploy an app deploys once its source step is answered: a Project's repository or a stored definition. */
+/**
+ * What Deploy an app deploys once its source step is answered: a Project's repository, a stored definition, or a
+ * catalog app (its exact pin read from the registry). `targetId` pre-selects Where; the person can still change it.
+ */
 export type NewAppDeploySource =
   | Readonly<{ kind: 'repository'; projectSourceId: string }>
   | Readonly<{
       kind: 'definition';
       definitionKind: DeploymentNewDefinitionKind;
-    }>;
+    }>
+  | Readonly<{ kind: 'catalogApp'; app: Readonly<{ sourceId: string; itemId: string }>; targetId?: string }>;
 
 /**
  * Deploy an app's Where → Configure → Review (journey-deploy D3): the one Environment draft, hosted as steps inside
@@ -62,6 +68,14 @@ export function NewAppDeploySteps(
       {...props}
       lifetime={binding}
       projectSourceId={props.source.projectSourceId}
+    />
+  ) : props.source.kind === 'catalogApp' ? (
+    <CatalogAppDeploy
+      key={`${binding.scope.serverId}:${binding.scope.accountId}`}
+      {...props}
+      lifetime={binding}
+      app={props.source.app}
+      targetId={props.source.targetId ?? null}
     />
   ) : (
     <DefinitionDeploy
@@ -179,6 +193,43 @@ function DefinitionDeploy(
       }}
     />
   );
+}
+
+/**
+ * A catalog app: the registry's own item read gives its title and exact pin (`readStoreAppTemplateRef`), and the same
+ * draft creates it with `definition: { from: 'catalogApp' }` in a new Project named after it. A listing that is not a
+ * ready App has no pin, so it says unavailable rather than guessing one.
+ */
+function CatalogAppDeploy(props: BoundProps & Readonly<{ app: Readonly<{ sourceId: string; itemId: string }>; targetId: string | null }>) {
+  const read = useRegistryItem({ kind: 'app', sourceId: props.app.sourceId, itemId: props.app.itemId }, true, { scope: props.lifetime.scope });
+  if (!read.item) {
+    return read.error && !read.loading
+      ? <SurfaceStateCard testID="newApp.deploy.catalogFailed" kind="error" layout="inline" title={t('capabilities.store.listing.failed')}
+        reason={read.error} action={{ label: t('common.retry'), onPress: read.refresh }} />
+      : <SurfaceStateCard testID="newApp.deploy.loading" kind="loading" layout="inline" title={t('common.loading')} />;
+  }
+  const templateRef = readStoreAppTemplateRef(read.item);
+  if (!templateRef) return <SurfaceStateCard testID="newApp.deploy.catalogUnavailable" kind="unavailable" layout="inline" title={t('common.unavailable')} />;
+  return <CatalogAppDraft {...props} templateRef={templateRef} title={read.item.summary.title} />;
+}
+
+function CatalogAppDraft(props: BoundProps & Readonly<{ templateRef: NonNullable<ReturnType<typeof readStoreAppTemplateRef>>;
+  title: string; targetId: string | null }>) {
+  const { lifetime } = props;
+  const projectChoice = useDeploymentProjectChoice({ lifetime, initiallyNew: true, initialNewProjectName: props.title });
+  const actions = React.useMemo(() => createDeploymentActions(lifetime), [lifetime]);
+  const catalogApp = React.useMemo(() => ({ templateRef: props.templateRef, title: props.title }), [props.templateRef, props.title]);
+  const { leaveTo, onApprovalRequested } = useDeployExits(props);
+  return <DeploymentEnvironmentDraft lifetime={lifetime} sourceId={null} projectChoice={projectChoice} catalogApp={catalogApp}
+    phone={props.phone} actions={actions} initialMachineId={props.machineId} initialTargetKey={props.targetId}
+    steps={props.steps} onApprovalRequested={onApprovalRequested} onDiscard={props.onLeave}
+    onSaved={(environmentId, next) => {
+      const selection = projectChoice.selection;
+      const projectSourceId = next?.projectSourceId ?? (selection && 'projectSourceId' in selection ? selection.projectSourceId : null);
+      if (projectSourceId) leaveTo(buildDeploymentEnvironmentHref({ serverId: lifetime.scope.serverId, projectSourceId,
+        environmentId, ...(next?.tab ? { tab: next.tab } : {}) }));
+      else props.onLeave();
+    }} />;
 }
 
 /**
