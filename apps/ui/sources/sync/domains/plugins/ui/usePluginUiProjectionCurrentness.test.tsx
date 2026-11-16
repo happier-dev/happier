@@ -3215,6 +3215,78 @@ describe('usePluginUiProjectionCurrentness', () => {
         } finally { release(); await pending; await rendered.unmount(); }
     });
 
+    it('admits renderer artifacts from a presented plugin slice while the full catalog is establishing', async () => {
+        const { pluginUiSections } = await import('./projectionSections');
+        const { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1 } = await import('@happier-dev/protocol/plugins/ui');
+        const { getInstalledPluginReactNativeBundleCache } = await import('@/components/plugins/reactNative/bundleCache');
+        const { getInstalledPluginReactNativeModuleRegistry } = await import('@/components/plugins/reactNative/moduleRegistry');
+        const { loadPluginReactNativeBundleModule } = await import('@/components/plugins/reactNative/loader');
+        const pluginId = 'qa.remainder-1116.choices';
+        const contributionId = 'choices-renderer';
+        const artifactId = 'choices';
+        const bundleId = `reactNativeBundle:${pluginId}:${contributionId}`;
+        const entry = 'react-native/choices/entry.cjs.bundle';
+        const bytes = new TextEncoder().encode('exports.renderSurface = function () { return null; };');
+        const artifactDigest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entry, bytes }]);
+        // Captured B2 shape: the mounted plugin's deferred slice has a compatible
+        // Machine renderer, while the passive full-catalog projection is unread.
+        const reply = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projectionDigest: 'c'.repeat(64), projection: {
+                v: 2, generation: 9117,
+                installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'QA choices', version: '0.1.0', enabled: true,
+                    source: { kind: 'registryPackage', locator: '@qa/choices' } } },
+                familiesById: { pluginUi: { family: 'pluginUi', entriesById: { [bundleId]: {
+                    id: bundleId, pluginId, contributionId, contributionKind: 'reactNativeBundle', generatedV2: true,
+                    pluginVersion: '0.1.0', occurrenceId: `${pluginId}:9117`, generatedOwnerKind: 'renderer',
+                    artifactSelectionOwner: 'daemonProjection',
+                    executionOrigin: { serverIdentityId, materializationRef: { machineId: 'machine-1', pluginId, materializationId: 'materialization-choices' } },
+                    entry: { artifactId, exportName: 'renderSurface' },
+                    artifactGraph: { artifactId, tier: 'reactNative', entry,
+                        files: [{ relativePath: entry, digest: computePluginUiArtifactSha256DigestV1(bytes), byteSize: bytes.byteLength }],
+                        digest: artifactDigest, builtWith: { bundler: 'esbuild', version: '0.27.2' },
+                        executable: { exports: ['renderSurface'] }, hostUiApiRange: '^1.1.0' },
+                    runtime: { state: 'loadable', diagnostics: [], decision: { state: 'load', reason: 'compatible', diagnostics: [] },
+                        cacheKey: artifactDigest, cacheIdentity: { artifactDigest }, loadPolicy: { source: 'installedArtifact' } },
+                } } } },
+            },
+        });
+        const deferred = buildDeferredDaemonProjectionSections(reply);
+        projectionRuntime.describe.mockImplementation(async (_machineId, options) => {
+            const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse((options as { payload: unknown }).payload);
+            if (request.selection !== undefined) throw new Error('Expected shared projection');
+            return request.sectionRead ? deferred.read(request.sectionRead.digest, request.sectionRead.offset,
+                request.sectionRead.includeDigests) : deferred.manifest;
+        });
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        const target = { machineId: 'machine-1', serverId: serverIdentityId, accountLifetime: lifetime };
+        const rendered = await renderHook(() => usePluginUiProjectionCurrentness({ ...target, load: false }));
+        const modules = getInstalledPluginReactNativeModuleRegistry();
+        try {
+            await act(async () => {
+                expect(await loadDaemonMergedProjectionCacheEntry({ ...target, sections: pluginUiSections(pluginId) }))
+                    .toMatchObject({ kind: 'ready' });
+            });
+            await waitForHomeGovernance(() => {
+                expect(rendered.getCurrent().phase).toBe('establishing');
+                expect(rendered.getCurrent().presentedPluginIds?.has(pluginId)).toBe(true);
+                expect(rendered.getCurrent().installedPackagesProjection?.reactNativeBundlesById[bundleId])
+                    .toMatchObject({ artifactGraph: { digest: artifactDigest }, runtime: { decision: { state: 'load' } } });
+            });
+            expect(rendered.getCurrent().pluginUiProjection?.reactNativeBundlesById[bundleId]).toBeUndefined();
+            const identity = { pluginId, contributionId, artifactId, artifactDigest, platform: 'web' };
+            const cache = getInstalledPluginReactNativeBundleCache();
+            expect(cache.putInstalledArtifact({ identity, bytes, format: 'plainJs', accountScope: lifetime.scope },
+                cache.captureWriteFence(identity))).toMatchObject({ ok: true });
+            expect(cache.readInstalledArtifact(identity, lifetime.scope)).not.toBeNull();
+            const loaded = await loadPluginReactNativeBundleModule({ cache, identity });
+            if (!loaded.ok) throw new Error(loaded.code);
+            const fence = modules.captureWriteFence(artifactDigest);
+            expect(fence).not.toBeNull();
+            expect(modules.write(artifactDigest, loaded.module, fence!)).toBe(true);
+        } finally { await rendered.unmount(); }
+        expect(modules.read(artifactDigest)).toBeNull();
+    });
+
     it('settles a passive source establishment when demanded deferred UI sections fail, and recovers on fresh demand', async () => {
         const { PLUGIN_UI_SECTIONS } = await import('./usePluginUiProjectionCurrentness');
         const deferred = buildDeferredDaemonProjectionSections({

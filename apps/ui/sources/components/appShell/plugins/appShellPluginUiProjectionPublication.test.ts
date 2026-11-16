@@ -315,6 +315,24 @@ describe('AppShell projection source publication', () => {
         } finally { owner.dispose(); }
     });
 
+    it('publishes presented plugin slices only while the full Machine catalog is establishing', () => {
+        const owner = createAppShellPluginUiProjectionPublication();
+        owner.publishSources({ accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false, activeServerId: null,
+            serverProfilesGeneration: 0, activeInventoryLoaded: true, onlineMachineIds: ['machine'], selectableMachineIds: ['machine'] });
+        const complete = translationProjection(1, 'Complete catalog');
+        const presented = translationProjection(2, 'Presented slice');
+        try {
+            for (const phase of ['establishing', 'current', 'retainedOffline', 'unavailable'] as const) {
+                for (const presentedPluginIds of [new Set(['acme.publication']), new Set<string>()]) {
+                    owner.publishMachineCurrentness('machine', null, { ...currentness(complete), phase,
+                        installedPackagesProjection: presented, presentedPluginIds, interactionEnabled: phase === 'current' });
+                    expect(owner.getSnapshot().pluginUiProjection?.translationsByPluginId['acme.publication']?.bundles)
+                        .toEqual({ en: { title: phase === 'establishing' ? 'Presented slice' : 'Complete catalog' } });
+                }
+            }
+        } finally { owner.dispose(); }
+    });
+
     it('settles the restored Machine descriptor answer while unrelated UI establishment is still pending', () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const sources = { accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false, activeServerId: null,

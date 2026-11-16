@@ -55,6 +55,7 @@ const CONNECTED_ACCOUNT_PROJECTION_TRANSPORT_ERROR = Object.freeze({
     reason: 'transport' as const,
 });
 import { CONNECTED_ACCOUNT_PROJECTION_SECTIONS, PLUGIN_UI_SECTIONS, REGISTRY_SOURCE_PROJECTION_SECTIONS } from './projectionSections';
+import { selectPresentedPluginUiProjection } from './presentedPluginUiProjection';
 export { PLUGIN_UI_SECTIONS, PLUGIN_SEARCH_SECTIONS } from './projectionSections';
 const CONNECTED_ACCOUNT_PROJECTION_UNSUPPORTED = Object.freeze({
     kind: 'error' as const,
@@ -350,7 +351,7 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
     const lastRequestedAuthorityKeyRef = React.useRef<string | null>(null);
     const currentAccountLifetimeRef = React.useRef(accountLifetime);
     currentAccountLifetimeRef.current = accountLifetime;
-    const currentPluginUiProjectionRef = React.useRef<PluginUiProjectionModel | null>(null);
+    const currentRuntimeProjectionRef = React.useRef<PluginUiProjectionModel | null>(null);
     const [loadedProjectionState, setLoadedProjection] = React.useState<LoadedProjectionState>(() => (
         targetKey && machineId
             ? createRestoredLoadedProjectionState({ targetKey, machineId, accountLifetime, platform })
@@ -622,7 +623,11 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         ? loadedProjection.installedPackages.projection : null;
     const presentedPluginIds = installedPackagesProjection ? loadedProjection.installedPackages?.presentedPluginIds ?? null : null;
     const registrySourcesCurrent = installedPackagesProjection !== null && loadedProjection.installedPackages?.registrySourcesRead === true;
-    currentPluginUiProjectionRef.current = currentPluginUiProjection;
+    // A mounted plugin's answered slices are current before the full catalog.
+    // Publish the same admitted presentation the AppShell's Machine member uses.
+    const { projection: runtimeProjection } = selectPresentedPluginUiProjection({ phase,
+        pluginUiProjection: currentPluginUiProjection, installedPackagesProjection, presentedPluginIds });
+    currentRuntimeProjectionRef.current = runtimeProjection;
     const reactNativeRuntimeProjectionSourceRef = React.useRef<PluginUiReactNativeRuntimeProjectionSource | null>(null);
 
     React.useEffect(() => {
@@ -640,15 +645,15 @@ export function usePluginUiProjectionCurrentness(params: Readonly<{
         const source = reactNativeRuntimeProjectionSourceRef.current;
         if (!source) return;
         source.update({
-            projection: currentPluginUiProjection,
+            projection: runtimeProjection,
             accountLifetime,
             isCurrent: () => (
                 currentAccountLifetimeRef.current === accountLifetime
-                && currentPluginUiProjectionRef.current === currentPluginUiProjection
+                && currentRuntimeProjectionRef.current === runtimeProjection
                 && isAccountLifetimeCurrent(accountLifetime)
             ),
         });
-    }, [accountLifetime, currentPluginUiProjection]);
+    }, [accountLifetime, runtimeProjection]);
 
     return React.useMemo(() => ({
         pluginUiProjection: currentPluginUiProjection,

@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow';
 
 import type { PluginAccountUiProjectionInputs } from '@/sync/domains/plugins/availability/reader';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { selectPresentedPluginUiProjection } from '@/sync/domains/plugins/ui/presentedPluginUiProjection';
 import { selectPluginDestinationSurfacePlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import {
     createInstalledPluginUiProjectionPublication,
@@ -477,8 +478,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             if (!merge) { merge = createInstalledPluginUiProjectionPublication(); machineMerges.set(target.machineId, merge); }
             // Held plugin slices (a mounted surface's, the Session's) present those plugins
             // while the Machine's catalogue stays establishing: others are not loaded, never absent.
-            const presentedPluginIds = current?.phase === 'establishing' && current.installedPackagesProjection
-                ? current.presentedPluginIds ?? null : null;
+            const { projection: presentedProjection, presentedPluginIds } = selectPresentedPluginUiProjection(current);
             // Read registry source declarations publish before the Machine's other sections (Deploy an app's
             // starters), beside any retained presentation, which never carries them.
             const registrySourcesRead = !presentedPluginIds && current?.phase === 'establishing'
@@ -489,9 +489,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 materializationsByPluginId: declaration?.materializationsByPluginId,
                 selectableExecutionOrigins: selectableByMachine.get(target.machineId)?.origins,
                 projection: merge.publish(declaration?.models ?? NO_MODELS,
-                    (presentedPluginIds ? current?.installedPackagesProjection
-                        : registrySourcesRead ? withReadRegistrySources(current?.pluginUiProjection ?? null, registrySourcesRead)
-                        : current?.pluginUiProjection) ?? null,
+                    registrySourcesRead ? withReadRegistrySources(presentedProjection, registrySourcesRead) : presentedProjection,
                     declaration?.materializationsByPluginId, undefined, declaration?.completeUiPluginIds),
                 ...(presentedPluginIds ? { currentPluginIds: presentedPluginIds } : {}),
                 phase: current?.phase === 'unavailable' || current?.phase === 'retainedOffline' ? current.phase
