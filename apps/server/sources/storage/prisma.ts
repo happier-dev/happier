@@ -10,6 +10,7 @@ import { acquirePgliteDirLock } from "./locks/pgliteLock";
 import { resolveLightSqliteBusyTimeoutMsFromEnv } from "@/flavors/light/sqliteConnectionConfig";
 import { log, warn } from "@/utils/logging/log";
 import { AsyncLock } from "@/utils/runtime/lock";
+import { setNativeEnvironmentVariable } from "@/utils/runtime/nativeEnvironment";
 import { isPrismaErrorCode, readSharedQaSchemaMismatchDiagnostic, withPrismaQueryValidationDiagnostic } from './prismaErrors';
 import { annotateWebLatencyQuery, timeWebLatencyPhase } from '@/utils/webLatencyTrace';
 import { notifySqliteCommittedWrite } from './sqliteCommittedWrites';
@@ -125,7 +126,14 @@ function preparePrismaEngineRuntime(provider: DbProvider, databaseUrl?: string):
         // SQLite workers add no write concurrency. Idle RSS at 1 vs 2 workers measured equal
         // within noise (~100 MB, +1 OS thread).
         const sideConnections = provider === 'sqlite' ? SQLITE_SERVER_SIDE_CONNECTIONS : 0;
-        process.env.TOKIO_WORKER_THREADS = String(connectionLimit + sideConnections);
+        const workers = String(connectionLimit + sideConnections);
+        try {
+            // The engine reads the native environment; under Bun process.env alone never reaches it.
+            setNativeEnvironmentVariable("TOKIO_WORKER_THREADS", workers);
+        } catch (error) {
+            warn({ module: "storage", event: "prisma-engine-worker-budget-unapplied", workers, error: String(error) },
+                "Prisma engine worker budget could not be applied; the engine uses one worker per CPU");
+        }
     }
 }
 

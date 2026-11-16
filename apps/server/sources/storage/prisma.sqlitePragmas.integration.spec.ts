@@ -26,13 +26,14 @@ describe("storage/prisma sqlite pragmas", () => {
             env: { HAPPIER_DB_CONNECTION_LIMIT: "3", HAPPY_DB_CONNECTION_LIMIT: "" },
         });
         expect(getPrismaConnectionLimit()).toBe(3);
-        expect(process.env.TOKIO_WORKER_THREADS).toBe("3");
+        // Three pooled connections plus SQLite's read-snapshot, maintenance and readiness clients.
+        expect(process.env.TOKIO_WORKER_THREADS).toBe("6");
         const maintenance = await createDbSqliteMaintenanceClient();
         try {
             expect(await maintenance.$queryRawUnsafe("SELECT 1 AS value")).toEqual([{ value: 1n }]);
             expect(await withSqliteReadSnapshot(reader => reader.$queryRawUnsafe("SELECT 1 AS value"))).toEqual([{ value: 1n }]);
             expect(getPrismaConnectionLimit()).toBe(3);
-            expect(process.env.TOKIO_WORKER_THREADS).toBe("3");
+            expect(process.env.TOKIO_WORKER_THREADS).toBe("6");
         } finally {
             await maintenance.$disconnect();
         }
