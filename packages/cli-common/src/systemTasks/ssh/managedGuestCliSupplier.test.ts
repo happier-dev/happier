@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { mkdtemp, writeFile, chmod, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { prepareManagedGuestCliBuildInput, resolveManagedGuestCliSource } from './managedGuestCliSupplier.js';
+import { prepareManagedGuestCliBuildInput, resolveManagedGuestCliBuildIdentity, resolveManagedGuestCliSource } from './managedGuestCliSupplier.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 
 const exec = promisify(execFile);
@@ -39,13 +39,19 @@ describe('managed guest CLI source supplier', () => {
     const http = homeFetch('public-release');
     await expect(prepareManagedGuestCliBuildInput({ homeUrl: 'https://home.example', target, fetchImpl: http.boundary }))
       .rejects.toMatchObject({ code: 'guest_architecture_unsupported' });
+    await expect(resolveManagedGuestCliBuildIdentity({ homeUrl: 'https://home.example', target, fetchImpl: http.boundary }))
+      .rejects.toMatchObject({ code: 'guest_architecture_unsupported' });
     expect(http.urls).toEqual([]);
   });
   it('refuses a Home payload for another image target', async () => {
+    const local = { identity: 'a'.repeat(64), versionId: '0.3.0', target: { os: 'linux', arch: 'x64' } as const,
+      archive: { contentsBase64: 'cGF5bG9hZA==', rootDirectory: 'payload' } };
     await expect(prepareManagedGuestCliBuildInput({ homeUrl: 'https://home.example', target: { os: 'linux', arch: 'arm64' },
       fetchImpl: homeFetch('home-payload').boundary,
-      prepareLocalPayload: async () => ({ identity: 'a'.repeat(64), versionId: '0.3.0', target: { os: 'linux', arch: 'x64' },
-        archive: { contentsBase64: 'cGF5bG9hZA==', rootDirectory: 'payload' } }),
+      prepareLocalPayload: async () => local,
+    })).rejects.toMatchObject({ code: 'guest_payload_missing' });
+    await expect(resolveManagedGuestCliBuildIdentity({ homeUrl: 'https://home.example', target: { os: 'linux', arch: 'arm64' },
+      fetchImpl: homeFetch('home-payload').boundary, readLocalPayloadMetadata: async () => local,
     })).rejects.toMatchObject({ code: 'guest_payload_missing' });
   });
   it('selects the Home public channel and exact version, then refuses unsigned image input', async () => {
@@ -62,6 +68,9 @@ describe('managed guest CLI source supplier', () => {
       expect(init?.credentials).toBe('omit');
       return new Response(url.endsWith('.minisig') ? 'invalid signature' : `${'a'.repeat(64)}  happier-v0.3.10-preview.1-linux-x64.tar.gz\n`);
     };
+    await expect(resolveManagedGuestCliBuildIdentity({ homeUrl: 'https://home.example', target: { os: 'linux', arch: 'x64' }, fetchImpl,
+      readLocalPayloadMetadata: async () => { throw new Error('Public identity must not read controller payload files'); },
+    })).resolves.toEqual({ identity: 'public-release:0.3.10-preview.1', versionId: '0.3.10-preview.1', target: { os: 'linux', arch: 'x64' } });
     await expect(prepareManagedGuestCliBuildInput({ homeUrl: 'https://home.example', target: { os: 'linux', arch: 'x64' }, fetchImpl,
       prepareLocalPayload: async () => { throw new Error('Public release preparation must not read controller payload files'); },
     }))
@@ -94,6 +103,8 @@ describe('managed guest CLI source supplier', () => {
       binaryPath: '/missing/happier', fetchImpl: http.boundary,
       runRemoteText: async () => ({ status: 0, stdout: 'managed_guest_cli_absent', stderr: '' }),
     })).resolves.toEqual({ kind: 'public-release', versionId });
+    await expect(resolveManagedGuestCliBuildIdentity({ homeUrl: 'https://home.example', target: { os: 'linux', arch: 'x64' }, fetchImpl: http.boundary }))
+      .resolves.toEqual({ identity: `public-release:${versionId}`, versionId, target: { os: 'linux', arch: 'x64' } });
   });
   it('refuses an identity without a channel before guest commands or public lookup', async () => {
     const urls: string[] = [];

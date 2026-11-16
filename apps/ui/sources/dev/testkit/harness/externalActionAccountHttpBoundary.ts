@@ -12,6 +12,7 @@ import {
     projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
     projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
     projectExternalActionDeploymentPreparationEnvelopeAdmissionV1,
+    projectExternalActionPresetPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentReadEnvelopeAdmissionV1,
     isDeploymentEnvironmentUpdateNativeAdmissionV1,
     createDeploymentCandidatePublicationV1,
@@ -223,6 +224,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                 const admittedEnvelope = { actionId: params.actionId, machineId: machine.id, envelope };
                 const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1(admittedEnvelope);
                 const deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1(admittedEnvelope);
+                const presetPreparationAdmission = projectExternalActionPresetPreparationEnvelopeAdmissionV1(admittedEnvelope);
                 const deploymentReadAdmission = projectExternalActionDeploymentReadEnvelopeAdmissionV1(admittedEnvelope);
                 const deploymentChildRoot = isDeploymentChildRootActionIdV1(params.actionId, deploymentPreparationAdmission);
                 const deploymentNativeAdmission = native && ('kind' in native || isDeploymentEnvironmentUpdateNativeAdmissionV1(native))
@@ -244,6 +246,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                         ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
                         ...(deploymentNativeAdmission ? { deploymentNativeAdmission } : {}),
                         ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
+                        ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
                         ...(deploymentReadAdmission ? { deploymentReadAdmission } : {}),
                         ...(deploymentCandidatePublication ? { deploymentCandidatePublication } : {}),
                         requestEnvelopeDigest,

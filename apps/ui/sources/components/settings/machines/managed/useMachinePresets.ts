@@ -4,7 +4,8 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import type { MachinePresetUpdateDraftInput } from '@/sync/domains/machines/presets/machinePresetEditDraft';
 type PresetMutationResultV1 = OpenedMachinePresetActionOutputV1<'machines.presets.update'>;
 import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1, type OpenedMachinePresetActionOutputV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
-import type { MachinePresetActionInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { MACHINE_PRESET_PREPARE_ACTION_ID_V1, type MachinePresetActionInputV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { ActionOperationAcceptedResultSchema, type ActionOperationAcceptedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
@@ -25,6 +26,105 @@ import type { ManagedProvisionerOptionsInput } from './useManagedProvisionerOpti
 import { describeManagedNativeFailureDiagnostic } from './managedNativeFailurePresentation';
 import { readManagedConfiguration } from './readManagedConfiguration';
 import { refreshManagedProvisionerAvailability } from './managedProvisionerAvailability';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { resumeActionExecutionResult } from '@/components/approvals/actionApprovalContinuation';
+import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
+import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
+import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
+import { canRequestActionOperationStop } from '@/components/inbox/actionOperations/actionOperationPresentation';
+import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
+
+const NO_PREPARATION_APPROVAL_REFRESH = () => {};
+
+/** Last-reported private preparation and the canonical admitted Action lifecycle, without freshness inference. */
+export function useMachinePresetPreparation(input: Readonly<{
+    serverId: string;
+    preset: OpenedManagedMachinePresetV1 | null;
+    /** The caller selects a target for a new Prepare; this never locates an older build. */
+    machineId: string | null;
+    onChanged: () => void;
+}>) {
+    const { serverId, preset, machineId } = input;
+    const { binding } = useServerCredentialAccountScopeBinding(serverId);
+    const scopeKey = JSON.stringify([binding?.scope, binding?.revision, preset?.id]);
+    const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
+    const callbacks = React.useRef(input);
+    callbacks.current = input;
+    const request = React.useRef<AbortController | null>(null);
+    const [pendingScope, setPendingScope] = React.useState<string | null>(null);
+    const [failure, setFailure] = React.useState<Readonly<{ scopeKey: string; code: string }> | null>(null);
+    const [accepted, setAccepted] = React.useState<Readonly<{
+        scopeKey: string; presetRevision: number; value: ActionOperationAcceptedResult;
+    }> | null>(null);
+    const approval = useActionApprovalContinuation({ scopeKey, serverId,
+        onExecuted: NO_PREPARATION_APPROVAL_REFRESH });
+    React.useEffect(() => () => { request.current?.abort(); }, [scopeKey]);
+
+    const prepare = React.useCallback(async () => {
+        if (!binding?.isCurrent() || !preset || !machineId || request.current) return null;
+        const controller = new AbortController();
+        request.current = controller;
+        const retirement = binding.onRetire(() => controller.abort());
+        setPendingScope(scopeKey);
+        setFailure(null);
+        const actionInput: MachinePresetActionInputV1<typeof MACHINE_PRESET_PREPARE_ACTION_ID_V1> = {
+            homeId: preset.homeId, id: preset.id, expectedRevision: preset.revision, machineId,
+        };
+        try {
+            const result = await resumeActionExecutionResult({
+                result: await execute(MACHINE_PRESET_PREPARE_ACTION_ID_V1, actionInput, {
+                    surface: 'ui', authority: 'present_user', serverId: binding.scope.serverId,
+                    expectedAccountId: binding.scope.accountId, signal: controller.signal,
+                }),
+                actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, actionInput, scope: binding.scope,
+                signal: controller.signal, onApprovalPending: approval.requestApproval,
+            });
+            if (controller.signal.aborted || !binding.isCurrent()) return null;
+            if (!result.ok) { setFailure({ scopeKey, code: result.errorCode }); return null; }
+            const value = ActionOperationAcceptedResultSchema.parse(result.result);
+            setAccepted({ scopeKey, presetRevision: preset.revision, value });
+            callbacks.current.onChanged();
+            return value;
+        } catch {
+            if (!controller.signal.aborted && binding.isCurrent()) setFailure({ scopeKey, code: 'request_failed' });
+            return null;
+        } finally {
+            retirement.dispose();
+            if (request.current === controller) {
+                request.current = null;
+                setPendingScope(null);
+            }
+        }
+    }, [binding, preset, machineId, scopeKey, execute, approval.requestApproval]);
+
+    const prepared = binding?.isCurrent() ? preset?.prepared ?? null : null;
+    // A newer private row wins over a prior click. The accepted receipt remains useful once that row names it.
+    const currentAccepted = accepted?.scopeKey === scopeKey
+        && (accepted.presetRevision === preset?.revision || accepted.value.operationId === prepared?.operationId) ? accepted.value : null;
+    const operationId = currentAccepted?.operationId ?? prepared?.operationId ?? '';
+    const observed = useActionOperation({ serverId: binding?.isCurrent() ? binding.scope.serverId : null, operationId },
+        currentAccepted && binding ? { machineId: currentAccepted.machineId,
+            actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, lifetime: binding } : undefined);
+    const operation = binding?.isCurrent() && observed?.snapshot.scope.accountId === binding.scope.accountId
+        && observed.snapshot.actionId === MACHINE_PRESET_PREPARE_ACTION_ID_V1 ? observed : null;
+    const previous = React.useRef({ scopeKey, operationId, state: operation?.snapshot.state });
+    React.useEffect(() => {
+        const state = operation?.snapshot.state;
+        if (previous.current.scopeKey === scopeKey && previous.current.operationId === operationId
+            && previous.current.state !== state && state && isActionOperationTerminal(state)) callbacks.current.onChanged();
+        previous.current = { scopeKey, operationId, state };
+    }, [scopeKey, operationId, operation?.snapshot.state]);
+    const stopControl = useActionOperationStopControl(operation);
+    const canCancel = operation !== null && canRequestActionOperationStop(operation.snapshot, operation.observation);
+    const openOperation = React.useCallback(() => {
+        if (operation) openActionOperationDetail({ serverId: operation.serverId, operationId: operation.snapshot.operationId });
+    }, [operation]);
+    return { prepared, reportedStatus: prepared?.status ?? null, prepare, retry: prepare,
+        pending: pendingScope === scopeKey && !approval.approvalPending,
+        error: failure?.scopeKey === scopeKey ? failure.code : null,
+        approval, operation, openOperation, canCancel, stopControl };
+}
 
 type MachinePresetQueryValue = Pick<OpenedManagedMachinePresetV1, 'id' | 'controller'> | Pick<MachinePresetHistoryData, 'preset'>;
 /** Readiness and data are facts; starting another read does not replace a ready receipt. */

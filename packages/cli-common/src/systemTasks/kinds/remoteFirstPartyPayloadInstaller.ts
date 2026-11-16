@@ -38,7 +38,7 @@ import { normalizeScpRemotePath } from '../ssh/scpRemotePath.js';
 import { buildRemoteFirstPartyStagingCleanupCommand } from '../ssh/remoteFirstPartyStagingCleanup.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
-import { resolveManagedGuestCliSource, type ManagedGuestCliBuildTarget, type ManagedGuestCliLocalBuildPayload } from '../ssh/managedGuestCliSupplier.js';
+import { resolveManagedGuestCliSource, type ManagedGuestCliBuildTarget, type ManagedGuestCliLocalBuildPayload, type ManagedGuestCliLocalBuildMetadata } from '../ssh/managedGuestCliSupplier.js';
 
 export {
   normalizeRemoteReleaseArch,
@@ -171,8 +171,7 @@ async function resolveLocalCliPayloadRoot(root: string, target: Readonly<{ os: '
   return payloadRoot;
 }
 
-/** Filesystem adapter for the portable image supplier; the source producer owns identity. */
-export async function prepareManagedGuestCliLocalBuildPayload(target: ManagedGuestCliBuildTarget): Promise<ManagedGuestCliLocalBuildPayload> {
+async function readManagedGuestCliLocalBuildPayloadSource(target: ManagedGuestCliBuildTarget) {
   const root = String(process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT ?? '').trim();
   let metadata: unknown;
   try { metadata = JSON.parse(process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA ?? ''); }
@@ -197,6 +196,18 @@ export async function prepareManagedGuestCliLocalBuildPayload(target: ManagedGue
   const payloadRoot = await resolveLocalCliPayloadRoot(root, target);
   const versionId = await readLocalCliPayloadVersion(payloadRoot);
   if (!versionId) throw new SystemTaskExecutionError('guest_cli_version_unavailable', 'The source runtime CLI payload version is unavailable.');
+  return { identity, versionId, target, payloadRoot };
+}
+
+/** Finalized target metadata only; no payload tree traversal, archive or encoded bytes. */
+export async function readManagedGuestCliLocalBuildPayloadMetadata(target: ManagedGuestCliBuildTarget): Promise<ManagedGuestCliLocalBuildMetadata> {
+  const { identity, versionId } = await readManagedGuestCliLocalBuildPayloadSource(target);
+  return { identity, versionId, target };
+}
+
+/** Filesystem adapter for the portable image supplier; the source producer owns identity. */
+export async function prepareManagedGuestCliLocalBuildPayload(target: ManagedGuestCliBuildTarget): Promise<ManagedGuestCliLocalBuildPayload> {
+  const { identity, versionId, payloadRoot } = await readManagedGuestCliLocalBuildPayloadSource(target);
   const archive = await createScpReadyPayloadArchive(payloadRoot);
   try {
     return { identity, versionId, target, archive: {

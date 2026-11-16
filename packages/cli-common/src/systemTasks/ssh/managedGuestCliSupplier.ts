@@ -1,5 +1,6 @@
 import { GuestCliIdentityV1Schema, type GuestCliIdentityV1 } from '@happier-dev/protocol/features';
 import type { ManagedGuestCliBuildInputV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationBuildInputV1';
+import { ManagedGuestCliBuildTargetV1Schema, type ManagedGuestCliBuildTargetV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { GitHubReleaseRateLimitError } from '@happier-dev/release-runtime/github';
 import { assertManagedGuestCliVersion, ManagedGuestCliReleaseError, resolveManagedGuestCliRelease } from '../../firstPartyRuntime/resolveManagedGuestCliRelease.js';
@@ -71,7 +72,7 @@ async function selectManagedGuestCliSource(identity: GuestCliIdentityV1,
   }
 }
 
-export type ManagedGuestCliBuildTarget = Readonly<{ os: 'linux' | 'darwin'; arch: 'x64' | 'arm64' }>;
+export type ManagedGuestCliBuildTarget = Readonly<ManagedGuestCliBuildTargetV1>;
 
 /** Produced from the source runtime's finalized payload identity and canonical archive. */
 export type ManagedGuestCliLocalBuildPayload = Readonly<{
@@ -83,6 +84,41 @@ export type ManagedGuestCliLocalBuildPayload = Readonly<{
 
 export type ManagedGuestCliBuildInput = ManagedGuestCliBuildInputV1;
 
+export type ManagedGuestCliLocalBuildMetadata = Pick<ManagedGuestCliLocalBuildPayload, 'identity' | 'versionId' | 'target'>;
+
+type ManagedGuestCliBuildSourceRequest<Local extends ManagedGuestCliLocalBuildMetadata> = Readonly<{
+  homeUrl: string;
+  target?: Readonly<{ os: string; arch: string }>;
+  readLocalPayload?: (target: ManagedGuestCliBuildTarget) => Promise<Local>;
+  signal?: AbortSignal;
+  fetchImpl?: typeof fetch;
+}>;
+
+async function resolveManagedGuestCliBuildSelection<Local extends ManagedGuestCliLocalBuildMetadata>(input: ManagedGuestCliBuildSourceRequest<Local>) {
+  const parsedTarget = ManagedGuestCliBuildTargetV1Schema.safeParse({ os: input.target?.os, arch: input.target?.arch });
+  if (!parsedTarget.success) {
+    throw new SystemTaskExecutionError('guest_architecture_unsupported', 'Preparation requires an explicit supported image OS and architecture.');
+  }
+  const target = parsedTarget.data;
+  const identity = await readManagedGuestCliIdentity(input);
+  const local = identity.source === 'home-payload' ? await input.readLocalPayload?.({ os: target.os, arch: target.arch }) : undefined;
+  if (identity.source === 'home-payload' && (!local || local.target.os !== target.os || local.target.arch !== target.arch)) {
+    throw new SystemTaskExecutionError('guest_payload_missing', 'The Home CLI payload for this image target is unavailable.');
+  }
+  const source = await selectManagedGuestCliSource(identity, input);
+  return { source, channel: identity.channel, local, target,
+    identity: source.kind === 'public-release' ? `public-release:${source.versionId}` : `home-payload:${local!.identity}`,
+    versionId: source.kind === 'public-release' ? source.versionId : local!.versionId };
+}
+
+/** Current acquisition identity, without preparing or encoding installation files. */
+export async function resolveManagedGuestCliBuildIdentity(input: Omit<ManagedGuestCliBuildSourceRequest<ManagedGuestCliLocalBuildMetadata>, 'readLocalPayload'> & Readonly<{
+  readLocalPayloadMetadata?: (target: ManagedGuestCliBuildTarget) => Promise<ManagedGuestCliLocalBuildMetadata>;
+}>): Promise<ManagedGuestCliLocalBuildMetadata> {
+  const selection = await resolveManagedGuestCliBuildSelection({ ...input, readLocalPayload: input.readLocalPayloadMetadata });
+  return { identity: selection.identity, versionId: selection.versionId, target: selection.target };
+}
+
 /** Fresh, uncredentialed image input. No guest process, enrollment or Account material is read. */
 export async function prepareManagedGuestCliBuildInput(input: Readonly<{
   homeUrl: string;
@@ -92,17 +128,8 @@ export async function prepareManagedGuestCliBuildInput(input: Readonly<{
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
 }>): Promise<ManagedGuestCliBuildInput> {
-  const target = input.target;
-  if (!target || (target.os !== 'linux' && target.os !== 'darwin') || (target.arch !== 'x64' && target.arch !== 'arm64')) {
-    throw new SystemTaskExecutionError('guest_architecture_unsupported', 'Preparation requires an explicit supported image OS and architecture.');
-  }
-  const identity = await readManagedGuestCliIdentity(input);
-  const local = identity.source === 'home-payload' ? await input.prepareLocalPayload?.({ os: target.os, arch: target.arch }) : undefined;
-  if (identity.source === 'home-payload' && (!local || local.target.os !== target.os || local.target.arch !== target.arch)) {
-    throw new SystemTaskExecutionError('guest_payload_missing', 'The Home CLI payload for this image target is unavailable.');
-  }
-  const source = await selectManagedGuestCliSource(identity, input);
-  const channel = identity.channel;
+  const selection = await resolveManagedGuestCliBuildSelection({ ...input, readLocalPayload: input.prepareLocalPayload });
+  const { source, channel, target, local } = selection;
   if (source.kind === 'public-release') {
     const fetchImpl = input.fetchImpl ?? globalThis.fetch;
     const plan = await resolveRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel,
@@ -113,7 +140,7 @@ export async function prepareManagedGuestCliBuildInput(input: Readonly<{
         return await response.text();
       },
     });
-    return { identity: `public-release:${source.versionId}`, versionId: plan.versionId, binaryPath: plan.binaryPath,
+    return { identity: selection.identity, versionId: plan.versionId, binaryPath: plan.binaryPath,
       installScript: plan.command, files: [] };
   }
   // The Home branch above establishes the matching owner-produced payload.
@@ -130,7 +157,7 @@ export async function prepareManagedGuestCliBuildInput(input: Readonly<{
       cliInstall: { componentId: 'happier-cli', channel, versionId, managedGuest: true },
     }),
   ].join('; ');
-  return { identity: `home-payload:${local.identity}`, versionId: local.versionId, binaryPath: layout.binaryPath,
+  return { identity: selection.identity, versionId: selection.versionId, binaryPath: layout.binaryPath,
     installScript, files: [{ path: 'happier-cli-payload.tar.gz', contentsBase64: local.archive.contentsBase64 }] };
 }
 

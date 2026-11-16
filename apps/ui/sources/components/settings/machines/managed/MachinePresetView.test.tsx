@@ -510,6 +510,105 @@ async function seedConfiguration(serverId: string, image = false) {
 }
 
 describe('reachable preset detail', () => {
+  it('headless preset preparation retains last reports without guessing an operation host and follows actual scoped pushes', async () => {
+    const serverId = await seed();
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const { useMachinePresetPreparation } = await import('./useMachinePresets');
+    const { actionOperationStore } = await import('@/sync/domains/actionOperations/actionOperationStore');
+    const { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
+    const opened = { ...createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened,
+      prepared: { operationId: 'previous-build', status: 'building' as const,
+        binding: { presetRevision: preset.revision, cliIdentity: 'supplier-identity', configuration: {
+          launch: { provider: preset.launch.provider, schemaVersion: preset.launch.schemaVersion, choices: preset.launch.choices },
+        } } } };
+    let displayed = opened;
+    const onChanged = vi.fn();
+    const hook = await renderHook(() => useMachinePresetPreparation({ serverId: scopeId, preset: displayed,
+      machineId: 'next-builder', onChanged }));
+    try {
+      expect(hook.getCurrent().reportedStatus).toBe('building');
+      expect(hook.getCurrent().operation).toBeNull();
+      expect(hook.getCurrent().canCancel).toBe(false);
+      expect(onChanged).not.toHaveBeenCalled();
+      expect(boundary.rpc).not.toHaveBeenCalled();
+      const snapshot = { version: 1 as const, operationId: 'previous-build', revision: 1,
+        actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, state: 'running' as const,
+        scope: { accountId: 'owner', machineId: 'actual-builder' }, title: 'Prepare preset',
+        createdAt: 1, startedAt: 2, cancellation: 'supported' as const };
+      await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId, snapshots: [snapshot] }));
+      expect(hook.getCurrent().operation?.snapshot.scope.machineId).toBe('actual-builder');
+      expect(hook.getCurrent().canCancel).toBe(true);
+      await hook.rerender();
+      expect(onChanged).not.toHaveBeenCalled();
+      await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId,
+        snapshots: [{ ...snapshot, revision: 2, state: 'succeeded', finishedAt: 3 }] }));
+      expect(onChanged).toHaveBeenCalledTimes(1);
+      expect(hook.getCurrent().canCancel).toBe(false);
+      await hook.rerender();
+      expect(onChanged).toHaveBeenCalledTimes(1);
+      expect(hook.getCurrent().reportedStatus).toBe('building');
+      await act(async () => actionOperationStore.mergeSnapshots({ serverId: scopeId,
+        snapshots: [{ ...snapshot, operationId: 'another-build', scope: { ...snapshot.scope, accountId: 'another-account' } }] }));
+      displayed = { ...opened, prepared: { ...opened.prepared, operationId: 'another-build' } };
+      await hook.rerender();
+      expect(hook.getCurrent().operation).toBeNull();
+      expect(hook.getCurrent().canCancel).toBe(false);
+    } finally { await hook.unmount(); actionOperationStore.reset(); }
+  });
+  it('headless preset preparation sends the displayed revision and retries through the same admitted Action', async () => {
+    const serverId = await seed();
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const { useMachinePresetPreparation } = await import('./useMachinePresets');
+    const { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } = await import('@happier-dev/protocol/machines/managed/machinePresetActionsV1');
+    const { ACTION_OPERATION_RPC_METHODS_V2 } = await import('@happier-dev/protocol/actions/operations/v1');
+    const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+    const { computeActionReviewDigestV1 } = await import('@happier-dev/protocol/actions/decisionAuthority');
+    boundary.rpc.mockResolvedValue({ kind: 'not_found' });
+    const inputs: unknown[] = [];
+    // The remote daemon is the network boundary: like setup updates, its initial own-Account
+    // UI request carries back a review, and the confirmed replay carries the private invocation.
+    await answerExternalActionAccountForHome(harness, serverId, {
+      actionId: MACHINE_PRESET_PREPARE_ACTION_ID_V1, machineId: 'selected-builder', installationId: 'builder-installation', tokenEpoch: 0,
+      requesterInvocation: 'optional',
+      failure: result => { const failure = ActionExecuteFailureSchema.safeParse(result); return failure.success ? failure.data : null; },
+      execute: (input, context) => {
+        const review = { actionArgs: input, preview: { summary: 'Build a prepared image for this preset' } };
+        const reviewDigest = computeActionReviewDigestV1(MACHINE_PRESET_PREPARE_ACTION_ID_V1, review);
+        if (context.invocation?.presentUserConfirmation?.reviewDigest !== reviewDigest) return {
+          ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
+          details: { review, reviewDigest },
+        };
+        inputs.push(input);
+        return { status: 'accepted', operationId: 'new-build', machineId: 'admitted-builder' };
+      },
+    });
+    const opened = createPlainManagedMachinePresetFixture({ ...preset, preparation: { enabled: true } }).opened;
+    const onChanged = vi.fn();
+    const hook = await renderHook((displayed: typeof opened) => useMachinePresetPreparation({ serverId: scopeId, preset: displayed,
+      machineId: 'selected-builder', onChanged }), { initialProps: opened });
+    const modalHost = await renderSettingsView(<ModalProvider />);
+    const confirmPreparation = async (run: () => Promise<unknown>) => {
+      let result: Promise<unknown> | undefined;
+      await act(async () => { result = run(); });
+      await waitForHomeGovernance(() => expect(modalHost.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
+      await modalHost.pressByTestIdAsync('actions.confirmation-review.decision-approve');
+      await act(async () => { await result; });
+    };
+    try {
+      await confirmPreparation(hook.getCurrent().prepare);
+      expect(hook.getCurrent().error).toBeNull();
+      expect(inputs).toEqual([{ homeId: preset.homeId, id: preset.id, expectedRevision: preset.revision, machineId: 'selected-builder' }]);
+      await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls).toEqual(expect.arrayContaining([
+        [expect.objectContaining({ serverId: scopeId, accountId: 'owner', machineId: 'admitted-builder', method: ACTION_OPERATION_RPC_METHODS_V2.get,
+          payload: { operationId: 'new-build', waitForTerminal: true } })],
+      ])));
+      await hook.rerender({ ...opened, revision: opened.revision + 1 });
+      await confirmPreparation(hook.getCurrent().retry);
+      expect(inputs).toHaveLength(2);
+      expect(inputs[1]).toEqual({ homeId: preset.homeId, id: preset.id, expectedRevision: preset.revision + 1, machineId: 'selected-builder' });
+      expect(onChanged).toHaveBeenCalledTimes(2);
+    } finally { await hook.unmount(); await modalHost.unmount(); }
+  });
   it('keeps selected preset reads quiet for unrelated Machine pushes and refreshes relevant changes and recovery', async () => {
     const serverId = await seed();
     const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);

@@ -637,6 +637,12 @@
       "import": "./dist/systemTasks/nativeRemoteSshBootstrap.js",
       "default": "./dist/systemTasks/nativeRemoteSshBootstrap.js"
     },
+    "./systemTasks/kinds/remoteFirstPartyPayloadInstaller": {
+      "happier-source": "./src/systemTasks/kinds/remoteFirstPartyPayloadInstaller.ts",
+      "types": "./dist/systemTasks/kinds/remoteFirstPartyPayloadInstaller.d.ts",
+      "import": "./dist/systemTasks/kinds/remoteFirstPartyPayloadInstaller.js",
+      "default": "./dist/systemTasks/kinds/remoteFirstPartyPayloadInstaller.js"
+    },
     "./systemTasks/kinds/sshKnownHostLine": {
       "happier-source": "./src/systemTasks/kinds/sshKnownHostLine.ts",
       "types": "./dist/systemTasks/kinds/sshKnownHostLine.d.ts",

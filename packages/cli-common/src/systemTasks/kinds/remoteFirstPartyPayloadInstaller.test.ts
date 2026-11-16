@@ -8,18 +8,18 @@ import { createServer } from 'node:http';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { installRemoteFirstPartyComponent, installRemoteFirstPartyComponentPayload, normalizeRemoteReleaseArch, prepareManagedGuestCliLocalBuildPayload } from './remoteFirstPartyPayloadInstaller.js';
+import { installRemoteFirstPartyComponent, installRemoteFirstPartyComponentPayload, normalizeRemoteReleaseArch, prepareManagedGuestCliLocalBuildPayload, readManagedGuestCliLocalBuildPayloadMetadata } from './remoteFirstPartyPayloadInstaller.js';
 import { buildRemoteSelfDownloadFirstPartyInstallCommand, resolveRemoteSelfDownloadFirstPartyInstallPlan } from '../ssh/remoteSelfDownloadFirstPartyInstallCommand.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { createCliPayloadFixture as createPayloadRootFixture } from '../testkit/createCliPayloadFixture.js';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
-import { prepareManagedGuestCliBuildInput } from '../ssh/managedGuestCliSupplier.js';
+import { prepareManagedGuestCliBuildInput, resolveManagedGuestCliBuildIdentity } from '../ssh/managedGuestCliSupplier.js';
 
 // Filesystem IO is the system boundary; all payload/archive logic stays real.
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...actual, copyFile: vi.fn(actual.copyFile), lstat: vi.fn(actual.lstat) };
+  return { ...actual, copyFile: vi.fn(actual.copyFile), lstat: vi.fn(actual.lstat), readFile: vi.fn(actual.readFile) };
 });
 
 const execFileAsync = promisify(execFile);
@@ -45,6 +45,43 @@ async function extractTarFixture(params: Readonly<{ archivePath: string }>): Pro
 
 describe('installRemoteFirstPartyComponent', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+  it.skipIf(process.platform === 'win32')('reads the current target identity without archiving, then archives once for a Home image build', async () => {
+    const fixture = await createPayloadRootFixture();
+    try {
+      await writeFile(join(fixture.payloadRoot, 'package.json'), JSON.stringify({ version: '0.3.0' }));
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', fixture.payloadRoot);
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', JSON.stringify({ root: fixture.payloadRoot,
+        identity: 'a'.repeat(64), targetIdentities: { 'linux-x64': 'b'.repeat(64), 'linux-arm64': 'c'.repeat(64) } }));
+      const target = { os: 'linux', arch: 'x64' } as const;
+      const request = { homeUrl: 'https://home.example', target,
+        fetchImpl: async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev' } } }) };
+      const readIdentity = () => resolveManagedGuestCliBuildIdentity({ ...request,
+        readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata });
+      vi.mocked(lstat).mockClear();
+      vi.mocked(readFile).mockClear();
+      const identity = await readIdentity();
+      expect(identity).toEqual({ identity: `home-payload:${'b'.repeat(64)}`, versionId: '0.3.0', target });
+      const archivePasses = () => vi.mocked(lstat).mock.calls.filter(([path]) => String(path) === fixture.payloadRoot).length;
+      const archiveReads = () => vi.mocked(readFile).mock.calls.filter(([path]) => String(path).endsWith('.tar.gz')).length;
+      expect(archivePasses()).toBe(0);
+      expect(archiveReads()).toBe(0);
+      const build = await prepareManagedGuestCliBuildInput({ ...request, prepareLocalPayload: prepareManagedGuestCliLocalBuildPayload });
+      expect(build.identity).toBe(identity.identity);
+      expect(build.versionId).toBe(identity.versionId);
+      expect(archivePasses()).toBe(1);
+      expect(archiveReads()).toBe(1);
+      expect(Buffer.from(build.files[0]!.contentsBase64, 'base64').subarray(0, 2)).toEqual(Buffer.from([0x1f, 0x8b]));
+      vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', JSON.stringify({ root: fixture.payloadRoot,
+        identity: 'a'.repeat(64), targetIdentities: { 'linux-x64': 'd'.repeat(64), 'linux-arm64': 'c'.repeat(64) } }));
+      expect((await readIdentity()).identity).toBe(`home-payload:${'d'.repeat(64)}`);
+      expect(await resolveManagedGuestCliBuildIdentity({ ...request, target: { os: 'linux', arch: 'arm64' },
+        readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata }))
+        .toEqual({ identity: `home-payload:${'c'.repeat(64)}`, versionId: '0.3.0', target: { os: 'linux', arch: 'arm64' } });
+      expect(archivePasses()).toBe(1);
+      expect(archiveReads()).toBe(1);
+    } finally { await fixture.cleanup(); }
+  });
 
   it.skipIf(process.platform === 'win32')('prepares the source producer identity and actual payload archive without exporting the environment', async () => {
     const fixture = await createPayloadRootFixture();

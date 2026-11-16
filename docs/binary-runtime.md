@@ -340,6 +340,33 @@ does this for `hstack happier --source`. An explicit operator payload root takes
 precedence. CLI launch does not compile a guest payload; when no completed tree
 is available, the existing supplier still reports `guest_payload_missing`.
 
+The development preset-preparation supplier exposes
+`prepareManagedGuestCliBuildInput` through
+`cli-common/systemTasks/nativeRemoteSshBootstrap`.
+It requires an explicit image OS and architecture, and reuses the same Home
+source and release-line decision. Home payload input uses the finalized
+`HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA` identity for the matching root
+and target; source daemon restart forwards that metadata with the payload root.
+Public-release input retains the exact selected version's signed integrity
+checks. The result contains only the CLI identity/version, binary path,
+installation script and archive files. It reads no Account, provider,
+enrollment or pairing material. Image installation uses `--managed-guest`,
+which checks the staged CLI's actual version before replacing an installed CLI.
+The image promotion command also sets the existing
+`HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION=1` switch so an older base CLI cannot
+repair or start a daemon during the build. Ordinary CLI promotion retains its
+existing migration behavior.
+These source producers do not establish an executable Prepare or warm-acquire
+path; provider and operation integration remain separate development work.
+
+The same supplier exposes `resolveManagedGuestCliBuildIdentity` for the current
+target identity without constructing an archive. The Node filesystem adapters
+`readManagedGuestCliLocalBuildPayloadMetadata` and
+`prepareManagedGuestCliLocalBuildPayload` live behind
+`cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller`; the portable
+bootstrap entry does not re-export that Node-only module. Identity reads and
+actual image builds share the finalized source and target selection.
+
 Standalone released SSH setup retains verified release acquisition when no payload
 root is supplied. Released CLI 0.2.17 predates the dedicated
 bootstrap interpreter and shared `HAPPIER_FIRST_PARTY_INSTALL_HOME` layout, so it
