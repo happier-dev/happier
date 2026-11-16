@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import tweetnacl from 'tweetnacl';
 import { expect, it, vi } from 'vitest';
-import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { ExternalActionDaemonDispatchRequestSchema, EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { MANAGED_FINITE_WAKE_RPC_METHOD, ManagedFiniteWakeRequestV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
@@ -30,8 +30,16 @@ import { resolveRpcForwardTimeoutMs } from '@/app/api/socket/rpc/rpcForwardTimeo
 import { createSocketRoomDiscoveryHarness } from '@/app/api/testkit/socketHarness';
 import { qualifyCurrentAccountStoredContentSocket } from '@/app/api/testkit/accountStoredContentCompatibility';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { hasManagedWakeAuthority } from '@/app/machines/managed/managedWakeBinding';
 
-it.each([true, false])('admits stored-credential CLI Send-now through Home and wakes only an asleep managed guest (managed=%s)', async managed => {
+it('preserves owner-enabled input wake for Use-only public Send without granting other finite work power', () => {
+    expect(hasManagedWakeAuthority('use', true, 'finite-command', 'session.message.send')).toBe(true);
+    expect(hasManagedWakeAuthority('use', false, 'finite-command', 'session.message.send')).toBe(false);
+    expect(hasManagedWakeAuthority('use', true, 'finite-command', 'execution.run.start')).toBe(false);
+});
+
+it.each([true, false].flatMap(managed => (['default', 'enqueue', 'send_now'] as const).map(kind => ({ managed, kind }))))(
+    'admits public Session Send through Home and wakes only an asleep managed guest (managed=$managed, input=$kind)', async ({ managed, kind }) => {
     const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey;
     const delivered: unknown[] = [];
@@ -115,7 +123,7 @@ it.each([true, false])('admits stored-credential CLI Send-now through Home and w
             allocation: 'bound', creationState: 'active', desired: 'stop', intentRevision: 2,
             launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Send-now guest', choices: {} },
             resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: { id: 'native' } },
-            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
             observation: { availability: 'present', power: 'stopped', storage: 'retained', observedAt: Date.now() } } }) : null;
         managedId = row?.id ?? '';
         await db.machine.update({ where: { id: guest.id }, data: {
@@ -133,7 +141,7 @@ it.each([true, false])('admits stored-credential CLI Send-now through Home and w
             const machine = await runWithServerHttpBaseUrl(server.baseUrl, () => api.getMachine(guest.id));
             if (!machine) throw new Error('Guest Machine was not readable');
             const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: server.baseUrl, token: server.token });
-            const machineClient = runWithServerHttpBaseUrl(server.baseUrl, () => api.machineSyncClient(machine, undefined, {
+            const machineClient = await runWithServerHttpBaseUrl(server.baseUrl, () => api.machineSyncClient(machine, undefined, {
                 getServerFeaturesSnapshot: () => snapshot, resolveCurrentServerIdentityId: () => server.homeId,
             }));
             let connected: Promise<void> | undefined;
@@ -146,10 +154,13 @@ it.each([true, false])('admits stored-credential CLI Send-now through Home and w
                     externalActionExecutionAuthorization: CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1.externalActionExecutionAuthorization,
                 }).then(() => resolve(), reject);
             } })));
+            // This transport fixture deliberately waives the CLI native confirmation.
+            const settings = setActionApprovalOverride({ settings: ActionsSettingsV1Schema.parse({ v: 1 }),
+                actionId: 'session.message.send', surface: 'cli', approvalRequired: false });
             const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
                 serverId: configuration.activeServerId, serverIdentityId: server.homeId, serverApiUrl: server.baseUrl,
                 resolveServerFeaturesSnapshot: () => snapshot,
-                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+                actionsSettingsProvider: { getActionsSettings: () => settings } });
             const receiver = createCliActionExecutorFromCredentials({ credentials,
                 serverId: configuration.activeServerId, serverIdentityId: server.homeId, serverApiUrl: server.baseUrl,
                 machineActionDirectTargetTransport: { machineId: guest.id,
@@ -158,7 +169,7 @@ it.each([true, false])('admits stored-credential CLI Send-now through Home and w
                 machineId: guest.id, externalActionMachineInstallationId: guest.installationId,
                 externalActionMachineRequestPrivateKey: guest.keys.secretKey,
                 resolveServerFeaturesSnapshot: () => snapshot,
-                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+                actionsSettingsProvider: { getActionsSettings: () => settings } });
             registerExternalActionRpcHandler({ registerHandler: (method, handler) => {
                 if (method === EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1) receive = handler;
             } }, { machineId: guest.id, currentServerId: configuration.activeServerId,
@@ -180,7 +191,7 @@ it.each([true, false])('admits stored-credential CLI Send-now through Home and w
                 resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: server.baseUrl }),
                 executor: receiver });
             const input = { sessionId: session.id, message: 'Wake and accept this input', localId: 'send-now-input',
-                requestedAction: { v: 1, kind: 'send_now' }, reply: 'none' };
+                ...(kind === 'default' ? {} : { requestedAction: { v: 1, kind } }), reply: 'none' };
             try {
                 const result = await runWithServerHttpBaseUrl(server.baseUrl,
                     () => executor.execute('session.message.send', input, { surface: 'cli' }));

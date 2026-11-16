@@ -4,7 +4,7 @@ import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machine
 import { resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import type { ManagedWakeTargetV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { isSessionSpawnNewActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionSpawnNewActionIdV1, SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { serializeMachinePresence } from '@/app/machines/machineSerialization';
@@ -22,7 +22,8 @@ type WakeMachine = Machine & { account: Prisma.AccountGetPayload<{ select: { sta
 export function hasManagedWakeAuthority(controllerRole: 'manage' | 'use' | null, wakeOnAcceptedMessage: boolean,
     origin: ManagedWakeTargetV1['origin']['kind'], finiteActionId?: string): boolean {
     return controllerRole === 'manage' || wakeOnAcceptedMessage && (origin === 'session-input'
-        || origin === 'finite-command' && finiteActionId !== undefined && isSessionSpawnNewActionIdV1(finiteActionId));
+        || origin === 'finite-command' && finiteActionId !== undefined
+            && (isSessionSpawnNewActionIdV1(finiteActionId) || finiteActionId === SESSION_MESSAGE_SEND_ACTION_ID_V1));
 }
 
 function projectWakeBinding(homeId: string, row: StoredManagedMachine | undefined, guest: WakeMachine | undefined,

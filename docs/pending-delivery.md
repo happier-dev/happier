@@ -1384,6 +1384,8 @@ Secrets, raw provider evidence, content, and credentials never belong in public 
 
 Finite CLI/agent Machine forwarding declares runtime demand to the shared
 reviewed wake owner and waits for the enrolled guest before dispatching the
-original work. Forwarded Send retains accepted-input activation: enqueue and
-ACK precede wake. Passive list/get operations do not request power. See
+original work. Public Action Send requires the guest runtime before it can enqueue
+input, so every Send kind uses that shared wake before dispatch. After enqueue and
+ACK, Pending retains its accepted-input activation owner. Passive list/get
+operations do not request power. See
 [Managed runtime demand](actions.md#managed-runtime-demand-03-development).

@@ -6,7 +6,7 @@ import type { ActionExecutorContext } from './executor/types.js';
 const context: ActionExecutorContext = { serverId: 'home', defaultSessionId: 'current',
   externalActionTarget: { kind: 'machine', machineId: 'guest' }, executionRunTargetMachineId: 'guest' };
 
-it('declares explicit Send-now as finite runtime demand while ordinary and enqueued input retain accepted activation', () => {
+it('requires public Send delivery runtime while local ordinary and enqueued input retain accepted activation', () => {
   const target = { kind: 'session' as const, sessionId: 'selected' };
   for (const kind of [undefined, 'enqueue', 'send_now'] as const) {
     const input = { sessionId: target.sessionId, message: 'hello', ...(kind ? { requestedAction: { v: 1, kind } } : {}) };
@@ -16,7 +16,7 @@ it('declares explicit Send-now as finite runtime demand while ordinary and enque
       binding: { serverIdentityId: 'srv_home', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 0 },
         actionId: 'session.message.send', requestId: 'send-now', target }, input,
       material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) }, randomBytes: size => new Uint8Array(size).fill(5) });
-    expect(readExternalActionMachineRuntimeDemandV1('session.message.send', envelope)).toBe(kind === 'send_now' ? 'required' : undefined);
+    expect(readExternalActionMachineRuntimeDemandV1('session.message.send', envelope)).toBe('required');
   }
 });
 

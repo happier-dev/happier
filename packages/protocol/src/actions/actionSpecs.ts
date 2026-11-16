@@ -2270,7 +2270,7 @@ export function getActionSpec(id: ActionId): ActionSpec {
   return spec;
 }
 
-/** Public non-content demand comes only from the Action's declaration; accepted input keeps its own activation owner. */
+/** Public dispatch needs the declared runtime before delivery, including input not yet accepted by the guest. */
 export function projectExternalActionMachineRuntimeDemandV1(actionId: string, input: unknown,
   target: ExternalActionTargetV1 | undefined): 'required' | undefined {
   const parsed = ActionIdSchema.safeParse(actionId);
@@ -2279,7 +2279,7 @@ export function projectExternalActionMachineRuntimeDemandV1(actionId: string, in
     ...(target ? { externalActionTarget: target } : {}),
     ...(target?.kind === 'session' ? { defaultSessionId: target.sessionId } : {}),
   });
-  return demand && demand.activation !== 'accepted-input' ? 'required' : undefined;
+  return demand ? 'required' : undefined;
 }
 
 /** Home checks the declaration before consuming the sealed operand's authenticated projection. */

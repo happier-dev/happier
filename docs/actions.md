@@ -9666,8 +9666,11 @@ Session; Resume compares at its fresh Home-scoped target owner before transport,
 instead of silently selecting the new Machine or moving the Session back.
 Default and enqueued Send declare `activation: 'accepted-input'`: admission still
 reviews their paid-wake child, but their accepted-input owner invokes it only after
-enqueue/ACK. Explicit `requestedAction.kind: 'send_now'` declares finite runtime
-demand and enters the same shared wake before publisher delivery. The port's
+enqueue/ACK for local delivery. Forwarding any Send through the public Action
+transport requires the guest runtime before input can be accepted, so the shared
+runtime-demand projection enters Home's existing managed wake before dispatch.
+Explicit `requestedAction.kind: 'send_now'` also declares finite runtime demand
+for local publisher delivery. The port's
 `preparedChildren` projects concrete prepared facts;
 only its existing exact-plan `invoke` grants child consent. These are in-process
 contracts, never transported authority.
@@ -11060,9 +11063,11 @@ Finite CLI/agent Machine forwarding retains its original target and declares
 runtime need through the sealed V2 operand and signed execution binding. Home's
 existing finite-wake custody owner first verifies that the Action spec declares
 finite runtime demand before consuming the sealed flag; native power still
-requires managed access and Action policy. Explicit Send-now uses this finite
-path; default and enqueued Send activate through their existing accepted-input
-owner. The receiving opener checks the declaration against the
+requires managed access and Action policy. Public Action Send uses this finite
+path for default, enqueued and Send-now delivery; after acceptance, Pending retains
+its existing activation owner. Owner-enabled input wake also permits Use-only
+Send callers; it grants no power authority to other finite Actions. The receiving
+opener checks the declaration against the
 original Action spec. Invocation-private child ports
 never travel to another host.
 
