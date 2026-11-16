@@ -262,19 +262,23 @@ describe('SessionPaneHeader', () => {
         expect(input()?.props.value).toBe('Fix the modal remount');
     });
 
-    it('keeps the title\'s hit area from covering the lineage breadcrumb stacked flush above it', async () => {
+    it('reads the origin under the title, after the folder, and keeps the title\'s hit area off it', async () => {
         const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
         const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
-            <SessionPaneHeader title="Worker" lineage={React.createElement('Text', null, 'Lead')}
+            <SessionPaneHeader title="Worker" subtitle="Home folder" lineage={React.createElement('Text', { testID: 'lineage' }, 'Lead')}
                 rename={{ sessionId: 'session-without-home', serverId: null }} />
         </HappierUiPlatformProvider>);
+        // Owner 11-15: the origin belongs below the title with the folder label, never above it.
+        const metadata = screen.findHostByTestId('session-header-metadata')!;
+        expect(metadata.findAll((node) => node.props.testID === 'lineage').length).toBeGreaterThan(0);
+        expect(metadata.findAll((node) => node.props.testID === 'session-header-subtitle').length).toBeGreaterThan(0);
         await act(async () => {
             screen.findHostByTestId('session-header-title')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 120, height: 20 } } });
         });
         const slop = screen.findHostByTestId('session-header-title')!.props.hitSlop as Record<'top' | 'bottom', number>;
-        // The breadcrumb sits flush against the title, so the title takes none of that side; below it nothing competes.
-        expect(slop.top).toBe(0);
-        expect(slop.bottom).toBeGreaterThan(0);
+        // The origin sits flush under the title, so the title takes none of that side; above it nothing competes.
+        expect(slop.bottom).toBe(0);
+        expect(slop.top).toBeGreaterThan(0);
     });
 
     it('shows the title as plain text where it cannot be renamed', async () => {

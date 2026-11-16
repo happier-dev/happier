@@ -45,7 +45,7 @@ export type SessionPaneHeaderProps = Readonly<{
     agentIdentity?: React.ReactNode;
     isConnected?: boolean;
     flavor?: string | null;
-    /** The leads above a reporting Session, over the title (a leaf that draws nothing for a root). */
+    /** Where a reporting Session comes from (its leads), after the folder under the title (a leaf that draws nothing for a root). */
     lineage?: React.ReactNode;
     /** The header's controls: Next, attention, Follow, ⋯, the pane's Hide. */
     rightElement?: React.ReactNode;
@@ -67,7 +67,7 @@ export type SessionPaneHeaderProps = Readonly<{
 /**
  * The Session page's header (calm-shell `cshead.H1`/`H1p`): a data and interaction leaf over the one
  * entity header (`DetailsTabHeader` → `PaneHeader`). It chooses the identity mark from the person's
- * setting, composes the title with its role chip, lineage above it and folder · machine beneath, and
+ * setting, composes the title with its role chip and folder · origin beneath (owner 11-15: never above), and
  * hands the controls to the band, which keeps them beside the title and compacts them when room is short.
  */
 export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: SessionPaneHeaderProps) {
@@ -114,7 +114,7 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
             ) : (
                 <SessionHeaderTitle title={props.title} accessory={props.titleAccessory}
                     onBeginRename={props.rename ? editing.begin : undefined}
-                    triggerRef={editing.titleTriggerRef} lineageAbove={props.lineage != null} />
+                    triggerRef={editing.titleTriggerRef} lineageBelow={props.lineage != null} />
             )}
         </PullTarget>
     );
@@ -134,10 +134,10 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
                 </PullTarget>
             ) : undefined}
             titleControl={titleControl}
-            overline={props.lineage}
-            metaLeading={props.badges?.length || props.subtitle ? (
+            metaLeading={props.badges?.length || props.subtitle || props.lineage ? (
                 <View style={styles.metadataRow} testID={resolveOptionalSessionScreenTestId(testIdsEnabled, 'session-header-metadata')}>
                     {props.subtitle ? <SessionHeaderSubtitle text={props.subtitle} mode={props.subtitleEllipsizeMode ?? 'tail'} /> : null}
+                    {props.lineage}
                     {props.badges?.map((badge, index) => (
                         <StatusPill key={`${badge}:${index}`} variant="neutral" chrome="plain" hideDot
                             foregroundColor={theme.colors.text.secondary}
@@ -169,7 +169,7 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
     );
 });
 
-const LINEAGE_SEAM_HIT_REACH = { top: 0 } as const;
+const LINEAGE_SEAM_HIT_REACH = { bottom: 0 } as const;
 
 /**
  * The title with its role chip. The title keeps its natural width when it can; the chip is
@@ -182,7 +182,7 @@ function SessionHeaderTitle(props: Readonly<{
     onBeginRename?: () => void;
     triggerRef?: (instance: HappierFocusable | null) => void;
     /** The lineage breadcrumb sits flush above the title: its hit area keeps that side, the title's stops at the seam. */
-    lineageAbove?: boolean;
+    lineageBelow?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const [rowWidth, setRowWidth] = React.useState(0);
@@ -211,7 +211,7 @@ function SessionHeaderTitle(props: Readonly<{
                 <HappierPressable testID="session-header-title" accessibilityRole="button"
                     accessibilityLabel={props.title} accessibilityHint={t('sessionInfo.renameSession')}
                     onPress={props.onBeginRename} controlRef={props.triggerRef}
-                    hitReach={props.lineageAbove ? LINEAGE_SEAM_HIT_REACH : undefined} style={(state) => [styles.titlePress,
+                    hitReach={props.lineageBelow ? LINEAGE_SEAM_HIT_REACH : undefined} style={(state) => [styles.titlePress,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}>
                     {(state) => titleText(state.hovered)}
                 </HappierPressable>

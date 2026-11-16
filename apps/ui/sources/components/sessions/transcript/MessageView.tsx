@@ -51,13 +51,12 @@ import { useMessageComposerAttachments } from '@/components/sessions/transcript/
 import { useTranscriptMotion } from '@/components/sessions/transcript/motion/TranscriptMotionContext';
 import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/ThinkingTimelineRow';
 import { PeerMessageRow } from '@/components/sessions/transcript/peer/PeerMessageRow';
-import { TranscriptEventRow, TranscriptFollowSourceNotice, TranscriptHostWakeNotice } from '@/components/sessions/transcript/events/TranscriptEventRow';
+import { TranscriptEventRow, TranscriptFailureNotice, TranscriptFollowSourceNotice, TranscriptHostWakeNotice } from '@/components/sessions/transcript/events/TranscriptEventRow';
 import { projectWorkerCardDelivery } from '@/components/sessions/transcript/events/followWorkerCardDelivery';
 import type { FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1';
 import { isRuntimeIssueMessageMeta, readRuntimeIssueMessageMeta } from '@/components/sessions/transcript/events/runtimeIssueMessage';
 import { TeamCredentialDenialRecovery } from '@/components/sessions/transcript/events/TeamCredentialDenialRecovery';
 import { AgentAuthRequiredRecovery } from '@/components/sessions/transcript/events/AgentAuthRequiredRecovery';
-import { RuntimeIssueDetails } from '@/components/sessions/transcript/events/RuntimeIssueDetails';
 import { isRuntimeIssueStatedByStartFailureNotice } from '@/components/sessions/startFailure/sessionStartFailureNotice';
 import { useTranscriptRuntimeIssueRepeatCount } from '@/components/sessions/transcript/events/runtimeIssueRepeatProjection';
 import { isHostAuthoredInputMeta, isHostOnboardingInputMeta, readDiscussionInputOrigin, readHostDiscussionInputMeta, readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
@@ -873,8 +872,6 @@ function TranscriptTextNoticeRow(props: Readonly<{
     runtimeIssue !== null && session !== null && isRuntimeIssueStatedByStartFailureNotice(runtimeIssue, {
       issue: session.lastRuntimeIssue, sessionActive: session.active === true,
     })));
-  // Every typed failure keeps its raw cause one press away, under any recovery it offers.
-  const footer = runtimeIssue ? <>{recovery}<RuntimeIssueDetails issue={runtimeIssue} /></> : undefined;
   if (statedByStartFailureNotice) return null;
   return (
     <TranscriptJumpAttention
@@ -884,16 +881,19 @@ function TranscriptTextNoticeRow(props: Readonly<{
       radius={TRANSCRIPT_EVENT_ROW_HIGHLIGHT_RADIUS}
       style={styles.eventHighlightSurface}
     >
-      <TranscriptEventRow
-        event={event}
-        tone={props.tone}
-        findSourceRanges={findSourceRanges}
-        messageId={props.message.id}
-        sessionId={props.sessionId}
-        serverId={props.serverId}
-        createdAt={props.message.createdAt}
-        footer={footer}
-      />
+      {props.tone === 'failure' ? (
+        // Every typed failure keeps its raw cause one press away (Details), under any recovery it offers.
+        <TranscriptFailureNotice text={displayText} findSourceRanges={findSourceRanges} issue={runtimeIssue} recovery={recovery} />
+      ) : (
+        <TranscriptEventRow
+          event={event}
+          findSourceRanges={findSourceRanges}
+          messageId={props.message.id}
+          sessionId={props.sessionId}
+          serverId={props.serverId}
+          createdAt={props.message.createdAt}
+        />
+      )}
     </TranscriptJumpAttention>
   );
 }

@@ -14,7 +14,7 @@ import { Text } from '@/components/ui/text/Text';
 import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 import { TranscriptSeparatorRow } from '@/components/sessions/transcript/separators/TranscriptSeparatorRow';
-import { presentSessionAuthSwitchFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { presentSessionAuthSwitchFailure, presentSessionRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import {
     isTerminalComposerDraftBlockedEvent,
@@ -54,7 +54,9 @@ import { followInputNeedsYou } from '@/sync/domains/session/input/hostAuthoredIn
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HappierBodyEdgeContext, HappierPressable, HAPPIER_STATE_LINE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 
 const EVENT_ICON_SIZE = 18;
 // Derived, not chosen: the spinner replaces the glyph in the same slot, so it must paint the same
@@ -433,8 +435,6 @@ type TranscriptEventRowProps = {
     sessionId?: string | null;
     serverId?: string | null;
     emphasis?: TranscriptEventEmphasis;
-    /** A failed turn or rejected input: the same row, with its glyph in the failure colour. */
-    tone?: 'failure';
     /** Find ranges in the displayed primary text, supplied by the transcript row owner. */
     findSourceRanges?: readonly FindTextRange[];
     navigationEnabled?: boolean;
@@ -478,8 +478,7 @@ function TranscriptEventRowContent(props: TranscriptEventRowProps & Readonly<{ c
     // Host accounting evidence is retained for Usage/Coach, not a conversation
     // notification. Keep unknown event types on the visible fallback below.
     if (props.event.type === 'mcp-binding-usage') return null;
-    const eventColor = props.tone === 'failure' ? theme.colors.state.danger.foreground
-        : deemphasized ? theme.colors.text.tertiary : theme.colors.text.secondary;
+    const eventColor = deemphasized ? theme.colors.text.tertiary : theme.colors.text.secondary;
     let iconName: IconName = 'info';
     let text = t('message.unknownEvent');
     let detailText: string | undefined;
@@ -543,8 +542,7 @@ function TranscriptEventRowContent(props: TranscriptEventRowProps & Readonly<{ c
         iconName = 'arrows-left-right';
         text = t('message.switchedToMode', { mode: props.event.mode });
     } else if (props.event.type === 'message') {
-        iconName = props.tone === 'failure' ? 'warning' : 'info';
-        if (props.tone === 'failure') testID = 'transcript-event-runtime-issue';
+        iconName = 'info';
         capabilityNotice = describeCapabilityNotice(props.event);
         // The Follow wake commits one fixed Protocol sentence as the persisted
         // event content so every host recognises it; the reader localizes it the
@@ -744,6 +742,37 @@ function TranscriptEventRowContent(props: TranscriptEventRowProps & Readonly<{ c
     );
 }
 
+/**
+ * A failed turn or rejected input in the transcript: the app's one inline failure notice (A2, `SurfaceStateCard`
+ * line) on the transcript's row rhythm. The cause reads as its sentence, the typed raw cause sits behind its
+ * Details, and a recovery the row's owner offers (a refused Team credential, a missing sign-in) stands under the
+ * sentence's words.
+ */
+export function TranscriptFailureNotice(props: Readonly<{
+    text: string;
+    findSourceRanges?: readonly FindTextRange[];
+    issue: SessionRuntimeIssueV1 | null;
+    recovery?: React.ReactNode;
+}>) {
+    const details = props.issue ? presentSessionRuntimeIssue(props.issue).details : null;
+    return (
+        <View style={styles.container}>
+            <HappierBodyEdgeContext.Provider value>
+                <SurfaceStateCard
+                    testID="transcript-event-runtime-issue"
+                    size="line"
+                    kind="error"
+                    title={props.text}
+                    titleContent={props.findSourceRanges?.length
+                        ? <FindHighlightedText text={props.text} ranges={props.findSourceRanges} selectable /> : undefined}
+                    diagnosticCode={details}
+                />
+            </HappierBodyEdgeContext.Provider>
+            {props.recovery ? <View style={styles.failureRecovery}>{props.recovery}</View> : null}
+        </View>
+    );
+}
+
 const styles = StyleSheet.create((theme) => ({
     container: {
         marginHorizontal: theme.space.s16,
@@ -835,5 +864,9 @@ const styles = StyleSheet.create((theme) => ({
     },
     actionText: {
         ...Typography.variant('meta', 'semiBold'),
+    },
+    // Under the notice's sentence, on its words (past the line's glyph column).
+    failureRecovery: {
+        paddingLeft: HAPPIER_STATE_LINE_METRICS.glyphPx + HAPPIER_STATE_LINE_METRICS.gapPx,
     },
 }));

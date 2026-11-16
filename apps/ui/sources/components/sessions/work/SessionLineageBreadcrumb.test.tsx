@@ -60,9 +60,9 @@ describe('Session lineage navigation', () => {
         const drawn = [link.props.style].flat(Infinity).filter(Boolean).reduce((all, one) => ({ ...all, ...one }), {} as Record<string, unknown>);
         expect(drawn.minHeight).toBeUndefined();
         const frame = screen.root.findAll((node) => node.props?.dataSet?.happierHitArea === 'true')[0]!;
-        // The header title sits flush beneath the row: the row's hit area keeps its upper side only.
-        expect(frame.props.style.bottom).toBeCloseTo(0);
-        expect(frame.props.style.top).toBeLessThan(0);
+        // The header title sits flush above the row (owner 11-15): the row's hit area keeps its lower side only.
+        expect(frame.props.style.top).toBeCloseTo(0);
+        expect(frame.props.style.bottom).toBeLessThan(0);
     });
 
     it('keeps the root-first breadcrumb and renders no relationship for a root Session', async () => {

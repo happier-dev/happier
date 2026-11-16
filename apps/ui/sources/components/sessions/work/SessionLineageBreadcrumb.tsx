@@ -13,12 +13,13 @@ import { describeSessionLineage, useSessionLineage, type SessionLineageAncestor 
 
 type SessionLineagePresentation = 'breadcrumb' | 'manager';
 
-const TITLE_BELOW_HIT_REACH = { bottom: 0 } as const;
+const TITLE_ABOVE_HIT_REACH = { top: 0 } as const;
 
 /**
  * The lineage breadcrumb of a Session that reports to a lead (ORC §3.8 header; lab `session-E`): the
- * leads above it, root first, each one a way back up. It sits over the header title, which already
- * names this Session, so the crumb names only the leads. A Session that reports to no one draws nothing.
+ * leads above it, root first, each one a way back up. It sits under the header title, after the folder
+ * (owner 11-15), and the title already names this Session, so the crumb names only the leads. A Session
+ * that reports to no one draws nothing.
  */
 export const SessionLineageBreadcrumb = React.memo(
   function SessionLineageBreadcrumb(
@@ -57,8 +58,8 @@ export const SessionLineageNavigation = React.memo(
           accessibilityRole="link"
           accessibilityLabel={label}
           style={styles.row}
-          // Drawn at its text line; the finger's reach is the hit area, kept off the title flush beneath.
-          hitReach={TITLE_BELOW_HIT_REACH}
+          // Drawn at its text line; the finger's reach is the hit area, kept off the title flush above.
+          hitReach={TITLE_ABOVE_HIT_REACH}
           onPress={() => openAncestor(lead.sessionId)}
         >
           <Icon name="tree-structure" size={11} color={theme.colors.text.tertiary} />
@@ -80,8 +81,8 @@ export const SessionLineageNavigation = React.memo(
         separator={<Icon name="caret-right" size={10} color={theme.colors.text.tertiary} />}
         colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.hover }}
         linkStyle={styles.crumb}
-        // The header title sits flush below the crumbs: its hit area keeps that side.
-        linkHitReach={TITLE_BELOW_HIT_REACH}
+        // The header title sits flush above the crumbs: its hit area keeps that side.
+        linkHitReach={TITLE_ABOVE_HIT_REACH}
         items={lineage.map((ancestor) => ({ key: ancestor.sessionId, label: ancestor.title, testID: `session-header-lineage:${ancestor.sessionId}`, onPress: () => openAncestor(ancestor.sessionId) }))}
         renderLabel={(item) => <Text numberOfLines={1} style={styles.label}>{item.label}</Text>}
       />

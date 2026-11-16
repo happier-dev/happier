@@ -43,10 +43,10 @@ function buildPendingUserActionItems(
 }
 
 /**
- * Present the canonical crossover decision without losing the committed position. Durable retry
- * custody replaces its user anchor with the existing Pending block; only uncommitted input belongs
- * at the tail. Turn grouping retains the anchor until this final projection so replies keep their
- * original turn boundary even while the user row is presented as Pending.
+ * Present the canonical crossover decision as ONE Pending section docked at the tail (owner 11-15).
+ * Durable retry custody hides its committed user row; the replies after it (a failure, a partial
+ * answer) stay where they landed, and the message itself joins every other pending and discarded
+ * message in the single tail section, which reports each one's status and reason.
  */
 export function projectPendingTranscriptItems<T extends ChatListItem | WorkflowTranscriptTurnItem>(params: Readonly<{
     items: readonly T[];
@@ -64,29 +64,8 @@ export function projectPendingTranscriptItems<T extends ChatListItem | WorkflowT
     const pending = params.pendingMessages.filter((message) => !isPendingToolAnswerDelivery(message)
         && !isPendingTranscriptMessageHiddenByCrossover(message, crossover));
     const discarded = (params.discardedMessages ?? []).filter((message) => !isPendingTranscriptMessageHiddenByCrossover(message, crossover));
-    const queueContexts = resolvePendingMessagesPresentationByRecipient(pending);
-    type MutablePendingQueueItem = PendingQueueItem & { pendingMessages: PendingMessage[]; discardedMessages: DiscardedPendingMessage[] };
-    const anchoredRows = new Map<string, MutablePendingQueueItem>();
-    const rowForLocalId = (localId: string | null): MutablePendingQueueItem | null => {
-        if (!localId || !crossover.committedLocalIds.has(localId) || !crossover.pendingOwnedLocalIds.has(localId)) return null;
-        let row = anchoredRows.get(localId);
-        if (!row) {
-            row = { kind: 'pending-queue', id: `pending-queue:${localId}`, pendingMessages: [], pendingQueueContexts: queueContexts, discardedMessages: [] };
-            anchoredRows.set(localId, row);
-        }
-        return row;
-    };
-    for (const message of pending) {
-        const row = rowForLocalId(message.localId);
-        if (row) row.pendingMessages.push(message);
-    }
-    for (const message of discarded) {
-        const row = rowForLocalId(message.localId);
-        if (row) row.discardedMessages.push(message);
-    }
 
     const items: Array<T | PendingQueueItem | Extract<ChatListItem, { kind: 'pending-user-action' }>> = [];
-    const placedLocalIds = new Set<string>();
     for (const item of params.items) {
         const messageId = item.kind === 'message' ? item.messageId : item.kind === 'turn' ? item.turn.userMessageId : null;
         const message = messageId ? params.messagesById[messageId] : null;
@@ -94,30 +73,13 @@ export function projectPendingTranscriptItems<T extends ChatListItem | WorkflowT
             items.push(item);
             continue;
         }
-        const localId = 'localId' in message ? message.localId : null;
-        const pendingRow = localId ? anchoredRows.get(localId) : null;
-        if (pendingRow && localId && !placedLocalIds.has(localId)) {
-            items.push(pendingRow);
-            placedLocalIds.add(localId);
-        }
         if (item.kind === 'turn' && item.turn.content.length > 0) {
             items.push({ ...item, turn: { ...item.turn, userMessageId: null } });
         }
     }
-    const trailingPending = pending.filter((message) => !message.localId || !placedLocalIds.has(message.localId));
-    const trailingDiscarded = discarded.filter((message) => !message.localId || !placedLocalIds.has(message.localId));
-    if (trailingPending.length > 0 || trailingDiscarded.length > 0) {
-        // An anchored Pending row that nothing follows already sits at the tail: the queue continues in
-        // it, so one titled section holds the whole tail rather than two stacked ones.
-        const last = items.at(-1);
-        const tailRow = last && last.kind === 'pending-queue' ? [...anchoredRows.values()].find((row) => row === last) : undefined;
-        if (tailRow) {
-            tailRow.pendingMessages.push(...trailingPending);
-            tailRow.discardedMessages.push(...trailingDiscarded);
-        } else {
-            items.push({ kind: 'pending-queue', id: 'pending-queue', pendingMessages: trailingPending,
-                pendingQueueContexts: queueContexts, discardedMessages: trailingDiscarded });
-        }
+    if (pending.length > 0 || discarded.length > 0) {
+        items.push({ kind: 'pending-queue', id: 'pending-queue', pendingMessages: pending,
+            pendingQueueContexts: resolvePendingMessagesPresentationByRecipient(pending), discardedMessages: discarded });
     }
     items.push(...buildPendingUserActionItems(params.pendingUserActionRequests, params.messageIdsOldestFirst, params.messagesById));
     return items;

@@ -25,7 +25,7 @@ describe('workflow turn membership in linear transcripts', () => {
         const grouped = groupWorkflowTranscriptTurns(linear, turns, (id) => messagesById[id] ?? null);
         const rows = buildTranscriptTurnUnits({ items: grouped, getMessageById: (id) => messagesById[id] ?? null,
             collapsedPreviewCount: 0, isGroupExpanded: () => false, quietWorkflowTurnIds: new Set([turns[0]!.id]) });
-        expect(rows.map((row) => row.kind === 'message' ? row.messageId : row.kind)).toEqual(['pending-queue', 'failure']);
+        expect(rows.map((row) => row.kind === 'message' ? row.messageId : row.kind)).toEqual(['failure', 'pending-queue']);
     });
 
     it.each([false, true])('preserves unfolded interleaved linear rows with all-tools turn grouping (linear groups: %s)', groupToolCalls => {

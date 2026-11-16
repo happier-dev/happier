@@ -62,7 +62,7 @@ function buildToolCallMessage(params: {
 
 describe('buildChatListItems', () => {
     it.each(['full', 'cached-rebuild', 'cached-append'] as const)(
-        'keeps blocked retry custody at its committed position before the failure through %s',
+        'docks blocked retry custody with the queue in one tail section after its failure through %s',
         (path) => {
             const messages: Message[] = [
                 { kind: 'user-text', id: 'previous-user', localId: null, createdAt: 1, seq: 1, text: 'Previous question' },
@@ -78,15 +78,11 @@ describe('buildChatListItems', () => {
             const items = path === 'full' ? buildChatListItems(input) : buildChatListItemsCached({ ...input, cache: path === 'cached-append' ? initial.cache : null }).items;
 
             expect(items.map((item) => item.kind === 'message' ? item.messageId : item.kind)).toEqual([
-                'previous-user', 'previous-answer', 'pending-queue', 'failure', 'pending-queue',
+                'previous-user', 'previous-answer', 'failure', 'pending-queue',
             ]);
-            const retry = items[2];
-            expect(retry?.kind === 'pending-queue' && retry.pendingMessages).toEqual([blocked]);
-            expect(items[4]?.kind === 'pending-queue' && items[4].pendingMessages).toEqual([queued]);
-            expect(retry?.kind === 'pending-queue' && retry.pendingQueueContexts?.get(undefined)?.messages).toEqual([blocked, queued]);
-            if (retry?.kind === 'pending-queue' && items[4]?.kind === 'pending-queue') {
-                expect(retry.pendingQueueContexts).toBe(items[4].pendingQueueContexts);
-            }
+            const queue = items[3];
+            expect(queue?.kind === 'pending-queue' && queue.pendingMessages).toEqual([blocked, queued]);
+            expect(queue?.kind === 'pending-queue' && queue.pendingQueueContexts?.get(undefined)?.messages).toEqual([blocked, queued]);
             expect(new Set(items.map((item) => item.id)).size).toBe(items.length);
             if (path === 'cached-append') expect(items[0]).toBe(initial.items[0]);
         },

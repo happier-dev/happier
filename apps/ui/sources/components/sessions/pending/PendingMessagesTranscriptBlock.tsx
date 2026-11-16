@@ -903,45 +903,6 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                         <View style={[styles.pendingStatusRow, isHostFollowInput ? styles.hostStatusRow : null]}>
                             {followInput ? <TranscriptFollowSourceAction followInput={followInput} serverId={props.serverId}
                                 testID={`pendingMessages.followSourceOpen:${message.id}`} style={styles.hostSourceAction} /> : null}
-                            {isHostOnboarding ? null : <View
-                                testID={`pendingMessages.pendingAffordance:${message.id}`}
-                                accessible
-                                accessibilityLabel={deliveryStateAccessibilityLabel}
-                                {...(!isWeb ? { pointerEvents: 'none' as const } : null)}
-                                style={[
-                                    styles.pendingAffordanceChip,
-                                    isWeb ? { pointerEvents: 'none' as const } : null,
-                                ]}
-                            >
-                                {visualState.showSpinner ? (
-                                    <ActivitySpinner
-                                        testID={`pendingMessages.${visualState.kind}Indicator:${message.id}`}
-                                        // The spinner takes the status icon's place at the icon's size, so a
-                                        // working state keeps the label's height instead of growing over the bubble.
-                                        size={iconMatchedSpinnerSize(PENDING_AFFORDANCE_ICON_SIZE_PX)}
-                                        color={theme.colors.text.secondary}
-                                    />
-                                ) : (
-                                    <Icon name={visualState.iconName} size={PENDING_AFFORDANCE_ICON_SIZE_PX} color={theme.colors.text.secondary} />
-                                )}
-                                <Text
-                                    testID={`pendingMessages.pendingAffordanceLabel:${message.id}`}
-                                    style={[styles.pendingAffordanceText, { color: theme.colors.text.secondary }]}
-                                >
-                                    {deliveryStateLabel}
-                                </Text>
-                                {blockedDeliveryLabel ? <>
-                                    <Text style={[styles.pendingAffordanceText, { color: theme.colors.text.secondary }]}>·</Text>
-                                    <Text
-                                        testID={deliveryBlockedPresentation?.isUnknown ? `pendingMessages.unknownDeliveryStatus:${message.id}` : `pendingMessages.blockedDeliveryReason:${message.id}`}
-                                        numberOfLines={1}
-                                        style={[styles.pendingAffordanceReasonText, { color: theme.colors.text.secondary }]}
-                                    >
-                                        {blockedDeliveryLabel}
-                                    </Text>
-                                </> : null}
-                            </View>}
-
                             {isWeb && presentation.canMutate ? (
                                 // The committed message's reveal owner: a queued row's actions keep their
                                 // band and fade in on hover or focus, like every transcript row; a delivery
@@ -1090,6 +1051,45 @@ export function PendingMessagesTranscriptBlock(props: Readonly<{
                                     })}
                                 </View>
                             ) : null}
+                            {/* The status reads at the row's edge; actions reveal to its left (owner 11-15). */}
+                            {isHostOnboarding ? null : <View
+                                testID={`pendingMessages.pendingAffordance:${message.id}`}
+                                accessible
+                                accessibilityLabel={deliveryStateAccessibilityLabel}
+                                {...(!isWeb ? { pointerEvents: 'none' as const } : null)}
+                                style={[
+                                    styles.pendingAffordanceChip,
+                                    isWeb ? { pointerEvents: 'none' as const } : null,
+                                ]}
+                            >
+                                {visualState.showSpinner ? (
+                                    <ActivitySpinner
+                                        testID={`pendingMessages.${visualState.kind}Indicator:${message.id}`}
+                                        // The spinner takes the status icon's place at the icon's size, so a
+                                        // working state keeps the label's height instead of growing over the bubble.
+                                        size={iconMatchedSpinnerSize(PENDING_AFFORDANCE_ICON_SIZE_PX)}
+                                        color={theme.colors.text.secondary}
+                                    />
+                                ) : (
+                                    <Icon name={visualState.iconName} size={PENDING_AFFORDANCE_ICON_SIZE_PX} color={theme.colors.text.secondary} />
+                                )}
+                                <Text
+                                    testID={`pendingMessages.pendingAffordanceLabel:${message.id}`}
+                                    style={[styles.pendingAffordanceText, { color: theme.colors.text.secondary }]}
+                                >
+                                    {deliveryStateLabel}
+                                </Text>
+                                {blockedDeliveryLabel ? <>
+                                    <Text style={[styles.pendingAffordanceText, { color: theme.colors.text.secondary }]}>·</Text>
+                                    <Text
+                                        testID={deliveryBlockedPresentation?.isUnknown ? `pendingMessages.unknownDeliveryStatus:${message.id}` : `pendingMessages.blockedDeliveryReason:${message.id}`}
+                                        numberOfLines={1}
+                                        style={[styles.pendingAffordanceReasonText, { color: theme.colors.text.secondary }]}
+                                    >
+                                        {blockedDeliveryLabel}
+                                    </Text>
+                                </> : null}
+                            </View>}
                         </View>
                     </View>
                 )}
@@ -1665,16 +1665,18 @@ const styles = StyleSheet.create((theme) => ({
     },
     // A notice carries the transcript's row rhythm as space below it; its delivery mark reads as that row's
     // own caption, not as the heading of the next one.
-    // ...and sits under the notice's own words (past its glyph column), not at the far edge of the queue.
+    // It starts under the notice's own words (past its glyph column); its status reads at the queue's edge.
     hostStatusRow: {
         marginTop: -resolvePendingFollowNoticePullUpPx(theme.space),
-        alignSelf: 'flex-start',
+        alignSelf: 'stretch',
+        justifyContent: 'flex-end',
         marginLeft: EVENT_ICON_CONTAINER_SIZE + theme.space.s10,
     },
-    // The action is a text button: its label, not its box, reads on the edge the status label below it uses
-    // (the mark and its gap), so it takes the button's own inset back.
+    // The action is a text button: its label, not its box, starts on the notice's words, so it takes the
+    // button's own inset back; the status takes the remaining width at the row's edge.
     hostSourceAction: {
-        marginLeft: PENDING_AFFORDANCE_ICON_SIZE_PX + theme.space.s4 - theme.space.s10,
+        marginLeft: -theme.space.s10,
+        marginRight: 'auto',
     },
     // One line whatever the state: a blocked reason truncates rather than wraps, so it never moves the row.
     pendingAffordanceChip: {

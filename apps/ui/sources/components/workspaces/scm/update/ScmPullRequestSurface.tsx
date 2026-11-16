@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { PluginUiLaunchInputV1Schema } from '@happier-dev/protocol/plugins/ui';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm/pullRequests';
 
@@ -54,15 +55,21 @@ export function ScmPullRequestSurfaceBinding(props: Readonly<{
         ? PluginUiLaunchInputV1Schema.safeParse({ ...mount.launchInput, homeServerId: runtime.serverId })
         : null, [mount, runtime.serverId]);
     if (!mount || !input?.success) return props.fallback;
-    return <PluginInlineSurfaceHost
-        placement={mount.placement}
-        inlineMount={mount.inlineMount}
-        launchInput={input.data}
-        sessionId={props.sessionId}
-        serverId={runtime.serverId}
-        machineId={runtime.machineId}
-        platform={runtime.platform}
-        pluginUiProjection={runtime.pluginUiProjection}
-        projectionInteractionEnabled={runtime.phase === 'current' && runtime.interactionEnabled}
-    />;
+    // The PR slot sits in a pane's flow above its own list: it takes its content's height (none when the
+    // card draws nothing) and never grows into the pane's free room, so the list follows it directly (P03 W4).
+    return (
+        <View>
+            <PluginInlineSurfaceHost
+                placement={mount.placement}
+                inlineMount={mount.inlineMount}
+                launchInput={input.data}
+                sessionId={props.sessionId}
+                serverId={runtime.serverId}
+                machineId={runtime.machineId}
+                platform={runtime.platform}
+                pluginUiProjection={runtime.pluginUiProjection}
+                projectionInteractionEnabled={runtime.phase === 'current' && runtime.interactionEnabled}
+            />
+        </View>
+    );
 }

@@ -10,7 +10,7 @@ await loadSyncSingletonForTests();
 const { useTranscriptRootDerivedItems } = await import('./useTranscriptRootDerivedItems');
 
 describe('main transcript Pending ordering', () => {
-    it.each(['linear', 'turns'] as const)('keeps retry custody before the first failure through the real %s derivation', async (groupingMode) => {
+    it.each(['linear', 'turns'] as const)('docks retry custody with the queue in one tail section through the real %s derivation', async (groupingMode) => {
         const messages: Message[] = [
             { kind: 'user-text', id: 'user', localId: 'retry-local', createdAt: 1, seq: 1, text: 'Please start' },
             { kind: 'agent-text', id: 'failure', localId: null, createdAt: 2, seq: 2, text: 'Agent could not start' },
@@ -30,12 +30,11 @@ describe('main transcript Pending ordering', () => {
         };
         const hook = await renderHook((input: typeof params) => useTranscriptRootDerivedItems(input), { initialProps: params });
         const items = hook.getCurrent().groupedItems;
-        expect(items.map((item) => item.kind)).toEqual(['pending-queue', groupingMode === 'turns' ? 'turn' : 'message', 'pending-queue']);
-        expect(items[0]).toMatchObject({ kind: 'pending-queue', pendingMessages: [blocked] });
-        expect(items[1]).toMatchObject(groupingMode === 'turns'
+        expect(items.map((item) => item.kind)).toEqual([groupingMode === 'turns' ? 'turn' : 'message', 'pending-queue']);
+        expect(items[0]).toMatchObject(groupingMode === 'turns'
             ? { turn: { userMessageId: null, content: [{ kind: 'message', messageId: 'failure' }] } }
             : { messageId: 'failure' });
-        expect(items[2]).toMatchObject({ kind: 'pending-queue', pendingMessages: [queued] });
+        expect(items[1]).toMatchObject({ kind: 'pending-queue', pendingMessages: [blocked, queued] });
 
         await hook.rerender({ ...params, pendingMessages: [{ ...blocked, pendingDeliveryStatus: 'server_delivering' }, queued] });
         const delivering = hook.getCurrent().groupedItems;
