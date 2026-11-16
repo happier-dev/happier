@@ -9,6 +9,7 @@ export type ManagedMachineAcquire<T> = Readonly<{
     provisioner?: Pick<MachineProvisionerContributionV1, 'browserReachable'>;
     guestCli?: Parameters<typeof readMachineProvisionerHostAvailability>[0]['guestCli'];
     localPayloadAvailable?: boolean;
+    remotePayloadAvailable?: boolean;
     admit(): Promise<ManagedMachineFullV1>;
     onAccepted(machine: ManagedMachineFullV1): void | Promise<void>;
     run(machine: ManagedMachineFullV1): Promise<T>;
@@ -16,7 +17,8 @@ export type ManagedMachineAcquire<T> = Readonly<{
 
 export async function executeManagedMachineAcquire<T>(input: ManagedMachineAcquire<T>): Promise<Readonly<{ machine: ManagedMachineFullV1; result: T }>> {
     const availability = readMachineProvisionerHostAvailability({ host: input.host, provisioner: input.provisioner ?? {},
-        guestCli: input.guestCli, localPayloadAvailable: input.localPayloadAvailable });
+        guestCli: input.guestCli, localPayloadAvailable: input.localPayloadAvailable,
+        remotePayloadAvailable: input.remotePayloadAvailable });
     if (!availability.available) throw new ManagedMachineControllerError(availability.code ?? 'provider_unavailable');
     const machine = await input.admit();
     await input.onAccepted(machine);

@@ -106,6 +106,17 @@ describe('Account managed power role preparation', () => {
 });
 
 describe('provisioner host availability before acquisition', () => {
+    it('offers exported archives only to a consumer that can install the pinned Home payload', () => {
+        const guestCli = { source: 'home-payload' as const, line: '0.3', channel: 'publicdev' as const,
+            payloads: [{ target: { os: 'linux' as const, arch: 'x64' as const },
+                sha256: '4b'.repeat(32), url: '/v1/runtime/guest-cli/payloads/linux/x64' }] };
+        expect(readMachineProvisionerHostAvailability({ host: 'browser', guestCli,
+            remotePayloadAvailable: true })).toMatchObject({ available: true, executionTarget: 'account', requiresController: false });
+        expect(readMachineProvisionerHostAvailability({ host: 'browser', guestCli }))
+            .toMatchObject({ available: false, executionTarget: 'daemon', requiresController: true });
+        expect(readMachineProvisionerHostAvailability({ host: 'browser', guestCli: { ...guestCli, payloads: [] },
+            remotePayloadAvailable: true })).toMatchObject({ available: false, requiresController: true });
+    });
     it('awaits a computer for a daemon role with cloud billing and keeps an Account role with local billing usable', () => {
         const cloudProvisioner = MachineProvisionerContributionV1Schema.parse({ ...provisioner,
             billing: { location: 'cloud', stoppedBilling: 'billed' } });
@@ -145,7 +156,7 @@ describe('provisioner host availability before acquisition', () => {
         const request = { host, provisioner: { browserReachable: true }, acquireExecutionTarget: 'account' as const,
             guestCli: { source: 'home-payload' as const }, localPayloadAvailable: false };
         expect(readMachineProvisionerHostAvailability(request)).toMatchObject({ available: false,
-            executionTarget: 'daemon', requiresController: true });
+            code: 'guest_payload_missing', executionTarget: 'daemon', requiresController: true });
         const controller = { machineId: 'reviewed', installationId: 'reviewed-installation' };
         expect(readMachineProvisionerHostAvailability({ ...request, controller })).toMatchObject({ available: true,
             executionTarget: 'daemon', requiresController: false, controller });

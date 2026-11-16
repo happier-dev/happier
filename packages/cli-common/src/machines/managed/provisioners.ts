@@ -51,22 +51,26 @@ export function readMachineProvisionerHostAvailability(input: Readonly<{
     host: 'browser' | 'native'; provisioner?: Pick<MachineProvisionerContributionV1, 'browserReachable'>;
     acquireExecutionTarget?: ManagedProvisionerDiscoveryEntry['acquireExecutionTarget'];
     controller?: ManagedMachineV1['controller'];
-    guestCli?: Pick<GuestCliIdentityV1, 'source'>;
+    guestCli?: Pick<GuestCliIdentityV1, 'source' | 'payloads'>;
     localPayloadAvailable?: boolean;
+    /** This consumer installs the archive pinned by the enrollment admission. */
+    remotePayloadAvailable?: boolean;
 }>): Pick<MachineProvisionerCheckResultV1, 'available' | 'code'> & Readonly<{
     executionTarget: 'account' | 'daemon'; controller?: ManagedMachineV1['controller']; requiresController: boolean;
 }> {
     if (!input.provisioner && !input.guestCli) return { available: false, code: 'guest_cli_identity_unavailable',
         executionTarget: 'account', requiresController: false };
     // Machine placement runs the same Account role with native host services; it does not change its declaration.
-    const payloadRequiresController = input.guestCli?.source === 'home-payload' && input.localPayloadAvailable !== true;
+    const payloadRequiresController = input.guestCli?.source === 'home-payload' && input.localPayloadAvailable !== true
+        && !(input.remotePayloadAvailable === true && input.guestCli.payloads?.length);
     const executionTarget = input.acquireExecutionTarget === 'daemon' || payloadRequiresController
         || input.provisioner && input.host === 'browser' && input.provisioner.browserReachable !== true && input.controller
         ? 'daemon' : 'account';
     const controller = executionTarget === 'daemon' ? input.controller : undefined;
     const unavailable = !controller && (payloadRequiresController || input.provisioner && input.host === 'browser' && input.provisioner.browserReachable !== true);
     return { executionTarget, requiresController: executionTarget === 'daemon' && !controller, ...(controller ? { controller } : {}),
-        ...(unavailable ? { available: false, code: 'provider_unavailable' as const } : { available: true }) };
+        ...(unavailable ? { available: false, code: payloadRequiresController ? 'guest_payload_missing' as const : 'provider_unavailable' as const }
+            : { available: true }) };
 }
 
 /** Account declaration custody already includes bundled and explicitly selected releases. */
