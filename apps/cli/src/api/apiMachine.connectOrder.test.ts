@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '@happier-dev/cli-common/systemTasks';
 import axios from 'axios';
+import tweetnacl from 'tweetnacl';
 import { Readable } from 'node:stream';
 import { request as httpRequest } from 'node:http';
 
@@ -26,6 +27,8 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/ma
 import { createDaemonAgentIsolationEffects } from '@/daemon/agentIsolation/createDaemonAgentIsolationEffects';
 import { createMachineAdminAccessObserver } from '@/machines/adminAccess/observeMachineAdminAccess';
 import { createDaemonMachineAdminAccessRoutes } from '@/machines/adminAccess/createDaemonMachineAdminAccessRoutes';
+import { createDaemonMachineRpcRouteAttachmentCache } from '@/daemon/machineRpcRouteAttachments';
+import { verifyMachineRpcAdmissionCurrent } from './machine/machineRpcAuthorization';
 import type { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { MACHINE_ROLE_RPC_NAMESPACES } from '@/daemon/roles/machineRoleRpcNamespaces';
 import { activateSessionsRoleForMachineClient } from '@/daemon/testkit/sessionsRole.testkit';
@@ -77,6 +80,18 @@ function registerRequiredMachineControlHandlers(rpcHandlerManager: RpcHandlerMan
   }
 }
 
+function acknowledgeSocketRegistrations(socket: ReturnType<typeof createApiSessionSocketStub>, includeSetup = true): void {
+  const methods = socket.emit.mock.calls.flatMap(([event, registration]) => {
+    if (event !== SOCKET_RPC_EVENTS.REGISTER || !registration || typeof registration !== 'object'
+      || !('method' in registration) || typeof registration.method !== 'string') return [];
+    return [registration.method];
+  });
+  for (const method of new Set(methods)) {
+    if (!includeSetup && method === `machine-1:${RPC_METHODS.MACHINE_ADMIN_ACCESS_SET}`) continue;
+    socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method });
+  }
+}
+
 vi.mock('socket.io-client', () => ({
   io: ioMock,
 }));
@@ -107,6 +122,7 @@ vi.mock('@/ui/logger', () => ({
   logger: {
     debug: loggerDebugMock,
     info: () => undefined,
+    infoFile: () => undefined,
     warn: loggerWarnMock,
     debugLargeJson: () => undefined,
   },
@@ -541,6 +557,10 @@ describe('ApiMachineClient connect ordering', () => {
         }
       },
       emitWithAck: (event, payload) => {
+        if (event === 'machine-update-metadata') {
+          const write = payload as { metadata: string; expectedVersion: number };
+          return { result: 'success', version: write.expectedVersion + 1, metadata: write.metadata };
+        }
         if (event === 'machine-update-state') {
           callOrder.push('state:machine-socket-1');
           return {
@@ -587,7 +607,8 @@ describe('ApiMachineClient connect ordering', () => {
       id: 'machine-1',
       encryptionKey: new Uint8Array(32).fill(1),
       encryptionVariant: 'legacy',
-      metadata: null,
+      metadata: { host: 'worker', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/happier',
+        happyHomeDir: '/home/happier/.happier', adminAccess: { version: 1, mode: 'none' } },
       metadataVersion: 0,
       daemonState: projectionRevision === 0
         ? null
@@ -603,42 +624,68 @@ describe('ApiMachineClient connect ordering', () => {
     const rpcHandlerManager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
     rpcHandlerManager.registerHandler('neutral.reconnect', async () => ({ ok: true }));
     registerRequiredMachineControlHandlers(rpcHandlerManager);
-    vi.spyOn(rpcHandlerManager, 'waitForRegisteredHandlers');
-    const acknowledgeRegistrations = (socket: ReturnType<typeof createApiSessionSocketStub>) => {
-      // Registration receipts are a server/socket boundary; readiness logic stays real.
-      const methods = socket.emit.mock.calls.flatMap(([event, registration]) => {
-        if (event !== SOCKET_RPC_EVENTS.REGISTER || !registration || typeof registration !== 'object'
-            || !('method' in registration) || typeof registration.method !== 'string') return [];
-        return [registration.method];
-      });
-      for (const method of new Set(methods)) socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method });
-    };
+    const routeAttachments = createDaemonMachineRpcRouteAttachmentCache({ getApiMachineForSessions: () => null });
+    routeAttachments.attachMachineAdminAccessRoutes(createDaemonMachineAdminAccessRoutes({ getMachineClient: () => client,
+      target: () => ({ serverId: 'connect-order-home', machineId: 'machine-1', installationId: 'installation', custodianAccountId: 'owner' }),
+      nativeDependencies: { platform: 'linux', execFile: async () => { throw Object.assign(new Error('Unavailable native observation'), { code: 'ENOENT' }); } },
+    }));
+    routeAttachments.prepareApiMachineForSessions(client);
+    if (projectionRevision !== 0) {
+      rpcHandlerManager.setInactiveRoleNamespaces(MACHINE_ROLE_RPC_NAMESPACES.sessions.map(prefix => [prefix, 'sessions'] as const));
+    }
+    const readinessAbort = new AbortController();
 
     try {
       client.connect();
       await vi.waitFor(() => expect(ioMock).toHaveBeenCalledTimes(1));
       await vi.waitFor(() => expect(firstSocket.connect,
         JSON.stringify({ warnings: loggerWarnMock.mock.calls, debug: loggerDebugMock.mock.calls })).toHaveBeenCalledTimes(1));
-      await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(firstSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTER, {
+        method: `machine-1:${RPC_METHODS.MACHINE_ADMIN_ACCESS_SET}`,
+      }));
       expect(callOrder).not.toContain('state:machine-socket-1');
-      acknowledgeRegistrations(firstSocket);
-      await vi.waitFor(() => expect(callOrder).toContain('state:machine-socket-1'));
-      await vi.waitFor(() => expect(client.isMachineControlRegistrationReady()).toBe(true));
-      expect(localReadiness).toEqual([true]);
+      acknowledgeSocketRegistrations(firstSocket, false);
       // The native CLI boundary is read after registration, before any heartbeat.
       // The real waiter consumes that current fact even when it attaches late.
       let statusReads = 0;
+      const readinessObserved = createDeferred<void>();
       const waiter = createEnrollMachineFlowExecutorFromHappierJsonExecutor({ executor: {
         runHappierText: async () => { throw new Error('Readiness never reinstalls the service'); },
         runHappierJson: async () => {
           statusReads++;
+          if (statusReads > 1 || localReadiness.at(-1) === true) readinessObserved.resolve();
           return { daemon: { pid: process.pid, running: true, healthy: localReadiness.at(-1) },
             service: { installed: true }, auth: { needsAuth: false, machineId: 'machine-1' } };
         },
       } });
-      await expect(waiter.waitForReadyDaemon!({ timeoutMs: 1_000, requireMachineControlReady: true }))
-        .resolves.toMatchObject({ daemonHealthy: true, machineId: 'machine-1' });
-      expect(statusReads).toBe(1);
+      const admission = { machineId: 'machine-1', installationId: 'installation', custodianAccountId: 'owner',
+        actorAccountId: 'owner', role: 'manage' as const, encryptionMode: 'e2ee' as const };
+      const signal = readinessAbort.signal;
+      const signing = tweetnacl.sign.keyPair();
+      vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { v: 1, ok: true } });
+      let setupDispatches = 0;
+      // Managed enrollment already consumes this native readiness fact before
+      // dispatching its policy children. Hold only Home's Setup registration ACK.
+      const setup = waiter.waitForReadyDaemon!({ timeoutMs: null, signal, requireMachineControlReady: true }).then(async () => {
+        setupDispatches += 1;
+        return client.invokeLocalMachineAction(RPC_METHODS.MACHINE_ADMIN_ACCESS_SET, {
+          serverId: 'connect-order-home', machineId: 'machine-1', expectedMetadataVersion: 0,
+          expectedAdminAccess: { version: 1, mode: 'none' }, adminAccess: { version: 1, mode: 'ask', administratorUsername: 'alice' }, comparison: 'field',
+        }, { signal, rpcContext: { signal, machineAdmission: admission,
+          verifyMachineAdmissionCurrent: () => verifyMachineRpcAdmissionCurrent({ context: admission,
+            method: `machine-1:${RPC_METHODS.MACHINE_ADMIN_ACCESS_SET}`, privateKey: signing.secretKey,
+            daemonToken: 'token', serverHttpBaseUrl: 'https://home.invalid', signal }) } });
+      });
+      void setup.catch(() => undefined); // The assertion below still observes rejection; cleanup can cancel a held waiter.
+      await readinessObserved.promise;
+      expect(setupDispatches).toBe(0);
+      expect(client.isMachineControlRegistrationReady()).toBe(false);
+      expect(callOrder).not.toContain('state:machine-socket-1');
+      acknowledgeSocketRegistrations(firstSocket);
+      await expect(setup).resolves.toMatchObject({ status: 'applied', policy: { version: 1, mode: 'ask', administratorUsername: 'alice' } });
+      expect(setupDispatches).toBe(1);
+      await vi.waitFor(() => expect(client.isMachineControlRegistrationReady()).toBe(true));
+      expect(localReadiness).toEqual([true]);
 
       const runningPublication = firstSocket.emitWithAck.mock.calls.find(([event]) => event === 'machine-update-state');
       expect(runningPublication).toBeDefined();
@@ -661,13 +708,13 @@ describe('ApiMachineClient connect ordering', () => {
       await vi.waitFor(() => expect(secondSocket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTER,
         { method: 'machine-1:neutral.reconnect' }));
       expect(callOrder).not.toContain('state:machine-socket-2');
-      acknowledgeRegistrations(secondSocket);
+      acknowledgeSocketRegistrations(secondSocket);
       // A reconnect of the same daemon process is not a daemon restart: its running state is already
       // current, so nothing is republished. A fresh startedAt would make every reader treat it as a
       // replaced daemon and re-read its contribution projection.
       await vi.waitFor(() => expect(Reflect.get(client, 'machineControlRunningGeneration')).toBe(Reflect.get(client, 'activeTransportGeneration')));
       expect(localReadiness).toEqual([true, false, true]);
-      acknowledgeRegistrations(secondSocket);
+      acknowledgeSocketRegistrations(secondSocket);
       expect(localReadiness).toHaveLength(3);
       expect(callOrder).not.toContain('state:machine-socket-2');
       laterClock.mockRestore();
@@ -683,6 +730,7 @@ describe('ApiMachineClient connect ordering', () => {
         method: 'machine-1:neutral.reconnect',
       });
     } finally {
+      readinessAbort.abort();
       await client.shutdown();
     }
   }, 5_000);
@@ -937,11 +985,7 @@ describe('ApiMachineClient connect ordering', () => {
         // The server's post-connect admission can attach its REGISTER listener
         // after the client's first burst. It acknowledges only the replay.
         acknowledgeReplay.current = () => {
-          for (const requiredMethod of requiredMachineControlMethods) {
-            activeSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
-              method: `machine-1:${requiredMethod}`,
-            });
-          }
+          acknowledgeSocketRegistrations(activeSocket);
         };
       },
       emitWithAck: (event, payload) => {
@@ -1070,31 +1114,11 @@ describe('ApiMachineClient connect ordering', () => {
       firstSocket.disconnect();
       await vi.waitFor(() => expect(rpcHandlerManager.waitForRegisteredHandlers).toHaveBeenCalledTimes(3));
 
-      for (const method of [
-        RPC_METHODS.SPAWN_HAPPY_SESSION,
-        RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
-        RPC_METHODS.SESSION_SPAWN_NEW,
-        RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
-        RPC_METHODS.STOP_SESSION,
-        SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
-        RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
-      ]) {
-        firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
-      }
+      acknowledgeSocketRegistrations(firstSocket);
       await Promise.resolve();
       expect(stateSockets).toEqual([]);
 
-      for (const method of [
-        RPC_METHODS.SPAWN_HAPPY_SESSION,
-        RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE,
-        RPC_METHODS.SESSION_SPAWN_NEW,
-        RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE,
-        RPC_METHODS.STOP_SESSION,
-        SESSION_SERVER_START_DAEMON_RPC_METHOD_V1,
-        RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V2_GET,
-      ]) {
-        secondSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: `machine-1:${method}` });
-      }
+      acknowledgeSocketRegistrations(secondSocket);
       await vi.waitFor(() => expect(stateSockets).toEqual(['machine-socket-2']));
     } finally {
       await client.shutdown();

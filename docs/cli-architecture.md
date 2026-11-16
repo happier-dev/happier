@@ -190,7 +190,11 @@ still takes precedence. This is 0.3 development behavior.
 In 0.3 development, the Machine client's acknowledged core RPC registration
 publishes daemon-local readiness immediately through the existing lifecycle
 lock owner. `daemon status` and `doctor` read that current fact; they need not
-wait for the next heartbeat after registration or disconnect.
+wait for the next heartbeat after registration or disconnect. Cached Machine Setup
+receivers attach before connection, and this same readiness fact waits for their
+registration acknowledgments before managed enrollment dispatches Setup children.
+This also applies when the Machine's Sessions role is inactive; optional native
+observations still settle independently of readiness.
 
 In 0.3 development, optional Account catalog or plugin initialization failures
 settle as unavailable diagnostics while the daemon continues to register and

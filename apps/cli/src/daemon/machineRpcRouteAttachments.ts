@@ -150,6 +150,15 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
     return localServicesRoutes;
   }
 
+  function registerMachineSetupRoutes(registrar: DaemonMachineRpcRouteRegistrar): void {
+    if (machineRolesRoutes) registrar.registerMachineRolesRoutes(machineRolesRoutes);
+    if (machineIsolationRoutes) registrar.registerMachineIsolationRoutes(machineIsolationRoutes);
+    if (machineReachabilityRoutes) registrar.registerMachineReachabilityRoutes(machineReachabilityRoutes);
+    if (machineAdminAccessRoutes) registrar.registerMachineAdminAccessRoutes(machineAdminAccessRoutes);
+    if (machineAgentIsolationRoutes) registrar.registerMachineAgentIsolationRoutes(machineAgentIsolationRoutes);
+    if (machineGuardRoutes) registrar.registerMachineGuardRoutes(machineGuardRoutes);
+  }
+
   return {
     attachMachineAccessLossReceiver(options) {
       machineAccessLossReceiver = options;
@@ -236,6 +245,8 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       }
       registerConnectedAccountRuntime(apiMachineForSessions);
       registerConnectedAccountPurposeRuntime(apiMachineForSessions);
+      // Enrollment consumes Machine control readiness as soon as connect publishes it.
+      registerMachineSetupRoutes(apiMachineForSessions);
     },
 
     attachApiMachineForSessions(apiMachineForSessions) {
@@ -267,24 +278,7 @@ export function createDaemonMachineRpcRouteAttachmentCache(input: Readonly<{
       if (machineResourcesPolicyRoutes) {
         apiMachineForSessions.registerMachineResourcesPolicyRoutes(machineResourcesPolicyRoutes);
       }
-      if (machineRolesRoutes) {
-        apiMachineForSessions.registerMachineRolesRoutes(machineRolesRoutes);
-      }
-      if (machineIsolationRoutes) {
-        apiMachineForSessions.registerMachineIsolationRoutes(machineIsolationRoutes);
-      }
-      if (machineReachabilityRoutes) {
-        apiMachineForSessions.registerMachineReachabilityRoutes(machineReachabilityRoutes);
-      }
-      if (machineAdminAccessRoutes) {
-        apiMachineForSessions.registerMachineAdminAccessRoutes(machineAdminAccessRoutes);
-      }
-      if (machineAgentIsolationRoutes) {
-        apiMachineForSessions.registerMachineAgentIsolationRoutes(machineAgentIsolationRoutes);
-      }
-      if (machineGuardRoutes) {
-        apiMachineForSessions.registerMachineGuardRoutes(machineGuardRoutes);
-      }
+      registerMachineSetupRoutes(apiMachineForSessions);
       if (storageRoutes) {
         apiMachineForSessions.registerStorageRoutes(storageRoutes);
       }

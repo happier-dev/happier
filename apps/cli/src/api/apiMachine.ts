@@ -55,6 +55,13 @@ import { prepareRequesterNativeOperation, type PrepareRequesterNativeOperationIn
 import { createSessionAgentIsolationMemberPreparation } from '@/daemon/agentIsolation/sessionPreparation';
 import { prepareDaemonAgentIsolationIdentity } from '@/daemon/spawn/prepareDaemonAgentIsolationIdentity';
 import { registerDaemonMachineAdminAccessRpcHandlers, type DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
+import { MACHINE_ADMIN_ACCESS_ACTION_IDS } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
+import { MACHINE_ROLES_ACTION_IDS } from '@happier-dev/protocol/actions/specs/machineRolesActionIdsV1';
+import { MACHINE_ISOLATION_ACTION_IDS } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
+import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from '@happier-dev/protocol/actions/specs/machine/agentIsolationActionIdsV1';
+import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
+import { MACHINE_GUARD_ACTION_IDS } from '@happier-dev/protocol/machines/guard/actionIdsV1';
+import { MACHINE_SETUP_PLAN_ACTION_ID_V1, MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { registerDaemonMachineReachabilityRpcHandlers, executeDaemonMachineReachabilityAction,
     prepareDaemonMachineReachabilityReviewedChildren, type DaemonMachineReachabilityRoutes } from '@/machines/reachability/createDaemonMachineReachabilityRoutes';
 import type { MachineDaemonRightsV1 } from '@happier-dev/protocol';
@@ -5056,7 +5063,16 @@ export class ApiMachineClient {
      * owned by an inactive Machine role are refused by design (`machine_role_inactive`), not missing.
      */
     private requiredMachineControlRpcMethods(): readonly string[] {
-        return REQUIRED_MACHINE_CONTROL_RPC_METHODS.filter(method => !this.rpcHandlerManager.inactiveRoleIdFor(method));
+        // Managed enrollment consumes this same readiness fact before its Setup
+        // children. Installed Setup receivers must be acknowledged, including on
+        // server-role Machines whose Session creation namespaces are inactive.
+        const setupMethods = [
+            ...MACHINE_ADMIN_ACCESS_ACTION_IDS, ...MACHINE_ROLES_ACTION_IDS, ...MACHINE_ISOLATION_ACTION_IDS,
+            ...MACHINE_AGENT_ISOLATION_ACTION_IDS, ...MACHINE_REACHABILITY_ACTION_IDS_V1, ...MACHINE_GUARD_ACTION_IDS,
+            MACHINE_SETUP_PLAN_ACTION_ID_V1, MACHINE_SETUP_APPLY_ACTION_ID_V1,
+        ].filter(method => this.rpcHandlerManager.hasHandler(method));
+        return [...REQUIRED_MACHINE_CONTROL_RPC_METHODS, ...setupMethods]
+            .filter(method => !this.rpcHandlerManager.inactiveRoleIdFor(method));
     }
 
     private currentMachineOperationProtocolCapabilities(
