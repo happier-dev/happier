@@ -1,6 +1,6 @@
 import normalizeColor from '@react-native/normalize-colors';
 
-import { FontFamilies } from '@/constants/Typography';
+import { isBundledFontFamily } from '@/constants/bundledFonts';
 
 export type NativeDeclarationStyle = Readonly<Record<string, string | number>>;
 export type NativeDeclarationConversion = Readonly<
@@ -20,12 +20,6 @@ const numberPattern = new RegExp(`^${CSS_NUMBER}$`, 'u');
 const dimensionPattern = new RegExp(`^(${CSS_NUMBER})(px|pt|%)?$`, 'iu');
 const sides = ['Top', 'Right', 'Bottom', 'Left'] as const;
 const corners = ['TopLeft', 'TopRight', 'BottomRight', 'BottomLeft'] as const;
-const bundledFonts = new Set([
-    ...Object.values(FontFamilies.default),
-    ...Object.values(FontFamilies.mono),
-    ...Object.values(FontFamilies.logo),
-    FontFamilies.legacy.spaceMono,
-]);
 
 function parseNumber(value: string): number | null {
     if (!numberPattern.test(value)) return null;
@@ -259,7 +253,7 @@ export const NATIVE_DECLARATION_CONVERSIONS: Readonly<Record<string, NativeDecla
     'font-family': property('fontFamily', value => {
         const family = /^(?:"([^"\\]*)"|'([^'\\]*)'|([^\s,"'\\]+))$/u.exec(value);
         const name = family?.[1] ?? family?.[2] ?? family?.[3];
-        return name !== undefined && bundledFonts.has(name) ? name : null;
+        return name !== undefined && isBundledFontFamily(name) ? name : null;
     }, 'one bundled font family (optionally quoted)', 'text'),
     'font-weight': keywords('fontWeight', ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'], 'text'),
     'font-style': keywords('fontStyle', ['normal', 'italic'], 'text'),

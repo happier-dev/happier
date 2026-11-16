@@ -36,10 +36,19 @@ export type BundledFontFamily = FontFace<BundledFont>['family'];
 export type BundledTypefaceWeight = FontFaceWeight<BundledFont>;
 export type BundledTypefaceChoice = Readonly<{ id: BundledFontFamily; label: string }>;
 
+function findBundledFont(family: string) {
+    return Object.values(BUNDLED_FONTS).find(candidate =>
+        Object.values(candidate.faces).some(face => face.family === family));
+}
+
+/** Narrow authored font names against the same catalog used to load their assets. */
+export function isBundledFontFamily(family: string): family is BundledFontFamily {
+    return findBundledFont(family) !== undefined;
+}
+
 /** A selected family uses its loaded face for the requested emphasis, then its default face. */
 export function resolveBundledTypefaceFace(family: string, weight: BundledTypefaceWeight): BundledFontFamily | null {
-    const font = Object.values(BUNDLED_FONTS).find(candidate =>
-        Object.values(candidate.faces).some(face => face.family === family));
+    const font = findBundledFont(family);
     if (!font) return null;
     const faces: Readonly<Partial<Record<BundledTypefaceWeight, Readonly<{ family: BundledFontFamily }>>>> = font.faces;
     const requested = weight === 'bold' && faces.semiBold ? 'semiBold' : weight;
