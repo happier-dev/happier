@@ -3934,6 +3934,7 @@
     "sources/theme/css/themeStylesheet.web.ts",
     "sources/theme/profiles/createThemeProfileDraft.ts",
     "sources/theme/profiles/index.ts",
+    "sources/theme/profiles/shareThemePlugin.ts",
     "sources/theme/useWebRootCanvasPresentation.ts",
     "sources/track/settingsAnalytics/SettingsAnalyticsRuntime.tsx",
     "sources/track/settingsAnalytics/buildAccountSettingsSnapshot.ts",

@@ -8080,6 +8080,7 @@
     "sources/theme/profiles/builtInThemeProfiles.test.ts",
     "sources/theme/profiles/createThemeProfileDraft.test.ts",
     "sources/theme/profiles/resolveThemeProfile.test.ts",
+    "sources/theme/profiles/shareThemePlugin.test.ts",
     "sources/theme/profiles/themeProfileArtifactAdapter.test.ts",
     "sources/theme/profiles/themeProfileArtifactProjection.test.ts",
     "sources/theme/profiles/themeProfileColorValidation.test.ts",
