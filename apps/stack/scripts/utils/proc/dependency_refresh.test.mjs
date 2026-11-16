@@ -713,3 +713,40 @@ test('dependency admission repairs an exact node_modules self-link without reins
   await assert.rejects(() => lstat(invalidLink), { code: 'ENOENT' });
   assert.equal((await inspectDependencyRefresh({ installDir: root, env })).required, false);
 });
+
+test('a writer whose work became unnecessary while it queued releases without draining consumers', async t => {
+  // 2026-11-16 19:30–19:52Z: ~20 local preparations each took writer custody and drained
+  // the load sentinel's readers, then mutated nothing (no generation for 25 min), because
+  // the need was judged when they queued, not when their turn came.
+  const fixture = await createTempFixture(t, { prefix: 'hstack-writer-recheck-' });
+  const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.root,
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '0', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '0' };
+  const options = { installDir: fixture.root, env };
+  await writeFile(fixture.path('package.json'), '{"private":true}');
+  await mkdir(fixture.path('node_modules'));
+  let releaseFirst;
+  const firstHolds = new Promise(resolve => { releaseFirst = resolve; });
+  let firstEntered;
+  const entered = new Promise(resolve => { firstEntered = resolve; });
+  const first = withDependencyRefreshLock(options, async () => { firstEntered(); await firstHolds; });
+  await entered;
+  let needed = true;
+  let checks = 0;
+  let acted = false;
+  const second = withDependencyRefreshLock({ ...options,
+    isRequired: async () => { checks += 1; return needed; } }, async () => { acted = true; });
+  // The queued writer judged the need once. The holder's work makes it unnecessary
+  // without a publication, and a live consumer (this process) now holds read custody.
+  while (checks === 0) await new Promise(resolve => setTimeout(resolve, 20));
+  needed = false;
+  const readers = `${resolveDependencyRefreshLockPath(fixture.root, env)}.readers`;
+  await mkdir(readers, { recursive: true });
+  releaseFirst();
+  await first;
+  await writeFile(join(readers, `reader-${process.pid}-00000000-0000-0000-0000-000000000000.json`), JSON.stringify({ pid: process.pid }));
+  const result = await Promise.race([second, new Promise(resolve => setTimeout(() => resolve('still-draining'), 5000))]);
+  assert.notEqual(result, 'still-draining', 'the queued writer must not wait on consumers for work it no longer needs');
+  assert.equal(acted, false, 'no mutation work runs once the need is gone');
+  assert.equal(checks, 2, 'the need is judged once more at the writer turn');
+  await rm(readers, { recursive: true, force: true });
+});

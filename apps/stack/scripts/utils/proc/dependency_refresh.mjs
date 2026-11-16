@@ -89,18 +89,25 @@ export async function withDependencyRefreshLock({ installDir, env = process.env,
   }
   let observedPublication;
   let required = true;
+  let judgedThisTurn = false;
   const shouldAcquire = isRequired && (async () => {
     const publication = await readJsonIfExists(`${lockPath}.generation`);
     const completed = publication?.completedGeneration ?? null;
     // The existing publisher wakes all waiters. Reinspect canonical freshness
     // once per publication, not once per departing ticket or heartbeat.
-    if (observedPublication === undefined || completed !== observedPublication) {
+    judgedThisTurn = observedPublication === undefined || completed !== observedPublication;
+    if (judgedThisTurn) {
       required = await isRequired();
       observedPublication = completed;
     }
     return required;
   });
   return await withJsonOwnerFileLock(async context => {
+    // A need judged while queueing can disappear without a publication (the
+    // previous holder's work, or an input edit reverted meanwhile). Judge it
+    // once more at this writer's turn, before draining every consumer for
+    // nothing (2026-11-16: ~20 writers drained readers and mutated nothing).
+    if (isRequired && !judgedThisTurn && !await isRequired()) return undefined;
     await waitForDependencyReaders({ lockPath, env, signal, wait });
     const generationPath = `${lockPath}.generation`;
     const initialGeneration = await readJsonIfExists(generationPath);
