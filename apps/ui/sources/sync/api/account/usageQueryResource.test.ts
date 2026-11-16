@@ -4570,6 +4570,83 @@ describe('usage query captured Resource adapter', () => {
     } finally { inspector.disconnect(); }
   });
 
+  it('releases retired accounting generations when repeated failed reads retain current fallback facts', async () => {
+    const { Session: InspectorSession } = await import('node:inspector');
+    const population = usageQaAccountingFixture();
+    let generation = 1;
+    let failed = false;
+    let failures = 0;
+    const captured = await context(request => {
+      // A schema-valid but incomplete HTTP batch fails the real accounting
+      // admission after its initial fallback projection has been published.
+      if (request.path === '/v2/usage/query-batch' && failed) {
+        failures++;
+        return Response.json({ v: 1, results: [] });
+      }
+      if (request.path === '/v2/usage/query') return Response.json({ ...population,
+        // A corrected observation makes this array a distinct admitted fact,
+        // so the positive control also proves retired row-array sensitivity.
+        contributions: population.contributions!.map((row, index) => index === 0 ? { ...row, eventCount: generation } : row),
+        totals: { ...population.totals, eventCount: generation }, priceCatalog: { ...population.priceCatalog!,
+          provenance: { ...population.priceCatalog!.provenance, asOfMs: generation } } });
+      return undefined;
+    });
+    const queries = ['7days', '30days'].map(relative => normalizeUsageQuery({ metric: 'cost', period: { relative },
+      includeContributions: true, includeQuota: false, includeComparison: false, includeSessionEvidence: false,
+      includeTranscriptEvidence: false, includeWorkEvidence: false }));
+    const entries = queries.map(query => getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) }));
+    const accountingFor = (entry: typeof entries[number]) => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!.accounting!;
+    const families = (accounting: ReturnType<typeof accountingFor>) => ({ accounting, totals: accounting.totals,
+      contributions: accounting.contributions!, catalog: accounting.priceCatalog! });
+    const references: Record<keyof ReturnType<typeof families>, WeakRef<object>[]> = {
+      accounting: [], totals: [], contributions: [], catalog: [],
+    };
+    const control: { accounting?: ReturnType<typeof accountingFor> } = {};
+    const inspector = new InspectorSession();
+    inspector.connect();
+    const collect = async () => {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await new Promise<void>((resolve, reject) => inspector.post('HeapProfiler.collectGarbage', error => error ? reject(error) : resolve()));
+    };
+    const retainedCounts = (withControl: boolean) => Object.fromEntries((Object.keys(references) as (keyof typeof references)[]).map(name => {
+      const expected = new Set<object>(entries.map(entry => families(accountingFor(entry))[name]));
+      if (withControl) expected.add(families(control.accounting!)[name]);
+      const actual = new Set(references[name].flatMap(reference => { const object = reference.deref(); return object ? [object] : []; }));
+      expect(actual.size, `${name}: only current fallback generations and explicit control remain`).toBe(expected.size);
+      expect([...actual].every(object => expected.has(object)), `${name}: retired identities are collectible`).toBe(true);
+      return [name, actual.size];
+    }));
+    try {
+      for (let round = 0; round < 20; round++) for (const entry of entries) {
+        failed = false;
+        await entry.refresh();
+        expect(entry.getSnapshot().error).toBeUndefined();
+        expect(entry.getSnapshot().pending).toBe('idle');
+        expect(accountingFor(entry).totals.eventCount).toBe(generation);
+        if (generation === 1) control.accounting = accountingFor(entry);
+        for (const [name, object] of Object.entries(families(accountingFor(entry)))) references[name as keyof typeof references].push(new WeakRef(object));
+        failed = true;
+        await entry.refresh();
+        expect(entry.getSnapshot().pending).toBe('idle');
+        expect(entry.getSnapshot().error).toBeDefined();
+        const slice = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+        expect(slice.pending).toBe(false);
+        expect(slice.accounting!.totals.eventCount, 'failed admission preserves its current valid fallback').toBe(generation);
+        generation++;
+      }
+      expect(failures).toBe(40);
+      await collect();
+      const withControl = retainedCounts(true);
+      expect(references.accounting[0]!.deref()).toBe(control.accounting);
+      delete control.accounting;
+      await collect();
+      const current = retainedCounts(false);
+      expect(entries.map(entry => accountingFor(entry).totals.eventCount)).toEqual([39, 40]);
+      console.info('usage-failed-read-retained-generation-counts', { withControl, current });
+    } finally { inspector.disconnect(); }
+  });
+
   it('releases retired rich quota generations across twenty settled two-scope round trips', async () => {
     const { Session: InspectorSession } = await import('node:inspector');
     const { encodeBase64 } = await import('@/encryption/base64');
