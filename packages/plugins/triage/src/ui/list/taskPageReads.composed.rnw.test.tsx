@@ -18,19 +18,21 @@ import { usePersonalTaskOrder } from './usePersonalTaskOrder.js';
 import { useTriageListSessionActivityV1 } from './useListSessionActivity.js';
 import { usePluginHostApi } from '@happier-dev/plugin-ui';
 import { createTriageListWindowStore } from '../../projection/listWindowStore.js';
+import { planTriageListItemsV1 } from './sections.js';
 import { useTriageListSessionActivitySourcesV1 } from './useListSessionActivitySources.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('the Task page admitted read', () => {
-    it('refreshes 60 Tasks, their order and Session links with one TaskList and one palette read', async () => {
+    it('refreshes 60 Tasks and retains qualified unreadable Session links in Agents with one TaskList and one palette read', async () => {
         const scope = { serverId: 'home', accountId: 'account' };
         const counts = { lists: 0, exact: 0, palettes: 0 };
         let unavailable = false;
         let unreadableTaskId: string | undefined;
         const rows = new Map(Array.from({ length: 60 }, (_, index) => [`todo.task-${index}`, {
             id: `task-${index}`, title: `Task ${index}`, done: false, labels: ['bug'], createdAt: index + 1, updatedAt: index + 1,
-            linkedSessions: { session: { title: 'Existing Session', linkedAt: 3 } },
+            linkedSessions: index === 1 ? {} : { qualified: { title: 'Existing Session', linkedAt: 3,
+                session: { ...scope, sessionId: 'stopped-session' } } },
         }]));
         const port: AccountJsonKvCollectionPort = {
             read: async key => { if (key === 'task-label-colours.v1') counts.palettes++; return { value: rows.get(key) ?? null, version: 1 }; },
@@ -108,7 +110,12 @@ describe('the Task page admitted read', () => {
             const links = useTriageListSessionActivityV1({ entryRefs: refs,
                 taskProjection: current.taskProjection, sourceInstanceIds: sources,
                 acquisition: current.passes, active: current.window !== undefined });
+            const agents = planTriageListItemsV1({ rows: current.window?.rows ?? [], pins: [],
+                workflowSubjectOf: () => 'issue',
+                tasks: { audience: 'agents', isTask: ref => ref.kindId === 'task',
+                    hasSessions: key => (links.linkedSessions.get(key)?.length ?? 0) > 0 } });
             return <><Text value={`${current.window?.rows.length ?? 0}:${order.available}:${links.linkedSessions.size}`} />
+                <Text value={`Agents ${agents.length}:${agents.some(item => item.row.entryRef.entryId === 'task-1')}`} />
                 <Text value={current.window?.rows[0]?.content?.outcome.snapshot.title ?? 'Loading Tasks'} />
                 <Text value={`Links ${links.linksStatus}`} />
                 <Button title="Refresh Tasks" onPress={() => { void refresh?.(); }} /></>;
@@ -135,6 +142,7 @@ describe('the Task page admitted read', () => {
                 },
             }); });
             await expect(ui!.getByText(`${MAX_TRIAGE_LIST_WINDOW_ROWS_V1}:true:${MAX_TRIAGE_LIST_WINDOW_ROWS_V1}`)).resolves.toBeDefined();
+            await expect(ui!.getByText(`Agents ${MAX_TRIAGE_LIST_WINDOW_ROWS_V1 - 1}:false`)).resolves.toBeDefined();
             expect(page?.window.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
             expect(isExternalActionResultWithinResponseEnvelopeLimitV1(page)).toBe(true);
             expect(counts).toEqual({ lists: 1, exact: 0, palettes: 1 });
