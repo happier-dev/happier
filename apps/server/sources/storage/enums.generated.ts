@@ -242,6 +242,7 @@ export const AutomationTriggerKind = {
     runLifecycle: "runLifecycle",
     prComment: "prComment",
     ciFailed: "ciFailed",
+    action: "action",
 } as const;
 
 export type AutomationTriggerKind = (typeof AutomationTriggerKind)[keyof typeof AutomationTriggerKind];
