@@ -342,17 +342,58 @@ async function canUseSessionScopedRpcMethodWithMachineAccessKey(params: Readonly
         return false;
     }
 
-    const machineId = binding.machineId;
-    if (!machineId) {
+    if (!binding.machineId) {
         return false;
     }
 
-    return hasCurrentSessionScopedMachineAccessInTx({
-        tx: db,
-        accountId: params.accountId,
-        sessionId: binding.sessionId,
-        machineId,
+    // Connect admitted this Machine access for the socket's own Account; the access owner pushes
+    // its withdrawal.
+    return (params.socket.data as { userId?: unknown } | undefined)?.userId === params.accountId
+        && !withdrawnSessionScopedMachineAccess.has(params.socket);
+}
+
+/**
+ * Session-scoped sockets whose Machine access the access owner withdrew after connect admission.
+ * Withdrawal arrives as `receiveMachineAccessLoss` (grant removal through `machineAccessEffects`,
+ * Machine revoke, replacement or installation change; local and cluster). Machine revoke and
+ * Session deletion also disconnect the bound socket. The admitted publisher keeps finishing its
+ * work (ruling 2026-10-29); new RPC registration and calls are refused from the withdrawal on.
+ */
+const withdrawnSessionScopedMachineAccess = new WeakSet<object>();
+
+type MachineAccessLossSubscription = (
+    listener: (input: Readonly<{ accountId: string; machineId: string }>) => void,
+) => () => void;
+
+/** Subscribe before `confirmSessionScopedMachineAccess`; release on disconnect. */
+export function watchSessionScopedMachineAccess(params: Readonly<{
+    socket: Pick<Socket, 'data'>;
+    accountId: string;
+    onMachineAccessLoss: MachineAccessLossSubscription;
+}>): () => void {
+    const binding = readSessionScopedSocketBinding(params.socket);
+    const machineId = binding?.proof === "machine-access-key" ? binding.machineId : null;
+    if (!machineId) return () => {};
+    return params.onMachineAccessLoss(input => {
+        if (input.accountId === params.accountId && input.machineId === machineId) {
+            withdrawnSessionScopedMachineAccess.add(params.socket);
+        }
     });
+}
+
+/**
+ * One access read after the watch is registered closes the connect window: a withdrawal that
+ * committed between the handshake admission read and the subscription is observed here.
+ */
+export async function confirmSessionScopedMachineAccess(params: Readonly<{
+    socket: Pick<Socket, 'data'>;
+    accountId: string;
+}>): Promise<void> {
+    const binding = readSessionScopedSocketBinding(params.socket);
+    if (binding?.proof !== "machine-access-key" || !binding.machineId) return;
+    if (!await hasCurrentSessionScopedMachineAccessInTx({
+        tx: db, accountId: params.accountId, sessionId: binding.sessionId, machineId: binding.machineId,
+    })) withdrawnSessionScopedMachineAccess.add(params.socket);
 }
 
 export async function canRegisterSessionScopedRpcMethod(params: Readonly<{

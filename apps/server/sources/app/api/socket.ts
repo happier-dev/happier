@@ -94,7 +94,8 @@ import { db, isPrismaErrorCode } from "@/storage/db";
 import { readSharedQaSchemaMismatchDiagnostic } from '@/storage/prismaErrors';
 import { isServerFeatureEnabledForHome, isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readMachineLiveStreamFeatureEnv, readMachineTransferFeatureEnv, readMachineTunnelFeatureEnv, readPeerMediationFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { readSessionScopedSocketBinding, resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
+import { confirmSessionScopedMachineAccess, readSessionScopedSocketBinding, resolveSessionScopedSocketBinding,
+    watchSessionScopedMachineAccess } from "./socket/sessionScopedBinding";
 import {
     resolveRestrictedSocketAdmission,
     type RestrictedSocketAdmission,
@@ -937,6 +938,12 @@ export function startSocket(app: Fastify): () => Promise<void> {
             socket.disconnect(true);
         };
 
+        // Session-scoped Machine access is admitted at the handshake and withdrawn by the access
+        // owner's push; subscribe before the post-join confirmation read below.
+        const releaseSessionScopedMachineAccessWatch = watchSessionScopedMachineAccess({
+            socket, accountId: userId, onMachineAccessLoss: listener => eventRouter.onMachineAccessLoss(listener),
+        });
+        socket.once("disconnect", releaseSessionScopedMachineAccessWatch);
         try {
             await socket.join(getAccountRevocationSocketRoom(userId));
             if (handshakeEphemeralRunnerAdmission?.kind === "api-token-session-viewer") {
@@ -973,6 +980,7 @@ export function startSocket(app: Fastify): () => Promise<void> {
                 await rejectPostConnectAdmission(); return;
             }
             await socket.join(protectedRooms);
+            await confirmSessionScopedMachineAccess({ socket, accountId: userId });
             if (!socket.connected) {
                 await rejectPostConnectAdmission();
                 return;

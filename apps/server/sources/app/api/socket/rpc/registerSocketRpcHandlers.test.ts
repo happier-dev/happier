@@ -20,6 +20,7 @@ import {
 } from "@happier-dev/protocol";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import { Server, type Socket } from "socket.io";
+import { watchSessionScopedMachineAccess } from "../sessionScopedBinding";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSha256SecretDigest } from "@/app/auth/secretDigest";
 import { auth } from "@/app/auth/auth";
@@ -302,6 +303,16 @@ function createRoomAwareIo() {
     };
 
     return { io, rooms, addToRoom, createRoomAwareSocket, emitToRoom, fetchSockets };
+}
+
+/** Machine replacement reaches admitted Session-scoped sockets as the access owner's loss push. */
+function withdrawReplacedMachineAccess(socket: Pick<Socket, 'data'>): void {
+    let notify: ((input: Readonly<{ accountId: string; machineId: string }>) => void) | undefined;
+    watchSessionScopedMachineAccess({ socket, accountId: "user-1", onMachineAccessLoss: listener => {
+        notify = listener;
+        return () => { notify = undefined; };
+    } });
+    notify?.({ accountId: "user-1", machineId: "machine-old" });
 }
 
 describe("registerSocketRpcHandlers", () => {
@@ -3108,19 +3119,12 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
 
     it("rejects session-scoped RPC registration when a lingering access key points at a replaced machine", async () => {
         sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow());
-        accessKeyFindUniqueMock.mockResolvedValue({
-            machineId: "machine-old",
-            session: { accountId: 'user-1' },
-            machine: {
-                revokedAt: null,
-                replacedByMachineId: "machine-current",
-            },
-        });
         const join = vi.fn().mockResolvedValue(undefined);
         const socket = createFakeSocket({
             id: "session-socket",
             data: {
                 clientType: "session-scoped",
+                userId: "user-1",
                 sessionScopedBinding: {
                     sessionId: "sess_1",
                     machineId: "machine-old",
@@ -3136,18 +3140,12 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             socket: socket as any,
             io: {} as Server,
         });
+        withdrawReplacedMachineAccess(socket);
 
         await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.REGISTER, { method: "sess_1:execution.run.stream.start" });
 
-        expect(accessKeyFindUniqueMock).toHaveBeenCalledWith(expect.objectContaining({
-            where: {
-                accountId_machineId_sessionId: {
-                    accountId: "user-1",
-                    machineId: "machine-old",
-                    sessionId: "sess_1",
-                },
-            },
-        }));
+        // Replacement withdrew the admitted access by push; nothing is re-read per event.
+        expect(accessKeyFindUniqueMock).not.toHaveBeenCalled();
         expect(join).not.toHaveBeenCalled();
 expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectContaining({
             type: "register",
@@ -4063,14 +4061,6 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
 
     it("rejects session-scoped RPC calls when a lingering access key points at a replaced machine", async () => {
         sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow());
-        accessKeyFindUniqueMock.mockResolvedValue({
-            machineId: "machine-old",
-            session: { accountId: 'user-1' },
-            machine: {
-                revokedAt: null,
-                replacedByMachineId: "machine-current",
-            },
-        });
         const { io, inMock } = createIo({
             targetsByRoom: {
                 "rpc:user-1:sess_1:execution.run.stream.start": [],
@@ -4080,6 +4070,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             id: "session-caller-socket",
             data: {
                 clientType: "session-scoped",
+                userId: "user-1",
                 sessionScopedBinding: {
                     sessionId: "sess_1",
                     machineId: "machine-old",
@@ -4097,6 +4088,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             socket: socket as any,
             io,
         });
+        withdrawReplacedMachineAccess(socket);
 
         await triggerSocketHandler(
             socket,
@@ -4105,15 +4097,8 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             callback,
         );
 
-        expect(accessKeyFindUniqueMock).toHaveBeenCalledWith(expect.objectContaining({
-            where: {
-                accountId_machineId_sessionId: {
-                    accountId: "user-1",
-                    machineId: "machine-old",
-                    sessionId: "sess_1",
-                },
-            },
-        }));
+        // Replacement withdrew the admitted access by push; nothing is re-read per event.
+        expect(accessKeyFindUniqueMock).not.toHaveBeenCalled();
         expect(inMock).not.toHaveBeenCalled();
         expect(callback).toHaveBeenCalledWith({
             ok: false,

@@ -12,8 +12,9 @@ import { db } from '@/storage/db';
 import { inTx, type Tx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
-import { canCallSessionScopedRpcMethod, canReadAccessKeyFromSessionScopedSocket,
-    resolveSessionScopedSocketBinding } from './sessionScopedBinding';
+import { canCallSessionScopedRpcMethod, canReadAccessKeyFromSessionScopedSocket, canRegisterSessionScopedRpcMethod,
+    confirmSessionScopedMachineAccess, resolveSessionScopedSocketBinding, watchSessionScopedMachineAccess } from './sessionScopedBinding';
+import { deleteOwnedSession } from '@/app/session/delete/deleteOwnedSession';
 import { sessionUpdateHandler } from './sessionUpdateHandler';
 
 /**
@@ -93,7 +94,7 @@ describe('Admitted Session publisher after Machine grant withdrawal', () => {
         const admitted = await resolveSessionScopedSocketBinding({ userId: guest.id, ...binding });
         if (!admitted.ok) throw new Error('Publisher admission failed');
         // Socket.IO is the transport boundary; the guest's UI socket stays connected throughout.
-        const socket = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'session-scoped',
+        const socket = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'session-scoped', userId: guest.id,
             sessionScopedBinding: admitted.binding } }), { disconnect: () => { socket.connected = false; } });
         const connection: ClientConnection = { connectionType: 'session-scoped', userId: guest.id,
             machineId: machine.id, sessionId: session.id, socket: socket as unknown as Socket };
@@ -104,6 +105,10 @@ describe('Admitted Session publisher after Machine grant withdrawal', () => {
         sessionUpdateHandler(guest.id, connection.socket, connection, { presence, binding });
         eventRouter.clearIo();
         eventRouter.addConnection(guest.id, connection);
+        // The connect owner's push subscription and post-join confirmation (api/socket.ts).
+        const releaseAccessWatch = watchSessionScopedMachineAccess({ socket: socket as unknown as Socket, accountId: guest.id,
+            onMachineAccessLoss: listener => eventRouter.onMachineAccessLoss(listener) });
+        await confirmSessionScopedMachineAccess({ socket: socket as unknown as Socket, accountId: guest.id });
         eventRouter.addConnection(guest.id, uiConnection);
         const emit = async (event: string, payload: unknown) => {
             const acks: unknown[] = [];
@@ -138,8 +143,13 @@ describe('Admitted Session publisher after Machine grant withdrawal', () => {
             expect(uiSocket.connected).toBe(true);
             expect(socket.connected).toBe(true);
             // Per-request admissions of new work stay: Session-scoped RPC call and Session access-key read.
-            expect(await canCallSessionScopedRpcMethod({ socket: socket as unknown as Socket, accountId: guest.id,
-                method: `${session.id}:execution.run.start` })).toBe(false);
+            // The withdrawal arrived as the access owner's push: refused without an AccessKey read.
+            const refusalCounter = countAccessKeyReads();
+            try {
+                expect(await canCallSessionScopedRpcMethod({ socket: socket as unknown as Socket, accountId: guest.id,
+                    method: `${session.id}:execution.run.start` })).toBe(false);
+                expect(refusalCounter.count()).toBe(0);
+            } finally { refusalCounter.restore(); }
             expect(await canReadAccessKeyFromSessionScopedSocket({ socket: socket as unknown as Socket, connection,
                 sessionId: session.id, machineId: machine.id })).toBe(false);
             // The admitted publisher's next events are accepted.
@@ -148,8 +158,65 @@ describe('Admitted Session publisher after Machine grant withdrawal', () => {
             // Reconnect is a new admission and is refused.
             expect(await resolveSessionScopedSocketBinding({ userId: guest.id, ...binding })).toMatchObject({ ok: false });
         } finally {
+            releaseAccessWatch();
             eventRouter.removeConnection(guest.id, connection);
             eventRouter.removeConnection(guest.id, uiConnection);
+        }
+    });
+
+    // OWNER-RULINGS 2026-11-16 "Remove overbuilt re-reads" (P03 ORCH 14:10Z): connect admits the
+    // Session-scoped Machine access once; the access owner's push withdraws it. RPC registration and
+    // calls on an admitted socket read no AccessKey, and a deleted Session's bound socket is evicted.
+    it('reads no AccessKey per Session-scoped RPC and evicts the bound socket when its Session is deleted', async () => {
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: custodian.id,
+            metadata: encodePlainMachineStoredContent({ host: 'rpc-access', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/guest', happyHomeDir: '/home/guest/.happier' }),
+            daemonState: encodePlainMachineStoredContent({ status: 'running' }), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            installationId: randomUUID() } });
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+            machineId: machine.id, principal: { kind: 'account', accountId: guest.id }, level: 'view' })))
+            .toMatchObject({ kind: 'saved' });
+        const session = await db.session.create({ data: { accountId: guest.id, tag: randomUUID(),
+            encryptionMode: 'plain', metadata: '{}', active: false } });
+        await db.accessKey.create({ data: { accountId: guest.id, machineId: machine.id,
+            sessionId: session.id, data: 'guest-binding' } });
+        const binding = { accountId: guest.id, machineId: machine.id, sessionId: session.id };
+        const admitted = await resolveSessionScopedSocketBinding({ userId: guest.id, ...binding });
+        if (!admitted.ok) throw new Error('Session-scoped admission failed');
+        const socket = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'session-scoped', userId: guest.id,
+            sessionScopedBinding: admitted.binding } }), { disconnect: () => { socket.connected = false; } });
+        const connection: ClientConnection = { connectionType: 'session-scoped', userId: guest.id,
+            machineId: machine.id, sessionId: session.id, socket: socket as unknown as Socket };
+        eventRouter.clearIo();
+        eventRouter.addConnection(guest.id, connection);
+        // The connect owner's push subscription and post-join confirmation (api/socket.ts).
+        const releaseAccessWatch = watchSessionScopedMachineAccess({ socket: socket as unknown as Socket, accountId: guest.id,
+            onMachineAccessLoss: listener => eventRouter.onMachineAccessLoss(listener) });
+        await confirmSessionScopedMachineAccess({ socket: socket as unknown as Socket, accountId: guest.id });
+        const rpc = { socket: socket as unknown as Socket, accountId: guest.id };
+        try {
+            const counter = countAccessKeyReads();
+            let rpcReads: number;
+            try {
+                for (const method of ['execution.run.start', 'session.status', 'session.abort', 'session.permission', 'session.read']) {
+                    expect(await canRegisterSessionScopedRpcMethod({ ...rpc, method: `${session.id}:${method}` })).toBe(true);
+                    expect(await canCallSessionScopedRpcMethod({ ...rpc, method: `${session.id}:${method}` })).toBe(true);
+                }
+                rpcReads = counter.count();
+            } finally { counter.restore(); }
+            // 10 RPC admissions (5 registrations, 5 calls) on the admitted socket.
+            expect(rpcReads).toBe(0);
+            // Another Session's method is still refused by the held binding.
+            expect(await canCallSessionScopedRpcMethod({ ...rpc, method: `${randomUUID()}:session.status` })).toBe(false);
+
+            expect(await deleteOwnedSession({ sessionId: session.id, reason: 'user_request', ownerAccountId: guest.id }))
+                .toEqual({ ok: true });
+            expect(socket.connected).toBe(false);
+        } finally {
+            releaseAccessWatch();
+            eventRouter.removeConnection(guest.id, connection);
         }
     });
 });

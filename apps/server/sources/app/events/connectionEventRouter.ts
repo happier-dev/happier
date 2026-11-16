@@ -270,6 +270,22 @@ class EventRouter {
         }
     }
 
+    /** Disconnects the Session-scoped sockets bound to these exact Machine/Session tuples, cluster-wide. */
+    disconnectSessionBoundSockets(bindings: readonly Readonly<{ accountId: string; machineId: string; sessionId: string }>[]): void {
+        if (bindings.length === 0) return;
+        if (this.io) {
+            this.io.to([...new Set(bindings.map(binding => getMachineBoundSessionSocketRoom(
+                binding.accountId, binding.sessionId, binding.machineId)))]).disconnectSockets(true);
+            return;
+        }
+        for (const binding of bindings) {
+            for (const connection of this.userConnections.get(binding.accountId) ?? []) {
+                if (connection.connectionType === "session-scoped" && connection.sessionId === binding.sessionId
+                    && connection.machineId === binding.machineId) connection.socket.disconnect(true);
+            }
+        }
+    }
+
     /** Disconnects exact-resource sockets through the configured cross-node adapter. */
     disconnectMachineAndSessionSockets(params: Readonly<{
         accountId: string;

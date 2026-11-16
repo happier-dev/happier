@@ -683,7 +683,7 @@ describe('Machine current access (real SQLite)', () => {
                 authority?: 'present_user' | 'account_automation' }> = {}) => {
                 const socket = createAuthenticatedFakeSocket({ data: { accountStoredContentCompatibility, clientType: 'user-scoped',
                     authAuthority: options.authority ?? 'present_user',
-                    ...(options.sessionOrigin ? { clientType: 'session-scoped', sessionId: session.id,
+                    ...(options.sessionOrigin ? { clientType: 'session-scoped', sessionId: session.id, userId: accountId,
                         sessionScopedBinding: target.data.sessionScopedBinding } : {}) } });
                 rpcHandler(accountId, socket as unknown as Socket, { io });
                 const reply = vi.fn();

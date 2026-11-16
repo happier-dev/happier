@@ -1,5 +1,6 @@
 import { refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/teamCredentialUsageCounters';
 import { afterTx, type Tx } from '@/storage/inTx';
+import { eventRouter } from '@/app/events/eventRouter';
 import type { Prisma } from '@prisma/client';
 import { notifySessionHumanPresenceAccessChanged } from '../humanPresence/sessionHumanPresenceService';
 import { notifySessionTranscriptMutationAfterCommit } from '../sessionTranscriptMutationObserver';
@@ -113,9 +114,20 @@ export async function deleteSessionTree(
         } });
     }
 
+    // Session-scoped sockets hold their connect-time Machine access; the deleted Session's bound
+    // sockets are evicted after commit instead of being refused per RPC.
+    const boundAccessKeys = await tx.accessKey.findMany({
+        where: { sessionId: params.sessionId },
+        select: { accountId: true, machineId: true },
+    });
     const deletedAccessKeys = await tx.accessKey.deleteMany({
         where: { sessionId: params.sessionId },
     });
+    if (boundAccessKeys.length > 0) {
+        afterTx(tx, () => eventRouter.disconnectSessionBoundSockets(boundAccessKeys.map(key => ({
+            accountId: key.accountId, machineId: key.machineId, sessionId: params.sessionId,
+        }))));
+    }
 
     await invalidateSessionFollowDestinationsForSessionDeleteInTx(tx, {
         sessionId: params.sessionId,
