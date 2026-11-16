@@ -1123,6 +1123,18 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findAllHostsByTestId('value.open.s2')).toHaveLength(1);
   });
 
+  it.each(['draft', 'open'] as const)('shows the linked draft outcome for the provider state %s', async (state) => {
+    const witness = evidence('s1', 't1', 2493);
+    const draftWork = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
+      contributions,
+      evidence: [{ ...witness, pullRequest: { ...witness.pullRequest!, state, isDraft: true } }],
+    }));
+    const screen = await renderScreen(
+      <UsageSessionValueWidget {...props} slice={{ ...slice, work: draftWork }} id="usage_session_value" testID="draft-value" />,
+    );
+    expect(screen.getTextContent()).toContain(`${witness.pullRequest!.title} · ${t('usage.board.work.state_draft')}`);
+  });
+
   it('outcomes shows the exact PR and the session funnel', async () => {
     const screen = await renderScreen(
       <UsageOutcomesWidget {...props} id="usage_outcomes" testID="outcomes" />,

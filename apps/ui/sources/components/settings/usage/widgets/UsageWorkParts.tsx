@@ -43,6 +43,7 @@ export function usageWorkBranchName(ref: string): string {
 /** Native state only: a closed PR is "closed", never "abandoned". */
 export function usageWorkPullRequestState(pullRequest: ScmPullRequestSummary): string {
   if (pullRequest.state === 'merged') return t('usage.board.work.state_merged');
+  if (pullRequest.state === 'draft') return t('usage.board.work.state_draft');
   if (pullRequest.state === 'open')
     return pullRequest.isDraft ? t('usage.board.work.state_draft') : t('usage.board.work.state_open');
   return t('usage.board.work.state_closed');
