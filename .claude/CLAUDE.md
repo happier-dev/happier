@@ -109,6 +109,7 @@ Before briefing a lane whose change renders anything (new state, control, copy, 
 
 ## Delegation shape (what worked)
 
+- **Set model and effort explicitly at every launch.** Session defaults can be low (three Opus UI lanes ran at low effort on 11-16).
 - **Corridor-sized lanes, never micro-tasks.** A lane owns a whole responsibility (a corridor, a
   full QA matrix, a full review) end to end: analysis, implementation, tests, validation, ledger
   updates. Micro-slicing (one-boolean extractions) provably grows god-files instead of shrinking
