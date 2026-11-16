@@ -563,6 +563,10 @@ from a matching Settings object in the daemon. An unavailable catalog retains it
 typed retry recovery. A missing binding retains the add-secret recovery, and one
 connection's credential failure remains local to its inventory row.
 
+Team defaults and Session model discovery consume the same launch-readiness
+owner. Its typed refusal preserves Home's resource repair, unavailability and
+policy causes even when the resource projection omits choices and models.
+
 In 0.3 development, `ProviderSettingsIndex` keeps the root as a home over
 `ProviderConnectionsSettingsScreen`, rather than redirecting to a connection.
 Its rail's All entry returns to the same root; explicit connection and
@@ -607,6 +611,11 @@ The CLI mirrors the same ownership:
 ## Identity model
 
 ### Editor inline suggestions (0.3 development)
+
+Inline and next-edit Provider refusals retain the existing `ProviderErrorV1`
+under the language-intelligence `provider_error` response. The editor retains
+the Provider code and Saved Secret repair reason instead of relabelling a stale
+binding as an unavailable model or a missing credential as a signed-out state.
 
 The editor's `ai.inlineSuggest` query uses the existing Machine language-intelligence
 RPC family and executes in `apps/cli/src/providers/inlineSuggestions.ts`, independently
