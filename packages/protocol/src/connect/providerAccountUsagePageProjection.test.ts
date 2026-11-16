@@ -312,6 +312,35 @@ describe('B page projection', () => {
       history: { ...repeated, nextCursor: { id: '999', observedAtMs: 1000 } } })).toThrow();
   });
 
+  it('shares admitted meter definitions across changing readings without losing exact quota facts', () => {
+    const entries = Array.from({ length: 128 }, (_, index) => {
+      const snapshot = sample(index + 1, index / 2);
+      snapshot.meters[0]!.details = { note: 'One definition across every changing reading', code: 'observed' };
+      snapshot.meters.push({ ...snapshot.meters[0]!, meterId: 'other', label: 'Other',
+        details: { note: 'A separate definition', remainingPct: index / 2 } });
+      return { id: String(index), observedAtMs: snapshot.fetchedAtMs, snapshot };
+    });
+    const projection = buildProviderAccountUsagePageProjectionV1({ recordId: entries[0]!.snapshot.recordId, range,
+      history: { entries, nextCursor: null } });
+    const content = sealProviderAccountUsagePageProjectionV1({ projection, accountMode: 'plain' });
+    const opened = openProviderAccountUsagePageProjectionV1({ recordId: projection.recordId, accountMode: 'plain', content });
+    expect(opened).toEqual(projection);
+    const definitions = new Set(opened.history.entries.map(entry => entry.snapshot.meters[0]!.details));
+    console.info(JSON.stringify({ observations: entries.length, changingReadings: entries.length * 2,
+      retainedUnchangedDefinitions: definitions.size }));
+    expect(definitions.size).toBe(1);
+    const source = { ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' }, bindingKind: 'account' as const };
+    const project = (history: typeof projection.history) => projectProviderAccountUsageQuotaReadV1({
+      input: { source, projection: { range, resolution: 'accepted_observations' } }, current: entries.at(-1)!.snapshot,
+      history, nowMs: 1100 });
+    expect(project(opened.history)).toEqual(project(projection.history));
+    if (content.t !== 'plain') throw new Error('Expected plain fixture');
+    content.v.meterDefinitions[0]!.unit = 'usd';
+    delete content.v.meterDefinitions[0]!.currency;
+    const normalized = openProviderAccountUsagePageProjectionV1({ recordId: projection.recordId, accountMode: 'plain', content });
+    expect(normalized.history.entries.map(entry => entry.snapshot.meters[0]!.currency)).toEqual(entries.map(() => 'USD'));
+  });
+
   it('preserves absent versus null meter facts and rejects invalid dictionary references or clocks', () => {
     const entries = [100, 200, 300].map((at, index) => {
       const snapshot = sample(at, 20);
@@ -332,6 +361,10 @@ describe('B page projection', () => {
       (value: typeof content) => { value.v.observations[0]![1][0] = value.v.meters.length; },
       (value: typeof content) => { value.v.meters[0]![0] = value.v.meterDefinitions.length; },
       (value: typeof content) => { value.v.observations[0]![3][0]![1] = -1; },
+      (value: typeof content) => { value.v.meters[0]![3] = 101; },
+      (value: typeof content) => { value.v.meters[0]![5].remainingPct = -1; },
+      (value: typeof content) => { value.v.meters[0]![5].usedPct = 101; },
+      (value: typeof content) => { value.v.meters[0]![5].detailsRemainingPct = 101; },
     ]) {
       const corrupt: typeof content = JSON.parse(JSON.stringify(content));
       mutate(corrupt);

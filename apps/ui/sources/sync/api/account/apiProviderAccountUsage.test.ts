@@ -101,6 +101,51 @@ describe('apiProviderAccountUsage', () => {
         expect(result.pageFacts?.dayQuotaHistory).toEqual([summary]);
         expect(summaryReads).toBe(1);
     });
+    it.each(['plain', 'e2ee'] as const)('shares admitted %s backfill material across changing readings without dropping accepted witnesses', async accountMode => {
+        const base = makeSnapshot();
+        const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ ...base,
+            recoveryCredits: { availableCount: 32, credits: Array.from({ length: 32 }, (_, index) => ({ id: `credit-${index}`, kind: 'unknown', status: 'available' })) },
+            meters: [{ meterId: 'daily', label: 'Daily quota', used: 0, limit: 1_000, utilizationPct: 0,
+                resetsAt: 86_400_000, windowDurationMs: 86_400_000, unit: 'count', status: 'ok', details: { note: 'Provider daily allowance' } }],
+        });
+        const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' } };
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const samples = Array.from({ length: 256 }, (_, index) => ({ ...snapshot, fetchedAtMs: index + 1, observedAtMs: index + 1,
+            meters: snapshot.meters.map(meter => ({ ...meter, used: index, utilizationPct: index / 10 })) }));
+        const record = (value: ProviderAccountUsageSnapshotV1) => {
+            const sealed = accountMode === 'e2ee' ? sealProviderAccountUsageSnapshot({ snapshot: value, material,
+                randomBytes: length => new Uint8Array(length).fill(9) }) : null;
+            return { content: sealed ? { t: 'encrypted', c: sealed.ciphertext, recoveryCreditDetails: sealed.recoveryCreditDetails }
+                : { t: 'plain', v: value }, metadata: { fetchedAt: value.fetchedAtMs, staleAfterMs: value.staleAfterMs, status: 'ok' }, sources: [source] };
+        };
+        const request = async (path: string, init?: RequestInit) => {
+            if (path.includes('/sources/resolve')) return Response.json({ source, recordId: snapshot.recordId,
+                providerAccountId: snapshot.recordKey.accountSubjectId, fetchedAt: 1, staleAfterMs: snapshot.staleAfterMs });
+            if (path.includes('/record?')) return Response.json(record(samples.at(-1)!));
+            if (init?.method === 'PUT') return Response.json({ success: true });
+            const query = JSON.parse(new URL(path, 'https://test.invalid').searchParams.get('query')!);
+            if (query.projection) return Response.json({ projection: null, complete: false });
+            const selected = samples.filter(value => value.fetchedAtMs > (query.history.cursor?.observedAtMs ?? 0))
+                .slice(0, query.history.pageSize);
+            const last = selected.at(-1)!;
+            return Response.json({ entries: selected.map(value => ({ id: `accepted-${value.fetchedAtMs}`,
+                observedAtMs: value.fetchedAtMs, record: record(value) })),
+                nextCursor: last.fetchedAtMs < samples.length ? { id: `accepted-${last.fetchedAtMs}`, observedAtMs: last.fetchedAtMs } : null });
+        };
+        const { getProviderAccountUsageQuota } = await loadApi();
+        const projectionDocuments: import('./apiProviderAccountUsage').ProviderAccountUsageProjectionDocuments = new Map();
+        const result = await getProviderAccountUsageQuota(credentials,
+            { source, projection: { range: { startAtMs: 0, endAtMs: 1_000 }, resolution: 'accepted_observations' } },
+            { accountMode, material, request, projectionDocuments, includePendingWork: false, nowMs: 256 });
+        const retained = projectionDocuments.get(snapshot.recordId)!.admitted!.opened.history.entries;
+        expect(retained.map(entry => [entry.id, entry.observedAtMs, entry.snapshot.meters[0]!.used]))
+            .toEqual(samples.map(value => [`accepted-${value.fetchedAtMs}`, value.fetchedAtMs, value.meters[0]!.used]));
+        expect(result.pageFacts?.resetWitness?.id).toBe('accepted-256');
+        // Constant provider inventory and definition trees are one admitted
+        // material, not a decoded copy for every accepted observation.
+        expect(new Set(retained.map(entry => entry.snapshot.recoveryCredits)).size).toBe(1);
+        expect(new Set(retained.map(entry => entry.snapshot.meters[0]!.details)).size).toBe(1);
+    });
     it('borrows the quota record acquisition from the snapshot row owner without borrowing its cancellation', async () => {
         await activateTestHome();
         const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');

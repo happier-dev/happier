@@ -39,11 +39,11 @@ const MeterDefinitionSchema = lazyZodSchema(() => z.strictObject({
     remaining: true, remainingPct: true, usedPct: true, resetAtMs: true, details: true }).shape,
   details: z.omit(ConnectedServiceQuotaMeterDetailsV1Schema, { remainingPct: true }),
 }));
-const MeterReadingSchema = lazyZodSchema(() => z.tuple([Index, z.nullable(z.number()), z.nullable(z.number()),
-  z.nullable(z.number()), z.nullable(Time), z.strictObject({
-    remaining: z.optional(z.nullable(z.number())), remainingPct: z.optional(z.nullable(z.number())),
-    usedPct: z.optional(z.nullable(z.number())), resetAtMs: z.optional(z.nullable(Time)),
-    detailsRemainingPct: z.optional(z.nullable(z.number())),
+const MeterReadingSchema = lazyZodSchema(() => z.tuple([Index, ConnectedServiceQuotaMeterV1Schema.shape.used, ConnectedServiceQuotaMeterV1Schema.shape.limit,
+  ConnectedServiceQuotaMeterV1Schema.shape.utilizationPct, ConnectedServiceQuotaMeterV1Schema.shape.resetsAt, z.strictObject({
+    remaining: ConnectedServiceQuotaMeterV1Schema.shape.remaining, remainingPct: ConnectedServiceQuotaMeterV1Schema.shape.remainingPct,
+    usedPct: ConnectedServiceQuotaMeterV1Schema.shape.usedPct, resetAtMs: ConnectedServiceQuotaMeterV1Schema.shape.resetAtMs,
+    detailsRemainingPct: ConnectedServiceQuotaMeterDetailsV1Schema.shape.remainingPct,
   })]));
 // A run shares material only. Each sample retains its exact id and clock deltas;
 // irregular clocks cannot be reconstructed from endpoints and a count alone.
@@ -193,11 +193,18 @@ export function unpackAdmittedProjection(packed: z.infer<typeof PackedProviderAc
     if (value === undefined) throw new Error('provider_account_usage_content_unavailable');
     return value;
   };
+  // Normalize composite definition defaults once. Changing readings have already
+  // passed their owning field schemas and must not clone this material again.
+  const definitions = packed.meterDefinitions.map(material => {
+    const { used: _used, limit: _limit, utilizationPct: _utilization, resetsAt: _reset, ...definition } =
+      ConnectedServiceQuotaMeterV1Schema.parse({ ...material, used: null, limit: null, utilizationPct: null, resetsAt: null });
+    return definition;
+  });
   const meters = packed.meters.map(([definition, used, limit, utilizationPct, resetsAt, reading]) => {
     const { detailsRemainingPct, ...values } = reading;
-    const material = at(packed.meterDefinitions, definition);
-    return ConnectedServiceQuotaMeterV1Schema.parse({ ...material, used, limit, utilizationPct, resetsAt, ...values,
-      details: { ...material.details, ...(detailsRemainingPct !== undefined ? { remainingPct: detailsRemainingPct } : {}) } });
+    const material = at(definitions, definition);
+    return { ...material, used, limit, utilizationPct, resetsAt, ...values,
+      details: detailsRemainingPct === undefined ? material.details : { ...material.details, remainingPct: detailsRemainingPct } };
   });
   const projection: ProviderAccountUsagePageProjectionV1 = { v: packed.v, recordId: packed.recordId, resolution: packed.resolution, range: packed.range,
     history: { entries: packed.observations.flatMap(([base, meterIndexes, subscription, samples]) => {

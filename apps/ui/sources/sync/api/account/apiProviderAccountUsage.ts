@@ -24,6 +24,7 @@ import { getRandomBytes } from '@/platform/cryptoRandom';
 import { ProviderAccountUsagePageProjectionReadV1Schema, ProviderAccountUsagePageProjectionWriteV1Schema,
     buildProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING,
+    packProviderAccountUsagePageProjectionV1, unpackAdmittedProjection,
     ProviderAccountUsagePageProjectionPrefixReadV1Schema,
     type ProviderAccountUsagePageProjectionCoverageV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { sealProviderAccountUsagePageProjectionV1, openProviderAccountUsagePageProjectionV1,
@@ -285,7 +286,14 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                         if (!page) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
                         const next = await openHistoryPageWithYield({ recordId, accountMode: options.accountMode, material: options.material, page }, options);
                         if (!active) return;
-                        entries = [...entries, ...next.entries];
+                        // Raw fallback pages carry full copies of unchanged provider
+                        // inventory and meter definitions. Admit them into the same
+                        // dictionaries as a stored projection before acquiring the
+                        // next page; keep every accepted id, clock and numeric reading.
+                        if (next.entries.length) entries = unpackAdmittedProjection(packProviderAccountUsagePageProjectionV1(
+                            buildProviderAccountUsagePageProjectionV1({ recordId, range,
+                                history: { entries: [...entries, ...next.entries], nextCursor: null } }),
+                        )).history.entries;
                         pageSize += next.entries.length;
                         cursor = next.nextCursor ?? undefined;
                     } while (cursor);
