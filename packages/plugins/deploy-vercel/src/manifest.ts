@@ -19,6 +19,7 @@ export const plugin = definePlugin({
   resources: { 'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' }, ...targetOptionsResources },
   inputTypes: targetInputTypes,
   deploymentTargets: { runtime: { role: 'runtime', title: 'Vercel', targetKind: 'vercel', icon: 'server-outline',
+    accepts: ['static', 'server'], needs: ['repository', 'stateless'],
     targetSchema: { type: 'object', properties: {}, additionalProperties: false }, linkSchema: projectPrepareResultSchema,
     actions: { inspect: 'targets-inspect-v1', link: 'project-link', create: 'project-create', deploy: 'deploy', uploadDeploy: 'deploy-upload-v1', observe: 'observe', cancel: 'cancel', promote: 'promote', rollback: 'rollback', teardown: 'teardown',
       logs: { build: 'build-logs-read', runtime: 'runtime-logs-read' }, variables: { read: 'variables-read', sync: 'variables-sync' },
