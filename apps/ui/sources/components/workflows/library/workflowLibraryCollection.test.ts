@@ -19,6 +19,28 @@ const project = (accountTriggers: readonly WorkflowTriggerSetV1[]) => projectWor
     definitions: { library: [], sharedWithYou: [] }, accountTriggers, summaries: null, automationSummaries: null });
 
 describe('retained triggers whose Workflow is gone', () => {
+    it('presents deployment observer identity names as Events while retaining each distinct enrollment', () => {
+        // Account C/#164: each Environment has separate failed/succeeded observation-only definitions.
+        const observers = ['cmwg2ttqc01hwmcswcfldvi20', 'cmwg2l6dk01efmcswm2v53btb'].flatMap(environmentId =>
+            ['deployment-failed', 'deployment-succeeded'].map(localId => set(`${environmentId}-${localId}`, {
+                name: environmentId,
+                observationOnly: { kind: 'observationOnly', templateVersion: 1,
+                    deploymentEnvironment: { serverId: 'home', projectSourceId: 'project', environmentId } },
+                triggers: [{ id: `${environmentId}-${localId}`, revision: 0, enabled: true, createdAt: 1, updatedAt: 1,
+                    kind: 'pluginEvent', eventRef: { pluginId: 'happier.machine.services', localId },
+                    sourceSelectorId: '00000000-0000-4000-8000-000000000002', sourceContractVersion: 1,
+                    observation: { kind: 'checkpointedPull', watcher: null }, sourceStatus: null, sourceCatalogStatus: null,
+                    // Opaque persisted Event content is not opened by the Library projection.
+                    triggerDefinitionEnvelope: 'retained-event-envelope' }],
+            })));
+        const authored = set('authored', { ...observers[0], automationId: 'authored', name: 'Production alerts' });
+        const rows = project([...observers, authored]);
+        expect(rows).toHaveLength(5);
+        expect(rows.filter(row => row.key !== 'account-trigger:authored').map(row => row.name))
+            .toEqual(Array(4).fill('workflows.triggers.kind.pluginEvent'));
+        expect(rows.find(row => row.key === 'account-trigger:authored')?.name).toBe('Production alerts');
+    });
+
     it('lists a definition once across list sources and presents unreadable earlier-build content', () => {
         const definitionId = 'cmwg2ttqc01hwmcswcfldvi20';
         const { definitions } = WorkflowDefinitionListResultV1Schema.parse({ definitions: [{

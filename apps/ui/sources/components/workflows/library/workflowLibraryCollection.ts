@@ -59,6 +59,10 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
     ];
     const triggers = input.accountTriggers.map((set): WorkflowLibraryRecordRow => {
         const sourceGone = isWorkflowTriggerSourceGone(set);
+        const triggerSummary = formatTriggerSetSummary(set.triggers, input.automationSummaries?.get(set.automationId)?.lastRun?.state);
+        // Automatic deployment observers can store their Environment identity as the name.
+        const named = set.name === set.automationId || set.name === set.observationOnly?.deploymentEnvironment?.environmentId
+            ? undefined : set.name;
         // Nothing of a gone source is editable, so its row is one press: remove the retained set.
         const triggerOpenTargets = (set.triggers.length && !sourceGone ? set.triggers.map(trigger => trigger.id) : [null]).map(triggerId => ({
             kind: 'accountTrigger' as const, automationId: set.automationId, triggerId,
@@ -66,9 +70,9 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
         return {
             key: `account-trigger:${set.automationId}`, group: 'library', accountTrigger: set,
             name: sourceGone ? t('workflows.triggers.row.workflowUnavailable')
-                : (set.name === set.automationId ? undefined : set.name)
-                    ?? describeLegacyTriggerSet(set)?.title ?? describeTriggerTarget(set.target, () => null),
-            triggerSummary: formatTriggerSetSummary(set.triggers, input.automationSummaries?.get(set.automationId)?.lastRun?.state),
+                : named ?? describeLegacyTriggerSet(set)?.title
+                    ?? (set.observationOnly ? triggerSummary : describeTriggerTarget(set.target, () => null)),
+            triggerSummary,
             updatedAt: set.updatedAt ?? 0,
             lastRunSummary: input.automationSummaries?.get(set.automationId),
             openTarget: triggerOpenTargets[0]!, triggerOpenTargets,
