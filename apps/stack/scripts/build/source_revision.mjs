@@ -8,7 +8,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { createGzip, gunzipSync } from 'node:zlib';
-import { BuildInputDriftError, mountInstalledNodeModules } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { BuildInputDriftError, mountInstalledNodeModules, unmountInstalledNodeModules } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { EMBEDDED_FEATURE_POLICIES_OUTPUT, isSourceGeneratedInput, isWorkspaceBuildInputIgnoredPath, readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readStaleServerGeneratedClients, SERVER_GENERATED_CLIENTS } from './server_generated_clients.mjs';
 import { run } from '../utils/proc/proc.mjs';
@@ -377,12 +377,18 @@ async function deriveServerGeneratedClients({ captureDir, sourceDir, env, signal
   // Installed tools only, at the capture root: the captured physical clients stay
   // the generator's output, and no workspace link or package cache leads back
   // into the checkout for a write.
-  await mountInstalledNodeModules({ sourceModules: join(sourceDir, 'node_modules'), targetModules: join(captureDir, 'node_modules'),
-    excludedNames: ['@happier-dev'] });
-  await run(process.execPath, sourceBuildNodeArgs({ repoDir: captureDir, scriptPath: join(captureDir, 'apps/server/scripts/generateClients.ts') }), {
-    cwd: join(captureDir, 'apps/server'), signal, stdio: ['ignore', 'ignore', 'inherit'], captureFailureDiagnostic: true,
-    // Schema sync only checks: the capture's schemas are the revision's bytes.
-    env: { ...env, HAPPIER_BUILD_DB_PROVIDERS: 'all', HAPPIER_DEV_TARGET_EXECUTION: '1' } });
+  // The tools are borrowed for this run only: a revision base mounts its pinned
+  // installation snapshot afterwards and must not keep links into the checkout.
+  const tools = { sourceModules: join(sourceDir, 'node_modules'), targetModules: join(captureDir, 'node_modules') };
+  await mountInstalledNodeModules({ ...tools, excludedNames: ['@happier-dev'] });
+  try {
+    await run(process.execPath, sourceBuildNodeArgs({ repoDir: captureDir, scriptPath: join(captureDir, 'apps/server/scripts/generateClients.ts') }), {
+      cwd: join(captureDir, 'apps/server'), signal, stdio: ['ignore', 'ignore', 'inherit'], captureFailureDiagnostic: true,
+      // Schema sync only checks: the capture's schemas are the revision's bytes.
+      env: { ...env, HAPPIER_BUILD_DB_PROVIDERS: 'all', HAPPIER_DEV_TARGET_EXECUTION: '1' } });
+  } finally {
+    await unmountInstalledNodeModules(tools);
+  }
   const remaining = readStaleCapturedClients(captureDir);
   if (remaining.length) throw new Error(`[source-revision] generated server clients still differ from the captured schema: ${remaining.join(', ')}`);
   console.error(`[source-revision] regenerated server clients from the captured schema (${stale.join(', ')}) elapsedMs=${Math.round(performance.now() - started)}`);

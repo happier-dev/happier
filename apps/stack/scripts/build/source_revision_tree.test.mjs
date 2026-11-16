@@ -330,8 +330,16 @@ test('a base derives generated server clients from its revision schema; a commit
     return await prepareStackSourceRevisionTree({ repoDir, treesRoot, treeDir: fixture.path(`stacks/${stack}/tree`),
       descriptorPath: revision.descriptorPath });
   };
+  // An installed dependency: the base must mount the pinned snapshot, even after
+  // the client generator borrowed the checkout's installed tools (2026-11-16
+  // base 81d8bc8: node_modules/diff linked into the checkout, so every reload
+  // refused "outside the caller-approved root").
+  await mkdir(join(repoDir, 'node_modules/fixture-dep'), { recursive: true });
+  await writeFile(join(repoDir, 'node_modules/fixture-dep/package.json'), JSON.stringify({ name: 'fixture-dep' }));
   const first = await reload();
   assert.deepEqual(await readGeneratedClientFields(first.treeDir), { default: ['id'], sqlite: ['id'], mysql: ['id'] });
+  const mounted = await realpath(join(first.treeDir, 'node_modules/fixture-dep'));
+  assert.ok(!mounted.startsWith(`${await realpath(repoDir)}/`), `the base mounts the installation snapshot, not the checkout (${mounted})`);
   assert.deepEqual((await readGeneratedClientFields(repoDir)).default, ['id', 'metadataBytes'], 'the checkout keeps its own clients');
   const committed = FIXTURE_MACHINE_SCHEMA.replace('  id String\n', '  id String\n  name String\n');
   await writeServerSchemas(repoDir, committed);

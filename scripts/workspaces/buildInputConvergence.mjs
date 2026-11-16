@@ -1,5 +1,5 @@
 import { chmod, copyFile, cp, lstat, mkdir, readFile, readdir, readlink, realpath, rm, stat, symlink } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { readCachedFileDigest } from '../../apps/stack/scripts/utils/fs/cached_file_digest.mjs';
 import { createHash } from 'node:crypto';
 import { readDependencyPublicationState, resolveDependencyInstallRoot, waitForDependencyRefresh } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
@@ -150,6 +150,29 @@ export async function captureBuildInputFiles({ sourceDir, captureDir, readPaths 
  * linked modules/task-state directories; its mutable journal must stay local.
  * @param {{ sourceModules: string, targetModules: string, excludedNames?: string[] }} input
  */
+/** Remove the links mountInstalledNodeModules made from `sourceModules` (physical
+ * captured entries stay), so a later mount can bind the target to another installation. */
+export async function unmountInstalledNodeModules({ sourceModules, targetModules }) {
+  const installedModules = await realpath(sourceModules).catch(error => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (installedModules === null) return;
+  const entries = await readdir(targetModules, { withFileTypes: true }).catch(error => {
+    if (error.code === 'ENOENT') return [];
+    throw error;
+  });
+  for (const entry of entries) {
+    const target = join(targetModules, entry.name);
+    if (entry.isSymbolicLink()) {
+      const link = resolve(dirname(target), await readlink(target));
+      if (link === installedModules || link.startsWith(`${installedModules}${sep}`)) await rm(target, { force: true });
+    } else if (entry.isDirectory()) {
+      await unmountInstalledNodeModules({ sourceModules: join(installedModules, entry.name), targetModules: target });
+    }
+  }
+}
+
 export async function mountInstalledNodeModules({ sourceModules, targetModules, excludedNames = [] }) {
   await mkdir(targetModules, { recursive: true });
   // A capture may replace a source workspace alias with its captured sources.
