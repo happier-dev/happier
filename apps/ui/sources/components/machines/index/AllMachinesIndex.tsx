@@ -256,7 +256,7 @@ function AllMachinesIndexBody() {
     // "—", so the table says each machine's presence instead (the no-metrics layout).
     const anyOnline = items.some(item => item.kind === 'machine' && item.online);
     const shownMetrics = anyOnline ? summarySetting.metrics : NO_METRICS;
-    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, shownMetrics, deviceType === 'phone', cardAttention);
+    const anatomy = useMachineIndexAnatomy(view, summarySetting.style, shownMetrics, deviceType === 'phone', cardAttention, anyOnline);
     // An open page keeps its online machines' summaries live (one batched demand for the whole fleet), owned by a
     // leaf so a hide or a window blur withdraws it without redrawing the page.
     const demandKeys = React.useMemo(() => items.flatMap(item => item.online && item.kind === 'machine'
@@ -472,7 +472,9 @@ const AllMachinesHeader = React.memo(function AllMachinesHeader(props: Readonly<
  * while an online refusal says why across its figures. The phone's list: work on the name's line, the strip (or why there is
  * none) beneath. The grid: the card body with its metric tiles.
  */
-function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummaryStyle, metrics: readonly MachineSummaryMetric[], phone: boolean, cardAttention: ReadonlyMap<string, MachineAttentionEntry>): CollectionAnatomy<MachineIndexItem> {
+function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummaryStyle, metrics: readonly MachineSummaryMetric[], phone: boolean, cardAttention: ReadonlyMap<string, MachineAttentionEntry>,
+    /** No listed machine is online: no one has work to show, so the table has no Work column of blanks. */
+    anyOnline: boolean): CollectionAnatomy<MachineIndexItem> {
     const language = usePreferredLanguage();
     const { theme } = useUnistyles();
     return React.useMemo((): CollectionAnatomy<MachineIndexItem> => {
@@ -495,9 +497,10 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         ...(phone ? { titleMeta: (item: MachineIndexItem) => item.online ? <MachineWorkCell item={item} /> : null } : {}),
         fields: [
             // Offline machines retain one missing-value mark per metric; an online refusal can span the figures.
+            ...(anyOnline ? [
             { key: 'work', title: t('allMachines.columnWork'), minWidth: WORK_COLUMN_WIDTH_PX, priority: 2,
                 ...(metrics.length > 0 ? { spanRest: (item: MachineIndexItem) => item.online && item.reason !== null } : {}),
-                render: (item) => metrics.length > 0 && (!item.online || item.reason !== null)
+                render: (item: MachineIndexItem) => metrics.length > 0 && (!item.online || item.reason !== null)
                     ? <Text numberOfLines={2} style={stylesheet.quiet}>{item.reason ?? item.presence}</Text> : (
                         // The work, then the one update fact that needs the person (lab mIdx, review H2: no new column).
                         <View style={stylesheet.workCell}>
@@ -505,6 +508,7 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
                             <MachineIndexUpdateLine item={item} />
                         </View>
                     ) },
+            ] : []),
             ...(metrics.length === 0 ? [
                 { key: 'status', title: t('allMachines.columnStatus'), minWidth: 200, priority: 1, render: (item: MachineIndexItem) => <MachinePresenceCell item={item} /> },
             ] : metrics.map((metric, index) => ({
@@ -532,7 +536,7 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         testID: (item) => `machines.index.row.${item.key}`,
         columnTitles: { title: t('allMachines.columnMachine') },
         };
-    }, [cardAttention, language, metrics, phone, style, theme.colors.text.secondary, view]);
+    }, [anyOnline, cardAttention, language, metrics, phone, style, theme.colors.text.secondary, view]);
 }
 
 /** The phone list's second line: the machine's strip under its name, or — when it shows none — why. */

@@ -586,6 +586,9 @@ describe('All machines (the Settings door index)', () => {
     // Three columns of "—" say nothing; the row says it is offline, once.
     expect(row.findAll(node => typeof node.type === 'string' && node.props?.children === '—')).toHaveLength(0);
     expect(text(row)).toContain('settingsOverview.machineOffline');
+    // Nobody online has work to show either: no Work column of blanks.
+    const collection = tree.findAll(node => node.props?.testID === 'machines.index.collection')[0]!;
+    expect(text(collection)).not.toContain('allMachines.columnWork');
   });
 
   it('says why an online machine it cannot read has no figures, where its figures would stand in the table', async () => {
