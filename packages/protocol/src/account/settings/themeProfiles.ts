@@ -121,10 +121,11 @@ export type ThemeProfileDocument = Readonly<{
     raw: Readonly<Record<string, import('../../json/strictJsonValue.js').JsonValue>>;
     compatibility: ThemePresentationCompatibility;
 }>;
-export type ThemeMiniatureData = Readonly<{
-    mode: ThemeProfileMode; canvas: string; raised: string; text: string; mutedText: string;
-    accent: string; border: string; radius: ThemeRadiusScaleName;
-}>;
+export const ThemeMiniatureDataSchema = z.strictObject({
+    mode: z.enum(['light', 'dark']), canvas: z.string(), raised: z.string(), text: z.string(), mutedText: z.string(),
+    accent: z.string(), border: z.string(), radius: ThemeRadiusScaleNameSchema,
+});
+export type ThemeMiniatureData = Readonly<z.infer<typeof ThemeMiniatureDataSchema>>;
 /** Stable selection identity; plugin contributions never masquerade as Artifact ids. */
 export const ThemeReferenceSchema = z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('artifact'), id: z.string().check(z.minLength(1)) }),

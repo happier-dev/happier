@@ -54,6 +54,7 @@ export * from './voiceConversationActionFamily.js';
 export * from './appShellActionFamily.js';
 export * from './notificationConfigurationActionFamily.js';
 export * from './appUpdateActionFamily.js';
+export * from './themeActionFamily.js';
 export * from './executor/artifactPublicLinkActions.js';
 export * from './decisionAuthority.js';
 export { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations, type WorkflowDefinitionArtifactHeaderRow } from './executor/workflowDefinitions.js';
