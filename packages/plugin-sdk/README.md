@@ -62,6 +62,17 @@ See the [typed clone example](../../apps/docs/content/docs/plugins/api/actions-t
 for publication and partial-outcome semantics. This is separate from changing
 the branch of an existing checkout.
 
+The same owner accepts `{ branch: 'feature/name' }` to select a remote branch
+before publication. Optional `authentication: 'connected_account'` requires the
+hosting provider's private, purpose-bound credential materialization. Credential
+bytes stay in the controller and are never part of the clone result or target
+process environment. Matching hosts provide `repositoryTransport` for binary
+smart HTTP over their workspace process boundary; target Git sees only a
+credential-free, operation-local URL rewrite. Target push and branch publication
+consume the same transport. Matching hosts
+also supply `BackendRuntimeServices.repositoryFileSystem` so destination effects
+use the same workspace source as Git; a bound host without it reports unavailable.
+
 ## Coalesced reads (0.3 development source)
 
 `createCoalescedScheduler` from `@happier-dev/plugin-sdk/async` owns one active

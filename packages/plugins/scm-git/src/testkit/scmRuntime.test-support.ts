@@ -13,6 +13,9 @@ import type { ResolvedScmHostingProviderRegistry } from '../hostingProviders/typ
 // This plugin-owned testkit composes the real CLI host; its imports must not
 // resolve through whichever app's private @/ namespace consumes the fixture.
 import { runScmCommand as runHostScmCommand } from '../../../../../apps/cli/src/scm/runtime';
+import { createScmRepositoryFileSystem } from '../../../../../apps/cli/src/scm/repositoryFileSystem';
+import { runAuthenticatedScmRepositoryCommand } from '../../../../../apps/cli/src/scm/repositoryTransport';
+import { currentWorkspaceSource } from '../../../../../apps/cli/src/workspaces/source/workspaceSource';
 
 export type GitScmCommandRunner = (input: ScmBackendCommandRunInput | BackendCommandStreamInput) => Promise<ScmBackendCommandRunResult>;
 
@@ -94,6 +97,12 @@ function runInteractiveGitCommand(input: ScmBackendCommandRunInput): Promise<Scm
 export function createRealGitScmBackendRuntimeServices(): ScmBackendRuntimeServices {
     return {
         readEnvironment: () => process.env,
+        get repositoryFileSystem() { return createScmRepositoryFileSystem(); },
+        get repositoryTransport() { return {
+            requiresConnectedAccount: currentWorkspaceSource().kind === 'target',
+            run: ({ repositories, command }: Parameters<NonNullable<ScmBackendRuntimeServices['repositoryTransport']>['run']>[0]) =>
+                runAuthenticatedScmRepositoryCommand({ repositories, command: { ...command, bin: command.command, args: [...command.args] } }),
+        }; },
         async renamePathNoReplace({ sourcePath, targetPath, expectedIdentity, signal }) {
             const { renameStoragePathNoReplace } = await import('../../../../../apps/cli/src/storage/trash/renameStoragePath');
             await renameStoragePathNoReplace(sourcePath, targetPath, signal, expectedIdentity);
@@ -200,6 +209,7 @@ export function runWithRealGitScmRuntime<T>(
 export function runWithGitScmCommandRunner<T>(runner: GitScmCommandRunner, callback: () => T): T {
     return runWithScmBackendRuntimeServices({
         readEnvironment: () => process.env,
+        get repositoryFileSystem() { return createScmRepositoryFileSystem(); },
         runCommandStreaming: runner,
         async runCommand(input) {
             if (input.command !== 'git') {

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 /** Workspace command overlays, never host credentials or native launch configuration. */
-const TARGET_COMMAND_ENV = /^(?:GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL|DATE)|GIT_(?:TERMINAL_PROMPT|OPTIONAL_LOCKS|NO_REPLACE_OBJECTS|NO_LAZY_FETCH|LITERAL_PATHSPECS|CONFIG_NOSYSTEM|CONFIG_GLOBAL|CONFIG_SYSTEM)|LANG|LANGUAGE|LC_[A-Z]+|TERM|NO_COLOR|COLUMNS)$/u;
+const TARGET_COMMAND_ENV = /^(?:GIT_(?:AUTHOR|COMMITTER)_(?:NAME|EMAIL|DATE)|GIT_(?:TERMINAL_PROMPT|OPTIONAL_LOCKS|NO_REPLACE_OBJECTS|NO_LAZY_FETCH|LITERAL_PATHSPECS|CONFIG_NOSYSTEM|CONFIG_GLOBAL|CONFIG_SYSTEM|CONFIG_COUNT|CONFIG_(?:KEY|VALUE)_\d+)|LANG|LANGUAGE|LC_[A-Z]+|TERM|NO_COLOR|COLUMNS)$/u;
 
 export function holderWorkspaceRelativePath(rootPath: string, target: string): string {
   const root = path.posix.resolve(rootPath);

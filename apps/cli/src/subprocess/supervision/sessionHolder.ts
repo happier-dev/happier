@@ -564,6 +564,7 @@ export class SessionHolderChild extends ChildProcess {
     private buffered: Buffer = Buffer.alloc(0);
     private exitSeen = false;
     private closed = false;
+    private finiteWorkspaceChannel = false;
     // Plain push streams: a flowing consumer receives each chunk synchronously
     // inside `push`, and anything not yet consumed is visible as readableLength,
     // which is what acknowledgement relies on.
@@ -764,6 +765,13 @@ export class SessionHolderChild extends ChildProcess {
             for (const [id, resolve] of this.pendingReplies) resolve({ id, ok: false, error: 'holder_disconnected' });
             this.pendingReplies.clear();
             if (this.closed || this.exitSeen) return;
+            if (this.finiteWorkspaceChannel) {
+                this.closed = true;
+                this.holderConnectionFailed = true;
+                for (const stream of this.streams.values()) stream.observeExit(null, null);
+                this.emit('holderDisconnected');
+                return;
+            }
             // A dropped channel is not an exit: only the holder's exit frame says
             // the Agent ended (a newer runner may have attached, or an exec
             // channel broke). The one exception is a local fact: the holder and
@@ -786,6 +794,12 @@ export class SessionHolderChild extends ChildProcess {
             }
             this.emit('holderDisconnected');
         });
+    }
+
+    /** A finite workspace-only process has no socket to reconnect to. */
+    attachWorkspaceChannel(channel: Duplex, onHello: (hello: SessionHolderHello) => void): void {
+        this.finiteWorkspaceChannel = true;
+        this.attachSocket(channel, onHello);
     }
 
     /** The Agent never started: queued input fails instead of waiting forever. */
@@ -1140,6 +1154,23 @@ export function attachSessionHolderWorkspaceClient(socketPath: string, target?: 
             client.holderPid = hello.holderPid;
             resolve(client);
         }, reject);
+    });
+}
+
+/** Existing holder frames over one admitted provider pipe, before an Agent exists. */
+export function attachSessionHolderWorkspaceChannel(channel: Duplex): Promise<SessionHolderChild> {
+    const client = new SessionHolderChild('workspace-stdio');
+    return new Promise((resolve, reject) => {
+        let attached = false;
+        const failed = () => { if (!attached) reject(new PluginError({ code: 'agent_cli_target_unavailable',
+            message: 'The Session target workspace channel is unavailable', retryable: false })); };
+        channel.once('error', failed);
+        channel.once('close', failed);
+        client.attachWorkspaceChannel(channel, hello => {
+            attached = true;
+            client.holderPid = hello.holderPid;
+            resolve(client);
+        });
     });
 }
 

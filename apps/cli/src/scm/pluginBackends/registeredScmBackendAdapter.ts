@@ -1,4 +1,7 @@
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { createScmRepositoryFileSystem } from '@/scm/repositoryFileSystem';
+import { runAuthenticatedScmRepositoryCommand } from '@/scm/repositoryTransport';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type {
@@ -125,6 +128,13 @@ function createScmBackendRuntimeServices(
         }));
     };
     return { readEnvironment: sessionProcessEnvironment, runCommand, runCommandStreaming: runCommand,
+        get repositoryTransport() { return {
+            requiresConnectedAccount: currentWorkspaceSource().kind === 'target',
+            run: ({ repositories, command }: Parameters<NonNullable<ScmBackendRuntimeServices['repositoryTransport']>['run']>[0]) =>
+                runAuthenticatedScmRepositoryCommand({ repositories, command: { ...command, bin: command.command, args: [...command.args] } },
+                    rewritten => runCommand({ ...command, args: rewritten.args, env: rewritten.env })),
+        }; },
+        get repositoryFileSystem() { return createScmRepositoryFileSystem(); },
         async renamePathNoReplace({ sourcePath, targetPath, expectedIdentity, signal }) {
             const { renameStoragePathNoReplace } = await import('@/storage/trash/renameStoragePath');
             await renameStoragePathNoReplace(sourcePath, targetPath, signal, expectedIdentity);

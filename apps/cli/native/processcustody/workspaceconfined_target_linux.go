@@ -238,6 +238,22 @@ func runWorkspaceTargetWrite(request workspaceTargetWriteRequest, content []byte
 		return mkdirWorkspaceTarget(request)
 	case "rename":
 		return renameWorkspaceTarget(request)
+	case "rmdir":
+		parent, name, domainErr := splitWorkspaceTargetParent(request.rootPath, request.relativePath)
+		if domainErr != nil {
+			return workspaceTargetDomainResult(domainErr)
+		}
+		defer parent.close()
+		if err := unix.Unlinkat(parent.final().fd, name, unix.AT_REMOVEDIR); err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				return workspaceTargetStatus("missing")
+			}
+			if errors.Is(err, unix.ENOTEMPTY) || errors.Is(err, unix.EEXIST) {
+				return workspaceTargetError("not_empty", "folder is not empty")
+			}
+			return workspaceTargetError("io_failed", "folder could not be removed")
+		}
+		return workspaceTargetStatus("done")
 	}
 	return workspaceTargetError("workspace_root_unsafe", "unknown op")
 }

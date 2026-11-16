@@ -107,6 +107,7 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
     const clone = await runScmRepositoryCloneRoute({
       request: ScmRepositoryCloneInputSchema.parse({ ...input.selector, destinationParentPath: parent, destinationDirectoryName: choice.destinationDirectoryName,
         ...(initialCheckout ? { initialCheckout } : {}),
+        ...(choice.authentication ? { authentication: choice.authentication } : {}),
         confirmed: true, authorizationToken: 'clone-repository' }),
       workingDirectory: parent, registry: input.registry, signal: input.signal,
     }).catch(error => { input.onEffectsIssued?.(); throw error; });

@@ -9,6 +9,7 @@ import { runWithRealGitScmRuntime, runWithGitScmCommandRunner, createRealGitScmB
 import type { ScmBackendContext } from '../types.js';
 import { gitRemoteFetch, gitRemotePull, gitRemotePush } from './remoteOperations.js';
 import { gitRemotePublish } from './publishOperations.js';
+import { runWithBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 const execFile = promisify(execFileCallback);
 async function git(cwd: string, ...args: string[]) {
@@ -53,6 +54,21 @@ function runWithPolicyCommandRunner<T>(runner: GitScmCommandRunner, callback: ()
 }
 
 describe('Git remote policy at the real repository boundary', { timeout: 30_000 }, () => {
+    it.each(['push', 'publish'] as const)('requires the connected account before target %s and leaves the remote unchanged', async kind => {
+        await withRepository(async ({ cwd, writer, context }) => {
+            await writeFile(join(cwd, 'account-only'), 'private target commit');
+            await git(cwd, 'add', '.');
+            await git(cwd, 'commit', '-m', 'target change');
+            const before = await git(writer, 'ls-remote', 'origin', 'refs/heads/main');
+            const runtime = createRealGitScmBackendRuntimeServices();
+            const response = await runWithRealGitScmRuntime(() => runWithBackendRuntimeServices({ ...runtime,
+                repositoryTransport: { requiresConnectedAccount: true, run: async () => { throw new Error('Unadmitted transport'); } },
+            }, () => kind === 'push' ? gitRemotePush({ context, request: { remote: 'origin', branch: 'main' } })
+                : gitRemotePublish({ context, request: { remote: 'origin' } })));
+            expect(response).toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED' });
+            expect(await git(writer, 'ls-remote', 'origin', 'refs/heads/main')).toBe(before);
+        });
+    });
     it('publishes through the same outward effect outcome and retains unknown terminal provenance', async () => {
         await withRepository(async ({ cwd, writer, context }) => {
             await git(cwd, 'checkout', '-b', 'first-publish');

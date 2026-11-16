@@ -4,7 +4,9 @@ import type {
   HostingProviderRepositoryDescribePublishTargetsInput as ScmHostingProviderRepositoryDescribePublishTargetsInput,
   HostingProviderRepositoryDescribePublishTargetsResult as ScmHostingProviderRepositoryDescribePublishTargetsResult,
   HostingProviderRepositoryGetInput as ScmHostingProviderRepositoryGetInput,
+  HostingProviderRepositoryCloneCapability,
 } from '@happier-dev/plugin-sdk/scm/hosting';
+import { encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import type {
   ScmHostingRepositoryAuthSummary,
   ScmHostingRepositorySummary,
@@ -31,6 +33,7 @@ import {
 } from './githubRepositoryRestAdapter.js';
 
 export type GithubRepositoryProvisioningAdapter = typeof githubHostingProviderAdapter & Readonly<{
+  resolveCloneAuthentication: NonNullable<HostingProviderRepositoryCloneCapability['resolveCloneAuthentication']>;
   describePublishTargets(
     input: ScmHostingProviderRepositoryDescribePublishTargetsInput
   ): Promise<ScmHostingProviderRepositoryDescribePublishTargetsResult>;
@@ -190,6 +193,16 @@ export function createGithubRepositoryProvisioningAdapter(params?: Readonly<{
 
   return Object.freeze({
     ...githubHostingProviderAdapter,
+    async resolveCloneAuthentication({ provider, runtimeServices }: Parameters<NonNullable<HostingProviderRepositoryCloneCapability['resolveCloneAuthentication']>>[0]) {
+      requireBoundAccountHost(provider);
+      const material = await runtimeServices?.resolveScmHostingTokenMaterialization?.({
+        kind: 'scm_hosting_token', boundAccountOnly: true,
+        providerId: provider.id, host: new URL(provider.baseUrl).host, provider,
+      });
+      if (material?.kind !== 'available') return { kind: 'missing' as const };
+      return { kind: 'available' as const,
+        authorizationHeader: `Basic ${encodeBase64(new TextEncoder().encode(`x-access-token:${material.token}`))}` };
+    },
     async describePublishTargets(input: ScmHostingProviderRepositoryDescribePublishTargetsInput) {
       if (!shouldTryRest(input.provider) || !restAdapter.describePublishTargets) {
         return createNoAuthTargetDiscoveryResult(input.provider);

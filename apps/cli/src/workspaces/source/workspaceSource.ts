@@ -51,6 +51,8 @@ export type WorkspaceChildProcess = Pick<ChildProcessWithoutNullStreams, 'stdin'
  */
 export interface WorkspaceSource {
   readonly kind: 'local' | 'target';
+  /** The host-admitted native helper location in this source's OS. */
+  readonly nativeHelperPath?: string;
   /** Identity for keys that dedupe per workspace (watches, caches): never shared across sources. */
   readonly id: string;
   stat(path: string): Promise<WorkspaceEntryStats>;
@@ -62,7 +64,9 @@ export interface WorkspaceSource {
   /** `noFollow` refuses a final symbolic link (O_NOFOLLOW where the OS has it). */
   open(path: string, options?: Readonly<{ noFollow?: boolean }>): Promise<WorkspaceReadHandle>;
   writeFile(path: string, bytes: Uint8Array): Promise<void>;
-  mkdir(path: string, options?: Readonly<{ recursive?: boolean }>): Promise<void>;
+  mkdir(path: string, options?: Readonly<{ recursive?: boolean; mode?: number }>): Promise<void>;
+  /** Empty directory only: concurrent contents are preserved. */
+  rmdir(path: string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
   rm(path: string, options?: Readonly<{ recursive?: boolean; force?: boolean }>): Promise<void>;
   copyFile(from: string, to: string): Promise<void>;

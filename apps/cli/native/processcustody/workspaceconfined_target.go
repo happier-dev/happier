@@ -25,6 +25,7 @@ import (
 //                                                  | {status:"exists"} | {status:"changed", sha256}
 //   op mkdir  {recursive} -> {status:"done"}
 //   op rename {toRelativePath} -> {status:"done"}
+//   op rmdir -> {status:"done"} | error not_empty (never removes contents)
 // Errors: {status:"error", code, message} with code workspace_root_unsafe,
 // workspace_file_unsupported, not_directory, not_link, symlink_loop, io_failed.
 
@@ -152,6 +153,7 @@ func decodeWorkspaceTargetWriteRequest(encoded []byte) (workspaceTargetWriteRequ
 		if request.toRelativePath, err = decodeRequiredString(fields, "toRelativePath"); err != nil {
 			return request, err
 		}
+	case "rmdir":
 	default:
 		return request, fmt.Errorf("unknown op")
 	}

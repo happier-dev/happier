@@ -1,7 +1,7 @@
 // Same specifiers as the leaves this source replaced, so OS-boundary test doubles keep applying.
 import { spawn } from 'child_process';
 import { accessSync, closeSync, constants as fsConstants, openSync, writeSync } from 'node:fs';
-import { copyFile, symlink, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, rm, stat, writeFile, type FileHandle } from 'fs/promises';
+import { copyFile, symlink, lstat, mkdir, open, readdir, readFile, readlink, realpath, rename, rm, rmdir, stat, writeFile, type FileHandle } from 'fs/promises';
 import path, { delimiter as PATH_DELIMITER } from 'node:path';
 
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
@@ -77,7 +77,8 @@ export const localWorkspaceSource: WorkspaceSource = Object.freeze<WorkspaceSour
   },
   open: (target: string, options?: Readonly<{ noFollow?: boolean }>) => openWorkspaceFile(target, options),
   writeFile: (target: string, bytes: Uint8Array) => writeFile(target, bytes),
-  mkdir: async (target: string, options?: Readonly<{ recursive?: boolean }>) => { await mkdir(target, options); },
+  mkdir: async (target: string, options?: Readonly<{ recursive?: boolean; mode?: number }>) => { await mkdir(target, options); },
+  rmdir: target => rmdir(target),
   rename: (from: string, to: string) => rename(from, to),
   rm: (target: string, options?: Readonly<{ recursive?: boolean; force?: boolean }>) => rm(target, options),
   copyFile: (from: string, to: string) => copyFile(from, to),

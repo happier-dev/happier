@@ -93,6 +93,7 @@ usage:
   happier-process-custody workspace-confined-recover
   happier-process-custody workspace-confined-meta
   happier-process-custody workspace-confined-write
+  happier-process-custody git-http-transport
   happier-process-custody disk-measure
   happier-process-custody storage-rename
   happier-process-custody disk-scan`))
@@ -151,6 +152,8 @@ func main() {
 		err = workspaceConfinedMetaCommand(rest, os.Stdin, os.Stdout)
 	case "workspace-confined-write":
 		err = workspaceConfinedWriteCommand(rest, os.Stdin, os.Stdout)
+	case "git-http-transport":
+		err = gitHTTPTransportCommand(rest, os.Stdin, os.Stdout)
 	case "disk-measure":
 		err = diskMeasureCommand(rest, os.Stdin, os.Stdout)
 	case "storage-rename":

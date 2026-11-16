@@ -766,6 +766,28 @@ export type BackendCommandRunResult = Readonly<{
 }>;
 
 export type BackendRuntimeServices = Readonly<{
+    /** Host-private authentication; only credential-free HTTP reaches workspace Git. */
+    repositoryTransport?: Readonly<{
+        readonly requiresConnectedAccount: boolean;
+        run(input: Readonly<{ repositories: readonly Readonly<{ url: string; authorizationHeader: string }>[];
+            command: BackendCommandRunInput }>): Promise<BackendCommandRunResult>;
+    }>;
+    /** Optional host operation: every path addresses the admitted workspace's filesystem. */
+    repositoryFileSystem?: Readonly<{
+        lstat(path: string): Promise<Readonly<{ dev: number; ino: number; birthtimeMs?: number;
+            isDirectory(): boolean; isSymbolicLink(): boolean }>>;
+        realpath(path: string): Promise<string>;
+        mkdir(path: string, options?: Readonly<{ recursive?: boolean; mode?: number }>): Promise<unknown>;
+        mkdtemp(prefix: string): Promise<string>;
+        rm(path: string, options?: Readonly<{ recursive?: boolean; force?: boolean }>): Promise<void>;
+        /** Local hosts may retain a directory inode across publication; targets use their metadata identity. */
+        openDirectory?(path: string): Promise<Readonly<{ close(): Promise<void> }>>;
+        readdir(path: string): Promise<string[]>;
+        rename(from: string, to: string): Promise<void>;
+        rmdir(path: string): Promise<void>;
+        unlink(path: string): Promise<void>;
+        writeExclusiveFile(path: string, contents: string): Promise<void>;
+    }>;
     /** Environment inherited by this admitted SCM operation; absence makes environment-dependent operations unavailable. */
     readEnvironment?(): Readonly<Record<string, string | undefined>>;
     runCommand(input: BackendCommandRunInput): Promise<BackendCommandRunResult>;

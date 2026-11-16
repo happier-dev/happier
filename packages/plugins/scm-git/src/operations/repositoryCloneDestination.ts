@@ -1,6 +1,5 @@
-import { lstat, mkdir, mkdtemp, open, readdir, rename, rmdir, unlink, writeFile } from 'node:fs/promises';
-import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 
 import {
   SCM_OPERATION_ERROR_CODES,
@@ -24,7 +23,7 @@ export type CloneDestinationReservation =
         finalDestinationPath: string;
         cloneDestinationPath: string;
         privateTempPath: string;
-        privateTempHandle: FileHandle;
+        privateTempHandle: Readonly<{ close(): Promise<void> }>;
         privateTempIdentity: FileIdentity;
     }>
     | Readonly<{ ok: false; response: ScmRepositoryCloneOutput }>;
@@ -34,10 +33,18 @@ export type ClonePublishResult =
     | Readonly<{ ok: false; response: ScmRepositoryCloneOutput }>;
 
 export type FileIdentity = Readonly<{
-    birthtimeMs: number;
+    birthtimeMs?: number;
     dev: number;
     ino: number;
 }>;
+
+const lstat = (path: string) => readRepositoryFileSystem().lstat(path);
+const mkdir = (path: string, options?: Readonly<{ recursive?: boolean; mode?: number }>) => readRepositoryFileSystem().mkdir(path, options);
+const mkdtemp = (prefix: string) => readRepositoryFileSystem().mkdtemp(prefix);
+const readdir = (path: string) => readRepositoryFileSystem().readdir(path);
+const rename = (from: string, to: string) => readRepositoryFileSystem().rename(from, to);
+const rmdir = (path: string) => readRepositoryFileSystem().rmdir(path);
+const unlink = (path: string) => readRepositoryFileSystem().unlink(path);
 
 type FinalReservation = Readonly<{
     path: string;
@@ -217,7 +224,8 @@ export async function reserveCloneDestination(
             `${PRIVATE_CLONE_DIRECTORY_PREFIX}${basename(destination.destinationPath)}-`,
         ));
         const privateTempStats = await lstat(privateTempPath);
-        const privateTempHandle = await open(privateTempPath, 'r');
+        const privateTempHandle = await readRepositoryFileSystem().openDirectory?.(privateTempPath)
+            ?? { close: async () => undefined };
         return {
             ok: true,
             parentPath: destination.parentPath,
@@ -391,7 +399,7 @@ export async function publishPrivateCloneDestination(
             dev: finalDestinationStats.dev,
             ino: finalDestinationStats.ino,
         };
-        await writeFile(reservationMarkerPath, '', { flag: 'wx', mode: 0o600 });
+        await readRepositoryFileSystem().writeExclusiveFile(reservationMarkerPath, '');
         const markerStats = await lstat(reservationMarkerPath);
         finalReservation = {
             path: reservation.finalDestinationPath,

@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema } from './openProjectV1.js';
+import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema, WorkspaceActivationRequestV1Schema } from './openProjectV1.js';
 
 describe('OpenProject V1 wire admission', () => {
+  it('admits connected clone authentication without accepting credential material', () => {
+    const materialization = { kind: 'clone', destinationParentPath: '/workspaces', destinationDirectoryName: 'project',
+      initialCheckout: { branch: 'feature/files' }, authentication: 'connected_account' };
+    expect(WorkspaceActivationRequestV1Schema.parse(materialization)).toEqual(materialization);
+    expect(WorkspaceActivationRequestV1Schema.safeParse({ ...materialization, token: 'private' }).success).toBe(false);
+  });
   it('carries only the own destination review fact without granting checkout authority', () => {
     const destinationReview = { accountId: 'member', serverId: 'canonical-home', machineId: 'machine',
       destinationParentPath: '/srv/happier/members/own', destinationDirectoryName: 'existing-workspace-id' };

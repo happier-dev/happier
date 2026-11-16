@@ -138,6 +138,7 @@ export function makeRequest(parent: string, remotePath: string, destinationDirec
 export function makeProviderRegistry(
     description: ScmRepositoryCloneTargetDescription,
     repositoryClone: HostingProviderRepositoryCloneCapability | null = { describeCloneTargets: async () => description },
+    fixtureCloneUrl?: string,
 ) {
     const declaration = GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders?.[0];
     if (!declaration) throw new Error('GitHub did not declare its hosting provider');
@@ -147,7 +148,12 @@ export function makeProviderRegistry(
             urlSafety: { allowedSchemes: description.repository.provider.urlSafety?.allowedSchemes ?? ['https:'],
                 allowedBaseUrls: ['https://github.com'], allowedOrigins: ['https://github.com'] } }],
         runtimeRegistrations: [{ pluginId: 'happier.scm.forge.github', occurrenceId: 'clone-test',
-            registration: { id: 'github', adapter: { routing: githubHostingProviderAdapter,
+            registration: { id: 'github', adapter: { routing: fixtureCloneUrl ? {
+                ...githubHostingProviderAdapter,
+                // The fixture forge is the external HTTP boundary for this canonical repository.
+                detectRemote: input => githubHostingProviderAdapter.detectRemote({ ...input,
+                    remoteUrl: input.remoteUrl === fixtureCloneUrl ? 'https://github.com/happier-dev/happier.git' : input.remoteUrl }),
+            } : githubHostingProviderAdapter,
                 ...(repositoryClone ? { repositoryClone } : {}) } } }],
     });
 }

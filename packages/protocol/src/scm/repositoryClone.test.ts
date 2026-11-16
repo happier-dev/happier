@@ -45,6 +45,10 @@ describe('SCM repository clone protocol contracts', () => {
       destinationDirectoryName: 'checkout', confirmed: true, authorizationToken: 'clone-repository' });
     expect(parsed.repository.visibility).toBeUndefined();
     expect(parsed.provider.urlSafety).toEqual({ allowedSchemes: ['https:'] });
+    expect(scm.ScmRepositoryCloneInputSchema.safeParse({ ...parsed,
+      initialCheckout: { branch: 'feature/project-files' } }).success).toBe(true);
+    expect(scm.ScmRepositoryCloneInputSchema.safeParse({ ...parsed,
+      initialCheckout: { branch: '--upload-pack=unsafe' } }).success).toBe(false);
   });
   it('requires an explicit destination parent, safe child name, protocol preference, and user authorization', () => {
     const schema = readProtocolSchema<protocol.ScmRepositoryCloneInput>(

@@ -12,6 +12,8 @@ import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/register
 import { runScmRepositoryCloneRoute } from '@/scm/rpc/repositoryProvisioningDispatch';
 import { createGitScmBackendRuntimeRegistration } from '../backend.js';
 import { createScmHostingProviderRuntimeServicesForTest } from '../testkit/scmRuntime.test-support.js';
+import { createRealGitScmBackendRuntimeServices } from '../testkit/scmRuntime.test-support.js';
+import { runWithBackendRuntimeServices, type BackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
 import {
     cloneWithRealGitRuntime,
@@ -27,6 +29,64 @@ import {
 } from './repositoryCloneOperations.test-support.js';
 
 describe('git repository clone operation', () => {
+    it('keeps connected clone credentials in the host transport and out of workspace processes and results', async () => {
+        const parent = createWorkspace();
+        const secret = 'private-clone-token';
+        const authorizationHeader = `Basic ${Buffer.from(`x-access-token:${secret}`).toString('base64')}`;
+        const description = makeCloneTargetDescription('/tmp/authenticated-clone.git');
+        let transported: Parameters<NonNullable<BackendRuntimeServices['repositoryTransport']>['run']>[0] | undefined;
+        const clone = getRepositoryCloneOperation({
+            registry: makeProviderRegistry(description, {
+                describeCloneTargets: async () => description,
+                resolveCloneAuthentication: async () => ({ kind: 'available', authorizationHeader }),
+            }),
+            runtimeServices: createScmHostingProviderRuntimeServicesForTest(),
+        });
+        const response = await runWithBackendRuntimeServices({ ...createRealGitScmBackendRuntimeServices(),
+            // Genuine network/process boundary: this private host callback never runs in the target.
+            repositoryTransport: { requiresConnectedAccount: true, run: async input => {
+                transported = input;
+                return { success: false, exitCode: 128, stdout: secret,
+                    stderr: `fatal: Authentication failed ${authorizationHeader}` };
+            } },
+        }, () => clone({ context: makeContext(parent),
+            request: { ...makeRequest(parent, '/tmp/authenticated-clone.git'), authentication: 'connected_account' } }));
+        expect(transported?.repositories).toEqual([{ url: 'file:///tmp/authenticated-clone.git', authorizationHeader }]);
+        expect(JSON.stringify(transported?.command)).not.toContain(authorizationHeader);
+        expect(response).toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED' });
+        expect(JSON.stringify(response)).not.toContain(secret);
+        expect(JSON.stringify(response)).not.toContain(authorizationHeader);
+    });
+
+    it('refuses a connected-account clone before Git when the provider cannot supply credentials', async () => {
+        const parent = createWorkspace();
+        const remote = createBareRemoteRepository();
+        const clone = getRepositoryCloneOperation({ registry: makeProviderRegistry(makeCloneTargetDescription(remote)) });
+        const response = await cloneWithRealGitRuntime(clone, { context: makeContext(parent),
+            request: { ...makeRequest(parent, remote), authentication: 'connected_account' } });
+        expect(response).toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED',
+            remediation: { kind: 'auth_required' } });
+        expect(existsSync(join(parent, 'happier'))).toBe(false);
+    });
+
+    it.each(['feature/project-files', 'refs/heads/feature/project-files'])('clones the selected remote branch %s with its upstream instead of the remote default', async branch => {
+        const parent = createWorkspace();
+        const remote = createBareRemoteRepository();
+        const source = join(dirname(remote), 'source');
+        runGit(source, ['switch', '-c', 'feature/project-files']);
+        writeFileSync(join(source, 'sentinel.txt'), 'selected branch\n');
+        runGit(source, ['add', 'sentinel.txt']);
+        runGit(source, ['commit', '-m', 'selected branch']);
+        runGit(source, ['push', remote, 'feature/project-files']);
+        const clone = getRepositoryCloneOperation({ registry: makeProviderRegistry(makeCloneTargetDescription(remote)) });
+        const response = await cloneWithRealGitRuntime(clone, { context: makeContext(parent),
+            request: { ...makeRequest(parent, remote), initialCheckout: { branch } } });
+        expect(response).toMatchObject({ success: true, snapshot: { branch: { head: 'feature/project-files', detached: false } } });
+        if (!response.success) throw new Error(response.error);
+        expect(runGit(response.destinationPath, ['rev-parse', 'HEAD'])).toBe(runGit(source, ['rev-parse', 'HEAD']));
+        expect(runGit(response.destinationPath, ['rev-parse', '--abbrev-ref', '@{upstream}'])).toBe('origin/feature/project-files');
+    });
+
     it.each([
         { authenticated: false, phase: 'scm.repository_auth.target_state' },
         { authenticated: true, phase: 'scm.repository_auth.git' },

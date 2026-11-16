@@ -44,6 +44,28 @@ func write(t *testing.T, root string, fields map[string]any, content string) wor
 	}, string(request)+"\n"+content)
 }
 
+func TestWorkspaceTargetRmdirPreservesNonemptyDirectories(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "reserved")
+	must(t, os.Mkdir(directory, 0o700))
+	must(t, os.WriteFile(filepath.Join(directory, "retained"), []byte("work"), 0o600))
+	if result := write(t, root, map[string]any{"op": "rmdir", "relativePath": "reserved"}, ""); result.Code != "not_empty" {
+		t.Fatalf("nonempty directory must remain: %+v", result)
+	}
+	content, err := os.ReadFile(filepath.Join(directory, "retained"))
+	must(t, err)
+	if string(content) != "work" {
+		t.Fatal("retained work changed")
+	}
+	must(t, os.Remove(filepath.Join(directory, "retained")))
+	if result := write(t, root, map[string]any{"op": "rmdir", "relativePath": "reserved"}, ""); result.Status != "done" {
+		t.Fatalf("empty directory removal: %+v", result)
+	}
+	if _, err := os.Lstat(directory); !os.IsNotExist(err) {
+		t.Fatalf("empty directory remains: %v", err)
+	}
+}
+
 func TestWorkspaceTargetMetaListsStatsAndResolvesInsideTheRootOnly(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "ws")

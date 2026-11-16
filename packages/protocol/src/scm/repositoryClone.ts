@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import { ScmCommitOidSchema } from './commitPublication.js';
+import { ScmBranchSourceRefSchema } from './remoteNormalization.js';
 
 import {
   ScmWorkingSnapshotSchema,
@@ -122,9 +123,11 @@ export const ScmRepositoryCloneInputSchema = lazyZodSchema(() => z.strictObject(
     destinationParentPath: z.string().check(z.trim(), z.minLength(1), z.refine((value) => !hasUnsafePathInput(value), 'Destination parent path must not use home expansion or traversal segments')),
     destinationDirectoryName: z.string().check(z.trim(), z.minLength(1), z.refine((value) => value !== '.' && value !== '..' && !/[\/\\]/.test(value) && !hasUnsafePathInput(value), 'Destination directory name must be a single safe path segment')),
     protocol: SourceControlCloneProtocolSchema,
+    authentication: z.optional(z.literal('connected_account')),
     initialCheckout: z.optional(z.union([
       z.strictObject({ branch: z.nullable(z.literal('main')), commit: ScmCommitOidSchema }),
       z.strictObject({ branch: z.literal('main'), revision: ScmRepositoryCloneRevisionSchema }),
+      z.strictObject({ branch: ScmBranchSourceRefSchema }),
     ])),
     confirmed: z.literal(true),
     authorizationToken: ScmRepositoryCloneAuthorizationTokenSchema,

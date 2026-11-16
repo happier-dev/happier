@@ -368,6 +368,12 @@ export type HostingProviderRepositoryPublishingCapability = Readonly<{
 }>;
 
 export type HostingProviderRepositoryCloneCapability = Readonly<{
+    /** Private Git HTTP material shared by clone and target push, never an Account Action result or durable input. */
+    resolveCloneAuthentication?: (input: Readonly<{
+        provider: ScmHostingProviderRef;
+        runtimeServices?: HostingProviderRuntimeServices;
+    }>) => Promise<Readonly<{ kind: 'available'; authorizationHeader: string }>
+        | Readonly<{ kind: 'missing' }>>;
     describeCloneTargets: (
         input: HostingProviderRepositoryDescribeCloneTargetsInput
     ) => Promise<ScmRepositoryCloneTargetDescription>;

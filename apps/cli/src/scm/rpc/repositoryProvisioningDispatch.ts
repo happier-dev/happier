@@ -1,4 +1,9 @@
 import { isAbsolute, resolve } from 'node:path';
+import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { ScmRepositoryCloneInputSchema } from '@happier-dev/protocol';
+import type { WorkspaceManifest } from '@happier-dev/protocol';
+import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type { ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse, ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse, ScmRepositoryCloneInput, ScmRepositoryCloneOutput, ScmRepositoryInitRequest, ScmRepositoryInitResponse, ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse } from '@happier-dev/protocol';
@@ -12,6 +17,57 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import { normalizeScmOperationOutcome } from '@happier-dev/protocol/scm/operationOutcome';
 import { observeCloneInitialCheckout } from './repositoryCloneInitialCheckout';
+import type { ManagedSessionTarget } from '@/machines/managed/acquire';
+import { attachSessionHolderWorkspaceChannel } from '@/subprocess/supervision/sessionHolder';
+import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
+import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { resolveWorkspaceReplicationSourceInputsWithScmWorkspace } from '@/scm/workspace/workspaceTransferResolution';
+import { buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries } from '@/scm/workspace/workspaceExportPackaging/artifacts/fromTransferEntries';
+
+/** Finite pre-Session clone through the existing SCM owner on the admitted target. */
+export async function materializeManagedProjectClone(input: Readonly<{
+    target: Pick<ManagedSessionTarget, 'id' | 'holderPath' | 'helperPath' | 'openChannel' | 'exec'>;
+    selection: Extract<SessionProjectFilesV1, { kind: 'git_clone' }>;
+    destinationParentPath: string;
+    destinationDirectoryName: string;
+    registry?: ScmBackendRegistry;
+    signal: AbortSignal;
+}>): Promise<Readonly<{ targetRoot: string; baseline?: WorkspaceManifest }>> {
+    const request = ScmRepositoryCloneInputSchema.parse({
+        ...input.selection.source,
+        protocol: 'https',
+        initialCheckout: { branch: input.selection.branch },
+        authentication: 'connected_account',
+        destinationParentPath: input.destinationParentPath,
+        destinationDirectoryName: input.destinationDirectoryName,
+        confirmed: true,
+        authorizationToken: 'clone-repository',
+    });
+    input.signal.throwIfAborted();
+    const prepared = await input.target.exec(`umask 077; mkdir -p ${safeBashSingleQuote(request.destinationParentPath)}`, input.signal);
+    if (prepared.status !== 0) throw new PluginError({ code: 'workspace_source_operation_unavailable',
+        message: 'The target clone parent could not be prepared', retryable: false });
+    const channel = input.target.openChannel([input.target.holderPath, 'workspace', '--root', request.destinationParentPath], input.signal);
+    const holder = await attachSessionHolderWorkspaceChannel(channel).catch(error => { channel.destroy(); throw error; });
+    try {
+        const source = createHolderWorkspaceSource({ id: input.target.id, rootPath: request.destinationParentPath,
+            helperPath: input.target.helperPath, holder });
+        const result = await runWithWorkspaceSource(source, () => runScmRepositoryCloneRoute({ request,
+            workingDirectory: request.destinationParentPath, registry: input.registry, signal: input.signal }));
+        if (!result.success) throw new PluginError({ code: result.errorCode ?? SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+            message: result.error ?? 'The target repository could not be cloned', retryable: false });
+        const baseline = await runWithWorkspaceSource(source, async () => {
+            const transfer = await resolveWorkspaceReplicationSourceInputsWithScmWorkspace({ sourcePath: result.destinationPath,
+                workspaceTransfer: { includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [] }, registry: input.registry });
+            const built = await buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntries({ entries: transfer.entries });
+            try { return built.manifest; } finally { await built.blobProvider.dispose?.(); }
+        });
+        return { targetRoot: result.destinationPath, baseline };
+    } finally {
+        holder.detach();
+        channel.destroy();
+    }
+}
 
 function hasUnsafeCloneParentPath(value: string): boolean {
     return value.includes('\0') || value.startsWith('~') || value.split(/[\\/]+/).includes('..');

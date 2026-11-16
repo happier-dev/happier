@@ -3,6 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { ManagedMachinePresetV1Schema } from '../../machines/managed/managedMachinePresetV1.js';
 import { MachineIsolationConfiguredSandboxV1Schema, MachineIsolationSandboxWorkChoiceV1Schema } from '../../machines/machineIsolationV1.js';
 import { SessionExecutionTargetV1Schema } from './sessionExecutionTargetV1.js';
+export { SessionProjectFilesV1Schema, type SessionProjectFilesV1 } from '../../machines/machineIsolationV1.js';
 
 export const SessionMachinePlacementV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('machine'), target: SessionExecutionTargetV1Schema,

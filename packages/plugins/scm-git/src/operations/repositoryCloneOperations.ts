@@ -36,6 +36,9 @@ import {
 } from './repositoryCloneDestination.js';
 import { readClonedSnapshot } from './repositoryCloneSnapshotReadback.js';
 import { checkoutInitialClone } from './repositoryCloneCheckout.js';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
+import { readCurrentBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
+import { GIT_INSTALLABLE_DEP_ID } from '../installables/gitInstallable.js';
 
 const GIT_REPOSITORY_CLONE_TIMEOUT_MS = 120_000;
 
@@ -65,7 +68,8 @@ type CloneTargetSelectionResult =
     | Readonly<{
         ok: true;
         repository: ScmHostingRepositorySummary;
-        initialCheckout?: { branch: 'main' | null; commit: string };
+        initialCheckout?: { branch: string | null; commit?: string };
+        authorizationHeader?: string;
         target: ScmRepositoryCloneTarget & { protocol: 'ssh' | 'https' };
     }>
     | Readonly<{ ok: false; response: ScmRepositoryCloneOutput }>;
@@ -308,10 +312,25 @@ async function describeCloneTargets(input: Readonly<{
             repository: sanitizeRepositorySelector(input.request.repository),
             runtimeServices: await readRuntimeServices(input.deps),
         });
-        const selected = selectCloneTarget(description, input.request.protocol, registeredProvider);
+        let selected = selectCloneTarget(description, input.request.protocol, registeredProvider);
         if (!selected.ok) return selected;
+        if (input.request.authentication === 'connected_account') {
+            const authentication = selected.target.protocol === 'https'
+                ? await adapter.resolveCloneAuthentication?.({ provider: registeredProvider,
+                    runtimeServices: await readRuntimeServices(input.deps) }) : undefined;
+            if (authentication?.kind !== 'available') return { ok: false, response: errorResponse(
+                'Repository clone requires a connected Git account with repository access.',
+                SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED,
+                { remediation: { kind: 'auth_required', label: 'Connect a Git account with repository access and use HTTPS.' },
+                    failureCause: { phase: 'scm.repository_auth.connected_account', errorClass: 'Error', errorCode: null, httpStatus: null } },
+            ) };
+            selected = { ...selected, authorizationHeader: authentication.authorizationHeader };
+        }
         const requested = input.request.initialCheckout;
         if (!requested) return selected;
+        if (!('commit' in requested) && !('revision' in requested)) {
+            return { ...selected, initialCheckout: { branch: requested.branch.replace(/^refs\/heads\//, '') } };
+        }
         const commit = 'commit' in requested ? requested.commit : description.initialCheckoutRef;
         if (!commit) {
             return { ok: false, response: errorResponse('The hosting provider cannot resolve latest stable releases.', SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) };
@@ -332,14 +351,13 @@ function isFailureResponse(value: ScmWorkingSnapshot | ScmRepositoryCloneOutput)
     return 'success' in value;
 }
 
-function mapCloneCommandFailure(result: ScmExecResult): ScmRepositoryCloneOutput {
+function mapCloneCommandFailure(result: ScmExecResult, privateOutput = false): ScmRepositoryCloneOutput {
     const errorCode = mapGitErrorCode(result.stderr);
     return errorResponse(
-        result.stderr || 'Failed to clone repository.',
+        privateOutput ? 'Authenticated repository clone failed.' : result.stderr || 'Failed to clone repository.',
         errorCode,
         {
-            stdout: result.stdout,
-            stderr: result.stderr,
+            ...(!privateOutput ? { stdout: result.stdout, stderr: result.stderr } : {}),
             ...(errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED ? {
                 failureCause: { phase: 'scm.repository_auth.git', errorClass: 'Error' as const, errorCode: null, httpStatus: null },
                 remediation: { kind: 'auth_required' as const,
@@ -361,6 +379,9 @@ export function createGitRepositoryCloneOperation(
 
     return Object.freeze({
         async clone({ context, request }) {
+            try { readRepositoryFileSystem(); } catch {
+                return errorResponse('SCM workspace filesystem is unavailable.', SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
+            }
             const destination = await preflightDestination(request);
             if (!destination.ok) return unpublishedCloneFailure(destination.response);
 
@@ -369,6 +390,9 @@ export function createGitRepositoryCloneOperation(
                 deps,
             });
             if (!cloneTarget.ok) return cloneTarget.response;
+            const transport = readCurrentBackendRuntimeServices()?.repositoryTransport;
+            if (cloneTarget.authorizationHeader && !transport) return errorResponse(
+                'Host-authenticated Git transport is unavailable.', SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE);
 
             const finalDestination = await preflightDestination(request);
             if (!finalDestination.ok) return unpublishedCloneFailure(finalDestination.response);
@@ -377,15 +401,20 @@ export function createGitRepositoryCloneOperation(
 
             let clone;
             try {
-                clone = await runCommand({
+                const command = {
                     bin: 'git',
                     cwd: reservedDestination.parentPath,
                     args: ['clone', '--', cloneTarget.target.url, reservedDestination.cloneDestinationPath],
                     timeoutMs: GIT_REPOSITORY_CLONE_TIMEOUT_MS,
-                    env: buildScmNonInteractiveEnv(),
-                });
+                    env: buildScmNonInteractiveEnv(), signal: context.signal,
+                };
+                clone = cloneTarget.authorizationHeader && transport
+                    ? await transport.run({ repositories: [{ url: cloneTarget.target.url, authorizationHeader: cloneTarget.authorizationHeader }],
+                        command: { ...command, command: 'git', installableKey: GIT_INSTALLABLE_DEP_ID } })
+                    : await runCommand({ ...command, bin: 'git' });
             } catch (error) {
                 await reservedDestination.privateTempHandle.close();
+                if (cloneTarget.authorizationHeader) return errorResponse('Authenticated repository clone failed.', SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
                 throw error;
             }
             if (!clone.success) {
@@ -394,7 +423,7 @@ export function createGitRepositoryCloneOperation(
                     path: reservedDestination.privateTempPath,
                     identity: reservedDestination.privateTempIdentity,
                 });
-                return mapCloneCommandFailure(clone);
+                return mapCloneCommandFailure(clone, Boolean(cloneTarget.authorizationHeader));
             }
 
             if (cloneTarget.initialCheckout) {
@@ -440,8 +469,7 @@ export function createGitRepositoryCloneOperation(
                 cloneUrl: cloneTarget.target.url,
                 repository: cloneTarget.repository,
                 snapshot,
-                stdout: clone.stdout,
-                stderr: clone.stderr,
+                ...(!cloneTarget.authorizationHeader ? { stdout: clone.stdout, stderr: clone.stderr } : {}),
             };
         },
     });

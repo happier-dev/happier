@@ -16,7 +16,7 @@ export function observeCloneInitialCheckout(
         },
     };
     const matchesBranch = initialCheckout.branch === null ? snapshot.branch.detached
-        : snapshot.branch.head === initialCheckout.branch && !snapshot.branch.detached;
+        : snapshot.branch.head === initialCheckout.branch.replace(/^refs\/heads\//, '') && !snapshot.branch.detached;
     if (matchesBranch && (!('commit' in initialCheckout) || headOid === initialCheckout.commit)) return clone;
     return {
         success: false, destinationPath: clone.destinationPath, errorCode: 'SCM_SOURCE_CHANGED',

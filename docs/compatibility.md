@@ -10711,6 +10711,24 @@ scoped-clean `../0.2` frontier at
 `cli-v0.2.17` / `cli-v0.2.17-preview.1` have no corresponding clone contract in
 the affected Protocol/SDK/clone-route paths.
 
+The same unreleased clone owner also accepts `initialCheckout: { branch }` for
+a selected remote branch and optional `authentication: 'connected_account'`.
+Project Open derives both fields from the clone input. Omission preserves the
+existing clone behavior; a connected-account request requires the provider's
+private credential callback and never falls back to ambient Git credentials.
+The optional SDK repository filesystem port keeps reservation, publication and
+readback on the admitted workspace source; a bound older host without that port
+returns `BACKEND_UNAVAILABLE`. The private provider credential callback is not
+an Account Action result. These changes require matching development Protocol,
+SDK, provider and CLI sources, without a new epoch or persisted migration.
+Managed pre-Session clones require the matching native holder's `workspace`
+stdio mode and confined helper's empty-directory removal operation. Connected
+clone and target push also require the optional SDK `repositoryTransport` port
+and native `git-http-transport` command: credentials remain on the controller,
+with binary smart HTTP forwarded through the existing holder streams to a
+credential-free target loopback endpoint. These are matching-source development
+contracts, not a wire epoch or a persisted credential format.
+
 The unpublished 0.3 signed external Action binding adds optional literal
 `managedAcquireDelegation: true`. Only Home derives it from the exact reviewed
 Team preset and bound custodian controller. The receiving daemon consumes that

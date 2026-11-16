@@ -10,6 +10,7 @@ import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingPro
 import { readGitOperationRepositoryState } from './branchOperationState.js';
 import { readGitSnapshotForChecks } from './snapshotChecks.js';
 import { applyGitStashOid, buildHappierTransientStashMarker, createGitStashPush, dropGitStashOid } from './stashOperations.js';
+import { runGitPushWithConnectedAccount } from './connectedAccountPush.js';
 
 type RemoteTarget = { remote: string; branch?: string };
 type RecoveryStash = NonNullable<ScmOperationOutcome['recoveryStash']>;
@@ -179,7 +180,9 @@ export async function gitRemotePush(input: { context: ScmBackendContext; request
         const rejected = await evaluateGitPushConfiguration({ context, remote: target.remote, hasExplicitRefspec: Boolean(request.branch) });
         if (rejected) return rejected;
     }
-    const command = await git(context, buildGitPushArgs(request), 30_000);
+    const command = await runGitPushWithConnectedAccount({ remote: target?.remote,
+        command: { bin: 'git', cwd: context.cwd, args: buildGitPushArgs(request), timeoutMs: 30_000,
+            env: buildScmNonInteractiveEnv(), signal: context.signal } });
     const response = await finalizeGitRemoteMutation({ context, kind: 'push', command, target, effect: target ? { kind: 'remote', ...target } : undefined });
     invalidatePrStatusCacheAfterSuccessfulScmMutation({ response, context, headBranch: snapshot.branch.head });
     return response;

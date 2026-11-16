@@ -19,6 +19,7 @@ import {
   GITHUB_SCM_HOSTING_PROVIDER_ID,
   PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST,
   githubPullRequestAdapter,
+  githubRepositoryProvisioningAdapter,
 } from '@happier-dev/plugins-scm-github';
 import { PLUGIN_MANIFEST as AZURE_PLUGIN_MANIFEST, azureDevopsOperationsAdapter } from '@happier-dev/plugins-scm-azure-devops';
 
@@ -311,6 +312,26 @@ function createAuthenticationBindingOwner(
 }
 
 describe('createHostScmHostingProviderRuntimeServices', () => {
+  it('materializes private Git clone authentication through the registered provider and bound Account owner', async () => {
+    const owner = createAuthenticationBindingOwner(async input => {
+      expect(input.account.accountId).toBe('bound-account');
+      expect(input.request).toMatchObject({ kind: 'httpHeaders', origin: 'https://github.com' });
+      return { kind: 'httpHeaders', headers: { Authorization: 'Bearer connected-clone-token' } };
+    });
+    const runtimeInput = createRuntimeInput();
+    const registration = runtimeInput.scmHostingProvidersById.get(GITHUB_SCM_HOSTING_PROVIDER_ID)!;
+    const services = createHostScmHostingProviderRuntimeServices({ ...runtimeInput,
+      scmHostingProvidersById: new Map([[GITHUB_SCM_HOSTING_PROVIDER_ID, { ...registration,
+        registration: { ...registration.registration, adapter: { repositoryClone: githubRepositoryProvisioningAdapter } },
+      }]]), resolveConnectedAccountPurposeBindingOwner: () => owner,
+    });
+    const registry = await services.resolveScmHostingProviderRegistry!();
+    await expect(registry.getRepositoryClone(GITHUB_SCM_HOSTING_PROVIDER_ID)?.resolveCloneAuthentication?.({
+      provider: githubProvider,
+    })).resolves.toEqual({ kind: 'available',
+      authorizationHeader: `Basic ${Buffer.from('x-access-token:connected-clone-token').toString('base64')}` });
+  });
+
   it('discovers independent hosting deployments concurrently without materializing credentials', async () => {
     const entered = new Set<string>();
     let release!: () => void;

@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 
 import {
   SCM_OPERATION_ERROR_CODES,
@@ -32,8 +32,8 @@ async function isResolvedCloneRoot(rootPath: string | null | undefined, destinat
     if (typeof rootPath !== 'string') return false;
     if (rootPath.includes('\0') || pathContainsTraversal(rootPath)) return false;
     try {
-        const destinationRealPath = await realpath(destinationPath);
-        const rootRealPath = await realpath(rootPath);
+        const destinationRealPath = await readRepositoryFileSystem().realpath(destinationPath);
+        const rootRealPath = await readRepositoryFileSystem().realpath(rootPath);
         return rootRealPath === destinationRealPath;
     } catch {
         return false;

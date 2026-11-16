@@ -15,6 +15,14 @@ import { runWithScmCommandOperation } from '@/scm/commandOperation';
 
 import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
 import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { startGitSmartHttpFixture } from '@/testkit/scm/gitSmartHttpFixture';
+import { materializeManagedProjectClone, runScmRepositoryCloneRoute } from '@/scm/rpc/repositoryProvisioningDispatch';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { createGitScmBackendRuntimeRegistration } from '../../../../packages/plugins/scm-git/src/backend';
+import { createScmHostingProviderRuntimeServicesForTest } from '../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
+import { createBareRemoteRepository, makeCloneTargetDescription, makeProviderRegistry, makeRequest, runGit }
+    from '../../../../packages/plugins/scm-git/src/operations/repositoryCloneOperations.test-support';
 
 const holderExecutable = resolveSessionHolderExecutablePath();
 const helperExecutable = resolveProcessCustodySupportExecutable('linux');
@@ -56,6 +64,77 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         holder?.detach();
         await agent?.terminateGroup({ graceMs: 100 });
         await rm(directory, { recursive: true, force: true });
+    });
+
+    it('prepares and publishes the selected branch through the target filesystem', async () => {
+        const remote = createBareRemoteRepository();
+        const sourceRepository = join(remote, '..', 'source');
+        runGit(sourceRepository, ['switch', '-c', 'feature/target-files']);
+        await writeFile(join(sourceRepository, 'branch-sentinel'), 'target branch\n');
+        runGit(sourceRepository, ['add', 'branch-sentinel']);
+        runGit(sourceRepository, ['commit', '-m', 'target branch']);
+        runGit(sourceRepository, ['push', remote, 'feature/target-files']);
+        const description = makeCloneTargetDescription(remote);
+        const registration = createGitScmBackendRuntimeRegistration();
+        if (!registration.runtime) throw new Error('Git backend unavailable');
+        const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+            definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+            executableDefinition: registration.runtime, registration,
+            hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(
+                makeProviderRegistry(description)),
+        })]);
+        const source = createHolderWorkspaceSource({ id: 'clone-target', rootPath: root,
+            holder, helperPath: helperExecutable! });
+        const filesystemWrites: string[] = [];
+        // Genuine OS boundary: observe the real holder filesystem, preserving every operation.
+        const observedSource = { ...source,
+            mkdir: async (...args: Parameters<typeof source.mkdir>) => {
+            filesystemWrites.push(args[0]);
+            await source.mkdir(...args);
+        } };
+        const response = await runWithWorkspaceSource(observedSource, () => runScmRepositoryCloneRoute({
+            request: { ...makeRequest(root, remote, 'cloned-branch'),
+                initialCheckout: { branch: 'feature/target-files' } }, workingDirectory: root, registry,
+        }));
+        expect(response, response.success ? undefined : response.error).toMatchObject({ success: true,
+            snapshot: { branch: { head: 'feature/target-files', detached: false } } });
+        expect(filesystemWrites).toContain(join(root, 'cloned-branch'));
+        expect(await source.readFile(join(root, 'cloned-branch', 'branch-sentinel'))).toEqual(Buffer.from('target branch\n'));
+    });
+
+    it('clones through the workspace channel before an Agent is created', async () => {
+        const forge = await startGitSmartHttpFixture({ authorization: 'Basic fixture', branch: 'project-files' });
+        try {
+            const original = makeCloneTargetDescription('unused');
+            const description = { ...original, repository: { ...original.repository, cloneUrl: forge.url,
+                provider: { ...original.repository.provider, urlSafety: { allowedSchemes: ['http:', 'https:'] } } },
+                targets: [{ protocol: 'https' as const, url: forge.url, isDefault: true }] };
+            const registration = createGitScmBackendRuntimeRegistration();
+            if (!registration.runtime) throw new Error('Git backend unavailable');
+            const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+                definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+                executableDefinition: registration.runtime, registration,
+                hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(makeProviderRegistry(description, {
+                    describeCloneTargets: async () => description,
+                    resolveCloneAuthentication: async () => ({ kind: 'available', authorizationHeader: 'Basic fixture' }),
+                }, forge.url)),
+            })]);
+            const launched: string[][] = [];
+            const targetBoundary = { id: 'pre-session', holderPath: holderExecutable!, helperPath: helperExecutable!,
+                exec: target.exec, openChannel: (argv: readonly string[]) => {
+                    launched.push([...argv]);
+                    return target.openChannel(argv);
+                } };
+            const request = makeRequest(root, 'unused', 'before-agent');
+            const clone = await materializeManagedProjectClone({ target: targetBoundary,
+                selection: { kind: 'git_clone', source: { provider: request.provider, repository: request.repository, protocol: 'https' }, branch: 'project-files' },
+                destinationParentPath: root, destinationDirectoryName: 'before-agent', registry, signal: new AbortController().signal });
+            expect(launched.map(argv => argv[1])).toEqual(['workspace']);
+            expect(await readFile(join(clone.targetRoot, 'sentinel.txt'), 'utf8')).toBe('selected branch\n');
+            expect(runGit(clone.targetRoot, ['branch', '--show-current'])).toBe('project-files');
+            expect(clone.baseline?.entries.map(entry => entry.relativePath)).toContain('sentinel.txt');
+            expect(clone.baseline?.entries.some(entry => entry.relativePath === '.git' || entry.relativePath.startsWith('.git/'))).toBe(false);
+        } finally { await forge.close(); }
     });
 
     it.each(['available', 'unavailable', 'unavailable-bare'] as const)('keeps Git panel hooks on an %s target when a requester host runner is selected', async availability => {

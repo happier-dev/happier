@@ -159,6 +159,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
     return () => { stream.kill('SIGTERM'); };
   };
   const source: WorkspaceSource = {
+    nativeHelperPath: input.helperPath,
     kind: 'target' as const,
     id: input.id,
     stat: async target => entryStats((await meta(target, 'stat')).entry!),
@@ -191,8 +192,13 @@ export function createHolderWorkspaceSource(input: Readonly<{
     },
     writeFile: async (target, bytes) => { await put(target, bytes, 'any'); },
     mkdir: async (target, options) => {
-      const result = await write({ op: 'mkdir', relativePath: relative(target), recursive: options?.recursive === true });
+      const result = await write({ op: 'mkdir', relativePath: relative(target), recursive: options?.recursive === true,
+        ...(options?.mode === undefined ? {} : { mode: options.mode }) });
       if (result.status === 'exists') throw errno('EEXIST', `File exists: ${target}`);
+    },
+    rmdir: async target => {
+      const result = await write({ op: 'rmdir', relativePath: relative(target) });
+      if (result.status === 'missing') throw errno('ENOENT', `No such directory: ${target}`);
     },
     rename: async (from, to) => {
       const result = await write({ op: 'rename', relativePath: relative(from), toRelativePath: relative(to) });

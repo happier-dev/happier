@@ -9,7 +9,7 @@ import {
 } from '@happier-dev/plugin-sdk/scm';
 
 import type { ScmBackendContext } from '../types.js';
-import { runScmCommand } from '../runtime.js';
+import { runGitPushWithConnectedAccount } from './connectedAccountPush.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { normalizeScmRemoteRequest } from '../remote.js';
 import { evaluateRemoteMutationPreconditions } from '../remoteGuards.js';
@@ -105,13 +105,14 @@ export async function gitRemotePublish(input: {
     if (configured) return configured;
 
     const args = ['push', '--set-upstream', remote.remote, head];
-    const push = await runScmCommand({
+    const push = await runGitPushWithConnectedAccount({ remote: remote.remote, command: {
         bin: 'git',
         cwd: input.context.cwd,
         args,
         timeoutMs: 30_000,
         env: buildScmNonInteractiveEnv(),
-    });
+        signal: input.context.signal,
+    } });
 
     const response = await finalizeGitRemoteMutation({ context: input.context, kind: 'push', command: push, target: { remote: remote.remote, branch: head }, effect: { kind: 'remote', remote: remote.remote, branch: head } });
     invalidatePrStatusCacheAfterSuccessfulScmMutation({

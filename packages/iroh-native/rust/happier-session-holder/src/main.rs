@@ -34,7 +34,7 @@ use outbox::Outbox;
 use serde_json::{json, Value};
 
 fn usage() -> ! {
-    eprintln!("usage: happier-session-holder serve --socket <path> [--session-mcp] [--windows-verbatim] -- <argv...>\n       happier-session-holder attach --socket <path>\n       happier-session-holder mcp-relay [--tool-name-max-length <n>]");
+    eprintln!("usage: happier-session-holder serve --socket <path> [--session-mcp] [--windows-verbatim] -- <argv...>\n       happier-session-holder attach --socket <path>\n       happier-session-holder workspace --root <path>\n       happier-session-holder mcp-relay [--tool-name-max-length <n>]");
     std::process::exit(2);
 }
 
@@ -47,6 +47,13 @@ fn main() {
         }
         Some("attach") => match args.get(1..) {
             Some([flag, socket]) if flag == "--socket" => attach(socket),
+            _ => usage(),
+        },
+        Some("workspace") => match args.get(1..) {
+            Some([flag, root]) if flag == "--root" => {
+                if std::env::set_current_dir(root).is_err() { std::process::exit(1); }
+                serve_workspace_stdio(Box::new(std::io::stdin()), Box::new(WorkspaceStdout));
+            }
             _ => usage(),
         },
         Some("mcp-relay") => mcp_relay::run(&args[1..]),
@@ -229,6 +236,24 @@ fn listener_cleanup_and_exit() -> ! {
 /// (`i`/`c`), its process (`signal`), its state (`status`/`meta`) and its output are
 /// never reachable from this socket.
 const WORKSPACE_OPS: [&str; 6] = ["spawn", "kill", "which", "pty", "resize", "watch"];
+
+struct WorkspaceStdout;
+impl Write for WorkspaceStdout {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> { std::io::stdout().write(bytes) }
+    fn flush(&mut self) -> std::io::Result<()> { std::io::stdout().flush() }
+}
+impl outbox::ClientWriter for WorkspaceStdout { fn close(&mut self) {} }
+
+/// Finite pre-Session workspace work uses the same operations and frames as a
+/// held Session, without creating an Agent or a reconnectable socket.
+fn serve_workspace_stdio(reader: Box<dyn Read + Send>, writer: Box<dyn outbox::ClientWriter>) {
+    let outbox = Arc::new(Outbox::new());
+    let hello = |replay_from: u64| json!({ "protocol": frame::PROTOCOL_VERSION,
+        "holderPid": std::process::id(), "role": "workspace", "replayFrom": replay_from }).to_string().into_bytes();
+    if let Some(generation) = outbox.attach(writer, hello) {
+        serve_workspace_client(reader, generation, outbox);
+    }
+}
 
 fn serve_workspace_client(mut reader: Box<dyn Read + Send>, generation: u64, outbox: Arc<Outbox>) {
     let streams: Arc<streams::Streams> = Arc::default();
@@ -526,6 +551,25 @@ mod stream_tests {
         let (seen, exited) = wait_for(&sink, stream, |_, exited| exited);
         assert!(exited && seen == "ws\n", "{seen:?}");
         assert_eq!(workspace_ops_socket_path("/run/h.sock"), "/run/h.sock.ops");
+    }
+
+    #[test]
+    fn workspace_stdio_serves_existing_frames_without_an_agent_or_socket() {
+        let request = frame::encode(b'q', br#"{"id":"w","op":"which","command":"sh"}"#);
+        let sink = Sink::default();
+        serve_workspace_stdio(Box::new(std::io::Cursor::new(request)), Box::new(sink.clone()));
+        let bytes = sink.0.lock().unwrap().clone();
+        let mut reader = bytes.as_slice();
+        let (kind, hello) = read_frame(&mut reader).unwrap().unwrap();
+        assert_eq!(kind, b'H');
+        let hello: Value = serde_json::from_slice(&hello).unwrap();
+        assert_eq!(hello["role"], "workspace");
+        assert!(hello.get("agentPid").is_none());
+        let (kind, reply) = read_frame(&mut reader).unwrap().unwrap();
+        assert_eq!(kind, b'r');
+        let reply: Value = serde_json::from_slice(&reply).unwrap();
+        assert_eq!(reply["ok"], true);
+        assert!(reply["value"].as_str().is_some());
     }
 
     #[cfg(unix)]

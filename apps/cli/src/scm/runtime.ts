@@ -370,7 +370,9 @@ function runResolvedScmCommand(input: ScmCommandInput, source: ReturnType<typeof
         let child: WorkspaceChildProcess;
         try {
             if (input.stdoutFilePath) stdoutDescriptor = openSync(input.stdoutFilePath, 'wx', 0o600);
-            child = source.spawn({ command: resolvedBinPath, args: input.args, cwd: input.cwd, env: execEnv,
+            child = source.spawn({ command: resolvedBinPath, args: input.args, cwd: input.cwd,
+                // The target inherits its own environment; only this operation's overlays cross.
+                env: source.kind === 'target' ? input.env : execEnv,
                 ...(stdoutDescriptor !== undefined ? { stdoutFd: stdoutDescriptor } : {}) });
         } catch (error) {
             if (stdoutDescriptor !== undefined) closeSync(stdoutDescriptor);

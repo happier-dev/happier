@@ -1519,6 +1519,19 @@ branch/head returns `SCM_SOURCE_CHANGED`; missing head evidence returns
 reconciliation. The internal Project materializer forwards this operand and
 skips its later branch checkout. A full commit in Open's `ref` uses this same
 operand with a detached HEAD; branch names retain ordinary branch selection.
+The branch-only `initialCheckout: { branch }` instead checks out that remote
+branch with its upstream before publishing. `authentication: 'connected_account'`
+requires the GitHub provider's bound-account HTTP materialization. The controller
+keeps the header and forwards smart HTTP for the admitted repository over the
+holder's binary streams. Target Git uses an operation-local, credential-free
+loopback URL rewrite; no account token enters target arguments, environment,
+files or output. The native endpoint ends with the Git operation. Target push
+and branch publication use this same transport and connected-account owner;
+ordinary local Git credential behavior is unchanged. Authenticated clone output
+is omitted from its result.
+Managed Session preparation runs this same controller-side clone owner through
+the native holder's workspace-only stdio channel, before starting an Agent.
+Reservation, Git, publication and readback share the target workspace source.
 A terminal branch-selection failure after cloning returns `refused` with its
 SCM code and a content-free `failureCause` naming `project_open.checkout_ref`.
 The retained operation carries the same cause and original Open receipt.
