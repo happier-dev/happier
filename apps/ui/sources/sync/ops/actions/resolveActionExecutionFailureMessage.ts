@@ -102,7 +102,7 @@ export function describeActionExecutionPrerequisite(code: unknown): Readonly<{
     if (code === 'mode_none' || code === 'not_preauthorized') {
         return { message: t('machineDetailPage.security.reasons.needsAdminToCheck'), recovery: 'machine_security' };
     }
-    if (code === 'action_forbidden' || code === 'credential_scope_denied' || code === 'artifact_access_forbidden' || code === 'artifact_kind_internal'
+    if (code === 'action_forbidden' || code === 'credential_scope_denied' || code === 'machine_manage_required' || code === 'artifact_access_forbidden' || code === 'artifact_kind_internal'
         || code === 'project_account_access_denied' || code === 'forbidden' || code === 'access_denied'
         || code === 'permission_denied' || code === 'denied'
         || code === RPC_ERROR_CODES.FORBIDDEN) {

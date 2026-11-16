@@ -111,6 +111,7 @@ export async function applyWorkspaceFileStageAction(input: Readonly<{
 
             if (!response.success) {
                 const errorMessage = getScmUserFacingError({
+                    ...response,
                     errorCode: response.errorCode,
                     error: response.error,
                     fallback: response.error || t('errors.tryAgain'),

@@ -108,6 +108,7 @@ export async function executeScmCommit(input: {
                 }
                 if (outcome.kind !== 'succeeded') {
                     const errorMessage = buildScmCommitFailureMessage({
+                        ...response,
                         errorCode: response.errorCode,
                         error: response.error,
                         commitSha: createdCommitSha,

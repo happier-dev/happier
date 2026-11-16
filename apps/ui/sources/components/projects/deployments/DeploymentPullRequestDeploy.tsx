@@ -77,7 +77,7 @@ export function DeploymentPullRequestDeploy(props: Readonly<{
       } else {
         setNotFoundNumber(null);
         setAuthRequired(result.errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED);
-        setReadFailure(getScmUserFacingError({ errorCode: result.errorCode, error: result.error,
+        setReadFailure(getScmUserFacingError({ ...result, errorCode: result.errorCode, error: result.error,
           fallback: t('projects.deployments.editors.prUnavailable'), subject: 'pullRequest' }));
       }
     } catch (error) {

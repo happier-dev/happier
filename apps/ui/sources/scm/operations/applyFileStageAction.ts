@@ -132,6 +132,7 @@ export async function applyFileStageAction(input: Readonly<{
                 if (shownDaemonUnavailable) return;
 
                 const errorMessage = getScmUserFacingError({
+                    ...response,
                     errorCode: response.errorCode,
                     error: response.error,
                     fallback: response.error || 'Source-control operation failed',

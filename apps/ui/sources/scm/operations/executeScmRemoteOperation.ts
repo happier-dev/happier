@@ -157,6 +157,7 @@ export async function executeScmRemoteOperation(input: Readonly<{
             const outcome = normalizeScmOperationOutcome(response);
             if (outcome.kind !== 'succeeded') {
                 const message = getScmUserFacingError({
+                    ...response,
                     errorCode: response.errorCode,
                     error: response.error,
                     fallback: response.error || `Failed to ${input.kind}`,

@@ -1,9 +1,11 @@
 import type { ScmOperationErrorCode } from '@happier-dev/protocol/scm';
 import { classifyScmOperationErrorCode, mapGitScmErrorCode, SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
 import { t } from '@/text';
+import { describeActionExecutionPrerequisite } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 export function getScmUserFacingError(input: {
     errorCode?: ScmOperationErrorCode;
+    actionErrorCode?: string;
     error?: string;
     fallback: string;
     /**
@@ -12,6 +14,8 @@ export function getScmUserFacingError(input: {
      */
     subject?: 'message' | 'pullRequest';
 }): string {
+    const prerequisite = describeActionExecutionPrerequisite(input.actionErrorCode);
+    if (prerequisite) return prerequisite.message;
     const rawError = input.error?.toLowerCase() ?? '';
     const rawFallback = input.fallback.toLowerCase();
     switch (input.errorCode) {

@@ -93,6 +93,7 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                         shouldContinue: input.shouldContinue ?? null,
                     });
                     const errorMessage = buildScmCommitFailureMessage({
+                        ...response,
                         errorCode: response.errorCode,
                         error: response.error,
                         commitSha: createdCommitSha,

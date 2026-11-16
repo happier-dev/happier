@@ -7,6 +7,16 @@ import { getScmUserFacingError, isRecoverableGitIndexLockError } from './scmUser
 import { t } from '@/text';
 
 describe('getScmUserFacingError', () => {
+    it.each(['machine_manage_required', 'credential_scope_denied'])('presents %s as a permission refusal rather than backend unavailability', (actionErrorCode) => {
+        const refusal = {
+            success: false,
+            errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+            actionErrorCode,
+            error: 'Source control command failed. Refresh repository status and try again.',
+        };
+        expect(getScmUserFacingError({ ...refusal, fallback: 'Failed operation' }))
+            .toBe(t('errors.permissionDenied'));
+    });
     it('explains a missing root without blaming the source control tool', () => {
         expect(getScmUserFacingError({ errorCode: ScmOperationErrorCodeSchema.parse('ROOT_NOT_FOUND'), fallback: 'Git unavailable' }))
             .toContain('folder');
@@ -178,7 +188,7 @@ describe('getScmUserFacingError', () => {
                 error: 'Sapling binary missing',
                 fallback: 'Failed operation',
             })
-        ).toContain('unavailable');
+        ).toBe('The active source control backend is unavailable.');
     });
 
     it('maps unsupported feature errors to deterministic copy', () => {

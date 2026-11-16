@@ -33,6 +33,14 @@ function createOperationState(options?: { busy?: boolean }) {
 }
 
 describe('runSessionScmMutation', () => {
+    it('records readable permission copy for a typed refusal in the Git operation log', async () => {
+        const state = createOperationState();
+        await runSessionScmMutation({ state, sessionId: 's1', operation: 'branch_switch', cwd: '/repo', fallbackError: 'failed',
+            run: async () => ({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
+                actionErrorCode: 'machine_manage_required', error: 'Source control command failed.' }) });
+        expect(state.log[0]?.detail).toBe('errors.permissionDenied');
+        expect(state.inFlight).toBeNull();
+    });
     it.each(['conflicted', 'outcome_unknown'] as const)('reconciles %s without replaying or replacing the canonical result', async (kind) => {
         const state = createOperationState();
         const outcome: ScmOperationOutcome = kind === 'conflicted'

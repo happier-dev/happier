@@ -253,6 +253,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
 
                     if (!response.success) {
                         const errorMessage = getScmUserFacingError({
+                            ...response,
                             errorCode: response.errorCode,
                             error: response.error,
                             fallback: response.error || t('files.commitDetails.revert.failed'),

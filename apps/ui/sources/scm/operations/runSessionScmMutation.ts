@@ -136,7 +136,7 @@ async function runScmMutation<T extends ScmMutationResponse>(input: SessionScmMu
                 operation: input.operation,
                 status: 'failed',
                 outcome,
-                detail: getScmUserFacingError({ errorCode, error: response.error, fallback: response.error || input.fallbackError }),
+                detail: getScmUserFacingError({ ...response, errorCode, error: response.error, fallback: response.error || input.fallbackError }),
                 ...(response.error ? { rawError: response.error } : {}),
                 ...(errorCode ? { errorCode } : {}),
                 surface: 'update',

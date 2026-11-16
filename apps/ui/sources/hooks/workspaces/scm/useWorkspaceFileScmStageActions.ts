@@ -144,6 +144,7 @@ export function useWorkspaceFileScmStageActions(input: {
 
                     if (!response.success) {
                         const errorMessage = getScmUserFacingError({
+                            ...response,
                             errorCode: response.errorCode,
                             error: response.error,
                             fallback: response.error || t('errors.tryAgain'),
@@ -290,6 +291,7 @@ export function useWorkspaceFileScmStageActions(input: {
 
                     if (!response.success) {
                         const errorMessage = getScmUserFacingError({
+                            ...response,
                             errorCode: response.errorCode,
                             error: response.error,
                             fallback: response.error || t('files.stageActions.diffChangedRefreshAndReselect'),

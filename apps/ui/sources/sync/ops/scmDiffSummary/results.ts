@@ -22,12 +22,13 @@ import type { core } from 'zod/mini';
 
 /** Source-control failure codes are presented by their one copy owner; saved-result codes keep the Machine's copy. */
 function presentScmFailure<R>(actionId: ActionId, response: R): R {
-  const failure = response as Readonly<{ success?: unknown; errorCode?: unknown; error?: unknown }> | null;
+  const failure = response as Readonly<{ success?: unknown; errorCode?: unknown; actionErrorCode?: unknown; error?: unknown }> | null;
   if (!failure || failure.success !== false) return response;
   const scmCode = ScmOperationErrorCodeSchema.safeParse(failure.errorCode);
   if (!scmCode.success) return response;
   const error = typeof failure.error === 'string' ? failure.error : undefined;
   return { ...failure, error: getScmUserFacingError({ errorCode: scmCode.data, error, fallback: error ?? '',
+    actionErrorCode: typeof failure.actionErrorCode === 'string' ? failure.actionErrorCode : undefined,
     ...(actionId === 'scm.diffSummary.discuss' ? { subject: 'message' as const } : {}) }) } as R;
 }
 
