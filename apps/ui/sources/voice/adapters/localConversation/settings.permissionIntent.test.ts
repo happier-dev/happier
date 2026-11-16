@@ -7,8 +7,9 @@ import {
 } from './settings';
 
 describe('local Voice PermissionIntent settings', () => {
-  it('defaults new global Voice conversations to canonical read-only', () => {
-    expect(VoiceLocalConversationSchema.parse({}).agent.permissionIntent).toBe('read-only');
+  it('defaults new global Voice conversations to normal Agent permissions', () => {
+    // 923ffb77ff8 preserves explicit saved preferences while new conversations use normal permissions.
+    expect(VoiceLocalConversationSchema.parse({}).agent.permissionIntent).toBe('default');
   });
 
   it('normalizes legacy persisted aliases once and writes only the canonical field', () => {
