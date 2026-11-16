@@ -7,6 +7,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { SOURCE_CONDITION, createWorkspaceSourceResolver, readWorkspacePackages } from '../sourceRuntimeEntries.mjs';
+import { createAsciiLegalCommentsPlugin } from './asciiLegalComments.mjs';
 
 function readArg(name) {
   const prefix = `${name}=`;
@@ -57,7 +58,7 @@ const result = await Bun.build({
     ...(process.argv.includes('--no-compile-autoload-bunfig') ? { autoloadBunfig: false }
       : process.argv.includes('--compile-autoload-bunfig') ? { autoloadBunfig: true } : {}),
   },
-  plugins: [createWorkspaceSourceResolver({ workspacePackages, requireFromProject, externalPackages: [] }), {
+  plugins: [createWorkspaceSourceResolver({ workspacePackages, requireFromProject, externalPackages: [] }), createAsciiLegalCommentsPlugin(), {
     name: 'load-packaged-sharp-addon',
     setup(build) {
       // Sharp's public CJS entry uses static native imports. Its ESM entry uses
