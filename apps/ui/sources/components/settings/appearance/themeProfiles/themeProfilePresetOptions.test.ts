@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { ThemePresetSourceOption } from './themeProfilePresetOptions';
-import { buildThemePresetSourceOptions, resolveThemePresetSourcePreferredMode, themeProfileDraftMatchesPresetSource } from './themeProfilePresetOptions';
+import { buildThemePresetSourceOptions, getThemePresetSourceReferenceId, readThemePresetSourceReferenceId, resolveThemePresetSourcePreferredMode, themeProfileDraftMatchesPresetSource } from './themeProfilePresetOptions';
 import type { ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 
 const profile = (overrides: ThemeProfileV1['overrides']): ThemeProfileV1 => ({
@@ -32,6 +32,18 @@ const source = (sourceProfile: ThemeProfileV1): ThemePresetSourceOption => ({
 });
 
 describe('themeProfilePresetOptions', () => {
+    it('round-trips tagged route references and reads released Artifact routes', () => {
+        const references = [
+            { kind: 'artifact', id: 'theme-header' },
+            { kind: 'plugin', pluginId: 'first.theme', contributionId: 'night' },
+            { kind: 'plugin', pluginId: 'second.theme', contributionId: 'night' },
+        ] as const;
+        for (const reference of references) expect(readThemePresetSourceReferenceId(getThemePresetSourceReferenceId(reference))).toEqual(reference);
+        expect(readThemePresetSourceReferenceId('theme-header')).toEqual(references[0]);
+        expect(readThemePresetSourceReferenceId('premiumDark')).toEqual({ kind: 'built-in', presetId: 'premiumDark' });
+        expect(readThemePresetSourceReferenceId('["plugin","missing"]')).toBeNull();
+    });
+
     it('matches preset values independent of override key insertion order', () => {
         const draft = profile({
             light: { 'text.primary': '#111111', 'background.canvas': '#FFFFFF' },

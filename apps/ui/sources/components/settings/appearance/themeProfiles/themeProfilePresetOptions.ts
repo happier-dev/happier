@@ -1,3 +1,4 @@
+import { ThemeReferenceSchema } from '@happier-dev/protocol/account/settings/themeProfiles';
 import type { ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { t } from '@/text';
 import { BUILT_IN_THEME_PROFILES } from '@/theme/profiles/builtInThemeProfiles';
@@ -22,6 +23,26 @@ export function getThemePresetSourceReferenceId(reference: ThemeReference): stri
     return JSON.stringify(reference.kind === 'artifact' ? ['artifact', reference.id]
         : ['plugin', reference.pluginId, reference.contributionId]);
 }
+
+/** Reads tagged routes and retained pre-reference Artifact links at this route boundary. */
+export function readThemePresetSourceReferenceId(value: string | null): ThemeReference | null {
+    if (!value || value === 'light' || value === 'dark') return null;
+    const builtIn = BUILT_IN_THEME_PROFILES.find(definition => definition.presetId === value || definition.profile.id === value);
+    if (builtIn) return { kind: 'built-in', presetId: builtIn.presetId };
+    let candidate: unknown = { kind: 'artifact', id: value };
+    if (value.startsWith('[')) {
+        try {
+            const tuple: unknown = JSON.parse(value);
+            candidate = Array.isArray(tuple) && tuple[0] === 'artifact' && tuple.length === 2
+                ? { kind: 'artifact', id: tuple[1] }
+                : Array.isArray(tuple) && tuple[0] === 'plugin' && tuple.length === 3
+                    ? { kind: 'plugin', pluginId: tuple[1], contributionId: tuple[2] } : null;
+        } catch { return null; }
+    }
+    const parsed = ThemeReferenceSchema.safeParse(candidate);
+    return parsed.success ? parsed.data : null;
+}
+
 
 export const resolveThemePresetSourcePreferredMode = (profile: ThemeProfileV1): ThemeProfileMode => {
     return resolveThemeProfileAssetAppearance(profile);

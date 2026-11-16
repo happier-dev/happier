@@ -1,4 +1,4 @@
-import { useThemeProfiles } from '@/sync/store/useThemeProfiles';
+import { useThemeProfileDocument } from '@/sync/store/useThemeProfiles';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
@@ -14,9 +14,9 @@ import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
-import { BUILT_IN_THEME_PROFILES, getBuiltInThemeProfileDefinition, isBuiltInThemeProfilePresetId } from '@/theme/profiles/builtInThemeProfiles';
+import { getBuiltInThemeProfileDefinition, isBuiltInThemeProfilePresetId } from '@/theme/profiles/builtInThemeProfiles';
 import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
-import { resolveThemePresetSourcePreferredMode } from './themeProfilePresetOptions';
+import { readThemePresetSourceReferenceId, resolveThemePresetSourcePreferredMode } from './themeProfilePresetOptions';
 import { exportThemeProfileFile } from './themeProfileFileExport';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 
@@ -41,14 +41,14 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
     const styles = stylesheet;
     const copyFeedback = useHappierCopyFeedback();
     const params = useLocalSearchParams();
-    const themeProfiles = useThemeProfiles();
     const profileId = getProfileIdParam(params.profileId);
-    const builtInDefinition = BUILT_IN_THEME_PROFILES.find((definition) => definition.profile.id === profileId);
-    const customProfile = themeProfiles.profiles.find((entry) => entry.id === profileId) ?? null;
-    const profile = customProfile ?? builtInDefinition?.profile ?? null;
+    const reference = React.useMemo(() => readThemePresetSourceReferenceId(profileId), [profileId]);
+    const read = useThemeProfileDocument(reference);
+    const profile = read.document?.profile ?? null;
+    const builtInDefinition = reference?.kind === 'built-in' ? getBuiltInThemeProfileDefinition(reference.presetId) : undefined;
     // Built-in themes are named by their translated title, not their stored profile name.
-    const displayName = customProfile?.name ?? (builtInDefinition ? t(builtInDefinition.translationKey) : null);
-    const json = React.useMemo(() => (profile ? exportThemeProfileToJson(profile, { mode: resolveExportMode(profile), includeResolvedValues: true }) : ''), [profile]);
+    const displayName = builtInDefinition ? t(builtInDefinition.translationKey) : profile?.name;
+    const json = React.useMemo(() => (read.document ? exportThemeProfileToJson(read.document, { mode: resolveExportMode(read.document.profile), includeResolvedValues: true }) : ''), [read.document]);
     const fileName = React.useMemo(() => (profile ? `happier-theme-${sanitizeDownloadName(profile.name)}.json` : 'happier-theme.json'), [profile]);
 
     const copy = React.useCallback(async () => {
@@ -69,6 +69,8 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
             <SettingsPageHeader
                 description={profile
                     ? t('settingsAppearance.themeProfiles.exportPageDescription')
+                    : read.state === 'loading' ? t('common.loading')
+                    : read.state === 'failed' ? t('common.error')
                     : t('settingsAppearance.themeProfiles.exportMissingDescription')}
                 actions={profile ? (
                     <View style={styles.headerActions}>
@@ -89,6 +91,8 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
                             onPress={() => { void copy(); }}
                         />
                     </View>
+                ) : read.state === 'failed' ? (
+                    <RoundButton title={t('common.retry')} onPress={read.retry} />
                 ) : undefined}
             />
             {profile ? (
