@@ -237,8 +237,11 @@ export function resolveHappierTabGlyphOnly(input: Readonly<{
   return input.labels === 'none' && input.tabs.length > 0 && input.tabs.every((tab) => tab.icon != null);
 }
 
-/** One equality rule for controlled selection across core and plugin adapters. */
-export function isHappierTabSelected(value: string, candidate: string): boolean {
+/**
+ * One equality rule for controlled selection across core and plugin adapters. A `null` value is a value
+ * choice nobody has made yet: no option is selected.
+ */
+export function isHappierTabSelected(value: string | null, candidate: string): boolean {
   return value === candidate;
 }
 

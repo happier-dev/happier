@@ -108,6 +108,19 @@ describe('segmented choice row', () => {
     ).toBeUndefined();
   });
 
+  it('selects nothing and keeps the row description while the choice is not made yet', () => {
+    const model = resolveHappierSegmentedChoiceRow({
+      options: [
+        { id: 'web-01', label: 'web-01', description: 'Runs beside production' },
+        { id: 'web-02', label: 'web-02' },
+      ],
+      value: null,
+      description: 'Pick where previews run',
+    });
+    expect(model.segments.map((segment) => segment.selected)).toEqual([false, false]);
+    expect(model.detail).toBe('Pick where previews run');
+  });
+
   it('attaches each reason to its option only when several options are unavailable for different reasons', () => {
     const model = resolveHappierSegmentedChoiceRow({
       options: [

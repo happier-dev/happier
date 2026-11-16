@@ -79,7 +79,8 @@ function nameUnavailableOptions<T extends string>(
 export function resolveHappierSegmentedChoiceRow<T extends string>(
   input: Readonly<{
     options: readonly HappierSegmentedChoiceRowOption<T>[];
-    value: T;
+    /** `null`: nothing chosen yet (a choice the person must make explicitly); no segment is selected. */
+    value: T | null;
     /** The row's own description, shown when the chosen option has none. */
     description?: string;
   }>,
@@ -125,7 +126,8 @@ export type HappierSegmentedChoiceRowProps<T extends string = string> =
     leading?: ReactNode;
     description?: string;
     options: readonly HappierSegmentedChoiceRowOption<T>[];
-    value: T;
+    /** `null`: nothing chosen yet; no segment is selected until the person picks one. */
+    value: T | null;
     onChange: (next: T) => void;
     disabled?: boolean;
     size?: HappierSegmentedSize;

@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { View } from 'react-native';
 
 import { HappierChevron } from '../presentation/collection/DisclosureChevron.js';
-import { Button } from './Button.js';
+import { Button, PluginUiButtonFillContext } from './Button.js';
 import { Row } from './Layout.js';
 import { Menu, type MenuGroup } from './Overlay.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
@@ -103,11 +104,7 @@ export function AgentActionButton(
     else if (id === EDIT_ID) props.onEdit?.();
     else props.onSelectDestination?.(id);
   };
-  return (
-    <Row
-      align="center"
-      style={props.compact === true ? COMPACT_SPLIT_STYLE : SPLIT_STYLE}
-    >
+  const mainFace = (
       <Button
         {...(props.titleKey === undefined ? {} : { titleKey: props.titleKey })}
         title={props.title}
@@ -120,6 +117,19 @@ export function AgentActionButton(
           props.onLaunch(props.launchMode);
         }}
       />
+  );
+  return (
+    <Row
+      align="center"
+      style={props.compact === true ? COMPACT_SPLIT_STYLE : SPLIT_STYLE}
+    >
+      {props.compact === true ? (
+        // A phone's split takes the width its column gives it (stacked controls read at one width); the face grows
+        // and the chevron keeps its size. In a row that sizes it to its content this changes nothing.
+        <View style={COMPACT_FACE_STYLE}>
+          <PluginUiButtonFillContext.Provider value>{mainFace}</PluginUiButtonFillContext.Provider>
+        </View>
+      ) : mainFace}
       <Menu
         open={open}
         onOpenChange={setMenuOpen}
@@ -149,6 +159,8 @@ export function AgentActionButton(
 
 /** A hairline of the page between the split's two presses. */
 const SPLIT_STYLE = Object.freeze({ gap: 1 });
+/** The compact face's box: it grows into room the split is given and gives it up first. */
+const COMPACT_FACE_STYLE = Object.freeze({ flexGrow: 1, flexShrink: 1, minWidth: 0 });
 /** On a phone the main face takes the row's room and gives it up first. */
 const COMPACT_SPLIT_STYLE = Object.freeze({
   gap: 1,

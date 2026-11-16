@@ -17,10 +17,11 @@ import { isHappierTabSelected } from './Tabs.js';
  * authority: the shown choice gives way as soon as the owner's value reaches it, and returns to the owner's value when
  * the owner settles without taking it (an unsaved-changes guard, a refused Action).
  */
-export function useHappierTabSelection<T extends string>(
-  value: T,
-  onValueChange: (value: T) => unknown,
-): readonly [selected: T, select: (value: T) => void] {
+export function useHappierTabSelection<V extends string | null>(
+  value: V,
+  onValueChange: (value: NonNullable<V>) => unknown,
+): readonly [selected: V, select: (value: NonNullable<V>) => void] {
+  type T = NonNullable<V>;
   const [pending, setPending] = useState<Readonly<{ value: T; token: number }> | null>(null);
   // The owner caught up: its value is now the selection, so the pending choice has nothing left to show.
   if (pending !== null && isHappierTabSelected(value, pending.value)) setPending(null);

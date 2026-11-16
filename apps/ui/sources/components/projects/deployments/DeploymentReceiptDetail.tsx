@@ -323,14 +323,15 @@ export const DeploymentReceiptDetail = React.memo(
     // Without one, Investigate leads and Deploy again stays quiet (K12-6).
     const recoveryLeads = rollbackTarget !== null || retryRollbackTo !== null;
     const investigateEmphasis = recoveryLeads ? 'secondary' : 'primary';
-    const investigateControl = agentActionsPending ? (
-      <InvestigationAgentActionButtons actions={waitingAgentActions} pending compact={phone} emphasis={investigateEmphasis}
+    // A narrow banner stacks its ways forward; the split controls stack with them at the same width.
+    const investigateControl = ({ stacked }: Readonly<{ stacked: boolean }>) => agentActionsPending ? (
+      <InvestigationAgentActionButtons actions={waitingAgentActions} pending compact={phone || stacked} emphasis={investigateEmphasis}
         onLaunch={() => {}} />
     ) : (
       <InvestigationAgentActionButtons
         actions={investigation.actions ?? fallbackInvestigate}
         pending={investigation.pending}
-        compact={phone}
+        compact={phone || stacked}
         emphasis={investigateEmphasis}
         onLaunch={(mode, actionId) => { void investigation.launch(mode, actionId); }}
       />

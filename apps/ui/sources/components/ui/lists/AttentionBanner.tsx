@@ -61,9 +61,10 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
     action?: AttentionBannerAction | null;
     /**
      * The primary way forward when it is a shared control rather than a button (the agent-action split button,
-     * `AgentActionButton`): drawn in the action's place, so a notice never grows a second actions row.
+     * `AgentActionButton`): drawn in the action's place, so a notice never grows a second actions row. As a function it
+     * learns whether the banner stacks its ways forward (a narrow banner), so the control stacks with them at one width.
      */
-    control?: React.ReactNode;
+    control?: React.ReactNode | ((placement: Readonly<{ stacked: boolean }>) => React.ReactNode);
     /**
      * A notice whose sibling states differ in how many ways forward they offer keeps its actions in one
      * place: `below` puts even a single action under the words, where two or more always sit.
@@ -110,19 +111,19 @@ export const AttentionBanner = React.memo(function AttentionBanner(props: Readon
     // The one filled button leads the row: a filled banner action goes before the shared control, which then yields.
     const actionLeads = props.action?.display === 'default';
     const actionButton = props.action
-        ? <BannerButton action={props.action} testID={`${props.testID}.action`} fullWidth={fullWidthAction} beside={besideControl} />
+        ? <BannerButton action={props.action} testID={`${props.testID}.action`} fullWidth={fullWidthAction} beside={besideControl} stacked={compact} />
         : null;
     const actions = props.action || props.control || props.secondaryAction || (props.moreActions?.length ?? 0) > 0 ? (
         // Narrow, the ways forward move beneath one another at one width instead of wrapping ragged.
         <View style={[styles.actions, compact ? styles.actionsStacked : null, fullWidthAction ? { width: '100%' } : null]}>
             {actionLeads ? actionButton : null}
-            {props.control ?? null}
+            {typeof props.control === 'function' ? props.control({ stacked: compact }) : props.control ?? null}
             {actionLeads ? null : actionButton}
             {props.secondaryAction
-                ? <BannerButton action={props.secondaryAction} testID={`${props.testID}.secondaryAction`} quiet beside={besideControl} />
+                ? <BannerButton action={props.secondaryAction} testID={`${props.testID}.secondaryAction`} quiet beside={besideControl} stacked={compact} />
                 : null}
             {(props.moreActions ?? []).map((more, index) => (
-                <BannerButton key={index} action={more} testID={`${props.testID}.moreAction.${index}`} quiet beside={besideControl} />
+                <BannerButton key={index} action={more} testID={`${props.testID}.moreAction.${index}`} quiet beside={besideControl} stacked={compact} />
             ))}
         </View>
     ) : null;
@@ -235,7 +236,7 @@ function AttentionBannerStrip(props: React.ComponentProps<typeof AttentionBanner
                                 label={action.label} onPress={action.onPress} disabled={action.disabled} />
                         </View>
                     ))}
-                    {props.control ?? null}
+                    {typeof props.control === 'function' ? props.control({ stacked: false }) : props.control ?? null}
                     {props.action ? <BannerButton action={props.action} testID={`${props.testID}.action`} /> : null}
                 </>
             ) : undefined}
@@ -252,13 +253,14 @@ function AttentionBannerStrip(props: React.ComponentProps<typeof AttentionBanner
     );
 }
 
-function BannerButton(props: Readonly<{ action: AttentionBannerAction; testID: string; quiet?: boolean; fullWidth?: boolean; beside?: boolean }>) {
+/** Stacked (a narrow banner), every way forward takes the one width of the column, so the group reads as one (TH D-J). */
+function BannerButton(props: Readonly<{ action: AttentionBannerAction; testID: string; quiet?: boolean; fullWidth?: boolean; beside?: boolean; stacked?: boolean }>) {
     const { theme } = useUnistyles();
     return (
         <RoundButton
             testID={props.action.testID ?? props.testID}
             size={props.fullWidth ? 'normal' : props.beside ? 'small' : 'mini'}
-            style={props.fullWidth ? { width: '100%' } : undefined}
+            style={props.fullWidth || props.stacked ? { width: '100%' } : undefined}
             display={props.action.display ?? (props.quiet ? 'inverted' : 'secondary')}
             title={props.action.label}
             leading={props.action.icon ? <Icon name={props.action.icon} size={ICON_SIZE.xs}

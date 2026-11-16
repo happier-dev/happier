@@ -127,6 +127,25 @@ describe('SegmentedChoiceItem', () => {
         expect(screen.root.findAll((node) => node.props?.accessibilityRole === 'tablist' || node.props?.accessibilityRole === 'tab')).toHaveLength(0);
     });
 
+    // A choice the person must make explicitly (Preview "Runs on") starts with nothing selected.
+    it('starts with no option chosen when its value is null, and the first press chooses', async () => {
+        const { SegmentedChoiceItem } = await import('./SegmentedChoiceItem');
+        const onChange = vi.fn();
+        const screen = await renderScreen(
+            <SegmentedChoiceItem<'hints' | 'deep'>
+                title="Index mode" subtitle="Pick one to continue." options={OPTIONS} value={null}
+                onChange={onChange} testIDPrefix="mode"
+            />,
+        );
+        for (const option of OPTIONS) {
+            expect(screen.findByTestId(`mode:${option.id}`)!.props.accessibilityState).toEqual({ checked: false, disabled: false });
+        }
+        expect(screen.findByTestId('mode:thumb')).toBeNull();
+        expect(texts(screen)).toContain('Pick one to continue.');
+        screen.findByTestId('mode:deep')!.props.onPress();
+        expect(onChange).toHaveBeenCalledWith('deep');
+    });
+
     it("says why one option can't be chosen: on the segment and in the row", async () => {
         const { SegmentedChoiceItem } = await import('./SegmentedChoiceItem');
         const onChange = vi.fn();

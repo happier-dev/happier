@@ -37,7 +37,7 @@ export type InboxItemFocus = Readonly<{ serverId: string; id: string } & (
 )>;
 
 export type InboxItemDetailContext = Readonly<{ notice?: AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 | null }>;
-type InboxNoticePageSource = Pick<AccountNoticeArtifactHeaderV1, 'kind' | 'source' | 'page' | 'notice'>
+type InboxNoticePageSource = Pick<AccountNoticeArtifactHeaderV1, 'kind' | 'source' | 'page' | 'notice'> & Partial<Pick<AccountNoticeArtifactHeaderV1, 'recoveryChoices'>>
     | Pick<UsageNoticeArtifactHeaderV1, 'kind' | 'notice'>;
 
 /** Source kinds choose one detail adapter and their real page here; plugins use the existing page host. */
@@ -72,8 +72,18 @@ export const INBOX_ITEM_DETAIL_REGISTRY = {
  * same selected notice the wide pane shows, never the stored document page with its JSON.
  */
 export function resolveInboxNoticePageRoute(id: string, notice?: InboxNoticePageSource | null, serverId?: string): string {
-    return resolveInboxNoticeOwnPageRoute(notice, serverId)
+    return (inboxHostsNoticePage(notice, serverId) ? null : resolveInboxNoticeOwnPageRoute(notice, serverId))
         ?? `/inbox?item=${encodeURIComponent(inboxNoticeFocusKeyV1(serverId ?? '', id))}`;
+}
+
+/**
+ * Whether the Inbox shows this notice itself where the list is the whole page (a phone): it points nowhere, or it
+ * offers recovery choices, which travel with the Inbox's controls into the page it hosts (a failed deploy's receipt
+ * with "Roll back to …"). Otherwise a phone opens the notice's own page.
+ */
+export function inboxHostsNoticePage(notice?: InboxNoticePageSource | null, serverId?: string): boolean {
+    return resolveInboxNoticeOwnPageRoute(notice, serverId) === null
+        || (notice?.kind === 'account_notice.v1' && (notice.recoveryChoices?.length ?? 0) > 0);
 }
 
 /** The page a notice points at (a plugin page, usage or a machine), or null when the notice is its own content. */

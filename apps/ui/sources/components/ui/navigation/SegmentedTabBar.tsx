@@ -135,7 +135,11 @@ export type SegmentedTab<T extends string = string> = Readonly<{
 
 export type SegmentedTabBarProps<T extends string = string> = Readonly<{
     tabs: ReadonlyArray<SegmentedTab<T>>;
-    activeTabId: T;
+    /**
+     * The selected tab. `null` only for a value choice (`role="radiogroup"`) the person has not made yet:
+     * no segment is selected and no thumb is drawn until they pick one. A view switch always names its tab.
+     */
+    activeTabId: T | null;
     onSelectTab: (tabId: T) => void;
     /** Wraps each visible tab, whole (a reorder row around a strip tab); the bar keeps its selection and keys. */
     wrapTab?: (tabId: T, tab: React.ReactElement) => React.ReactNode;
@@ -749,7 +753,7 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
         });
     }, []);
 
-    const activeRect = tabRects[props.activeTabId] ?? null;
+    const activeRect = props.activeTabId === null ? null : tabRects[props.activeTabId] ?? null;
     // Roving tabindex: the active segment takes focus; when the value names no enabled segment (a
     // custom value, or a choice that cannot apply now) the first enabled one does, so the group
     // never drops out of the tab order.
@@ -1052,7 +1056,7 @@ function SegmentedTrackGlass(props: Readonly<{ glass: boolean | undefined; conte
  */
 export function SegmentedValueSelect<T extends string>(props: Readonly<{
     tabs: ReadonlyArray<SegmentedTab<T>>;
-    activeTabId: T;
+    activeTabId: T | null;
     onSelectTab: (tabId: T) => void;
     disabled: boolean;
     accessibilityLabel?: string;

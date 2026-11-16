@@ -849,6 +849,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               style={({ pressed }) => [
                 styles.tilePressable,
                 compact ? styles.tileCompact : null,
+                // One tile per line has no row to keep even: each takes its own content's height.
+                fittedColumns === 1 && !sheet ? styles.tileSingleColumn : null,
                 compact && !subtitleLine ? styles.tileCompactWithoutSubtitle : null,
                 below ? styles.tilePressableBelow : null,
                 sheet ? styles.sheetCellPressable : null,
@@ -1106,6 +1108,9 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       paddingHorizontal: 10,
       paddingVertical: 8,
       minHeight: 48,
+    },
+    tileSingleColumn: {
+      minHeight: 0,
     },
     // A one-line compact card is a bordered choice in a dense grid (a popover's scope tiles): the
     // field box's height under every pointer, its title centred. A finger reaches it through the tile's

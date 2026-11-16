@@ -28,7 +28,11 @@ export type SegmentedChoiceOption<T extends string> = Readonly<{
 
 export type SegmentedChoiceItemProps<T extends string> = Omit<ItemProps, 'rightElement' | 'onPress' | 'accessoryLayout'> & Readonly<{
     options: ReadonlyArray<SegmentedChoiceOption<T>>;
-    value: T;
+    /**
+     * `null`: nothing chosen yet, for a choice the person must make explicitly (no option is preselected).
+     * No segment is selected and the row keeps its own description until they pick one.
+     */
+    value: T | null;
     onChange: (next: T) => void;
     /** Prefix for per-option test ids (`${testIDPrefix}:${id}`). */
     testIDPrefix?: string;
