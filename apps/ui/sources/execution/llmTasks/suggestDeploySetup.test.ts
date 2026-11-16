@@ -102,10 +102,19 @@ it('returns per-Machine repair reasons without starting a run when no Agent is r
     } }) }));
     execute.mockImplementation(executor.execute);
     expect(await suggestDeploySetup({ serverId: 'home', description: 'Bakery', catalog })).toMatchObject({ kind: 'noAgent',
-        machines: expect.arrayContaining([expect.objectContaining({ machineId: 'offline', online: false, reason: 'offline' }),
-            expect.objectContaining({ machineId: 'signed-out', online: true, reason: 'no_ready_agent',
-                unavailableAgents: [expect.objectContaining({ reason: 'sign_in_required' })] })]) });
+        machines: [
+            { machineId: 'offline', online: false, reason: 'offline', unavailableAgents: [] },
+            { machineId: 'signed-out', online: true, reason: 'no_ready_agent',
+                unavailableAgents: [{ agentTargetKey: runner.modelSelection.agentTargetKey, reason: 'sign_in_required' }] },
+            { machineId: 'ready', online: true, reason: 'no_ready_agent',
+                unavailableAgents: [{ agentTargetKey: runner.modelSelection.agentTargetKey, reason: 'sign_in_required' }] },
+            { machineId: 'unused', online: true, reason: 'no_ready_agent',
+                unavailableAgents: [{ agentTargetKey: runner.modelSelection.agentTargetKey, reason: 'sign_in_required' }] },
+        ] });
+    const runnerReads = execute.mock.calls.filter(row => row[0] === 'agents.models.list');
+    expect(runnerReads.map(row => row[1].machineId)).toEqual(['signed-out', 'ready', 'unused']);
     expect(execute.mock.calls.filter(row => row[0] === 'execution.run.start')).toHaveLength(0);
+    expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.check')).toHaveLength(0);
 });
 
 it.each([false, true])('stops the accepted run once without hiding Stop failure (refused: %s)', async (refused) => {
