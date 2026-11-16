@@ -1395,7 +1395,7 @@ export function createAccountArtifactStore(params: Readonly<{
     },
   };
   const readListBodies = async (items: readonly AccountArtifactHeader[], signal?: AbortSignal,
-    readAccountMode?: () => Promise<ConnectedServiceAccountEncryptionMode>,
+    readAdmittedAccountMode?: () => Promise<ConnectedServiceAccountEncryptionMode>,
     authorizationHeaders?: ArtifactRequestAuthorizationHeaders): Promise<readonly AccountArtifactHeader[]> => {
     signal?.throwIfAborted();
     if (items.length === 0) return items;
@@ -1417,7 +1417,10 @@ export function createAccountArtifactStore(params: Readonly<{
       throw Object.assign(new Error('artifact_read_invalid'), { code: 'artifact_read_invalid' });
     }
     const timing = { accountModeMs: 0, codecMs: 0 };
-    const opened = await projectHeaderRows(parsed.data.items.flatMap(item => item.ok ? [item.artifact] : []), { includeBody: true, signal }, timing, readAccountMode);
+    let accountMode: Promise<ConnectedServiceAccountEncryptionMode> | undefined;
+    const readBatchAccountMode = () => accountMode ??= readAdmittedAccountMode?.()
+      ?? readAccountMode({ signal, authorizationHeaders });
+    const opened = await projectHeaderRows(parsed.data.items.flatMap(item => item.ok ? [item.artifact] : []), { includeBody: true, signal }, timing, readBatchAccountMode);
     signal?.throwIfAborted();
     const byId = new Map(opened.map(item => [item.artifactId, item]));
     logger.infoFile('[Artifacts] Selected body batch timing', { rows: items.length, items: opened.length,

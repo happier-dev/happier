@@ -1955,6 +1955,36 @@ describe('createAccountArtifactStore', () => {
     expect(await store.list({ sort: 'title_asc' })).toMatchObject({ coverage: 'partial', items: [{ artifactId: 'doc' }] });
   });
 
+  it('reads a selected body batch with one Account mode request and observes retirement on the next batch', async () => {
+    const store = createCredentialedAccountArtifactStore({ token: 'selected-body-batch-token', encryption: null });
+    // Match the populated Inbox selection observed in READY228; HTTP is the only mocked boundary.
+    const rows = Array.from({ length: 172 }, (_, index) => ({ id: `selected-notice-${index}`,
+      header: encodePlainArtifactStoredContent({ kind: 'example.v1' }),
+      body: encodePlainArtifactStoredContent({ body: `notice-${index}` }),
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+      headerVersion: 1, bodyVersion: 1, seq: index, createdAt: 1, updatedAt: 1 }));
+    let currentMode: 'plain' | 'e2ee' = 'plain';
+    mockGet.mockImplementation(async (url: string) => {
+      if (new URL(url).pathname === '/v1/account/encryption') return { status: 200, data: { mode: currentMode, updatedAt: 1 } };
+      return { status: 200, data: artifactListResponse(url, rows) };
+    });
+    mockPost.mockImplementation(async (_url: string, input: unknown) => artifactReadResponse(input,
+      artifactId => rows.find(row => row.id === artifactId) ?? null));
+    const headers = (await store.list()).items;
+    mockGet.mockClear();
+    expect(await store.readBodies([])).toEqual([]);
+    expect(mockGet).not.toHaveBeenCalled();
+    const opened = await store.readBodies(headers);
+    expect(opened.map(item => item.body)).toEqual(rows.map((_, index) => `notice-${index}`));
+    expect(mockGet.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/v1/account/encryption']);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    currentMode = 'e2ee';
+    await expect(store.readBodies(headers)).rejects.toMatchObject({ code: 'artifact_account_mode_mismatch' });
+    expect(mockGet.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
+      '/v1/account/encryption', '/v1/account/encryption',
+    ]);
+  });
+
   it.each(['plain', 'e2ee'] as const)('opens opt-in batched list bodies with the existing %s Artifact codec', async (mode) => {
     const secret = randomBytes(32);
     const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: mode === 'plain' ? null : {
