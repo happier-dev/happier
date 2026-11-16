@@ -8,6 +8,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { t } from '@/text';
 import { WorkflowRunWindowRow } from '../library/WorkflowRunWindowRow';
 import { Item } from '@/components/ui/lists/Item';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, formatNextScheduledRunTime, readNextScheduledRunRefreshAtMs } from './formatTriggerSummary';
 import { readOnceScheduleState, formatOnceScheduleStateLabel, type OnceScheduleSource } from './triggerSchedule';
@@ -63,9 +64,12 @@ export const WorkflowTriggerRunHistory = React.memo(function WorkflowTriggerRunH
             title={read.status === 'loading' ? t('common.loading') : emptyWithNext
                 ? t('workflows.destination.history.triggerEmpty', { when: formatNextScheduledRunTime(nextRunAt, true, nowMs) })
                 : t('workflows.empty.runsTitle')} /> : null}
-        {serverId !== null ? read.rows.map(row => <WorkflowRunWindowRow
+        {/* History's Runs are rows of its page section wherever the section is hosted (the editor's When card,
+            a Session's or the Account's triggers): flat on the section's edge, and on a narrow row their name and
+            progress wrap rather than clip (QA-LAYOUT H1). */}
+        {serverId !== null ? <ListPresentationProvider value="page">{read.rows.map(row => <WorkflowRunWindowRow
             key={row.id} row={row} serverId={serverId} accountLifetime={read.accountLifetime}
-            fallbackName={props.triggerName} inTriggerHistory testID={`session-work-trigger-history-row:${row.id}`} />) : null}
+            fallbackName={props.triggerName} inTriggerHistory testID={`session-work-trigger-history-row:${row.id}`} />)}</ListPresentationProvider> : null}
         {read.hasMore ? <ToolbarButton testID={`session-work-trigger-history:${props.automationId}-loadMore`}
             label={t(read.loadMoreFailed ? 'workflows.retry' : 'workflows.destination.history.loadMore')}
             busy={read.loadingMore} disabled={read.loadingMore} onPress={read.loadMore} /> : null}

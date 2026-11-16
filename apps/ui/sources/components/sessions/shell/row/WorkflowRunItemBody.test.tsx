@@ -452,6 +452,26 @@ describe('opened habit History result', () => {
         await flushHookEffects({ cycles: 40 });
         expect(scoped.findAllHostsByTestId('workflow-run-row:habit-run')).toHaveLength(1);
     });
+    // QA-LAYOUT H1: a phone's History row clipped its name and progress beside a short age.
+    it('wraps a narrow trigger History row\'s name rather than clipping it beside its age', async () => {
+        const { home } = await initializeRun('timer');
+        const titleLinesAt = async (node: React.ReactElement) => {
+            const screen = await renderScreen(node);
+            await flushHookEffects({ cycles: 40 });
+            const sheet = screen.findHostByTestId('workflow-run-sheet:habit-run');
+            const status = screen.findHostByTestId('workflow-run-row:habit-run:status');
+            const rowLayout = sheet?.findAll(host => typeof host.type === 'string' && typeof host.props.onLayout === 'function'
+                && host !== status && !status?.findAll(inner => inner === host).length).at(0);
+            if (rowLayout) await act(async () => {
+                invokeTestInstanceHandler(rowLayout, 'onLayout', { nativeEvent: { layout: { width: 320, height: 56 } } });
+            });
+            const title = sheet?.findAll(host => typeof host.type === 'string' && 'numberOfLines' in host.props).at(0);
+            return title?.props.numberOfLines ?? 1;
+        };
+        expect(await titleLinesAt(<WorkflowTriggerRunHistory automationId="auto-1" triggerId="timer" />)).toBeGreaterThan(1);
+        // A column's Run row (outside a page section) keeps the one-line row a Session row has.
+        expect(await titleLinesAt(<WorkflowRunItemBody kind="workflow_run" runId="habit-run" serverId={home.id} />)).toBe(1);
+    });
     it('keeps each destination writer beside aggregate progress with the Run status alone', async () => {
         const { home, serve } = await initializeRun();
         const summary: WorkflowRunSummaryV1 = { ...createWorkflowRunSummaryFixture({ id: 'habit-run', state: 'running', revision: 4 }),

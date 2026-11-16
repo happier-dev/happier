@@ -206,6 +206,11 @@ export type HappierCollectionRowContentProps = Readonly<{
    * `isHappierPageRowAccessoryStacked`, which the row's owner measures and decides).
    */
   trailingBeneath?: boolean;
+  /**
+   * The row's text wraps rather than ellipsizes (a narrow page row whose owner lets its name and lines read whole), so
+   * the row grows to hold them instead of keeping its one-line height and overlapping its neighbours.
+   */
+  wraps?: boolean;
   trailingProps?: Pick<HappierTextHostProps,
     | 'accessible' | 'accessibilityLabel' | 'accessibilityHint'
     | 'accessibilityElementsHidden' | 'accessibilityLiveRegion'
@@ -412,7 +417,8 @@ export function HappierCollectionRowContent(
       ? Math.max(1, props.textScale)
       : 1;
   const beneath = props.trailingBeneath === true;
-  const grows = textScale > 1.1 || beneath;
+  const wraps = props.wraps === true;
+  const grows = textScale > 1.1 || beneath || wraps;
   // Fills resolve through the plane's material, so a glass sidebar keeps its coat under the row's chip.
   const paintColor = useHappierMaterialColorResolver();
   const fill =
@@ -429,7 +435,7 @@ export function HappierCollectionRowContent(
       : { height },
     beneath
       ? { flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', paddingVertical: M.padding[props.density] } as const
-      : null,
+      : wraps ? { paddingVertical: M.padding[props.density] } : null,
     fill ? { backgroundColor: paintColor(fill) } : null,
     props.style,
   ];

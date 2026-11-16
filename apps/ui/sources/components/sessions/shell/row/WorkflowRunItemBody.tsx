@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
-import { Pressable, useWindowDimensions, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -32,6 +32,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { publishOpenedWorkflowRunDetail } from '@/sync/engine/workflows/refreshWorkflowRun';
 import type { WorkflowRunRow } from '@/sync/store/domains/workflowRuns';
 import { t } from '@/text';
+import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { Item } from '@/components/ui/lists/Item';
 import { useBareSectionRowEdge, useListPresentation } from '@/components/ui/lists/listPresentation';
@@ -40,7 +41,7 @@ import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs'
 import { resolveSessionRowTitleColorRole, sessionRowTitleInk, type SessionListActiveColorModeV1 } from './sessionRowTitleColorRole';
 
 import { resolveCollectionRowDensity, type SessionListRowDensity } from '../resolveSessionListDensityViewState';
-import { isHappierPageRowAccessoryStacked, resolveHappierCollectionTreeChildIndentPx } from '@happier-dev/plugin-ui/presentation';
+import { isHappierPageRowAccessoryStacked, isHappierPageRowNarrow, resolveHappierCollectionTreeChildIndentPx } from '@happier-dev/plugin-ui/presentation';
 import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { SESSION_LIST_SHEET_INSET_PX } from '../sessionListStyles';
 import { CollectionRowContent, CollectionRowLine, CollectionRowTitle, useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
@@ -141,7 +142,9 @@ function useOpenedWorkflowRunResult(input: Readonly<{
 export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactElement | null {
     const router = useRouter();
     const { theme } = useUnistyles();
-    const { fontScale } = useWindowDimensions();
+    // The app's text size, as a Session row reads it (SessionItem): the window's own scale is 1 on web.
+    const uiFontScale = useLocalSetting('uiFontScale');
+    const fontScale = typeof uiFontScale === 'number' ? uiFontScale : 1;
     const bareSectionRow = useBareSectionRowEdge();
     const pageRow = useListPresentation() === 'page';
     // A page row's status follows the page row rule: it stays beside the name while the name keeps its label
@@ -226,9 +229,11 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     const oneLine = rowDensity === 'compact';
     const statusBeneath = pageRow && !oneLine
         && isHappierPageRowAccessoryStacked({ kind: 'operation', rowWidthPx, accessoryWidthPx: statusWidthPx });
-    // Above its status, a narrow row's name and its context wrap rather than ellipsize, so they read whole.
-    const narrowTitleLines = statusBeneath ? 3 : undefined;
-    const narrowContextLines = statusBeneath ? 4 : undefined;
+    // A narrow page row (every phone sheet, or a status moved beneath) wraps its name and context rather than
+    // ellipsizing them, so they read whole beside a short status such as an age (QA-LAYOUT H1).
+    const narrowRow = statusBeneath || (pageRow && !oneLine && isHappierPageRowNarrow(rowWidthPx));
+    const narrowTitleLines = narrowRow ? 3 : undefined;
+    const narrowContextLines = narrowRow ? 4 : undefined;
     const showWord = !oneLine || props.statusWords === true;
     const rowMark = resolveWorkStatusRowMark(status);
     // Who edited the occurrence is its own fact: a detailed row has room for a third line, so attribution takes
@@ -263,7 +268,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
         <View style={depth > 0 ? styles.guide : null}>
             <CollectionRowContent density={rowDensity} touchCompact={readablePhone} textScale={fontScale}
                 selected={props.selected} hovered={hovered} style={bareSectionRow ? styles.bareSectionRow : undefined}
-                trailingBeneath={statusBeneath} onLayout={pageRow && !oneLine ? onRowLayout : undefined}
+                trailingBeneath={statusBeneath} wraps={narrowRow} onLayout={pageRow && !oneLine ? onRowLayout : undefined}
                 identity={props.kindMark === true ? <Icon name={WORKER_KIND_GLYPHS.workflow_run} size={ICON_SIZE.md} color={theme.colors.text.secondary} /> : undefined}
                 // A Run's title takes the ink a Session row in the same state takes: primary while it runs or
                 // asks, quiet once it has stopped.
