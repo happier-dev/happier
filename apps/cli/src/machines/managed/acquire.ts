@@ -668,8 +668,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const setupClient = () => createManagedMachineControllerClient(input, {
                     requestId: request.operation?.actionRequestId ?? options.requestId, signal: finiteSignal, context: request.operation,
                 }, 'machines.managed.inspect', hydrator);
+                let cliInstallationRequired = selectedExecution?.updateCli === true || !current.bootstrapInstalled && !selectedExecution;
                 const ensureRecipeInterpreter = async () => {
-                    if (!current.bootstrapInstalled && !selectedExecution) {
+                    if (cliInstallationRequired) {
                         if (!current.preset) throw new ManagedMachineControllerError('admission_unavailable');
                         request.operation?.operationOwnerUpdate?.update({ progress: {
                             phase: 'ssh.installCli', label: 'Installing Happier',
@@ -686,9 +687,13 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                             homeId: current.homeId, managedId: current.id, presetId: current.preset.id, presetRevision: current.preset.revision,
                             target: { kind: 'bound', controller: input.controller, sessionId: request.committedSessionId! }, bootstrapInstalled: true,
                         });
+                        cliInstallationRequired = false;
                     }
                     return setupBinaryPath;
                 };
+                if (current.acquisitionMode === 'resource-bound' && request.operation && selectedExecution?.updateCli) {
+                    await ensureRecipeInterpreter();
+                }
                 if (current.acquisitionMode === 'resource-bound' && request.operation && setupRemaining && setup) {
                     await runBoundSessionSetup({ machine: current, setup, sessionId: request.committedSessionId!,
                         requesterAccountId: request.requesterAccountId, transport: io, binaryPath: setupBinaryPath, ensureRecipeInterpreter,

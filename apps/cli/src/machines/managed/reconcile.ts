@@ -47,7 +47,8 @@ import { readManagedMachinePresetPreparationV1 } from '@happier-dev/cli-common/m
 import type { ManagedMachinePresetPreparationBindingV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
 import { resolveManagedGuestCliBuildIdentity } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { readManagedGuestCliLocalBuildPayloadMetadata } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
-import { readMachineProvisionerPreparedLaunchV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MachineProvisionerPreparationInspectResultV1Schema, readMachineProvisionerActionRolesV1,
+    readMachineProvisionerPreparedLaunchV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
@@ -358,7 +359,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
         return resolveManagedRoleCredentialAuthorizations(input, launch.provider, localId, launch.credentials,
             { descriptor: contribution.definition, launch: launch.choices });
     }
-    async function invoke(role: keyof typeof contribution.definition.actions | 'exec' | 'putFile' | 'stream' | 'reconcile' | 'cleanup' | 'nativeCredentialApply', body: unknown, io?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void; channel?: ManagedNativeChannelIO; beforeNativeEffect?: () => Promise<void>; managedNativeCredentials?: ManagedNativeCredentialInvocationBinding }>): Promise<JsonValue | null> {
+    async function invoke(role: MachineProvisionerRoleV1, body: unknown, io?: Readonly<{ signal?: AbortSignal; timeoutMs?: number | null; onStdoutChunk?: (text: string) => void; channel?: ManagedNativeChannelIO; beforeNativeEffect?: () => Promise<void>; managedNativeCredentials?: ManagedNativeCredentialInvocationBinding }>): Promise<JsonValue | null> {
         let dispatched = false;
         try {
             if (params.action === 'machines.managed.inspect' && role !== 'inspect' && role !== 'reconcile' && role !== 'cleanup'
@@ -378,10 +379,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
             }
             const machine = readMachine();
             const { executeContributedAction } = await import('@/plugins/runtime/invocation/actions/executeContributedAction');
-            const localId = role === 'nativeCredentialApply' ? contribution.definition.nativeCredentialDelivery?.apply
-                : role === 'reconcile' ? contribution.definition.reconciliation?.action
-                : role === 'cleanup' ? contribution.definition.reconciliation?.cleanup
-                : role === 'exec' || role === 'putFile' || role === 'stream' ? contribution.definition.bootstrapTransport?.[role] : contribution.definition.actions[role];
+            const localId = readMachineProvisionerActionRolesV1(contribution.definition).find(binding => binding.role === role)?.action;
             if (!localId) throw new ManagedMachineControllerError('provider_unavailable');
             const input = await resolveManagedRoleRuntime(params.input, contribution.pluginId, localId);
             const occurrenceId = input.runtimeRegistry.readPluginOccurrenceId?.(contribution.pluginId);
@@ -642,16 +640,32 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                         readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata, signal: params.options.signal,
                         ...(params.input.guestCliFetch ? { fetchImpl: params.input.guestCliFetch } : {}) });
                     // Unsubmitted preparation captures this same basis before constructing native invocations.
-                    const decision = readManagedMachinePresetPreparationV1({ content, presetRevision: machine.preset.revision,
+                    const decision = readManagedMachinePresetPreparationV1({ content,
                         cliIdentity: cli.identity, credentialConfigurations: credentialConfigurations! });
                     if (decision.kind === 'warm') {
                         const preparedLaunch = readMachineProvisionerPreparedLaunchV1({ provisioner: retainedProvisioner.identity,
                             descriptor: retainedProvisioner.definition, artifact: decision.artifact });
-                        if (!preparedLaunch.success) throw new ManagedMachineControllerError('provider_unavailable');
-                        // Retained launch wire values use the canonical mutable JSON vocabulary.
-                        launch = { ...launch, choices: PluginJsonValueV2Schema.parse(preparedLaunch.data) };
-                        preparationExecution = { launch, binaryPath: decision.binaryPath,
-                            ...(decision.deferredSetup === undefined ? {} : { deferredSetup: decision.deferredSetup }) };
+                        if (preparedLaunch.success) {
+                            const prepared = content.prepared!;
+                            const observation = MachineProvisionerPreparationInspectResultV1Schema.parse(await native.invoke('preparationInspect',
+                                prepared.nativeOperationRef ? { nativeOperation: prepared.nativeOperationRef }
+                                    : { operationId: prepared.operationId, launch: prepared.binding.configuration.launch.choices }));
+                            if (observation.kind === 'failed' || observation.kind === 'unknown') {
+                                throw new ManagedMachineControllerError(observation.code, undefined,
+                                    observation.nativeCause ? { kind: 'managedNative', nativeCause: observation.nativeCause } : undefined);
+                            }
+                            if (observation.kind === 'pending') throw new ManagedMachineControllerError('native_observation_unavailable');
+                            if (observation.kind === 'ready') {
+                                const currentLaunch = readMachineProvisionerPreparedLaunchV1({ provisioner: retainedProvisioner.identity,
+                                    descriptor: retainedProvisioner.definition, artifact: observation.artifact });
+                                if (!currentLaunch.success) throw new ManagedMachineControllerError('provider_unavailable');
+                                // Retained launch wire values use the canonical mutable JSON vocabulary.
+                                launch = { ...launch, choices: PluginJsonValueV2Schema.parse(currentLaunch.data) };
+                                preparationExecution = { launch, binaryPath: decision.binaryPath,
+                                    ...(decision.updateCli ? { updateCli: decision.updateCli } : {}),
+                                    ...(decision.deferredSetup === undefined ? {} : { deferredSetup: decision.deferredSetup }) };
+                            }
+                        }
                     }
                 }
             }

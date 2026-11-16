@@ -202,14 +202,14 @@ describe('private preset preparation operation', () => {
         return { kind: 'pending', nativeOperationRef };
       } }) };
     expect(await advanceManagedMachinePresetPreparationOperationV1(request)).toMatchObject({ kind: 'pending' });
-    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), presetRevision: fixture.row().revision, ...identity }))
+    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), ...identity }))
       .toEqual({ kind: 'cold', reason: 'building' });
     expect(await advanceManagedMachinePresetPreparationOperationV1({ ...request,
       composeBuild: async () => ({ input: { ...buildInput, cli: { ...buildInput.cli, binaryPath: '/different-current-cli/happier' } },
         bakedSetup: { scripts: [{ body: 'unrelated-retry-setup', affects: 'none' }] } }) }))
       .toMatchObject({ kind: 'ready', prepared: { cliBinaryPath: buildInput.cli.binaryPath } });
     expect(fixture.opened().prepared).not.toHaveProperty('bakedSetup');
-    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), presetRevision: fixture.row().revision, ...identity }))
+    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), ...identity }))
       .toMatchObject({ kind: 'warm', binaryPath: buildInput.cli.binaryPath });
   });
   it('foreground following retains the operation until native readiness and leaves no settled timer', async () => {
@@ -297,8 +297,7 @@ describe('private preset preparation operation', () => {
       expect(restorable.preparation).toEqual({ enabled: true });
       expect(restorable.prepared).not.toHaveProperty('artifact');
       expect(restorable.prepared).not.toHaveProperty('nativeOperationRef');
-      expect(readManagedMachinePresetPreparationV1({ content: restorable, ...identity,
-        presetRevision: fixture.row().revision })).toEqual({ kind: 'cold', reason: 'cancelled' });
+      expect(readManagedMachinePresetPreparationV1({ content: restorable, ...identity })).toEqual({ kind: 'cold', reason: 'cancelled' });
       expect(fixture.row().recipients).toEqual(recipients);
       expect(destroys).toBe(3);
       expect(vi.getTimerCount()).toBe(0);
@@ -361,14 +360,15 @@ describe('private preset preparation operation', () => {
     const native = nativeFixture({ build: async input => {
       expect(input).toEqual({ operationId: 'operation-one', input: buildInput });
       expect(fixture.opened().prepared).toMatchObject({ operationId: 'operation-one', status: 'building',
-        binding: { presetRevision: fixture.row().revision } });
+        binding: { cliIdentity: buildInput.cli.identity } });
+      expect(fixture.opened().prepared!.binding).not.toHaveProperty('presetRevision');
       return { kind: 'ready', artifact };
     } });
     const result = await advanceManagedMachinePresetPreparationOperationV1({ operationId: 'operation-one',
       ...identity, composeBuild: async () => ({ input: buildInput }), credentialConfigurations: [], custody: { mode: 'plain' }, storage: fixture.storage, native });
     expect(result).toMatchObject({ kind: 'ready', revision: 3, prepared: { operationId: 'operation-one', artifact } });
     expect(fixture.writes.map(row => row.revision)).toEqual([2, 3]);
-    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), presetRevision: fixture.row().revision, ...identity }))
+    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), ...identity }))
       .toEqual({ kind: 'warm', artifact, binaryPath: buildInput.cli.binaryPath });
   });
 
@@ -423,7 +423,7 @@ describe('private preset preparation operation', () => {
     ready = true;
     expect(await advanceManagedMachinePresetPreparationOperationV1(request)).toMatchObject({ kind: 'ready', prepared: { artifact } });
     expect(fixture.writes).toHaveLength(3);
-    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), presetRevision: fixture.row().revision, ...identity }))
+    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), ...identity }))
       .toEqual({ kind: 'warm', artifact, binaryPath: buildInput.cli.binaryPath });
   });
 
@@ -440,7 +440,7 @@ describe('private preset preparation operation', () => {
     } });
     expect(await cancelManagedMachinePresetPreparationOperationV1({ ...request, native: cleanup }))
       .toMatchObject({ kind: 'unknown', prepared: { status: 'cancelled', nativeOperationRef } });
-    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), presetRevision: fixture.row().revision, ...identity }))
+    expect(readManagedMachinePresetPreparationV1({ content: fixture.opened(), ...identity }))
       .toEqual({ kind: 'cold', reason: 'cancelled' });
     expect(await cancelManagedMachinePresetPreparationOperationV1({ ...request, native: cleanup }))
       .toMatchObject({ kind: 'cancelled', prepared: { status: 'cancelled' } });
@@ -689,8 +689,9 @@ describe('private preset preparation operation', () => {
         return { kind: 'ready', artifact };
       }, destroy: async () => { events.push('destroy'); return { kind: 'confirmed' }; },
         build: async () => { events.push('build'); return { kind: 'ready', artifact }; } }) });
-    expect(outcome).toMatchObject({ kind: 'ready', prepared: { operationId: scenario === 'matching' ? 'operation-one' : 'operation-two' } });
-    expect(events).toEqual(scenario === 'matching' ? ['inspect'] : ['inspect', 'destroy', 'compose', 'build']);
+    const reusable = scenario === 'matching' || scenario === 'cli-changed';
+    expect(outcome).toMatchObject({ kind: 'ready', prepared: { operationId: reusable ? 'operation-one' : 'operation-two' } });
+    expect(events).toEqual(reusable ? ['inspect'] : ['inspect', 'destroy', 'compose', 'build']);
     expect(fixture.opened().prepared?.binding.credentialConfigurations).toEqual(credentialConfigurations);
   });
 

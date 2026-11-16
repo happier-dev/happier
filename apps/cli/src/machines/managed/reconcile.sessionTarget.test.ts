@@ -97,6 +97,34 @@ function harness(options: Readonly<{ streamRole?: boolean; holdStream?: boolean;
     return { calls, inputs, native, input };
 }
 
+async function installableGuestCliPayload() {
+    const root = await mkdtemp(join(tmpdir(), 'bound-session-cli-'));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const guestHome = join(root, 'guest'), payload = join(root, 'payload');
+    const binaryPath = resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli', remoteHomeDir: join(guestHome, '.happier'),
+        channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label });
+    await Promise.all([mkdir(guestHome), mkdir(payload)]);
+    await writeFile(join(payload, 'package.json'), JSON.stringify({ version: '0.3.0-dev' }));
+    // The guest executable is an explicit operator fixture. Its self-install
+    // delegates to the canonical installation owner, rather than simulating promotion.
+    const installer = `import { installVersionedPayload } from ${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve('@happier-dev/cli-common/firstPartyRuntime')).href)};
+const args=process.argv.slice(1); const value=flag=>args[args.indexOf(flag)+1];
+await installVersionedPayload({componentId:value('--component'),channel:value('--channel'),versionId:value('--version'),payloadRoot:value('--payload-root'),processEnv:process.env,selectAsDefaultReleaseChannel:true});`;
+    await writeFile(join(payload, 'happier'), `#!/bin/sh
+if [ "$1 $2" = 'self __install-payload' ]; then
+  [ "$HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION" = '1' ] || exit 92
+  exec ${safeBashSingleQuote(process.execPath)} --conditions=happier-source --import ${safeBashSingleQuote(createRequire(import.meta.url).resolve('tsx'))} --input-type=module -e ${safeBashSingleQuote(installer)} "$@"
+fi
+if [ "$1" = '--version' ]; then printf '%s\n' '0.3.0-dev'; exit 0; fi
+exit 91
+`);
+    await chmod(join(payload, 'happier'), 0o755);
+    vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payload);
+    vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } }));
+    onTestFinished(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+    return { guestHome, binaryPath };
+}
+
 describe('Session-target authority for managed provider channel roles', () => {
     it.each([false, true])('uses the author digest for a cold source without preparation guest metadata (Prepare %s)', async enabled => {
         const acquired: unknown[] = [];
@@ -289,6 +317,64 @@ describe('Session placement on a managed target (driver)', () => {
         expect(row.bootstrapInstalled).toBeUndefined();
     });
 
+    it.skipIf(process.platform === 'win32')('replaces the bundled CLI for a selected warm image even without deferred Setup or enrollment', async () => {
+        const { guestHome, binaryPath } = await installableGuestCliPayload();
+        await mkdir(join(binaryPath, '..'), { recursive: true });
+        await writeFile(binaryPath, '#!/bin/sh\n# old-prepared-cli\nprintf \'%s\\n\' \'0.3.0-alpha.1\'\n');
+        await chmod(binaryPath, 0o755);
+        const h = harness({ targetExec: async body => {
+            const request = body as { argv: string[]; inputBase64?: string };
+            if (request.argv[2]!.includes('uname -s')) return { ...guestExec(body), stdoutBase64: Buffer.from(`Linux\naarch64\n${guestHome}\n`).toString('base64') };
+            if (request.argv[2]!.includes('sha256sum')) return guestExec(body);
+            const child = promisify(execFile)('/bin/sh', ['-c', request.argv[2]!], { cwd: guestHome, env: { ...process.env, HOME: guestHome } });
+            child.child.stdin?.on('error', () => {});
+            child.child.stdin?.end(request.inputBase64 ? Buffer.from(request.inputBase64, 'base64') : '');
+            const result = await child;
+            return { ...guestExec(body), stdoutBase64: Buffer.from(result.stdout).toString('base64') };
+        }, targetPutFile: async body => {
+            const request = body as { guestPath: string; bytesBase64: string };
+            await writeFile(request.guestPath, Buffer.from(request.bytesBase64, 'base64'));
+        } });
+        const provisioner = h.native.manifest.contributes.machineProvisioners[0]!;
+        let row = ManagedOpaquePresetMachineV1Schema.parse({ id: machine.id, homeId, custodianAccountId: 'owner',
+            controller: machine.controller, preset: { id: 'preset', revision: 1, contentEncryptionMode: 'plain' },
+            acquisitionMode: 'resource-bound', bootstrapInstalled: true, allocation: 'bound', creationState: 'active',
+            desired: 'start', desiredWhen: 'now', intentRevision: 3, retention: machine.retention, wakeOnAcceptedMessage: false });
+        const launch = machine.launch!;
+        const content = { t: 'plain' as const, v: ManagedMachinePresetContentV1Schema.parse({ v: 1, name: 'Prepared target', launch,
+            preparationExecution: { launch, binaryPath, updateCli: true },
+            reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
+                retentionCapabilities: provisioner.retention, retention: row.retention, wakeOnAcceptedMessage: false },
+            nativeResult: { kind: 'bound', resource: machine.resource } }) };
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const reports: unknown[] = [];
+        const post = vi.spyOn(axios, 'post').mockImplementation(async (url, wire) => {
+            if (String(url).endsWith('/context')) return { status: 200, data: { machine: row,
+                presetContent: { content, recipients: [] }, requestId: 'creation' } };
+            expect(String(url)).toBe('https://home.example/v1/machines/setup/report');
+            const body = decodeExternalActionHttpBodyV1(wire)?.body ?? wire;
+            reports.push(body);
+            row = ManagedOpaquePresetMachineV1Schema.parse({ ...row, bootstrapInstalled: true });
+            return { status: 200, data: { machine: row } };
+        });
+        onTestFinished(() => post.mockRestore());
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, token, credentials: { token, encryption: null }, readPolicyCurrent: async () => row });
+        const target = await driver.openSessionTarget({ managedId: row.id, sessionId: 'holder-nonce', committedSessionId: 'committed-session',
+            requesterAccountId: 'owner', lifetime: new AbortController().signal, holder,
+            operation: { actionRequestId: 'startup-operation', signal: new AbortController().signal,
+                operationProgress: { update() {} }, operationOwnerUpdate: { update() {} } } });
+        expect(target.id).toBe(`managed:${row.id}`);
+        expect(await readFile(binaryPath, 'utf8')).toContain('self __install-payload');
+        expect(await target.exec(`${safeBashSingleQuote(binaryPath)} --version`, new AbortController().signal)).toMatchObject({ status: 0, stdout: '0.3.0-dev\n' });
+        // Reopening an already-placed Session does not repeat finite startup work.
+        await driver.openSessionTarget({ managedId: row.id, sessionId: 'holder-nonce', requesterAccountId: 'owner',
+            lifetime: new AbortController().signal, holder });
+        expect(reports).toEqual([expect.objectContaining({ bootstrapInstalled: true,
+            target: { kind: 'bound', controller: machine.controller, sessionId: 'committed-session' } })]);
+        expect(row.machineSetup).toBeUndefined();
+        expect(h.calls).not.toContain('acquire');
+    }, 120_000);
+
     it.skipIf(process.platform === 'win32')('installs the Setup interpreter without enrollment, retains failed Setup and reuses installation on Retry', async () => {
         const { PassThrough } = await import('node:stream');
         const { runMachineSetupEffectInternal } = await import('../setup/effectInternal');
@@ -297,29 +383,7 @@ describe('Session placement on a managed target (driver)', () => {
             inputSchema: { type: 'object', properties: {}, additionalProperties: false },
             steps: [{ id: 'tool', kind: 'command', executable: 'true', args: [],
                 check: { executable: 'true', args: [], unsatisfiedExitCodes: [1] } }] });
-        const root = await mkdtemp(join(tmpdir(), 'bound-session-cli-'));
-        onTestFinished(() => rm(root, { recursive: true, force: true }));
-        const guestHome = join(root, 'guest'), payload = join(root, 'payload');
-        const binaryPath = resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli', remoteHomeDir: join(guestHome, '.happier'),
-            channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label });
-        await Promise.all([mkdir(guestHome), mkdir(payload)]);
-        // The guest executable is an explicit operator fixture. Its self-install
-        // delegates to the canonical installation owner, rather than simulating promotion.
-        const installer = `import { installVersionedPayload } from ${JSON.stringify(pathToFileURL(createRequire(import.meta.url).resolve('@happier-dev/cli-common/firstPartyRuntime')).href)};
-const args=process.argv.slice(1); const value=flag=>args[args.indexOf(flag)+1];
-await installVersionedPayload({componentId:value('--component'),channel:value('--channel'),versionId:value('--version'),payloadRoot:value('--payload-root'),processEnv:process.env,selectAsDefaultReleaseChannel:true});`;
-        await writeFile(join(payload, 'happier'), `#!/bin/sh
-if [ "$1 $2" = 'self __install-payload' ]; then
-  [ "$HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION" = '1' ] || exit 92
-  exec ${safeBashSingleQuote(process.execPath)} --conditions=happier-source --import ${safeBashSingleQuote(createRequire(import.meta.url).resolve('tsx'))} --input-type=module -e ${safeBashSingleQuote(installer)} "$@"
-fi
-if [ "$1" = '--version' ]; then printf '%s\n' '0.3.0-dev'; exit 0; fi
-exit 91
-`);
-        await chmod(join(payload, 'happier'), 0o755);
-        vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payload);
-        vi.stubGlobal('fetch', async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } }));
-        onTestFinished(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+        const { guestHome, binaryPath } = await installableGuestCliPayload();
         const h = harness({ targetExec: async body => {
             const request = body as { argv: string[]; inputBase64?: string };
             if (request.argv[2]!.includes('uname -s')) return { ...guestExec(body), stdoutBase64: Buffer.from(`Linux\naarch64\n${guestHome}\n`).toString('base64') };

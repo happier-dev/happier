@@ -4,8 +4,10 @@ import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { computeContentPublicKeyFingerprint } from '../identity/contentPublicKeyFingerprint.js';
 import * as preset from './managedMachinePresetContentV1.js';
-import { MachineProvisionerPreparationBuildResultV1Schema } from '../../plugins/contributions/machineProvisionerPreparationSchemas.js';
-import { ManagedMachinePresetPreparationBindingV1Schema } from './managedMachinePresetPreparationV1.js';
+import { MachineProvisionerPreparationBuildResultV1Schema, MachineProvisionerPreparationInspectResultV1Schema,
+  MachineProvisionerPreparationDestroyResultV1Schema } from '../../plugins/contributions/machineProvisionerPreparationSchemas.js';
+import { ManagedMachinePresetPreparationBindingV1Schema, ManagedMachinePresetPreparedV1Schema,
+  ManagedMachinePresetPreparationExecutionV1Schema } from './managedMachinePresetPreparationV1.js';
 
 const content = {
   v: 1 as const, name: 'Prepared preset', preparation: { enabled: true },
@@ -15,7 +17,6 @@ const content = {
 };
 const reference = { contributionRef: content.launch.provider, schemaVersion: 1, value: { id: 'image-1' } };
 const binding = {
-  presetRevision: 3,
   configuration: { launch: { provider: content.launch.provider, schemaVersion: 1, choices: content.launch.choices },
     setup: content.setup },
   cliIdentity: 'home-payload:0.3:abc',
@@ -25,6 +26,13 @@ const prepared = { operationId: 'prepare-1', binding, status: 'ready' as const, 
   cliBinaryPath: '/opt/happier/cli/current/happier', bakedSetup: content.setup };
 
 describe('private prepared preset content', () => {
+  it('reads retained bindings without retaining the retired revision', () => {
+    expect(ManagedMachinePresetPreparationBindingV1Schema.parse({ ...binding, presetRevision: 3 })).toEqual(binding);
+  });
+  it('carries the admitted CLI swap independently of its warm physical launch', () => {
+    const execution = { launch: content.launch, binaryPath: prepared.cliBinaryPath, updateCli: true };
+    expect(ManagedMachinePresetPreparationExecutionV1Schema.parse(execution)).toEqual(execution);
+  });
   it('retains source author approval beside the different prepared physical launch review', () => {
     const effectReview = { kind: 'devcontainer' as const, reviewedEffectDigest: 'a'.repeat(64), effects: [] };
     const sealed = preset.sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content });
@@ -55,6 +63,26 @@ describe('private prepared preset content', () => {
       .toEqual({ ...binding, credentialConfigurations });
     const { credentialConfigurations: _missingBasis, ...missingBasis } = binding;
     expect(ManagedMachinePresetPreparationBindingV1Schema.safeParse(missingBasis).success).toBe(false);
+  });
+
+  it('retains the canonical redacted native cause through preparation results and private storage', () => {
+    const nativeCause = { localCause: 'native_command_failed' as const, command: 'run' as const,
+      exitCode: 17, stderr: 'setup failed' };
+    const failures = [
+      [MachineProvisionerPreparationBuildResultV1Schema, { kind: 'refused', code: 'setup_failed' }],
+      [MachineProvisionerPreparationBuildResultV1Schema, { kind: 'unknown', code: 'setup_failed', nativeOperationRef: reference }],
+      [MachineProvisionerPreparationInspectResultV1Schema, { kind: 'failed', code: 'setup_failed', nativeOperationRef: reference }],
+      [MachineProvisionerPreparationInspectResultV1Schema, { kind: 'unknown', code: 'setup_failed', nativeOperationRef: reference }],
+      [MachineProvisionerPreparationDestroyResultV1Schema, { kind: 'refused', code: 'delete_failed' }],
+      [MachineProvisionerPreparationDestroyResultV1Schema, { kind: 'unknown', code: 'delete_failed', nativeOperationRef: reference }],
+    ] as const;
+    for (const [schema, failure] of failures) {
+      expect(schema.parse({ ...failure, nativeCause })).toEqual({ ...failure, nativeCause });
+      expect(schema.safeParse({ ...failure, nativeCause: { ...nativeCause, secret: 'not allowed' } }).success).toBe(false);
+      expect(schema.safeParse(failure).success).toBe(true);
+    }
+    expect(ManagedMachinePresetPreparedV1Schema.parse({ ...prepared, status: 'failed', code: 'setup_failed', nativeCause }))
+      .toMatchObject({ nativeCause });
   });
 
   it.each(['plain', 'e2ee'] as const)('refuses unreviewed or foreign provider/schema/Account execution through the real %s sealer', mode => {
@@ -149,7 +177,7 @@ describe('private prepared preset content', () => {
   it('accepts canonical Account selections without a second credential identity', () => {
     const { name: _name, ...launch } = content.launch;
     expect(preset.ManagedMachinePresetContentV1Schema.safeParse({ ...content, prepared: { ...prepared,
-      binding: { presetRevision: binding.presetRevision, cliIdentity: binding.cliIdentity,
+      binding: { cliIdentity: binding.cliIdentity,
         credentialConfigurations: [{ account: { service: { pluginId: 'test.service', localId: 'compute' },
           accountId: 'provider-account' }, revision: null }],
         configuration: { ...binding.configuration, launch: { ...launch, credentials: [{
@@ -189,6 +217,16 @@ describe('private prepared preset content', () => {
     expect(next?.prepared).toEqual(writerPrepared);
     const opened = preset.openManagedMachinePresetContentV1({ presetId: 'preset', ...auth, content: next?.content });
     expect(opened).toEqual({ ...content, prepared: writerPrepared });
+    const nativeCause = { httpStatusClass: '5xx' as const, code: 'service_error' as const };
+    const { artifact: _failedArtifact, bakedSetup: _failedBakedSetup, ...failedBase } = prepared;
+    const failedPrepared = { ...failedBase, status: 'failed' as const, code: 'native_build_failed', nativeCause };
+    const failedWrite = preset.replaceManagedMachinePresetPreparationV1({ presetId: 'preset',
+      ...auth, content: sealed.content, expectedOperationId: null, prepared: failedPrepared });
+    expect(failedWrite).not.toBeNull();
+    expect(preset.openManagedMachinePresetContentV1({ presetId: 'preset', ...auth, content: failedWrite?.content }))
+      .toEqual({ ...content, prepared: failedPrepared });
+    expect(ManagedMachinePresetPreparedV1Schema.safeParse({ ...failedPrepared,
+      nativeCause: { ...nativeCause, message: 'private vendor response' } }).success).toBe(false);
     expect(preset.resolveManagedMachinePresetAcquireOverrideV1({ baseContent: opened,
       overrideContent: { ...opened, launch: { ...content.launch, name: 'Session name' },
         prepared: { ...prepared, artifact: { ...reference, value: { id: 'forged' } } } } })).toBeNull();

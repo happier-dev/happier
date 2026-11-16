@@ -51,6 +51,15 @@ const reviewedFacts = ManagedConfigurationFactsV1Schema.parse({
   wakeOnAcceptedMessage: false,
 });
 
+describe('Project files private preset default', () => {
+  it('retains an authored two-way choice through the existing plain envelope', () => {
+    const authored = { ...content, projectFiles: { kind: 'sync', mode: 'keep_both_in_sync' } };
+    const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: authored });
+    expect(openManagedMachinePresetContentV1({ presetId, mode: 'plain', content: sealed.content }))
+      .toMatchObject({ projectFiles: authored.projectFiles });
+  });
+});
+
 function randomBytesFactory(initialValue = 1): (length: number) => Uint8Array {
   let value = initialValue;
   return (length) => new Uint8Array(length).fill(value++);
@@ -305,7 +314,6 @@ describe('managed machine preset content envelope', () => {
     const prepared = {
       operationId: 'promotion-prepare',
       binding: {
-        presetRevision: 4,
         configuration: { launch: { provider: source.launch!.provider, schemaVersion: source.launch!.schemaVersion,
           choices: source.launch!.choices }, setup: source.setup },
         cliIdentity: 'home-payload:0.3:promotion',

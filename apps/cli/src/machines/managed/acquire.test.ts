@@ -1530,7 +1530,10 @@ describe('opaque managed preset admission', () => {
         expect(invocationIds[0]).not.toBe(runId);
         expect(invocationIds[0]).not.toBe(binding.requestId);
     });
-    it.each([['warm', 'resource-bound'], ['stale', 'resource-bound'], ['warm', 'enrolled'], ['stale', 'enrolled']] as const)(
+    it.each([['warm', 'resource-bound'], ['stale', 'resource-bound'], ['cli-updated', 'resource-bound'],
+        ['warm', 'enrolled'], ['stale', 'enrolled'], ['cli-updated', 'enrolled'],
+        ['missing-launch', 'resource-bound'], ['invalid-launch', 'resource-bound'], ['deleted-image', 'resource-bound'],
+        ['unknown-image', 'resource-bound'], ['failed-image', 'resource-bound']] as const)(
         'selects the %s prepared execution once at admitted %s creation', async (freshness, acquisitionMode) => {
         const { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, defineMachineProvisionerPreparationSchemas } = await import('@happier-dev/protocol/plugins/contributions/machineProvisioners');
         const { defineProtocolObject, defineProtocolString } = await import('@happier-dev/protocol/plugins/actions/protocol-composable-schema');
@@ -1572,9 +1575,12 @@ describe('opaque managed preset admission', () => {
         const authored = { v: 1 as const, name: 'Prepared preset', launch, setup, preparation: { enabled: true } };
         const revision = carrier.acquisition.selection.revision;
         const content = { ...authored, prepared: { operationId: 'image-build', status: 'ready' as const,
-            binding: createManagedMachinePresetPreparationBindingV1({ content: authored, presetRevision: revision,
-                cliIdentity: freshness === 'warm' ? 'public-release:0.3.0' : 'public-release:0.2.0' }),
-            artifact: { contributionRef: launch.provider, schemaVersion: 1, value: { launch: { image: 'owned-artifact' } } },
+            binding: createManagedMachinePresetPreparationBindingV1({ content: freshness === 'stale'
+                ? { ...authored, setup: { ...setup, scripts: [{ body: 'echo old setup' }] } } : authored,
+                credentialConfigurations: [],
+                cliIdentity: freshness === 'cli-updated' ? 'public-release:0.2.0' : 'public-release:0.3.0' }),
+            artifact: { contributionRef: launch.provider, schemaVersion: 1, value: freshness === 'missing-launch' ? {}
+                : { launch: freshness === 'invalid-launch' ? { image: 7 } : { image: 'owned-artifact' } } },
             cliBinaryPath: '/opt/happier/cli/current/happier', bakedSetup: { items: setup.items } } };
         let retainedContent = { t: 'plain' as const, v: content };
         let retained = ManagedMachineV1Schema.parse({ ...carrier.admission.machine,
@@ -1585,10 +1591,17 @@ describe('opaque managed preset admission', () => {
         const resource = { contributionRef: launch.provider, schemaVersion: 1, value: {} };
         const native = nativeFixture({ credentialPurposes: [], fixtureManifest: manifest, reconciliation: true, nativeTransport: true,
             nativeRoleResults: { acquire: { kind: 'pending', nativeOperationRef }, reconcile: { kind: 'bound', resource },
+                preparationInspect: freshness === 'deleted-image' ? { kind: 'absent' }
+                    : freshness === 'unknown-image' || freshness === 'failed-image' ? {
+                        kind: freshness === 'unknown-image' ? 'unknown' : 'failed',
+                        code: freshness === 'unknown-image' ? 'native_observation_unavailable' : 'prepared_artifact_not_owned',
+                        nativeOperationRef: { contributionRef: launch.provider, schemaVersion: 1, value: {} },
+                        nativeCause: { sdkError: 'NotFoundError' },
+                    } : { kind: 'ready', artifact: content.prepared.artifact },
                 options: { base: { launch: launch.choices, nativeFacts: { preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' } } },
                     dimensions: { size: [], image: [], location: [], network: [], duration: [] } } },
             onNativeRole(role, body) { roles.push(role); if (role === 'acquire') acquired.push(body); if (role === 'reconcile') reconciled.push(body); },
-            onAction(role) { if (role === 'options') roles.push(role); },
+            onAction(role) { if (role === 'options' || role === 'inspect-image') roles.push(role); },
         });
         const reads: string[] = [];
         vi.spyOn(globalThis, 'fetch').mockImplementation(async url => { reads.push(String(url)); return Response.json(String(url).endsWith('/v1/features')
@@ -1637,14 +1650,24 @@ describe('opaque managed preset admission', () => {
             operationAcceptance: { operationId: 'warm-operation', accept() {} }, operationOwnerUpdate: { update() {} } };
         const first = await createManagedMachineAcquisitionDriver(connection).execute('machines.managed.acquire', acquisition,
             { requestId: 'warm-create', acquisitionMode, context }).catch((error: unknown) => error);
+        if (freshness === 'unknown-image' || freshness === 'failed-image') {
+            expect(first).toMatchObject({ code: freshness === 'unknown-image' ? 'native_observation_unavailable' : 'prepared_artifact_not_owned',
+                details: { kind: 'managedNative', nativeCause: { sdkError: 'NotFoundError' } } });
+            expect(acquired).toEqual([]);
+            expect(roles.filter(role => role === 'inspect-image')).toHaveLength(1);
+            return;
+        }
         if (!(first instanceof Error) || !('code' in first) || first.code !== 'native_acquisition_unconfirmed') throw first;
-        const physical = freshness === 'warm' ? { image: 'owned-artifact' } : launch.choices;
+        const warm = freshness === 'warm' || freshness === 'cli-updated';
+        const physical = warm ? { image: 'owned-artifact' } : launch.choices;
         expect(acquired).toEqual([expect.objectContaining({ launch: physical })]);
         const normalizedLaunch = { ...launch, name: 'Virtual machine' };
         expect(retainedContent.v).toMatchObject({ launch: normalizedLaunch, setup, reviewedFacts: { launch: { ...normalizedLaunch, choices: physical } } });
-        if (freshness === 'warm') expect(retainedContent.v).toHaveProperty('preparationExecution', {
-            launch: { ...normalizedLaunch, choices: physical }, binaryPath: content.prepared.cliBinaryPath, deferredSetup: { scripts: setup.scripts } });
+        if (warm) expect(retainedContent.v).toHaveProperty('preparationExecution', {
+            launch: { ...normalizedLaunch, choices: physical }, binaryPath: content.prepared.cliBinaryPath,
+            ...(freshness === 'cli-updated' ? { updateCli: true } : {}), deferredSetup: { scripts: setup.scripts } });
         else expect(retainedContent.v).not.toHaveProperty('preparationExecution');
+        expect(roles.filter(role => role === 'inspect-image')).toHaveLength(warm || freshness === 'deleted-image' ? 1 : 0);
         const readsBeforeRestart = reads.length;
         if (acquisitionMode === 'enrolled') {
             // Reopen the actual Home-retained carrier under a fresh custodian
@@ -1653,7 +1676,7 @@ describe('opaque managed preset admission', () => {
                 admission: ManagedAdmissionOutputV1Schema.parse({ machine: retained, replayed: true,
                     presetContent: { content: retainedContent, recipients: [] } }) });
             expect(reopened.launch.choices).toEqual(physical);
-            expect(reopened.machineSetup?.setup).toEqual(freshness === 'warm' ? { scripts: setup.scripts } : setup);
+            expect(reopened.machineSetup?.setup).toEqual(warm ? { scripts: setup.scripts } : setup);
             expect(roles.filter(role => role === 'options')).toHaveLength(1);
             expect(roles.filter(role => role === 'acquire')).toHaveLength(1);
             expect(reads).toHaveLength(readsBeforeRestart);

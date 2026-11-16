@@ -1,5 +1,18 @@
 # Compatibility and version skew
 
+## Prepared image freshness (unreleased 0.3)
+
+Prepared images bind authored launch, setup, reviewed source contents and selected
+Connected Account configuration revisions. Preset row revisions are CAS facts,
+not image freshness. The private binding reader accepts and discards the retired
+`presetRevision` field in retained development rows; new bindings omit it. The
+supplier CLI identity remains build provenance. A CLI-only change selects the
+same warm image with private `preparationExecution.updateCli: true`, and the
+existing guest installer replaces the CLI during admitted Session startup.
+Launch or setup changes still select a cold launch. No automatic rebuild setting
+is introduced. The inspected prospective 0.2 frontier `cfbc463ba8` has neither
+managed preset nor prepared-image schemas; no predecessor wire adapter is added.
+
 ## Workflow trigger Event references (unreleased 0.3)
 
 The closed Workflow value-reference union adds `trigger_event`, and the private

@@ -4,7 +4,7 @@ import type { ManagedMachinePresetPreparationBindingV1 } from '@happier-dev/prot
 import type { ManagedNativeOperationReferenceV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { splitMachineSetupForPreparationV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 
-type PreparationIdentity = Readonly<{ presetRevision: number; cliIdentity: string;
+type PreparationIdentity = Readonly<{ cliIdentity: string;
   credentialConfigurations: ManagedMachinePresetPreparationBindingV1['credentialConfigurations'] }>;
 
 export function createManagedMachinePresetPreparationBindingV1(params: PreparationIdentity & Readonly<{
@@ -14,8 +14,7 @@ export function createManagedMachinePresetPreparationBindingV1(params: Preparati
   machineId?: string;
 }>): ManagedMachinePresetPreparationBindingV1 {
   const { name: _name, ...launch } = params.content.launch;
-  return { presetRevision: params.presetRevision,
-    configuration: { launch, ...(params.content.setup === undefined ? {} : { setup: params.content.setup }),
+  return { configuration: { launch, ...(params.content.setup === undefined ? {} : { setup: params.content.setup }),
       ...(params.content.authorEffectReview === undefined ? {} : {
         reviewedEffectDigest: params.content.authorEffectReview.reviewedEffectDigest,
       }) },
@@ -26,10 +25,10 @@ export function createManagedMachinePresetPreparationBindingV1(params: Preparati
 
 export type ManagedMachinePresetPreparationDecisionV1 =
   | Readonly<{ kind: 'warm'; artifact: ManagedNativeOperationReferenceV1; binaryPath: string;
-    bakedSetup?: MachineSetupV1; deferredSetup?: MachineSetupV1 }>
+    updateCli?: true; bakedSetup?: MachineSetupV1; deferredSetup?: MachineSetupV1 }>
   | Readonly<{ kind: 'cold'; reason: 'disabled' | 'unprepared' | 'stale' | 'building' | 'failed' | 'cancelled' }>;
 
-/** One admission-time comparison of the exact persisted revision and supplier/configuration tuple. */
+/** Image freshness follows authored configuration; CLI provenance selects an install at start. */
 export function readManagedMachinePresetPreparationV1(params: PreparationIdentity & Readonly<{
   content: ManagedMachinePresetContentV1;
 }>): ManagedMachinePresetPreparationDecisionV1 {
@@ -37,9 +36,11 @@ export function readManagedMachinePresetPreparationV1(params: PreparationIdentit
   if (content.preparation?.enabled !== true) return { kind: 'cold', reason: 'disabled' };
   const prepared = content.prepared;
   if (prepared === undefined) return { kind: 'cold', reason: 'unprepared' };
-  if (content.launch === undefined || !sameStrictJsonValue(prepared.binding,
-    createManagedMachinePresetPreparationBindingV1({ ...params, content: { ...content, launch: content.launch },
-      machineId: prepared.binding.machineId }),
+  if (content.launch === undefined || !sameStrictJsonValue({ configuration: prepared.binding.configuration,
+    credentialConfigurations: prepared.binding.credentialConfigurations },
+    { configuration: createManagedMachinePresetPreparationBindingV1({ ...params,
+      content: { ...content, launch: content.launch } }).configuration,
+      credentialConfigurations: params.credentialConfigurations },
     { omitUndefinedObjectMembers: true })) return { kind: 'cold', reason: 'stale' };
   if (prepared.status !== 'ready') return { kind: 'cold', reason: prepared.status };
   if (prepared.cliBinaryPath === undefined) return { kind: 'cold', reason: 'unprepared' };
@@ -47,6 +48,7 @@ export function readManagedMachinePresetPreparationV1(params: PreparationIdentit
     : splitMachineSetupForPreparationV1(content.setup, prepared.bakedSetup?.items?.length ?? 0).deferredSetup;
   // The private schema establishes that ready always has an artifact.
   return { kind: 'warm', artifact: prepared.artifact!, binaryPath: prepared.cliBinaryPath,
+    ...(prepared.binding.cliIdentity === params.cliIdentity ? {} : { updateCli: true }),
     ...(prepared.bakedSetup === undefined ? {} : { bakedSetup: prepared.bakedSetup }),
     ...(deferredSetup === undefined ? {} : { deferredSetup }) };
 }

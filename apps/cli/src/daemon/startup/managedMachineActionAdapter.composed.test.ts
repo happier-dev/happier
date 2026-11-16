@@ -296,7 +296,7 @@ describe('daemon managed Machine Action factory', () => {
             preset = ManagedMachinePresetV1Schema.parse({ ...preset, content: { t: 'plain', v: { v: 1,
                 name: launch.name, launch, preparation: { enabled: true },
                 prepared: { operationId: 'lost-original-operation', status: 'building', cliBinaryPath: '/opt/happier/cli/current/happier',
-                    binding: createManagedMachinePresetPreparationBindingV1({ content: { launch }, presetRevision: 1,
+                    binding: createManagedMachinePresetPreparationBindingV1({ content: { launch },
                         credentialConfigurations: reconnected ? [{ account, revision: 'configuration-before-reconnect' }] : [],
                         cliIdentity: 'home-payload:' + (outcome === 'interrupted-replace' ? 'b' : 'a').repeat(64) }) },
             } } });
@@ -315,7 +315,7 @@ describe('daemon managed Machine Action factory', () => {
                 name: launch.name, launch: { ...launch, provider: replacementArtifact.contributionRef, choices: { name: 'replacement' } },
                 preparation: { enabled: true }, prepared: { operationId: 'original-preparation', status: 'ready', artifact,
                     cliBinaryPath: '/opt/happier/cli/current/happier', binding: createManagedMachinePresetPreparationBindingV1({
-                        content: { launch }, presetRevision: 1, cliIdentity: 'a'.repeat(64), credentialConfigurations: [] }) },
+                        content: { launch }, cliIdentity: 'a'.repeat(64), credentialConfigurations: [] }) },
             } } });
         }
         const nativeOperationRef = { contributionRef: provider, schemaVersion: 1, value: { claimId: 'prepare-operation' } };

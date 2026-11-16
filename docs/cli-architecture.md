@@ -3315,12 +3315,15 @@ reviewed-child issuer. They do not require a managed Machine row or mint another
 Account root. The same Connected Account purpose owner materializes the selected
 provider credentials outside the credential-free image input.
 
-The shared preset owner compares the exact preset revision, authored launch and
-setup, actual supplier CLI identity, and the required captured Connected Account
-configuration revisions. Reconnecting the same Account with a changed endpoint
-therefore makes the preparation stale. Stale preparation, an unsupported variant,
-or native image absence takes the ordinary cold launch path. Preset and CLI
-changes do not start a background rebuild; a new explicit Prepare replaces the
+The shared preset owner compares authored launch, setup and source-review content,
+and the required captured Connected Account configuration revisions. Names and
+operational preset revisions do not invalidate an image. Reconnecting the same
+Account with a changed endpoint therefore makes the preparation stale. Stale
+preparation, an unsupported variant, or native image absence takes the ordinary
+cold launch path. A supplier CLI identity change alone keeps the physical launch
+warm and selects CLI replacement at Session start through the existing installer.
+The retained build identity is provenance, not image freshness. Changes do not
+start a background rebuild; a new explicit Prepare replaces the
 old owned artifact within its new admission.
 
 Home checks Machine and preset authority at admission. The original signed binding

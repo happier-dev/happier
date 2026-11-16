@@ -11,12 +11,52 @@ const content = { v: 1 as const, name: 'Preset', preparation: { enabled: true },
     selection: { ref: { pluginId: 'test.recipes', recipeId: 'runtime', revision: '1' }, inputs: {} } }],
     scripts: [{ body: 'configure-session-credentials', affects: 'none' as const }] } };
 const bakedSetup = { items: content.setup.items };
-const current = { presetRevision: 3, cliIdentity: 'home:0.3:payload-a',
+const current = { cliIdentity: 'home:0.3:payload-a',
   credentialConfigurations: [{ account, revision: 'configuration-1' }] };
 const binaryPath = '/opt/happier/cli/current/happier';
 const artifact = { contributionRef: content.launch.provider, schemaVersion: 1, value: { image: 'owned-image' } };
 
 describe('preset preparation freshness', () => {
+  it('requests a rebuild only for an opted-in ready image with unchanged configuration and a changed CLI', () => {
+    const binding = createManagedMachinePresetPreparationBindingV1({ content, ...current });
+    const prepared = { operationId: 'build-1', status: 'ready' as const,
+      binding, artifact, cliBinaryPath: binaryPath, bakedSetup };
+    const saved = { ...content, preparation: { enabled: true, whenHappierUpdates: 'rebuild-automatically' as const }, prepared };
+    const changedCli = { ...current, cliIdentity: 'home:0.3:payload-b' };
+    const decision = readManagedMachinePresetPreparationV1({ content: saved, ...changedCli });
+    expect(decision).toMatchObject({ kind: 'rebuild', artifact, binaryPath, bakedSetup });
+    expect(decision).not.toHaveProperty('updateCli');
+    expect(readManagedMachinePresetPreparationV1({ content: saved, ...current }))
+      .toMatchObject({ kind: 'warm', artifact });
+    expect(readManagedMachinePresetPreparationV1({ content: saved, ...current })).not.toHaveProperty('updateCli');
+    expect(readManagedMachinePresetPreparationV1({ content: { ...saved,
+      preparation: { enabled: true, whenHappierUpdates: 'update-at-start' } }, ...changedCli }))
+      .toMatchObject({ kind: 'warm', artifact, updateCli: true });
+    for (const changed of [
+      { content: { ...saved, setup: { scripts: [{ body: 'echo changed', affects: 'none' as const }] } }, ...changedCli },
+      { content: { ...saved, launch: { ...saved.launch, choices: { image: 'changed' } } }, ...changedCli },
+      { content: saved, ...changedCli, credentialConfigurations: [{ account, revision: 'configuration-2' }] },
+    ]) expect(readManagedMachinePresetPreparationV1(changed)).toEqual({ kind: 'cold', reason: 'stale' });
+    expect(readManagedMachinePresetPreparationV1({ content: { ...saved,
+      preparation: { ...saved.preparation, enabled: false } }, ...changedCli })).toEqual({ kind: 'cold', reason: 'disabled' });
+    for (const status of ['building', 'failed', 'cancelled'] as const) {
+      expect(readManagedMachinePresetPreparationV1({ content: { ...saved, prepared: { ...prepared, status } }, ...changedCli }))
+        .toEqual({ kind: 'cold', reason: status });
+    }
+    expect(readManagedMachinePresetPreparationV1({ content: { ...saved, prepared: undefined }, ...changedCli }))
+      .toEqual({ kind: 'cold', reason: 'unprepared' });
+  });
+
+  it('keeps renamed or operationally updated images warm and swaps only a changed CLI at start', () => {
+    const binding = createManagedMachinePresetPreparationBindingV1({ content, ...current });
+    const saved = { ...content, prepared: { operationId: 'build-1', status: 'ready' as const,
+      binding, artifact, cliBinaryPath: binaryPath, bakedSetup } };
+    expect(readManagedMachinePresetPreparationV1({ content: { ...saved, name: 'Renamed' },
+      ...current })).toMatchObject({ kind: 'warm', artifact });
+    expect(readManagedMachinePresetPreparationV1({ content: saved, ...current,
+      cliIdentity: 'public:0.3:newer-release' })).toMatchObject({ kind: 'warm', artifact, updateCli: true });
+    expect(readManagedMachinePresetPreparationV1({ content: saved, ...current })).not.toHaveProperty('updateCli');
+  });
   it('retains the original preparation host without making it a freshness input', () => {
     const host = { machineId: 'original-local-image-host' };
     const binding = createManagedMachinePresetPreparationBindingV1({ content, ...current, ...host });
@@ -47,7 +87,7 @@ describe('preset preparation freshness', () => {
       prepared: { operationId: 'legacy-build', status: 'ready', binding, artifact } }, ...current }))
       .toEqual({ kind: 'cold', reason: 'unprepared' });
   });
-  it('matches the preset revision, baked configuration, supplier identity and canonical Account or Team selection', () => {
+  it('matches baked configuration and canonical Account or Team selection', () => {
     const binding = createManagedMachinePresetPreparationBindingV1({ content, ...current });
     const prepared = { operationId: 'build-1', status: 'ready' as const, binding, artifact, cliBinaryPath: binaryPath, bakedSetup };
     const saved = { ...content, prepared };
@@ -60,11 +100,9 @@ describe('preset preparation freshness', () => {
       { content: { ...saved, setup: { scripts: [{ body: 'echo edited', affects: 'none' as const }] } }, ...current },
       { content: { ...saved, launch: { ...saved.launch, choices: { image: 'new-image' } } }, ...current },
       { content: { ...saved, launch: { ...saved.launch, provider: { pluginId: 'other.compute', localId: 'guest' } } }, ...current },
-      { content: saved, ...current, cliIdentity: 'public:0.3:newer-release' },
       { content: { ...saved, launch: { ...saved.launch,
         credentials: [{ purpose, account: { ...account, accountId: 'provider-two' } }] } }, ...current },
       { content: saved, ...current, credentialConfigurations: [{ account, revision: 'configuration-2' }] },
-      { content: saved, ...current, presetRevision: 4 },
     ]) expect(readManagedMachinePresetPreparationV1(changed)).toEqual({ kind: 'cold', reason: 'stale' });
     const team = ManagedCredentialSelectionV1Schema.parse({ purpose, teamId: 'team',
       selection: { source: 'team_resource', resourceId: 'provider-pool-one', deliveryMode: 'direct', disclosedMember: account } });

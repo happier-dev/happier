@@ -77,12 +77,8 @@ async function persist(input: OperationInput, current: OpenPreset, prepared: Man
   if (expectedRevision === undefined && incumbent && sameStrictJsonValue(incumbent, prepared, { omitUndefinedObjectMembers: true })) {
     return { kind, revision: current.preset.revision, prepared: incumbent };
   }
-  // Both existing preset CAS owners increment the revision exactly once. Write
-  // that revision into the binding atomically with this state, rather than
-  // immediately invalidating the artifact with its own operational update.
-  const next = { ...prepared, binding: { ...prepared.binding, presetRevision: current.preset.revision + 1 } };
   const replacement = { presetId: current.preset.id, content: current.preset.content,
-    expectedOperationId: incumbent?.operationId ?? null, prepared: next };
+    expectedOperationId: incumbent?.operationId ?? null, prepared };
   const replaced = input.custody.mode === 'plain'
     ? replaceManagedMachinePresetPreparationV1({ ...replacement, mode: 'plain' })
     : replaceManagedMachinePresetPreparationV1({ ...replacement, ...input.custody, recipients: current.preset.recipients });
@@ -161,7 +157,7 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
       cliBinaryPath: composition.input.cli.binaryPath,
       ...(composition.bakedSetup === undefined ? {} : { buildSetup: composition.bakedSetup }),
       binding: createManagedMachinePresetPreparationBindingV1({ content: { ...capturedContent, launch: capturedContent.launch },
-        presetRevision: current.preset.revision, cliIdentity: composition.input.cli.identity,
+        cliIdentity: composition.input.cli.identity,
         machineId: input.machineId,
         credentialConfigurations: input.credentialConfigurations }) };
     const persisted = await persist(input, current, building, 'pending', input.expectedRevision);
@@ -335,7 +331,7 @@ export async function settleManagedMachinePresetPreparationOperationV1(
     if (recovered.kind !== 'ready' && recovered.kind !== 'failed') return recovered;
     if (recovered.kind === 'ready' && input.cliIdentity !== undefined
       && readManagedMachinePresetPreparationV1({ content: { ...capturedContent, prepared: recovered.prepared },
-        presetRevision: recovered.revision, cliIdentity: input.cliIdentity,
+        cliIdentity: input.cliIdentity,
         credentialConfigurations: input.credentialConfigurations }).kind === 'warm') return recovered;
     const observed = await readPreset(input);
     if ('kind' in observed) return observed;

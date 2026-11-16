@@ -18,6 +18,8 @@ export function createManagedMachinePresetPreparationExecutionV1Schema<Choices e
   return z.strictObject({
     launch: createValidatedLaunchSnapshotV1Schema(choices),
     binaryPath: id(),
+    /** Current supplier differs from the image; keep its launch and install the CLI at start. */
+    updateCli: z.optional(z.literal(true)),
     deferredSetup: z.optional(MachineSetupV1Schema),
   });
 }
@@ -35,8 +37,9 @@ export const ManagedMachinePresetPreparationConfigurationV1Schema = lazyZodSchem
 });
 
 /** Credential selections remain in the canonical launch; the supplier supplies its CLI identity. */
-export const ManagedMachinePresetPreparationBindingV1Schema = lazyZodSchema(() => z.strictObject({
-  presetRevision: z.number().check(z.int(), z.positive()),
+export const ManagedMachinePresetPreparationBindingV1Schema = lazyZodSchema(() => z.pipe(z.strictObject({
+  /** Read retained development images; new bindings omit this retired freshness input. */
+  presetRevision: z.optional(z.number().check(z.int(), z.positive())),
   configuration: ManagedMachinePresetPreparationConfigurationV1Schema,
   cliIdentity: id(),
   /** Original Prepare host; legacy images omit it and cannot select a local cleanup host. */
@@ -45,7 +48,7 @@ export const ManagedMachinePresetPreparationBindingV1Schema = lazyZodSchema(() =
     account: asProtocolZod(QualifiedConnectedAccountRefSchema),
     revision: z.nullable(id()),
   })),
-}));
+}), z.transform(({ presetRevision: _retiredRevision, ...binding }) => binding)));
 export type ManagedMachinePresetPreparationBindingV1 = Readonly<
   z.infer<typeof ManagedMachinePresetPreparationBindingV1Schema>>;
 
