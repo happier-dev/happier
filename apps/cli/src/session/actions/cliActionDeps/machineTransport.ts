@@ -77,6 +77,9 @@ export function createCliMachineActionServerScopeCurrent(
       && params.machineActionDirectTargetTransport?.machineId === input.machineId
       ? context.serverIdentityId : null;
     if (params.serverIdentityId) {
+      // A pinned Home needs no local profile, but two profiles claiming it leave the target ambiguous.
+      const { isServerProfileHomeIdentityAmbiguous } = await import("@/server/serverProfiles");
+      if (await isServerProfileHomeIdentityAmbiguous(params.serverIdentityId)) return false;
       const profileId = params.serverId ?? configuration.activeServerId;
       return areServerProfileIdentifiersEquivalent(profileId, input.serverId, identifier =>
         identifier === profileId || identifier === params.serverIdentityId ? params.serverIdentityId

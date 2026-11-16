@@ -289,6 +289,15 @@ export async function isServerProfileHomeIdentity(profileId: string, homeServerI
     identifier => identifier === profileId ? profileHomeId : identifier === homeServerIdentityId ? targetHomeId : null);
 }
 
+/** True when more than one saved profile claims this Home, so no profile can stand for it. Fails closed. */
+export async function isServerProfileHomeIdentityAmbiguous(homeServerIdentityId: string): Promise<boolean> {
+  try {
+    return findProfilesByHomeServerIdentityId((await readSettings()).servers ?? {}, homeServerIdentityId).length > 1;
+  } catch {
+    return true;
+  }
+}
+
 /** Canonical portable identity of one exactly admitted saved profile or Home id. */
 export async function resolveServerProfileHomeIdentityId(profileId: string): Promise<string | null> {
   try {

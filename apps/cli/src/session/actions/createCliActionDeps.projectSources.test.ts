@@ -189,9 +189,11 @@ describe('Source Actions through the CLI Account front door', () => {
         expect(await actions.projectSourcesUpdate!({ ...input, patch: { attachment: { ...input.patch.attachment,
           attachment: { ...input.patch.attachment.attachment, ref: { ...input.patch.attachment.attachment.ref, serverId: 'srv_wrongSource' } } } } }, context))
           .toEqual({ ok: false, error: 'artifact_unavailable' });
-        for (const scenario of ['ambiguous', 'retired'] as const) {
-          await updateSettings((settings): typeof settings => ({ ...settings, servers: scenario === 'retired' ? {}
-            : { [profileId]: profile, duplicate: { ...profile, id: 'duplicate' } } }));
+        // A retired profile is indistinguishable from a pinned daemon Home with no local profile
+        // (admitted since ae9958a541c); only two profiles claiming the pinned Home are refused here.
+        {
+          await updateSettings((settings): typeof settings => ({ ...settings,
+            servers: { [profileId]: profile, duplicate: { ...profile, id: 'duplicate' } } }));
           expect(await carrier.requesterAccountProjection!.readArtifact({ kind: 'doc', serverId: homeId, artifactId })).toBeNull();
           expect(await actions.projectSourcesUpdate!(input, context)).toMatchObject({ ok: false, errorCode: 'server_scope_mismatch' });
           expect(await actions.projectSourcesUpdate!({ ...input, serverId: profileId }, context))
