@@ -341,6 +341,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
         </ItemGroup>
         </View>
 
+        {detail.runtimeTargetLink?.targetKind === 'ownServer' ? <>
         <ItemGroup
           testID={section('rollout')}
           title={t('projects.deployments.sectionRollout')}
@@ -440,6 +441,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
 
         <DeploymentMigrationSettings detail={detail} editing={editing} machineName={machineName} />
         <DeploymentRegistryCredentials detail={detail} editing={editing} lifetime={props.lifetime ?? null} machineName={machineName} />
+        </> : null}
 
         <ItemGroup
           testID={section('checks-alerts')}
@@ -804,7 +806,7 @@ function TemplatePreviewRows(
   const previews = useDeploymentEnvironmentPreviews(props.lifetime, props.demand, {
     previewTemplateEnvironmentId: props.environmentId,
   });
-  const rows = useDeploymentEnvironmentRowParts(previews.result.items, props.testID);
+  const rows = useDeploymentEnvironmentRowParts(previews.result.items, props.testID, props.lifetime);
   return (
     <>
       {rows.map((row) => (

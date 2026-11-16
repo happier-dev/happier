@@ -25,24 +25,30 @@ const original = storage.getState();
 afterEach(() => { standardCleanup(); storage.setState(original, true); router.resetParams(); vi.unstubAllGlobals(); });
 
 describe('Project deployment defaults', () => {
-    it('links Environment Settings to the Account defaults page without another defaults editor', async () => {
+    it.each(['ownServer', 'vercel', 'neon'] as const)('shows Machine rollout settings only for ownServer and keeps Account defaults reachable (%s)', async targetKind => {
         const account = await createSecretSettingsTestHarness();
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
-        const { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+        const { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
         const { createDeploymentReadTransport } = await import('./deploymentReadTransport');
         const { DeploymentEnvironmentSettingsPanel } = await import('./DeploymentEnvironmentSettingsPanel');
         const context = await captureLazyActionAccountContext(account.scope.serverId);
         const controller = createDeploymentReadControllerV1({ scope: { ...account.scope, projectSourceId: 'source-app' }, transport: createDeploymentReadTransport(context.accountLifetime) });
         try {
             const detail = { ...createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId: account.scope.serverId }) }),
-                runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+                runtimeTargetLink: createDeploymentTargetLinkHeaderV1(targetKind === 'ownServer' ? {} : { targetKind,
+                    role: targetKind === 'neon' ? 'data' : 'runtime', machines: [], members: [],
+                    source: { kind: 'plugin', contribution: { pluginId: `happier.deploy.${targetKind}`, localId: targetKind } } }),
+                memberVersions: {}, secretRevisions: [] };
             const screen = await renderScreen(<DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
                 definitionDocument={{ document: detail.content.definition.kind === 'stored' ? detail.content.definition.document : '', change() {} }}
                 demand={{ mounted: false, visible: false, focused: false }} machineName={id => id} environmentTitle={() => null} />);
             await screen.pressByTestIdAsync('project-deployments.environment.settings.account-defaults');
             expect(router.spies.push).toHaveBeenLastCalledWith({ pathname: '/settings/deployments', params: { serverId: account.scope.serverId } });
             expect(screen.findByTestId('deployment-defaults.retention')).toBeNull();
+            expect(screen.findByTestId('project-deployments.environment.settings.rollout') !== null).toBe(targetKind === 'ownServer');
+            expect(screen.findByTestId('project-deployments.environment.settings.registry') !== null).toBe(targetKind === 'ownServer');
+            if (targetKind !== 'ownServer') expect(screen.findByTestId('project-deployments.environment.settings.migration')).toBeNull();
         } finally { standardCleanup(); controller.retire(); context.dispose(); await account.dispose(); }
     });
 
