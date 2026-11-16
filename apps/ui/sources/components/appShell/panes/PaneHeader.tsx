@@ -16,7 +16,7 @@ import {
     HEADER_BAND_SUBTITLE_TEXT,
     HEADER_BAND_TITLE_TEXT,
 } from '@/components/ui/layout/headerBand';
-import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
+import { pageTitleTypography, usePageTitleMaxLines } from '@/components/ui/layout/pageTitleTypography';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useLocalSetting } from '@/sync/store/hooks';
@@ -329,6 +329,8 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
     const height = useHeaderHeight();
     const testID = props.testID ?? 'pane-header';
     const large = props.size === 'large';
+    // A phone's large title is a page title: it wraps before it truncates (owner round 2 item 4); the band keeps one line.
+    const pageTitleMaxLines = usePageTitleMaxLines();
     // The name's readable room beside a large header's controls, at the reader's text size.
     const uiFontScale = useLocalSetting('uiFontScale');
     const { metricScale } = useHappierTextPresentation({ textScale: uiFontScale });
@@ -349,7 +351,7 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
             ref={props.headingRef}
             tabIndex={props.headingRef ? -1 : undefined}
             testID={`${testID}.title`}
-            numberOfLines={props.titleNumberOfLines === null ? undefined : props.titleNumberOfLines ?? 1}
+            numberOfLines={props.titleNumberOfLines === null ? undefined : props.titleNumberOfLines ?? (large ? pageTitleMaxLines : 1)}
             accessibilityRole="header"
             style={[large ? styles.largeTitle : styles.title, styles.titleText, props.titleTextStyle]}
         >

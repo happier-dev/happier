@@ -10,13 +10,11 @@ import {
     type HappierPageHeaderMetaIdHost,
     type HappierPageHeaderProps,
     type HappierPageHeaderTextRender,
-    useHappierTextPresentation,
 } from '@happier-dev/plugin-ui/presentation';
-import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
-import { pageTitleTypography } from '@/components/ui/layout/pageTitleTypography';
+import { pageTitleTypography, usePageTitleMaxLines } from '@/components/ui/layout/pageTitleTypography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { BACK_INK_ON_EDGE_STYLE } from '@/components/navigation/Header';
@@ -256,6 +254,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
             : {}),
     })), [props.meta, theme.colors.text.secondary]);
 
+    const titleMaxLines = usePageTitleMaxLines();
     const { descriptionLines } = props;
     const renderText = React.useMemo<HappierPageHeaderTextRender>(
         () => descriptionLines === undefined
@@ -268,7 +267,7 @@ export const PageHeader = React.memo(function PageHeader(props: PageHeaderProps)
     const ownTitleNode = props.titleControl != null ? props.titleControl : props.titleEditor
         // The editable title stops where the read-only one does, until the person edits it.
         ? <InlineTextField editor={props.titleEditor} style={stylesheet.titleInput}
-            restingLines={props.titleLines ?? PAGE_TITLE_MAX_LINES} />
+            restingLines={props.titleLines ?? titleMaxLines} />
         : props.title;
     const titleNode = props.titleLeading != null
         ? <View style={stylesheet.titleLeadingLine}>{props.titleLeading}<View style={stylesheet.titleLeadingTitle}>{ownTitleNode}</View></View>
@@ -354,19 +353,12 @@ export function PageHeaderActionButton(props: Readonly<{ action: PageHeaderPrima
     );
 }
 
-/** The most lines a page title takes before it ends in an ellipsis, at the default text size. */
-const PAGE_TITLE_MAX_LINES = 2;
-
-/**
- * A data-named title keeps as much of its name at a larger text size as at the default. Each line holds 1/s of
- * the characters at text scale s, and the title's own column narrows too (the header's actions grow by s beside
- * it), so the stop grows with s²: at 200% a title that read whole on two lines still reads whole (QA-DESIGN-R2 M2).
- */
+/** A page title wraps before it ends in an ellipsis, by the one title line rule (`usePageTitleMaxLines`). */
 function PageTitleText(props: Readonly<{ header: boolean; style: React.ComponentProps<typeof Text>['style']; children: React.ReactNode }>) {
-    const { metricScale } = useHappierTextPresentation({ textScale: useLocalSetting('uiFontScale') });
+    const maxLines = usePageTitleMaxLines();
     return (
         <Text accessibilityRole={props.header ? 'header' : undefined}
-            numberOfLines={Math.max(PAGE_TITLE_MAX_LINES, Math.ceil(PAGE_TITLE_MAX_LINES * metricScale * metricScale))} style={props.style}>
+            numberOfLines={maxLines} style={props.style}>
             {props.children}
         </Text>
     );

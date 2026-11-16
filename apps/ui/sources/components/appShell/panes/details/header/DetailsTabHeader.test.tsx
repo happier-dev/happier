@@ -52,7 +52,8 @@ describe('DetailsTabHeader', () => {
         expect(onSwitch).toHaveBeenCalledOnce();
         await screen.unmount();
         const title = await renderScreen(<SurfaceStateSizeProvider size="phone"><DetailsTabHeader title="Key the settings modal by route, not window width" /></SurfaceStateSizeProvider>);
-        expect(title.findByTestId('details-tab-header.title')?.props.numberOfLines).toBeUndefined();
+        // A long name wraps before it truncates, as a page title does (owner round 2 item 4).
+        expect(title.findByTestId('details-tab-header.title')?.props.numberOfLines).toBe(2);
     });
     it('keeps live status beside the facts in the shared band', async () => {
         const { Text } = await import('@/components/ui/text/Text');

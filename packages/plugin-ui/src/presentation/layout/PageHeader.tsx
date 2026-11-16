@@ -391,7 +391,8 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
         </View>
       ) : null}
       {props.details && props.detailsPlacement !== 'column' ? (
-        <View style={{ marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx }}>{props.details}</View>
+        // The first line under the title takes the title's rhythm; a line under the purpose takes the line gap.
+        <View style={{ marginTop: props.description ? HAPPIER_PAGE_METRICS.pageHeaderLineGapPx : titleToDescriptionGapPx }}>{props.details}</View>
       ) : null}
       {props.meta ? (
         <PageHeaderMetaLine
@@ -399,7 +400,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           facts={props.meta}
           renderText={renderText}
           centered={centered}
-          spaced={!props.details && (showTitle || Boolean(props.description))}
+          // An entity's facts directly under its name read as its subtitle (OWNER-UI round 2, item 4): only a line
+          // already under a purpose keeps the line gap.
+          spaced={!props.details && Boolean(props.description)}
         />
       ) : null}
     </>

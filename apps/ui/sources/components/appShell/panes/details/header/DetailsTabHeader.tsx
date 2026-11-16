@@ -420,7 +420,7 @@ export const DetailsTabHeader = React.memo(function DetailsTabHeader(props: Deta
                 overline={props.overline}
                 navigation={props.navigation}
                 shade={false}
-                titleNumberOfLines={largeTitle ? null : 1}
+                titleNumberOfLines={largeTitle ? undefined : 1}
                 onTitleNaturalWidth={largeTitle ? undefined : setTitleNeed}
                 lineTrailing={props.actionsFit !== 'compact' && !phone && !controlsBelow ? controls : undefined}
                 lineEnd={props.metaTrailing}
