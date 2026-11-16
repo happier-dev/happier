@@ -26,7 +26,7 @@ import { DeploymentEnvironmentMark, DeploymentEnvironmentStateMark, type Deploym
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import type { DeploymentReadControllerV1 } from '@happier-dev/deployments';
+import { selectDeploymentSingleDataMachineV1, type DeploymentReadControllerV1 } from '@happier-dev/deployments';
 
 import { deploymentActionRefusalRemedy, deploymentRailState, deploymentReceiptAtMs, deploymentRevisionLabel, deploymentStateLabel } from './deploymentPresentation';
 import { useDeploymentCollection } from './useDeploymentReads';
@@ -205,7 +205,10 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
    * whose Environment page names them: two short lines.
    */
   presentation: 'row' | 'rail' = 'row') {
-  const machineIds = React.useMemo(() => items.map((item) => item.environment.controllerMachineId), [items]);
+  const machineIds = React.useMemo(() => items.flatMap((item) => {
+    const member = selectDeploymentSingleDataMachineV1(item.runtimeTargetLink ?? null);
+    return member ? [member.machineId] : [];
+  }), [items]);
   const machineNames = useMachineDisplayNamesById(machineIds);
   // A platform Environment says which platform it runs on (lab d4), read once for every row.
   const anyPlatform = items.some((item) => item.runtimeTargetLink?.source.kind === 'plugin');
@@ -213,11 +216,12 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
   const nowMs = Date.now();
   const incoming = items.map(({ environment, title, currentDeployment, projectSourceName, liveVersionTitle, runtimeTargetLink, liveAddress }) => {
     // An unknown Machine drops out of the line rather than reading "a machine".
-    const name = machineNames[environment.controllerMachineId] ?? null;
+    const member = selectDeploymentSingleDataMachineV1(runtimeTargetLink ?? null);
+    const name = member ? machineNames[member.machineId] ?? null : null;
     // Machine names wrap between words, never at their own hyphens (lab K12-5).
     const machine = name ? keepNamesWhole(name) : null;
     const latest = currentDeployment ? deploymentRailState(currentDeployment.state) : null;
-    // Compose is a fact of a Machine target; an unlinked or platform Environment names only its Machine.
+    // Compose and runtime Machine names belong to native runtime membership, never to its controller.
     const compose = runtimeTargetLink?.targetKind === 'ownServer' ? t('projects.deployments.compose') : null;
     const platform = runtimeTargetLink?.source.kind === 'plugin' ? platformTitle(runtimeTargetLink.source) : null;
     const where = (platform ?? [machine, compose].filter(Boolean).join(' · ')) || undefined;
@@ -270,10 +274,10 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
         // Healthy says where it runs and, with room, what is live there (lab d1 `d1r`: the rail leaves that to the detail).
         // A live version titled like its Environment (a Store app, a Compose service) would only repeat the row's name.
         : liveVersionTitle && presentation === 'row' && !isSameDeploymentName(liveVersionTitle, title)
-          ? [machine, liveVersionTitle].filter(Boolean).join(' · ')
+          ? [platform ?? machine, liveVersionTitle].filter(Boolean).join(' · ')
           // A preview names where it runs and the address it serves at (lab d5 `vps-1 · pr-142.preview…`).
           : environment.purpose === 'preview' && liveAddress
-            ? [machine, formatDeploymentLiveAddress(liveAddress)].filter(Boolean).join(' · ') : where,
+            ? [platform ?? machine, formatDeploymentLiveAddress(liveAddress)].filter(Boolean).join(' · ') : where,
       leading: latest ? { state: latest, testID: `${testIDPrefix}.${environment.id}.state` } : null,
       detail: formatRelativeTimeShort(environment.updatedAtMs, nowMs),
       // Last deploy (Services → Apps): when the latest deploy happened; an Environment never deployed has none, whatever

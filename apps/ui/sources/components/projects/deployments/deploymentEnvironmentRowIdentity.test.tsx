@@ -1,14 +1,19 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentEnvironmentCollectionV1 } from '@happier-dev/deployment-protocol/v1';
 import { createDeploymentReadControllerV1, type DeploymentReadTransportV1 } from '@happier-dev/deployments';
-import { act, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { act, createMachineFixture, createMachineMetadataFixture, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION } from './deploymentPlatformTargetPlugin.testFixture';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 afterEach(standardCleanup);
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
 
 const { DeploymentEnvironmentCollection, DeploymentEnvironmentChooser, useDeploymentEnvironmentRowParts } = await import('./DeploymentEnvironmentCollection');
 const { AllDeploymentsView } = await import('./AllDeploymentsScreen');
@@ -25,6 +30,51 @@ const fixture = (count: number): EnvironmentItem[] => Array.from({ length: count
     ? { ...createDeploymentReceiptHeaderV1({ state: 'running' }), steps: [{ id: 'build', label: 'Build', state: 'running' as const }] }
     : index % 2 ? createDeploymentReceiptHeaderV1({ state: 'failed' }) : null,
 }));
+
+it('names the runtime platform for healthy releases and previews without presenting its controller as the runtime', async () => {
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+  const serverId = await homes.addHome({ name: 'Platform rows', serverUrl: 'https://platform-rows.test',
+    serverIdentityId: 'srv_platform_rows', accountId: 'owner', currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const plugin = createDeploymentTargetsTestPlugin('com.example.platform-rows');
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+    activate: api => plugin.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
+    accountLifetime: account.accountLifetime, publishProjection: true });
+  await publishMachineInventoryForTest(account.accountLifetime.scope, [
+    createMachineFixture({ id: 'controller', metadata: createMachineMetadataFixture({ displayName: 'Controller workstation' }) }),
+    createMachineFixture({ id: 'runtime', metadata: createMachineMetadataFixture({ displayName: 'Runtime server' }) }),
+  ]);
+  const runtimeTargetLink = createDeploymentTargetLinkHeaderV1({ role: 'runtime', targetKind: 'beta', machines: [], members: [],
+    source: { kind: 'plugin', contribution: { pluginId: plugin.manifest.id, localId: 'beta' } } });
+  const items: EnvironmentItem[] = [
+    { environment: createDeploymentEnvironmentHeaderV1({ controllerMachineId: 'controller' }), title: 'Production',
+      runtimeTargetLink, currentDeployment: createDeploymentReceiptHeaderV1({ state: 'succeeded' }), liveVersionTitle: 'Release one' },
+    { environment: createDeploymentEnvironmentHeaderV1({ id: 'preview', controllerMachineId: 'controller', purpose: 'preview',
+      previewTemplateEnvironmentId: 'template', previewRepositoryId: 'repository', previewPullRequestId: '42', previewTargetLinkId: runtimeTargetLink.id }),
+      title: 'Preview', runtimeTargetLink, liveAddress: 'https://preview.example.test' },
+    { environment: createDeploymentEnvironmentHeaderV1({ id: 'native', controllerMachineId: 'controller' }), title: 'Native',
+      runtimeTargetLink: createDeploymentTargetLinkHeaderV1({ targetKind: 'ownServer', machines: ['runtime'],
+        members: [{ machineId: 'runtime', installationId: 'runtime-installation', state: 'active' }] }), liveVersionTitle: 'Native release' },
+    { environment: createDeploymentEnvironmentHeaderV1({ id: 'unlinked', controllerMachineId: 'controller' }), title: 'Unlinked' },
+  ];
+  let rows: RowParts[] = [];
+  function Consumer() {
+    rows = useDeploymentEnvironmentRowParts(items, 'platform-row', account.accountLifetime);
+    return <>{rows.map(row => <Item key={row.environmentId} title={row.title} subtitle={row.subtitle} />)}</>;
+  }
+  const screen = await renderScreen(<Consumer />);
+  try {
+    expect(screen.getTextContent()).not.toContain('Controller workstation');
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(rows[0]?.runsOn).toBe('Beta runtime'); });
+    expect(rows[0]?.subtitle).toBe('Beta runtime · Release one');
+    expect(rows[1]?.subtitle).toBe('Beta runtime · preview.example.test');
+    expect(rows[2]?.runsOn).toBe('Runtime server');
+    expect(rows[2]?.subtitle).toBe('Runtime server · Native release');
+    expect(rows[3]?.runsOn).toBeNull();
+    expect(screen.getTextContent()).not.toContain('Controller workstation');
+  } finally { await screen.unmount(); await installed.dispose(); account.dispose(); await homes.reset(); }
+});
 
 it('E500: two unrelated arrivals and thirteen receipt batches render zero unaffected rows; a changed row renders once', async () => {
   let items = fixture(500);
