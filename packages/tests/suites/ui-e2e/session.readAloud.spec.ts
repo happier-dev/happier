@@ -113,6 +113,7 @@ test.describe('ui e2e: transcript read aloud', () => {
       const voice = before.settings.voice as { adapters: Record<string, unknown>; [key: string]: unknown };
       const local = voice.adapters.local_conversation as Record<string, unknown>;
       const configure = async (tts: Record<string, unknown>) => {
+        const priorVersion = (await readMountedSettings(page))?.version ?? 0;
         await upsertEncryptedAccountSettingsV2({ baseUrl: server!.baseUrl, token: credentials.token, secret,
           settings: { ...before.settings, experiments: true, featureToggles: { voice: true }, voice: {
             ...voice, providerId: 'local_conversation', adapters: { ...voice.adapters,
@@ -120,6 +121,11 @@ test.describe('ui e2e: transcript read aloud', () => {
           } } });
         await gotoDomContentLoadedWithRetries(page, transcriptUrl);
         await expect(page.getByText(text, { exact: true })).toBeVisible({ timeout: 60_000 });
+        await expect.poll(async () => (await readMountedSettings(page))?.version ?? 0, { timeout: 60_000 })
+          .toBeGreaterThan(priorVersion);
+        await expect.poll(async () => (await readMountedSettings(page))?.settings, { timeout: 60_000 })
+          .toMatchObject({ featureToggles: { voice: true }, voice: { providerId: 'local_conversation',
+            adapters: { local_conversation: { tts } } } });
       };
       await configure({ provider: 'openai_compat', openaiCompat: { baseUrl: '' } });
       await expect(speak).toHaveCount(0);
