@@ -5,6 +5,7 @@ import type { AgentExecutionRunConversationEventV1, AgentSessionCompactRequest, 
 import { SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX, SESSION_WORKFLOW_RUN_SNAPSHOT_SUMMARY_MAX,
   type SessionWorkflowRunSnapshotV1, type SessionWorkflowAgentStatusV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
 import { MUSE_ACCOUNTING_SOURCE_ID } from './definition.js';
+import { readMuseUsageTokens } from './usage.js';
 
 type EventContent<T = AgentExecutionRunConversationEventV1> = T extends AgentExecutionRunConversationEventV1
   ? Omit<T, 'emittedAtMs'> : never;
@@ -269,11 +270,12 @@ export function createMuseEventProjection<SessionId extends string | undefined =
       if (initialReplay) return;
       if (typeof item.childSessionId === 'string' && item.usage !== undefined && item.usage !== null
         && (previous?.value.childSessionId !== item.childSessionId || previous.value.usage === undefined || previous.value.usage === null)) {
-        // Child usage has no counted prompt/total. Preserve the observed source
-        // once; raw input/cache counters cannot establish its token categories.
+        // Child counters are measured, but their total and overlap semantics are unknown.
+        const usage = readMuseRecord(item.usage);
+        const tokens = readMuseUsageTokens(usage, usage.inputTokens, undefined);
         publish({ kind: 'usage-observed', observationId: `${item.childSessionId}:subagent:${item.itemId}`,
           source: MUSE_ACCOUNTING_SOURCE_ID, scope: 'session_cumulative',
-          accounting: { nativeSessionId: item.childSessionId } });
+          accounting: { nativeSessionId: item.childSessionId }, ...(tokens ? { tokens } : {}) });
       }
       return (async () => { await publishChild(id, child); if (child.workflowRunId) await publishWorkflow(child.workflowRunId); })();
     }
@@ -344,16 +346,12 @@ export function createMuseEventProjection<SessionId extends string | undefined =
     const owner = correlation(params.turnId);
     if (method === 'session/tokenUsage') {
       const usage = readMuseRecord(params.usage);
-      const counted = typeof params.promptTokens === 'number' && typeof usage.outputTokens === 'number'
-        && typeof usage.reasoningTokens === 'number' && typeof usage.cacheReadTokens === 'number'
-        && typeof usage.cacheWriteTokens === 'number' && typeof params.totalTokens === 'number'
-        ? { input: params.promptTokens, output: usage.outputTokens, reasoning: usage.reasoningTokens,
-          cacheRead: usage.cacheReadTokens, cacheWrite: usage.cacheWriteTokens, total: params.totalTokens } : undefined;
+      const counted = readMuseUsageTokens(usage, params.promptTokens, params.totalTokens);
       // Muse's promptTokens is the counted-once derivation; usage.inputTokens is provider dependent.
       publish({ kind: 'usage-observed', observationId: `${params.sessionId}:${method}:${identity}`,
         source: MUSE_ACCOUNTING_SOURCE_ID, scope: 'turn_delta', ...(owner.turnId ? { turnId: owner.turnId } : {}),
         accounting: { nativeSessionId: params.sessionId, inferenceId: identity,
-          ...(counted ? { inputIncludesCache: true, outputIncludesReasoning: true } : {}) },
+          inputIncludesCache: true, outputIncludesReasoning: true },
         ...(typeof params.modelId === 'string' ? { modelId: params.modelId } : {}),
         ...(counted ? { tokens: counted } : {}) });
     } else if (typeof params.usedTokens === 'number') {

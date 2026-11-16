@@ -5,6 +5,8 @@ import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/ru
 import { resolveUsageTokenCategories } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRuntimeEventV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { toNativeAgentUsageObservation, buildNativeAgentUsageAccountingMetadata } from '@/usage/nativeAgentUsageObservation';
+import { buildUsageEventIngestRequest } from '@/usage/buildUsageEventIngestRequest';
 import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
 import { openMuseMsp } from './msp.js';
 import { createMuseMspProcessFixture } from './testkit/mspProcess.js';
@@ -258,7 +260,7 @@ it('preserves the native user-shell environment failure without inventing a turn
   const observed = events.canonicalEvents();
   expect(observed.filter(event => event.kind === 'tool-call')).toMatchObject([{ toolName: 'Bash' }]);
   expect(observed.filter(event => event.kind === 'tool-result')).toMatchObject([
-    { output: expect.stringContaining('managed shell sandbox is unavailable'), isError: true },
+    { output: { status: 'failed', text: expect.stringContaining('managed shell sandbox is unavailable') }, isError: true },
   ]);
   expect(observed.filter(event => event.kind === 'turn-start' || event.kind === 'turn-complete' || event.kind === 'turn-failed' || event.kind === 'turn-cancelled')).toHaveLength(0);
   events.expectAllEventsValidated();
@@ -293,16 +295,17 @@ it('keeps counted prompt, reasoning, cache and context observations separate', (
     .toMatchObject({ input: 249, output: 12, reasoning: 8, cacheRead: 28148, total: 28417 });
 });
 
-it('retains native accounting identity when optional cache split counters are absent', async () => {
+it('retains measured native counters when optional cache split counters are absent', async () => {
   await withNativeProjection('login-smoke', async ({ events }) => {
     const observations = events.canonicalEvents().filter(event => event.kind === 'usage-observed' && !event.context);
     expect(observations).toHaveLength(1);
     expect(observations[0]).toMatchObject({ scope: 'turn_delta', source: 'muse-native-accounting',
       accounting: { nativeSessionId: '01a1bf87-da7f-7ce0-a4ff-bab34925049f', inferenceId: expect.any(String) } });
     if (observations[0]?.kind !== 'usage-observed') throw new Error('Expected native accounting evidence');
-    expect(observations[0].tokens).toBeUndefined();
-    expect(observations[0].accounting?.inputIncludesCache).toBeUndefined();
-    expect(observations[0].accounting?.outputIncludesReasoning).toBeUndefined();
+    expect(observations[0].tokens).toEqual({ input: 28177, output: 22, reasoning: 10,
+      cacheRead: null, cacheWrite: null, total: 28199 });
+    expect(observations[0].accounting?.inputIncludesCache).toBe(true);
+    expect(observations[0].accounting?.outputIncludesReasoning).toBe(true);
     events.expectAllEventsValidated();
   }, captured => {
     const rows = readMuseRecord(captured).rows;
@@ -318,7 +321,7 @@ it('retains native accounting identity when optional cache split counters are ab
   });
 });
 
-it('publishes observed child accounting identity without guessing transitive token categories', async () => {
+it('preserves measured child counters without guessing their total or overlap semantics', async () => {
   await withNativeProjection('child-follow', async ({ events, workflowCompleted }) => {
     await workflowCompleted;
     const observations = events.canonicalEvents().filter(event => event.kind === 'usage-observed'
@@ -326,9 +329,17 @@ it('publishes observed child accounting identity without guessing transitive tok
     expect(observations).toHaveLength(1);
     expect(observations[0]).toMatchObject({ scope: 'session_cumulative', source: 'muse-native-accounting' });
     if (observations[0]?.kind !== 'usage-observed') throw new Error('Expected native child accounting evidence');
-    expect(observations[0].tokens).toBeUndefined();
+    expect(observations[0].tokens).toEqual({ input: 43779, output: 202, reasoning: 49,
+      cacheRead: 21748, cacheWrite: 0, total: null });
     expect(observations[0].accounting).toEqual({ nativeSessionId: '57eb5081-f640-7bd6-8b7f-19602770febe' });
     expect(observations[0].turnId).toBeUndefined();
+    const ingested = buildUsageEventIngestRequest({ sessionId: 'host-child-accounting', observedAt: observations[0].emittedAtMs,
+      observation: toNativeAgentUsageObservation(observations[0], 'muse'),
+      metadata: buildNativeAgentUsageAccountingMetadata(observations[0]),
+    });
+    expect(ingested?.tokens).toEqual(observations[0].tokens);
+    expect(ingested?.modelId).toBeNull();
+    expect(resolveUsageTokenCategories(ingested!.tokens, observations[0].accounting)).toBeNull();
     events.expectAllEventsValidated();
   });
 });
