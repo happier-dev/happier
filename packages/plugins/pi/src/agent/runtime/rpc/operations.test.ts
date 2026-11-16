@@ -2047,6 +2047,8 @@ describe('createPiRuntimeOperations', () => {
       await waitForWrittenCount(capture, 1);
       await ackLastCommand(capture);
       await prompt;
+      await emit(capture, { type: 'message_end', message: { role: 'assistant', model: 'openai/gpt-4.1-mini',
+        usage: { input: 50_000, output: 10_000, reasoning: 0, cacheRead: 40_000, cacheWrite: 5_000, totalTokens: 105_000 } } });
       await emit(capture, { type: 'agent_end', willRetry: false });
       await vi.waitFor(() => expect(events.some(event => event.kind === 'usage-observed') || rejected.length > 0).toBe(true));
       expect(rejected).toEqual([]);
@@ -2059,7 +2061,7 @@ describe('createPiRuntimeOperations', () => {
         metadata: buildNativeAgentUsageAccountingMetadata(event),
       });
       expect(request).toMatchObject({ sessionId: 'happier-session-1',
-        scope: 'session_cumulative', tokens: { total: 105_000 },
+        scope: 'session_cumulative', modelId: 'openai/gpt-4.1-mini', tokens: { total: 105_000, reasoning: 0 },
         cost: { estimatedUsd: 0.45 },
         metadata: { usageAccounting: { nativeSessionId: 'native-pi-paid', historyComplete: false } },
       });

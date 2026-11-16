@@ -1,4 +1,4 @@
-import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionRuntimeEvent, UsageObservationTokens } from '@happier-dev/plugin-sdk/agents/runtime';
 import { normalizePiPaidUsage } from '../../usage/paidUsage.js';
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -11,6 +11,36 @@ function readNonNegativeInteger(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
     ? Math.trunc(value)
     : null;
+}
+
+export function createPiSessionStatsUsageProjector() {
+  const totals: UsageObservationTokens = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, reasoning: 0 };
+  let modelId: string | null | undefined;
+  return {
+    observeRecord(value: unknown) {
+      const record = readRecord(value);
+      const message = readRecord(record?.message);
+      if (record?.type !== 'message_end' || message?.role !== 'assistant') return;
+      const paid = normalizePiPaidUsage(message.usage, message.stopReason);
+      if (!paid) return;
+      const model = typeof message.model === 'string' && message.model.trim() ? message.model.trim() : null;
+      modelId = modelId === undefined ? model : modelId === model ? modelId : null;
+      for (const field of Object.keys(totals) as (keyof UsageObservationTokens)[]) {
+        const previous = totals[field];
+        const next = paid.tokens[field];
+        totals[field] = previous === null || next === null ? null : previous + next;
+      }
+    },
+    project(params: Parameters<typeof projectPiSessionStatsUsage>[0]) {
+      const event = projectPiSessionStatsUsage(params);
+      // Stats include resumed/fork history and paid summaries. Attribute only when
+      // every paid counter is accounted for by this runtime's completed messages.
+      // Keep constant-size totals, never retain or re-read message bodies.
+      if (!event?.tokens || modelId === undefined || !(['input', 'output', 'cacheRead', 'cacheWrite', 'total'] as const)
+        .every(field => totals[field] !== null && event.tokens![field] === totals[field])) return event;
+      return { ...event, ...(modelId ? { modelId } : {}), tokens: { ...event.tokens, reasoning: totals.reasoning } };
+    },
+  };
 }
 
 export function projectPiSessionStatsUsage(params: Readonly<{

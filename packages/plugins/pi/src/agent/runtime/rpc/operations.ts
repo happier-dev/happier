@@ -68,7 +68,7 @@ import {
 import type { PiPermissionMode, PiRpcStateData } from './types.js';
 import { resolvePiEffectiveLaunchPermissionPolicy } from './permissions.js';
 import { createPiSessionModelsSource } from '../modelsSource.js';
-import { projectPiSessionStatsUsage } from './usage.js';
+import { createPiSessionStatsUsageProjector } from './usage.js';
 import { AGENT_DEFINITION } from '../../definition.js';
 import {
   buildPiExtensionUiQuestionRequest,
@@ -1629,6 +1629,7 @@ async function createPiConversationRuntimeOperations(
   };
   let operations: RuntimeOperationsWithRecordHandler | null = null;
   let usageObservationChain = Promise.resolve();
+  const usageProjector = createPiSessionStatsUsageProjector();
   const blockingExtensionUiRequests = new Map<string, Readonly<{
     controller: AbortController;
     task: Promise<void>;
@@ -1717,6 +1718,7 @@ async function createPiConversationRuntimeOperations(
   rpc = createPiJsonStreamRpcClient({
     handle,
     onEvent(record) {
+      usageProjector.observeRecord(record);
       const extensionUserInput = parsePiExtensionUserInput(record);
       if (extensionUserInput !== null) {
         operations?.handleRuntimeRecord(record);
@@ -1841,7 +1843,7 @@ async function createPiConversationRuntimeOperations(
       usageObservationChain = usageObservationChain.then(async () => {
         const response = await rpc.send({ type: 'get_session_stats' }, 30_000);
         const observedAtMs = Date.now();
-        const event = projectPiSessionStatsUsage({
+        const event = usageProjector.project({
           stats: response.data,
           sessionId: happierSessionId,
           observationId: `pi-usage-${randomUUID()}`,
