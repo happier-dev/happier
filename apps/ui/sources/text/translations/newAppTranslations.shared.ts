@@ -132,6 +132,8 @@ type Copy = Readonly<{
     onMachine: string;
     builtImageSource: string;
     builtComposeSource: string;
+    /** A catalog app's Source row note, after its name. */
+    catalogSourceNote: string;
     moreSettings: string;
     moreSettingsSummary: string;
     defaultEnvironmentName: string;
@@ -304,6 +306,7 @@ export const newAppTranslations: Readonly<
       onMachine: 'A machine',
       builtImageSource: 'A Docker image',
       builtComposeSource: 'A Compose file',
+      catalogSourceNote: 'from the catalog',
       moreSettings: 'More settings',
       moreSettingsSummary: 'Name · who may deploy · production',
       defaultEnvironmentName: 'Production',
@@ -457,6 +460,7 @@ export const newAppTranslations: Readonly<
       onMachine: 'Una màquina',
       builtImageSource: 'Una imatge Docker',
       builtComposeSource: 'Un fitxer Compose',
+      catalogSourceNote: 'del catàleg',
       moreSettings: 'Més opcions',
       moreSettingsSummary: 'Nom · qui pot desplegar · producció',
       defaultEnvironmentName: 'Producció',
@@ -610,6 +614,7 @@ export const newAppTranslations: Readonly<
       onMachine: 'Eine Maschine',
       builtImageSource: 'Ein Docker-Image',
       builtComposeSource: 'Eine Compose-Datei',
+      catalogSourceNote: 'aus dem Katalog',
       moreSettings: 'Weitere Einstellungen',
       moreSettingsSummary: 'Name · wer bereitstellen darf · Produktion',
       defaultEnvironmentName: 'Produktion',
@@ -763,6 +768,7 @@ export const newAppTranslations: Readonly<
       onMachine: 'Una máquina',
       builtImageSource: 'Una imagen Docker',
       builtComposeSource: 'Un archivo Compose',
+      catalogSourceNote: 'del catálogo',
       moreSettings: 'Más ajustes',
       moreSettingsSummary: 'Nombre · quién puede desplegar · producción',
       defaultEnvironmentName: 'Producción',
@@ -916,6 +922,7 @@ export const newAppTranslations: Readonly<
       onMachine: 'Une machine',
       builtImageSource: 'Une image Docker',
       builtComposeSource: 'Un fichier Compose',
+      catalogSourceNote: 'depuis le catalogue',
       moreSettings: 'Plus de réglages',
       moreSettingsSummary: 'Nom · qui peut déployer · production',
       defaultEnvironmentName: 'Production',
@@ -1069,6 +1076,7 @@ export const newAppTranslations: Readonly<
       onMachine: 'Una macchina',
       builtImageSource: 'Un’immagine Docker',
       builtComposeSource: 'Un file Compose',
+      catalogSourceNote: 'dal catalogo',
       moreSettings: 'Altre impostazioni',
       moreSettingsSummary: 'Nome · chi può distribuire · produzione',
       defaultEnvironmentName: 'Produzione',
@@ -1222,6 +1230,7 @@ export const newAppTranslations: Readonly<
       onMachine: 'マシン',
       builtImageSource: 'Docker イメージ',
       builtComposeSource: 'Compose ファイル',
+      catalogSourceNote: 'カタログから',
       moreSettings: 'その他の設定',
       moreSettingsSummary: '名前 · デプロイできる人 · 本番',
       defaultEnvironmentName: '本番',
@@ -1375,6 +1384,7 @@ export const newAppTranslations: Readonly<
       onMachine: 'Maszyna',
       builtImageSource: 'Obraz Docker',
       builtComposeSource: 'Plik Compose',
+      catalogSourceNote: 'z katalogu',
       moreSettings: 'Więcej ustawień',
       moreSettingsSummary: 'Nazwa · kto może wdrażać · produkcja',
       defaultEnvironmentName: 'Produkcja',
@@ -1528,6 +1538,7 @@ export const newAppTranslations: Readonly<
       onMachine: 'Uma máquina',
       builtImageSource: 'Uma imagem Docker',
       builtComposeSource: 'Um ficheiro Compose',
+      catalogSourceNote: 'do catálogo',
       moreSettings: 'Mais definições',
       moreSettingsSummary: 'Nome · quem pode implementar · produção',
       defaultEnvironmentName: 'Produção',
@@ -1681,6 +1692,7 @@ export const newAppTranslations: Readonly<
       onMachine: 'Машина',
       builtImageSource: 'Образ Docker',
       builtComposeSource: 'Файл Compose',
+      catalogSourceNote: 'из каталога',
       moreSettings: 'Другие настройки',
       moreSettingsSummary: 'Имя · кто может развёртывать · продакшен',
       defaultEnvironmentName: 'Продакшен',
@@ -1830,6 +1842,7 @@ export const newAppTranslations: Readonly<
       onMachine: '一台机器',
       builtImageSource: 'Docker 镜像',
       builtComposeSource: 'Compose 文件',
+      catalogSourceNote: '来自目录',
       moreSettings: '更多设置',
       moreSettingsSummary: '名称 · 谁可以部署 · 生产',
       defaultEnvironmentName: '生产',
@@ -1979,6 +1992,7 @@ export const newAppTranslations: Readonly<
       onMachine: '一台機器',
       builtImageSource: 'Docker 映像',
       builtComposeSource: 'Compose 檔案',
+      catalogSourceNote: '來自目錄',
       moreSettings: '更多設定',
       moreSettingsSummary: '名稱 · 誰可以部署 · 正式環境',
       defaultEnvironmentName: '正式環境',

@@ -373,6 +373,43 @@ it('a catalog-app card continues in this dialog on Where for that app, not in th
   }
 });
 
+it('a catalog app picked by hand takes the same path as a suggested one: Where inside this dialog, never the Store listing (journey-deploy catWhere, D3)', async () => {
+  const digest = `sha256:${'b'.repeat(64)}`;
+  const summary = { sourceId: 'app', kind: 'app', itemId: 'activepieces', title: 'Activepieces', version: digest };
+  const reads: unknown[] = [];
+  suggestionBoundary({
+    registryActionExecute: async ({ actionId, input }) => {
+      if (actionId === 'registries.items.read') {
+        reads.push(input);
+        return { item: { summary, fetchedAt: 1, payload: { kind: 'app', state: 'ready', ref: { kind: 'content', digest },
+          app: { schemaVersion: 1, title: 'Activepieces', compose: { document: 'services:\n  web:\n    image: activepieces/activepieces\n', profiles: [], services: ['web'] },
+            variables: [], generatedSecrets: [], domains: [], volumes: [] } } } };
+      }
+      const kind = (input as { kind: string }).kind;
+      return { pages: [{ sourceId: kind, status: { state: 'ok', fetchedAt: 1 }, nextCursor: null, items: kind === 'app' ? [summary] : [] }] };
+    },
+  });
+  const { fixture, screen, onClose } = await openDescribe('manual-catalog-where');
+  try {
+    routerMock.spies.push.mockClear();
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.catalog.activepieces')).toBeTruthy());
+    await screen.pressByTestIdAsync('newApp.catalog.activepieces');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft')).toBeTruthy());
+    expect(reads).toContainEqual(expect.objectContaining({ kind: 'app', sourceId: 'app', itemId: 'activepieces' }));
+    expect(onClose, 'the dialog stays: Where runs inside it').not.toHaveBeenCalled();
+    expect(routerMock.spies.push, 'no detour through the Store listing').not.toHaveBeenCalled();
+    // The Source row names the catalog app it deploys, never a placeholder (journey-deploy catWhere).
+    const { FieldValue } = await import('@/components/ui/lists/FieldRow');
+    const sourceValues = screen.findAllByType(FieldValue).map((node) => [node.props.value, node.props.note]);
+    expect(sourceValues).toContainEqual(['Activepieces', expect.any(String)]);
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('says why no agent can suggest, per Machine, starting no run; Choose a starter myself returns to the source step (journey-deploy F3)', async () => {
   suggestionBoundary({
     agentsModelsList: async () => ({

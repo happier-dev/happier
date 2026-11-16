@@ -61,7 +61,6 @@ import {
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
 import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
-import { useOpenStoreListing } from '@/components/store/StoreListing';
 import type { DeploymentNewDefinitionKind } from '@/components/projects/deployments/deploymentNavigation';
 import type { DeploymentDraftFrame } from '@/components/projects/deployments/DeploymentEnvironmentDraft';
 import { NewAppCodeSources } from './NewAppCodeSources';
@@ -235,7 +234,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // The catalog's first apps, read only while the person is choosing a way in.
   const appCatalog = useRegistryItems(search ? { kind: 'app', query: search } : { kind: 'app' }, step === 'start');
   const catalogApps = React.useMemo(() => appCatalog.items.slice(0, CATALOG_TILES), [appCatalog.items]);
-  const openStoreListing = useOpenStoreListing();
   const builtTiles = React.useMemo((): Array<SelectionTile<Door>> => [
     { id: 'built:image', testID: 'newApp.built.image', icon: 'image',
       title: t('newApp.builtImage'), subtitle: t('newApp.builtImageSubtitle') },
@@ -340,8 +338,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     props.onClose?.();
   }, [props.onClose]);
 
-  // Already built continues in this flow's deploy steps, whose draft asks for the Project (journey-deploy imgCfg); a
-  // catalog app opens its Store listing; Browse shows the whole catalog. The ways out step aside first.
+  // Already built and a catalog app continue in this flow's deploy steps, whose draft asks for the Project (journey-deploy
+  // imgCfg, catWhere); a catalog app picked here takes the same source as a suggested one. Browse steps aside first.
   const continueThroughDoor = (chosen: Door) => {
     if (!scope) return;
     if (chosen === 'describe') {
@@ -354,9 +352,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     }
     const item = catalogApps.find((candidate) => catalogDoor(candidate) === chosen);
     if (!item) return;
-    stepAside();
-    openStoreListing({ type: 'registryItem', kind: item.kind, sourceId: item.sourceId, itemId: item.itemId,
-      ...(item.version === undefined ? {} : { version: item.version }) });
+    startDeploy({ kind: 'catalogApp', app: { sourceId: item.sourceId, itemId: item.itemId } });
   };
   const browseCatalog = () => {
     stepAside();

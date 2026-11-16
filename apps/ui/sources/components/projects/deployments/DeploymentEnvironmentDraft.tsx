@@ -486,16 +486,18 @@ export const DeploymentEnvironmentDraft = React.memo(
     const runsOnTitle = onPlatform && platformTarget ? platformTarget.title : chosen ? machineName(chosen.id) : null;
     // A saved Source carries no checkout path or Machine, so the summary names it by its name alone (journey-deploy:
     // "name ~/path on Machine" belongs to a local checkout, which this draft is not given).
-    const sourceTitle = source ? source.name : null;
+    const sourceTitle = source ? source.name : props.catalogApp?.title ?? null;
+    // A catalog app has no saved Source yet; the summary names the app and where it comes from (journey-deploy catWhere).
+    const sourceNote = !source && props.catalogApp ? t('newApp.deploy.catalogSourceNote') : null;
     const appName = source?.name ?? (projectSelection && 'newProject' in projectSelection ? projectSelection.newProject.name.trim() || null : null);
     const frame = React.useMemo((): DeploymentDraftFrame => ({
       step: draftStep,
       runsOn: runsOnKind ? { kind: runsOnKind, title: runsOnTitle } : null,
-      source: sourceTitle ? { title: sourceTitle, note: null } : null,
+      source: sourceTitle ? { title: sourceTitle, note: sourceNote } : null,
       appName,
       primary: { title: primary.title, disabled: primary.disabled, loading: primary.loading, testID: primary.testID },
       press: pressStep, back: backStep, toWhere,
-    }), [draftStep, runsOnKind, runsOnTitle, sourceTitle, branch, appName, primary.title, primary.disabled, primary.loading,
+    }), [draftStep, runsOnKind, runsOnTitle, sourceTitle, sourceNote, branch, appName, primary.title, primary.disabled, primary.loading,
       primary.testID, pressStep, backStep, toWhere]);
     const stepsHost = React.useRef(props.steps);
     stepsHost.current = props.steps;
