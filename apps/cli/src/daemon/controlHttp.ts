@@ -4,6 +4,7 @@ import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invoc
 import { armDeadlineTimer } from '@happier-dev/protocol/common/deadlineTimer';
 import { sanitizeConnectedServiceDiagnosticString } from './connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import { loadUndici } from '@/utils/loadUndici';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 
 export const DAEMON_CONTROL_TOKEN_HEADER = 'x-happier-daemon-token';
@@ -113,12 +114,13 @@ async function resolveTimeout(path: string, options: DaemonControlRequestOptions
   // operation. A generic control wait is not evidence of retired authority.
   if (path === '/connected-service-run/applied-parent-selection'
     || path === '/connected-service-run/generation-current') return null;
+  const env = sessionProcessEnvironment();
   if (path === '/spawn-session') {
     const { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnBudget');
-    const raw = process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
-    return positiveTimeout(raw?.trim() ? raw : process.env.HAPPIER_DAEMON_HTTP_TIMEOUT, DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS, 300_000);
+    const raw = env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
+    return positiveTimeout(raw?.trim() ? raw : env.HAPPIER_DAEMON_HTTP_TIMEOUT, DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS, 300_000);
   }
-  return positiveTimeout(process.env.HAPPIER_DAEMON_HTTP_TIMEOUT, 10_000, 300_000);
+  return positiveTimeout(env.HAPPIER_DAEMON_HTTP_TIMEOUT, 10_000, 300_000);
 }
 
 async function logControlError(message: string): Promise<void> {

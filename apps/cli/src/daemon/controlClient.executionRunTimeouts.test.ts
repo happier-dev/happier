@@ -4,6 +4,8 @@ import { projectExecutionRunError } from '@/agent/runtime/bridges/executionRun/e
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { stubIssuedFetch } from '@/testkit/http/stubIssuedFetch';
 import { stubUndiciFetch } from '@/testkit/http/stubUndiciFetch';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { runInHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 vi.mock('@/persistence', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/persistence')>(),
@@ -17,6 +19,7 @@ vi.mock('@/persistence', async (importOriginal) => ({
 import {
   admitDaemonExecutionRunStart,
   requestExecutionRunConnectedServicesMaterialization,
+  recoverExecutionRunConnectedServicesRejectedStart,
   requestExecutionRunConnectedServiceRuntimeAuthRefresh,
   resolveExecutionRunConnectedServiceMaterializeTimeoutMs,
 } from './controlClient';
@@ -172,6 +175,46 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
         connectedServicesBindings: materializeRequest.connectedServices, connectedServiceSelectionsEnv: {},
         sessionDirectory: materializeRequest.cwd, materializedRoot: null },
     },
+  });
+
+  it('uses each hosted Session deadline for materialization and rejected-start recovery', async () => {
+    const env = createEnvKeyScope(['HAPPIER_EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_MS']);
+    env.patch({ HAPPIER_EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_MS: '3300' });
+    const deadlines = new WeakMap<NonNullable<RequestInit['signal']>, number>();
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => {
+      const signal = new AbortController().signal;
+      deadlines.set(signal, ms);
+      return signal;
+    });
+    const issued: { path: string; timeoutMs: number | undefined }[] = [];
+    // Substitute HTTP and clocks only; public client authorization and parsing stay real.
+    stubUndiciFetch(async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname;
+      issued.push({ path, timeoutMs: init?.signal ? deadlines.get(init.signal) : undefined });
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(JSON.stringify(path.endsWith('/materialize')
+        ? successResponse(String(body.activationId)) : { ok: true, retry: true }));
+    });
+    const observe = async () => {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await expect(requestExecutionRunConnectedServicesMaterialization(materializeRequest)).resolves.toMatchObject({ ok: true });
+      await expect(recoverExecutionRunConnectedServicesRejectedStart({ runId: 'run-1', runnerPid: process.pid,
+        activationId: foreignActivationId, modelId: 'model', classification: { kind: 'auth_expired',
+          serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', groupId: null, resetsAtMs: null, planType: null,
+          rateLimits: null, source: 'structured_provider_error' },
+      })).resolves.toEqual({ ok: true, retry: true });
+    };
+    try {
+      await Promise.all([
+        runInHostedSessionScope({ environment: { NODE_ENV: 'test', HAPPIER_EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_MS: '1100' } }, observe),
+        runInHostedSessionScope({ environment: { NODE_ENV: 'test', HAPPIER_EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_MS: '2200' } }, observe),
+      ]);
+      for (const path of ['/connected-service-run/materialize', '/connected-service-run/rejected-start']) {
+        expect(issued.filter(request => request.path === path).map(request => request.timeoutMs).sort()).toEqual([1100, 2200]);
+      }
+      await expect(requestExecutionRunConnectedServicesMaterialization(materializeRequest)).resolves.toMatchObject({ ok: true });
+      expect(issued.at(-1)?.timeoutMs).toBe(3300);
+    } finally { env.restore(); }
   });
 
   it.each([

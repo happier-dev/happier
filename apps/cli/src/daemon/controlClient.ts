@@ -40,6 +40,7 @@ import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { readFileSync } from 'fs';
 import { configuration } from '@/configuration';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
 import {
   FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH,
@@ -228,7 +229,7 @@ function resolvePositiveIntValue(
 }
 
 export function resolveExecutionRunConnectedServiceMaterializeTimeoutMs(
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = sessionProcessEnvironment(),
 ): number | null {
   // Root writers wait for their live predecessor; elapsed time does not revoke
   // their authority. Only an explicitly configured caller deadline bounds this phase.

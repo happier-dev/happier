@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { runInHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import { buildDaemonControlHttpHeaders, daemonPost } from './controlHttp';
 import { deriveConnectedServiceRunMaterializeToken } from './connectedServices/runs/capabilityToken';
@@ -18,6 +19,52 @@ afterEach(() => {
 });
 
 describe('daemon control HTTP authentication', () => {
+  it('uses each hosted Session control timeout while retaining explicit deadlines and the host fallback', async () => {
+    envScope.patch({ HAPPIER_DAEMON_HTTP_TIMEOUT: '3500' });
+    const deadlines: Array<{ environment: string | undefined; ms: number }> = [];
+    // Observe the clock boundary while the actual loopback transport stays real.
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation(ms => {
+      deadlines.push({ environment: sessionProcessEnvironment().HAPPIER_DAEMON_HTTP_TIMEOUT, ms });
+      return new AbortController().signal;
+    });
+    const server = createServer((request, response) => {
+      request.resume();
+      response.end('{}');
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing server address');
+    const target = { pid: process.pid, httpPort: address.port, controlToken: 'control-token' };
+    const observe = async () => {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      return await Promise.all([
+        daemonPost('/session-holder', {}, { target }),
+        daemonPost('/spawn-session', {}, { target }),
+        daemonPost('/session-holder', {}, { target, timeoutMs: 8800 }),
+        daemonPost('/session-holder', {}, { target, timeoutMs: null }),
+      ]);
+    };
+    try {
+      const [a, b] = await Promise.all([
+        runInHostedSessionScope({ environment: { NODE_ENV: 'test', HAPPIER_DAEMON_HTTP_TIMEOUT: '1300',
+          HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT: '4700' } }, observe),
+        runInHostedSessionScope({ environment: { NODE_ENV: 'test', HAPPIER_DAEMON_HTTP_TIMEOUT: '2400' } }, observe),
+      ]);
+      expect(a).toEqual([{}, {}, {}, {}]);
+      expect(b).toEqual([{}, {}, {}, {}]);
+      const selected = (environment: string) => deadlines.filter(item => item.environment === environment)
+        .map(item => item.ms).sort((left, right) => left - right);
+      expect(selected('1300')).toEqual([1300, 4700, 8800]);
+      expect(selected('2400')).toEqual([2400, 2400, 8800]);
+      await expect(daemonPost('/session-holder', {}, { target })).resolves.toEqual({});
+      expect(deadlines.at(-1)).toEqual({ environment: '3500', ms: 3500 });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
   it('settles cancellation before a held daemon response is released', async () => {
     const opened = Promise.withResolvers<void>();
     const closed = Promise.withResolvers<void>();
