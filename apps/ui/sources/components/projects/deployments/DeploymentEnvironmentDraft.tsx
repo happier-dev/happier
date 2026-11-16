@@ -39,6 +39,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { t } from '@/text';
@@ -86,6 +87,24 @@ const PLUGINS_TILE = 'plugins';
 const RETRY_TILE = 'retry';
 const LOADING_TILE = 'loading';
 
+/** Deploy an app's steps (journey-deploy D3): this draft's own sections, split for a host that frames them. */
+export type DeploymentDraftStep = 'where' | 'configure' | 'review';
+/** What a stepped host needs to frame the current step: its facts for the summary, and the step's one action. */
+export type DeploymentDraftFrame = Readonly<{
+  step: DeploymentDraftStep;
+  /** The answered Where: a platform's name or the Machine's. */
+  runsOn: Readonly<{ kind: 'machine' | 'platform'; title: string | null }> | null;
+  /** The Project's repository and branch, once its Source is read. */
+  source: Readonly<{ title: string; note: string | null }> | null;
+  appName: string | null;
+  primary: Readonly<{ title: string; disabled: boolean; loading: boolean; testID: string }>;
+  press: () => void;
+  back: () => void;
+  /** Change on the summary's Runs on: back to Where, dropping a prepared review. */
+  toWhere: () => void;
+}>;
+export type DeploymentDraftStepsHost = Readonly<{ onFrame: (frame: DeploymentDraftFrame) => void; onExit: () => void }>;
+
 /**
  * A new Environment (lab d1 `draft`): its name, the Machine that runs it, what runs and who may deploy. It is
  * the selected draft row's detail; nothing exists until Save, and nothing is deployed until the person
@@ -110,6 +129,11 @@ export const DeploymentEnvironmentDraft = React.memo(
       onDiscard: () => void;
       /** The Machine the door already chose (Deploy an app here); the person's own choice still wins. */
       initialMachineId?: string | null;
+      /**
+       * Hosted as steps (Deploy an app): Where, then Configure, then Review, each framed by the host (title, summary,
+       * footer) from the published frame. The same instance walks every step, so nothing typed is lost between them.
+       */
+      steps?: DeploymentDraftStepsHost;
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -125,8 +149,14 @@ export const DeploymentEnvironmentDraft = React.memo(
       () => (allMachines ?? []).filter((machine) => Boolean(machine.installationId)),
       [allMachines],
     );
+    const stepped = props.steps !== undefined;
+    // A stepped draft starts named and marked as production (journey-deploy cfgx); both stay one press away.
     const [name, setName] = React.useState(() => props.copyFrom
-      ? t('projects.deployments.copy.name', { name: props.copyFrom.content.name }) : '');
+      ? t('projects.deployments.copy.name', { name: props.copyFrom.content.name })
+      : stepped ? t('newApp.deploy.defaultEnvironmentName') : '');
+    const [formStep, setFormStep] = React.useState<'where' | 'configure'>('where');
+    const [moreOpen, setMoreOpen] = React.useState(false);
+    const [configureVisited, setConfigureVisited] = React.useState(false);
     const [copyChoices, setCopyChoices] = React.useState(() => props.copyFrom ? initialCopyChoices(props.copyFrom) : null);
     const [provisionDrafts, setProvisionDrafts] = React.useState<Readonly<Record<string, ManagedDataProvisionDraft | null>>>({});
     const onProvisionDraftChange = React.useCallback((targetLinkId: string, draft: ManagedDataProvisionDraft | null) => {
@@ -147,7 +177,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [imageName, setImageName] = React.useState('');
     const [imagePort, setImagePort] = React.useState('');
     const [ref, setRef] = React.useState<string | null>(null);
-    const [production, setProduction] = React.useState(props.copyFrom?.environment.protection === 'production');
+    const [production, setProduction] = React.useState(props.copyFrom ? props.copyFrom.environment.protection === 'production' : stepped);
     const [deployerMode, setDeployerMode] = React.useState<DeploymentEnvironmentDetailV1['environment']['deployerMode']>(
       props.copyFrom?.environment.deployerMode ?? 'managers',
     );
@@ -390,15 +420,55 @@ export const DeploymentEnvironmentDraft = React.memo(
       testID: 'project-deployments.draft.save',
     };
 
+    const draftStep: DeploymentDraftStep = stepReview || prepared || partial ? 'review' : formStep;
+    const whereReady = chosen !== null && platformDefinitionAccepted;
+    const pressStep = useEventCallback(() => {
+      if (draftStep !== 'where') { void save(); return; }
+      if (!whereReady) return;
+      setConfigureVisited(true);
+      setFormStep('configure');
+    });
+    const backStep = useEventCallback(() => {
+      if (draftStep === 'configure') { setFormStep('where'); return; }
+      if (draftStep === 'where') { props.steps?.onExit(); return; }
+      if (partial) props.onDiscard();
+      else if (stepReview) answerStepConfirmation(false);
+      else setPrepared(null);
+    });
+    const toWhere = useEventCallback(() => {
+      if (stepReview) answerStepConfirmation(false);
+      setPrepared(null);
+      setFormStep('where');
+    });
+    const primary = draftStep === 'where'
+      ? { title: t('common.continue'), disabled: !whereReady, loading: false, testID: 'project-deployments.draft.continue' }
+      : draftStep === 'configure'
+        ? { title: t('newApp.deploy.review'), disabled: saveAction.disabled, loading: saveAction.loading, testID: 'project-deployments.draft.review' }
+        : { title: saveAction.title, disabled: saveAction.disabled, loading: saveAction.loading, testID: saveAction.testID };
+    const runsOnKind = onPlatform && platformTarget ? 'platform' : chosen ? 'machine' : null;
+    const runsOnTitle = onPlatform && platformTarget ? platformTarget.title : chosen ? machineName(chosen.id) : null;
+    const sourceTitle = source ? source.repository?.repository.nameWithOwner ?? source.name : null;
+    const appName = source?.name ?? (projectSelection && 'newProject' in projectSelection ? projectSelection.newProject.name.trim() || null : null);
+    const frame = React.useMemo((): DeploymentDraftFrame => ({
+      step: draftStep,
+      runsOn: runsOnKind ? { kind: runsOnKind, title: runsOnTitle } : null,
+      source: sourceTitle ? { title: sourceTitle, note: branch } : null,
+      appName,
+      primary: { title: primary.title, disabled: primary.disabled, loading: primary.loading, testID: primary.testID },
+      press: pressStep, back: backStep, toWhere,
+    }), [draftStep, runsOnKind, runsOnTitle, sourceTitle, branch, appName, primary.title, primary.disabled, primary.loading,
+      primary.testID, pressStep, backStep, toWhere]);
+    const stepsHost = React.useRef(props.steps);
+    stepsHost.current = props.steps;
+    React.useEffect(() => { stepsHost.current?.onFrame(frame); }, [frame]);
+
     if (creatingMachine && props.lifetime) return <MachineCreationContinuation
       serverId={props.lifetime.scope.serverId} testID="project-deployments.draft.createMachine"
       draft={machineCreationDraft} onDraftChange={setMachineCreationDraft}
       onCancel={() => setCreatingMachine(false)}
       onArrived={({ machineId }) => { setMachineId(machineId); setCreatingMachine(false); }} />;
 
-    return (
-      <View style={styles.page}>
-        <ItemList testID="project-deployments.draft">
+    const header = stepped ? null : (
           <PageHeader
             testID="project-deployments.draft.header"
             title={name.trim() || t('projects.deployments.newEnvironment')}
@@ -428,10 +498,10 @@ export const DeploymentEnvironmentDraft = React.memo(
               testID: 'project-deployments.draft.discard',
             }}
           />
-          {partial && refusal?.kind === 'refused' && refusal.failure ? (
-            <DeploymentPartialProgress testID="project-deployments.draft.progress" progress={partial} failure={refusal.failure} />
-          ) : <>
-          {refusal && refusal.kind === 'approval' ? (
+    );
+    const partialProgress = partial && refusal?.kind === 'refused' && refusal.failure
+      ? <DeploymentPartialProgress testID="project-deployments.draft.progress" progress={partial} failure={refusal.failure} /> : null;
+    const refusalBanner = refusal && refusal.kind === 'approval' ? (
             <AttentionBanner
               testID="project-deployments.draft.approval"
               tone="neutral"
@@ -446,8 +516,8 @@ export const DeploymentEnvironmentDraft = React.memo(
               description={readDeploymentRefusalRecoveryV1(refusal.code)?.remedy ?? deploymentActionRefusalRemedy(refusal.code)}
               details={[refusal.code]}
             />
-          ) : null}
-          {stepReview ? (
+          ) : null;
+    const reviewFacts = stepReview ? (
             <ActionConfirmationReviewFacts actionId={stepReview.actionId} actionArgs={stepReview.actionArgs}
               summaryPlacement="host"
               preview={stepReview.preview} serverId={props.lifetime?.scope.serverId ?? null}
@@ -455,13 +525,24 @@ export const DeploymentEnvironmentDraft = React.memo(
           ) : prepared ? (
             <DeploymentCreationReviewFacts review={prepared.review} serverId={props.lifetime?.scope.serverId ?? null}
               testID="project-deployments.draft" />
-          ) : null}
-          {props.projectChoice ? <DeploymentProjectChoiceGroups model={props.projectChoice}
+          ) : null;
+    const projectChoiceGroups = props.projectChoice ? <DeploymentProjectChoiceGroups model={props.projectChoice}
             testIDPrefix="project-deployments.draft.project"
             description={t('capabilities.store.appPage.projectDescription')}
-            newProjectHint={t('capabilities.store.appPage.projectNewHint')} /> : null}
+            newProjectHint={t('capabilities.store.appPage.projectNewHint')} /> : null;
+    const retentionChoice = onPlatform ? null : (
+              <DeploymentRetentionChoice
+                testID="project-deployments.draft.retention"
+                serverId={props.lifetime?.scope.serverId ?? null}
+                machineId={chosen?.id ?? null}
+                value={retention}
+                onChange={setRetention}
+              />
+            );
+    const whereGroup = <>
           <ItemGroup
-            title={t('projects.deployments.whereTitle')}
+            // Stepped, the host's step description asks the question; the group keeps the recommendation's reason.
+            title={stepped ? undefined : t('projects.deployments.whereTitle')}
             description={deploymentRecommendationDescription(recommendation)}
           >
             {props.platformAvailable ? (
@@ -499,18 +580,13 @@ export const DeploymentEnvironmentDraft = React.memo(
                 onSelectMachine={(machine) => setMachineId(machine.id)}
               />
             )}
-            {onPlatform ? null : (
-              <DeploymentRetentionChoice
-                testID="project-deployments.draft.retention"
-                serverId={props.lifetime?.scope.serverId ?? null}
-                machineId={chosen?.id ?? null}
-                value={retention}
-                onChange={setRetention}
-              />
-            )}
+            {/* Stepped, how long it keeps running is one of More settings (journey-deploy cfgM). */}
+            {stepped ? null : retentionChoice}
           </ItemGroup>
           {!platformDefinitionAccepted ? <SurfaceStateCard kind="unavailable" size="line"
             title={t('common.unavailable')} /> : null}
+    </>;
+    const configureGroups = <>
           {platformTarget && platformDefinitionAccepted && platformEnvironment && props.lifetime && actions ? (
             <DeploymentPlatformTargetEditor key={`${platformTarget.key}:${chosen?.id ?? ''}:${source?.revision ?? ''}`}
               name={name} environment={platformEnvironment} ownerAccountId={props.lifetime.scope.accountId}
@@ -699,6 +775,8 @@ export const DeploymentEnvironmentDraft = React.memo(
               })}
             </ItemGroup>
           ) : null}
+    </>;
+    const deployerGroups = <>
           <ItemGroup
             title={t('projects.deployments.whoMayDeploy')}
             description={t('projects.deployments.whoMayDeployDescription')}
@@ -720,6 +798,52 @@ export const DeploymentEnvironmentDraft = React.memo(
               showChevron={false}
             />
           </ItemGroup>
+    </>;
+
+    if (stepped) {
+      // One instance for every step: a visited step stays mounted while another shows, so its choices (the platform
+      // editor's resource, a typed document) are there when the person comes back.
+      return (
+        <View testID="project-deployments.draft">
+          <View style={draftStep === 'where' ? null : styles.hiddenStep}>{whereGroup}</View>
+          {!configureVisited ? null : (
+            <View style={draftStep === 'configure' ? null : styles.hiddenStep}>
+              {refusalBanner}
+              {projectChoiceGroups}
+              {configureGroups}
+              {moreOpen ? <>
+                <ItemGroup title={t('newApp.deploy.moreSettings')}>
+                  <Item testID="project-deployments.draft.name" title={t('projects.deployments.name')} accessoryLayout="adaptive"
+                    showChevron={false} rightElement={<FieldTextInput testID="project-deployments.draft.nameField"
+                      accessibilityLabel={t('projects.deployments.name')} value={name} onChangeText={setName}
+                      placeholder={t('projects.deployments.newEnvironment')} />} />
+                  {retentionChoice}
+                </ItemGroup>
+                {deployerGroups}
+              </> : (
+                <ItemGroup>
+                  <Item testID="project-deployments.draft.more" title={t('newApp.deploy.moreSettings')}
+                    subtitle={t('newApp.deploy.moreSettingsSummary')} onPress={() => setMoreOpen(true)} />
+                </ItemGroup>
+              )}
+            </View>
+          )}
+          {draftStep === 'review' ? (partialProgress ?? <>{refusalBanner}{reviewFacts}</>) : null}
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.page}>
+        <ItemList testID="project-deployments.draft">
+          {header}
+          {partialProgress ?? <>
+          {refusalBanner}
+          {reviewFacts}
+          {projectChoiceGroups}
+          {whereGroup}
+          {configureGroups}
+          {deployerGroups}
           </>}
         </ItemList>
         {props.phone ? (
@@ -786,6 +910,8 @@ function initialCopyChoices(source: DeploymentEnvironmentDetailV1): DraftCopyCho
 
 const styles = StyleSheet.create(() => ({
   page: { flex: 1, minHeight: 0 },
+  // A visited step that another step covers: kept mounted with its choices, out of layout and out of the tab order.
+  hiddenStep: { display: 'none' },
 }));
 
 function DeploymentCopyProvisionEditor(props: Readonly<{

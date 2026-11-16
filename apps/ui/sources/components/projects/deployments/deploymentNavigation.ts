@@ -56,17 +56,11 @@ export function buildDeploymentNewDefinitionHref(input: Readonly<{ serverId: str
         + (input.machineId ? `&deployMachine=${encodeURIComponent(input.machineId)}` : '');
 }
 
-/** The draft door's value for a Project's own repository (Deploy an app → Your code); not a stored definition. */
-export const DEPLOYMENT_NEW_REPOSITORY_DRAFT = 'repository' as const;
-
 /**
- * A Project's new-Environment draft on its repository: Deploy an app's Configure step for "Your code". `machineId` is the
- * Machine a "Deploy an app here" door already chose; the draft starts on it and the person can still change it.
+ * The draft door's value for a Project's own repository; not a stored definition. Deploy an app hosts that draft in its
+ * own dialog (journey-deploy D3); a link carrying it still opens the Project's draft.
  */
-export function buildDeploymentRepositoryDraftHref(input: Readonly<{ serverId: string; projectSourceId: string; machineId?: string | null }>): string {
-    return `/deployments/${encodeURIComponent(input.projectSourceId)}?serverId=${encodeURIComponent(input.serverId)}&newDefinition=${DEPLOYMENT_NEW_REPOSITORY_DRAFT}`
-        + (input.machineId ? `&deployMachine=${encodeURIComponent(input.machineId)}` : '');
-}
+export const DEPLOYMENT_NEW_REPOSITORY_DRAFT = 'repository' as const;
 
 /** A Project's own deployments page (its Environments), by its Source: the Services column's and the Projects tree's Project row. */
 export function buildDeploymentProjectHref(input: Readonly<{ serverId: string; projectSourceId: string }>): string {

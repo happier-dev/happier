@@ -53,7 +53,7 @@ const repository = {
   protocol: 'https',
 };
 
-it("Deploy an app: your code opens that Project's new Environment, stepping aside first (lab f1src → f1cfg)", async () => {
+it("Deploy an app: your code continues to Where it runs inside the dialog, with no page switch (journey-deploy D3)", async () => {
   // A Project with a repository is "your code"; a repository-free Project (stored definitions only) is not.
   const fixture = await createPlainPromptLibraryCatalogHomeFixture(
     'https://deploy-your-code.test',
@@ -91,9 +91,7 @@ it("Deploy an app: your code opens that Project's new Environment, stepping asid
     },
   );
   try {
-    const onClose = vi.fn(() =>
-      expect(routerMock.spies.push).not.toHaveBeenCalled(),
-    );
+    const onClose = vi.fn();
     routerMock.spies.push.mockClear();
     const screen = await renderScreen(<NewAppScreen onClose={onClose} />);
     await waitForHomeGovernance(() =>
@@ -108,10 +106,15 @@ it("Deploy an app: your code opens that Project's new Environment, stepping asid
     ).toBeNull();
     await screen.pressByTestIdAsync('newApp.code:source-invoices');
     await screen.pressByTestIdAsync('newApp.continue');
-    expect(onClose).toHaveBeenCalledOnce();
-    expect(routerMock.spies.push).toHaveBeenCalledWith(
-      `/deployments/source-invoices?serverId=${encodeURIComponent(fixture.home.id)}&newDefinition=repository`,
-    );
+    // The dialog stays and hosts the Environment draft's Where step under the flow's summary.
+    await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft')).toBeTruthy());
+    expect(screen.findByTestId('newApp.deploy.summary.source')).toBeTruthy();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(routerMock.spies.push).not.toHaveBeenCalled();
+    // Change on the summary's Source goes back to the source step.
+    await screen.pressByTestIdAsync('newApp.deploy.changeSource');
+    expect(screen.findByTestId('newApp.code:source-invoices')).toBeTruthy();
+    expect(screen.findByTestId('project-deployments.draft')).toBeNull();
     await screen.unmount();
   } finally {
     await standardCleanup();
@@ -134,17 +137,20 @@ it('the Deploy route keeps its Machine through Your code and the catalog (lab dM
     routerMock.spies.setParams(machine);
     const screen = await renderScreen(<NewAppRouteBody />);
     await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.code:source-invoices')).toBeTruthy());
+    const { SessionMachineField } = await import('@/components/sessions/new/placement/SessionPlacementChips');
+    const draftMachine = () => screen.findAllByType(SessionMachineField)
+      .find((node) => node.props.testID === 'project-deployments.draft.machine')?.props.machineId;
     await screen.pressByTestIdAsync('newApp.code:source-invoices');
     await screen.pressByTestIdAsync('newApp.continue');
-    expect(routerMock.spies.push).toHaveBeenCalledWith(
-      `/deployments/source-invoices?serverId=${encodeURIComponent(fixture.home.id)}&newDefinition=repository&deployMachine=hetzner-fsn1`);
+    await waitForHomeGovernance(() => expect(draftMachine()).toBe('hetzner-fsn1'));
+    expect(routerMock.spies.push).not.toHaveBeenCalled();
     // QA-DEPLOY-1114 #25: an Already built door (Compose file) keeps the Machine too, not the draft's default one.
-    routerMock.spies.push.mockClear();
+    await screen.pressByTestIdAsync('newApp.deploy.changeSource');
     await screen.pressByTestIdAsync('newApp.built.compose');
     await screen.pressByTestIdAsync('newApp.continue');
-    expect(routerMock.spies.push).toHaveBeenCalledWith(
-      `/deployments/new?serverId=${encodeURIComponent(fixture.home.id)}&newDefinition=compose&deployMachine=hetzner-fsn1`);
-    routerMock.spies.push.mockClear();
+    await waitForHomeGovernance(() => expect(draftMachine()).toBe('hetzner-fsn1'));
+    expect(routerMock.spies.push).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync('newApp.deploy.changeSource');
     await screen.pressByTestIdAsync('newApp.fromCatalog');
     expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringMatching(/kind=app.*machine=/));
     await screen.unmount();

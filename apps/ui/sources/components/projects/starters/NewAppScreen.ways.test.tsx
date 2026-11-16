@@ -34,7 +34,7 @@ const { waitForHomeGovernance } =
   await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { NewAppScreen } = await import('./NewAppScreen');
 
-it('runs an app that already exists: Already built opens the stored-definition draft, Browse opens the catalog (lab f1src)', async () => {
+it('runs an app that already exists: Already built continues to Where it runs in the dialog, Browse opens the catalog (journey-deploy D3)', async () => {
   // An admitted Home Account with no starter source: the repository-free ways stay available.
   const fixture = await createPlainPromptLibraryCatalogHomeFixture(
     'https://new-app-ways.test',
@@ -61,13 +61,11 @@ it('runs an app that already exists: Already built opens the stored-definition d
     expect(screen.findByTestId('newApp.continue')?.props.disabled).toBe(true);
     await screen.pressByTestIdAsync('newApp.built.compose');
     await screen.pressByTestIdAsync('newApp.continue');
-    expect(onClose).toHaveBeenCalledOnce();
-    // The draft asks which Project it belongs to, so the dialog no longer does.
-    expect(routerMock.spies.push).toHaveBeenCalledWith(
-      `/deployments/new?serverId=${encodeURIComponent(fixture.home.id)}&newDefinition=compose`,
-    );
-    onClose.mockClear();
-    routerMock.spies.push.mockClear();
+    // The stored-definition draft is hosted here; it asks which Project it belongs to on its Configure step.
+    await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft')).toBeTruthy());
+    expect(onClose).not.toHaveBeenCalled();
+    expect(routerMock.spies.push).not.toHaveBeenCalled();
+    await screen.pressByTestIdAsync('newApp.deploy.changeSource');
     await screen.pressByTestIdAsync('newApp.fromCatalog');
     expect(onClose).toHaveBeenCalledOnce();
     expect(routerMock.spies.push).toHaveBeenCalledWith(

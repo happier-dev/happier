@@ -62,12 +62,10 @@ import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
 import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
 import { useOpenStoreListing } from '@/components/store/StoreListing';
-import {
-  buildDeploymentNewDefinitionHref,
-  buildDeploymentRepositoryDraftHref,
-  type DeploymentNewDefinitionKind,
-} from '@/components/projects/deployments/deploymentNavigation';
+import type { DeploymentNewDefinitionKind } from '@/components/projects/deployments/deploymentNavigation';
+import type { DeploymentDraftFrame } from '@/components/projects/deployments/DeploymentEnvironmentDraft';
 import { NewAppCodeSources } from './NewAppCodeSources';
+import { NewAppDeploySteps, NewAppDeploySummary, type NewAppDeploySource } from './NewAppDeploySteps';
 import { isRepositoryAddressCandidate } from '@/components/projects/sources/projectSourceAddress';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -77,8 +75,11 @@ import type { MachineCreationContinuationDraft } from '@/components/machines/add
 
 const NewAppMachineSetup = React.lazy(() => import('./NewAppMachineSetup').then(module => ({ default: module.NewAppMachineSetup })));
 
-type Step = 'start' | 'describe' | 'create';
+/** A starter's own steps; the other ways continue through `deploy`: the Environment draft's Where → Configure → Review. */
+type Step = 'start' | 'describe' | 'create' | 'deploy';
 const STEPS: readonly Step[] = ['start', 'describe', 'create'];
+/** Source, then the draft's three steps (journey-deploy D3). */
+const DEPLOY_STEPS: readonly DeploymentDraftFrame['step'][] = ['where', 'configure', 'review'];
 /** Already built (a stored definition the Project draft picks a Project for) or a catalog app's listing. */
 type Door = `built:${DeploymentNewDefinitionKind}` | `catalog:${string}`;
 /** The lab's From the catalog row: three apps, the rest one press away in the Store. */
@@ -174,6 +175,19 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     save: () => Promise<ProjectSourceV1 | undefined> }> | null>(null);
   // Saving the pasted repository as this Home's Source, on Continue; the step stays until it is kept.
   const [savingSource, setSavingSource] = React.useState(false);
+  // What the deploy steps deploy, once the source step is answered; the draft frames each of its steps here.
+  const [deploySource, setDeploySource] = React.useState<NewAppDeploySource | null>(null);
+  const [deployFrame, setDeployFrame] = React.useState<DeploymentDraftFrame | null>(null);
+  const leaveDeploy = React.useCallback(() => {
+    setStep('start');
+    setDeployFrame(null);
+  }, []);
+  const deploySteps = React.useMemo(() => ({ onFrame: setDeployFrame, onExit: leaveDeploy }), [leaveDeploy]);
+  const startDeploy = React.useCallback((next: NewAppDeploySource) => {
+    setDeploySource(next);
+    setDeployFrame(null);
+    setStep('deploy');
+  }, []);
   const chooseCode = React.useCallback((next: string | null) => {
     setCodeSourceId(next);
     if (next) {
@@ -316,14 +330,12 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     props.onClose?.();
   }, [props.onClose]);
 
-  // Already built opens the stored-definition draft, which asks for the Project (lab f1cfg); a catalog app opens its
-  // Store listing; Browse shows the whole catalog. Each steps aside first.
+  // Already built continues in this flow's deploy steps, whose draft asks for the Project (journey-deploy imgCfg); a
+  // catalog app opens its Store listing; Browse shows the whole catalog. The ways out step aside first.
   const continueThroughDoor = (chosen: Door) => {
     if (!scope) return;
     if (chosen === 'built:image' || chosen === 'built:compose') {
-      stepAside();
-      router.push(buildDeploymentNewDefinitionHref({ serverId: scope.serverId, kind: chosen === 'built:image' ? 'image' : 'compose',
-        machineId: props.machine?.machineId ?? null }) as never);
+      startDeploy({ kind: 'definition', definitionKind: chosen === 'built:image' ? 'image' : 'compose' });
       return;
     }
     const item = catalogApps.find((candidate) => catalogDoor(candidate) === chosen);
@@ -452,6 +464,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
 
   const back = React.useCallback(() => {
     if (addingMachine) setAddingMachine(false);
+    else if (step === 'deploy') {
+      if (deployFrame) deployFrame.back();
+      else leaveDeploy();
+    }
     else if (step === 'describe') setStep('start');
     else if (
       step === 'create' &&
@@ -459,27 +475,29 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     )
       setStep('describe');
     else close();
-  }, [addingMachine, close, create?.kind, step]);
+  }, [addingMachine, close, create?.kind, deployFrame, leaveDeploy, step]);
   const pageBack = usePageBackControl('newApp.back', back);
 
-  const stepIndex = STEPS.indexOf(step);
+  const deployStep = step === 'deploy' ? deployFrame?.step ?? 'where' : null;
+  // The deploy steps count the source step first, then the draft's own (journey-deploy: four dots).
+  const stepIndex = deployStep ? 1 + DEPLOY_STEPS.indexOf(deployStep) : STEPS.indexOf(step);
+  const stepCount = step === 'deploy' ? 1 + DEPLOY_STEPS.length : STEPS.length;
   // With nothing to pick, the state's own next step (Add a computer, Retry) is the only action. Your code continues
   // in that Project's own new-Environment draft (lab f1cfg); a starter continues here.
   const primary = addingMachine ? null :
-    step === 'start'
+    step === 'deploy'
+      ? deployFrame ? { ...deployFrame.primary, onPress: deployFrame.press } : null
+      : step === 'start'
       ? {
           title: t('common.continue'),
           disabled: savingSource || (!starter && codeSourceId === null && door === null && pastedRepository === null),
           onPress: () => {
             if (pastedRepository !== null && scope) {
-              // The pasted repository is the deploy source: kept as this Home's Source, then its new Environment.
+              // The pasted repository is the deploy source: kept as this Home's Source, then its deploy steps here.
               setSavingSource(true);
               void pastedRepository.save().then((source) => {
                 setSavingSource(false);
-                if (!source) return;
-                stepAside();
-                router.push(buildDeploymentRepositoryDraftHref({ serverId: scope.serverId, projectSourceId: source.id,
-                  machineId: props.machine?.machineId ?? null }) as never);
+                if (source) startDeploy({ kind: 'repository', projectSourceId: source.id });
               });
               return;
             }
@@ -487,10 +505,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
               continueThroughDoor(door);
               return;
             }
-            if (codeSourceId !== null && scope) {
-              stepAside();
-              router.push(buildDeploymentRepositoryDraftHref({ serverId: scope.serverId, projectSourceId: codeSourceId,
-                machineId: props.machine?.machineId ?? null }) as never);
+            if (codeSourceId !== null) {
+              startDeploy({ kind: 'repository', projectSourceId: codeSourceId });
               return;
             }
             setStep('describe');
@@ -528,6 +544,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             }
           : null;
   const footerNote = addingMachine ? null :
+    deployStep === 'where' || deployStep === 'configure' ? t('newApp.deploy.nothingCreated') :
     step === 'start' && !starter && codeSourceId === null && door === null && pastedRepository === null
       ? t('newApp.startPick')
       : step === 'describe'
@@ -536,6 +553,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   // A selected managed creation owns Cancel, including its disabled state while acquisition is pending.
   const machineOwnsExit = addingMachine && machineCreationDraft !== null;
   const showBack = !machineOwnsExit && (
+    step === 'deploy' ||
     step === 'describe' ||
     (step === 'create' && (create?.kind === 'failed' || create?.kind === 'outcomeUnknown'))
   );
@@ -706,6 +724,28 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           </View>
         ) : null}
       </>
+    );
+  } else if (step === 'deploy' && deploySource && scope) {
+    const named = deployFrame?.source?.title ?? null;
+    const name = deployFrame?.appName ?? null;
+    const target = deployFrame?.runsOn?.title ?? null;
+    const [title, description] = deployStep === 'review'
+      ? [name && target ? t('newApp.deploy.reviewTitle', { name, target }) : target ? t('newApp.deploy.reviewTitleUnnamed', { target }) : t('newApp.title'),
+        t('newApp.deploy.reviewDescription')]
+      : deployStep === 'configure'
+        ? [t('newApp.title'), !name || !target ? t('newApp.deploy.configureUnnamed') : deployFrame?.runsOn?.kind === 'platform'
+          ? t('newApp.deploy.configurePlatform', { name, target }) : t('newApp.deploy.configureMachine', { name, machine: target })]
+        : [t('newApp.title'), name ? t('newApp.deploy.whereDescription', { name }) : t('newApp.deploy.whereDescriptionUnnamed')];
+    body = (
+      <View testID="newApp.deploy">
+        {header(title, description)}
+        <NewAppDeploySummary phone={phone} frame={deployFrame} onChangeSource={leaveDeploy}
+          source={deploySource.kind === 'definition'
+            ? { title: t(deploySource.definitionKind === 'image' ? 'newApp.deploy.builtImageSource' : 'newApp.deploy.builtComposeSource'), note: null }
+            : { title: named ?? pastedRepository?.selector.repository.nameWithOwner ?? '…', note: deployFrame?.source?.note ?? null }} />
+        <NewAppDeploySteps serverId={scope.serverId} source={deploySource} machineId={props.machine?.machineId ?? null}
+          phone={phone} steps={deploySteps} onLeave={stepAside} />
+      </View>
     );
   } else if (step === 'describe') {
     body = (
@@ -921,7 +961,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             kind: 'card' as const,
             title: headingTitle,
             subtitle: headingDescription,
-            actions: <WizardStepDots currentStepIndex={stepIndex} stepCount={STEPS.length} />,
+            actions: <WizardStepDots currentStepIndex={stepIndex} stepCount={stepCount} />,
             footer: (
               <ModalCardFooterActions note={footerNote}
                 noteAction={step === 'start' && !addingMachine ? { label: t('newApp.askAgent'), onPress: () => askAgentRef.current(), testID: 'newApp.askAgent' } : null}>
@@ -949,6 +989,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                     size="small"
                     title={primary.title}
                     disabled={primary.disabled}
+                    loading={'loading' in primary ? primary.loading : false}
                     onPress={() => primaryRef.current?.onPress()}
                   />
                 ) : null}
@@ -960,12 +1001,14 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       dialog,
       footerNote,
       primary?.disabled,
+      primary && 'loading' in primary ? primary.loading : false,
       primary?.testID,
       primary?.title,
       step,
       showBack,
       addingMachine,
       stepIndex,
+      stepCount,
       headingTitle,
       headingDescription,
     ],
