@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { captureSourceWebBuildInputs } from '../../build/build_source_runtime.mjs';
+import { captureBuildInputFiles, mountCapturedWorkspaceDependencies } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { readSourceComponentBuildInputs } from '../../utils/fs/workspaceBuildInputs.mjs';
 
 /** Relocate owner imports, leaving generated source templates untouched.
  * A null replacement keeps an existing fixture-owned external boundary. */
@@ -17,7 +18,14 @@ export function relocateSourceOwnerImports(source, sourceUrl, replacements = new
 }
 
 export async function prepareFiniteSourceWebFixture({ sourceRepo, repoDir }) {
-  await captureSourceWebBuildInputs({ repoDir: sourceRepo, outputDir: repoDir });
+  const { files, workspaceDirs } = await readSourceComponentBuildInputs({ repoDir: sourceRepo, component: 'expo' });
+  // This fixture authors its own app below and has no native modules. Copy
+  // the real compiler/tooling, without first copying the app it replaces. The
+  // other UI sources stay: the real asset owner (prepareSourceUiAssets) compiles
+  // the web workers and the atmosphere worklet from them.
+  await captureBuildInputFiles({ sourceDir: sourceRepo, captureDir: repoDir,
+    readPaths: async () => files.filter(path => !path.startsWith('apps/ui/sources/app/') && !path.startsWith('apps/ui/modules/')) });
+  await mountCapturedWorkspaceDependencies({ sourceDir: sourceRepo, captureDir: repoDir, workspaceDirs });
   // Keep the real captured compiler/tooling, but author one small app/plugin.
   // The separate whole-app export case exercises the complete plugin census.
   const pluginName = '@happier-dev/plugins-admission-fixture';
@@ -25,7 +33,7 @@ export async function prepareFiniteSourceWebFixture({ sourceRepo, repoDir }) {
     type: 'module', bundledDependencies: [pluginName] }));
   await writeFile(join(repoDir, 'apps/ui/package.json'), JSON.stringify({ name: '@happier-dev/ui',
     type: 'module', dependencies: { [pluginName]: '0.0.0' } }));
-  await rm(join(repoDir, 'apps/ui/sources'), { recursive: true });
+  await rm(join(repoDir, 'apps/ui/sources/app'), { recursive: true, force: true });
   await mkdir(join(repoDir, 'apps/ui/sources/app'), { recursive: true });
   const uiInput = join(repoDir, 'apps/ui/sources/app/_layout.tsx');
   const uiSource = 'export const admissionInput = "captured-ui-input";';

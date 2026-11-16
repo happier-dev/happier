@@ -30,7 +30,7 @@ function unavailableTarget({ target, producerStackName, reason, cause, refusal }
 /** Use the existing source mirror/transport; the execution host's producer
  * owns compilation, matching and publication in its existing source-bundles. */
 export async function prepareSourceRuntimeProducerOnTarget({ target, repoDir, producerStackBaseDir,
-  producerStackName, components, sourceCapturedAfter, sourceRevisionDescriptorPath, env = process.env, signal, logger = console },
+  producerStackName, components, sourceCapturedAfter, sourceRevisionDescriptorPath, web, env = process.env, signal, logger = console },
   executorDependencies, { transferFile = transferRuntimeFile } = {}) {
   const paths = resolveRemoteStackStatePaths(target, { stackName: producerStackName, runtimeMode: 'source-snapshot' });
   let result;
@@ -46,7 +46,7 @@ export async function prepareSourceRuntimeProducerOnTarget({ target, repoDir, pr
     result = await runDevTargetCommand({ target, stackBaseDir: producerStackBaseDir, sourceDir: repoDir,
       commandArgs: ['node', '--conditions=happier-source', '--import=./apps/stack/bin/localSourceRuntimeBootstrap.mjs',
         `./${workerPath}`, '--worker', JSON.stringify({ repoDir: target.repoDir, stackBaseDir: paths.stackBaseDir,
-          components, sourceCapturedAfter, sourceRevision })],
+          components, sourceCapturedAfter, sourceRevision, web })],
       environment: { HAPPIER_STACK_REPO_DIR: target.repoDir, HAPPIER_STACK_STACK: producerStackName,
         HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: producerStackName,
         HAPPIER_STACK_STORAGE_DIR: paths.stackStorageDir,
@@ -92,17 +92,34 @@ export async function createSourceRuntimeProducerReload({ repoDir, stackBaseDir,
       async build() {
         const revision = await resolveSourceRevisionIdentity({ repoDir });
         logger.error(`[source-producer] revision ${revision.revision}`);
+        // One shared web export per revision (owner 2026-11-13/11-14), on the primary
+        // producer host where QA Stacks serve it; digest-keyed, so a revision with
+        // unchanged UI inputs exports nothing. Git lives here, so the digest does too.
+        const { publishProducerSourceWebUi, readSourceWebRevisionInputDigest } = await import('../../build/build_source_web_ui.mjs');
+        // The runtime bundles do not depend on the web publication: a digest failure
+        // is reported and skips only the web export for this revision.
+        const web = await readSourceWebRevisionInputDigest({ repoDir, revision: revision.revision })
+          .then(uiInputDigest => ({ revision: revision.revision, uiInputDigest }), error => {
+            if (signal?.aborted) throw error;
+            logger.error(`[source-producer] shared web export skipped for ${revision.revision}: ${redactFailureDiagnostic(error.message, env)}`);
+            return null;
+          });
+        const webTarget = web ? targets[0]?.name ?? 'local' : null;
         const descriptorDir = targets.length ? await mkdtemp(join(tmpdir(), 'hstack-source-revision-')) : null;
         try {
           const sourceRevisionDescriptorPath = descriptorDir
-            ? await writeSourceRevisionDescriptor({ repoDir, identity: revision, outputDir: descriptorDir }) : undefined;
+            ? await writeSourceRevisionDescriptor({ repoDir, identity: revision, outputDir: descriptorDir,
+              components: ['server', 'daemon', 'expo'] }) : undefined;
           const requests = targets.map(target => ({ target: target.name, prepare: () => prepareSourceRuntimeProducerOnTarget({
             target, repoDir, producerStackBaseDir: authority.producerStackBaseDir, producerStackName: authority.producerStackName,
-            components: remoteComponents, sourceRevisionDescriptorPath, env, signal, logger }, executorDependencies, transport) }));
-          if (localComponents.length) requests.push({ target: 'local', prepare: async () => {
+            components: remoteComponents, sourceRevisionDescriptorPath, web: target.name === webTarget ? web : undefined,
+            env, signal, logger }, executorDependencies, transport) }));
+          if (localComponents.length || webTarget === 'local') requests.push({ target: 'local', prepare: async () => {
             const { prepareSourceRuntimeProducer } = await import('../../build/build_source_runtime.mjs');
-            return await prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components: localComponents, env, signal,
+            if (localComponents.length) await prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components: localComponents, env, signal,
               sourceRevision: { rev: revision.revision }, logger });
+            if (webTarget === 'local') await publishProducerSourceWebUi({ repoDir, stackBaseDir, revision: web,
+              uiInputDigest: web.uiInputDigest, sourceRevision: { rev: revision.revision }, env, signal, logger });
           } });
           // Hosts are independent; an unavailable optional target cannot hold the
           // local runtime or prevent another host's publication.
@@ -123,9 +140,19 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href &
   try {
     const { prepareSourceRuntimeProducer } = await import('../../build/build_source_runtime.mjs');
     const request = JSON.parse(process.argv[3]);
-    let prepared;
-    try { prepared = await prepareSourceRuntimeProducer({ ...request, env: process.env }); }
-    finally { if (request.sourceRevision?.descriptorPath) await rm(request.sourceRevision.descriptorPath, { force: true }); }
+    let prepared = {};
+    let failure;
+    try {
+      try { if (request.components?.length) prepared = await prepareSourceRuntimeProducer({ ...request, env: process.env }); }
+      catch (error) { failure = error; }
+      // The web export follows the runtime bundles in this same worker, so the two
+      // heavyweight admissions run one after the other, never side by side; a
+      // runtime refusal does not withhold the independent web publication.
+      if (request.web) await (await import('../../build/build_source_web_ui.mjs')).publishProducerSourceWebUi({
+        repoDir: request.repoDir, stackBaseDir: request.stackBaseDir, revision: request.web,
+        uiInputDigest: request.web.uiInputDigest, sourceRevision: request.sourceRevision, env: process.env });
+    } finally { if (request.sourceRevision?.descriptorPath) await rm(request.sourceRevision.descriptorPath, { force: true }); }
+    if (failure) throw failure;
     const sourceCaptures = Object.fromEntries(Object.entries(prepared).map(([component, built]) => [component, built.sourceCapture]));
     emitSourceRuntimeSourceTimes(Object.fromEntries(Object.entries(sourceCaptures).map(([component, capture]) => [component, capture?.capturedAt])), sourceCaptures);
   } catch (error) {

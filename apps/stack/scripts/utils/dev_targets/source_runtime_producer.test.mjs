@@ -91,6 +91,11 @@ test('rolling production reaches commands-only hosts while an unavailable peer c
   assert.equal(requests.length, 2, 'eligible command hosts each receive one request; disabled mac receives none');
   assert.ok(requests.some(request => request.args.includes('nl3')), 'commands-only nl3 is prepared without a runtime service');
   assert.ok(requests.every(request => !request.args.includes('mac-disabled')));
+  // Owner 2026-11-13/11-14: the HEAD advance also publishes the one shared web
+  // export, once, on the primary producer host (nl3) where QA Stacks serve it.
+  const webRequests = requests.filter(request => request.args.some(arg => /"uiInputDigest":"[a-f0-9]{64}"/.test(arg)));
+  assert.equal(webRequests.length, 1, 'a HEAD advance requests exactly one shared web publication');
+  assert.ok(webRequests[0].args.includes('nl3'));
   assert.equal(failures.length, 1);
   assert.match(failures[0], /source_runtime_producer_unavailable/);
 });

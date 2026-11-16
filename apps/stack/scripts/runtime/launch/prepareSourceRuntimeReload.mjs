@@ -177,10 +177,13 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       if (server) components.server = server;
       if (daemon) components.daemon = daemon;
       // The web export follows the server's revision, so this Stack serves one revision.
+      // On a source tree it is built from that server tree, never the moving checkout.
+      const serverTree = sourceTree ? components.server : null;
       const ui = components.server ? (await prepareSourceQaWebUi({ mode: uiMode, repoDir, baseDir: sourceRoot,
-        stackBaseDir, pending, env, signal: pending.signal, sourceCapturedAfter, sourceRevision,
+        stackBaseDir, pending, retainsSelection: true, env, signal: pending.signal, sourceCapturedAfter,
+        sourceRevision: serverTree ? { ...sourceRevision, treeDir: serverTree.sourceTree.dir } : sourceRevision,
         requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses,
-        revision: treeRevision ? { revision: treeRevision.revision, overlayDigest: null, key: treeRevision.key }
+        revision: serverTree ? { revision: serverTree.sourceCapture.revision, overlayDigest: serverTree.sourceCapture.overlayDigest ?? null }
           : request.revisionDescriptorPath ? sourceRevisionIdentity(await readSourceRevisionDescriptor(request.revisionDescriptorPath))
           : revision })).built : null;
       await log('[reload] producer capture adopted; checking replacement daemon loader, server health and UI boot');

@@ -39,6 +39,8 @@ import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKept
 const BASE_MARKER = '.happier-revision-tree.json';
 const TREE_MARKER = '.happier-revision-tree-ref.json';
 const DESCRIBED_SUFFIX = '.described';
+/** Products built from a base: the server and daemon trees and the web export. */
+const BASE_COMPONENTS = ['server', 'daemon', 'expo'];
 const runGit = promisify(execFile);
 
 async function git(repoDir, args) {
@@ -145,7 +147,7 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, env = process.e
   const staging = `${baseDir}.tmp-${randomUUID()}`;
   let archivePath;
   try {
-    const inputs = await Promise.all(['server', 'daemon'].map(component => readSourceComponentBuildInputs({ repoDir, component })));
+    const inputs = await Promise.all(BASE_COMPONENTS.map(component => readSourceComponentBuildInputs({ repoDir, component })));
     await mkdir(staging, { recursive: true });
     // Tracked bytes never come from a working tree: other lanes edit the shared
     // checkout (and its mirrors) while a base builds. A mirror can carry a `.git`
@@ -195,7 +197,7 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, env = process.e
   // The marker publishes the base; until it exists the next builder starts over.
   await chmod(baseDir, 0o755);
   await writeFile(join(baseDir, BASE_MARKER), JSON.stringify({ revision: descriptor.revision, installIdentity: install.identity,
-    builtAt: new Date().toISOString() }));
+    components: BASE_COMPONENTS, builtAt: new Date().toISOString() }));
   await chmod(baseDir, 0o555);
 }
 
@@ -380,8 +382,9 @@ export async function prepareSourceRevisionBase({ repoDir, treesRoot, descriptor
   await mkdir(treesRoot, { recursive: true });
   return await withBaseLock(baseDir, signal, async () => {
     const marker = await readJson(join(baseDir, BASE_MARKER));
-    // A base from before pinned installation snapshots mounts the live checkout: rebuild it.
-    const built = !marker?.installIdentity;
+    // A base from before pinned installation snapshots mounts the live checkout, and
+    // one from before web exports lacks the UI's generated inputs: rebuild it.
+    const built = !marker?.installIdentity || !BASE_COMPONENTS.every(component => marker.components?.includes(component));
     if (marker && built) await setSourceRevisionTreeWritable(baseDir);
     if (built) await buildRevisionBase({ repoDir: resolve(repoDir), baseDir, descriptor, env, signal, requestBaseArchive });
     if (treeDir) {
@@ -666,7 +669,7 @@ await runSqliteMigrationDeploy({ serverRoot: ${JSON.stringify(serverDir)}, runSc
     const runtimeDependencyClosure = tree.installIdentity ? { captured: true, identity: tree.installIdentity, imports: [] } : null;
     Object.assign(record, { sourceCapture, dependencyPublication, inputIdentity: sourceCapture.inputIdentity,
       ...(runtimeDependencyClosure ? { runtimeDependencyClosure } : {}),
-      sourceTree: { base: tree.base, baseBuilt: tree.baseBuilt, overlaid: tree.overlaid } });
+      sourceTree: { dir: t, base: tree.base, baseBuilt: tree.baseBuilt, overlaid: tree.overlaid } });
     await writeOwnFile(join(t, 'source-bundle.json'), JSON.stringify(record, null, 2));
     logger.error(`[source-tree] prepared component=${component} rev=${tree.revision} base=${tree.base} baseBuilt=${tree.baseBuilt} overlaid=${tree.overlaid} nativeSupport=${tree.supportFingerprint} elapsedMs=${Math.round(performance.now() - started)}`);
     prepared[component] = record;

@@ -241,7 +241,9 @@ function sourceRuntimeCaptureCandidateKey(fingerprint) {
 
 /** The completed product's publisher owns its exact locator. Domains choose
  * their key from their real capture contract, not from retained directories. */
-export async function publishSourceBundleCandidate({ bundleRoot, candidateKey, outputDir, record, producerCompletedAt, producerCandidateKey }) {
+/** `alias` names what a producer proved equal for this key (e.g. another
+ * revision with identical inputs); readers verify it against the record. */
+export async function publishSourceBundleCandidate({ bundleRoot, candidateKey, outputDir, record, producerCompletedAt, producerCandidateKey, alias }) {
   const candidatePath = sourceBundleCandidatePath({ bundleRoot, candidateKey });
   if (producerCompletedAt) {
     const previous = await readOptionalJson(candidatePath);
@@ -258,7 +260,7 @@ export async function publishSourceBundleCandidate({ bundleRoot, candidateKey, o
   }
   const candidate = {
     outputName: basename(outputDir), inputIdentity: record.inputIdentity, reuseFingerprint: record.reuseFingerprint,
-    ...(producerCompletedAt ? { producerCompletedAt, producerCandidateKey } : {}),
+    ...(producerCompletedAt ? { producerCompletedAt, producerCandidateKey } : {}), ...(alias ? { alias } : {}),
   };
   await writeJsonAtomic(candidatePath, candidate);
   if (producerCompletedAt) await writeJsonAtomic(sourceBundleCandidatePath({ bundleRoot,
@@ -793,7 +795,7 @@ export async function adoptReusableSourceBundle({ bundleRoot, candidateKey, publ
   const record = await withSourceBundlePublicationCustody({ bundleRoot, component, signal, operation: 'reuse-read' },
     () => readOptionalJson(join(outputDir, 'source-bundle.json')));
   if (record?.inputIdentity !== candidate.inputIdentity || record?.reuseFingerprint !== candidate.reuseFingerprint) return null;
-  const reusable = await verify({ record, outputDir });
+  const reusable = await verify({ record, outputDir, candidate });
   if (!reusable) return null;
   return await withSourceBundlePublicationCustody({ bundleRoot, component, signal, operation: 'reuse-select' }, async () => {
     const completed = await readOptionalJson(join(outputDir, 'source-bundle.json'));

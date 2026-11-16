@@ -29,6 +29,9 @@ import { withPatchedProcessEnv } from '../testkit/core/env_scope.mjs';
 import { resolveHeavyweightMemoryFloorKiB } from '../utils/dev_targets/remote_commands.mjs';
 import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { isWorkspaceBundleLockActive, withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { resolveSourceTreeRevision, writeSourceRevisionArchive } from './source_revision_tree.mjs';
+import { mountCapturedWorkspaceDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 
 for (const mode of ['fixed', 'old', 'still-broken', 'unnamed']) {
   test(`web producer capture retry: ${mode}`, async t => {
@@ -211,7 +214,7 @@ test('stack web source reload preserves other roles when the served export is un
   await assert.rejects(access(join(baseDir, 'runtime/artifacts')), { code: 'ENOENT' });
 });
 
-test('QA web export with app-local config uses the repository producer and adopts its completed capture', async t => {
+test('QA Stacks adopt the one shared web export the repository producer builds and never start their own', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-web-producer-adoption-', registerCleanup: false });
   let pending;
   let activeExport;
@@ -227,6 +230,7 @@ test('QA web export with app-local config uses the repository producer and adopt
     sourceRepo: fileURLToPath(new URL('../../../../', import.meta.url)), repoDir,
   });
   const stackBaseDir = fixture.path('stacks/consumer');
+  const producerBaseDir = fixture.path('stacks/producer');
   const counter = fixture.path('exports.json');
   const expo = fixture.path(process.platform === 'win32' ? 'expo.cmd' : 'expo');
   await writeFile(expo, process.platform === 'win32'
@@ -263,7 +267,7 @@ if(resolve(process.argv[1]??'')===${JSON.stringify(publicOwner)}){
   const write=process.stdout.write;
   process.stdout.write=function(chunk,...args){
     let built;try{built=JSON.parse(String(chunk))}catch{}
-    if(built?.uiDir)writeFileSync(${JSON.stringify(handoffLog)},readFileSync(${JSON.stringify(join(stackBaseDir, 'source-runtime/start.pending.json'))},'utf8'));
+    if(built?.uiDir)writeFileSync(${JSON.stringify(handoffLog)},readFileSync(${JSON.stringify(join(producerBaseDir, 'source-runtime/start.pending.json'))},'utf8'));
     return write.call(this,chunk,...args);
   };
 }`);
@@ -282,6 +286,8 @@ if(resolve(process.argv[1]??'')===${JSON.stringify(publicOwner)}){
     });
   });
   pending = await beginPendingSourceStart({ stackBaseDir });
+  const producerPending = await beginPendingSourceStart({ stackBaseDir: producerBaseDir });
+  t.after(() => producerPending.dispose());
   const config = fixture.path('app.local.cjs');
   await writeFile(config, 'module.exports = {};');
   const options = { repoDir, stackBaseDir, pending, signal: cancellation.signal,
@@ -290,24 +296,30 @@ if(resolve(process.argv[1]??'')===${JSON.stringify(publicOwner)}){
       HAPPIER_STACK_STACK: 'consumer', HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer',
       HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), EXPO_APP_LOCAL_CONFIG_PATH: config,
       NODE_OPTIONS: [buildNativeAdmissionFixtureEnv().NODE_OPTIONS, `--import=${pathToFileURL(observationHook).href}`].filter(Boolean).join(' ') } };
-  activeExport = exportShared(options);
+  const producer = { ...options, stackBaseDir: producerBaseDir, pending: producerPending,
+    baseDir: fixture.path('producer-state'), env: { ...options.env, HAPPIER_STACK_STACK: 'producer' } };
+  const exports = async () => JSON.parse(await readFile(counter, 'utf8').catch(() => '[]'));
+  // Owner 2026-11-13/11-14: a consumer Stack never starts an export; without a
+  // shared one it uses live Expo (the caller's borrowed fallback).
+  assert.equal(await exportShared(options), null, 'a QA Stack does not build its own web export');
+  assert.equal((await exports()).length, 0);
+  activeExport = exportShared(producer);
   void activeExport.catch(() => {});
   const worker = await Promise.race([workerStarted, activeExport.then(() => { throw new Error('export completed without an observed worker'); })]);
-  assert.equal(worker.stack, 'producer', 'QA export compiler processes must execute as the repository producer');
+  assert.equal(worker.stack, 'producer', 'shared export compiler processes execute as the repository producer');
   const first = await activeExport;
   const handoff = JSON.parse(await readFile(handoffLog, 'utf8'));
   assert.ok(handoff.preparationDirs?.includes(dirname(first.uiDir)),
-    'the producer pins completed output in the caller pending request before returning it');
-  const exports = async () => JSON.parse(await readFile(counter, 'utf8'));
+    'the producer pins completed output in its pending request before returning it');
   assert.equal((await exports())[0].stack, 'producer', 'an executable app config must not bypass producer authority');
   assert.equal((await exports())[0].config, config, 'the actual config variation remains part of the producer request');
+  // Every QA Stack adopts that one export, across source edits, with no compiler.
+  assert.equal((await exportShared(options)).uiDir, first.uiDir);
   await writeFile(uiInput, 'export const changed = true;');
-  const second = await exportShared(options);
-  assert.equal(second.uiDir, first.uiDir, 'source edits adopt the completed capture');
-  assert.equal((await exports()).length, 1, 'a QA adoption launches no compiler');
-  await t.test('default web reload refuses an export without a sentinel verdict', async () => {
-    await assert.rejects(exportShared({ ...options, requireLastGreen: true, loadSentinelPasses: [] }),
-      { code: 'source_runtime_producer_unavailable', reason: 'source_runtime_producer_capture_unavailable' });
+  assert.equal((await exportShared(options)).uiDir, first.uiDir, 'source edits adopt the completed shared export');
+  assert.equal((await exports()).length, 1, 'QA adoption launches no compiler');
+  await t.test('a QA Stack with no sentinel verdict for the shared export uses live Expo', async () => {
+    assert.equal(await exportShared({ ...options, requireLastGreen: true, loadSentinelPasses: [] }), null);
   });
   await t.test('last-green web adoption bypasses busy producer and fingerprint leases', async () => {
     const bundleRoot = fixture.path('stacks/source-bundles');
@@ -334,27 +346,171 @@ if(resolve(process.argv[1]??'')===${JSON.stringify(publicOwner)}){
   assert.equal(replaced.exportDir, undefined);
   assert.equal(await readFile(join(legacyUiDir, 'app.js'), 'utf8'), await readFile(join(first.uiDir, 'app.js'), 'utf8'));
   assert.equal((await exports()).length, 1, 'legacy serving replacement copies the completed producer export without compiling');
-  activeExport = exportShared({ ...options, sourceCapturedAfter: new Date(Date.now() + 86400000).toISOString() });
-  await assert.rejects(activeExport, error => {
-    assert.equal(error.reason, 'source_runtime_producer_capture_unavailable');
-    return true;
-  });
-  assert.equal((await exportShared(options)).uiDir, first.uiDir,
-    'a capture older than the explicit boundary cannot replace the completed incumbent');
-  assert.equal((await exports()).length, 2);
+  // A boundary newer than the shared export is never met by a QA Stack's own build.
   const sourceCapturedAfter = new Date().toISOString();
-  activeExport = Promise.all([exportShared({ ...options, sourceCapturedAfter }), exportShared({ ...options, sourceCapturedAfter })]);
+  assert.equal(await exportShared({ ...options, sourceCapturedAfter }), null);
+  assert.equal((await exports()).length, 1);
+  // The producer refreshes the one shared export once; every QA Stack adopts it.
+  activeExport = Promise.all([exportShared({ ...producer, sourceCapturedAfter }), exportShared({ ...producer, sourceCapturedAfter })]);
   const refreshed = await activeExport;
-  assert.equal(refreshed[0].uiDir, refreshed[1].uiDir, 'concurrent freshness requests join one producer product');
-  assert.ok(Date.parse(refreshed[0].sourceCapture.capturedAt) >= Date.parse(sourceCapturedAfter));
-  assert.equal((await exports()).length, 3, 'only the repository producer exports the newer capture once');
+  assert.equal(refreshed[0].uiDir, refreshed[1].uiDir, 'concurrent producer freshness requests join one product');
+  assert.equal((await exports()).length, 2, 'only the repository producer exports the newer capture, once');
+  assert.equal((await exportShared({ ...options, sourceCapturedAfter })).uiDir, refreshed[0].uiDir);
   const markerPath = resolveDependencyRefreshMarkerPath(repoDir);
   const marker = JSON.parse(await readFile(markerPath, 'utf8').catch(() => '{}'));
   await writeFile(markerPath, JSON.stringify({ ...marker, identity: 'new-dependency-publication' }));
-  activeExport = exportShared(options);
-  const changedDependencies = await activeExport;
-  assert.notEqual(changedDependencies.uiDir, refreshed[0].uiDir, 'a changed dependency publication cannot reuse the old capture');
-  assert.equal((await exports()).length, 4);
+  assert.equal(await exportShared(options), null, 'a changed dependency publication cannot reuse the old export, and QA does not rebuild');
+  assert.equal((await exports()).length, 2);
+});
+
+test('the repository producer publishes one shared web export per changed UI revision and QA Stacks adopt it for their revision', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-web-producer-revisions-', registerCleanup: false });
+  const pendings = [];
+  const cancellation = new AbortController();
+  t.after(async () => {
+    cancellation.abort();
+    try { for (const pending of pendings) await pending.dispose(); }
+    finally { await setBundleReadOnly(fixture.root, false); await fixture.cleanup(); }
+  });
+  const sourceUrl = new URL('./build_source_web_ui.mjs', import.meta.url);
+  const repoDir = fixture.path('repo');
+  const { uiInput } = await prepareFiniteSourceWebFixture({
+    sourceRepo: fileURLToPath(new URL('../../../../', import.meta.url)), repoDir,
+  });
+  const git = (...args) => execFileSync('git', ['-C', repoDir, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { encoding: 'utf8' }).trim();
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules\n');
+  git('init', '--quiet');
+  const commit = message => { git('add', '-A'); git('commit', '--quiet', '--allow-empty', '-m', message); return git('rev-parse', 'HEAD'); };
+  const counter = fixture.path('exports.json');
+  const expo = fixture.path(process.platform === 'win32' ? 'expo.cmd' : 'expo');
+  await writeFile(expo, process.platform === 'win32'
+    ? `@echo off\r\n"${process.execPath}" "${fixture.path('expo.mjs')}" %*\r\n`
+    : `#!/bin/sh\nexec '${process.execPath}' '${fixture.path('expo.mjs')}' "$@"\n`);
+  await chmod(expo, 0o755);
+  // Expo is the external compiler boundary: count runs and copy the captured UI input into the bundle.
+  await writeFile(fixture.path('expo.mjs'), `
+import {copyFile,mkdir,readFile,writeFile} from 'node:fs/promises';import {join} from 'node:path';
+const prior=JSON.parse(await readFile(${JSON.stringify(counter)},'utf8').catch(()=>'[]'));
+prior.push({stack:process.env.HAPPIER_STACK_STACK});await writeFile(${JSON.stringify(counter)},JSON.stringify(prior));
+const web=process.argv[process.argv.indexOf('--output-dir')+1];await mkdir(web,{recursive:true});
+// Like Expo, copy the project's public index.html into the output, then rewrite it.
+await copyFile(join(process.cwd(),'public/index.html'),join(web,'index.html')).catch(error=>{if(error.code!=='ENOENT')throw error});
+await writeFile(join(web,'index.html'),'<script src="./app.js"></script>');
+await writeFile(join(web,'app.js'),await readFile(join(process.cwd(),'sources/app/_layout.tsx'),'utf8'));
+`);
+  const native = process.platform === 'linux' ? await installNativeAdmissionFixture({ root: fixture.root }) : null;
+  const commandBoundary = fixture.path('expo-command.mjs');
+  await writeFile(commandBoundary, `export {prepareExpoCommandEnv} from ${JSON.stringify(new URL('../utils/expo/command.mjs', import.meta.url).href)};export async function resolveExpoBin(){return ${JSON.stringify(expo)}}`);
+  const publicOwner = fixture.path('source-web.mjs');
+  const adapterSource = new URL('../utils/proc/runSourceBuildCommand.mjs', import.meta.url);
+  const adapter = native && fixture.path('native-owner/apps/stack/scripts/utils/proc/runSourceBuildCommand.mjs');
+  if (adapter) {
+    await mkdir(dirname(adapter), { recursive: true });
+    await writeFile(adapter, relocateSourceOwnerImports(await readFile(adapterSource, 'utf8'), adapterSource,
+      new Map([['./workspace_build_admission.mjs', null]])));
+  }
+  await writeFile(publicOwner, relocateSourceOwnerImports((await readFile(sourceUrl, 'utf8'))
+    .replace("fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url))", JSON.stringify(native?.launcher ?? fileURLToPath(new URL('../../bin/hstack-exec', sourceUrl)))),
+  sourceUrl, new Map([['../utils/expo/command.mjs', pathToFileURL(commandBoundary)],
+    ...(adapter ? [['../utils/proc/runSourceBuildCommand.mjs', pathToFileURL(adapter)]] : [])])));
+  const { exportSourceWebUi: exportShared, publishProducerSourceWebUi, readSourceWebRevisionInputDigest } = await import(pathToFileURL(publicOwner));
+  const env = { ...(native ? buildNativeAdmissionFixtureEnv() : process.env), EXPO_PUBLIC_DEBUG: '0',
+    HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer', HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'),
+    // The fixture borrows the host's installed dependencies; pnpm installation is outside this contract.
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1' };
+  const producerBaseDir = fixture.path('stacks/producer');
+  const exports = async () => JSON.parse(await readFile(counter, 'utf8').catch(() => '[]')).length;
+  const publish = async rev => publishProducerSourceWebUi({ repoDir, stackBaseDir: producerBaseDir, revision: { revision: rev },
+    uiInputDigest: await readSourceWebRevisionInputDigest({ repoDir, revision: rev }), sourceRevision: { rev },
+    env: { ...env, HAPPIER_STACK_STACK: 'producer' }, signal: cancellation.signal, logger: { error() {} } });
+  const adopt = async rev => {
+    const stackBaseDir = fixture.path(`stacks/consumer-${pendings.length}`);
+    const pending = await beginPendingSourceStart({ stackBaseDir });
+    pendings.push(pending);
+    return await exportShared({ repoDir, stackBaseDir, pending, reuseOnly: true, signal: cancellation.signal,
+      baseDir: fixture.path(`consumer-state-${pendings.length}`), revision: { revision: rev, overlayDigest: null },
+      // Orchestrator decision under the 11-13 ruling: a QA Stack's own UI build
+      // options never fork the shared export; it adopts its revision's export.
+      env: { ...env, HAPPIER_STACK_STACK: `consumer-${pendings.length}`, HAPPIER_UI_QA_STACK_VARIANT: `stack-${pendings.length}` } });
+  };
+  const first = commit('first');
+  assert.equal(await adopt(first), null, 'a QA Stack builds nothing before the producer publishes');
+  assert.equal(await exports(), 0);
+  const published = await publish(first);
+  assert.equal(published.exported, true);
+  assert.equal(await exports(), 1, 'a new HEAD exports once');
+  // A HEAD advance that changes no UI input publishes nothing; its QA Stacks adopt the same bytes.
+  await mkdir(join(repoDir, 'docs'), { recursive: true });
+  await writeFile(join(repoDir, 'docs/note.md'), 'not a UI input\n');
+  const unchanged = commit('docs only');
+  assert.equal(await readSourceWebRevisionInputDigest({ repoDir, revision: unchanged }),
+    await readSourceWebRevisionInputDigest({ repoDir, revision: first }));
+  assert.equal((await publish(unchanged)).exported, false);
+  assert.equal(await exports(), 1, 'an unchanged UI input publishes no export');
+  const adoptedUnchanged = await adopt(unchanged);
+  assert.equal(adoptedUnchanged.uiDir, published.built.uiDir, 'a QA Stack on the unchanged revision adopts the existing export');
+  assert.equal(adoptedUnchanged.sourceCapture.revision, first, 'the adopted export names the revision it was built from');
+  // A HEAD advance that changes a UI input exports once; each QA Stack adopts its own revision's export.
+  await writeFile(uiInput, 'export const admissionInput = "changed-ui-input";');
+  const changed = commit('ui change');
+  assert.equal((await publish(changed)).exported, true);
+  assert.equal((await publish(changed)).exported, false, 'a repeated HEAD notification publishes nothing');
+  assert.equal(await exports(), 2, 'one export per changed UI revision');
+  const adoptedChanged = await adopt(changed);
+  assert.notEqual(adoptedChanged.uiDir, published.built.uiDir);
+  assert.match(await readFile(join(adoptedChanged.uiDir, 'app.js'), 'utf8'), /changed-ui-input/);
+  assert.equal((await adopt(unchanged)).uiDir, published.built.uiDir, 'an older revision keeps adopting its own export');
+  assert.equal(await exports(), 2, 'QA adoption launches no compiler');
+  // `--ui=export` on a QA Stack whose revision the producer has not exported yet
+  // (Usage r182, servers-deploy #167, 2026-11-16) requests that revision's
+  // producer-owned export once; later Stacks on the revision adopt it.
+  await writeFile(uiInput, 'export const admissionInput = "requested-before-publication";');
+  const requested = commit('ui change the producer has not reached');
+  const requestExport = async () => {
+    const stackBaseDir = fixture.path(`stacks/consumer-${pendings.length}`);
+    const pending = await beginPendingSourceStart({ stackBaseDir });
+    pendings.push(pending);
+    return await exportShared({ repoDir, stackBaseDir, pending, reuseOnly: false, signal: cancellation.signal,
+      baseDir: fixture.path(`consumer-state-${pendings.length}`), revision: { revision: requested, overlayDigest: null },
+      env: { ...env, HAPPIER_STACK_STACK: `consumer-${pendings.length}` } });
+  };
+  const exported = await requestExport();
+  assert.match(await readFile(join(exported.uiDir, 'app.js'), 'utf8'), /requested-before-publication/);
+  assert.equal(await exports(), 3, 'an explicit request exports its revision once');
+  assert.equal(JSON.parse(await readFile(counter, 'utf8')).at(-1).stack, 'producer', 'the export runs as the repository producer');
+  assert.equal((await requestExport()).uiDir, exported.uiDir, 'a second explicit request adopts it');
+  assert.equal((await adopt(requested)).uiDir, exported.uiDir, 'default Stacks on that revision adopt it');
+  assert.equal((await publish(requested)).exported, false, 'the producer does not export that revision again');
+  assert.equal(await exports(), 3);
+  // A QA Stack on a source tree requests its revision's export. The request carries
+  // the revision description made before the admission wait, and the checkout keeps
+  // moving (commits and edits) during that wait (INFRA-RESPONDER-3, 2026-11-16 19:20Z:
+  // "capture differs from <rev> at 1424 path(s)"). The export reads the Stack's
+  // revision tree (the revision's archive on its installation), so it builds that revision.
+  await writeFile(uiInput, 'export const admissionInput = "tree-revision";');
+  const treeRevision = commit('ui change served from a revision tree');
+  const described = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: treeRevision,
+    overlay: [], outputDir: fixture.path('tree-descriptors') });
+  const treeDir = fixture.path('stacks/tree-consumer/source-runtime/tree-server-0a0b0c0d');
+  await mkdir(treeDir, { recursive: true });
+  const archive = await writeSourceRevisionArchive({ repoDir, revision: treeRevision, outputPath: fixture.path('tree.tar.gz') });
+  execFileSync('tar', ['-xzf', archive, '-C', treeDir]);
+  await mountCapturedWorkspaceDependencies({ sourceDir: repoDir, captureDir: treeDir,
+    workspaceDirs: (await readSourceComponentBuildInputs({ repoDir, component: 'expo' })).workspaceDirs });
+  // A tree's files are its base's read-only inodes.
+  await setBundleReadOnly(treeDir, true);
+  await writeFile(uiInput, 'export const admissionInput = "committed-during-the-wait";');
+  commit('another lane commits while the export waits');
+  await writeFile(uiInput, 'export const admissionInput = "edited-during-the-wait";');
+  const treeConsumer = fixture.path('stacks/tree-consumer');
+  const treePending = await beginPendingSourceStart({ stackBaseDir: treeConsumer });
+  pendings.push(treePending);
+  const fromTree = await exportShared({ repoDir, stackBaseDir: treeConsumer, pending: treePending, reuseOnly: false,
+    signal: cancellation.signal, baseDir: fixture.path('tree-consumer-state'), revision: { revision: treeRevision, overlayDigest: null },
+    sourceRevision: { descriptorPath: described.descriptorPath, treeDir }, env: { ...env, HAPPIER_STACK_STACK: 'tree-consumer' } });
+  assert.match(await readFile(join(fromTree.uiDir, 'app.js'), 'utf8'), /tree-revision/, 'the export holds the revision tree bytes');
+  assert.equal(fromTree.sourceCapture.revision, treeRevision);
+  assert.equal(await exports(), 4, 'the moving checkout refuses nothing: one export for the revision');
 });
 
 test('source stacks reuse completed web bytes while debug options and damaged exports require construction', async context => {
