@@ -76,6 +76,15 @@ async function installProviderPersistence(seeds: readonly Readonly<{
     return response;
   }));
   storage.setState({ sessions });
+  // The HTTP boundary serves current owner tuples. Hydrate those tuples before
+  // observing provider mutations, so a legacy seed's privacy upgrade cannot
+  // consume the write barrier or the injected failure under test.
+  const { sync } = await import('@/sync/syncEngine');
+  for (const session of Object.values(sessions)) {
+    await sync.ensureSessionVisibleForMessageRoute(session.id, {
+      forceRefresh: true, hydrateMessages: false, serverId: account.scope.serverId,
+    });
+  }
   voiceSessionBindingStore.setState({ runtimeBindingsByConversationSessionId: {}, persistedBindingsByConversationSessionId: {} });
   const lease = createBundledConversationRuntimeHostLease();
   onTestFinished(() => lease.revoke());
@@ -85,6 +94,10 @@ async function installProviderPersistence(seeds: readonly Readonly<{
       requestedTargetSessionAddress: { serverId: account.scope.serverId, sessionId: session.id },
     });
   }
+  // Binding admission persists its own metadata before the tested provider
+  // attempt begins; measure mutations from that settled boundary.
+  attempts.length = 0;
+  commits.length = 0;
   const factory = getProviderConversationServiceFactory(lease.host, providerId);
   return {
     host: lease.host, factory, attempts, commits,
