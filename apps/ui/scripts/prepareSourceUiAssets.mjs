@@ -4,7 +4,6 @@ import { dirname, normalize, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readBuildInputIdentity } from '../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspacePackages } from '../../../packages/cli-common/sourceRuntimeEntries.mjs';
-import { readSourcePluginUiBuildInputs, readWorkspaceBuildInputs } from '../../stack/scripts/utils/fs/workspaceBuildInputs.mjs';
 import { readJsonIfExists } from '../../stack/scripts/utils/fs/json.mjs';
 import { dependencyInputsIdentity, resolveDependencyRefreshMarkerPath } from '../../stack/scripts/utils/proc/dependency_refresh.mjs';
 import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from './sourceUiAssetPaths.mjs';
@@ -66,15 +65,17 @@ async function readSourceWorkerSpecs() {
     const { resolveUiPostinstallTasks } = await import('../tools/resolveUiPostinstallTasks.mjs');
     const tasks = resolveUiPostinstallTasks({ env: process.env });
     const web = tasks.includes('vendor-password-kdf-worker');
-    const worker = (build) => async ({ uiPackageDir, outputPath }) => {
+    // The compiler module joins the bundler's own input list (its metafile).
+    const tool = path => [fileURLToPath(new URL(path, import.meta.url)), fileURLToPath(new URL('../tools/sourceAsset.mjs', import.meta.url))];
+    const worker = (build, modulePath) => async ({ uiPackageDir, outputPath }) => {
         const built = await build({ uiDirectory: uiPackageDir, outputFile: outputPath });
-        return { outputPath, assetPaths: [], inputPaths: built.inputPaths };
+        return { outputPath, assetPaths: [], inputPaths: [...tool(modulePath), ...built.inputPaths] };
     };
     // One compiler emits both atmosphere targets beside the candidate.
     const atmosphere = async ({ uiPackageDir, outputPath }) => {
         const { buildAtmosphereRenderers } = await import('../tools/atmosphere/buildAtmosphereRenderers.mjs');
         const built = await buildAtmosphereRenderers({ uiDirectory: uiPackageDir, outputDirectory: dirname(outputPath), web });
-        return { outputPath, assetPaths: [], inputPaths: built.inputPaths };
+        return { outputPath, assetPaths: [], inputPaths: [...tool('../tools/atmosphere/buildAtmosphereRenderers.mjs'), ...built.inputPaths] };
     };
     const specs = [];
     if (tasks.includes('prepare-atmosphere-renderers')) {
@@ -83,11 +84,11 @@ async function readSourceWorkerSpecs() {
     }
     if (web) {
         const { buildPasswordKdfWorker } = await import('../tools/password/buildPasswordKdfWorker.mjs');
-        specs.push({ generate: worker(buildPasswordKdfWorker), source: SOURCE_UI_ASSET_OUTPUT_PATHS.passwordKdfWorker, candidate: 'happier-password-kdf-worker.js' });
+        specs.push({ generate: worker(buildPasswordKdfWorker, '../tools/password/buildPasswordKdfWorker.mjs'), source: SOURCE_UI_ASSET_OUTPUT_PATHS.passwordKdfWorker, candidate: 'happier-password-kdf-worker.js' });
     }
     if (tasks.includes('vendor-crypto-worker')) {
         const { buildCryptoWorker } = await import('../tools/crypto/buildCryptoWorker.mjs');
-        specs.push({ generate: worker(buildCryptoWorker), source: SOURCE_UI_ASSET_OUTPUT_PATHS.cryptoWorker, candidate: 'happier-crypto-worker.js' });
+        specs.push({ generate: worker(buildCryptoWorker, '../tools/crypto/buildCryptoWorker.mjs'), source: SOURCE_UI_ASSET_OUTPUT_PATHS.cryptoWorker, candidate: 'happier-crypto-worker.js' });
     }
     return specs;
 }
@@ -107,7 +108,6 @@ async function prepareSourceUiAssetsWith({ uiPackageDir, outputDir, recordPath, 
     const retained = readSourceUiAssetsRecord(retainedRecordPath);
     const repoRoot = resolve(uiPackageDir, '../..');
     const packages = await readWorkspacePackages(repoRoot);
-    const compilerInputs = await readSourcePluginUiBuildInputs({ repoDir: repoRoot, compiler: true, inventory: true, packages });
     const packageRoots = new Map([...packages.values()].map(owner => [owner.root, owner]));
     const dependencyMarker = await readJsonIfExists(resolveDependencyRefreshMarkerPath(repoRoot));
     const dependencyIdentity = dependencyMarker && Array.isArray(dependencyMarker.inputs)
@@ -142,10 +142,11 @@ async function prepareSourceUiAssetsWith({ uiPackageDir, outputDir, recordPath, 
             while (dirname(parent) !== parent && !packageRoots.has(parent)) parent = dirname(parent);
             if (packageRoots.has(parent)) owners.add(parent);
         }
+        // Key each asset by its own compiler's input list, plus the manifests the
+        // bundler resolves through in each owning package. Edits outside that
+        // closure (other sources, temp tsconfigs, Metro config) keep the asset.
         const inputPaths = reused ? previous.inputPaths : [...new Set([fileURLToPath(import.meta.url), ...result.inputPaths,
-            ...compilerInputs.map(path => resolve(repoRoot, path)),
-            ...[...owners].flatMap(root => readWorkspaceBuildInputs(root, { sourceRoots: [] })
-                .map(path => resolve(root, path)))])];
+            ...[...owners].flatMap(root => ['package.json', 'tsconfig.json'].map(name => resolve(root, name)))])];
         const fingerprint = await identity(inputPaths);
         // The existing watcher requests a trailing refresh for edits during a build.
         // Do not certify unchanged reuse when its previously known inputs moved.

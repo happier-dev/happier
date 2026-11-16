@@ -127,3 +127,46 @@ test('source sync preserves usable worker-local UI assets while updating their a
   assert.equal(existsSync(join(mirror, 'apps/ui/.expo/hstack/locales/controller.bundle')), false,
     'controller Expo output remains excluded');
 });
+
+// P03 ORCH 2026-11-16: each prepared asset is keyed by its own inputs (the
+// bundler's dependency list), so an edit outside its import closure (another
+// lane's temp tsconfig, Metro config) never forces a rebuild.
+test('a focused rerun with unchanged asset inputs compiles nothing, even after unrelated package edits', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-ui-asset-closure-' });
+  const ui = fixture.path('apps/ui');
+  const write = (path, contents) => {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, contents);
+  };
+  write(join(ui, 'package.json'), '{"name":"@fixture/ui","type":"module"}');
+  write(fixture.path('package.json'), '{"private":true,"type":"module"}');
+  write(join(ui, 'sources/text/_all.ts'), "export const SUPPORTED_LANGUAGE_CODES = ['en', 'fr'];");
+  write(join(ui, 'sources/text/translations/fr.ts'), "export const fr = { greeting: 'bonjour' };");
+  write(join(ui, 'sources/text/bundledPluginTranslations/fr.generated.ts'), 'export const BUNDLED_PLUGIN_TRANSLATIONS = {};');
+  for (const entry of ['sources/sync/encryption/nativeCryptoWorker/webCryptoWorker.ts', 'sources/auth/password/passwordKdf.worker.ts',
+    'sources/components/atmosphere/atmosphere.worker.ts']) write(join(ui, entry), 'globalThis.workerMarker = 1;');
+  write(join(ui, 'scripts/prepareSourceUiAssets.mjs'),
+    `export * from ${JSON.stringify(new URL('../../../../ui/scripts/prepareSourceUiAssets.mjs', import.meta.url).href)};`);
+  symlinkSync(fileURLToPath(new URL('../../../../../node_modules', import.meta.url)), join(ui, 'node_modules'), 'dir');
+  // Files another lane edits all the time; none is read by an asset compiler.
+  write(join(ui, 'tsconfig.lane.tmp.json'), '{"include":["a"]}');
+  write(join(ui, 'metro.config.js'), 'export default {};');
+  const counts = [];
+  t.mock.method(console, 'log', (...values) => {
+    const match = /phase=source-asset-input-reuse compiled=(\d+)/u.exec(values.join(' '));
+    if (match) counts.push(Number(match[1]));
+  });
+  const prepare = () => prepareRemoteValidationWorkspace({ repoDir: fixture.root, componentRelativeDir: 'apps/ui',
+    validationKind: 'source-test', focusedTest: true });
+  await prepare();
+  assert.ok(counts[0] > 0, 'the cold run compiles its assets');
+  await prepare();
+  assert.equal(counts[1], 0, 'a rerun with unchanged inputs does no preparation');
+  write(join(ui, 'tsconfig.lane.tmp.json'), '{"include":["b"]}');
+  write(join(ui, 'metro.config.js'), 'export default { changed: true };');
+  await prepare();
+  assert.equal(counts[2], 0, 'edits outside every asset import closure keep the prepared assets');
+  write(join(ui, 'sources/text/translations/fr.ts'), "export const fr = { greeting: 'salut' };");
+  await prepare();
+  assert.ok(counts[3] > 0, 'an edit inside an asset import closure rebuilds it');
+});

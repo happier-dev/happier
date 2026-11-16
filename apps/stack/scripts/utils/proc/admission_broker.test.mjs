@@ -484,6 +484,8 @@ const priorityIdentity = (root, kind) => ({
   export: { className: 'source-web-export', component: '.', entry: `node ${root}/apps/stack/scripts/build/build_source_web_ui.mjs` },
   rolling: { className: 'compilation', component: '../../cache/commit-typecheck/wt',
     entry: `node ${root}/scripts/workspaces/commitPackageTypecheck.mjs` },
+  // Owner ruling 2026-11-16: a focused test run (class named by the command policy).
+  focused: { className: 'validation', resourceClass: 'focused-validation-ui', component: 'apps/ui', entry: 'pnpm exec vitest' },
 })[kind];
 for (const [scenario, earlier, later, laterFirst] of [
   ['commit compiler before an earlier ordinary job', 'ordinary', 'commit', true],
@@ -492,6 +494,8 @@ for (const [scenario, earlier, later, laterFirst] of [
   ['runtime producer before an earlier ordinary job', 'ordinary', 'producer', true],
   ['runtime producer before an earlier commit compiler', 'commit', 'producer', true],
   ['an ordinary caller cannot claim priority', 'ordinary', 'claimed', false],
+  ['focused test run before an earlier commit compiler', 'commit', 'focused', true],
+  ['runtime producer before an earlier focused test run', 'focused', 'producer', true],
 ]) {
   test(`head priority: ${scenario}`, linux, async t => {
     const { root } = await fixture(t);

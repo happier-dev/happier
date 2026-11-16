@@ -4,7 +4,7 @@ import { appendFileSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync
 import { createConnection, createServer } from 'node:net';
 import { dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { availableParallelism } from 'node:os';
-import { HEAVYWEIGHT_COMMAND_RESOURCES, resolveAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
+import { FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, resolveAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { admitWorkerDiskBudget } from '../dev_targets/worker_disk_budget.mjs';
@@ -35,7 +35,14 @@ const HEAD_PRIORITY_RANKS = new Map([
   ['compilation scripts/workspaces/checkCommitTypeCoherence.mjs', 1],
   ['compilation scripts/workspaces/commitPackageTypecheck.mjs', 1],
 ]);
+// Owner ruling 2026-11-16 ("small suites local"): focused test runs (up to ten
+// explicit files; the command-policy classifier names their class from argv)
+// start at the next free slot, after the shared producers and ahead of
+// commit compilers (between ranks 2 and 1): they are small (1-3 GiB) and short.
+const FOCUSED_TEST_PRIORITY_RANK = 1.5;
+const FOCUSED_TEST_CLASSES = new Set(FOCUSED_TEST_ADMISSION_CLASSES);
 function headPriorityRank(request) {
+  if (FOCUSED_TEST_CLASSES.has(request.resourceClass ?? request.className)) return FOCUSED_TEST_PRIORITY_RANK;
   const script = typeof request.entry === 'string' ? request.entry.split(' ')[1] : undefined;
   if (!script || typeof request.repoDir !== 'string') return 0;
   const path = isAbsolute(script) ? relative(request.repoDir, script) : posix.normalize(script);

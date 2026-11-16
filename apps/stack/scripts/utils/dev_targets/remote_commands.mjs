@@ -1807,7 +1807,7 @@ export function buildRemoteExecCommand(
     }
     if (preparation?.componentRelativeDir != null) {
       requireRemoteRelativeWorkingDirectory(target, preparation.componentRelativeDir);
-      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--required-tools=${policy.requiredTools}`)} ${posixQuote(`--preparation-scope=${policy.preparationScope}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}`);
+      body.push(`${cacheEnv} node ./apps/stack/scripts/utils/dev_targets/remote_validation_preparation.mjs ${posixQuote(`--component-relative-dir=${preparation.componentRelativeDir}`)} ${posixQuote(`--validation-kind=${preparation.validationKind}`)} ${posixQuote(`--required-tools=${policy.requiredTools}`)} ${posixQuote(`--preparation-scope=${policy.preparationScope}`)} ${posixQuote(`--default-build-mode=${defaultBuildMode}`)}${FOCUSED_TEST_ADMISSION_CLASSES.includes(policy.heavyClass) ? ' --focused-test' : ''}`);
     }
     body.push(`cd -- ${posixQuote(workingDirectory)}`);
     let payloadCommand = '';
