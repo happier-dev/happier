@@ -1,13 +1,13 @@
 // Entry for `hstack stack qa-bed`: seed one fresh QA bed Account on a running server.
 // Usage: node scripts/runTsxEntrypoint.mjs src/testkit/qaBed/seedQaBedMain.ts \
-//   --server-url <url> --profile <small|large> --key-file <path>
+//   --server-url <url> --profile <profile> --key-file <path>
 // The recovery key goes only to --key-file (mode 0600). Stdout carries one JSON
 // line with counts and Session ids; it never contains a key or token.
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { isQaBedProfileName, seedQaBedAccount } from './seedQaBedAccount';
+import { isQaBedProfileName, QA_BED_PROFILES, seedQaBedAccount } from './seedQaBedAccount';
 
 const { values } = parseArgs({
   options: {
@@ -20,7 +20,7 @@ const serverUrl = values['server-url'];
 const keyFile = values['key-file'];
 const profile = values.profile ?? 'small';
 if (!serverUrl || !keyFile || !isQaBedProfileName(profile)) {
-  process.stderr.write('Usage: seedQaBedMain.ts --server-url <url> --profile <small|large> --key-file <path>\n');
+  process.stderr.write(`Usage: seedQaBedMain.ts --server-url <url> --profile <${Object.keys(QA_BED_PROFILES).join('|')}> --key-file <path>\n`);
   process.exit(2);
 }
 

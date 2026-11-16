@@ -4764,6 +4764,9 @@ importers:
       '@happier-dev/cli-common':
         specifier: 0.0.0
         version: link:../cli-common
+      '@happier-dev/deployment-protocol':
+        specifier: workspace:*
+        version: link:../deployment-protocol
       '@happier-dev/iroh-native':
         specifier: 0.0.0
         version: link:../iroh-native

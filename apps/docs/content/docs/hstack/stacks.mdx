@@ -442,6 +442,18 @@ node ./apps/stack/scripts/repo_local.mjs stack qa-bed reset  agent-qa-<lane>-bed
 
 Profiles: `small` is 12 Sessions (one 120-message transcript), 2 Machines and 6 Artifacts. `large` is 300 Sessions (three 1,200-message transcripts), 6 Machines and 100 Artifacts, the sizes the signed-in device and web profiling used. Sessions are created through `POST /v1/sessions` with legacy metadata, and Artifacts carry no classification. These are the 0.2-era shapes 0.3 must keep reading; 0.3 migrates them the first time they are shown. The fixture Machines have no daemon, so they show as offline. The bed's own daemon is the one live Machine.
 
+`deploy-preview` creates a listed Project with Production and a deployed `purpose: preview` Environment for reviewing deployment screens. These are **records only**: the seeder uses the ordinary encrypted Project row, signed HTTP admission and receipt settlement APIs, never dispatches a deployment, and makes no platform or forge writes. The receipt has no workload or health observations. The example address `https://preview.records-only.invalid/` is marked with a warning and unavailable network exposure; it has no DNS or native route. Its saved preview admission Workflow has no triggers. This profile has one offline fixture Machine and no seeded Sessions.
+
+To seed an existing running QA Home without creating another stack:
+
+```bash
+cd packages/tests
+node scripts/runTsxEntrypoint.mjs src/testkit/qaBed/seedQaBedMain.ts \
+  --server-url <qa-home-url> --profile deploy-preview --key-file <private-key-file>
+```
+
+This creates a fresh Account and writes its recovery key only to the specified file (mode 0600). The JSON summary includes the Project, Source, Environment and receipt ids. Deployments and Workflows must be enabled on that Home. It does not prove a real deployment or unblock an agent/provider live test.
+
 `check` prints one JSON line (`kind: "qa_bed"`). `status` is `READY` only when every check passes; otherwise `check` names the first failure:
 
 | check | proves |

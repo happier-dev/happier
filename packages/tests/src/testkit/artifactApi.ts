@@ -144,6 +144,7 @@ export async function createEncryptedArtifactViaApi(params: Readonly<{
   headerJson: unknown;
   bodyJson: unknown;
   cliAccessKey: CliAccessKey;
+  kind?: string;
 }>): Promise<ArtifactRecord> {
   const request = buildEncryptedArtifactCreateRequestForCliAccessKey({
     artifactId: params.artifactId,
@@ -157,7 +158,7 @@ export async function createEncryptedArtifactViaApi(params: Readonly<{
       Authorization: `Bearer ${params.token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify({ ...request, ...(params.kind === undefined ? {} : { kind: params.kind }) }),
   });
   if (res.status !== 200 || !res.data || typeof res.data !== 'object') {
     throw new Error(`Expected 200 encrypted artifact create, received ${res.status}`);

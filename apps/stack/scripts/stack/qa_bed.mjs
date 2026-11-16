@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { runRetainedRuntimeCli } from './stack_reload_verification.mjs';
+import profileSizes from '../../../../packages/tests/src/testkit/qaBed/profiles.json' with { type: 'json' };
 
 /**
  * QA bed: one ready, verified Stack per lane on the existing Stack lifecycle.
@@ -15,7 +16,7 @@ import { runRetainedRuntimeCli } from './stack_reload_verification.mjs';
  * repository producer's products, so a bed costs a start, a seed and a check.
  */
 export const QA_BED_PROFILE_ENV_KEY = 'HAPPIER_STACK_QA_BED_PROFILE';
-export const QA_BED_PROFILES = Object.freeze(['small', 'large']);
+export const QA_BED_PROFILES = Object.freeze(Object.keys(profileSizes));
 const FAKE_CLAUDE_FIXTURE = 'packages/tests/src/fixtures/fake-claude-code-cli.js';
 const FAKE_CLAUDE_REPLY_PREFIX = 'FAKE_CLAUDE_';
 
@@ -260,7 +261,7 @@ export async function runQaBedCommand({ rootDir, argv }) {
   const stackName = positionals[2];
   const profileArg = argv.find((arg) => arg.startsWith('--profile='))?.slice('--profile='.length);
   if (!['create', 'reset', 'check'].includes(action) || !stackName || (profileArg && !QA_BED_PROFILES.includes(profileArg))) {
-    process.stderr.write('Usage: hstack stack qa-bed create|reset|check <stack> [--profile=small|large]\n');
+    process.stderr.write(`Usage: hstack stack qa-bed create|reset|check <stack> [--profile=${QA_BED_PROFILES.join('|')}]\n`);
     process.exitCode = 2;
     return;
   }

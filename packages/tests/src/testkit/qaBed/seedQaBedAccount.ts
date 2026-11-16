@@ -6,21 +6,19 @@ import { createEncryptedArtifactViaApi } from '../artifactApi';
 import { createTestAuth, type TestAuth } from '../auth';
 import { buildTestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
-import { registerMachineIdentity } from '../machineIdentity';
+import { createMachineInstallationIdentityFixture, registerMachineIdentity } from '../machineIdentity';
 import { encryptDataKeyBase64 } from '../rpcCrypto';
 import { createSessionWithCiphertexts } from '../sessions';
 import { perfFixtureId } from '../stress/scenarios/perfProfile';
 import { runStressTasksWithConcurrencyLimit } from '../stress/scenarios/runStressTasksWithConcurrencyLimit';
+import profileSizes from './profiles.json' with { type: 'json' };
 
 /**
  * The QA bed Account shapes. `large` keeps the sizes the 2026-11-15 signed-in
  * device and web lanes measured (300 Sessions, 3 × 1,200-message transcripts),
  * so new numbers stay comparable with theirs.
  */
-export const QA_BED_PROFILES = {
-  small: { sessions: 12, longSessions: 1, longMessages: 120, machines: 2, artifacts: 6 },
-  large: { sessions: 300, longSessions: 3, longMessages: 1_200, machines: 6, artifacts: 100 },
-} as const;
+export const QA_BED_PROFILES = profileSizes;
 
 export type QaBedProfileName = keyof typeof QA_BED_PROFILES;
 
@@ -35,6 +33,8 @@ export type QaBedSeedSummary = Readonly<{
   machines: number;
   artifacts: number;
   longSessionIds: readonly string[];
+  deployments?: Readonly<{ serverId: string; projectId: string; projectSourceId: string; productionEnvironmentId: string;
+    previewEnvironmentId: string; deploymentId: string }>;
 }>;
 
 export type SeededQaBedAccount = Readonly<{
@@ -82,6 +82,7 @@ export async function seedQaBedAccount(params: Readonly<{
   const concurrency = params.concurrency ?? 16;
   const label = params.label ?? 'qa';
   const auth = await createTestAuth(baseUrl);
+  const installation = params.profile === 'deploy-preview' ? createMachineInstallationIdentityFixture() : undefined;
   const credentials = buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' });
   if (!('encryption' in credentials)) throw new Error('QA bed seeding needs data-key credentials');
   const recipientPublicKey = Buffer.from(credentials.encryption.publicKey, 'base64');
@@ -99,6 +100,7 @@ export async function seedQaBedAccount(params: Readonly<{
         metadata: encryptDataKeyBase64({ host, platform: ['linux', 'darwin', 'win32'][index % 3], homeDir: '/home/qa',
           happyHomeDir: '/home/qa/.happier', happyCliVersion: '0.0.0-qa-bed-fixture', displayName: host }, dataKey),
         dataEncryptionKey: wrapDataKey(dataKey),
+        ...(installation ? { installation } : {}),
       });
       if (registered.status !== 200) throw new Error(`QA bed Machine registration failed (status=${registered.status})`);
       return registered.machineId as string;
@@ -136,6 +138,9 @@ export async function seedQaBedAccount(params: Readonly<{
         cliAccessKey: credentials });
     });
 
+  const deploymentFixture = installation
+    ? await (await import('./seedDeployPreview')).seedDeployPreview({ baseUrl, auth, machineId: machineIds[0], installation })
+    : undefined;
   return {
     auth,
     recoveryKey: formatRecoveryKey(auth.accountSigningSeed),
@@ -144,8 +149,9 @@ export async function seedQaBedAccount(params: Readonly<{
       sessions: sessions.length,
       messages: sessions.reduce((total, session) => total + session.messages, 0),
       machines: machineIds.length,
-      artifacts: sizes.artifacts,
+      artifacts: sizes.artifacts + (deploymentFixture?.artifactsCreated ?? 0),
       longSessionIds: sessions.filter((session) => session.long).map((session) => session.sessionId),
+      ...(deploymentFixture ? { deployments: deploymentFixture.summary } : {}),
     },
   };
 }

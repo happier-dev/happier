@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { defineConfig } from 'vitest/config';
 
+import { createUiProductionHooksVitestConfig } from './vitest.uiProductionHooks';
 import { createWorkspacePackageSourcesPlugin } from '../../scripts/testing/vitestWorkspacePackageResolution.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -15,7 +16,7 @@ export default defineConfig({
       packageName: '@happier-dev/protocol',
       packageSourceRoot: resolve(repoRoot, 'packages', 'protocol', 'src'),
     },
-  ], 'happier-qa-fixtures-workspace-package-sources')],
+  ], 'happier-qa-fixtures-workspace-package-sources'), ...(createUiProductionHooksVitestConfig().plugins ?? [])],
   test: {
     ...resolveVitestWorkers(),
     environment: 'node',
