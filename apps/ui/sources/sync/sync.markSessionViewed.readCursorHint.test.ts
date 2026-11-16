@@ -225,6 +225,24 @@ describe('sync.markSessionViewed (authoritative read cursor)', () => {
         expect(storage.getState().sessions[sessionId]?.lastViewedSessionSeq).toBeUndefined();
     });
 
+    it('acknowledges read cursor advances on the active Home over its live socket, without re-reading the held credential or opening a socket', async () => {
+        // The desktop app read the stored credential (secure-storage IPC) and dialed a new socket on every
+        // turn the viewed Session advanced (P03-DESKTOP-MEMORY-3: 6 reads in a 40 s stream, no HTTP).
+        const sessionId = 'active-home-advances';
+        storage.getState().applySessions([createPlainSession({ sessionId })]);
+        const { sync } = await import('./sync');
+        const reads = boundary.credentialRequests.length;
+        const sockets = boundary.socketBoundaries.length;
+        for (const seq of [4, 5, 6]) {
+            storage.getState().applySessions([{ ...storage.getState().sessions[sessionId]!, seq }]);
+            await sync.markSessionViewed(activeAddress(sessionId), { sessionSeq: seq });
+        }
+        expect(emitWithAckMock.mock.calls.filter(([event]) => event === 'update-read-cursor').map(([, payload]) => payload))
+            .toEqual([4, 5, 6].map(lastViewedSessionSeq => ({ sid: sessionId, lastViewedSessionSeq })));
+        expect(boundary.credentialRequests.length - reads).toBe(0);
+        expect(boundary.socketBoundaries.length - sockets).toBe(0);
+    });
+
     it('does not maintain a second read frontier in owner metadata', async () => {
         const sessionId = 'metadata-contraction';
         storage.getState().applySessions([createPlainSession({ sessionId })]);

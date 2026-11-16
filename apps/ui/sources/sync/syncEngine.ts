@@ -40,7 +40,7 @@ import { bindAccountEncryptionObservation, readAccountEncryptionObservationBindi
     type AccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 import { getConcurrentAccountEncryptionObservationBinding } from '@/sync/runtime/orchestration/concurrentSessionCache';
 import { createConfiguredSocketRequest } from '@/sync/engine/socket/configuredSocketTransport';
-import { emitSessionReadCursorUpdateWithServerScope } from '@/sync/api/session/emitSessionReadCursorUpdateWithServerScope';
+import { emitSessionReadCursorUpdateWithServerScope, type SessionReadCursorUpdateAck } from '@/sync/api/session/emitSessionReadCursorUpdateWithServerScope';
 import { isDemoModeActive, isSeededDemoHome } from '@/demoMode/runtime/enterExitDemoMode';
 import { ensureSessionRuntimeForPendingInput } from '@/sync/ops';
 import {
@@ -6241,7 +6241,15 @@ class Sync {
             // Current Homes return the canonical private attention with the ACK.
             if (!session.viewer) this.applyLocalReadCursor(address, nextAuthoritativeSeq);
             try {
-                const result = await emitSessionReadCursorUpdateWithServerScope(address, nextAuthoritativeSeq);
+                // The applied Home's live socket already carries this Account's credential: an advance on
+                // its Session acknowledges there. Reading the stored credential and dialing an exact-Home
+                // socket per advance cost a secure-storage read and a new connection on every turn the
+                // viewed Session streamed (P03-DESKTOP-MEMORY-3). The socket is taken in this same tick as
+                // the applied-Home check, so a Home switch cannot retarget it. Other Homes keep the exact path.
+                const result = this.isAppliedTransportServer(serverId)
+                    ? await this.messageTransport.emitWithAck<SessionReadCursorUpdateAck>('update-read-cursor',
+                        { sid: sessionId, lastViewedSessionSeq: nextAuthoritativeSeq }, { timeoutMs: null })
+                    : await emitSessionReadCursorUpdateWithServerScope(address, nextAuthoritativeSeq);
                 if (usedActiveSession && this.credentials !== activeCredentials) return;
                 const current = this.readSessionAtAddress(address);
                 if (!current || !isSessionPersonallyTrackedForViewer(current)) return;
