@@ -102,6 +102,12 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
      * creates no connection demand, background reads or mutation authority.
      */
     subscribeRetainedInvalidation?: (target: TTarget, handlers: ScopedSnapshotRetainedInvalidation) => () => void;
+    /**
+     * false: only a released observation keeps this retention. A finite read (a mutation completion, a one-shot
+     * refresh) then takes no wake or credential custody, so a refusal it receives or a write its own maintenance makes
+     * cannot supersede it before it publishes.
+     */
+    retainFiniteReads?: boolean;
     /** Marks the domain's rows for one Home stale. Called before refetching. */
     invalidateServer: (serverId: string) => void;
     /** Marks this exact retained target stale; the domain distinguishes advisory reloads from retirement. */
@@ -387,7 +393,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
     }
 
     async function withFiniteDemand(target: TTarget, read: () => Promise<void>): Promise<void> {
-        if (params.subscribeRetainedInvalidation) {
+        if (params.subscribeRetainedInvalidation && params.retainFiniteReads !== false) {
             // A non-observing consumer (for example Voice) can be the first
             // reader. Its admitted snapshot needs the same withdrawal signals.
             retainInvalidation(target);

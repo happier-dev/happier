@@ -9,6 +9,7 @@ import type { SavedSecretLegacyImportResult } from '@/sync/domains/settings/save
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { sync } from '@/sync/sync';
+import { subscribeAccountCatalogInvalidation } from '@/sync/engine/settings/accountCatalogInvalidation';
 import { homeAccountChangeAffectsSavedSecretCatalog } from '@/sync/runtime/orchestration/changesPlanner';
 import {
     applySavedSecretCatalogFailure,
@@ -164,6 +165,11 @@ const loader = createScopedSnapshotLoader<Target>({
         const snapshot = getSavedSecretCatalogSnapshot(scope);
         return !snapshot || snapshot.stale || (snapshot.data === null && snapshot.status !== 'loading');
     },
+    // Like the other Account catalogs, a released observation keeps its Home wake and credential invalidation, so a
+    // return to a page hidden through Activity reads nothing unless the material changed. Finite reads keep none:
+    // a 401 they receive still settles as the retired Home scope, and a legacy import they run still publishes.
+    subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
+    retainFiniteReads: false,
     invalidateServer: invalidateSavedSecretCatalogsForServer,
     invalidateTarget: ({ scope }) => invalidateSavedSecretCatalog(scope),
     // Resources and legacy Settings own this material. Artifact receipts also

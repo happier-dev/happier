@@ -370,6 +370,40 @@ describe('SavedSecret catalog captured request boundary', () => {
         await expect(read(context)).resolves.toMatchObject({ ok: false, failure: { kind: 'invalid' } });
     });
 
+    it('re-takes a released material observation without a read when nothing changed while it was away', async () => {
+        const accountId = 'saved-secret-retake-account';
+        let materialReads = 0;
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://saved-secret-retake.test', accountId,
+            credentials: { token: createAccountTokenForTests(accountId, { currentAccount: true }) },
+            request: async rawUrl => {
+                const path = new URL(String(rawUrl)).pathname;
+                if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
+                if (path.startsWith('/v1/features')) return Response.json(createRootLayoutFeaturesResponse());
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/saved-secrets/resources/materials') { materialReads++; return Response.json({ resources: [] }); }
+                if (path === '/v2/account/settings') return Response.json({ version: 0, content: { t: 'plain', v: {} } });
+                if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
+                return Response.json({ error: 'not_found' }, { status: 404 });
+            },
+        });
+        const scope = { serverId: resolveServerProfileScopeIdForIdentifier(connection.home.id), accountId };
+        let release = observeSavedSecretCatalog(scope);
+        await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(scope)).toMatchObject({ status: 'ready', stale: false }));
+        await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(scope)?.legacyImport).toBeTruthy());
+        const settled = materialReads;
+        // A page hidden through Activity releases its observation and takes it again on return.
+        for (let index = 0; index < 3; index += 1) {
+            release();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            release = observeSavedSecretCatalog(scope);
+            await new Promise<void>(resolve => setImmediate(resolve));
+        }
+        await vi.waitFor(() => expect(getSavedSecretCatalogSnapshot(scope)).toMatchObject({ status: 'ready', stale: false }));
+        release();
+        expect(materialReads - settled).toBe(0);
+    });
+
     describe('incumbent loaded material demand', () => {
 
     it('publishes retained-source diagnostics from actual material demand while keeping current resources usable', async () => {
