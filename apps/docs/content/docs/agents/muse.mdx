@@ -15,6 +15,19 @@ Muse models through a Provider gateway in another Agent.
 For native login and API-key connections, see
 [Muse accounts](/accounts/connected-services#muse-accounts-in-03-development).
 
+## Models, effort and approvals in 0.3 development
+
+Native Muse model and effort choices come from the selected account's catalog.
+When using a Muse model through another Agent, available effort also depends on
+what that Agent can apply. See [reasoning effort](/agents/provider-integrations#manual-reasoning-effort-in-03-development).
+Codex custom upstreams exclude inherited ChatGPT Apps to avoid unrelated tool
+context; see [Codex models and tools](/agents/codex).
+
+A pending approval appears in its approval card. When the Machine is offline
+and no card can present the waiting request, the Session status line explains
+that permission is required and the Machine is offline. Reconnect the Machine
+to answer it. See [Permissions](/sessions/permissions).
+
 ## Troubleshooting
 
 ### Shell commands fail in a home-directory workspace

@@ -74,6 +74,10 @@ a reason and **Retry** on the page and in its **+** menu, including the sidebar
 menu. Saved accounts remain listed and selectable. Retry refreshes the service
 catalog; it does not create an account or repeat a sign-in.
 
+In unreleased 0.3 development, reopening an account with a pending sign-in shows
+one **Sign-in in progress** row. Choose **Continue** to reopen that attempt or
+**Cancel** to end it; opening the account page alone does not expand the form.
+
 In the CLI:
 
 - `happier connect status`
@@ -114,6 +118,12 @@ runtime operation uses the new revision; any required refresh or reconnect still
 happens on the machine. Account-specific credentials and in-progress sign-in
 configuration remain machine operations. If a save's outcome is unknown, read
 the saved configuration before deciding whether to retry; do not assume it failed.
+
+In unreleased 0.3 development, a control-connection timeout while fetching model
+choices can report **Selected machine is unavailable** with **Retry**. Retry once the Machine
+and its Happier connection are reachable. This failure occurs before the Agent
+starts; it does not by itself mean the vendor rejected the account or that the
+connection needs signing in again.
 
 ## Test a connection in 0.3 development
 

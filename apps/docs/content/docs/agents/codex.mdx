@@ -118,6 +118,13 @@ Earlier Codex CLI versions and Windows can still run App Server sessions remotel
 
 Codex model availability depends on the active Codex backend, installed runtime, and account state. The new-session engine picker can show the currently available Codex models, model-specific options such as reasoning effort, and favorite Codex model shortcuts when those models are available for the selected backend.
 
+In unreleased 0.3 development, an explicitly selected custom upstream, including
+Muse through a Provider gateway, disables inherited ChatGPT Apps for that Codex
+Session. This keeps unrelated App tool definitions out of its context and can
+reduce input-token usage. Your native OpenAI route keeps its existing Apps
+behavior; configured Session MCP tools still follow their normal policy. This
+does not establish vendor prompt-cache behavior or a fixed token saving.
+
 For the full model guide, see:
 
 - [Model and engine selection](/agents/model-and-engine-selection)
