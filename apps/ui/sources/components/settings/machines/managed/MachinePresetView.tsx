@@ -10,6 +10,10 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Switch } from '@/components/ui/forms/Switch';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerScopedMachine, useMachineListForServer } from '@/sync/domains/state/storage';
@@ -22,15 +26,15 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 import { MachinePresetDetail, managedPresetLimitRow, type MachinePresetDetailModel } from './MachinePresetDetail';
 import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
-import { isManagedControllerCandidate } from './useManagedControllerScope';
+import { isManagedControllerCandidate, useManagedControllerScope } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
 import { describeManagedPresetAvailabilityFailure } from './managedNativeFailurePresentation';
 import { findPresetLastSavedFacts } from './managedPresetHistory';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
-import { useMachinePresetDetail, useMachinePresetConfiguration } from './useMachinePresets';
+import { useMachinePresetDetail, useMachinePresetConfiguration, useMachinePresetPreparation } from './useMachinePresets';
 import { useManagedProvisioners } from './useManagedProvisioners';
 import { ManagedPresetMark, MANAGED_PROVISIONER_MARK_SIZE, useManagedProvisionerPresentation } from './useManagedProvisionerPresentation';
-import { hasOpenedManagedMachinePresetCreationV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
+import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { useManagedProvisionerOptionsInput } from './useManagedProvisionerOptionsInput';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scopedSnapshotFacts';
@@ -39,6 +43,57 @@ import { useManagedMachineRouteScope } from './useManagedMachineRouteScope';
 import { KnownHomeGate } from '@/components/sessions/access/KnownHomeGate';
 import { ManagedMachineConfigurationView } from './ManagedMachineConfigurationView';
 import { useMachinePoolName } from '@/sync/engine/machines/useMachinePoolProjections';
+import { describeActionOperationStatusLabel, resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
+import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
+
+/**
+ * "Prepare ahead" (lab scene 5): one sheet right after Setup, because it bakes that setup. The preference row, then
+ * the image's state with its one next step, then where it builds. The builder is a visible Machine choice; an old
+ * operation keeps its own admitted address.
+ */
+function MachinePresetPrepareSection(props: Readonly<{
+    serverId: string; preset: OpenedManagedMachinePresetV1; canManage: boolean; busy: boolean; onChanged: () => void;
+}>) {
+    const target = useManagedControllerScope({ serverId: props.serverId, preferred: props.preset.controller,
+        delegatedPreset: props.preset.controller !== undefined, observeThisComputer: false,
+        disabled: !props.canManage || props.busy, testIDPrefix: 'machine-preset.preparation.target' });
+    const machineId = props.preset.controller?.machineId ?? target.controller?.machineId ?? null;
+    const preparation = useMachinePresetPreparation({ serverId: props.serverId, preset: props.preset,
+        machineId, onChanged: props.onChanged });
+    const operation = preparation.operation;
+    const active = !preparation.interrupted && (preparation.awaitingOperation
+        || operation !== null && !isActionOperationTerminal(operation.snapshot.state));
+    const retry = preparation.interrupted || preparation.reportedStatus === 'failed' || preparation.reportedStatus === 'cancelled'
+        || operation?.snapshot.state === 'failed' || operation?.snapshot.state === 'cancelled';
+    const status = preparation.error ? t('ui.pluginUi.actionFailed') : preparation.interrupted ? t('voiceAssistant.interrupted')
+        : operation
+            ? describeActionOperationStatusLabel(resolveActionOperationStatus(operation.snapshot, operation.observation).label)
+            : preparation.awaitingOperation ? t('inbox.actionOperations.status.accepted')
+                : preparation.reportedStatus === 'ready' ? t('machinePresets.prepareReady')
+                    : preparation.reportedStatus === 'failed' ? t('inbox.actionOperations.status.failed')
+                        : preparation.reportedStatus === 'cancelled' ? t('inbox.actionOperations.status.cancelled')
+                            : t('machinePresets.prepareNotBuilt');
+    const disabled = !props.canManage || props.busy || preparation.pending;
+    const built = preparation.reportedStatus === 'ready';
+    const action = preparation.canCancel ? <RoundButton testID="machine-preset.preparation.stop" size="small" display="secondary"
+            title={t('common.stop')} disabled={disabled || preparation.stopControl.pending || preparation.stopControl.stopRequested}
+            loading={preparation.stopControl.pending} onPress={preparation.stopControl.requestStop} />
+        : !active ? <RoundButton testID={retry ? 'machine-preset.preparation.retry' : 'machine-preset.preparation.prepare'}
+            size="small" display="secondary"
+            title={retry || preparation.error ? t('common.retry') : built ? t('machinePresets.prepareRebuild') : t('machinePresets.prepareBuild')}
+            disabled={disabled || machineId === null} loading={preparation.pending}
+            onPress={() => fireAndForget(preparation.prepare(), { tag: 'MachinePresetView.prepare' })} /> : null;
+    return <ItemGroup testID="machine-preset.prepare" title={t('machinePresets.prepareSection')} description={t('machinePresets.prepareSectionHelp')}>
+        {/* A standing preference of the preset, changed in its editor; here it says what it does. */}
+        <Item testID="machine-preset.prepare.keep" title={t('machinePresets.prepareKeep')} subtitle={t('machinePresets.prepareKeepHelp')}
+            subtitleLines={0} mode="info" showChevron={false}
+            rightElement={<Switch testID="machine-preset.prepare.keep.switch" accessibilityLabel={t('machinePresets.prepareKeep')} value disabled />} />
+        <Item testID="machine-preset.preparation" title={status} subtitleLines={0} mode="info" showChevron={false}
+            loading={active} accessoryLayout="adaptive" rightElement={action ?? undefined} />
+        {!props.preset.controller && target.chip ? <Item testID="machine-preset.prepare.builder" title={t('managedMachines.config.managedFrom')}
+            mode="info" showChevron={false} accessoryLayout="adaptive" rightElement={target.chip} /> : null}
+    </ItemGroup>;
+}
 
 function parameter(value: string | string[] | undefined): string {
     return (Array.isArray(value) ? value[0] : value)?.trim() ?? '';
@@ -313,6 +368,10 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                 secondaryNote: t('machinePresets.futureOnly') } : {}) },
         ...(canUse && visiblePreset.archivedAt === undefined && configuration.creationEnabled && !cannotCreateHere
             ? { onCreateOne: () => openConfiguration(false) } : {}),
+        // Archive attempts to delete the image it keeps ready; its retained report says when cleanup is needed.
+        ...(visiblePreset.preparation?.enabled ? { archiveHelp: t('machinePresets.archivePreparedHelp') } : {}),
+        ...(!archived && visiblePreset.preparation?.enabled ? { prepare: <MachinePresetPrepareSection serverId={props.serverId}
+            preset={visiblePreset} canManage={canManage} busy={busy} onChanged={detail.refresh} /> } : {}),
         ...archiveActions,
         archivePending: busy, notice,
     };

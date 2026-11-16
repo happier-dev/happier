@@ -89,6 +89,8 @@ export type MachinePresetDetailModel = Readonly<{
   onArchive?: () => void;
   archivePending?: boolean;
   notice?: React.ReactNode;
+  /** "Prepare ahead", right after Setup because it bakes that setup; absent unless the preset keeps an image. */
+  prepare?: React.ReactNode;
 }>;
 
 export const MachinePresetDetail = React.memo(function MachinePresetDetail(
@@ -165,6 +167,7 @@ export const MachinePresetDetail = React.memo(function MachinePresetDetail(
         scope={model.setup.scope}
         onEdit={model.setup.onEdit}
       />
+      {model.prepare ?? null}
       {model.controller ? (
         <ItemGroup
           title={t('managedMachines.config.managedFrom')}
