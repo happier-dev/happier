@@ -1,5 +1,15 @@
 /** @moduleRealm any */
 
+/** The Protocol subject owner supplies the same identity to core and external resource pages. */
+export type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+
+/** Plugin kinds retain their contribution qualification when selecting a resource kind. */
+type SubjectKindReference<TSubject extends AutomationSubjectV1> = TSubject extends { kind: 'plugin' }
+    ? Pick<TSubject, 'kind' | 'pluginId' | 'subjectKindId'>
+    : Pick<TSubject, 'kind'>;
+export type AutomationSubjectKind = SubjectKindReference<AutomationSubjectV1>;
+
 import { AutomationConversationAdmitInputV1Schema as canonicalAutomationConversationAdmitInputV1Schema, AutomationConversationAdmitResultV1Schema as canonicalAutomationConversationAdmitResultV1Schema, AutomationConversationResultDeliveryV1Schema as canonicalAutomationConversationResultDeliveryV1Schema, AutomationResultDeliveryInputV1JsonSchema as canonicalAutomationResultDeliveryInputV1JsonSchema, AutomationResultDeliveryInputV1Schema as canonicalAutomationResultDeliveryInputV1Schema, AutomationResultDeliveryResultV1JsonSchema as canonicalAutomationResultDeliveryResultV1JsonSchema, AutomationResultDeliveryResultV1Schema as canonicalAutomationResultDeliveryResultV1Schema, AutomationResultDeliverySourceV1JsonSchema as canonicalAutomationResultDeliverySourceV1JsonSchema, AutomationResultDeliverySourceV1Schema as canonicalAutomationResultDeliverySourceV1Schema } from '@happier-dev/protocol/automations/result-delivery';
 import type {
     AutomationIdV1,
