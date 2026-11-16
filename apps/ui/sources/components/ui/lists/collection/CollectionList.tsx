@@ -287,6 +287,13 @@ const collectionListPhonePageHost: HappierCollectionListHost = {
 };
 
 /**
+ * Set by the app shell's column (`AppShellColumn`), the one owner of "this list is the navigation column beside the
+ * page": a list inside it lies on the shell's plane and paints no ground of its own, whichever destination draws it
+ * (owner 2026-11-15, A4: sidebar backgrounds are gone app-wide). A list that names its `surface` keeps it.
+ */
+export const CollectionShellColumnSurfaceContext = React.createContext<'plane' | undefined>(undefined);
+
+/**
  * How many items a list holds before its header offers the search field (`search` is "present only when
  * the list is long enough to need it"). A list whose whole length is not yet known counts as long.
  */
@@ -317,7 +324,9 @@ export const CollectionList = React.memo(function CollectionList(props: Omit<Hap
      */
     create?: PageCreateAction | null;
 }>) {
-    const { surface, toolsInsetPx, phonePage, create, headerAction, children, ...listRest } = props;
+    const { surface: ownSurface, toolsInsetPx, phonePage, create, headerAction, children, ...listRest } = props;
+    const shellColumnSurface = React.useContext(CollectionShellColumnSurfaceContext);
+    const surface = ownSurface ?? shellColumnSurface;
     // The column states its own rows' order, so each draws the one list-row rule (owner 2026-11-15).
     const listProps = { ...listRest, children: orderCollectionColumnRows(children) };
     const largeTitle = useNavigationLeavesLargeTitle();

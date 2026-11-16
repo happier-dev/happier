@@ -45,6 +45,24 @@ describe('navigation row parity between core and the plugin list anatomy', () =>
         expect(readSurfaceStyleProperty(ground('plane-rail').props.style, 'backgroundColor')).toBe('transparent');
     });
 
+    // Owner 2026-11-15 (A4): the Machines column painted the page ground behind itself while every other column lay
+    // on the plane. The shell's column decides it once for whichever list stands in it.
+    it('lays a list standing in the shell column on the plane unless it names its own surface', async () => {
+        const { CollectionShellColumnSurfaceContext } = await import('./CollectionList');
+        let pageColor = '';
+        function Column() {
+            pageColor = useUnistyles().theme.colors.surface.base;
+            return React.createElement(CollectionShellColumnSurfaceContext.Provider, { value: 'plane' },
+                React.createElement(CollectionList, { testID: 'column-list', title: 'Machines' }),
+                React.createElement(CollectionList, { testID: 'named-page', title: 'Credentials', surface: 'page' }));
+        }
+        const screen = await renderScreen(React.createElement(Column));
+        const ground = (testID: string) => screen.findAll(node => typeof node.type === 'string' && node.props.testID === testID)[0]!;
+        expect(readSurfaceStyleProperty(ground('column-list').props.style, 'backgroundColor')).toBe('transparent');
+        expect(readSurfaceStyleProperty(ground('named-page').props.style, 'backgroundColor'))
+            .toBe(glassSurfaceBackgroundColor(pageColor, 'content', true));
+    });
+
     // Owner 2026-11-11 (desktop #13 / OWNER-1334-ROWS 05): the Settings sidebar's selected row painted an opaque
     // brownish chip on glass while hover was translucent. A selected navigation row resolves through the plane's material.
     it('fills a selected navigation row through the containing material, never the raw opaque chip', async () => {
