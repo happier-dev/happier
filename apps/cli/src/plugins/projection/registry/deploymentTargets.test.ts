@@ -15,7 +15,7 @@ it('indexes managed data resource backing Actions and mutations through the same
     const manifest = normalizePluginManifestV2({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Data target',
         entrypoints: { daemon: './daemon.mjs' }, contributes: {
             deploymentTargets: [{ id: 'data', role: 'data', targetKind: 'database', title: 'Data', icon: 'server-outline',
-                targetSchema: closed, linkSchema: closed, dataV1: { projects: {
+                targetSchema: closed, linkSchema: closed, dataV1: { database: { engineId: 'postgresql' }, projects: {
                     list: 'projects', listAction: 'list-projects', provision: 'provision',
                 } } }],
             resources: [{ id: 'projects', source: 'dynamic', scope: 'surface', kind: 'config', contentType: 'application/json' }],
@@ -34,6 +34,11 @@ it('indexes managed data resource backing Actions and mutations through the same
         { id: 'list-projects', roles: [{ targetLocalId: 'data', targetKind: 'database', role: 'projects.list' }] },
         { id: 'provision', roles: [{ targetLocalId: 'data', targetKind: 'database', role: 'projects.provision' }] },
     ]);
+    expect(buildPluginProjectionV2({ registry, generation: 1 }).familiesById).toMatchObject({
+        deploymentTargets: { entriesById: { [`${pluginId}/data`]: {
+            definition: { dataV1: { database: { engineId: 'postgresql' } } },
+        } } },
+    });
 });
 
 it('projects an admitted external runtime target and withdraws it with its supplying occurrence', () => {

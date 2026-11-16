@@ -54,7 +54,7 @@ export const plugin = definePlugin({
   inputTypes: dataInputTypes,
   resources: { ...dataInputResources, 'projects-list-resource': resource('projects-list'), 'provision-options-resource': resource('provision-options'), 'branches-list-resource': resource('branches-list') },
   deploymentTargets: { database: { role: 'data', title: 'Supabase', icon: 'server-outline', targetKind: 'supabase', targetSchema: empty, linkSchema: empty,
-    dataV1: { query: { readOnly: 'query-read' }, projects: { list: 'projects-list-resource', listAction: 'projects-list', provisionOptions: 'provision-options-resource', provisionOptionsAction: 'provision-options', provision: 'projects-provision', link: 'projects-link', delete: 'projects-delete', observe: 'projects-observe' },
+    dataV1: { database: { engineId: 'postgresql' }, query: { readOnly: 'query-read' }, projects: { list: 'projects-list-resource', listAction: 'projects-list', provisionOptions: 'provision-options-resource', provisionOptionsAction: 'provision-options', provision: 'projects-provision', link: 'projects-link', delete: 'projects-delete', observe: 'projects-observe' },
       branches: { list: 'branches-list-resource', listAction: 'branches-list', create: 'branches-create', delete: 'branches-delete',
         previewInput: { name: { kind: 'input', name: 'preview', path: ['name'] },
           gitBranch: { kind: 'input', name: 'preview', path: ['headRef'] }, withData: { kind: 'literal', value: false } } }, connectionSecret: { save: 'connections-save' } },

@@ -85,12 +85,16 @@ export const DeploymentTargetV1Schema: z.ZodMiniType<DeploymentTargetV1> = z.dis
     if (target.role === 'data') {
         if (target.source.kind !== 'plugin') return true;
         const pluginId = target.source.contribution.pluginId;
-        const { branches, ...groups } = target.dataV1 ?? {};
-        const { previewInput: _previewInput, ...branchReferences } = branches ?? {};
-        return [...Object.values(groups).flatMap(group => Object.values(group ?? {})), ...Object.values(branchReferences)].every(ref => !ref
-            || ref.kind === 'plugin' && ('actionId' in ref
-                ? parseQualifiedPluginActionId(ref.actionId)?.pluginId === pluginId
-                : parseQualifiedPluginContributionKey(ref.resourceId)?.pluginId === pluginId));
+        // The shared role grammar has already validated the reference objects.
+        // Engine metadata and preview operands carry no invocation identity.
+        return Object.values(target.dataV1 ?? {}).flatMap(group => Object.values(group ?? {})).every(ref => {
+            if (typeof ref !== 'object' || ref === null) return true;
+            if ('actionId' in ref && typeof ref.actionId === 'string') return 'kind' in ref && ref.kind === 'plugin'
+                && parseQualifiedPluginActionId(ref.actionId)?.pluginId === pluginId;
+            if ('resourceId' in ref && typeof ref.resourceId === 'string') return 'kind' in ref && ref.kind === 'plugin'
+                && parseQualifiedPluginContributionKey(ref.resourceId)?.pluginId === pluginId;
+            return true;
+        });
     }
     const upload = target.actions.uploadDeploy;
     if (!upload) return true;

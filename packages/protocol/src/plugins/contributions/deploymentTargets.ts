@@ -50,6 +50,8 @@ export const DeploymentDataParentBranchRefV1ProtocolSchema = projectZodProtocolS
 /** Optional managed-data capabilities share one grammar across declaration and normalized refs. */
 export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType, TResource extends z.ZodMiniType>(action: TAction, resource: TResource) {
     return z.strictObject({
+        /** Engine association only; selected-target resolution and invocation custody remain host-owned. */
+        database: z.optional(z.strictObject({ engineId: z.string().check(z.minLength(1)) })),
         projects: z.optional(z.strictObject({ list: z.optional(resource), listAction: z.optional(action),
             provisionOptions: z.optional(resource), provisionOptionsAction: z.optional(action),
             provision: z.optional(action), link: z.optional(action), delete: z.optional(action), observe: z.optional(action) })),
@@ -114,7 +116,7 @@ export function isDeploymentTargetRoleReadOnlyV1(role: string): boolean {
 /** One traversal supplies kind-aware reference admission and normalized catalog projection. */
 export function readDeploymentTargetReferenceRolesV1(descriptor: DeploymentTargetContributionV1): readonly DeploymentTargetReferenceRoleV1[] {
     if (descriptor.role === 'data') return Object.entries(descriptor.dataV1 ?? {}).flatMap(([group, value]) => {
-        if (!value) return [];
+        if (!value || group === 'database') return [];
         return Object.entries(value).flatMap(([leaf, reference]) => {
             if (typeof reference !== 'string') return [];
             // A Resource's backing Action spends the same role through the ordinary executor.

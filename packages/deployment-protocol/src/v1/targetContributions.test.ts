@@ -78,6 +78,21 @@ describe('deployment target manifest admission', () => {
         expect(normalized.plans).toEqual(plans);
     });
 
+    it('keeps engine metadata separate from normalized Action and Resource ownership', () => {
+        const source = { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'database' } };
+        const dataV1 = { database: { engineId: 'example-engine' },
+            projects: { list: { kind: 'plugin', resourceId: 'example.deploy/projects/list' } },
+            branches: { previewInput: { kind: { kind: 'literal', value: 'preview' },
+                actionId: { kind: 'literal', value: 'provider-operand' } } },
+            query: { readOnly: { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'example.deploy', localId: 'query/read-only' }) } } };
+        const normalized = { ...dataTarget, v: 1, source, dataV1 };
+        expect(DeploymentTargetV1Schema.safeParse(normalized).success).toBe(true);
+        for (const foreign of [
+            { ...dataV1, projects: { list: { kind: 'plugin', resourceId: 'foreign.plugin/projects/list' } } },
+            { ...dataV1, query: { readOnly: { kind: 'plugin', actionId: formatQualifiedPluginActionId({ pluginId: 'foreign.plugin', localId: 'query/read-only' }) } } },
+        ]) expect(DeploymentTargetV1Schema.safeParse({ ...normalized, dataV1: foreign }).success).toBe(false);
+    });
+
     it('admits read-only exact-resource data project observation for Account and daemon execution', () => {
         for (const execution of [{ target: 'daemon' }, { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activateAccount' } }]) {
             const value = manifest([]);
@@ -162,27 +177,34 @@ describe('deployment target manifest admission', () => {
         } }).targets).toEqual([noCapabilities]);
     });
 
-    it('withdraws data targets with missing or wrong-kind refs and mismatched query effects', () => {
+    it.each([
+        ['a missing branch Action', { ...dataTarget, dataV1: { ...dataTarget.dataV1, branches: { create: 'missing' } } }],
+        ['an Action used as a Resource', { ...dataTarget, dataV1: { ...dataTarget.dataV1, projects: { list: 'query/read-only' } } }],
+        ['a mutation used as a query', { ...dataTarget, dataV1: { ...dataTarget.dataV1, query: { readOnly: 'branches/create' } } }],
+        ['a foreign Resource', { ...dataTarget, dataV1: { ...dataTarget.dataV1, projects: { list: 'foreign.plugin/projects/list' } } }],
+        ['undeclared provider metadata', { ...dataTarget, dataV1: { ...dataTarget.dataV1, provider: { arbitrary: true } } }],
+        ['runtime Actions on a data target', { ...dataTarget, actions: target.actions }],
+    ])('withdraws a data target with %s while retaining its healthy sibling', (_reason, invalid) => {
         const value = dataManifest();
-        for (const invalid of [
-            { ...dataTarget, dataV1: { ...dataTarget.dataV1, branches: { create: 'missing' } } },
-            { ...dataTarget, dataV1: { ...dataTarget.dataV1, projects: { list: 'query/read-only' } } },
-            { ...dataTarget, dataV1: { ...dataTarget.dataV1, query: { readOnly: 'branches/create' } } },
-            { ...dataTarget, dataV1: { ...dataTarget.dataV1, projects: { list: 'foreign.plugin/projects/list' } } },
-            { ...dataTarget, dataV1: { ...dataTarget.dataV1, provider: { arbitrary: true } } },
-            { ...dataTarget, actions: target.actions },
-        ]) {
-            expect(admittedTargets({ ...value, contributes: { ...value.contributes,
-                deploymentTargets: [invalid, target],
-            } }).targets).toEqual([target]);
-        }
+        expect(admittedTargets({ ...value, contributes: { ...value.contributes,
+            deploymentTargets: [invalid, target],
+        } }).targets).toEqual([target]);
+    });
+
+    it('withdraws a data target backed by a packaged Resource', () => {
+        const value = dataManifest();
         const resources = value.contributes.resources.map(resource => resource.id === 'projects/list'
             ? { id: resource.id, source: 'packaged', kind: resource.kind, contentType: resource.contentType, path: 'projects.json' } : resource);
         expect(admittedTargets({ ...value, contributes: { ...value.contributes, resources } }).targets).toEqual([target]);
-        for (const patch of [{ readOnly: false }, { execution: { target: 'client', platforms: ['web'], client: { artifactId: 'client', exportName: 'activate' } } }]) {
-            const actions = value.contributes.actions.map(action => action.id === 'query/read-only' ? { ...action, ...patch } : action);
-            expect(admittedTargets({ ...value, contributes: { ...value.contributes, actions } }).targets).toEqual([target]);
-        }
+    });
+
+    it.each([
+        { reason: 'a write effect', patch: { readOnly: false } },
+        { reason: 'client placement', patch: { execution: { target: 'client', platforms: ['web'], client: { artifactId: 'client', exportName: 'activate' } } } },
+    ])('withdraws a query Action with $reason', ({ patch }) => {
+        const value = dataManifest();
+        const actions = value.contributes.actions.map(action => action.id === 'query/read-only' ? { ...action, ...patch } : action);
+        expect(admittedTargets({ ...value, contributes: { ...value.contributes, actions } }).targets).toEqual([target]);
     });
 
     it('admits declared runtime roles without a provider unlink or absent optional effects', () => {

@@ -43,6 +43,9 @@ function normalizeTarget(entry: DeploymentTargetDeclarationV1): DeploymentTarget
             roles[group] = nested;
         }
     }
+    if (entry.definition.role === 'data' && entry.definition.dataV1?.database !== undefined) {
+        roles.database = entry.definition.dataV1.database;
+    }
     if (entry.definition.role === 'data' && entry.definition.dataV1?.branches?.previewInput !== undefined) {
         const branches = roles.branches ?? {};
         Object.assign(branches, { previewInput: entry.definition.dataV1.branches.previewInput });
@@ -159,8 +162,8 @@ export function projectDeploymentSuggestionTargetsV1(targets: readonly Deploymen
             ...(target.needs === undefined ? {} : { needs: target.needs }),
             ...(target.sources === undefined ? {} : { sources: target.sources }),
         }] : []),
-        // A data-target descriptor does not declare the engine of a saved store. Until its owner supplies that
-        // fact, it is not an executable managed-store choice; self-hosted databases remain catalog apps.
+        // An engine association does not identify a selected saved store.
+        // Linked-store discovery remains with the selected-target owner.
         stores: [],
     };
 }

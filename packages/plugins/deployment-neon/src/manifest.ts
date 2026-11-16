@@ -48,7 +48,7 @@ export const plugin = definePlugin({
     'branches-list-resource': resource('branches-list-read') },
   deploymentTargets: { database: { role: 'data', title: 'Neon', icon: 'server-outline', targetKind: 'neon',
     targetSchema: targetSchema.jsonSchema, linkSchema: targetSchema.jsonSchema,
-    dataV1: { query: { readOnly: 'query-read' }, projects: { list: 'projects-list-resource', listAction: 'projects-list-read', provisionOptions: 'provision-options-resource',
+    dataV1: { database: { engineId: 'postgresql' }, query: { readOnly: 'query-read' }, projects: { list: 'projects-list-resource', listAction: 'projects-list-read', provisionOptions: 'provision-options-resource',
       provisionOptionsAction: 'provision-options-read', provision: 'projects-provision', link: 'projects-link', delete: 'projects-delete', observe: 'projects-observe' },
       branches: { list: 'branches-list-resource', listAction: 'branches-list-read', create: 'branches-create', delete: 'branches-delete',
         previewInput: { name: { kind: 'input', name: 'preview', path: ['name'] },

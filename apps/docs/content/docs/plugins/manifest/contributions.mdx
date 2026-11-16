@@ -286,12 +286,16 @@ deploymentTargets: {
     targetSchema: { type: 'object', properties: {}, additionalProperties: false },
     linkSchema: { type: 'object', properties: {}, additionalProperties: false },
     dataV1: {
+      database: { engineId: 'postgresql' },
       projects: { list: 'projects/list', listAction: 'projects/list-action' },
       query: { readOnly: 'query/read-only' },
     },
   },
 },
 ```
+
+The development SDK preserves `dataV1.database.engineId` as engine association
+metadata. It grants no execution or credential access and is not an Action reference.
 
 This example requires a declared dynamic `projects/list` Resource and declared
 safe, explicitly read-only `projects/list-action` and `query/read-only` Actions

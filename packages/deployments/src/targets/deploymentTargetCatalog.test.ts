@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { OWN_SERVER_DEPLOYMENT_TARGET_V1, OWN_SERVER_DEPLOYMENT_TARGET_SOURCE_V1, projectDeploymentSuggestionTargetsV1, selectDeploymentTargetTeardownAvailableV1, selectDeploymentTargetRemovalChoicesV1 } from './deploymentTargetCatalog.js';
+import { listDeploymentTargetsV1 } from './deploymentTargetCatalog.js';
+
+it('preserves a contributed database engine while qualifying only executable references', () => {
+    const closed = { type: 'object' as const, properties: {}, additionalProperties: false };
+    const targets = listDeploymentTargetsV1([{
+        pluginId: 'com.example.data', identity: { pluginId: 'com.example.data', localId: 'database' },
+        definition: { id: 'database', role: 'data', title: 'Data', icon: 'server-outline', targetKind: 'example',
+            targetSchema: closed, linkSchema: closed,
+            dataV1: { database: { engineId: 'example-engine' }, projects: { list: 'projects' } } },
+    }]);
+    expect(targets.find(target => target.role === 'data')?.dataV1).toEqual({
+        database: { engineId: 'example-engine' },
+        projects: { list: { kind: 'plugin', resourceId: 'com.example.data/projects' } },
+    });
+});
 
 it('carries the host repository source routes into the suggestion catalog', () => {
     const catalog = projectDeploymentSuggestionTargetsV1([OWN_SERVER_DEPLOYMENT_TARGET_V1]);

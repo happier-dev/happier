@@ -2513,8 +2513,12 @@ The CLI projection qualifies declaration-local Action and dynamic Resource
 references through the single Protocol role traversal. The strict `runtime` arm
 retains its required Actions; the strict `data` arm has only optional `dataV1`
 capabilities, with omitted groups/leaves unsupported. Both normalized arms reuse
-the Protocol role factories rather than maintaining a second grammar. The data
-parent branch reference is one strict provider-project/branch native-id pair,
+the Protocol role factories rather than maintaining a second grammar. A data
+target's optional `dataV1.database.engineId` associates it with a database engine.
+This development-source metadata is neither an Action reference nor an invocation
+or credential grant. Neon and Supabase declare `postgresql`; selected-target
+resolution still owns transport selection and custody.
+The parent branch reference is one strict provider-project/branch native-id pair,
 not a branch name or authority grant. Own-server execution admission reads this same
 catalog. A plugin's local target id cannot select the host target. This is
 development-source catalog and admission wiring, not installed runtime/data
