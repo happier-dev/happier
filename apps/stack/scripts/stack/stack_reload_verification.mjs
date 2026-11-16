@@ -36,9 +36,16 @@ function readAgentProbeFailure(phase, envelope) {
  * attach (the same `session create` path QA uses), then stop and archive it
  * through the canonical Session owners. No prompt is sent, so no model turn runs.
  */
-export async function probeStackAgentStart({ rootDir, stackName, runtimeMode, run }) {
+export async function probeStackAgentStart({ rootDir, stackName, runtimeMode, machineId, run }) {
   const cli = (args, kind) => runRetainedRuntimeCli({ rootDir, stackName, args, kind, run, runtimeMode });
-  const created = await cli(['session', 'create', '--title', 'Stack readiness probe'], 'session_create');
+  // The inventory owner composes Machine and connected-account readiness.
+  const inventory = await cli(['actions', 'invoke', 'agents.backends.list', '--input-json',
+    JSON.stringify({ machineId })], 'actions_invoke');
+  if (inventory?.ok !== true) return readAgentProbeFailure('inventory', inventory);
+  const target = inventory.data?.items?.find(item => item.enabled === true && item.readiness === 'ready');
+  if (!target) return readAgentProbeFailure('inventory', { error: { code: 'agent_cli_not_ready' } });
+  const created = await cli(['session', 'create', '--backend', target.targetKey,
+    '--machine-id', machineId, '--title', 'Stack readiness probe'], 'session_create');
   const sessionId = created?.ok === true ? created.data?.session?.id : null;
   if (typeof sessionId !== 'string' || !sessionId) return readAgentProbeFailure('create', created);
   const stopped = await cli(['session', 'stop', sessionId], 'session_stop');
@@ -75,7 +82,7 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
       return { ...verdict, durationMs: Date.now() - startedAt };
     }
     check = 'agent';
-    const agent = await probeStackAgentStart({ rootDir, stackName, runtimeMode });
+    const agent = await probeStackAgentStart({ rootDir, stackName, runtimeMode, machineId: status.data?.machineId });
     // Resolve all non-render failures before acquiring a managed browser.
     const agentVerdict = projectStackReloadVerification({ info, beforeManagedCli, auth, agent });
     if (agentVerdict.status === 'NOT_READY' && agentVerdict.check !== 'render') {

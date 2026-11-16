@@ -145,7 +145,13 @@ function fakeRuntimeCli(replies) {
   const run = async (_cmd, args) => {
     const happierArgs = args.slice(args.indexOf('--') + 1);
     calls.push(happierArgs);
-    const reply = replies[happierArgs.slice(0, 2).join(' ')];
+    const reply = happierArgs[0] === 'actions'
+      ? { ok: true, kind: 'actions_invoke', data: { items: [
+          { targetKey: 'agent:claude', enabled: true, readiness: 'signedOut' },
+          { targetKey: 'agent:codex', enabled: false, readiness: 'ready' },
+          { targetKey: 'agent:pi', enabled: true, readiness: 'ready' },
+        ] } }
+      : replies[happierArgs.slice(0, 2).join(' ')];
     return { ok: reply.ok !== false, out: `preparing runtime\n${JSON.stringify(reply)}\n` };
   };
   return { calls, run };
@@ -158,19 +164,19 @@ test('READY requires one real Agent start; a child that exits before webhook kee
 
   const failing = fakeRuntimeCli({ 'session create': { ok: false, kind: 'session_create',
     error: { code: 'spawn_failed', launchError: { code: 'CHILD_EXITED_BEFORE_WEBHOOK', message: 'private child log' } } } });
-  input.agent = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', run: failing.run });
+  input.agent = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', machineId: 'probe-machine', run: failing.run });
   assert.deepEqual(projectStackReloadVerification(input), { status: 'NOT_READY', check: 'agent',
     evidence: { status: 'failed', phase: 'create', code: 'spawn_failed', launchErrorCode: 'CHILD_EXITED_BEFORE_WEBHOOK' } });
-  assert.equal(failing.calls.length, 1);
+  assert.equal(failing.calls.length, 2);
 
   const working = fakeRuntimeCli({
     'session create': { ok: true, kind: 'session_create', data: { created: true, session: { id: 'probe-1' } } },
     'session stop': { ok: true, kind: 'session_stop', data: { sessionId: 'probe-1', stopped: true } },
     'session archive': { ok: true, kind: 'session_archive', data: { sessionId: 'probe-1' } },
   });
-  input.agent = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', run: working.run });
+  input.agent = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', machineId: 'probe-machine', run: working.run });
   assert.equal(projectStackReloadVerification(input).status, 'READY');
-  assert.deepEqual(working.calls.slice(1).map(args => args.slice(0, 3)),
+  assert.deepEqual(working.calls.slice(2).map(args => args.slice(0, 3)),
     [['session', 'stop', 'probe-1'], ['session', 'archive', 'probe-1']]);
 });
 
@@ -178,12 +184,13 @@ test('a source-snapshot stack runs its probe CLI from the source runtime, not a 
   const wrapperArgs = [];
   const run = async (_cmd, args) => {
     wrapperArgs.push(args.slice(args.indexOf('qa') + 1, args.indexOf('--')));
+    if (args.includes('agents.backends.list')) return { ok: true, out: JSON.stringify({ ok: true, kind: 'actions_invoke', data: { items: [{ targetKey: 'agent:pi', enabled: true, readiness: 'ready' }] } }) };
     const kind = { create: 'session_create', stop: 'session_stop', archive: 'session_archive' }[args[args.indexOf('--') + 2]];
     return { ok: true, out: `${JSON.stringify({ ok: true, kind, data: { session: { id: 'probe-3' } } })}\n` };
   };
-  await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', runtimeMode: 'source-snapshot', run });
+  await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', runtimeMode: 'source-snapshot', machineId: 'probe-machine', run });
   // Bare `--runtime` selects the built runtime snapshot, which a source stack does not have.
-  assert.deepEqual(wrapperArgs, [['--runtime=source'], ['--runtime=source'], ['--runtime=source']]);
+  assert.deepEqual(wrapperArgs, [['--runtime=source'], ['--runtime=source'], ['--runtime=source'], ['--runtime=source']]);
 });
 
 test('a probe Session the stop owner cannot stop keeps the stack NOT_READY', async () => {
@@ -192,7 +199,36 @@ test('a probe Session the stop owner cannot stop keeps the stack NOT_READY', asy
     'session create': { ok: true, kind: 'session_create', data: { created: true, session: { id: 'probe-2' } } },
     'session stop': { ok: false, kind: 'session_stop', error: { code: 'session_stop_failed', message: 'private' } },
   });
-  const agent = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', run: leaking.run });
+  const agent = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', machineId: 'probe-machine', run: leaking.run });
   assert.deepEqual(projectStackReloadVerification({ info, beforeManagedCli: info.runtime.managedCli,
     auth: { authenticated: true }, agent }).evidence, { status: 'failed', phase: 'stop', code: 'session_stop_failed' });
+});
+
+test('readiness probe explicitly starts a ready Agent instead of the signed-out CLI fallback', async () => {
+  const boundary = fakeRuntimeCli({
+    'session create': { ok: true, kind: 'session_create', data: { session: { id: 'probe-selected' } } },
+    'session stop': { ok: true, kind: 'session_stop' },
+    'session archive': { ok: true, kind: 'session_archive' },
+  });
+  assert.deepEqual(await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', machineId: 'probe-machine', run: boundary.run }), { status: 'ready' });
+  assert.deepEqual(boundary.calls[0], ['actions', 'invoke', 'agents.backends.list', '--input-json', JSON.stringify({ machineId: 'probe-machine' }), '--json']);
+  const create = boundary.calls.find(args => args[0] === 'session');
+  assert.equal(create[create.indexOf('--backend') + 1], 'agent:pi');
+  assert.equal(create[create.indexOf('--machine-id') + 1], 'probe-machine');
+});
+
+test('an unavailable inventory or no ready Agent settles without creating a Session', async () => {
+  for (const envelope of [
+    { ok: false, kind: 'actions_invoke', error: { code: 'catalog_unavailable', message: 'private' } },
+    { ok: true, kind: 'actions_invoke', data: { items: [{ targetKey: 'agent:claude', enabled: true, readiness: 'signedOut' }] } },
+    { ok: true, kind: 'actions_invoke', data: { items: [{ targetKey: 'agent:claude', enabled: true }] } },
+  ]) {
+    const calls = [];
+    const result = await probeStackAgentStart({ rootDir: '/repo', stackName: 'qa', machineId: 'probe-machine',
+      run: async (_command, args) => { calls.push(args); return { ok: envelope.ok, out: JSON.stringify(envelope) }; } });
+    assert.equal(result.status, 'failed');
+    assert.equal(result.phase, 'inventory');
+    assert.equal(result.code, envelope.ok ? 'agent_cli_not_ready' : 'catalog_unavailable');
+    assert.equal(calls.length, 1);
+  }
 });
