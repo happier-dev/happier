@@ -89,7 +89,7 @@ it.each(['failed', 'succeeded'] as const)('commits %s C1 through the default CLI
             const request = AutomationEventAdmitHttpRequestV1Schema.parse(body);
             expect(config?.headers).toHaveProperty(PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1);
             expect(request.caller.materialization).toEqual(fixture.caller);
-            return { status: 200, data: { results: [{ kind: 'skipped', reason: 'occurrenceRejected', checkpointSafe: true }],
+            return { status: 200, data: { results: [{ kind: 'observed', checkpointSafe: true }],
                 continuation: { kind: 'ready', accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } } };
         }
         return existingPost(url, body, config);
@@ -142,7 +142,7 @@ it('adopts a first direct admission before committing its platform item', async 
         resolveAdoptedDefinitionSet: (_caller, _occurrence, transport) => transport.kind === 'checkpointedPull' ? owner : null,
         resolveAccountId: async () => 'owner', revalidateCallerMaterialization: async () => true, revalidateCallerOccurrence: async () => true,
         onCommittedObservation: async input => { await consume(input); },
-        transport: { execute: async () => ({ results: [{ kind: 'skipped', reason: 'occurrenceRejected', checkpointSafe: true }],
+        transport: { execute: async () => ({ results: [{ kind: 'observed', checkpointSafe: true }],
             continuation: { kind: 'ready', accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } }) },
     });
     expect(await execute({ actionId: 'automation.event.admit', input: fixture.observation('failed', 100), signal: abort.signal,
@@ -183,7 +183,7 @@ it.each(['production', 'nonProduction'] as const)('commits one %s generic failur
                 const input = AutomationEventAdmitInputV1Schema.parse(request.input);
                 admissions += 1;
                 // The server's observation-only result intentionally creates no Workflow run.
-                return { results: input.definitions.map(() => ({ kind: 'skipped', reason: 'occurrenceRejected', checkpointSafe: true })),
+                return { results: input.definitions.map(() => ({ kind: 'observed', checkpointSafe: true })),
                     continuation: { kind: 'ready', accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } };
             } },
         });
