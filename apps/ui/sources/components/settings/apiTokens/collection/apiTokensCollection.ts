@@ -9,12 +9,12 @@ export const API_TOKENS_COLLECTION_ROOT = SETTINGS_ROUTES.apiTokens;
 /** Settings → Embeds' detail for an embed-backed token (plan 04 §4.10): the one place it is managed. */
 export const apiTokenEmbedDetailPath = embedDetailPath;
 
-export function apiTokenDetailPath(tokenId: string): string {
+export function apiTokenDetailPath(tokenId: string): `${typeof API_TOKENS_COLLECTION_ROOT}/${string}` {
     return `${API_TOKENS_COLLECTION_ROOT}/${encodeURIComponent(tokenId)}`;
 }
 
 /** Where a token's row leads: its detail here, or its embed when an embed owns it. */
-export function apiTokenRowHref(token: Pick<AccountApiTokenSummaryV1, 'tokenId' | 'embedConfig'>): string {
+export function apiTokenRowHref(token: Pick<AccountApiTokenSummaryV1, 'tokenId' | 'embedConfig'>): ReturnType<typeof apiTokenDetailPath> | ReturnType<typeof apiTokenEmbedDetailPath> {
     return token.embedConfig !== null ? apiTokenEmbedDetailPath(token.tokenId) : apiTokenDetailPath(token.tokenId);
 }
 

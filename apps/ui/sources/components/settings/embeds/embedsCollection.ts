@@ -17,7 +17,7 @@ export function isEmbedToken(token: Pick<AccountApiTokenSummaryV1, 'embedConfig'
     return token.embedConfig !== null && token.parentTokenId === null;
 }
 
-export function embedDetailPath(tokenId: string): string {
+export function embedDetailPath(tokenId: string): `${typeof EMBEDS_COLLECTION_ROOT}/${string}` {
     return `${EMBEDS_COLLECTION_ROOT}/${encodeURIComponent(tokenId)}`;
 }
 

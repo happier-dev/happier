@@ -184,7 +184,7 @@ const ApiTokensListPage = React.memo(function ApiTokensListPage(props: Readonly<
     const revokeAll = operations.revokeAll;
     const openCreate = operations.create;
     const openToken = React.useCallback((token: ApiTokenSettingsToken) => {
-        const result = runGuardedNavigation(() => router.push(apiTokenRowHref(token) as never));
+        const result = runGuardedNavigation(() => router.push(apiTokenRowHref(token)));
         if (result !== true) fireAndForget(result, { tag: 'ApiTokensSettingsScreen.openToken' });
     }, [router]);
 

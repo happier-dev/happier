@@ -38,7 +38,7 @@ export const ApiTokensCollectionRail = React.memo(function ApiTokensCollectionRa
     const open = React.useCallback((token: ApiTokenSettingsToken) => {
         const href = apiTokenRowHref(token);
         // Switching tokens replaces the open detail; an embed opens in its own collection.
-        const result = runGuardedNavigation(() => (token.embedConfig !== null ? router.push(href as never) : router.replace(href as never)));
+        const result = runGuardedNavigation(() => (token.embedConfig !== null ? router.push(href) : router.replace(href)));
         if (result !== true) fireAndForget(result, { tag: 'ApiTokensCollectionRail.open' });
     }, [router]);
 

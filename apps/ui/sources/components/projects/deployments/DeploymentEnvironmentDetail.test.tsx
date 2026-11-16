@@ -1031,7 +1031,7 @@ describe('Project deployments page', () => {
     const controller = createDeploymentReadControllerV1({ scope, transport: { ...createDeploymentReadTransport(context.accountLifetime),
       listDomains: async () => ({ ok: true as const, value: { items: [], nextCursor: null } }) } });
     const actions = createDeploymentActions(context.accountLifetime, scope.projectSourceId);
-    const teardown = vi.fn(async () => ({ ok: true as const, environmentId: detail.environment.id,
+    const teardown = vi.fn(async (_input: Parameters<typeof actions.teardown>[0]) => ({ ok: true as const, environmentId: detail.environment.id,
       revision: detail.environment.revision, deploymentId: 'provider-teardown', deploymentRevision: 1, state: 'queued' as const }));
     const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
       environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}

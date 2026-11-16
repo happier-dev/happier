@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { projectDeploymentReceiptFactsV1 } from '@happier-dev/deployments';
+import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
@@ -27,7 +28,7 @@ const { DeploymentStepLogs } = await import('./DeploymentStepLogs');
 
 describe('Deployment step logs on a platform receipt (TYPES-ODEPLOY TS18047)', () => {
   it('shows the platform deploy log beside a step that recorded no stage log, without a Machine', async () => {
-    const receipt = createDeploymentReceiptDetailV1();
+    const receipt: DeploymentReceiptDetailV1 = createDeploymentReceiptDetailV1();
     receipt.content.ownServer = undefined;
     receipt.content.platform = {
       targetLinkRevision: 1,
