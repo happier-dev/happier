@@ -852,7 +852,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `agents.models.list`
 
-**List agent models** — List available models for an agent backend. With purpose "llm_task_runner" and a task (memory_hints, scm_commit_message, scm_diff_summary, session_replay_summary), report which Agent and model that background task runs on the machine: the stored choice when one is set, otherwise what Auto picks among the ready Agents, or why nothing is ready. Omit serverId; the authenticated host binds the Home.
+**List agent models** — List available models for an agent backend. With purpose "llm_task_runner" and a task (memory_hints, deploy_suggestion, scm_commit_message, scm_diff_summary, session_replay_summary), report which Agent and model that background task runs on the machine: the stored choice when one is set, otherwise what Auto picks among the ready Agents, or why nothing is ready. Omit serverId; the authenticated host binds the Home.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -6109,6 +6109,35 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `targetLinkId` (text, required): Target Link Id
 - `expectedTargetLinkRevision` (integer, required): Expected Target Link Revision
 - `restoreBackupId` (text): Restore Backup Id
+
+## `deployments.suggestions.catalog`
+
+**Read app setup catalog** — Read one compact snapshot of current starters, catalog apps, deployment targets, connected accounts and Machines. Reuse it while answering questions; read again after connecting an account.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+No field hints are published. Use the typed input accepted by `execute`.
+
+## `deployments.suggestions.check`
+
+**Check app setup suggestions** — Validate suggested setups against the exact catalog snapshot already read. Returns surviving recommendations and drop reasons without any fresh reads. Present actionable setup cards from this result.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `catalog` (json, required): Held catalog snapshot
+- `suggestion` (json, required): Suggested setups
 
 ## `deployments.targets.link`
 
@@ -14455,6 +14484,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `destinationParentPath` (text, required): Parent folder
 - `destinationDirectoryName` (text, required): Folder name
 - `repository` (json, required): New repository
+- `starterSourceId` (text): Starter Source Id
 - `resume` (json): Resume
 
 ## `projects.trust.list`
