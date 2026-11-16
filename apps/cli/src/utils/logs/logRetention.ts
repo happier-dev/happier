@@ -101,6 +101,7 @@ export function createLogRetentionOwner(input: Readonly<{
   additionalRoots?: () => readonly string[];
   env?: EnvLike;
   onError(error: unknown): void;
+  daemonDatabases?: Pick<import('@/plugins/runtime/context/daemonDatabase').StablePluginDaemonDatabaseHost, 'runRetention'>;
 }>) {
   return {
     async run(days: number | null, nowMs: number, operation: Readonly<{ beforeEffect?: () => Promise<void> }> = {}): Promise<LogRetentionPassResult> {
@@ -152,6 +153,13 @@ export function createLogRetentionOwner(input: Readonly<{
         }
       }
       for (const root of [...storageLogRoots(input.happyHomeDir), ...(input.additionalRoots?.() ?? [])]) await visit(root);
+      if (!stopped && input.daemonDatabases) {
+        try {
+          const pass = await input.daemonDatabases.runRetention(days, nowMs, operation);
+          result.pruned += pass.pruned;
+          if (pass.nextDueAtMs !== null) result.nextDueAtMs = Math.min(result.nextDueAtMs ?? Infinity, pass.nextDueAtMs);
+        } catch (error) { input.onError(error); }
+      }
       return result;
     },
   };

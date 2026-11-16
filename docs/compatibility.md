@@ -9116,6 +9116,16 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 daemon-database declarations accept optional
+`retention: [{ table, timeColumn }]` through the existing closed manifest family
+and `definePlugin` projection. Omitted retention preserves existing declarations.
+The declared epoch-millisecond rows consume the Machine's `logRetentionDays` at
+the existing maintenance owner; no database format, migration identity, runtime
+ABI epoch or separate policy changes. A preceding strict development reader
+rejects the new field, so declarations using it require matching development
+Protocol, SDK and daemon readers; there is no mixed-development adapter.
+
+
 Unreleased 0.3 member SCM Actions admit the native owner's existing pre-operation
 refusal (`success: false`, `BACKEND_UNAVAILABLE`, `actionErrorCode`) separately
 from repository results. This closed diagnostic response cannot establish success

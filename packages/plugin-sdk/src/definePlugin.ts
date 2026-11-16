@@ -697,6 +697,8 @@ export type PluginComposerDefinition = Readonly<{
 export type PluginDaemonDatabaseDefinition = Readonly<{
     migrations?: readonly DaemonDatabaseMigration[];
     incumbentQueryFixture: DaemonDatabaseIncumbentQueryFixture;
+    /** Machine log retention; table timestamps are epoch milliseconds. */
+    retention?: readonly NonNullable<PluginDaemonDatabaseDeclaration['retention']>[number][];
 }>;
 
 /**
@@ -1614,6 +1616,7 @@ const normalizeDaemonDatabaseDefinition:
     (value: unknown, localId: string) => Readonly<{
         migrations: readonly DaemonDatabaseMigration[];
         incumbentQueryFixture: DaemonDatabaseIncumbentQueryFixture;
+        retention?: readonly NonNullable<PluginDaemonDatabaseDeclaration['retention']>[number][];
     }> = normalizeSharedDaemonDatabaseDefinition<
         DaemonDatabaseMigration['up'],
         DaemonDatabaseIncumbentQueryFixture['run']
@@ -1667,6 +1670,7 @@ function projectDaemonDatabaseDeclarations(
                 id: migration.id,
             }))),
             incumbentQueryFixtureId: definition.incumbentQueryFixture.id,
+            ...(definition.retention === undefined ? {} : { retention: definition.retention }),
         });
     });
     return { daemonDatabases: Object.freeze(declarations) } as DefinePluginFamilyProjection;

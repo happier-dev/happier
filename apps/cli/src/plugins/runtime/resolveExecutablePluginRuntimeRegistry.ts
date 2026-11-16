@@ -6782,6 +6782,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         readDaemonDatabaseCapability(pluginId) {
             return daemonDatabaseHost.readCapability(pluginId);
         },
+        runDaemonDatabaseRetention: (days, nowMs, operation) => daemonDatabaseHost.runRetention(days, nowMs, operation),
         connectedAccountContributions,
         resolveConnectedAccountRuntime: connectedAccountContributions.resolve,
         resolveAccountConnectedAccountRuntime: connectedAccountContributions.resolveAccount,

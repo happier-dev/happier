@@ -12,6 +12,12 @@ export const PluginDaemonDatabaseMigrationDeclarationV1Schema = lazyZodSchema(()
 export type PluginDaemonDatabaseMigrationDeclarationV1 =
   z.infer<typeof PluginDaemonDatabaseMigrationDeclarationV1Schema>;
 
+/** Epoch-millisecond rows governed by MachineStoragePolicyV1.logRetentionDays. */
+export const PluginDaemonDatabaseRetentionDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
+  table: z.string().check(z.minLength(1)),
+  timeColumn: z.string().check(z.minLength(1)),
+}));
+
 /**
  * Static manifest declaration for one plugin-local daemon database.
  *
@@ -22,6 +28,7 @@ export const PluginDaemonDatabaseContributionV1Schema = lazyZodSchema(() => z.st
   id: asProtocolZod(PluginContributionLocalIdSchema),
   migrations: z.array(PluginDaemonDatabaseMigrationDeclarationV1Schema),
   incumbentQueryFixtureId: asProtocolZod(PluginContributionLocalIdSchema),
+  retention: z.optional(z.array(PluginDaemonDatabaseRetentionDeclarationV1Schema)),
 }).check(z.superRefine((value, context) => {
   const migrationIds = new Set<string>();
   let previousVersion = 0;

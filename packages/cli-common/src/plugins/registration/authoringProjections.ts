@@ -1,3 +1,5 @@
+import { PluginDaemonDatabaseRetentionDeclarationV1Schema } from '@happier-dev/protocol/plugins/contributions/daemonDatabases';
+
 type RuntimeCallback = (...args: never[]) => unknown;
 
 type NormalizedPluginDaemonDatabaseDefinition<TUp extends RuntimeCallback, TRun extends RuntimeCallback> =
@@ -18,7 +20,7 @@ function assertDaemonDatabaseDefinitionKeys(
     localId: string,
 ): void {
     const unknownKeys = Object.keys(value).filter((key) => (
-        key !== 'migrations' && key !== 'incumbentQueryFixture'
+        key !== 'migrations' && key !== 'incumbentQueryFixture' && key !== 'retention'
     ));
     if (unknownKeys.length > 0) {
         throw new TypeError(
@@ -85,8 +87,17 @@ export function normalizeDaemonDatabaseDefinition<TUp extends RuntimeCallback = 
     if (typeof fixture.run !== 'function') {
         throw new TypeError(`Daemon database '${localId}' incumbent query fixture must provide a run callback`);
     }
+    const retention = definition.retention;
+    if (retention !== undefined && !Array.isArray(retention)) {
+        throw new TypeError(`Daemon database '${localId}' retention must be an array`);
+    }
     return Object.freeze({
         migrations: Object.freeze(migrations),
+        ...(retention === undefined ? {} : {
+            retention: Object.freeze(retention.map(entry => (
+                Object.freeze(PluginDaemonDatabaseRetentionDeclarationV1Schema.parse(entry))
+            ))),
+        }),
         incumbentQueryFixture: Object.freeze({
             id: fixture.id,
             run: fixture.run as TRun,

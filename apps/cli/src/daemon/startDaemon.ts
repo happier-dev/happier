@@ -3311,6 +3311,14 @@ export async function startDaemon(
             subscribePower: storageVitals.subscribePower,
             logs: createLogRetentionOwner({ happyHomeDir: home,
               currentLogPaths: async () => [logger.logFilePath, ...await readManagedServiceCurrentLogPaths()],
+              daemonDatabases: { async runRetention(days, nowMs, operation) {
+                const lease = pluginReloadController.tryAcquireRuntimeRegistry();
+                if (!lease) return { pruned: 0, nextDueAtMs: null };
+                try {
+                  return await lease.registry.runDaemonDatabaseRetention?.(days, nowMs, operation)
+                    ?? { pruned: 0, nextDueAtMs: null };
+                } finally { await lease.release(); }
+              } },
               onError: error => logger.warn('[DAEMON RUN] Storage log retention failed', error) }),
             recordings: {
               nextExpiryAtMs: () => recordingStorage.nextExpiryAtMs(),

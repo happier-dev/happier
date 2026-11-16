@@ -1650,6 +1650,7 @@ describe('definePlugin', () => {
             id: 'index',
             migrations: [{ version: 1, id: 'create-index' }],
             incumbentQueryFixtureId: 'current-index-readable',
+            retention: [{ table: 'records', timeColumn: 'at' }],
         } as const satisfies PluginDaemonDatabaseDeclaration;
         const migration: DaemonDatabaseMigration = {
             version: 1,
@@ -1667,6 +1668,7 @@ describe('definePlugin', () => {
                 index: {
                     migrations: [migration],
                     incumbentQueryFixture,
+                    retention: [{ table: 'records', timeColumn: 'at' }],
                 },
             },
         });
@@ -1683,6 +1685,7 @@ describe('definePlugin', () => {
             index: {
                 migrations: [migration],
                 incumbentQueryFixture,
+                retention: [{ table: 'records', timeColumn: 'at' }],
             },
         });
 

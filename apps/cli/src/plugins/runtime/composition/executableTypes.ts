@@ -30,7 +30,7 @@ import type { ClientContributedActionExecutor } from '../invocation/actions/exec
 import type { CurrentGlobalExternalSessionsRouter } from '@/session/external/currentGlobalRouting';
 import type { createTargetActionInvocationRegistry } from '../invocation/targetActionRegistry';
 import type { CliActionMachineAdmissionTransport } from '@/session/actions/createCliActionExecutorFromCredentials';
-import type { PluginDaemonDatabaseCapability, PluginDaemonDatabasePreparedContract, PluginDaemonDatabaseQuiescence } from '../context/daemonDatabase';
+import type { PluginDaemonDatabaseCapability, PluginDaemonDatabasePreparedContract, PluginDaemonDatabaseQuiescence, StablePluginDaemonDatabaseHost } from '../context/daemonDatabase';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import type { StablePluginConnectedAccountsOwner } from '../invocation/services/connectedAccounts';
 import type { StablePluginNotificationsOwner } from '../invocation/services/notifications';
@@ -386,6 +386,8 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     ): readonly PluginDaemonDatabasePreparedContract[];
     /** Capability/diagnostic view of the injected measured database policy. */
     readDaemonDatabaseCapability?(pluginId: string): PluginDaemonDatabaseCapability;
+    /** Called only by the daemon's existing Machine-policy maintenance pass. */
+    runDaemonDatabaseRetention?: StablePluginDaemonDatabaseHost['runRetention'];
     connectedAccountContributions?: ReturnType<typeof createConnectedAccountContributionRegistry>;
     resolveConnectedAccountRuntime?(ref: PluginContributionRef): Promise<ConnectedAccountRuntimeLease | ConnectedAccountPortableRuntimeLease | null>;
     resolveAccountConnectedAccountRuntime?(ref: PluginContributionRef): Promise<ConnectedAccountPortableRuntimeLease | null>;

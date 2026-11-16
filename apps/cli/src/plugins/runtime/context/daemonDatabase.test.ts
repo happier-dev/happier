@@ -16,6 +16,7 @@ import {
     type DaemonDatabaseWorkerAllRequestOptions,
 } from './daemonDatabaseWorker';
 import { createStablePluginStorageService } from './storage';
+import { createLogRetentionOwner } from '@/utils/logs/logRetention';
 
 const observedWorkerResponses = vi.hoisted((): unknown[] => []);
 
@@ -91,6 +92,59 @@ function observedRowsResponseCount(): number {
 }
 
 describe('plugin daemon database owner', () => {
+    it('expires declared telemetry in bounded chunks only on the existing log-retention pass', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const limits = {
+            maximumDatabaseBytes: 1_048_576, maximumInputBytes: 16_384,
+            maximumResultBytes: 16_384, maximumResultRows: 100,
+            maximumAffectedRows: 1_000, maximumElapsedMs: 5_000,
+        } as const;
+        const host = createStablePluginDaemonDatabaseHost({
+            paths: resolvePluginStorePaths({ happyHomeDir }),
+            daemonDatabaseLimits: { protocolMaximumDatabaseBytes: limits.maximumDatabaseBytes, resolvePluginLimits: () => limits },
+        });
+        const runtime = {
+            main: {
+                migrations: [{ version: 1, id: 'create-observations', up: async (tx: import('@happier-dev/plugin-sdk/storage').DaemonDatabaseMigrationTransaction) => {
+                    await tx.execute('CREATE TABLE observations (at INTEGER NOT NULL, value TEXT NOT NULL)');
+                    await tx.execute('CREATE TABLE unrelated (value TEXT NOT NULL)');
+                    await tx.execute("INSERT INTO unrelated VALUES ('keep')");
+                } }],
+                incumbentQueryFixture: { id: 'read-observations', run: async () => undefined },
+            },
+        };
+        const controller = new AbortController();
+        const errors: unknown[] = [];
+        try {
+            await host.prepare({ pluginId: 'acme.capture', occurrenceId: '1', signal: controller.signal,
+                isOccurrenceCurrent: () => true, runtime,
+                declarations: [{ id: 'main', migrations: [{ version: 1, id: 'create-observations' }],
+                    incumbentQueryFixtureId: 'read-observations', retention: [{ table: 'observations', timeColumn: 'at' }] }],
+            });
+            const database = await host.bind({ pluginId: 'acme.capture', occurrenceId: '1', signal: controller.signal,
+                isOccurrenceCurrent: () => true }).database('main', runtime.main);
+            // Cross the owner's 1000 affected-row boundary: one unbounded DELETE rolls back.
+            await database.execute("WITH RECURSIVE batch(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM batch WHERE n < 1000) INSERT INTO observations SELECT 0, 'old' FROM batch");
+            await database.execute("INSERT INTO observations VALUES (0, 'old'), (86400000, 'recent')");
+            const count = async () => (await database.query('SELECT COUNT(*) AS count FROM observations'))[0]?.count;
+            expect(await count()).toBe(1002);
+            const retention = createLogRetentionOwner({ happyHomeDir, currentLogPaths: () => [],
+                daemonDatabases: host, onError: error => errors.push(error) });
+            expect(await retention.run(null, 86400000)).toMatchObject({ pruned: 0, nextDueAtMs: null });
+            expect(await count()).toBe(1002);
+            expect(await retention.run(1, 86400000)).toMatchObject({ pruned: 1001, nextDueAtMs: 172800000 });
+            expect(await count()).toBe(1);
+            expect(await database.query('SELECT value FROM unrelated')).toEqual([{ value: 'keep' }]);
+            // Recording has stopped; the host's retained database remains eligible.
+            expect(await retention.run(1, 172800000)).toMatchObject({ pruned: 1, nextDueAtMs: null });
+            expect(await count()).toBe(0);
+            expect(errors).toEqual([]);
+        } finally {
+            await host.close();
+            await rm(happyHomeDir, { recursive: true, force: true });
+        }
+    });
+
     it('stops at row and encoded-byte result overages before evaluating later SQLite rows', async () => {
         const happyHomeDir = await makeHappyHome();
         const worker = createDaemonDatabaseWorkerClient(join(happyHomeDir, 'bounded-results.sqlite'));

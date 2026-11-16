@@ -2876,6 +2876,18 @@ including `backgroundServices` itself and UI. Availability reports the bindings
 actually supplied; a missing binding yields a typed unavailable service. This is
 process placement for trusted plugin code, not a sandbox.
 
+In 0.3 development, a `daemonDatabases` declaration may include
+`retention: [{ table, timeColumn }]`. The declared ordinary SQLite tables retain
+their unshadowed `rowid`; each time column stores epoch milliseconds. The existing
+Machine storage-maintenance log pass applies `logRetentionDays` to those rows,
+deletes within the database owner's affected-row bound, and supplies the next
+expiry to the existing maintenance timer. Null retention keeps rows indefinitely.
+Ingest and Resource publication do not request maintenance or arm a timer; the
+existing policy, volume and idle edges discover newly retained data. Stopping a
+recording does not remove its declared database from retention. The native log
+byte budget applies only to native logs; plugin databases keep their existing
+database quota.
+
 Consumed Agent reader operations bind the available subset of that same service
 set through the ordinary invocation owner. An Agent manifest can also require
 interactive runtime services, such as terminal control; those unrelated

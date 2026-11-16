@@ -34,6 +34,7 @@ import {
     type DaemonDatabaseWorkerRequestOptions,
 } from './daemonDatabaseWorker';
 import { normalizePluginStorageNamespace } from './pluginNamespace';
+import { runDatabaseRetention, type DaemonDatabaseRetentionOperation, type DaemonDatabaseRetentionPassResult } from './databaseRetention';
 
 type DatabaseValue = DaemonDatabaseValue;
 type DatabaseRow = DaemonDatabaseRow;
@@ -84,6 +85,7 @@ type DatabaseHandle = DaemonDatabase;
 export type PluginDaemonDatabaseOwner = Readonly<{
     /** The private producer that the public storage facade binds into `storage.daemon`. */
     storage: DatabaseStorageScope;
+    runRetention(days: number | null, nowMs: number, operation?: DaemonDatabaseRetentionOperation): Promise<DaemonDatabaseRetentionPassResult>;
     /** Candidate lifecycle consumes this exact generation-owned fixture registry after adoption. */
     readPreparedContracts: () => readonly PreparedDatabaseContract[];
     /** Candidate preparation closes incumbent SQLite handles without retiring its generation. */
@@ -1572,6 +1574,12 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
         }));
     };
 
+    const publicHandle = (entry: DatabaseEntry): DatabaseHandle => createPublicDatabaseHandle({
+        entry, limits, readAggregateBytes, assertQuota,
+        ownerSignal: params.signal,
+        isOccurrenceCurrent: params.isOccurrenceCurrent,
+        assertOwnerUsable: () => assertOwnerUsable(),
+    });
     const storage: DatabaseStorageScope = Object.freeze({
         database: async (name: string, options: DatabaseOpenOptions): Promise<DaemonDatabase> => {
             assertOwnerUsable(options.signal);
@@ -1599,15 +1607,7 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
             }
             await entry.initialized;
             assertOwnerUsable(options.signal);
-            return createPublicDatabaseHandle({
-                entry,
-                limits,
-                readAggregateBytes,
-                assertQuota,
-                ownerSignal: params.signal,
-                isOccurrenceCurrent: params.isOccurrenceCurrent,
-                assertOwnerUsable: () => assertOwnerUsable(),
-            });
+            return publicHandle(entry);
         },
     });
 
@@ -1630,6 +1630,21 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
 
     return Object.freeze({
         storage,
+        async runRetention(days, nowMs, operation = {}): Promise<DaemonDatabaseRetentionPassResult> {
+            const result = { pruned: 0, nextDueAtMs: null as number | null };
+            if (days === null) return result;
+            for (const declaration of declarations) {
+                if (!declaration.retention?.length) continue;
+                const entry = entries.get(declaration.id);
+                if (!entry) continue;
+                await entry.initialized;
+                const pass = await runDatabaseRetention({ database: publicHandle(entry), retention: declaration.retention,
+                    days, nowMs, maximumAffectedRows: limits.maximumAffectedRows, operation });
+                result.pruned += pass.pruned;
+                if (pass.nextDueAtMs !== null) result.nextDueAtMs = Math.min(result.nextDueAtMs ?? Infinity, pass.nextDueAtMs);
+            }
+            return result;
+        },
         readPreparedContracts: () => Object.freeze([...preparedContracts.values()].sort((left, right) => (
             left.id.localeCompare(right.id)
         ))),
@@ -1695,6 +1710,7 @@ export type PluginDaemonDatabaseCapability = Readonly<
 >;
 
 export type StablePluginDaemonDatabaseHost = Readonly<{
+    runRetention(days: number | null, nowMs: number, operation?: DaemonDatabaseRetentionOperation): Promise<DaemonDatabaseRetentionPassResult>;
     /**
      * Candidate bootstrap performs migration/fixture proof before it exposes
      * any generation-owned owner through invocation storage.
@@ -1963,6 +1979,17 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
     };
 
     return Object.freeze({
+        async runRetention(days, nowMs, operation = {}): Promise<DaemonDatabaseRetentionPassResult> {
+            const result = { pruned: 0, nextDueAtMs: null as number | null };
+            if (days === null || closed) return result;
+            for (const [pluginId, prepared] of preparedByPluginId) {
+                if (quiescedByPluginId.has(pluginId)) continue;
+                const pass = await prepared.owner.runRetention(days, nowMs, operation);
+                result.pruned += pass.pruned;
+                if (pass.nextDueAtMs !== null) result.nextDueAtMs = Math.min(result.nextDueAtMs ?? Infinity, pass.nextDueAtMs);
+            }
+            return result;
+        },
         async prepare(input): Promise<void> {
             if (closed) fail('daemon_database_closed', 'Plugin daemon database host is closed');
             if (retiredPluginIds.has(input.pluginId)) {

@@ -69,6 +69,15 @@ describe('daemon database manifest declarations', () => {
       });
   });
 
+  it('preserves declarative Machine-policy retention without introducing a plugin policy', () => {
+    const declaration = { ...declaredDatabase, retention: [{ table: 'observations', timeColumn: 'at' }] };
+    expect(PluginContributesV2Schema.parse({ daemonDatabases: [declaration] }).daemonDatabases)
+      .toEqual([declaration]);
+    expect(() => PluginDaemonDatabaseContributionV1Schema.parse({
+      ...declaredDatabase, retention: [{ table: 'observations', timeColumn: 'at', days: 7 }],
+    })).toThrow();
+  });
+
   it('rejects a runtime callback and any changed migration identity or order', () => {
     expect(() => PluginDaemonDatabaseContributionV1Schema.parse({
       ...declaredDatabase,
