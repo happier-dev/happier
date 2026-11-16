@@ -14,7 +14,7 @@ import {
     updateWorkflowTrigger,
 } from '@/sync/domains/workflows/workflowTriggerActions';
 
-import { formatTriggerSetSummary } from './formatTriggerSummary';
+import { formatTriggerSetSentence } from './formatTriggerSummary';
 import {
     EMPTY_WORKFLOW_TRIGGER_DRAFT,
     WorkflowTriggerSnapshotRestoreError,
@@ -201,7 +201,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     const summary = React.useMemo(
         () => {
             const rows = projectWorkflowTriggerRows(set, draft);
-            return rows.length > 0 || status === 'ready' ? formatTriggerSetSummary(rows.map((row) => ({ ...row.trigger, enabled: row.enabled })))
+            return rows.length > 0 || status === 'ready' ? formatTriggerSetSentence(rows.map((row) => row.trigger))
                 : status === 'failed' ? t('workflows.triggers.section.loadFailed') : t('common.loading');
         },
         [draft, set, status],

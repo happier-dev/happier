@@ -1,5 +1,6 @@
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
+import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
 export type EligibleEventPresentation = Readonly<{ title: string; description: string | null }>;
@@ -19,4 +20,14 @@ export function readEligibleEventPresentation(
         title: localized ? localize(pluginId, localized.title) : event.title,
         description: localized?.description ? localize(pluginId, localized.description) : event.description,
     };
+}
+
+/** The name a catalog Event's plugin goes by: its installed package's name, else its projection title, else its id. */
+export function readEligibleEventPluginName(
+    inputs: Pick<DaemonMergedProjectionInputs, 'pluginProjectionById' | 'pluginProjectionV2'> | null | undefined,
+    pluginId: string,
+): string {
+    const candidate = inputs?.pluginProjectionV2?.installedPackagesById[pluginId] ?? null;
+    const installed = candidate?.id === pluginId ? candidate : null;
+    return installed?.displayName ?? inputs?.pluginProjectionById[pluginId]?.title ?? pluginId;
 }

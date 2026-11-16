@@ -14,7 +14,7 @@ export type TriggerEventGroup = Readonly<{
 }>;
 
 /** I4-W §Handoff glyphs: turn end, session start and archive; the attention event uses the hand. */
-const LIFECYCLE_GLYPHS = {
+export const TRIGGER_LIFECYCLE_GLYPHS = {
     turnEnds: 'arrows-clockwise',
     needsYou: 'hand',
     sessionStarts: 'play',
@@ -26,7 +26,7 @@ export function resolveTriggerEventGroup(trigger: TriggerSummarySource): Trigger
     switch (trigger.kind) {
         case 'sessionLifecycle': {
             const kind = readSessionLifecycleKind(trigger.events);
-            return { id: `lifecycle:${kind}`, glyph: LIFECYCLE_GLYPHS[kind], title };
+            return { id: `lifecycle:${kind}`, glyph: TRIGGER_LIFECYCLE_GLYPHS[kind], title };
         }
         case 'schedule':
             return { id: `schedule:${title}`, glyph: 'clock', title };

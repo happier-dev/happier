@@ -17,7 +17,7 @@ import { t } from '@/text';
  */
 
 export type WorkflowBlockAction = Readonly<{
-    id: 'duplicate' | 'addBranch' | 'addOtherwise' | 'moveUp' | 'moveDown' | 'moveIn' | 'moveOut' | 'remove';
+    id: 'duplicate' | 'addBranch' | 'addOtherwise' | 'moveUp' | 'moveDown' | 'moveIn' | 'moveOut' | 'history' | 'remove';
     label: string;
     destructive?: boolean;
     onSelect: () => void;

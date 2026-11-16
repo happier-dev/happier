@@ -41,8 +41,10 @@ export type TriggerWhenValue =
         sourceSessionId?: string;
         /** "When this turn finishes…" (04 §5.5): bound to that exact turn, it fires once for it. */
         sourceTurnId?: string;
+        /** Next matching event only, using the existing firstMatch policy. */
+        nextTimeOnly?: true;
     }>
-    | Readonly<{ kind: 'needsYou' | 'sessionArchived' | 'sessionStarts'; sourceSessionId?: string }>
+    | Readonly<{ kind: 'needsYou' | 'sessionArchived' | 'sessionStarts'; sourceSessionId?: string; nextTimeOnly?: true }>
     /**
      * A simple schedule, a cron kept as written, or an interval ("Every hour", `everyMs`) kept as it
      * was saved until the person picks a simple schedule instead.
@@ -200,7 +202,7 @@ export function buildTriggerDefinition(params: Readonly<{
         events: [...LIFECYCLE_EVENTS[when.kind]],
         policy: when.kind === 'turnEnds' && when.sourceTurnId !== undefined
             ? { kind: 'currentTurn', sourceTurnId: when.sourceTurnId }
-            : { kind: 'everyMatch' },
+            : when.nextTimeOnly ? { kind: 'firstMatch' } : { kind: 'everyMatch' },
     };
 }
 
@@ -220,7 +222,7 @@ export function buildInitialTriggerDefinition(params: Readonly<{
     }
     if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined) return null;
     return SessionInitialTriggerDefinitionV1Schema.parse({
-        kind: 'sessionLifecycle', enabled, events: [...LIFECYCLE_EVENTS[when.kind]], policy: { kind: 'everyMatch' },
+        kind: 'sessionLifecycle', enabled, events: [...LIFECYCLE_EVENTS[when.kind]], policy: when.nextTimeOnly ? { kind: 'firstMatch' } : { kind: 'everyMatch' },
     });
 }
 
@@ -414,7 +416,7 @@ export function readTriggerWhen(
         // A trigger bound to one turn stays bound when edited.
         return kind === 'turnEnds' && trigger.policy.kind === 'currentTurn'
             ? { kind, ...source, sourceTurnId: trigger.policy.sourceTurnId }
-            : { kind, ...source };
+            : trigger.policy.kind === 'firstMatch' ? { kind, ...source, nextTimeOnly: true } : { kind, ...source };
     }
     return null;
 }

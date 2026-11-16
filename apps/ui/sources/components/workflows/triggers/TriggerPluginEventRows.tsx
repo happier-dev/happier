@@ -43,6 +43,11 @@ export function TriggerPluginEventRows(props: Readonly<{
     guidedPreset?: boolean;
     initialEventEditSeed?: PluginEventAutomationEditSeed;
     onEditSeedApplied?: React.ComponentProps<typeof PluginEventAutomationEditor>['onEditSeedApplied'];
+    /**
+     * The resting entry that opens the Event editor, drawn by a host that lays rows on its own label track
+     * (the "When it runs" card); the editor, its seed read and its test stay here.
+     */
+    renderEntry?: (entry: Readonly<{ detail: string | undefined; onPress: () => void }>) => React.ReactNode;
 }>) {
     const [inlineEditing, setInlineEditing] = React.useState(false);
     const editing = props.editing ?? inlineEditing;
@@ -97,7 +102,8 @@ export function TriggerPluginEventRows(props: Readonly<{
                 observationOnly={props.when.observationOnly}
                 maxHeight={props.editorMaxHeight}
                 onComplete={(value, intent) => { props.onChange({ kind: 'pluginEvent', value, ...intent }); setEditing(false); }}
-                onCancel={() => setEditing(false)} /> : <Item testID={`${props.testID}-configure-event`}
+                onCancel={() => setEditing(false)} /> : props.renderEntry ? props.renderEntry({
+                    detail: props.when.value?.displayLabel, onPress: () => setEditing(true) }) : <Item testID={`${props.testID}-configure-event`}
                 title={t(props.when.value || props.eventEdit ? 'workflows.triggers.popover.editEvent' : 'workflows.triggers.popover.configureEvent')}
                 subtitle={eventRef ? <Text style={styles.eventRef}>{`${eventRef.pluginId}/${eventRef.localId}`}</Text> : undefined}
                 detail={props.when.value?.displayLabel} onPress={() => setEditing(true)} />}

@@ -11,6 +11,11 @@ export type ValueFieldSelectItem = Readonly<{
     title: string;
     /** A leading mark, shown in the menu row and in the field when selected. */
     icon?: React.ReactNode;
+    /** The menu group this choice sits in; titled groups keep the order their first choice gives them. */
+    category?: string;
+    /** A line under the choice in the menu (a Session's folder and age). */
+    subtitle?: string;
+    disabled?: boolean;
 }>;
 
 /**
@@ -39,13 +44,30 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
     placeholder?: string;
     /** A search field atop the menu, for a list long enough to look through (a person's Projects). */
     searchPlaceholder?: string;
+    /** The menu's line when it has no choices (a list still loading, or none to choose). */
+    emptyLabel?: string;
+    /** The menu opened or closed: a list read only while it is open starts here. */
+    onOpenChange?: (open: boolean) => void;
+    /** A choice that acts in place (a retry) and leaves the menu open on its result. */
+    keepsOpen?: (id: string) => boolean;
+    /** The stored value no longer resolves: the field wears the invalid border instead of looking chosen. */
+    invalid?: boolean;
 }>) {
     const { theme } = useUnistyles();
-    const [open, setOpen] = React.useState(false);
+    const [open, setOpenState] = React.useState(false);
+    const onOpenChange = props.onOpenChange;
+    const setOpen = React.useCallback((next: boolean) => {
+        setOpenState(next);
+        onOpenChange?.(next);
+    }, [onOpenChange]);
+    const grouped = props.items.some((item) => item.category !== undefined);
     const items = React.useMemo(() => props.items.map((item) => ({
         id: item.id,
         title: item.title,
         ...(item.icon ? { icon: item.icon } : {}),
+        ...(item.category === undefined ? {} : { category: item.category }),
+        ...(item.subtitle === undefined ? {} : { subtitle: item.subtitle }),
+        ...(item.disabled ? { disabled: true } : {}),
         checked: item.id === props.selectedId,
         testID: `${props.testID}:${item.id}`,
     })), [props.items, props.selectedId, props.testID]);
@@ -60,15 +82,17 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
             items={items}
             selectedId={props.selectedId}
             onSelect={(id, selection) => {
-                setOpen(false);
+                if (props.keepsOpen?.(id) !== true) setOpen(false);
                 props.onSelect(id, selection);
             }}
+            {...(props.keepsOpen === undefined ? {} : { closeOnSelect: false })}
+            {...(props.emptyLabel === undefined ? {} : { emptyLabel: props.emptyLabel })}
             placement="bottom"
             popoverAnchorAlign={props.fill ? 'start' : 'end'}
             variant="slim"
             matchTriggerWidth={props.fill === true}
             {...(props.fill ? {} : { maxWidthCap: 320 })}
-            showCategoryTitles={false}
+            showCategoryTitles={grouped}
             {...(props.searchPlaceholder ? { search: true, searchPlaceholder: props.searchPlaceholder } : {})}
             popoverPortalWebTarget="body"
             trigger={({ toggle }) => (
@@ -87,7 +111,7 @@ export const ValueFieldSelect = React.memo(function ValueFieldSelect(props: Read
                         open,
                         detailColor: theme.colors.text.secondary,
                         chevronColor: theme.colors.text.secondary,
-                        field: resolveFieldBoxColors(theme),
+                        field: resolveFieldBoxColors(theme, props.invalid ? 'invalid' : 'idle'),
                         leading: selected?.icon,
                         fieldSpan: props.fill ? 'row' : props.compact ? 'intrinsic' : 'content',
                     })}

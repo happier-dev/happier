@@ -624,8 +624,8 @@ function WorkflowEditorIdentity(props: Readonly<{
     readOnlyFacts: readonly string[] | null;
 }>) {
     const name = useWorkflowEditorSelector(props.draftStore, readDraftName);
-    const { summaryTrigger } = props;
-    const trigger = summaryTrigger === null || summaryTrigger === t('workflows.triggers.summary.manual') ? null : summaryTrigger;
+    // The trigger owner supplies the complete When-it-runs sentence.
+    const trigger = props.summaryTrigger;
     const summary = useWorkflowEditorSelector(props.draftStore, (draft) => formatWorkflowSummaryLine(draft, { trigger }));
     const description = joinReadOnlyDescription([summary ?? undefined, ...(props.readOnlyFacts ?? [])]);
     return (

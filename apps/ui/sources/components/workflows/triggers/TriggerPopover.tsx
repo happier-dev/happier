@@ -264,7 +264,7 @@ const styles = StyleSheet.create((theme) => ({
 }));
 
 
-const REPEAT_LABEL_KEYS = { daily: 'everyDay', weekdays: 'weekdays', weekly: 'weekly' } as const;
+export const REPEAT_LABEL_KEYS = { daily: 'everyDay', weekdays: 'weekdays', weekly: 'weekly' } as const;
 
 // The form is narrow even on desktop. Its layout follows the window, not the list's page breakpoint.
 /**

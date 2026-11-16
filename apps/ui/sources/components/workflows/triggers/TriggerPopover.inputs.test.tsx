@@ -38,6 +38,7 @@ await import('@/sync/syncEngine');
 const { ModalProvider } = await import('@/modal');
 const { WebAlertModal } = await import('@/modal/components/WebAlertModal');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+const { matchesHappierMenuQuery } = await import('@happier-dev/plugin-ui/presentation');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
 const { getStorage } = await import('@/sync/domains/state/storageStore');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
@@ -95,6 +96,26 @@ const { TriggerPopover, FieldSelect } = await import('./TriggerPopover');
 const { WorkflowTriggerSection } = await import('./WorkflowTriggerSection');
 const { WorkflowDefinitionV1Schema} = await import('@happier-dev/protocol/workflows/workflowV1');
 type ExistingTriggerSubmit = Extract<React.ComponentProps<typeof TriggerPopover>, { creatingSession?: false }>['onSubmit'];
+type RenderedScreen = Awaited<ReturnType<typeof renderScreen>>;
+/** The trigger's on/off switch, as a person flips it. */
+async function toggleTrigger(screen: RenderedScreen, testID: string) {
+    const toggle = screen.findAll(node => node.props.testID === `${testID}-toggle` && typeof node.props.onValueChange === 'function')[0]!;
+    await act(async () => { toggle.props.onValueChange(!toggle.props.value); });
+}
+type MenuItems = readonly { id: string; title: string; testID?: string }[];
+/** "…" → Remove, through the block's menu (its rows live in a portal outside the test tree). */
+async function removeTrigger(screen: RenderedScreen, testID: string) {
+    const menu = screen.findAllByType(DropdownMenu).find(node => (node.props.items as MenuItems)
+        .some(item => item.testID === `${testID}-more-remove`))!;
+    await act(async () => { menu.props.onSelect('remove'); });
+}
+const addMenu = (screen: RenderedScreen, prefix: string) =>
+    screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${prefix}-triggers-add-menu`)!;
+/** Add a trigger → a start from the menu. */
+async function addTrigger(screen: RenderedScreen, prefix: string, startId: string) {
+    await act(async () => { addMenu(screen, prefix).props.onOpenChange(true); });
+    await act(async () => { addMenu(screen, prefix).props.onSelect(startId); });
+}
 const DAILY_TRIGGER = { kind: 'schedule' as const, enabled: true,
     schedule: { kind: 'cron' as const, scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'Europe/Zurich' } };
 
@@ -409,32 +430,41 @@ describe('Run a workflow trigger inputs', () => {
         // No popover: the Event's own rows sit in the card, with its edit entry.
         expect(screen.findByTestId('event-workflow-trigger-popover')).toBeNull();
         expect(screen.findByTestId('event-workflow-trigger:saved:event-row-configure-event')).toBeTruthy();
-        await screen.pressByTestIdAsync('event-workflow-trigger:saved:event-row-toggle');
+        await toggleTrigger(screen, 'event-workflow-trigger:saved:event-row');
         expect(change).toHaveBeenCalledWith({ adds: [], updates: { 'event-row': { enabled: false } }, removes: [] });
-        await screen.pressByTestIdAsync('event-workflow-trigger:saved:event-row-remove');
+        await removeTrigger(screen, 'event-workflow-trigger:saved:event-row');
         expect(change).toHaveBeenLastCalledWith({ adds: [], updates: {}, removes: ['event-row'] });
     });
-    it('starts with "Only when you run it"; a schedule joins the draft at once, a session event waits for its Session', async () => {
+    it('says what a trigger adds with none; a schedule from Add a trigger joins the draft at once, a session event waits for its Session', async () => {
         const change = vi.fn();
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="starts-workflow" set={null}
             draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={change} status="ready" onRetry={vi.fn()}
             stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
-        const starts = () => screen.findAll(node => node.props.testID === 'starts-workflow-triggers-manual-starts'
-            && typeof node.props.onSelect === 'function')[0]!;
-        expect(starts().props.selectedId).toBe('manual');
-        await act(async () => { starts().props.onSelect('sessionEvent'); });
+        expect(screen.getTextContent()).toContain('workflows.triggers.card.empty');
+        await addTrigger(screen, 'starts-workflow', 'session:turnEnds');
         expect(change).not.toHaveBeenCalled();
         expect(screen.getTextContent()).toContain('workflows.triggers.card.incomplete');
-        await screen.unmount();
-
-        const scheduled = await renderScreen(<WorkflowTriggerSection testIDPrefix="starts-workflow" set={null}
-            draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={change} status="ready" onRetry={vi.fn()}
-            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
-        await act(async () => { scheduled.findAll(node => node.props.testID === 'starts-workflow-triggers-manual-starts'
-            && typeof node.props.onSelect === 'function')[0]!.props.onSelect('schedule'); });
+        expect(screen.getTextContent()).not.toContain('workflows.triggers.card.empty');
+        await addTrigger(screen, 'starts-workflow', 'schedule');
         expect(change).toHaveBeenCalledTimes(1);
         expect(change.mock.calls[0]?.[0].adds).toMatchObject([{ trigger: { kind: 'schedule', enabled: true,
             schedule: { kind: 'cron', scheduleExpr: '0 9 * * *' } } }]);
+    });
+    it('the When select switches a session trigger to another session event and keeps its Session and How often', async () => {
+        const change = vi.fn();
+        const trigger = { kind: 'sessionLifecycle' as const, enabled: true, sourceSessionId: 'session-a',
+            events: ['parentTurnCompleted' as const, 'parentTurnFailed' as const, 'parentTurnCancelled' as const], policy: { kind: 'firstMatch' as const } };
+        const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="when-workflow" set={null}
+            draft={{ adds: [{ clientId: 'c1', trigger }], updates: {}, removes: [] }} onChangeDraft={change}
+            status="ready" onRetry={vi.fn()} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
+        const when = screen.findAll(node => node.props.testID === 'when-workflow-trigger:new:c1-starts'
+            && typeof node.props.onSelect === 'function')[0]!;
+        expect(when.props.selectedId).toBe('session:turnEnds');
+        await act(async () => { when.props.onSelect('session:needsYou'); });
+        expect(change).toHaveBeenLastCalledWith({ adds: [{ clientId: 'c1', trigger: { kind: 'sessionLifecycle', enabled: true,
+            sourceSessionId: 'session-a', events: ['userActionRequired'], policy: { kind: 'firstMatch' } } }], updates: {}, removes: [] });
+        await screen.pressByTestIdAsync('when-workflow-trigger:new:c1-how-often:everyTime');
+        expect(change.mock.lastCall?.[0].adds[0].trigger.policy).toEqual({ kind: 'everyMatch' });
     });
     it('draws no Loading line while a saved workflow\'s Team grants load, so the card keeps its size (07 §7)', async () => {
         const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
@@ -489,11 +519,61 @@ describe('Run a workflow trigger inputs', () => {
         }
         expect(roles).not.toBeNull();
         const mainText = screen.getTextContent();
-        expect(mainText.indexOf('workflows.triggers.editor.roles')).toBeLessThan(mainText.indexOf('workflows.triggers.card.anotherWay'));
+        expect(mainText.indexOf('workflows.triggers.editor.roles')).toBeLessThan(mainText.indexOf('workflows.triggers.card.add'));
         await screen.pressByTestIdAsync('roles-workflow-trigger-roles');
         await vi.waitFor(() => expect(screen.findByTestId('roles-workflow-trigger-roles-role-portable_builder-target:background_run')).not.toBeNull());
         expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '09:00' })).toBeTruthy();
         expect(screen.findByTestId('roles-workflow-trigger-input-release')).not.toBeNull();
+    });
+    it('Add a trigger searches built-in starts and the Machine\'s plugin Events; a picked Event shows its own rows', async () => {
+        const { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const machine = createMachineFixture({ id: 'trigger-events-machine', activeAt: Date.now(), storageMode: 'plain',
+            access: createPlainMachineRowFixture({ id: 'trigger-events-machine', accountId: 'account-a' }).access });
+        getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+        publishMachineActivityForTest([machine]);
+        home.answer(serverId, `/v1/machines/${machine.id}`, { body: { machine: createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a' }) } });
+        const eligible = (pluginId: string, localId: string, title: string) => DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({ event: {
+            id: `${pluginId}/${localId}`, identity: { pluginId, localId }, occurrenceId: `capture-${pluginId}`,
+            sourceCustody: { kind: 'development', registeredRootId: 'capture-root' }, title, description: null,
+            payloadSchema: { type: 'object', properties: { action: { type: 'string' } }, additionalProperties: false },
+            automation: { v: 1, eligible: true, source: { sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull'],
+                sourceConfigSchema: { type: 'object', additionalProperties: false }, setupActionRef: { pluginId, localId: 'setup-source' } } },
+        }, setupAction: { id: `${pluginId}/setup-source`, identity: { pluginId, localId: 'setup-source' }, occurrenceId: `capture-${pluginId}`,
+            title: 'Set up source', description: null, inputSchema: { type: 'object', additionalProperties: false }, inputHints: null } });
+        machineRpc.mockImplementation(async (request) => request.method === `${machine.id}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`
+            ? { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+                installedPackagesById: { 'happier.scm.forge.github': { id: 'happier.scm.forge.github', displayName: 'GitHub', version: '1.0.0', enabled: true,
+                    source: { kind: 'path', locator: '/plugins/github' } } }, familiesById: {} }),
+                automationEligibleEvents: [eligible('happier.scm.forge.github', 'automation/issue-opened-v1', 'An issue opens'),
+                    eligible('happier.scm.forge.github', 'automation/pull-request-opened-v1', 'A pull request opens'),
+                    eligible('happier.sentry', 'issue-transition', 'A new issue appears')] } : { error: 'method_not_found' });
+        const change = vi.fn();
+        const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="add-workflow" set={null}
+            accountLifetime={undefined} draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={change}
+            status="ready" onRetry={vi.fn()} stepsUnsaved={false} whereTarget={{ machineId: machine.id, directory: '/repo' }}
+            whereSummary={null} inputs={[]} />);
+        await act(async () => { addMenu(screen, 'add-workflow').props.onOpenChange(true); });
+        const ids = () => (addMenu(screen, 'add-workflow').props.items as MenuItems).map(item => item.id);
+        await waitForHomeGovernance(async () => {
+            await act(async () => {});
+            expect(ids()).toContain('event:happier.sentry/issue-transition');
+        });
+        // The menu's own search (the selectable menu owner's matcher) runs across built-in and plugin starts.
+        const matching = (query: string) => (addMenu(screen, 'add-workflow').props.items as MenuItems)
+            .filter(item => matchesHappierMenuQuery({ label: item.title, query })).map(item => item.id);
+        expect(matching('issue')).toEqual(['event:happier.scm.forge.github/automation/issue-opened-v1', 'event:happier.sentry/issue-transition']);
+        expect(matching('schedule')).toEqual(['schedule']);
+        expect(addMenu(screen, 'add-workflow').props.footer).toBeTruthy();
+        await addTrigger(screen, 'add-workflow', 'event:happier.sentry/issue-transition');
+        // Not set up yet: nothing is written, and the block names the Event and asks for its source.
+        expect(change).not.toHaveBeenCalled();
+        const block = screen.findAll(node => typeof node.props.testID === 'string' && /^add-workflow-trigger:new:.*-starts$/.test(node.props.testID)
+            && typeof node.props.onSelect === 'function')[0]!;
+        expect(block.props.selectedId).toBe('event:happier.sentry/issue-transition');
+        const blockId = String(block.props.testID).replace(/-starts$/, '');
+        expect(screen.findByTestId(`${blockId}-title`)?.props.children).toBe('A new issue appears');
+        expect(screen.findByTestId(`${blockId}-configure-event`)).not.toBeNull();
+        expect(screen.getTextContent()).toContain('workflows.triggers.card.incomplete');
     });
     it('turns off a newly authored Event row without discarding its configured source', async () => {
         const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
@@ -506,7 +586,7 @@ describe('Run a workflow trigger inputs', () => {
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="event-workflow" set={null}
             draft={{ adds: [{ clientId: 'event-draft', trigger }], updates: {}, removes: [] }} onChangeDraft={change}
             status="ready" onRetry={vi.fn()} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
-        await screen.pressByTestIdAsync('event-workflow-trigger:new:event-draft-toggle');
+        await toggleTrigger(screen, 'event-workflow-trigger:new:event-draft');
         expect(change).toHaveBeenCalledWith({ adds: [{ clientId: 'event-draft', trigger: { ...trigger, enabled: false } }],
             updates: {}, removes: [] });
     });

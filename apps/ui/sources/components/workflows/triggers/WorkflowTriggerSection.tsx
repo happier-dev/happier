@@ -1,10 +1,22 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
+import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { WorkflowProjectTargetControl } from '@/components/workflows/editor/WorkflowProjectTargetControl';
+import { WorkflowFieldPair } from '@/components/workflows/editor/WorkflowStepDataEditor';
+import { workflowEditorStyles } from '@/components/workflows/editor/workflowEditorStyles';
+import { isWorkflowProjectTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Item } from '@/components/ui/lists/Item';
@@ -29,11 +41,12 @@ import {
 import { readScheduleWhen, readTriggerWhen, type TriggerWhenValue } from './sessionTriggerForm';
 import { FieldSelect } from './TriggerPopover';
 import type { TriggerPluginEventRows } from './TriggerPluginEventRows';
-import { TriggerRunsOnRow } from './TriggerRunsOnRow';
+import { WorkflowRequesterDisclosure } from '../presentation/WorkflowRequesterDisclosure';
 import { TriggerRow } from './TriggerRow';
 import { useWorkflowDefinitionLibrary } from '../library/workflowLibraryReads';
 import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
-import { WorkflowTriggerStartRows } from './WorkflowTriggerStartRows';
+import { WorkflowTriggerBlock } from './WorkflowTriggerBlock';
+import { useWorkflowTriggerEventOptions } from './useWorkflowTriggerEventOptions';
 import { describeLegacyTriggerSet } from './sessionTriggerGroups';
 import { WorkflowRunRoles, workflowUsedRoleIds } from '../run/WorkflowRunRoles';
 import { useWorkflowRunVisibility } from '../run/useWorkflowRunVisibility';
@@ -44,7 +57,28 @@ import {
     type WorkflowTriggerRowModel,
     type WorkflowTriggerSetContextDraft,
 } from './workflowTriggerDraft';
-import { commitWorkflowTriggerWhen, removeWorkflowTriggerRow, type WorkflowTriggerRowRef } from './workflowTriggerStarts';
+import {
+    buildWorkflowTriggerStartOptions,
+    commitWorkflowTriggerWhen,
+    createWorkflowTriggerStartWhen,
+    readWorkflowTriggerStartId,
+    removeWorkflowTriggerRow,
+    type WorkflowTriggerRowRef,
+} from './workflowTriggerStarts';
+
+const styles = StyleSheet.create((theme) => ({
+    /** A hairline between triggers, and above Add a trigger (lab `trig-card-two`). */
+    rule: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default },
+    empty: { ...Typography.variant('label'), color: theme.colors.text.secondary, paddingVertical: theme.space.s12 },
+    runsOn: { paddingVertical: theme.space.s8 },
+    runsOnValue: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s12, rowGap: theme.space.s4 },
+    addRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: theme.space.s12, paddingVertical: theme.space.s8 },
+    addAction: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, borderRadius: theme.borderRadius.md },
+    addLabel: { ...Typography.variant('label'), color: theme.colors.text.secondary },
+    menuFoot: { ...Typography.variant('meta'), color: theme.colors.text.secondary, paddingHorizontal: theme.space.s12, paddingVertical: theme.space.s8,
+        borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default },
+    addNote: { ...Typography.variant('meta'), color: theme.colors.text.tertiary, flexShrink: 1, textAlign: 'right' },
+}));
 
 export type WorkflowTriggerSectionProps = Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
@@ -75,7 +109,13 @@ function rowWhen(row: WorkflowTriggerRowModel, set: WorkflowTriggerSetV1 | null,
         return { kind: 'pluginEvent', value: { ...input, enabled: row.enabled } };
     }
     // A drafted session event (the card only drafts Account kinds; schedules are read above).
-    if (input?.kind === 'sessionLifecycle') return { kind: readSessionLifecycleKind(input.events), sourceSessionId: input.sourceSessionId };
+    if (input?.kind === 'sessionLifecycle') {
+        const kind = readSessionLifecycleKind(input.events);
+        if (kind === 'turnEnds' && input.policy.kind === 'currentTurn') {
+            return { kind, sourceSessionId: input.sourceSessionId, sourceTurnId: input.policy.sourceTurnId };
+        }
+        return { kind, sourceSessionId: input.sourceSessionId, ...(input.policy.kind === 'firstMatch' ? { nextTimeOnly: true as const } : {}) };
+    }
     const saved = row.kind === 'saved' ? set?.triggers.find((trigger) => trigger.id === row.triggerId) : null;
     return saved ? readTriggerWhen(saved) : null;
 }
@@ -99,15 +139,16 @@ function LegacyWorkflowTriggerSummary(props: Readonly<{ legacy: NonNullable<Retu
         subtitle={time ? formatScheduledRunQualifier(time, nowMs) : props.legacy.qualifier} subtitleLines={0} mode="info" />;
 }
 
-/** A way to start that is not complete yet (no Session or Event chosen): held here, never in the draft. */
-type PendingStart = Readonly<{ clientId: string; when: TriggerWhenValue | null }>;
+/** A trigger that is not complete yet (no Session or Event chosen): held here, never in the draft. */
+type PendingStart = Readonly<{ clientId: string; when: TriggerWhenValue }>;
 
 /**
- * **When it runs** (owner 11-15; lab round-1115 `r16first-card-two`, `trigger-card-*`): every way this
- * workflow starts, each edited in place — Starts, then only the rows its kind needs — plus **Another
- * way to start**; "Only when you run it" with none. Edits are part of the editor's draft: Save writes
- * the definition, then the trigger delta. A trigger here always runs this workflow, in the editor's
- * Where; what the set gives every trigger (constant inputs, Roles, Visible to) follows the triggers.
+ * **When it runs** (owner 11-15; lab round 1116 `trig-card-*`, `btrig-v-*`): every trigger of this
+ * workflow as one block — its sentence, switch and "…", then When and only the rows its start needs —
+ * and **Add a trigger**, one searchable menu of every start; with none, one line says what a trigger
+ * adds. Edits are part of the editor's draft: Save writes the definition, then the trigger delta. A
+ * trigger here always runs this workflow, in the editor's Where; what the set gives every trigger
+ * (constant inputs, Roles, Visible to) follows the triggers.
  */
 export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): React.ReactElement {
     const activeMachines = useActiveMachineFacts(props.accountLifetime === undefined);
@@ -122,14 +163,28 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const [historyKey, setHistoryKey] = React.useState<string | null>(null);
     const toggleHistory = (key: string) => setHistoryKey(current => current === key ? null : key);
     const [pending, setPending] = React.useState<readonly PendingStart[]>([]);
-    const compact = useViewportClass() === 'compact';
     const [edits, setEdits] = React.useState<Readonly<Record<string, TriggerWhenValue>>>({});
+    const [addOpen, setAddOpen] = React.useState(false);
+    // The plugin Event catalog is read once a menu that lists it opens, or while a plugin trigger shows.
+    const [catalogDemanded, setCatalogDemanded] = React.useState(false);
+    const demandCatalog = React.useCallback((open: boolean) => { if (open) setCatalogDemanded(true); }, []);
+    const compact = useViewportClass() === 'compact';
+    const { theme } = useUnistyles();
 
     const change = props.onChangeDraft;
     // One Runs on per trigger set: a pending change, the set's, or the editor's Where for a new set.
     const runsOn = props.draft.context?.project ?? props.set?.project ?? props.whereTarget;
     const runsOnDiffers = runsOn !== null && props.whereTarget !== null
         && (runsOn.machineId !== props.whereTarget.machineId || runsOn.directory !== props.whereTarget.directory);
+    const serverId = props.accountLifetime?.scope.serverId ?? null;
+    const placement = { machineId: runsOn?.machineId ?? null, serverId };
+    const rowWhens = rows.map((row) => edits[row.key] ?? rowWhen(row, props.set, props.draft));
+    const showsEvent = [...rowWhens, ...pending.map((item) => item.when)].some((when) => when?.kind === 'pluginEvent');
+    const catalog = useWorkflowTriggerEventOptions({ ...placement, enabled: catalogDemanded || showsEvent });
+    const startOptions = React.useMemo(() => buildWorkflowTriggerStartOptions(catalog.events), [catalog.events]);
+    // The menu's foot says where plugin triggers come from: the trigger set's Machine.
+    const catalogMachineName = placement.machineId === null ? null
+        : getMachineDisplayName(machines.find((machine) => machine.id === placement.machineId) ?? null) ?? t('machine.unnamedMachine');
     const legacy = props.set ? describeLegacyTriggerSet(props.set,
         (id) => getMachineDisplayName(machines.find((machine) => machine.id === id) ?? { id, absence: 'unlisted' })) : null;
     const readState = props.status === 'ready' ? null : rows.length > 0 || legacy ? (
@@ -171,7 +226,6 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         );
     }
 
-    const placement = { machineId: runsOn?.machineId ?? null, serverId: props.accountLifetime?.scope.serverId ?? null };
     // A complete When joins the draft; an incomplete one stays on screen until it is.
     const editRow = (row: WorkflowTriggerRowModel, when: TriggerWhenValue) => {
         const next = commitWorkflowTriggerWhen({ draft: props.draft, row: rowRef(row), when, enabled: row.enabled });
@@ -186,94 +240,178 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
             : current.filter(item => item.clientId !== clientId));
         if (next !== null) change(next);
     };
+    const startTitle = (when: TriggerWhenValue) => {
+        const id = readWorkflowTriggerStartId(when);
+        return startOptions.find((option) => option.id === id)?.title ?? '';
+    };
+    // The When select's choice; a session event keeps its Session, and choosing the same start keeps the rows as they are.
+    const selectStart = (when: TriggerWhenValue | null, id: string, apply: (next: TriggerWhenValue) => void) => {
+        if (when !== null && readWorkflowTriggerStartId(when) === id) return;
+        const next = createWorkflowTriggerStartWhen(id, when);
+        if (next !== null) apply(next);
+    };
     // This Account's set has no trigger; the library may still list others' triggers on this workflow.
     const ownNone = rows.length === 0 && pending.length === 0 && props.status === 'ready';
     const sharedSettled = definitionIds.length === 0 || shared.status === 'loaded';
     const nothingYet = ownNone && sharedTriggers.length === 0 && sharedSettled;
-    return (
-        // Rows only: the editor's "When it runs" card owns the title and the one-sentence summary.
-        <ItemGroup header="none" surface="none">
-            {readState}
-            {props.stepsUnsaved && rows.length > 0 ? <Item testID={`${props.testIDPrefix}-triggers-save-to-include`}
-                title={t('workflows.triggers.editor.saveToInclude')} titleLines={0} mode="info" /> : null}
-            {nothingYet ? (
-                <WorkflowTriggerStartRows testID={`${props.testIDPrefix}-triggers-manual`} when={null} enabled incomplete={false}
-                    {...placement} onChangeWhen={(when) => editPending(createClientId(), when)} />
-            ) : null}
-            {rows.map((row) => {
-                const edited = edits[row.key];
-                return (
-                    <WorkflowTriggerStartRows
-                        key={row.key}
-                        testID={`${props.testIDPrefix}-trigger:${row.key}`}
-                        when={edited ?? rowWhen(row, props.set, props.draft)}
-                        enabled={row.enabled}
-                        incomplete={edited !== undefined}
-                        {...placement}
-                        {...(row.kind === 'saved' && props.set && row.trigger.kind === 'pluginEvent'
-                            ? { eventEdit: { automationId: props.set.automationId, triggerId: row.triggerId } } : {})}
-                        {...(props.onEditSeedApplied ? { onEditSeedApplied: props.onEditSeedApplied } : {})}
-                        onChangeWhen={(when) => editRow(row, when)}
-                        onRemove={() => {
-                            setEdits(({ [row.key]: _dropped, ...rest }) => rest);
-                            change(removeWorkflowTriggerRow(props.draft, rowRef(row)));
-                        }}
-                        onToggleEnabled={() => {
-                            if (row.kind === 'saved') {
-                                change(editWorkflowTriggerDraft(props.draft, { kind: 'update', triggerId: row.triggerId, enabled: !row.enabled }));
-                                return;
-                            }
-                            const add = props.draft.adds.find(candidate => candidate.clientId === row.clientId);
-                            if (add) change(editWorkflowTriggerDraft(props.draft, {
-                                kind: 'add', clientId: row.clientId, trigger: { ...add.trigger, enabled: !row.enabled },
-                            }));
-                        }}
-                        {...(row.kind === 'saved' && props.set ? {
-                            onToggleHistory: () => toggleHistory(row.key),
-                            history: historyKey === row.key ? <WorkflowTriggerRunHistory automationId={props.set.automationId} triggerId={row.triggerId}
-                                nextRunAt={props.set.enabled ? readNextRunAt(row) : null} accountLifetime={props.accountLifetime}
-                                triggerName={formatTriggerSummary(row.trigger)} trigger={row.trigger} /> : undefined,
-                        } : {})}
-                    />
-                );
-            })}
-            {pending.map((item) => (
-                <WorkflowTriggerStartRows key={`new:${item.clientId}`} testID={`${props.testIDPrefix}-trigger:new:${item.clientId}`}
-                    when={item.when} unchosen={item.when === null} enabled incomplete {...placement}
-                    onChangeWhen={(when) => editPending(item.clientId, when)}
-                    onRemove={() => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId))} />
-            ))}
-            {sharedTriggers.map(trigger => {
-                const key = `${trigger.automationId}:${trigger.triggerId}`;
-                const title = formatTriggerSummary(trigger);
-                return <React.Fragment key={key}>
-                    <Item testID={`${props.testIDPrefix}-trigger:${key}`} title={title} mode="info"
-                        rightElement={<ToolbarButton testID={`${props.testIDPrefix}-trigger:${key}-history`}
-                            label={t('workflows.destination.history.title')} active={historyKey === key}
-                            onPress={() => toggleHistory(key)} />} />
-                    {historyKey === key ? <WorkflowTriggerRunHistory automationId={trigger.automationId}
-                        nextRunAt={trigger.kind === 'schedule' ? trigger.nextRunAt : null}
-                        triggerId={trigger.triggerId} accountLifetime={props.accountLifetime} triggerName={title} /> : null}
-                </React.Fragment>;
-            })}
-            {shared.status === 'failed' ? <SurfaceFreshnessLine tone="warning"
-                reason={t('workflows.triggers.section.loadFailed')}
-                action={{ label: t('workflows.triggers.popover.tryAgain'), onPress: shared.retry }} /> : null}
-            {rows.length === 0 ? null : (
-                <WorkflowTriggerSetRows {...props} runsOn={runsOn} runsOnDiffers={runsOnDiffers} />
-            )}
-            {nothingYet || (ownNone && !sharedSettled) ? null : (
-                <Item
-                    testID={`${props.testIDPrefix}-triggers-add`}
-                    title={t('workflows.triggers.card.anotherWay')}
-                    // A phone has no room beside the action: the reminder would only truncate it.
-                    {...(rows.length > 0 && !compact ? { detail: t('workflows.triggers.card.runNowToo') } : {})}
-                    icon={<Icon name="plus" />}
-                    showChevron={false}
-                    onPress={() => setPending(current => [...current, { clientId: createClientId(), when: null }])}
+    const blocks: React.ReactNode[] = [
+        ...rows.map((row, index) => {
+            const edited = edits[row.key];
+            const when = rowWhens[index] ?? null;
+            const savedSchedule = row.kind === 'saved' && row.trigger.kind === 'schedule' && edited === undefined;
+            return (
+                <WorkflowTriggerBlock
+                    key={row.key}
+                    testID={`${props.testIDPrefix}-trigger:${row.key}`}
+                    title={edited !== undefined ? startTitle(edited) : formatTriggerSummary(row.trigger)}
+                    when={when}
+                    enabled={row.enabled}
+                    incomplete={edited !== undefined}
+                    startOptions={startOptions}
+                    onStartsOpenChange={demandCatalog}
+                    onSelectStart={(id) => selectStart(when, id, (next) => editRow(row, next))}
+                    {...placement}
+                    accountLifetime={props.accountLifetime}
+                    {...(savedSchedule ? { savedNextRunAt: props.set?.enabled ? readNextRunAt(row) : null } : {})}
+                    {...(row.kind === 'saved' && props.set && row.trigger.kind === 'pluginEvent'
+                        ? { eventEdit: { automationId: props.set.automationId, triggerId: row.triggerId } } : {})}
+                    {...(props.onEditSeedApplied ? { onEditSeedApplied: props.onEditSeedApplied } : {})}
+                    onChangeWhen={(next) => editRow(row, next)}
+                    onRemove={() => {
+                        setEdits(({ [row.key]: _dropped, ...rest }) => rest);
+                        change(removeWorkflowTriggerRow(props.draft, rowRef(row)));
+                    }}
+                    {...(edited !== undefined ? {} : { onToggleEnabled: () => {
+                        if (row.kind === 'saved') {
+                            change(editWorkflowTriggerDraft(props.draft, { kind: 'update', triggerId: row.triggerId, enabled: !row.enabled }));
+                            return;
+                        }
+                        const add = props.draft.adds.find(candidate => candidate.clientId === row.clientId);
+                        if (add) change(editWorkflowTriggerDraft(props.draft, {
+                            kind: 'add', clientId: row.clientId, trigger: { ...add.trigger, enabled: !row.enabled },
+                        }));
+                    } })}
+                    {...(row.kind === 'saved' && props.set ? {
+                        onToggleHistory: () => toggleHistory(row.key),
+                        history: historyKey === row.key ? <WorkflowTriggerRunHistory automationId={props.set.automationId} triggerId={row.triggerId}
+                            nextRunAt={props.set.enabled ? readNextRunAt(row) : null} accountLifetime={props.accountLifetime}
+                            triggerName={formatTriggerSummary(row.trigger)} trigger={row.trigger} /> : undefined,
+                    } : {})}
                 />
+            );
+        }),
+        ...pending.map((item) => (
+            <WorkflowTriggerBlock key={`new:${item.clientId}`} testID={`${props.testIDPrefix}-trigger:new:${item.clientId}`}
+                title={startTitle(item.when)} when={item.when} enabled incomplete startOptions={startOptions}
+                onStartsOpenChange={demandCatalog}
+                onSelectStart={(id) => selectStart(item.when, id, (next) => editPending(item.clientId, next))}
+                {...placement} accountLifetime={props.accountLifetime}
+                onChangeWhen={(when) => editPending(item.clientId, when)}
+                onRemove={() => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId))} />
+        )),
+    ];
+    const before = readState !== null || (props.stepsUnsaved && rows.length > 0);
+    const after = sharedTriggers.length > 0 || shared.status === 'failed' || rows.length > 0;
+    return (
+        // Rows only: the editor's "When it runs" card owns the title and the one-sentence summary. The
+        // triggers and Add a trigger sit on the card's text edge and label track; list rows keep their group.
+        <View>
+            {before ? (
+                <ItemGroup header="none" surface="none">
+                    {readState}
+                    {props.stepsUnsaved && rows.length > 0 ? <Item testID={`${props.testIDPrefix}-triggers-save-to-include`}
+                        title={t('workflows.triggers.editor.saveToInclude')} titleLines={0} mode="info" /> : null}
+                </ItemGroup>
+            ) : null}
+            {nothingYet ? (
+                <Text testID={`${props.testIDPrefix}-triggers-empty`} style={styles.empty}>{t('workflows.triggers.card.empty')}</Text>
+            ) : null}
+            {blocks.map((block, index) => index === 0 ? block : <View key={`rule:${index}`} style={styles.rule}>{block}</View>)}
+            {rows.length > 0 && runsOnDiffers ? (
+                <WorkflowTriggerRunsOnRow testIDPrefix={props.testIDPrefix} accountLifetime={props.accountLifetime}
+                    runsOn={runsOn} whereTarget={props.whereTarget} machines={machines}
+                    onChange={(project) => change(editWorkflowTriggerDraft(props.draft, { kind: 'setContext', context: { project } }))} />
+            ) : null}
+            {after ? (
+                <ItemGroup header="none" surface="none">
+                    {sharedTriggers.map(trigger => {
+                        const key = `${trigger.automationId}:${trigger.triggerId}`;
+                        const title = formatTriggerSummary(trigger);
+                        return <React.Fragment key={key}>
+                            <Item testID={`${props.testIDPrefix}-trigger:${key}`} title={title} mode="info"
+                                rightElement={<ToolbarButton testID={`${props.testIDPrefix}-trigger:${key}-history`}
+                                    label={t('workflows.destination.history.title')} active={historyKey === key}
+                                    onPress={() => toggleHistory(key)} />} />
+                            {historyKey === key ? <WorkflowTriggerRunHistory automationId={trigger.automationId}
+                                nextRunAt={trigger.kind === 'schedule' ? trigger.nextRunAt : null}
+                                triggerId={trigger.triggerId} accountLifetime={props.accountLifetime} triggerName={title} /> : null}
+                        </React.Fragment>;
+                    })}
+                    {shared.status === 'failed' ? <SurfaceFreshnessLine tone="warning"
+                        reason={t('workflows.triggers.section.loadFailed')}
+                        action={{ label: t('workflows.triggers.popover.tryAgain'), onPress: shared.retry }} /> : null}
+                    {rows.length === 0 ? null : (
+                        <WorkflowTriggerSetRows {...props} runsOn={runsOn} />
+                    )}
+                </ItemGroup>
+            ) : null}
+            {ownNone && !sharedSettled ? null : (
+                <View style={styles.rule}>
+                    <DropdownMenu
+                        testID={`${props.testIDPrefix}-triggers-add-menu`}
+                        open={addOpen}
+                        onOpenChange={(open) => { setAddOpen(open); demandCatalog(open); }}
+                        items={startOptions.map((option) => ({
+                            id: option.id,
+                            testID: `${props.testIDPrefix}-triggers-add:${option.id}`,
+                            title: option.title,
+                            category: option.group,
+                            icon: <Icon name={option.glyph} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />,
+                        }))}
+                        showCategoryTitles
+                        footer={catalogMachineName === null ? undefined : (
+                            <Text testID={`${props.testIDPrefix}-triggers-add-source`} style={styles.menuFoot}>
+                                {catalog.status === 'ready'
+                                    ? catalog.events.length === 0 ? t('workflows.triggers.card.noPluginTriggersOn', { machine: catalogMachineName })
+                                        : t('workflows.triggers.card.pluginTriggersOn', { count: catalog.events.length, machine: catalogMachineName })
+                                    : catalog.status === 'unavailable' ? t('workflows.triggers.card.pluginTriggersUnavailable', { machine: catalogMachineName })
+                                        : t('workflows.triggers.card.pluginTriggersLoading', { machine: catalogMachineName })}
+                            </Text>
+                        )}
+                        search
+                        searchPlaceholder={t('workflows.triggers.card.searchTriggers')}
+                        emptyLabel={t('workflows.triggers.card.noTriggersFound')}
+                        placement="bottom"
+                        popoverAnchorAlign="start"
+                        matchTriggerWidth={false}
+                        onSelect={(id) => {
+                            setAddOpen(false);
+                            const when = createWorkflowTriggerStartWhen(id);
+                            if (when !== null) editPending(createClientId(), when);
+                        }}
+                        trigger={({ toggle, open }) => (
+                            <View style={styles.addRow}>
+                                <HappierPressable
+                                    testID={`${props.testIDPrefix}-triggers-add`}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={t('workflows.triggers.card.add')}
+                                    expanded={open}
+                                    hasPopup="menu"
+                                    onPress={toggle}
+                                    style={(state) => [styles.addAction, state.pressed ? { opacity: HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle } : null,
+                                        focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+                                >
+                                    <Icon name="plus" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+                                    <Text style={styles.addLabel}>{t('workflows.triggers.card.add')}</Text>
+                                </HappierPressable>
+                                {/* A phone has no room beside the action: the reminder would only crowd it. */}
+                                {rows.length > 0 && !compact ? <Text style={styles.addNote}>{t('workflows.triggers.card.runNowToo')}</Text> : null}
+                            </View>
+                        )}
+                    />
+                </View>
             )}
-        </ItemGroup>
+        </View>
     );
 }
 
@@ -283,7 +421,6 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
  */
 function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
     runsOn: WorkflowProjectTargetV1 | null;
-    runsOnDiffers: boolean;
 }>) {
     const change = props.onChangeDraft;
     const setContext = (context: WorkflowTriggerSetContextDraft) => change(editWorkflowTriggerDraft(props.draft, { kind: 'setContext', context }));
@@ -304,16 +441,6 @@ function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
     const rolesTestID = `${props.testIDPrefix}-trigger-roles`;
     return (
         <>
-            {props.runsOnDiffers ? (
-                <TriggerRunsOnRow
-                    accountLifetime={props.accountLifetime}
-                    testID={`${props.testIDPrefix}-trigger-runs-on`}
-                    target={props.runsOn}
-                    onChange={(project) => setContext({ project })}
-                    description={props.whereSummary === null ? t('workflows.triggers.editor.runsOnDescription')
-                        : `${t('workflows.triggers.editor.runsOnDescription')} ${t('workflows.triggers.editor.runsOnDiffers', { where: props.whereSummary })}`}
-                />
-            ) : null}
             {props.inputs.map((input) => (
                 <FieldValueItem
                     key={input.name}
@@ -352,6 +479,47 @@ function WorkflowTriggerSetRows(props: WorkflowTriggerSectionProps & Readonly<{
                             subtitle={visibilityDescription} items={visibility.teams.map(team => ({ id: team.id, title: team.name ?? team.id }))}
                             selectedId={selectedTeamId} onSelect={visibility.onChange} />}
         </>
+    );
+}
+
+/**
+ * The trigger set's Machine and folder, shown only while it differs from the How card's Where (lab Q1):
+ * one row on the card's label track, with "Use the same". Otherwise the How card's Where is the one place.
+ */
+function WorkflowTriggerRunsOnRow(props: Readonly<{
+    testIDPrefix: string;
+    accountLifetime?: ServerAccountScopeLifetime | null;
+    runsOn: WorkflowProjectTargetV1 | null;
+    whereTarget: WorkflowProjectTargetV1 | null;
+    machines: NonNullable<React.ComponentProps<typeof WorkflowProjectTargetControl>['machines']>;
+    onChange: (project: WorkflowProjectTargetV1) => void;
+}>) {
+    const runsOnMachine = props.runsOn === null ? null : props.machines.find((candidate) => candidate.id === props.runsOn?.machineId) ?? null;
+    const runsOnMachineName = getMachineDisplayName(runsOnMachine) ?? t('machine.unnamedMachine');
+    return (
+        <View style={[workflowEditorStyles.actionFieldRow, styles.runsOn]} testID={`${props.testIDPrefix}-trigger-runs-on`}>
+            <WorkflowFieldPair label={t('workflows.triggers.card.runsOn')} trackKey="trigger-runs-on">
+                <View style={styles.runsOnValue}>
+                    <WorkflowProjectTargetControl
+                        accountLifetime={props.accountLifetime}
+                        purpose="trigger"
+                        presentation="value"
+                        target={props.runsOn}
+                        machineName={props.runsOn === null ? null : runsOnMachineName}
+                        machines={props.machines}
+                        onChange={(next) => { if (isWorkflowProjectTarget(next)) props.onChange(next); }}
+                        testIDPrefix={`${props.testIDPrefix}-trigger-runs-on`}
+                    />
+                    {props.whereTarget === null ? null : (
+                        <TextLinkButton testID={`${props.testIDPrefix}-trigger-runs-on-use-same`} tone="quiet"
+                            label={t('workflows.triggers.card.useSame')}
+                            onPress={() => { if (props.whereTarget) props.onChange(props.whereTarget); }} />
+                    )}
+                </View>
+            </WorkflowFieldPair>
+            <WorkflowRequesterDisclosure machineId={props.runsOn?.machineId}
+                accountLifetime={props.accountLifetime} retention="trigger" />
+        </View>
     );
 }
 

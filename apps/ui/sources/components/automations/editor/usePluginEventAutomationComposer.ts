@@ -6,7 +6,7 @@ import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol
 import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1, PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { readEligibleEventPresentation, type EligibleEventPresentation } from './pluginEventAutomationEventPresentation';
+import { readEligibleEventPluginName, readEligibleEventPresentation, type EligibleEventPresentation } from './pluginEventAutomationEventPresentation';
 import { type PluginMachineExecutionOriginV1, arePluginMachineExecutionOriginsEqual, arePluginMachineMaterializationRefsEqual, getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { validateAutomationEventFilterAgainstPayloadSchemaV1 } from '@happier-dev/protocol/automations/event';
 
@@ -219,7 +219,7 @@ function readPluginEventAutomationPluginPresentationFacts(
 
     return Object.freeze({
         eventKey: eventPresentationKey(event),
-        displayName: installedPackage?.displayName ?? projectionEntry?.title ?? pluginId,
+        displayName: readEligibleEventPluginName(state.projectionInputs, pluginId),
         availability: state.projectionPhase === 'loading' ? 'loading' : available ? 'available' : 'unavailable',
         // The package-brand owner must never receive an unavailable or stale
         // package binding merely to paint decorative chrome.

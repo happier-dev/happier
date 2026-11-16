@@ -219,6 +219,26 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
 }
 
 /**
+ * When a workflow runs, as one clause the "When it runs" card and the page's summary line both read:
+ * "When you press Run now" with no trigger, else every trigger's sentence joined ("When a turn ends and
+ * Every weekday at 09:00"). Run now always works too, so it is said only when nothing else starts it.
+ */
+export function formatTriggerSetSentence(triggers: readonly TriggerSummarySource[]): string {
+    if (triggers.length === 0) return t('workflows.triggers.card.manualSentence');
+    return joinList(triggers.map((trigger, index) => index === 0 ? formatTriggerSummary(trigger) : lowerSentenceStart(formatTriggerSummary(trigger))));
+}
+
+/**
+ * A summary joined after the first continues the sentence ("…and every day at 09:00"). Only a plain
+ * capitalised first word is lowered; a name with inner capitals or an acronym ("GitHub", "CI") keeps them.
+ */
+function lowerSentenceStart(summary: string): string {
+    const first = summary.split(/\s/u, 1)[0] ?? '';
+    if (!/^\p{Lu}\p{Ll}+$/u.test(first)) return summary;
+    return first.toLocaleLowerCase(getPreferredLanguage()) + summary.slice(first.length);
+}
+
+/**
  * A trigger set in one string: "Manual" with none, the one summary, or "{first} · {n} more". The
  * header chip and the settings-pane section use this same string for the same draft (04 §9.1).
  */
