@@ -92,7 +92,9 @@ function useHomeHubAccountStore() {
                     const invalidation = new InvalidateSync(async () => { if (isCurrent()) await domain.refresh(); });
                     const invalidate = () => { if (isCurrent()) invalidation.invalidate(); };
                     const unsubscribe = storage.subscribe(invalidate, { artifacts: [artifactId] });
-                    const reconnect = apiSocket.onReconnected(invalidate);
+                    // The layout Artifact's changes while away arrive through the changes catch-up into
+                    // `storage` above; a reconnect re-reads only a layout whose last read did not succeed.
+                    const reconnect = apiSocket.onReconnected(() => { if (domain.getSnapshot().status !== 'ready') invalidate(); });
                     detach = () => { invalidation.stop(); unsubscribe(); reconnect(); };
                     invalidate();
                 }
