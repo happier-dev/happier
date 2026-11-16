@@ -3,6 +3,7 @@ import type { RegistryItemPointerV1 } from '@happier-dev/protocol/registries/reg
 import type { RegistryThemeAcquisitionV1 } from '@happier-dev/protocol/registries/registryThemeV1';
 import type { ThemeLibraryMutationResult, ThemeProfileDocument, ThemeProfileLibrary, ThemeProfileMode, ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { randomUUID } from '@/platform/randomUUID';
+import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 
 /** Opaque client-local reference; validity is decided by this owner's current preview. */
 export type PreviewRef = string;
@@ -27,40 +28,45 @@ export interface ThemeTryOnOwner {
 
 /** One overlay, composed once by the device's theme runtime; no library snapshot is retained. */
 export function createThemeTryOnOwner(deps: Readonly<{
-    keep: ThemeProfileLibrary['keep'];
-    select: ThemeProfileLibrary['select'];
-    installStore(snapshot: ThemeTryOnSnapshot): Promise<ThemeLibraryMutationResult>;
+    captureScope(): AccountSettingsScope | null;
+    keep(input: Parameters<ThemeProfileLibrary['keep']>[0], scope: AccountSettingsScope): Promise<ThemeLibraryMutationResult>;
+    select(input: Parameters<ThemeProfileLibrary['select']>[0], scope: AccountSettingsScope): Promise<ThemeLibraryMutationResult>;
+    installStore(snapshot: ThemeTryOnSnapshot, scope: AccountSettingsScope): Promise<ThemeLibraryMutationResult>;
 }>): ThemeTryOnOwner {
-    let current: { snapshot: ThemeTryOnSnapshot; keeping?: Promise<ThemeLibraryMutationResult> } | null = null;
+    let current: { snapshot: ThemeTryOnSnapshot; scope: AccountSettingsScope | null; keeping?: Promise<ThemeLibraryMutationResult> } | null = null;
     const listeners = new Set<() => void>();
     const publish = () => { for (const listener of listeners) listener(); };
     const requireCurrent = (previewRef: PreviewRef) => {
         if (!current || current.snapshot.previewRef !== previewRef) {
             throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_preview_stale', error: 'theme_preview_stale' });
         }
-        return current;
+        const scope = current.scope;
+        if (!scope || !areAccountSettingsScopesEqual(scope, deps.captureScope())) {
+            throw new Error('Artifact Account scope is unavailable');
+        }
+        return { preview: current, scope };
     };
     const begin = (input: ThemeTryOnInput): ThemeTryOnSnapshot => {
         const snapshot: ThemeTryOnSnapshot = { ...input, previewRef: randomUUID() };
-        current = { snapshot };
+        current = { snapshot, scope: deps.captureScope() };
         publish();
         return snapshot;
     };
     return {
         begin,
         replace(previewRef, input) { requireCurrent(previewRef); return begin(input); },
-        read: () => current?.snapshot ?? null,
+        read: () => current && areAccountSettingsScopesEqual(current.scope, deps.captureScope()) ? current.snapshot : null,
         revert(previewRef) { requireCurrent(previewRef); current = null; publish(); },
         async keep(previewRef) {
-            const preview = requireCurrent(previewRef);
+            const { preview, scope } = requireCurrent(previewRef);
             if (!preview.keeping) {
                 preview.keeping = Promise.resolve().then(() => {
                     const snapshot = preview.snapshot;
                     if (snapshot.document === null || snapshot.selection !== undefined) {
-                        return deps.select({ reference: snapshot.selection ?? null, mode: snapshot.mode });
+                        return deps.select({ reference: snapshot.selection ?? null, mode: snapshot.mode }, scope);
                     }
-                    if (snapshot.origin.kind === 'store') return deps.installStore(snapshot);
-                    return deps.keep({ document: snapshot.document, mode: snapshot.mode });
+                    if (snapshot.origin.kind === 'store') return deps.installStore(snapshot, scope);
+                    return deps.keep({ document: snapshot.document, mode: snapshot.mode }, scope);
                 })
                     .then(result => {
                         if (current === preview) { current = null; publish(); }

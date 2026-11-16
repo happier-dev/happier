@@ -3,6 +3,9 @@ import { parseThemeProfileDocument, type ThemeReference } from '@happier-dev/pro
 import { createThemeProfileLibrary, type ThemeProfileArtifactAdapter } from './themeProfileLibrary';
 import { projectThemeLibraryEntry } from './themeProfilePresentation';
 import { createThemeTryOnOwner, type ThemeTryOnSnapshot } from './themeTryOn';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+
+const accountScope: AccountSettingsScope = { serverId: 'home', accountId: 'account' };
 
 function document(id: string) {
     const parsed = parseThemeProfileDocument({ schemaVersion: 2, id, name: id,
@@ -13,6 +16,8 @@ function document(id: string) {
 }
 
 function setup() {
+    let scope: AccountSettingsScope | null = accountScope;
+    const effectScopes: AccountSettingsScope[] = [];
     const rows = new Map<string, { document: ReturnType<typeof document>; revision: number; headerVersion: number }>();
     const selection = { light: null as ThemeReference | null, dark: null as ThemeReference | null };
     let beforeSave: (() => Promise<void>) | undefined;
@@ -40,13 +45,61 @@ function setup() {
         writeSelection: (mode: 'light' | 'dark', reference: ThemeReference | null) => { selection[mode] = reference; },
         createId: () => crypto.randomUUID(), now: () => Date.parse('2026-11-16T12:00Z') };
     const library = createThemeProfileLibrary(context);
-    const owner = createThemeTryOnOwner({ keep: input => library.keep(input), select: input => library.select(input),
+    const callbacks = { captureScope: () => scope,
+        keep: (input: Parameters<typeof library.keep>[0], captured: AccountSettingsScope) => { effectScopes.push(captured); return library.keep(input); },
+        select: (input: Parameters<typeof library.select>[0], captured: AccountSettingsScope) => { effectScopes.push(captured); return library.select(input); },
         // Store acquisition/install is exercised by the Store lifecycle composition suite.
-        installStore: async () => { throw new Error('Store origin is outside these agent/editor cases'); } });
-    return { owner, library, rows, selection, writes: () => writes, holdSave: (barrier: () => Promise<void>) => { beforeSave = barrier; } };
+        installStore: async () => { throw new Error('Store origin is outside these agent/editor cases'); } };
+    const owner = createThemeTryOnOwner(callbacks);
+    return { owner, library, rows, selection, effectScopes, setScope: (next: AccountSettingsScope | null) => { scope = next; },
+        writes: () => writes, holdSave: (barrier: () => Promise<void>) => { beforeSave = barrier; } };
 }
 
 describe('one-document theme try-on', () => {
+    it('refuses a previous Account preview before any library effect and hides its overlay', async () => {
+        const state = setup();
+        const preview = state.owner.begin({ document: document('old_account'), mode: 'dark', origin: { kind: 'agent' } });
+        state.setScope({ ...accountScope, accountId: 'other-account' });
+        await expect(state.owner.keep(preview.previewRef)).rejects.toThrow('Artifact Account scope is unavailable');
+        expect(state.owner.read()).toBeNull();
+        expect(state.rows.size).toBe(0);
+        expect(state.writes()).toBe(0);
+        expect(state.selection).toEqual({ light: null, dark: null });
+        expect(state.effectScopes).toEqual([]);
+    });
+
+    it('never assigns a preview captured without an Account to a later Account', async () => {
+        const state = setup();
+        const entry = (await state.library.list()).find(entry => entry.source.kind === 'built-in')!;
+        await state.library.select({ reference: entry.reference, mode: 'dark' });
+        state.setScope(null);
+        const preview = state.owner.begin({ document: null, selection: null, mode: 'dark', origin: { kind: 'editor' } });
+        state.setScope(accountScope);
+        await expect(state.owner.keep(preview.previewRef)).rejects.toThrow('Artifact Account scope is unavailable');
+        expect(state.owner.read()).toBeNull();
+        expect(state.selection.dark).toEqual(entry.reference);
+        expect(state.effectScopes).toEqual([]);
+        expect(state.writes()).toBe(0);
+    });
+
+    it('passes captured scope to real library effects and captures a replacement independently', async () => {
+        const state = setup();
+        const first = state.owner.begin({ document: document('first_scope'), mode: 'dark', origin: { kind: 'editor' } });
+        const replacementScope = { ...accountScope };
+        state.setScope(replacementScope);
+        const replacement = state.owner.replace(first.previewRef,
+            { document: document('replacement_scope'), mode: 'dark', origin: { kind: 'editor' } });
+        state.setScope({ ...replacementScope });
+        expect(state.owner.read()).toBe(replacement);
+        const saved = await state.owner.keep(replacement.previewRef);
+        expect(state.effectScopes[0]).toBe(replacementScope);
+        expect(state.rows.has(saved.entry!.id)).toBe(true);
+        const base = state.owner.begin({ document: null, selection: null, mode: 'dark', origin: { kind: 'editor' } });
+        await state.owner.keep(base.previewRef);
+        expect(state.effectScopes).toEqual([replacementScope, replacementScope]);
+        expect(state.selection.dark).toBeNull();
+    });
+
     it('keeps an existing theme or the exact base by selecting without saving a body', async () => {
         const state = setup();
         const entry = (await state.library.list()).find(entry => entry.source.kind === 'built-in')!;
@@ -91,11 +144,13 @@ describe('one-document theme try-on', () => {
         const keep = state.owner.keep(first.previewRef);
         const sameKeep = state.owner.keep(first.previewRef);
         await saving;
+        state.setScope({ ...accountScope, accountId: 'replacement-account' });
         const replacement = state.owner.begin({ document: document('new-preview'), mode: 'dark', origin: { kind: 'agent' } });
         release();
         const [result, repeated] = await Promise.all([keep, sameKeep]);
         expect(repeated).toEqual(result);
         expect(state.writes()).toBe(1);
+        expect(state.effectScopes).toEqual([accountScope]);
         expect(state.owner.read()).toBe(replacement);
         expect(state.rows.get(result.entry!.id)?.document.raw.style).toEqual({ futurePresentation: { glow: true } });
     });
