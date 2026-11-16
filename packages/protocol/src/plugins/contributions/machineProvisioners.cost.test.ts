@@ -128,6 +128,25 @@ it('normalizes each declared document once when serialized provisioners reuse ro
   }
 });
 
+it('retains no copy of an admitted schema text', async () => {
+  const { setFlagsFromString } = await import('node:v8');
+  const { runInNewContext } = await import('node:vm');
+  setFlagsFromString('--expose-gc');
+  const gc = runInNewContext('gc') as () => void;
+  const description = (i: number) => `${i}:${'x'.repeat(64 * 1024)}`;
+  const documentsKept: unknown[] = [];
+  gc();
+  const before = process.memoryUsage().heapUsed;
+  for (let i = 0; i < 64; i += 1) {
+    documentsKept.push(documents.normalizePluginJsonSchema(JSON.parse(JSON.stringify({ type: 'string', description: description(i) }))));
+  }
+  gc();
+  const grown = process.memoryUsage().heapUsed - before;
+  // Each admitted document holds its one 64 KiB description; a retained JSON text would add a second copy.
+  expect(documentsKept).toHaveLength(64);
+  expect(grown).toBeLessThan(64 * 64 * 1024 * 1.5);
+});
+
 it('admits each schema text once: a freshly decoded copy reuses the admitted document', () => {
   const native = documents.defineProtocolObject({ name: documents.defineProtocolString() }, { policy: 'closed' });
   // Every wire parse of an Action output or manifest carries new objects for the same schema.

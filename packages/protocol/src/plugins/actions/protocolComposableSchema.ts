@@ -26,6 +26,8 @@ import {
   sealComposedStrictJsonRecord,
 } from '../contributions/strictJsonValue.js';
 import type { JsonValue as StrictRuntimeJsonValue } from '../../json/strictJsonValue.js';
+import { sha256 } from '@noble/hashes/sha2';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 import { forEachJsonSchemaChild, jsonSchemaContainsReference } from '../../actions/actionInputJsonSchema.js';
 import { getResolvedLazyDefinitionValue } from '../../lazyZodSchema.js';
 import { readPaddedBase64DecodedLength } from '../../crypto/base64.js';
@@ -128,13 +130,14 @@ function isDeepFrozenDataGraph(value: unknown): boolean {
 }
 
 /**
- * Admitted documents by their strict JSON text. A freshly decoded copy of a schema this process
- * already admitted (every wire parse of an Action output or manifest carries new objects) is the
- * same document: it reuses that admission and its compiler identity instead of re-validating.
+ * Admitted documents by the SHA-256 of their strict JSON text. A freshly decoded copy of a schema
+ * this process already admitted (every wire parse of an Action output or manifest carries new
+ * objects) is the same document: it reuses that admission and its compiler identity instead of
+ * re-validating. The text itself is not kept as the key (a daemon held 7 MiB of schema texts).
  * Ceiling: one entry per distinct schema text, i.e. the declared contribution and output schemas.
  * A producer minting a new schema text per read would grow this map without bound.
  */
-const admittedSchemaDocumentsByText = new Map<string, PluginJsonSchemaV2>();
+const admittedSchemaDocumentsByTextDigest = new Map<string, PluginJsonSchemaV2>();
 
 // Mutable declarations still pass strict admission on every read; unchanged bytes keep
 // one immutable compiler identity, and edits replace it instead of reusing stale code.
@@ -154,8 +157,8 @@ export function normalizePluginJsonSchema(schema: object): PluginJsonSchemaV2 {
     normalized = Object.freeze({ ...cloned, $schema: CANONICAL_PLUGIN_JSON_SCHEMA_DIALECT });
   }
   // The strict clone above is exact JSON, so its text identifies the document.
-  const text = JSON.stringify(normalized);
-  let jsonSchema = admittedSchemaDocumentsByText.get(text);
+  const digest = bytesToHex(sha256(utf8ToBytes(JSON.stringify(normalized))));
+  let jsonSchema = admittedSchemaDocumentsByTextDigest.get(digest);
   if (!jsonSchema) {
     const parsed = PluginJsonSchemaV2Schema.safeParse(normalized);
     if (!parsed.success) {
@@ -171,7 +174,7 @@ export function normalizePluginJsonSchema(schema: object): PluginJsonSchemaV2 {
     // parser output would create a second mutable projection.
     assertSchemaSemantics(normalized as Readonly<Record<string, unknown>>);
     jsonSchema = previous && pluginJsonValuesEqual(previous, normalized) ? previous : normalized as PluginJsonSchemaV2;
-    admittedSchemaDocumentsByText.set(text, jsonSchema);
+    admittedSchemaDocumentsByTextDigest.set(digest, jsonSchema);
   }
   // Object.freeze alone (a frozen root, or accessors) proves nothing; a fully
   // frozen data graph that just passed admission cannot drift from it.
