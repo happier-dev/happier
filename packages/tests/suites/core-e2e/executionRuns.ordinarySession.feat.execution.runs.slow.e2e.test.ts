@@ -8,8 +8,7 @@ import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/acti
 import { findMachineAgentInventoryItemForTargetV1, MachinesAgentsListOutputSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 
 import { connectSessionMcpClient, readSessionMcpContextFromEnvironment } from '../../../../apps/cli/src/mcp/runtime/sessionMcpLocalClient';
-import { connectUiActionClient } from '@happier-tests/ui-action-client';
-import { buildTestAccountCliAuthCredentials } from '../../src/testkit/cliAuth';
+import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import {
   CLAUDE_CODE_E2E_OAUTH_SCOPE,
   CLAUDE_SUBSCRIPTION_SERVICE_ID,
@@ -33,7 +32,7 @@ import { initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
 const run = createRunDirs({ runLabel: 'core' });
 let fixture: StartedConnectedServicesClaudeDaemonFixture | undefined;
 let vendor: ConnectedServiceRecoveryTokenServer | undefined;
-let ui: Awaited<ReturnType<typeof connectUiActionClient>> | undefined;
+let ui: Awaited<ReturnType<typeof connectUiPersonActionClient>> | undefined;
 let nativeMcp: Awaited<ReturnType<typeof connectSessionMcpClient>> | undefined;
 
 function object(value: unknown): Record<string, unknown> {
@@ -97,8 +96,7 @@ it('starts selected-auth work once and delivers approved Project output to the o
     accessToken: 'ordinary-session-access', refreshToken: 'ordinary-session-refresh',
     scope: CLAUDE_CODE_E2E_OAUTH_SCOPE, tokenType: 'Bearer', idToken: null,
   });
-  const credentials = buildTestAccountCliAuthCredentials({ auth: fixture.auth, mode: 'legacy' });
-  ui = await connectUiActionClient({ serverUrl: fixture.serverBaseUrl, credentials });
+  ui = await connectUiPersonActionClient({ serverUrl: fixture.serverBaseUrl, accountSecret: fixture.auth.accountSigningSeed });
   const { serverId, execute } = ui;
   await waitFor(() => ui!.isAccountReady(), { timeoutMs: 60_000 }).catch(error => {
     const requests = fixture?.homeRequests?.entries().map(({ method, path, statusCode }) => ({ method, path, statusCode }));

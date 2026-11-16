@@ -23,6 +23,11 @@ export function connectUiActionClient(params: Readonly<{
     close(): Promise<void>;
 }>>;
 
+export function connectUiPersonActionClient(params: Readonly<{
+    serverUrl: string;
+    accountSecret: Uint8Array;
+}>): ReturnType<typeof connectUiActionClient>;
+
 export function createAccountOutputFixture(params: Readonly<{
     serverId: string; homeId: string; baseUrl: string; ownerToken: string; ownerAccountId: string;
     memberToken: string; memberAccountId: string; machineId: string; replacementMachineId?: string;

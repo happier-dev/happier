@@ -1,4 +1,6 @@
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { authGetTokenAtEndpoint } from '@/auth/flows/getToken';
+import { encodeBase64 } from '@/encryption/base64';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -56,4 +58,19 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
         await close();
         throw error;
     }
+}
+
+/** Sign in as the person through the UI's Account flow, never a terminal bearer. */
+export async function connectUiPersonActionClient(params: Readonly<{
+    serverUrl: string;
+    accountSecret: Uint8Array;
+}>): ReturnType<typeof connectUiActionClient> {
+    const credentials = await authGetTokenAtEndpoint({
+        endpointUrl: params.serverUrl,
+        secret: params.accountSecret,
+        requireKeyChallengeV2: true,
+        requireExistingAccount: true,
+    });
+    return connectUiActionClient({ serverUrl: params.serverUrl,
+        credentials: { ...credentials, secret: encodeBase64(params.accountSecret) } });
 }
