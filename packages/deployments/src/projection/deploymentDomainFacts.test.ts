@@ -81,12 +81,14 @@ describe('Domain lifecycle projection', () => {
 });
 
 describe('Domain saved health facts', () => {
-    const evidence = (kind: string, facts: Record<string, string | number>) => ({ v: 1 as const,
-        items: [{ source: { kind: 'alert' as const, label: kind }, author: { kind: 'process' as const },
-            text: JSON.stringify({ kind, ...facts }) }] });
+    const diagnostics = (kind: 'http' | 'certificate' | 'dns', facts: Record<string, string | number>) => ({
+        cause: { kind, observerMachineId: 'controller', vantage: 'outside' as const, ...facts },
+        evidence: { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: kind },
+            author: { kind: 'process' as const }, text: `${kind} finite observation` }] },
+    });
     const certificate = { domainId: domain.id, domainRevision: domain.revision, targetLinkRevision: 1,
         kind: 'certificate' as const, observerMachineId: 'controller', vantage: 'outside' as const,
-        result: { status: 'up' as const, observedAt: 2000, evidence: evidence('certificate', { notBefore: 0, notAfter: 3000 }) } };
+        result: { status: 'up' as const, observedAt: 2000, ...diagnostics('certificate', { notBefore: 0, notAfter: 3000 }) } };
     const content = { hostname: 'app.test', target: { service: 'app', containerPort: 80 }, tls: { kind: 'custom' as const } };
     it('projects the custom certificate replacement point and expiry without a managed renewal window', () => {
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [certificate], null, 2000))
@@ -99,16 +101,16 @@ describe('Domain saved health facts', () => {
     });
     it('distinguishes DNS, outside network access, TLS and unavailable observations', () => {
         const http = { ...certificate, kind: 'http' as const, result: { status: 'down' as const,
-            observedAt: 2000, evidence: evidence('http', { reason: 'connection' }) } };
+            observedAt: 2000, ...diagnostics('http', { reason: 'connection' }) } };
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [http], null, 2000))
             .toMatchObject({ needsYou: { cause: 'network', vantage: 'outside' } });
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...http, vantage: 'sameMachine' }], null, 2000))
             .toMatchObject({ needsYou: { cause: 'network', vantage: 'sameMachine' } });
         expect(projectDeploymentDomainHealthFactsV1({ ...domain, dnsHealth: { status: 'down',
-            evidence: evidence('dns', { reason: 'dns_missing' }) } }, content, [], null, 2000))
+            ...diagnostics('dns', { reason: 'dns_missing' }) } }, content, [], null, 2000))
             .toMatchObject({ needsYou: { cause: 'dns' } });
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...http,
-            result: { ...http.result, evidence: evidence('http', { reason: 'tls' }) } }], null, 2000))
+            result: { ...http.result, ...diagnostics('http', { reason: 'tls' }) } }], null, 2000))
             .toMatchObject({ needsYou: { cause: 'certificate' } });
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [], 'machine_unavailable', 2000))
             .toMatchObject({ availability: 'unavailable', unavailableReason: 'machine_unavailable', needsYou: null });
@@ -117,16 +119,16 @@ describe('Domain saved health facts', () => {
     });
     it('carries the observed HTTP status of a wrong answer as the cause, and none for a network failure', () => {
         const http = { ...certificate, kind: 'http' as const, result: { status: 'down' as const,
-            observedAt: 2000, evidence: evidence('http', {}), cause: { kind: 'http' as const, vantage: 'outside' as const,
+            observedAt: 2000, ...diagnostics('http', {}), cause: { kind: 'http' as const, vantage: 'outside' as const,
                 observerMachineId: 'controller', httpStatus: 502 } } };
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [http], null, 2000))
             .toMatchObject({ needsYou: { cause: 'http', httpStatus: 502, vantage: 'outside' } });
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...http, result: { ...http.result,
-            evidence: evidence('http', { reason: 'connection' }) } }], null, 2000).needsYou).not.toHaveProperty('httpStatus');
+            ...diagnostics('http', { reason: 'connection' }) } }], null, 2000).needsYou).not.toHaveProperty('httpStatus');
     });
     it('keeps an outside failure distinct from a newer local success and advances known expiry only at read', () => {
         const outside = { ...certificate, kind: 'http' as const, result: { status: 'down' as const,
-            observedAt: 1000, evidence: evidence('http', { reason: 'connection' }) } };
+            observedAt: 1000, ...diagnostics('http', { reason: 'connection' }) } };
         const local = { ...outside, vantage: 'sameMachine' as const, result: { ...outside.result,
             status: 'up' as const, observedAt: 2000 } };
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [outside, local], null, 2000))
@@ -139,26 +141,45 @@ describe('Domain saved health facts', () => {
     });
     it('keeps an absent configured check distinct from an unavailable finite observation', () => {
         const unknown = { ...certificate, kind: 'http' as const, result: { status: 'unknown' as const,
-            observedAt: 2000, evidence: evidence('http', { reason: 'not_checked' }) } };
+            observedAt: 2000, ...diagnostics('http', { reason: 'not_checked' }) } };
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [unknown], null, 2000))
             .toMatchObject({ availability: 'not_checked', observedAt: null, needsYou: null });
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [{ ...unknown,
-            result: { ...unknown.result, evidence: evidence('http', { reason: 'transport_incomplete' }) } }], null, 2000))
+            result: { ...unknown.result, ...diagnostics('http', { reason: 'transport_incomplete' }) } }], null, 2000))
             .toMatchObject({ availability: 'unavailable', unavailableReason: 'transport_incomplete', needsYou: null });
+    });
+    it('exposes unavailable DNS coverage without claiming that the address failed to answer', () => {
+        const unavailable = { ...domain, dnsHealth: { status: 'unknown' as const,
+            ...diagnostics('dns', { reason: 'resolver_unavailable' }) } };
+        expect(projectDeploymentDomainHealthFactsV1(unavailable, content, [], null, 2000))
+            .toMatchObject({ availability: 'unavailable', unavailableReason: 'resolver_unavailable', needsYou: null });
+        expect(projectDeploymentDomainHealthFactsV1(unavailable, content, [], 'machine_unavailable', 2000))
+            .toMatchObject({ availability: 'unavailable', unavailableReason: 'machine_unavailable', needsYou: null });
     });
     it('keeps an outside DNS failure primary while the custom certificate replacement is advisory', () => {
         const http = { ...certificate, kind: 'http' as const, result: { status: 'down' as const,
-            observedAt: 2000, evidence: evidence('http', { reason: 'dns' }) } };
+            observedAt: 2000, ...diagnostics('http', { reason: 'dns' }) } };
         expect(projectDeploymentDomainHealthFactsV1(domain, content, [http, certificate], null, 2000))
             .toMatchObject({ certificate: { state: 'expiresSoon' }, needsYou: { cause: 'dns', vantage: 'outside' } });
+    });
+    it('preserves retained certificate facts from the historical finite producer', () => {
+        // ce870ef1875 finiteHealthCheckResult persisted its facts in JSON evidence.
+        const retained = { ...certificate, result: { status: 'up' as const, observedAt: 2000,
+            evidence: { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: 'certificate' },
+                author: { kind: 'process' as const }, text: JSON.stringify({ kind: 'certificate',
+                    vantage: 'outside', observerMachineId: 'controller', notBefore: 0, notAfter: 3000 }) }] } } };
+        expect(projectDeploymentDomainHealthFactsV1(domain, content, [retained], null, 2000))
+            .toMatchObject({ certificate: { state: 'expiresSoon', expiresAt: 3000 } });
     });
 });
 
 
 describe('Domain DNS readiness', () => {
-    const health = (status: 'up' | 'down' | 'unknown', reason: string) => ({ status, evidence: { v: 1 as const,
+    const health = (status: 'up' | 'down' | 'unknown', reason: string) => ({ status,
+        cause: { kind: 'dns' as const, observerMachineId: 'controller', vantage: 'sameMachine' as const, reason },
+        evidence: { v: 1 as const,
         items: [{ source: { kind: 'alert' as const, label: 'DNS' }, author: { kind: 'process' as const },
-            text: JSON.stringify({ kind: 'dns', reason }) }] } });
+            text: `DNS finite observation` }] } });
     it.each([
         ['down', 'dns_missing', 'missing'],
         ['down', 'dns_not_this_machine', 'not_this_machine'],
@@ -175,5 +196,15 @@ describe('Domain DNS readiness', () => {
             .toEqual({ state: 'not_checked', reason: 'dns_present' });
         expect(projectDeploymentDomainDnsReadinessV1(health('unknown', 'not_checked')))
             .toEqual({ state: 'not_checked', reason: 'not_checked' });
+    });
+    it('prefers the typed cause and preserves historical DNS evidence when no cause was retained', () => {
+        // ce870ef1875 finiteHealthCheckResult is the retained JSON-only producer.
+        const retained = { status: 'down' as const, evidence: { v: 1 as const,
+            items: [{ source: { kind: 'alert' as const, label: 'dns' }, author: { kind: 'process' as const },
+                text: JSON.stringify({ kind: 'dns', vantage: 'sameMachine', observerMachineId: 'controller',
+                    reason: 'dns_missing', remedy: 'Configure the DNS record, then verify again.' }) }] } };
+        expect(projectDeploymentDomainDnsReadinessV1(retained)).toEqual({ state: 'missing', reason: 'dns_missing' });
+        expect(projectDeploymentDomainDnsReadinessV1({ ...health('down', 'dns_not_this_machine'), evidence: retained.evidence }))
+            .toEqual({ state: 'not_this_machine', reason: 'dns_not_this_machine' });
     });
 });

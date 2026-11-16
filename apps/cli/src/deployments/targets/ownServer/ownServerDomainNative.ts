@@ -313,7 +313,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 const health = await readNativeCaddyDnsReadiness(domain.hostname, basis, async () =>
                     nativeCaddyDnsResult(basis, 'unknown', 'dns_public_listener_unavailable'));
                 return { ok: true as const, environmentId: job.input.environmentId,
-                    dnsHealth: { status: health.status, evidence: health.evidence } };
+                    dnsHealth: { status: health.status, cause: health.cause, evidence: health.evidence } };
             }
             const native = createNativeCaddyRoutes({ machineId: host.machineId, installationId: identity.installationId,
                 privateKey: decodeBase64(identity.privateKey, 'base64url'),
@@ -323,7 +323,7 @@ export function createOwnServerDomainNative(host: Readonly<{
             if (!('status' in health)) return refuse('reason' in health ? health.reason : 'native_route_unavailable',
                 'details' in health ? health.details : undefined, 'failureCause' in health ? health.failureCause : undefined);
             return { ok: true as const, environmentId: job.input.environmentId,
-                dnsHealth: { status: health.status, evidence: health.evidence } };
+                dnsHealth: { status: health.status, cause: health.cause, evidence: health.evidence } };
         } finally { await acquired.release(); }
     }
     async function execute(job: DeploymentDomainChildRpcV1, context: ActionExecutorContext) {
@@ -343,12 +343,15 @@ export function createOwnServerDomainNative(host: Readonly<{
                     expectedDomainRevision: job.expectedDomainRevision, observation }), privateKey: identity.privateKey }) });
             const routeIdentity = { domainId: job.input.domainId, domain, listener: job.capture.listener,
                 ...(basicAuth ? { basicAuth } : {}), ...(job.capture.listener === 'public' ? { publicTls } : {}) };
-            const readDnsHealth = async () => {
+            const signServingObservation = async (observation: DeploymentDomainObservationBodyV1) => {
+                if (job.capture.listener !== 'public') return signObservation(observation);
                 const health = await native.checkDnsReadiness({ hostname: domain.hostname,
                     nativeServer: job.capture.placement.nativeServer, listener: job.capture.listener, signal });
                 if (!('status' in health)) return refuse('reason' in health ? health.reason : 'native_route_unavailable',
                     'details' in health ? health.details : undefined, 'failureCause' in health ? health.failureCause : undefined);
-                return { status: health.status, evidence: health.evidence };
+                return signObservation({ ...observation,
+                    state: health.status === 'up' ? observation.state : 'warning',
+                    dnsHealth: { status: health.status, cause: health.cause, evidence: health.evidence } });
             };
             const connector = job.cloudflareConnector;
             const settleConnector = async (remove: boolean) => {
@@ -403,8 +406,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 if (networkExposure.kind !== 'ready') return failure(job, networkExposure.reason,
                     networkExposure.details ?? { requiredFact: networkExposure.requiredFact, remedy: networkExposure.remedy },
                     networkExposure.failureCause);
-                return signObservation({ capture: job.capture, state: 'active', networkExposure,
-                    dnsHealth: await readDnsHealth() });
+                return await signServingObservation({ capture: job.capture, state: 'active', networkExposure });
             }
             if (!job.capture.desired) {
                 // The parent already selected last-consumer retirement. With no
@@ -498,7 +500,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 ...(result.networkExposure?.kind === 'ready' ? { routedReplicas:
                     result.networkExposure.localOrigin && route.upstreams.kind === 'replicas'
                         ? route.upstreams.containerNames.map(containerName => ({ containerName })) : [] } : {}) };
-            return signObservation(observation);
+            return await signServingObservation(observation);
         } finally { await acquired.release(); }
     }
     return async (job: DomainJob, context: ActionExecutorContext) => {

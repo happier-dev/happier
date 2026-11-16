@@ -262,8 +262,8 @@ export function projectDeploymentDomainHeader(row: DeploymentDomainRow) {
             operationAddress: { serverId: provider.placement.serverId, machineId: provider.placement.controller.machineId,
                 operationId: provider.placement.actionOperationId } } : {}),
         ...(operationAddress ? { operationAddress } : {}),
-        dnsHealth: (captures.find(capture => capture.desired && capture.dnsHealth?.status !== 'up')
-            ?? captures.find(capture => capture.desired))?.dnsHealth,
+        dnsHealth: (captures.find(capture => capture.desired && capture.dnsHealth && capture.dnsHealth.status !== 'up')
+            ?? captures.find(capture => capture.desired && capture.dnsHealth))?.dnsHealth,
         networkExposure: captures.map(capture => {
             const observation: DeploymentDomainNetworkExposureV1 = row.deletedAt ? { kind: 'unavailable', reason: 'route_absent' }
                 : capture.networkExposure ?? { kind: 'unavailable', reason: 'required_fact_unavailable' };
@@ -709,8 +709,7 @@ export async function transitionDeploymentDomainInTx(tx: Tx, input: DeploymentDo
     const deleted = input.observations.every(observation => observation.state === 'removed');
     if (deleted && row.state !== 'removing') return deploymentFailure('deployment_conflict');
     const state = deleted ? 'removing' : input.observations.some(item => item.state === 'failed') ? 'failed'
-        : input.observations.some(item => item.state === 'warning'
-            || item.capture.desired && item.dnsHealth?.status !== 'up') ? 'warning' : 'active';
+        : input.observations.some(item => item.state === 'warning') ? 'warning' : 'active';
     const retained = deleted ? observedCaptures : observedCaptures.filter(item => item.desired);
     // Identical observations are not content changes, freshness writes or publications.
     if (!deleted && state === row.state && isDeepStrictEqual(retained, captures)) return domainResult(row, environment.revision);

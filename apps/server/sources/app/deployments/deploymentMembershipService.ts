@@ -50,7 +50,7 @@ export async function haveDeploymentMembershipRoutesInTx(tx: Tx, input: Readonly
         if (!parsed.success || parsed.data.length === 0) return false;
         if (input.mode === 'drain') return parsed.data.every(capture => !input.members.some(member =>
             member.machineId === capture.placement.machineId && member.installationId === capture.placement.installationId));
-        return domain.state === 'active' && parsed.data.every(capture => capture.desired && capture.dnsHealth?.status === 'up')
+        return domain.state === 'active' && parsed.data.every(capture => capture.desired)
             && input.members.every(member => parsed.data.some(capture => capture.placement.targetLinkId === input.targetLinkId
                 && capture.placement.machineId === member.machineId && capture.placement.installationId === member.installationId));
     });

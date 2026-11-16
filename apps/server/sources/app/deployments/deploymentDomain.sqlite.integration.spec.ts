@@ -20,6 +20,7 @@ import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { projectDeploymentDomainHeader, projectDeploymentDomainMachineReferences, prepareDeploymentTeardownDomainsInTx,
     readAcceptedDeploymentTeardownDomainContentInTx, readMemberDeploymentDomainContentInTx, createDeploymentDomainInTx } from './deploymentDomainService';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
+import { haveDeploymentMembershipRoutesInTx } from './deploymentMembershipService';
 import { DeploymentDomainCapturedPlacementsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { deploymentDomainProviderObservationProofPayloadV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { DeploymentDomainProviderResultV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainProviderResultV1';
@@ -268,7 +269,7 @@ describe('public Domain storage and native custody', () => {
         }))).toBeNull();
     });
 
-    it.each(['plain', 'e2ee'] as const)('keeps native-only Domain success unhealthy until public DNS is observed in %s', async mode => {
+    it.each(['plain', 'e2ee'] as const)('persists the signed native Domain state and DNS evidence without redeciding health in %s', async mode => {
         const f = await fixture(mode);
         const domainId = crypto.randomUUID();
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
@@ -279,26 +280,39 @@ describe('public Domain storage and native custody', () => {
                     targetLinkId: f.target.id, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
                     actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(),
                     placements: [{ machineId: f.machine.id, installationId: f.machine.installationId!,
-                        nativeServer: 'private', listener: 'privateOrigin', dockerEngineId: 'domain-engine' }],
+                        nativeServer: 'private', listener: 'privateOrigin', dockerEngineId: 'domain-engine' },
+                        { machineId: f.machine.id, installationId: f.machine.installationId!,
+                            nativeServer: 'public', listener: 'public', dockerEngineId: 'domain-engine' }],
                     ...await f.content('deployment-domain.v1') } })).json());
             if (!added.ok) throw new Error(added.error);
-            const settle = async (revision: number, dnsHealth?: DeploymentDomainObservationBodyV1['dnsHealth'], tamper = false) => {
-                const observation = { capture: added.domain.placements![0]!, state: 'active' as const,
+            const settle = async (revision: number, state: 'active' | 'warning', dnsHealth?: DeploymentDomainObservationBodyV1['dnsHealth'], tamper = false) => {
+                const observation = { capture: added.domain.placements![1]!, state,
                     ...(dnsHealth ? { dnsHealth } : {}) };
+                const privateObservation = { capture: added.domain.placements![0]!, state: 'active' as const };
                 return app.inject({ method: 'POST',
                 url: `${url}/${domainId}/transitions`, headers, payload: { serverId, environmentId: f.environment.id,
-                    domainId, expectedDomainRevision: revision, observations: [{ ...observation,
+                    domainId, expectedDomainRevision: revision, observations: [{ ...privateObservation,
+                        proof: signMachineInstallationProof({ privateKey: f.key.secretKey,
+                            payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: revision, observation: privateObservation }) }) }, { ...observation,
                         ...(tamper ? { dnsHealth: { ...dnsHealth, status: 'up' } } : {}),
                         proof: signMachineInstallationProof({ privateKey: f.key.secretKey,
                             payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: revision, observation }) }) }] } });
             };
-            expect((await settle(1)).json()).toMatchObject({ ok: true, domain: { state: 'warning', revision: 2 } });
-            const missing: NonNullable<DeploymentDomainObservationBodyV1['dnsHealth']> = { status: 'down', evidence: {
+            expect.soft((await settle(1, 'active')).json()).toMatchObject({ ok: true, domain: { state: 'active', revision: 2 } });
+            const membershipRoutes = () => inTx(tx => haveDeploymentMembershipRoutesInTx(tx, {
+                environmentId: f.environment.id, targetLinkId: f.target.id, mode: 'join',
+                members: [{ machineId: f.machine.id, installationId: f.machine.installationId! }],
+            }));
+            expect.soft(await membershipRoutes()).toBe(true);
+            const missing: NonNullable<DeploymentDomainObservationBodyV1['dnsHealth']> = { status: 'down',
+                cause: { kind: 'dns', vantage: 'sameMachine', observerMachineId: f.machine.id,
+                    reason: 'dns_missing', remedy: 'Configure public DNS, then verify the Domain again.' }, evidence: {
                 v: 1, items: [{ source: { kind: 'alert', label: 'dns' }, author: { kind: 'process' },
-                    text: JSON.stringify({ reason: 'dns_missing', remedy: 'Configure public DNS, then verify the Domain again.' }) }] } };
-            expect((await settle(2, missing, true)).statusCode).toBe(403);
-            const unhealthy = DeploymentDomainMutationResultV1Schema.parse((await settle(2, missing)).json());
+                    text: 'dns health check: down (dns_missing).' }] } };
+            expect((await settle(2, 'warning', missing, true)).statusCode).toBe(403);
+            const unhealthy = DeploymentDomainMutationResultV1Schema.parse((await settle(2, 'warning', missing)).json());
             expect(unhealthy).toMatchObject({ ok: true, domain: { state: 'warning', revision: 3, dnsHealth: missing } });
+            expect(await membershipRoutes()).toBe(false);
             expect((await app.inject({ method: 'GET', url: `${url}/${domainId}?serverId=${serverId}`, headers })).json()).toEqual(unhealthy);
             expect((await app.inject({ method: 'GET', url: `${url}?serverId=${serverId}`, headers })).json())
                 .toMatchObject({ ok: true, domains: [{ state: 'warning', dnsHealth: missing }] });
@@ -306,13 +320,18 @@ describe('public Domain storage and native custody', () => {
             const stop = observeSqliteRequests({ before: event => {
                 if (event.model === 'DeploymentDomain' && event.action === 'update') changes.push(event.action);
             } });
-            try { expect((await settle(3, missing)).json()).toEqual(unhealthy); } finally { stop(); }
+            try { expect((await settle(3, 'warning', missing)).json()).toEqual(unhealthy); } finally { stop(); }
             expect(changes).toEqual([]);
-            const resolved = { ...missing, status: 'up' as const, evidence: { ...missing.evidence,
-                items: [{ ...missing.evidence.items[0]!, text: JSON.stringify({ reason: 'dns_matched' }) }] } };
-            expect((await settle(3, resolved)).json()).toMatchObject({ ok: true, domain: { state: 'active', revision: 4, dnsHealth: resolved } });
-            const unavailable = { ...missing, status: 'unknown' as const };
-            expect((await settle(4, unavailable)).json()).toMatchObject({ ok: true, domain: { state: 'warning', revision: 5, dnsHealth: unavailable } });
+            const resolved = { ...missing, status: 'up' as const,
+                cause: { ...missing.cause!, reason: 'dns_ready' }, evidence: { ...missing.evidence,
+                    items: [{ ...missing.evidence.items[0]!, text: 'dns health check: up (dns_ready).' }] } };
+            expect((await settle(3, 'active', resolved)).json()).toMatchObject({ ok: true, domain: { state: 'active', revision: 4, dnsHealth: resolved } });
+            const unavailable = { ...missing, status: 'unknown' as const,
+                cause: { ...missing.cause!, reason: 'resolver_unavailable' } };
+            expect((await settle(4, 'warning', unavailable)).json()).toMatchObject({ ok: true, domain: { state: 'warning', revision: 5, dnsHealth: unavailable } });
+            const recovered = (await settle(5, 'active')).json();
+            expect(recovered).toMatchObject({ ok: true, domain: { state: 'active', revision: 6 } });
+            expect(recovered.domain).not.toHaveProperty('dnsHealth');
         });
     });
 

@@ -602,7 +602,8 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     const environment = createDeploymentEnvironmentDetailV1();
     const adminWriteRefused = scenario === 'direct installed Caddy admin write refused';
     const recordedReplicaCase = scenario === 'direct installed Caddy' || scenario === 'direct installed Caddy redirect';
-    // Activation is not an open/manual DNS demand; observe only the DNS boundary.
+    // A public Add settles from its finite DNS observation; private origins
+    // (including Tunnel activation) do not demand public DNS proof.
     const activationDns = recordedReplicaCase ? vi.spyOn(Resolver.prototype, 'resolve').mockResolvedValue([]) : undefined;
     const networkConnectFailure = scenario === 'Tunnel running private network failure';
     // File logging is the diagnostic boundary; keep the real controller/native path.
@@ -1434,7 +1435,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 .toMatchObject({ ok: true, domain: { state: 'active' } });
             expect(admissions).toHaveLength(1);
             expect(children).toHaveLength(2);
-            expect(transitions).toMatchObject([{ observations: [{ state: 'active' }, { state: 'active' }] }]);
+            expect(transitions).toMatchObject([{ observations: [{ state: 'active' }, { state: recordedReplicaCase ? 'warning' : 'active' }] }]);
             if (recordedReplicaCase) {
                 expect(transitions).toMatchObject([{ observations: [
                     { routedReplicas: [{ containerName: 'deployed-web-1' }, { containerName: 'deployed-web-2' }] },
@@ -1443,8 +1444,13 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                 ] }]);
                 expect(JSON.stringify(transitions)).not.toContain('deployed-db-1');
             }
-            expect(nativeResults).toMatchObject([{ caddy: { status: 'ready' } }, { state: 'active' }, { state: 'active' }]);
-            if (activationDns) expect(activationDns).not.toHaveBeenCalled();
+            expect(nativeResults).toMatchObject([{ caddy: { status: 'ready' } }, { state: 'active' }, { state: recordedReplicaCase ? 'warning' : 'active' }]);
+            if (activationDns) {
+                expect(activationDns).toHaveBeenCalledTimes(2);
+                expect(transitions).toMatchObject([{ observations: [{ state: 'active' }, { state: 'warning',
+                    dnsHealth: { status: 'down', cause: { reason: 'dns_missing', remedy: expect.any(String) } } }] }]);
+                expect(JSON.stringify(transitions)).toContain('dns_missing');
+            }
             expect(admissions[0]?.placements).toEqual(expect.arrayContaining([
                 expect.objectContaining({ machineId: 'a', listener: 'privateOrigin', nativeServer: 'happier_private' }),
                 expect.objectContaining({ machineId: 'a', listener: 'public', nativeServer: 'happier_public' }),

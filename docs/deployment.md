@@ -4128,8 +4128,8 @@ reuses an unchanged app container while adding a database. The existing source
 custody reader proves each folder against its receipt before observation;
 competing native projects remain a conflict.
 
-Unreleased 0.3 Domain verification consumes the finite DNS health owner through
-an explicit verify Action. Draft preview resolves A and AAAA concurrently without
+Unreleased 0.3 public-listener Domain Add and Verify consume the finite DNS health
+owner before signing the native observation. Draft preview resolves A and AAAA concurrently without
 creating a Domain or requiring Caddy to be applied. Missing DNS reports `down`;
 resolver failure reports `unknown`. When DNS resolves but the public Caddy
 listener is absent or stopped, preview reports `unknown` with
@@ -4137,8 +4137,17 @@ listener is absent or stopped, preview reports `unknown` with
 serves one exact temporary HTTP challenge through the native route owner, then
 removes that challenge. This proves routing from the Machine's vantage, not
 Internet reachability, TLS validity or application health. No DNS polling runs.
-The semantic projection consumes the same health evidence for saved Domains;
-a successful native route alone does not establish DNS readiness.
+The native producer signs `warning` with the DNS evidence when applicable public
+DNS is down or unknown; a successful public native route alone does not establish
+DNS readiness. Private-origin observations, including Cloudflare Tunnel origins,
+omit this public-listener proof and may settle active after native activation.
+Home aggregates the signed states and retains the health owner's typed `cause`
+(reason, vantage and available remedy) beside the display evidence;
+membership readiness consumes the resulting Domain state. The semantic projection
+consumes the same typed cause for saved Domains, retaining the historical finite
+producer's JSON evidence only when no typed cause exists. Unknown DNS coverage
+projects as unavailable with its original reason, without claiming failed
+reachability.
 
 Before public Caddy setup, the native port owner checks Docker publications and
 host bind availability. On Linux, a denied privileged-port bind probe also reads

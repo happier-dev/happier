@@ -44,11 +44,17 @@ export function deploymentDomainProbeVantageV1(environment: DeploymentEnvironmen
         ? 'sameMachine' : 'outside';
 }
 
-function finiteEvidence(evidence: NonNullable<DeploymentDomainHeaderV1['dnsHealth']>['evidence']): Record<string, unknown> {
-    for (const item of evidence.items) {
+function finiteCause(result: Pick<NonNullable<DeploymentDomainHeaderV1['dnsHealth']>, 'cause' | 'evidence'>): Record<string, unknown> {
+    if (result.cause) return result.cause;
+    // The finite producer before 0df892b192a persisted this envelope as JSON evidence.
+    for (const item of result.evidence.items) {
+        if (item.source.kind !== 'alert' || item.author.kind !== 'process') continue;
         try {
             const value: unknown = JSON.parse(item.text);
-            if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+            if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+            const facts = value as Record<string, unknown>;
+            if (facts.kind === item.source.label && typeof facts.observerMachineId === 'string'
+                && (facts.vantage === 'sameMachine' || facts.vantage === 'outside')) return facts;
         } catch { /* Other evidence kinds do not carry finite-check facts. */ }
     }
     return {};
@@ -64,7 +70,7 @@ export function projectDeploymentDomainDnsReadinessV1(
     health: DeploymentDomainHeaderV1['dnsHealth'],
 ): DeploymentDomainDnsReadinessV1 {
     if (!health) return { state: 'not_checked', reason: null };
-    const facts = finiteEvidence(health.evidence);
+    const facts = finiteCause(health);
     const reason = typeof facts.reason === 'string' ? facts.reason : null;
     if (reason === 'dns_missing') return { state: 'missing', reason };
     if (reason === 'dns_not_this_machine') return { state: 'not_this_machine', reason };
@@ -78,7 +84,7 @@ export function projectDeploymentDomainHealthFactsV1(domain: DeploymentDomainHea
     observations: readonly DeploymentCurrentDomainObservationV1[], unavailableReason: string | null,
     readAt: number): DeploymentDomainHealthFactsV1 {
     const current = observations.filter(item => item.domainId === domain.id && item.domainRevision === domain.revision
-        && finiteEvidence(item.result.evidence).reason !== 'not_checked');
+        && finiteCause(item.result).reason !== 'not_checked');
     const latest = (kind: 'http' | 'certificate') => {
         const candidates = current.filter(item => item.kind === kind);
         const outside = candidates.filter(item => item.vantage === 'outside');
@@ -89,9 +95,11 @@ export function projectDeploymentDomainHealthFactsV1(domain: DeploymentDomainHea
     const tls = latest('certificate');
     const observed = !http ? tls : !tls || http.result.observedAt >= tls.result.observedAt ? http : tls;
     const incomplete = [http, tls].find(item => item?.result.status === 'unknown');
-    const reason = incomplete ? finiteEvidence(incomplete.result.evidence).reason : null;
-    const unavailable = unavailableReason ?? (incomplete ? typeof reason === 'string' ? reason : 'coverage_unavailable' : null);
-    const tlsEvidence = tls ? finiteEvidence(tls.result.evidence) : {};
+    const unavailableDns = projectDeploymentDomainDnsReadinessV1(domain.dnsHealth);
+    const reason = incomplete ? finiteCause(incomplete.result).reason : unavailableDns.state === 'unavailable' ? unavailableDns.reason : null;
+    const unavailable = unavailableReason ?? (incomplete || unavailableDns.state === 'unavailable'
+        ? typeof reason === 'string' ? reason : 'coverage_unavailable' : null);
+    const tlsEvidence = tls ? finiteCause(tls.result) : {};
     const notBefore = typeof tlsEvidence.notBefore === 'number' ? tlsEvidence.notBefore : null;
     const expiresAt = typeof tlsEvidence.notAfter === 'number' ? tlsEvidence.notAfter : null;
     const certificate: DeploymentDomainHealthFactsV1['certificate'] = { state: 'not_checked', expiresAt };
@@ -105,16 +113,16 @@ export function projectDeploymentDomainHealthFactsV1(domain: DeploymentDomainHea
     if (certificate.state === 'invalid' || certificate.state === 'expired') {
         needsYou = { cause: 'certificate', reason: certificate.state, vantage: tls?.vantage ?? null };
     } else if (http?.result.status === 'down') {
-        const facts = finiteEvidence(http.result.evidence);
+        const facts = finiteCause(http.result);
         const reason = typeof facts.reason === 'string' ? facts.reason : 'http_status';
         const cause = reason === 'dns' ? 'dns' : reason === 'tls' ? 'certificate' : reason === 'connection' ? 'network' : 'http';
         // A wrong answer keeps the status the check observed, so the row can say what came back.
-        const observedStatus = http.result.cause?.httpStatus;
-        const httpStatus = cause === 'http' && observedStatus !== undefined && observedStatus >= 100 && observedStatus <= 599
+        const observedStatus = facts.httpStatus;
+        const httpStatus = cause === 'http' && typeof observedStatus === 'number' && observedStatus >= 100 && observedStatus <= 599
             ? observedStatus : undefined;
         needsYou = { cause, reason, vantage: http.vantage, ...(httpStatus === undefined ? {} : { httpStatus }) };
     } else if (domain.dnsHealth?.status === 'down' && http?.result.status !== 'up') {
-        const facts = finiteEvidence(domain.dnsHealth.evidence);
+        const facts = finiteCause(domain.dnsHealth);
         needsYou = { cause: 'dns', reason: typeof facts.reason === 'string' ? facts.reason : 'dns_missing',
             vantage: facts.vantage === 'outside' || facts.vantage === 'sameMachine' ? facts.vantage : null };
     } else if (certificate.state === 'expiresSoon') {

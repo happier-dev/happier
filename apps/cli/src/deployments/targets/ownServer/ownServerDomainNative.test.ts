@@ -26,7 +26,7 @@ import type { RpcHandler } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { withSocketTempDir } from '@/testkit/fs/tempDir';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
-import { materializeCaddyDomainRouteV1 } from './caddyRouteMaterialization';
+import { caddyPublicHttpServerId, materializeCaddyDomainRouteV1 } from './caddyRouteMaterialization';
 import { createOwnServerStartFirstRoutesForHost } from './ownServerDomainNative';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { NativeComposeRoutingGeneration } from '@/daemon/local/services/launch/nativeComposeStartFirst';
@@ -78,7 +78,7 @@ vi.mock('node:fs/promises', async importOriginal => {
     };
 });
 
-afterEach(() => { connectorFs.directory = ''; vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+afterEach(() => { connectorFs.directory = ''; vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, desktop: true },
@@ -92,6 +92,10 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'missing' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'ipv6' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'unavailable' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, publicListener: true },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, publicListener: true, dns: 'missing' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, publicListener: true, dns: 'unavailable' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, publicListener: true, dns: 'ipv6' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none' },
     { encryptionMode: 'e2ee', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none' },
     { encryptionMode: 'plain', missingEngine: true, mismatchedEngine: false, cutover: false, connectorRetirement: 'none' },
@@ -101,13 +105,15 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', artifactRefusal: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'foreign' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'retain' },
-] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal, diagnostic: $diagnostic, Desktop: $desktop, preview: $preview)', async scenario => withSocketTempDir(async directory => {
+] as const)('settles captured $encryptionMode Domain custody (cutover: $cutover, missing engine: $missingEngine, mismatched engine: $mismatchedEngine, connector: $connectorRetirement, artifact refusal: $artifactRefusal, diagnostic: $diagnostic, Desktop: $desktop, preview: $preview, public: $publicListener, DNS: $dns)', async scenario => withSocketTempDir(async directory => {
     const { encryptionMode, missingEngine, mismatchedEngine, cutover, connectorRetirement } = scenario;
     const verifying = 'verify' in scenario && scenario.verify;
     const preview = 'preview' in scenario && scenario.preview;
     let artifactReads = 0;
     const desktop = 'desktop' in scenario && scenario.desktop;
     const dns = 'dns' in scenario ? scenario.dns : 'ready';
+    const publicListener = 'publicListener' in scenario && scenario.publicListener;
+    const listener = publicListener ? 'public' as const : 'privateOrigin' as const;
     const resolveDns = vi.spyOn(Resolver.prototype, 'resolve').mockImplementation(async (_hostname, recordType) => {
         if (dns === 'unavailable') throw Object.assign(new Error('resolver unavailable'), { code: 'ESERVFAIL' });
         if (dns === 'missing' || dns === 'ipv6' && recordType === 'A')
@@ -148,13 +154,27 @@ it.each([
         NetworkSettings: { Networks: { [connector.networkName]: {} } } };
     const rootEvents: unknown[] = [], rootLaunches: Parameters<MachineElevationSpawn>[0][] = [];
     let grantReads = 0, setupClient: ApiMachineClient | undefined;
-    const material = materializeCaddyDomainRouteV1({ domainId: 'domain', domain, listener: 'privateOrigin',
+    const material = materializeCaddyDomainRouteV1({ domainId: 'domain', domain, listener,
+        ...(publicListener ? { publicTls: { kind: 'managed' as const } } : {}),
         upstreams: { kind: 'replicas', containerNames: ['retired-generation-web-42'] }, privateSourceRanges: [] });
     const foreign = { '@id': 'foreign-app', match: [{ host: ['other.example.test'] }], handle: [{ handler: 'static_response', status_code: 204 }] };
-    const nativeServer = { listen: [':9381'], automatic_https: { disable: true }, routes: missingEngine || mismatchedEngine ? [foreign] : [material.route, foreign],
+    const nativeServer = { listen: [publicListener ? ':443' : ':9381'], automatic_https: { disable: !publicListener },
+        ...(material.tls ? { tls_connection_policies: [material.tls.connectionPolicy] } : {}),
+        routes: missingEngine || mismatchedEngine ? [foreign] : [material.route, foreign],
         errors: { routes: !missingEngine && !mismatchedEngine && material.fallbackRoute ? [material.fallbackRoute] : [] } };
+    const publicHttpServer = { listen: [':80'], routes: material.tls ? [material.tls.redirectRoute] : [] };
     const config = { admin: { listen: 'unix//run/domain-native/admin.sock|0660' },
-        apps: { http: { servers: { 'observed-private': nativeServer } } } };
+        apps: { http: { servers: { 'observed-private': nativeServer,
+            ...(publicListener ? { [caddyPublicHttpServerId('observed-private')]: publicHttpServer } : {}) } },
+            tls: { certificates: { load_pem: [] }, automation: { policies: material.tls ? [material.tls.automationPolicy] : [] } } } };
+    if (publicListener) {
+        const nativeFetch = globalThis.fetch;
+        vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>(async (input, options) => {
+            if (!String(input).startsWith('http://app.example.test/.well-known/happier-dns/')) return nativeFetch(input, options);
+            const challenge = publicHttpServer.routes[0] as { handle: { body: string }[] };
+            return new Response(challenge.handle[0]!.body);
+        }));
+    }
     await writeFile(configPath, JSON.stringify(config));
     let version = 1;
     const mutations: string[] = [];
@@ -166,11 +186,23 @@ it.each([
             // Acquisition reads a valid live config. The later native route
             // read fails at the real HTTP boundary, without replacing its owner.
             if (diagnostic && request.url !== '/config/') { response.end('{"routes":'); return; }
-            response.end(JSON.stringify(request.url === '/config/' ? config : nativeServer));
+            response.end(JSON.stringify(request.url === '/config/' ? config
+                : request.url === '/config/apps/tls' ? config.apps.tls
+                : request.url?.includes(caddyPublicHttpServerId('observed-private')) ? publicHttpServer : nativeServer));
             return;
         }
         if (request.headers['if-match'] !== etag) { response.writeHead(412).end(); return; }
+        if (request.method === 'PUT' && request.url?.endsWith('/routes/0')) {
+            let body = '';
+            for await (const chunk of request) body += String(chunk);
+            publicHttpServer.routes.unshift(JSON.parse(body));
+            version++; response.end(); return;
+        }
         const id = decodeURIComponent(request.url!.slice('/id/'.length));
+        if (request.method === 'DELETE' && id.startsWith('happier_dns_')) {
+            publicHttpServer.routes = publicHttpServer.routes.filter(route => route['@id'] !== id);
+            version++; response.end(); return;
+        }
         if (request.method === 'PATCH') {
             let body = '';
             for await (const chunk of request) body += String(chunk);
@@ -227,7 +259,7 @@ it.each([
             input: { serverId: placement.serverId, environmentId: placement.environmentId, domainId: 'domain' },
             machineId: placement.machineId, installationId: placement.installationId, actionOperationId: placement.actionOperationId,
             ...(connectorRetirement === 'exact' || connectorRetirement === 'foreign' ? { cloudflareConnector: connector } : {}),
-            expectedDomainRevision: 3, capture: { placement, listener: 'privateOrigin', desired: verifying,
+            expectedDomainRevision: 3, capture: { placement, listener, desired: verifying,
                 ...(!missingEngine ? { dockerEngineId: 's0-docker-engine' } : {}),
                 environmentContent: { contentArtifactId: environment.environment.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 },
                 targetLinkContent: { contentArtifactId: link.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 },
@@ -413,7 +445,9 @@ it.each([
         }
         if (preview) {
             expect(rawResult).toMatchObject({ ok: true, environmentId: placement.environmentId,
-                dnsHealth: { status: dns === 'missing' ? 'down' : 'unknown' } });
+                dnsHealth: { status: dns === 'missing' ? 'down' : 'unknown', cause: { kind: 'dns',
+                    reason: dns === 'missing' ? 'dns_missing' : 'dns_public_listener_unavailable',
+                    vantage: 'sameMachine', observerMachineId: placement.machineId } } });
             expect(JSON.stringify(rawResult)).toContain(dns === 'missing' ? 'dns_missing' : 'dns_public_listener_unavailable');
             expect(resolveDns).toHaveBeenCalledTimes(2);
             expect(artifactReads).toBe(0);
@@ -439,17 +473,24 @@ it.each([
             return;
         }
         if (verifying) {
-            expect(rawResult).toMatchObject({ dnsHealth: { status: dns === 'missing' ? 'down' : 'unknown' } });
-            expect(resolveDns).toHaveBeenCalledTimes(2);
             const observation = DeploymentDomainObservationV1Schema.parse(rawResult);
-            const dnsEvidence = JSON.parse(observation.dnsHealth!.evidence.items[0]!.text);
-            expect(dnsEvidence).toMatchObject({ reason: dns === 'missing' ? 'dns_missing'
-                : dns === 'unavailable' ? 'resolver_unavailable' : 'dns_private_listener_unavailable' });
-            if (dns === 'missing' || dns === 'unavailable') expect(dnsEvidence.remedy).toEqual(expect.any(String));
-            expect(JSON.stringify(observation.dnsHealth)).not.toMatch(/app\.example\.test|192\.0\.2\.1|2001:db8::1/);
-            expect(observation).toMatchObject({ state: 'active', networkExposure: { kind: 'ready',
-                listener: 'privateOrigin', localOrigin: true, fallback: false,
-                listeners: [{ tls: false, automaticHttpsDisabled: true, endpoints: [] }] } });
+            if (publicListener) {
+                const status = dns === 'missing' ? 'down' : dns === 'unavailable' ? 'unknown' : 'up';
+                expect(observation).toMatchObject({ state: status === 'up' ? 'active' : 'warning', dnsHealth: { status } });
+                expect(resolveDns).toHaveBeenCalledTimes(2);
+                expect(observation).toMatchObject({ dnsHealth: { cause: {
+                    kind: 'dns', vantage: 'sameMachine', observerMachineId: placement.machineId,
+                    reason: dns === 'missing' ? 'dns_missing' : dns === 'unavailable' ? 'resolver_unavailable' : 'dns_ready',
+                    ...(status !== 'up' ? { remedy: expect.any(String) } : {}),
+                } } });
+                expect(publicHttpServer.routes).toEqual([material.tls!.redirectRoute]);
+                expect(JSON.stringify(observation.dnsHealth)).not.toMatch(/app\.example\.test|192\.0\.2\.1|2001:db8::1/);
+            } else {
+                expect(observation).not.toHaveProperty('dnsHealth');
+                expect(resolveDns).not.toHaveBeenCalled();
+                expect(observation).toMatchObject({ state: 'active' });
+            }
+            expect(observation).toMatchObject({ networkExposure: { kind: 'ready', listener, localOrigin: true, fallback: false } });
             expect(mutations).toEqual([]);
             expect(JSON.stringify(observation)).not.toContain(socketPath);
             expect(JSON.stringify(observation.networkExposure)).not.toMatch(/hostAddress|"listen"/);
