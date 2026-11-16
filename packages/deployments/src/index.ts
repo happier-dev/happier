@@ -1,4 +1,5 @@
 export * from './controller/createDeploymentReadControllerV1.js';
+export * from './telemetry/export.js';
 export type * from './controller/deploymentReadControllerTypes.js';
 export * from './controller/deploymentObservationDemand.js';
 export * from './targets/deploymentTargetCatalog.js';

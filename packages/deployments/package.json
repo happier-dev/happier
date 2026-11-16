@@ -7,6 +7,11 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./telemetry": {
+      "happier-source": "./src/telemetry/export.ts",
+      "types": "./dist/telemetry/export.d.ts",
+      "default": "./dist/telemetry/export.js"
+    },
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
