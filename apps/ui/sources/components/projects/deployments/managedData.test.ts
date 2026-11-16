@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { managedDataConnections, managedDataLinkContent, managedDataTargets } from './managedData';
-import { definePlugin, DeploymentTargetRoleInputProtocolSchemasV1 } from '@happier-dev/plugin-sdk';
+import { definePlugin, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
 
@@ -20,16 +20,34 @@ it('projects a data descriptor, its credential purpose and authored fields witho
       confirmation: { title: 'Save these database connections?' },
       hostAccess: ['manage'], connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: 'manage' }],
       inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['connectionSecret.save'].jsonSchema, resultSchema: closed,
-      run: async () => ({}) } },
+      run: async () => ({}) }, delete: { title: 'Delete project', surfaces: ['ui'], execution: { target: 'account',
+        account: { artifactId: 'account-runtime', exportName: 'activate' } }, dangerLevel: 'destructive', readOnly: false,
+        confirmation: { title: 'Delete project?' }, inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.delete'].jsonSchema,
+        resultSchema: DeploymentTargetRoleResultV1ProtocolSchema, run: async () => ({ v: 1, state: 'succeeded', observedAtMs: 1, providerResourceAbsent: true } as const) },
+      observe: { title: 'Observe project', surfaces: ['ui'], execution: { target: 'account',
+        account: { artifactId: 'account-runtime', exportName: 'activate' } }, dangerLevel: 'safe', readOnly: true,
+        inputSchema: DeploymentTargetRoleInputProtocolSchemasV1['projects.observe'].jsonSchema,
+        resultSchema: DeploymentTargetRoleResultV1ProtocolSchema, run: async () => ({ v: 1, state: 'succeeded', observedAtMs: 1, providerResourceAbsent: true } as const) } },
     deploymentTargets: { database: { role: 'data', title: 'Database', targetKind: 'database', icon: 'server-outline',
-      targetSchema: closed, linkSchema: closed, dataV1: { connectionSecret: { save: 'save' } } } } });
-  const [target] = managedDataTargets([{ manifest: PluginPortableReleaseManifestV1Schema.parse(plugin.manifest) }]);
+      targetSchema: closed, linkSchema: closed, dataV1: { projects: { delete: 'delete', observe: 'observe' }, connectionSecret: { save: 'save' } } } } });
+  const manifest = PluginPortableReleaseManifestV1Schema.parse(plugin.manifest);
+  const [target] = managedDataTargets([{ manifest }]);
+  expect(target?.targetId).toBe('database');
+  expect(target?.teardown).toBe(true);
+  const [withoutDeletion] = managedDataTargets([{ manifest: { ...manifest, contributes: { ...manifest.contributes,
+    deploymentTargets: manifest.contributes.deploymentTargets?.map(descriptor => descriptor.role === 'data'
+      ? { ...descriptor, dataV1: {} } : descriptor) } } }]);
+  expect(withoutDeletion?.targetId).toBe('database');
+  expect(withoutDeletion).not.toHaveProperty('teardown');
   expect(target?.operations[0]).toMatchObject({ role: 'connectionSecret.save',
     actionId: 'com.example.data/actions/save', credential: { purpose: 'manage', service } });
   expect(target?.operations[0]?.inputHints.fields.some(field => field.path === 'expectedRevision')).toBe(false);
+  expect(target?.operations.map(operation => operation.role)).toEqual(['connectionSecret.save']);
 });
 
 it('keeps an ambiguous resource unlinked while exact provision/link identities remain recoverable', () => {
+  expect(managedDataLinkContent(principal, { state: 'provisioned', providerResourceOrigin: 'created', providerIdentity: identity,
+    providerEnvironment: { kind: 'custom', id: 'main' } })).toMatchObject({ providerResourceOrigin: 'created' });
   expect(managedDataLinkContent(principal, { state: 'provisioned', providerIdentity: identity,
     providerEnvironment: { kind: 'custom', id: 'main' } })).toEqual({ credentialPrincipal: principal,
     providerIdentity: identity, providerEnvironment: { kind: 'custom', id: 'main' } });

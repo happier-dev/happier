@@ -15,7 +15,7 @@ export function managedDataTargets(declarations: readonly Readonly<{ manifest: P
   return declarations.flatMap(({ manifest }) => (manifest.contributes.deploymentTargets ?? []).flatMap(target => {
     if (target.role !== 'data') return [];
     const operations = readDeploymentTargetActionRolesV1(target).flatMap(binding => {
-      if (binding.role === 'query.readOnly') return [];
+      if (binding.role === 'query.readOnly' || binding.role === 'projects.delete' || binding.role === 'projects.observe') return [];
       const action = manifest.contributes.actions?.find(value => value.id === binding.action);
       if (!action) return [];
       const hints = normalizePluginActionInputHintsV2(action.inputHints, action.inputSchema);
@@ -30,7 +30,8 @@ export function managedDataTargets(declarations: readonly Readonly<{ manifest: P
             && !Object.hasOwn(protocolFields, root));
         }) } }];
     });
-    return [{ key: `${manifest.id}/${target.id}`, pluginId: manifest.id, target,
+    return [{ key: `${manifest.id}/${target.id}`, pluginId: manifest.id, targetId: target.id, target,
+      ...(target.dataV1?.projects?.delete ? { teardown: true as const } : {}),
       title: resolvePluginLocalizedStringV2Text(target.title), operations }];
   }));
 }
@@ -43,6 +44,7 @@ export function managedDataLinkContent(credentialPrincipal: unknown, value: unkn
   if (!isRecord(value) || value.status === 'outcome_unknown' || value.status === 'unavailable') return null;
   const parsed = DeploymentTargetLinkProviderContentV1Schema.safeParse({ credentialPrincipal,
     providerIdentity: value.providerIdentity, providerEnvironment: value.providerEnvironment,
+    ...(value.providerResourceOrigin === 'created' ? { providerResourceOrigin: value.providerResourceOrigin } : {}),
     ...(typeof value.engine === 'string' ? { data: { engine: value.engine,
       ...(typeof value.engineVersion === 'number' || typeof value.engineVersion === 'string' ? { version: String(value.engineVersion) }
         : typeof value.version === 'string' ? { version: value.version } : {}),
