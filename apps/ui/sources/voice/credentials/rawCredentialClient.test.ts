@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { createDeferred } from '@/dev/testkit';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 vi.mock('socket.io-client', async original => (
@@ -61,7 +62,8 @@ describe('Voice client raw credential adapter', () => {
                 return null;
             },
         });
-        storage.getState().applyMachines(['machine-a', 'machine-b'].map(id => createMachineFixture({ id, activeAt: Date.now() })));
+        await publishMachineInventoryForTest({ serverId: account.home.id, accountId: 'account-a' },
+            ['machine-a', 'machine-b'].map(id => createHydratedPlainMachineFixture({ id, accountId: 'account-a', machine: { activeAt: Date.now() } })));
         selectMachine('machine-a');
     });
     afterEach(async () => { await account?.dispose(); account = null; });

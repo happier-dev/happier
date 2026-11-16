@@ -103,7 +103,7 @@ describe('createDefaultVoiceQaControllerDeps', () => {
             },
         });
         const fixture = await createStandaloneVoicePolicyHarness({
-            mode: 'off', initializeSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+            mode: 'off',
             existingSession: createSessionFixture({ id: 'voice-hidden-s1', active: true, metadata: {
                 path: '/voice', host: 'voice.test', flavor: 'claude',
                 ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }),

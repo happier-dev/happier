@@ -125,9 +125,9 @@ describe('bundled conversation runtime host current UI lifecycle', () => {
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
       voice: { ...voice, providerId: entry.providerId, privacy: { ...voice.privacy, currentUiContextMode: 'automatic', shareSessionSummary: true } },
     }, storage.getState().settings));
-    storage.setState({ sessions: {
-      ...previousState.sessions, [history.id]: { ...history, serverId: home.id }, [target.id]: { ...target, serverId: home.id },
-    } });
+    storage.getState().applySessions([
+      { ...history, serverId: home.id }, { ...target, serverId: home.id },
+    ]);
     setFocusedSessionId(target.id, home.id);
     let reader: CurrentUiContextReader | null = null;
     const enrichment = { commands: [] };

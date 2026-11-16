@@ -62,8 +62,9 @@ describe('createLocalVoiceAdapter', () => {
     await adapter.stop({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID });
     const storage = await getStorage();
     const carrier = storage.getState().sessions['voice-home-session'];
+    const { readSessionOwnerMetadataView } = await import('@/sync/domains/session/readSessionOwnerMetadataView');
     storage.__setState({ sessions: { ...storage.getState().sessions, 'voice-home-session': {
-      ...carrier, metadata: { ...carrier.metadata, voiceConversationBindingV1: {
+      ...carrier, metadataLayoutVersion: 1, ownerMetadataView: { ...readSessionOwnerMetadataView(carrier), voiceConversationBindingV1: {
         v: 1, adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
         transcriptMode: 'native_session', targetSessionId: 'missing-coding-root',
         targetServerId: localVoiceHomeId, updatedAt: Date.now(),

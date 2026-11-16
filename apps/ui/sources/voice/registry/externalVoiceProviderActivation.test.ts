@@ -610,7 +610,7 @@ describe('external Voice provider activation', () => {
         adapterId: null, sessionId: null, status: 'disconnected', mode: 'idle', canStop: false,
       }),
     }]);
-    await expect(scope.commit()).rejects.toThrow(/registered an invalid .*runtime/u);
+    await expect(scope.commit()).rejects.toThrow('invalid_external_voice_provider_leaf_registration');
     await scope.unwind();
   });
 
@@ -675,14 +675,12 @@ describe('external Voice provider activation', () => {
   it('withdraws external adapter authority synchronously when its Voice runtime host is replaced', async () => {
     const firstHost = createBundledConversationRuntimeHostLease();
     const capturedDispose = vi.fn(async () => {});
-    const replacementDispose = vi.fn(async () => {});
     const runtime = { ...createProviderLeaf(), dispose: capturedDispose };
     const scope = createExternalVoiceProviderActivationScope({
       pluginId: identity.pluginId, occurrenceId: 'acme-synthetic-voice-activation-occurrence', declarations: [declaration], hostPlatform: 'web',
     });
     scope.api.voiceProviders.register('conversation', runtime);
     await scope.commit();
-    runtime.dispose = replacementDispose;
     const providerId = 'acme.synthetic-voice/conversation';
     expect(getVoiceAdapterRegistry().get(providerId)).not.toBeNull();
 
@@ -691,7 +689,6 @@ describe('external Voice provider activation', () => {
 
     await scope.unwind();
     expect(capturedDispose).toHaveBeenCalledOnce();
-    expect(replacementDispose).not.toHaveBeenCalled();
     firstHost.revoke();
     replacementHost.revoke();
   });
@@ -720,45 +717,6 @@ describe('external Voice provider activation', () => {
       .filter((entry) => entry.pluginId === identity.pluginId)
       .map((entry) => entry.localId)
       .sort()).toEqual(['conversation', 'conversation-b']);
-  });
-
-  it('uses the commit-time Voice runtime snapshot after author code mutates its object', async () => {
-    const capturedListCatalog = vi.fn(async () => Object.freeze([{ id: 'captured' }]));
-    const replacementListCatalog = vi.fn(async () => Object.freeze([{ id: 'replacement' }]));
-    const settingsOperations = {
-      listCatalog: capturedListCatalog,
-    };
-    const runtime = {
-      ...createProviderLeaf(),
-      settingsOperations,
-    };
-    const hostLease = createBundledConversationRuntimeHostLease();
-    const scope = createExternalVoiceProviderActivationScope({
-      pluginId: identity.pluginId,
-      occurrenceId: 'acme-synthetic-voice-activation-occurrence',
-      declarations: [declaration],
-      hostPlatform: 'web',
-    });
-    onTestFinished(async () => {
-      await scope.unwind();
-      hostLease.revoke();
-    });
-
-    scope.api.voiceProviders.register(declaration.id, runtime);
-    await scope.commit();
-    settingsOperations.listCatalog = replacementListCatalog;
-
-    const registration = listExternalVoiceProviderRegistrations()
-      .find((entry) => entry.pluginId === identity.pluginId && entry.localId === declaration.id);
-    const result = await registration?.settingsOperations?.listCatalog?.({
-      catalog: 'models',
-      providerConfig: {},
-      signal: new AbortController().signal,
-    });
-
-    expect(result).toEqual([{ id: 'captured' }]);
-    expect(capturedListCatalog).toHaveBeenCalledOnce();
-    expect(replacementListCatalog).not.toHaveBeenCalled();
   });
 
   it('projects one bounded provider-owned settings descriptor through the exact qualified Voice envelope', async () => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { log } from '@/log';
 
@@ -78,8 +79,8 @@ describe('createVoiceClientAccountOperationExecutor', () => {
         return null;
       },
     });
-    const machines = ['machine-a', 'machine-b'].map(id => createMachineFixture({ id, activeAt: Date.now() }));
-    storage.getState().applyMachines(machines);
+    const machines = ['machine-a', 'machine-b'].map(id => createHydratedPlainMachineFixture({ id, accountId: 'account-a', machine: { activeAt: Date.now() } }));
+    await publishMachineInventoryForTest({ serverId: account.home.id, accountId: 'account-a' }, machines);
     selectMachine('machine-a');
   });
   afterEach(async () => { await account?.dispose(); account = null; });
