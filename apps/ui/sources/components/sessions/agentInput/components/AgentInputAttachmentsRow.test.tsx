@@ -13,6 +13,7 @@ import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 import type { AgentInputAttachmentsRowItem } from '../agentInputContracts';
 import { HappierUiPlatformProvider, HAPPIER_ANDROID_MINIMUM_INTERACTIVE_TARGET_SIZE, HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { layoutHitArea, readHitArea } from '@/dev/testkit/harness/hitFrameReach';
+import type { FocusReturnRef } from '@/keyboard/focusReturn';
 
 const attachmentRowPlatform = vi.hoisted(() => ({
   os: 'web' as 'android' | 'web',
@@ -92,6 +93,7 @@ vi.mock('@/components/ui/theme/haptics', () => ({ hapticsLight: vi.fn() }));
 const { View } = await import('react-native');
 const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
 const { AgentInputAttachmentsRow } = await import('./AgentInputAttachmentsRow');
+const { restoreFocusToBestTarget } = await import('@/keyboard/focusReturn');
 
 function flattenStyle(style: unknown): Record<string, unknown> {
   if (!style) return {};
@@ -814,29 +816,36 @@ describe('AgentInputAttachmentsRow', () => {
     expect(onFallbackPress).not.toHaveBeenCalled();
   });
 
-  it('hands a modal attachment action the real badge origin for focus return', async () => {
-    const onPress = vi.fn();
-    const screen = await renderScreen(
-      <AgentInputAttachmentsRow
-        items={[
-          {
-            kind: 'badge',
-            key: 'focus-origin',
-            label: 'Focus origin',
-            testID: 'focus-origin',
-            onPress,
-          },
-        ]}
-      />,
-    );
+  it.each(['web', 'android'] as const)('returns a modal picker to its badge, then a surviving attachment or Composer when the picker removed it on %s', async (platform) => {
+    attachmentRowPlatform.os = platform;
+    let returnRef: FocusReturnRef;
+    let remove: (key: string) => void = () => {};
+    const focusComposer = vi.fn();
+    function Harness(): React.ReactElement {
+      const [keys, setKeys] = React.useState(['first', 'second']);
+      remove = (key) => setKeys((current) => current.filter((value) => value !== key));
+      return <AgentInputAttachmentsRow
+        items={keys.map((key) => ({ kind: 'badge', key, label: key, testID: `modal-${key}`,
+          onPress: (context) => { returnRef = context?.focusReturnRef; },
+        }))}
+        onRequestComposerFocus={focusComposer}
+      />;
+    }
+    const screen = await renderScreen(<Harness />);
+    await screen.pressByTestIdAsync('modal-first-preview');
+    expect(restoreFocusToBestTarget(returnRef)).toBe(true);
+    expect(attachmentRowFocus.focusedTestIDs).toEqual(['modal-first-preview']);
 
-    const trigger = screen.findByTestId('focus-origin-preview');
-    act(() => {
-      trigger?.props.onPress?.();
-    });
-    const context = onPress.mock.calls[0]?.[0];
-    expect(context?.focusReturnRef?.current).toBeTruthy();
-    expect(typeof context.focusReturnRef.current.focus).toBe('function');
+    // The mounted picker applies an attachment transaction, bypassing the
+    // badge's remove button, then closes after its original trigger is gone.
+    await act(async () => { remove('first'); });
+    expect(restoreFocusToBestTarget(returnRef)).toBe(true);
+    expect(attachmentRowFocus.focusedTestIDs).toEqual(['modal-first-preview', 'modal-second-preview']);
+    expect(focusComposer).not.toHaveBeenCalled();
+
+    await act(async () => { remove('second'); });
+    expect(restoreFocusToBestTarget(returnRef)).toBe(true);
+    expect(focusComposer).toHaveBeenCalledTimes(1);
   });
 
   it('uses host preview affordances for adapter media and custom surfaces while retaining error feedback', async () => {

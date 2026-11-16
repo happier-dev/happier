@@ -36,6 +36,24 @@ afterEach(async () => {
 });
 
 describe('useWebOverlayFocusContainment', () => {
+    it('returns to the originating focus zone when an overlay removes its provided trigger', async () => {
+        const composer = document.createElement('textarea');
+        document.body.append(composer);
+        const origin = { current: null as FocusReturnTarget, fallback: composer };
+        const focusReturn = { kind: 'provided', ref: origin } as const;
+        try {
+            const harness = await mountHarness((props: OverlayHarnessProps) => <OverlayHarness {...props} />, {
+                active: false, includeTrigger: true, focusReturn,
+            });
+            origin.current = getElement<HTMLButtonElement>('overlay-trigger');
+            origin.current.focus?.();
+            await harness.render({ active: true, includeTrigger: true, focusReturn });
+            await harness.render({ active: true, includeTrigger: false, focusReturn });
+            await harness.render({ active: false, includeTrigger: false, focusReturn });
+            expect(document.activeElement).toBe(composer);
+        } finally { composer.remove(); }
+    });
+
     it('captures opening focus and moves it into the overlay shell', async () => {
         const harness = await mountHarness((props: OverlayHarnessProps) => <OverlayHarness {...props} />, {
             active: false,

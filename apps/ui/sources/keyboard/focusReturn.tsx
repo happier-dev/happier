@@ -14,6 +14,8 @@ export type FocusReturnTarget = FocusableFocusReturnTarget | NativeFocusReturnTa
 
 export type FocusReturnRef = Readonly<{
     current: FocusReturnTarget;
+    /** The originating focus zone when the opened surface removes its trigger. */
+    fallback?: FocusReturnTarget;
 }> | null | undefined;
 
 /** A host-owned ephemeral focus handoff; never persisted with pane state. */
@@ -147,6 +149,11 @@ export function restoreFocusToBestTarget(
     const trigger = triggerRef?.current;
     if (isRestorableFocusTarget(trigger)) {
         if (focusTarget(trigger)) return true;
+    }
+
+    const originFallback = triggerRef?.fallback;
+    if (isRestorableFocusTarget(originFallback)) {
+        if (focusTarget(originFallback)) return true;
     }
 
     const fallback = fallbackRef?.current;

@@ -76,6 +76,9 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
         if (!container || isWithinInertSubtree(container)) return;
 
         const activationTarget = readDocumentFocusReturnTarget(document);
+        const originFallback = options.focusReturn.kind === 'provided'
+            ? options.focusReturn.ref?.fallback
+            : undefined;
         returnTargetRef.current = options.focusReturn.kind === 'activation-time'
             ? readDocumentFocusReturnTarget(document)
             : options.focusReturn.kind === 'provided'
@@ -111,7 +114,7 @@ export function useWebOverlayFocusContainment(options: WebOverlayFocusContainmen
                     ? activationTarget
                     : null;
                 if (restoreFocusToBestTarget(
-                    { current: eligibleReturnTarget },
+                    { current: eligibleReturnTarget, fallback: originFallback },
                     { current: eligibleActivationTarget },
                 )) return;
                 restoreFocusToBestTarget({ current: fallbackTarget });

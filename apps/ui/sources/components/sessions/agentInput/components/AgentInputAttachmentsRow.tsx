@@ -1,8 +1,6 @@
 import { Image } from 'expo-image';
 import * as React from 'react';
 import {
-    AccessibilityInfo,
-    findNodeHandle,
     Platform,
     ScrollView,
     View,
@@ -36,6 +34,8 @@ import type {
 import { readAgentInputImageNumbers } from '../agentInputContracts';
 import { ImageNumberBadge } from '@/components/ui/referenceChip/ImageNumberBadge';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
+import type { FocusReturnRef } from '@/keyboard/focusReturn';
+import { useAttachmentRowFocus } from './useAttachmentRowFocus';
 
 /** A draft image the composer already holds as a direct URI (the draft owns and revokes it). */
 type ComposerAttachmentImagePreviewItem = Readonly<{ key: string; uri: string; title: string; mimeType?: string; edit?: import('@/components/ui/media/stage/mediaStageItems').StagePictureEdit }>;
@@ -217,50 +217,6 @@ function TrayPictureTile(props: Readonly<{
     );
 }
 const ATTACHMENT_IMAGE_PREVIEW_SIZE = 52;
-
-type FocusableAttachmentTarget = Readonly<{
-    focus?: (options?: Readonly<{ preventScroll?: boolean }>) => void;
-}>;
-
-type PendingAttachmentFocus = Readonly<{
-    removedKey: string;
-    neighborKeys: readonly string[];
-}>;
-
-function focusAttachmentTarget(target: unknown): boolean {
-    if (!target || (typeof target !== 'object' && typeof target !== 'function')) return false;
-    const focus = (target as FocusableAttachmentTarget).focus;
-    if (typeof focus !== 'function') return false;
-
-    if (Platform.OS === 'web') {
-        try {
-            focus.call(target, { preventScroll: true });
-        } catch {
-            try {
-                focus.call(target);
-            } catch {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    try {
-        focus.call(target);
-    } catch {
-        return false;
-    }
-    try {
-        const node = findNodeHandle(target as Parameters<typeof findNodeHandle>[0]);
-        if (typeof node === 'number') {
-            AccessibilityInfo.setAccessibilityFocus(node);
-        }
-    } catch {
-        // Physical focus already succeeded; accessibility focus is best-effort
-        // for non-native test doubles and platform handles that cannot resolve.
-    }
-    return true;
-}
 
 const stylesheet = StyleSheet.create((theme) => ({
     attachmentsRow: {
@@ -454,6 +410,7 @@ const stylesheet = StyleSheet.create((theme) => ({
 function AttachmentRowPreviewTrigger(props: Readonly<{
     item: AgentInputAttachmentsRowItem;
     fallbackOnPress?: () => void;
+    createFocusReturnRef: (key: string, origin: FocusReturnRef) => FocusReturnRef;
     children: (input: Readonly<{
         anchorRef?: React.RefObject<any>;
         onPress?: () => void;
@@ -492,11 +449,11 @@ function AttachmentRowPreviewTrigger(props: Readonly<{
             return;
         }
         if (props.item.onPress !== undefined) {
-            props.item.onPress({ focusReturnRef: anchorRef });
+            props.item.onPress({ focusReturnRef: props.createFocusReturnRef(props.item.key, anchorRef) });
             return;
         }
         props.fallbackOnPress?.();
-    }, [props.fallbackOnPress, props.item, renderPreviewPopover]);
+    }, [props.createFocusReturnRef, props.fallbackOnPress, props.item, renderPreviewPopover]);
     const hasCurrentPreviewRenderer = open
         && renderPreviewPopover !== undefined
         && openedWithPreviewRendererRef.current === renderPreviewPopover;
@@ -546,47 +503,9 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
         top: null,
         width: 0,
     });
-    const attachmentFocusTargetsRef = React.useRef(new Map<string, unknown>());
-    const pendingAttachmentFocusRef = React.useRef<PendingAttachmentFocus | null>(null);
-    const attachmentFocusRef = React.useCallback((
-        key: string,
-        anchorRef?: React.RefObject<any>,
-    ) => (target: unknown | null): void => {
-        if (anchorRef) {
-            (anchorRef as React.MutableRefObject<unknown | null>).current = target;
-        }
-        if (target === null) {
-            attachmentFocusTargetsRef.current.delete(key);
-            return;
-        }
-        attachmentFocusTargetsRef.current.set(key, target);
-    }, []);
-    const requestAttachmentRemoval = React.useCallback((
-        item: AgentInputAttachmentsRowItem,
-        onRemove: (() => void) | undefined,
-    ): void => {
-        if (!onRemove) return;
-        const index = props.items.findIndex((candidate) => candidate.key === item.key);
-        const neighborKeys = index < 0
-            ? []
-            : [props.items[index + 1]?.key, props.items[index - 1]?.key].filter(
-                (key): key is string => typeof key === 'string',
-            );
-        pendingAttachmentFocusRef.current = { removedKey: item.key, neighborKeys };
-        hapticsLight();
-        onRemove();
-    }, [props.items]);
-
-    React.useLayoutEffect(() => {
-        const pending = pendingAttachmentFocusRef.current;
-        if (!pending || props.items.some((item) => item.key === pending.removedKey)) return;
-        pendingAttachmentFocusRef.current = null;
-        for (const key of pending.neighborKeys) {
-            if (!props.items.some((item) => item.key === key)) continue;
-            if (focusAttachmentTarget(attachmentFocusTargetsRef.current.get(key))) return;
-        }
-        props.onRequestComposerFocus?.();
-    }, [props.items, props.onRequestComposerFocus]);
+    const { attachmentFocusRef, requestAttachmentRemoval, createFocusReturnRef } = useAttachmentRowFocus(
+        props.items, props.onRequestComposerFocus,
+    );
     const compactItems = React.useMemo(
         () => props.items.filter(isCompactAttachmentRowItem),
         [props.items],
@@ -774,6 +693,7 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
             <AttachmentRowPreviewTrigger
                 key={item.key}
                 item={item}
+                createFocusReturnRef={createFocusReturnRef}
             >
                 {({ anchorRef, onPress, onRemove }) => (
                     <View
@@ -881,6 +801,7 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                     <AttachmentRowPreviewTrigger
                         key={badge.key}
                         item={badge}
+                        createFocusReturnRef={createFocusReturnRef}
                     >
                         {({ anchorRef, onPress, onRemove }) => (
                             <View style={styles.attachmentChip} testID={badge.testID}>
@@ -921,6 +842,7 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                 <AttachmentRowPreviewTrigger
                     key={att.key}
                     item={att}
+                    createFocusReturnRef={createFocusReturnRef}
                 >
                     {({ anchorRef, onPress, onRemove }) => (
                         <TrayPictureTile
@@ -982,6 +904,7 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                 <AttachmentRowPreviewTrigger
                     key={att.key}
                     item={att}
+                    createFocusReturnRef={createFocusReturnRef}
                     fallbackOnPress={() => openImageStage(false)}
                 >
                     {({ anchorRef, onPress, onRemove }) => (
@@ -1057,6 +980,7 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                 <AttachmentRowPreviewTrigger
                     key={att.key}
                     item={att}
+                    createFocusReturnRef={createFocusReturnRef}
                 >
                     {({ anchorRef, onPress, onRemove }) => (
                         <View style={styles.attachmentChip} testID={att.testID}>
