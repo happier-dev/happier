@@ -18,6 +18,7 @@ export const IosSimulatorAdapterUnavailableReasonV1Schema = lazyZodSchema(() => 
   'private_framework_symbol_mismatch',
   'simulator_not_booted',
   'ios_private_helper_unavailable',
+  'ios_native_producer_unavailable',
   'screen_capture_permission_required',
 ]));
 export type IosSimulatorAdapterUnavailableReasonV1 = z.infer<
@@ -28,7 +29,7 @@ export const IosSimulatorAdapterCapabilitiesV1Schema = lazyZodSchema(() => z.str
     v: z.literal(1),
     platform: z.literal('ios'),
     usesPrivateFrameworks: z.literal(true),
-    helperDistribution: z.enum(['prebuilt-signed', 'development-build']),
+    helperDistribution: z.enum(['prebuilt-signed', 'development-build', 'bundled-native']),
     requiredPrivateFrameworks: z.tuple([
       z.literal('CoreSimulator'),
       z.literal('SimulatorKit'),

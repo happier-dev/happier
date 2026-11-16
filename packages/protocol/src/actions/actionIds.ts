@@ -1,4 +1,6 @@
 import { PROJECT_STARTER_ACTION_IDS_V1 } from './specs/projectStartersActionIdsV1.js';
+import { SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1 } from './actionIdsSimulatorV1.js';
+export * from './actionIdsSimulatorV1.js';
 import { BROWSER_RECORDING_ACTION_IDS_V1, COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
 export { BROWSER_RECORDING_ACTION_IDS_V1, COMPUTER_RECORDING_ACTION_IDS_V1, isComputerRecordingActionIdV1, type ComputerRecordingActionIdV1 } from './recordingActionIds.js';
 import { REGISTRY_ACTION_IDS_V1 } from '../registries/registryActionIdsV1.js';
@@ -823,6 +825,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'peerMediation.observability.unsubscribe',
   ],
   devices_simulator: [
+    ...Object.values(SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1),
     'devices.simulator.list',
     'devices.simulator.stream.keyframe',
     'devices.simulator.stream.snapshot',

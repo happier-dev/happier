@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
-import { ACTION_ID_FAMILIES_V1, COMPUTER_RECORDING_ACTION_IDS_V1, type RuntimeActionIdV1 } from './actionIds.js';
+import { ACTION_ID_FAMILIES_V1, COMPUTER_RECORDING_ACTION_IDS_V1, SIMULATOR_INPUT_ACTION_IDS_V1, SIMULATOR_MUTATING_DEVICE_ACTION_IDS_V1, simulatorDeviceOperationKindForActionIdV1, type RuntimeActionIdV1 } from './actionIds.js';
 import { RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS } from './danger.js';
 
 export { ActionSafetySchema, type ActionSafety } from './safetyVocabulary.js';
@@ -20,14 +20,8 @@ export type RuntimeActionSideEffectClass = 'none' | 'read' | 'write' | 'external
 
 const RUNTIME_EXTERNAL_SIDE_EFFECT_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>([
   'localServices.publicPreview.copyUrl',
-  'devices.simulator.input.tap',
-  'devices.simulator.input.swipe',
-  'devices.simulator.input.text',
-  'devices.simulator.input.key',
-  'devices.simulator.input.button',
-  'devices.simulator.input.orientation',
-  'devices.simulator.input.pinch',
-  'devices.simulator.input.rotate',
+  ...SIMULATOR_INPUT_ACTION_IDS_V1,
+  ...SIMULATOR_MUTATING_DEVICE_ACTION_IDS_V1,
 ]);
 
 const RUNTIME_DIAGNOSTIC_HOST_EFFECT_ACTION_IDS: ReadonlySet<RuntimeActionIdV1> = new Set<RuntimeActionIdV1>([
@@ -56,6 +50,7 @@ const RUNTIME_EXTERNAL_NAVIGATION_HOST_EFFECT_ACTION_IDS: ReadonlySet<RuntimeAct
 ]);
 
 export function runtimeActionSideEffectClass(actionId: RuntimeActionIdV1): RuntimeActionSideEffectClass {
+  if (simulatorDeviceOperationKindForActionIdV1(actionId) === 'screenshot') return 'read';
   if (actionId === 'computer.capture' || actionId === 'computer.query' || actionId === 'computer.clipboard.read') return 'read';
   // Explicit content reads still require consent through the separate danger/approval owner.
   if (actionId === 'browser.automation.clipboardRead' || actionId === 'browser.automation.download') return 'read';

@@ -1,4 +1,4 @@
-import { ACTION_ID_FAMILIES_V1, type RuntimeActionIdV1 } from '../../actions/actionIds.js';
+import { ACTION_ID_FAMILIES_V1, SIMULATOR_STATICALLY_BACKED_ACTION_IDS_V1, SIMULATOR_STATICALLY_UNBACKED_ACTION_IDS_V1, SIMULATOR_RESOURCE_GATED_ACTION_IDS_V1, type RuntimeActionIdV1 } from '../../actions/actionIds.js';
 import type { SimulatorStreamControlsV1 } from './v1.js';
 
 /**
@@ -26,47 +26,14 @@ export type SimulatorRuntimeActionBackingV1 =
 
 export type SimulatorRuntimeActionIdV1 = typeof ACTION_ID_FAMILIES_V1.devices_simulator[number];
 
-const STATICALLY_BACKED_IDS = [
-  'devices.simulator.list',
-  'devices.simulator.lease.acquire',
-  'devices.simulator.lease.renew',
-  'devices.simulator.lease.release',
-  'devices.simulator.input.tap',
-  'devices.simulator.input.swipe',
-  'devices.simulator.input.text',
-  'devices.simulator.input.key',
-  'devices.simulator.input.button',
-  'devices.simulator.sideband.request',
-] as const satisfies readonly SimulatorRuntimeActionIdV1[];
-
-const STATICALLY_UNBACKED_IDS = [
-  // Stock scrcpy `rotate_device` is relative, not absolute — there is no producer path for an
-  // absolute orientation control. Everything else previously parked here is now backed by the
-  // server-restart producer (see RESOURCE_GATED_IDS below).
-  'devices.simulator.input.orientation',
-] as const satisfies readonly SimulatorRuntimeActionIdV1[];
-
-const RESOURCE_GATED_IDS = [
-  'devices.simulator.input.pinch',
-  'devices.simulator.input.rotate',
-  // Encoder-reconfiguration stream controls. The Android scrcpy server-restart producer backs each
-  // (set_quality / request_keyframe / snapshot via a clean encoder restart). Resource-gated: backed
-  // only when the live resource advertises the control (Android scrcpy), forced-false elsewhere.
-  'devices.simulator.stream.keyframe',
-  'devices.simulator.stream.snapshot',
-  'devices.simulator.stream.quality.set',
-  'devices.simulator.stream.fps.set',
-  'devices.simulator.stream.scale.set',
-] as const satisfies readonly SimulatorRuntimeActionIdV1[];
-
 export const STATICALLY_BACKED_SIMULATOR_RUNTIME_ACTION_IDS_V1: ReadonlySet<SimulatorRuntimeActionIdV1> =
-  new Set(STATICALLY_BACKED_IDS);
+  new Set(SIMULATOR_STATICALLY_BACKED_ACTION_IDS_V1);
 
 export const STATICALLY_UNBACKED_SIMULATOR_RUNTIME_ACTION_IDS_V1: ReadonlySet<SimulatorRuntimeActionIdV1> =
-  new Set(STATICALLY_UNBACKED_IDS);
+  new Set(SIMULATOR_STATICALLY_UNBACKED_ACTION_IDS_V1);
 
 export const RESOURCE_GATED_SIMULATOR_RUNTIME_ACTION_IDS_V1: ReadonlySet<SimulatorRuntimeActionIdV1> =
-  new Set(RESOURCE_GATED_IDS);
+  new Set(SIMULATOR_RESOURCE_GATED_ACTION_IDS_V1);
 
 /**
  * The single capability-flip gate for stream controls (§B). A control name appears here ONLY
@@ -82,10 +49,9 @@ export const RESOURCE_GATED_SIMULATOR_RUNTIME_ACTION_IDS_V1: ReadonlySet<Simulat
  * signals (this producer can adjust fps / scale), not distinct sinks: the daemon folds the
  * `fps.set`/`scale.set` SCALAR runtime actions into a single `set_quality` sideband
  * (`actions/qualityScalarTranslator.ts`; fps → `maxFramesPerSecond`, scale → `maxWidth`/`maxHeight`).
- * Plus `request_keyframe` (`requestKeyframe`) and the legacy `snapshot` frame-refresh alias. Neither
- * returns an image or saved screenshot; both acknowledge dispatch. Per-resource
- * advertisement still gates actual visibility, so platforms without the producer (iOS today)
- * advertise none and the normalizer forces their bits false regardless of this gate.
+ * `requestKeyframe` remains an encoder-refresh control. `snapshot` is the presentation capability
+ * for the separate Session-media screenshot Action; its producer is the platform device-operation
+ * owner. Per-resource advertisement still gates visibility on the paths that expose these controls.
  */
 export const BACKABLE_SIMULATOR_STREAM_CONTROLS_V1: ReadonlySet<keyof SimulatorStreamControlsV1> =
   new Set<keyof SimulatorStreamControlsV1>([

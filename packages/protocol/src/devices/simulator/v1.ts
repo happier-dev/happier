@@ -10,6 +10,7 @@ import {
   MachineLiveStreamCodecIdV1Schema,
 } from '../../machines/peer/mediation/stream/codecsV1.js';
 import { BACKABLE_SIMULATOR_STREAM_CONTROLS_V1 } from './runtimeActionBacking.js';
+import { SimulatorDeviceHardwareButtonV1Schema, SimulatorDeviceOperationKindV1Schema } from './operationsV1.js';
 
 export const SimulatorPlatformV1Schema = lazyZodSchema(() => z.enum(['ios', 'android']));
 
@@ -55,6 +56,11 @@ export const SimulatorDeviceResourceV1Schema = lazyZodSchema(() => z.strictObjec
     platform: SimulatorPlatformV1Schema,
     deviceId: z.string().check(z.minLength(1)),
     displayName: z.string().check(z.minLength(1)),
+    state: z.optional(z.enum(['running', 'stopped', 'unavailable'])),
+    runtimeId: z.optional(z.string().check(z.minLength(1))),
+    avdName: z.optional(z.string().check(z.minLength(1))),
+    supportedDeviceOperations: z.optional(z.array(SimulatorDeviceOperationKindV1Schema)),
+    supportedHardwareButtons: z.optional(z.array(SimulatorDeviceHardwareButtonV1Schema)),
     appId: z.optional(z.string().check(z.minLength(1))),
     capture: SimulatorCaptureV1Schema,
     unavailableReason: z.optional(z.string().check(z.minLength(1))),

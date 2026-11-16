@@ -86,11 +86,7 @@ const eventCases = [
   {
     actionId: 'devices.simulator.stream.snapshot',
     input: {
-      type: 'simulator.snapshot.request',
-      simulatorId: 'simulator_1',
-      streamId: 'stream_1',
-      sourceId: 'source_1',
-      eventId: 'snapshot_1',
+      operation: 'screenshot', platform: 'ios', deviceId: 'ios-device', sessionId: 'session-1',
     },
     mismatchedInput: listEvent,
   },

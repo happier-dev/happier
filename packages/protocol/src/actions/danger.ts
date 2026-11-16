@@ -1,4 +1,4 @@
-import type { RuntimeActionIdV1 } from './actionIds.js';
+import { SIMULATOR_INPUT_ACTION_IDS_V1, SIMULATOR_MUTATING_DEVICE_ACTION_IDS_V1, type RuntimeActionIdV1 } from './actionIds.js';
 import { BROWSER_EXTENSION_MUTATION_ACTION_IDS, BROWSER_PROFILE_MUTATION_ACTION_IDS } from './actionIdsBrowser.js';
 
 // Side-effect danger SSOT: the actions whose `sideEffectClass` is `'danger'` (the highest
@@ -21,14 +21,8 @@ export const RUNTIME_SIDE_EFFECT_DANGER_ACTION_IDS: ReadonlySet<RuntimeActionIdV
   'localServices.actions.stopManaged',
   'localServices.actions.restartManaged',
   'localServices.actions.terminateDetected',
-  'devices.simulator.input.tap',
-  'devices.simulator.input.swipe',
-  'devices.simulator.input.text',
-  'devices.simulator.input.key',
-  'devices.simulator.input.button',
-  'devices.simulator.input.orientation',
-  'devices.simulator.input.pinch',
-  'devices.simulator.input.rotate',
+  ...SIMULATOR_INPUT_ACTION_IDS_V1,
+  ...SIMULATOR_MUTATING_DEVICE_ACTION_IDS_V1,
 ]);
 
 // SAFETY danger SSOT (single source of truth for the `safety` flag and the derived agent approval

@@ -1,7 +1,8 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
-import type { RuntimeActionIdV1 } from '../actionIds.js';
+import { SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1, type RuntimeActionIdV1 } from '../actionIds.js';
+import { SIMULATOR_DEVICE_OPERATION_SCHEMAS_V1, SimulatorDeviceOperationResultV1Schema, SimulatorDeviceScreenshotResultV1Schema, type SimulatorDeviceOperationKindV1 } from '../../devices/simulator/operationsV1.js';
 import {
   SimulatorPreviewActionResultV1Schema,
   SimulatorPreviewActionV1Schema,
@@ -34,10 +35,41 @@ function simulatorEventWithControlKindSchema<
     }));
 }
 
+type DeviceOperationInputSchemas = {
+  [K in SimulatorDeviceOperationKindV1 as typeof SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1[K]]: typeof SIMULATOR_DEVICE_OPERATION_SCHEMAS_V1[K];
+};
+const DEVICE_OPERATION_INPUT_SCHEMAS = Object.fromEntries(
+  Object.entries(SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1).map(([operation, actionId]) =>
+    [actionId, SIMULATOR_DEVICE_OPERATION_SCHEMAS_V1[operation as SimulatorDeviceOperationKindV1]]),
+) as DeviceOperationInputSchemas;
+type DeviceOperationOutputSchemas = {
+  [K in SimulatorDeviceOperationKindV1 as typeof SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1[K]]:
+    K extends 'screenshot' ? typeof SimulatorDeviceScreenshotResultV1Schema : typeof SimulatorDeviceOperationResultV1Schema;
+};
+const DEVICE_OPERATION_OUTPUT_SCHEMAS = Object.fromEntries(
+  Object.entries(SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1).map(([operation, actionId]) =>
+    [actionId, operation === 'screenshot' ? SimulatorDeviceScreenshotResultV1Schema : SimulatorDeviceOperationResultV1Schema]),
+) as DeviceOperationOutputSchemas;
+
+const DEVICE_OPERATION_TITLES = {
+  boot: 'Start simulator device', power_off: 'Power off simulator device',
+  app_launch: 'Launch simulator app', app_terminate: 'Terminate simulator app',
+  open_url: 'Open simulator URL', screenshot: 'Capture simulator screenshot',
+  appearance_set: 'Set simulator appearance', text_size_set: 'Set simulator text size',
+  location_set: 'Set simulator location', location_clear: 'Clear simulator location',
+  permission_set: 'Set simulator app permission', push: 'Send simulator push notification',
+  hardware: 'Press simulator hardware button', rotate: 'Rotate simulator device',
+} satisfies Record<SimulatorDeviceOperationKindV1, string>;
+const DEVICE_OPERATION_ACTION_TITLES = Object.fromEntries(
+  Object.entries(SIMULATOR_DEVICE_OPERATION_ACTION_IDS_V1).map(([operation, actionId]) =>
+    [actionId, DEVICE_OPERATION_TITLES[operation as SimulatorDeviceOperationKindV1]]),
+);
+
 export const SIMULATOR_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
+  ...DEVICE_OPERATION_ACTION_TITLES,
   'devices.simulator.list': 'List simulator devices',
   'devices.simulator.stream.keyframe': 'Request simulator stream keyframe',
-  'devices.simulator.stream.snapshot': 'Refresh simulator frame',
+  'devices.simulator.stream.snapshot': 'Capture simulator screenshot',
   'devices.simulator.stream.quality.set': 'Set simulator stream quality',
   'devices.simulator.stream.fps.set': 'Set simulator stream frame rate',
   'devices.simulator.stream.scale.set': 'Set simulator stream scale',
@@ -56,12 +88,13 @@ export const SIMULATOR_RUNTIME_ACTION_TITLES: Readonly<Partial<Record<RuntimeAct
 });
 
 export const SIMULATOR_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
+  ...DEVICE_OPERATION_INPUT_SCHEMAS,
   'devices.simulator.list': simulatorEventSchema('simulator.devices.list'),
   'devices.simulator.stream.keyframe': simulatorEventWithControlKindSchema(
     'simulator.keyframe.request',
     'request_keyframe',
   ),
-  'devices.simulator.stream.snapshot': simulatorEventSchema('simulator.snapshot.request'),
+  'devices.simulator.stream.snapshot': SIMULATOR_DEVICE_OPERATION_SCHEMAS_V1.screenshot,
   'devices.simulator.stream.quality.set': simulatorEventWithControlKindSchema(
     'simulator.quality.set',
     'set_quality',
@@ -83,9 +116,10 @@ export const SIMULATOR_RUNTIME_ACTION_INPUT_SCHEMAS = Object.freeze({
 } as const satisfies Readonly<Record<DevicesSimulatorRuntimeActionId, z.ZodMiniType>>);
 
 export const SIMULATOR_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
+  ...DEVICE_OPERATION_OUTPUT_SCHEMAS,
   'devices.simulator.list': SimulatorPreviewSnapshotV1Schema,
   'devices.simulator.stream.keyframe': SimulatorPreviewActionResultV1Schema,
-  'devices.simulator.stream.snapshot': SimulatorPreviewActionResultV1Schema,
+  'devices.simulator.stream.snapshot': SimulatorDeviceScreenshotResultV1Schema,
   'devices.simulator.stream.quality.set': SimulatorPreviewActionResultV1Schema,
   'devices.simulator.stream.fps.set': SimulatorPreviewActionResultV1Schema,
   'devices.simulator.stream.scale.set': SimulatorPreviewActionResultV1Schema,
@@ -104,9 +138,10 @@ export const SIMULATOR_RUNTIME_ACTION_OUTPUT_SCHEMAS = Object.freeze({
 } as const satisfies Readonly<Record<DevicesSimulatorRuntimeActionId, z.ZodMiniType>>);
 
 export const SIMULATOR_RUNTIME_ACTION_DESCRIPTIONS: Readonly<Partial<Record<RuntimeActionIdV1, string>>> = Object.freeze({
+  ...DEVICE_OPERATION_ACTION_TITLES,
   'devices.simulator.list': 'See the phone and tablet simulators available on a machine.',
   'devices.simulator.stream.keyframe': 'Ask the simulator preview for a fresh full picture when it looks broken.',
-  'devices.simulator.stream.snapshot': 'Request a fresh simulator preview frame. Returns an acknowledgement, not an image or saved screenshot.',
+  'devices.simulator.stream.snapshot': 'Capture the simulator screen and return a Session image media reference.',
   'devices.simulator.stream.quality.set': 'Choose how sharp the simulator preview is. Sharper uses more data.',
   'devices.simulator.stream.fps.set': 'Choose how smooth the simulator preview is. Smoother uses more data.',
   'devices.simulator.stream.scale.set': 'Choose how large the simulator preview is sent.',
