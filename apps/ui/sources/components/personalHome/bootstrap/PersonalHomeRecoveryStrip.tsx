@@ -3,9 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { presentThisComputerConnection } from '@/components/settings/machines/localControl/thisComputerConnectionPresentation';
 import { t } from '@/text';
 import { PersonalHomeDiagnosticDetails } from '../setup/PersonalHomeDiagnosticDetails';
@@ -20,8 +18,6 @@ const styles = StyleSheet.create((theme) => ({
         borderTopWidth: 1,
         borderTopColor: theme.colors.border.default,
     },
-    message: {  color: theme.colors.text.secondary, ...Typography.variant('body'),  },
-    actions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s10 },
     details: { width: '100%' },
 }));
 
@@ -67,29 +63,23 @@ export const PersonalHomeRecoveryStrip = React.memo(function PersonalHomeRecover
             accessibilityLiveRegion="polite"
             style={styles.root}
         >
-            <Text style={styles.message}>{message}</Text>
-            <View style={styles.actions}>
-                {!props.pending && props.onRetry ? (
-                    <RoundButton
-                        size="normal"
-                        testID="personal-home-recovery-retry"
-                        accessibilityLabel={retryLabel}
-                        onPress={props.onRetry}
-                        title={retryLabel}
-                    />
-                ) : null}
-                {!props.pending && hasDetails ? (
-                    <RoundButton
-                        size="normal"
-                        display="inverted"
-                        testID="personal-home-recovery-details"
-                        accessibilityLabel={t('common.details')}
-                        expanded={props.onOpenDetails ? undefined : detailsOpen}
-                        onPress={openDetails}
-                        title={t('common.details')}
-                    />
-                ) : null}
-            </View>
+            {/* The one shared inline notice (OWNER-UI-1115B A2): the sentence, Retry, and Details as a disclosure. */}
+            <SurfaceStateCard
+                size="line"
+                kind={props.pending ? 'loading' : 'error'}
+                title={message}
+                {...(!props.pending && props.onRetry ? { action: {
+                    label: retryLabel,
+                    onPress: props.onRetry,
+                    testID: 'personal-home-recovery-retry',
+                } } : {})}
+                {...(!props.pending && hasDetails ? { secondaryAction: {
+                    label: t('common.details'),
+                    onPress: openDetails,
+                    testID: 'personal-home-recovery-details',
+                    ...(props.onOpenDetails ? {} : { expanded: detailsOpen }),
+                } } : {})}
+            />
             {detailsOpen && (props.activeTask || props.detail) ? (
                 <View testID="personal-home-recovery-details-panel" style={styles.details}>
                     <PersonalHomeDiagnosticDetails detail={props.detail} activeTask={props.activeTask} />

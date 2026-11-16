@@ -20,10 +20,10 @@ describe('PersonalHomeRecoveryStrip', () => {
         );
 
         expect(screen.findByTestId('personal-home-recovery-details')).not.toBeNull();
-        expect(screen.findByTestId('personal-home-recovery-details')?.props.accessibilityRole).toBe('button');
-        expect(screen.findByTestId('personal-home-recovery-details')?.props.accessibilityState).toMatchObject({ expanded: false });
+        expect(screen.findHostByTestId('personal-home-recovery-details')?.props.accessibilityRole).toBe('button');
+        expect(screen.findHostByTestId('personal-home-recovery-details')?.props.accessibilityState).toMatchObject({ expanded: false });
         await screen.pressByTestIdAsync('personal-home-recovery-details');
-        expect(screen.findByTestId('personal-home-recovery-details')?.props.accessibilityState).toMatchObject({ expanded: true });
+        expect(screen.findHostByTestId('personal-home-recovery-details')?.props.accessibilityState).toMatchObject({ expanded: true });
         expect(screen.findByTestId('personal-home-recovery-details-panel')).not.toBeNull();
         expect(screen.findAllHostsByTestId('personal-home-diagnostic-code')).toHaveLength(1);
         expect(screen.root.findAll((node) => typeof node.props.children === 'string' && node.props.children.includes('should-not-render'))).toHaveLength(0);
