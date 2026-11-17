@@ -12,14 +12,14 @@ import {
   waitForTestEvent,
   createSessionMessagesFixture,
   createSessionFixture,
-  createMachineFixture,
   createRootLayoutFeaturesResponse,
   flushHookEffects,
   type RenderHookResult,
 } from '@/dev/testkit';
 import { getStorage } from '@/sync/domains/state/storage';
 import { observeStorageSubscriptionDeliveries } from '@/dev/testkit/performance/storageSubscriptionCensus';
-import { createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainMachineRowFixture, createMachineReadBatchResponseFixture, createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { renderScreen } from '@/dev/testkit';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } from '@/voice/settings/voiceSettingsRouteFocus';
@@ -348,10 +348,12 @@ async function restoreAttemptAccount(accountId = 'attempt-account') {
   sessionHttp = createSessionMetadataHttpBoundary(
     () => getStorage().getState().sessions,
   );
-  const machine = createMachineFixture({
+  const machine = createHydratedPlainMachineFixture({
     id: recoveryRuntime.machineId,
-    activeAt: Date.now(),
+    accountId,
+    machine: { activeAt: Date.now() },
   });
+  publishMachineActivityForTest([machine]);
   const machineRow = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
   connection = await restoreServerAccountForTest({
     serverUrl: 'https://voice-attempt.test',
@@ -571,8 +573,9 @@ describe('useVoiceAttemptControl start admission', () => {
     const delivery = observeStorageSubscriptionDeliveries(paths => paths.length === 1
       && paths[0]?.[0] === 'state' && (paths[0]?.[1] === 'sessions' || paths[0]?.[1] === 'sessionMessages'));
     const runtime = await renderScreen(React.createElement(VoiceSessionRuntime));
+    const initialProps: { conversation: SessionAddress | null } = { conversation: address };
     const setup = await renderHook(({ conversation }: { conversation: SessionAddress | null }) =>
-      useVoiceSetupConversationMessages(conversation), { initialProps: { conversation: address } });
+      useVoiceSetupConversationMessages(conversation), { initialProps });
     try {
       delivery.reset();
       for (let index = 0; index < 5; index++) await act(async () => {
@@ -1549,9 +1552,7 @@ describe('useVoiceAttemptControl recovery routing', () => {
       expect(hook.getCurrent().control).toMatchObject({
         recoveryAvailable: true,
         surfaceState: 'error',
-        captionLabel: t(
-          'settingsVoice.local.machineErrors.authentication_required',
-        ),
+        publicPresentation: { failureKind: 'authentication_required' },
         recoveryLabel: t('voiceSurface.connectAgent'),
       });
       await act(async () => {
@@ -1643,10 +1644,12 @@ describe('useVoiceAttemptControl recovery routing', () => {
       serverId: connection.home.id,
       accountId: 'attempt-account',
     };
-    const machine = createMachineFixture({
+    const machine = createHydratedPlainMachineFixture({
       id: recoveryRuntime.machineId,
-      activeAt: Date.now(),
+      accountId: scope.accountId,
+      machine: { activeAt: Date.now() },
     });
+    publishMachineActivityForTest([machine]);
     getStorage().setState({
       profileScope: scope,
       settingsScope: scope,
@@ -3634,7 +3637,7 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
     vi.restoreAllMocks();
   });
 
-  it('offers Retry during an owned reconnect backoff and routes it without restarting the session', async () => {
+  it('offers Retry after a terminal SDK disconnect and starts a fresh attempt', async () => {
     const { controller } = await installElevenLabsLifecycle();
     const { useVoiceAttemptControl } = await import('./useVoiceAttemptControl');
     const { getVoiceSessionPresentedAttemptId } =
@@ -3643,7 +3646,6 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
     expect(controller.getSnapshot().status).toBe('connected');
     const admittedAttempt = getVoiceSessionPresentedAttemptId();
     const hook = await renderHook(() => useVoiceAttemptControl(GLOBAL_TARGET));
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       const options = sdk.startSession.mock.calls[0]?.[0];
       if (!options?.onDisconnect)
@@ -3658,13 +3660,16 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
       await waitForTestEvent(hook.subscribe, () =>
         expect(hook.getCurrent().recoveryAvailable).toBe(true),
       );
+      // ElevenLabs SDK 1.18 ends the conversation after its own reconnect
+      // lifecycle; the canonical SDK owner publishes a terminal failure.
       expect(controller.getSnapshot()).toMatchObject({
-        presentationState: 'reconnecting',
-        reconnectRetryAvailable: true,
+        status: 'error',
+        errorCode: 'voice_service_unavailable',
+        errorRecoveryAction: 'retry',
       });
+      expect(sdk.startSession).toHaveBeenCalledTimes(1);
       expect(hook.getCurrent().recoveryLabel).toBe(t('common.retry'));
       expect(hook.getCurrent().recoveryIcon).toBe('arrow-clockwise');
-      vi.useRealTimers();
       await act(async () => {
         await hook.getCurrent().onRecover();
       });
@@ -3675,10 +3680,9 @@ describe('useVoiceAttemptControl terminal connection failures', () => {
       );
       expect(controller.getSnapshot().status).toBe('connected');
       expect(sdk.startSession).toHaveBeenCalledTimes(2);
-      expect(getVoiceSessionPresentedAttemptId()).toBe(admittedAttempt);
+      expect(getVoiceSessionPresentedAttemptId()).not.toBe(admittedAttempt);
       expect(controller.getAttemptTargetSessionAddress()).toBeNull();
     } finally {
-      vi.useRealTimers();
       await hook.unmount();
     }
   });

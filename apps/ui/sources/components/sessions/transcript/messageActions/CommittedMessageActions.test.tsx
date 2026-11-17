@@ -25,7 +25,7 @@ const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 // Load consumers after the canonical native and HTTP boundaries are configured.
 const { View } = await import('react-native');
-const { renderScreen, standardCleanup, createSessionFixture, createTestSessionTranscriptSource, wrapWithSessionTranscriptSource } = await import('@/dev/testkit');
+const { renderScreen, standardCleanup, createSessionFixture, createTestSessionTranscriptSource, wrapWithSessionTranscriptSource, waitForTestEvent } = await import('@/dev/testkit');
 const { TranscriptMessageSelectionProvider } = await import('../messageSelection/TranscriptMessageSelectionContext');
 const { ContextMenu } = await import('@/components/ui/forms/dropdown/ContextMenu');
 const { settingsDefaults } = await import('@/sync/domains/settings/settings');
@@ -56,7 +56,14 @@ beforeEach(async () => {
     serverId = await home.addHome({ serverUrl: 'https://committed-actions.test', name: 'Action test', accountId: 'account-a' });
     credentials = await TokenStorage.getCredentialsForServerUrl('https://committed-actions.test');
     getStorage().setState({ profileScope: { serverId, accountId: 'account-a' }, settings: settingsDefaults });
-    getStorage().getState().applySettingsLocal({ experiments: true, featureToggles: { automations: true, workflows: true } });
+    const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
+    getStorage().getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ experiments: true,
+        featureToggles: { automations: true, workflows: true, voice: true },
+        voice: { ...settingsDefaults.voice, providerId: 'local_conversation' },
+    }, settingsDefaults));
+    const features = createRootLayoutFeaturesResponse({ features: { voice: { enabled: true } } });
+    home.answer(serverId, '/v1/features', { body: features });
+    home.answer(serverId, '/v1/features/authenticated', { body: features });
     await featuresClient.getServerFeaturesSnapshot({ serverId, force: true });
     activeFeatureSubscriptions = 0;
     const subscribe = featuresClient.subscribeServerFeaturesSnapshot;
@@ -186,13 +193,39 @@ describe('Committed row and native menu availability', () => {
     });
 
 
+    it.each(['unselected', 'opted-out'] as const)('retains disabled native and overflow setup entries for %s Voice', async scenario => {
+        const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
+        const { VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } = await import('@/voice/settings/voiceSettingsRouteFocus');
+        const { router } = await import('expo-router');
+        const settings = getStorage().getState().settings;
+        getStorage().getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
+            voice: { ...settings.voice, providerId: scenario === 'unselected' ? null : settings.voice.providerId },
+            featureToggles: { ...settings.featureToggles, voice: scenario !== 'opted-out' },
+        }, settings));
+        const screen = await renderScreen(element('agent-text'));
+        try {
+            expect(screen.findHostByTestId('transcript-message-readAloud:m1')).toBeNull();
+            const disabled = overflowItems(screen).find(item => item.id === 'readAloud');
+            expect(disabled).toMatchObject({ disabled: true, subtitle: expect.any(String) });
+            const menu = screen.findByType(ContextMenu);
+            expect(menu.props.items.find((item: MenuItem) => item.id === 'readAloud')).toMatchObject({
+                id: 'readAloud', disabled: true, subtitle: disabled!.subtitle,
+            });
+            const target = scenario === 'unselected' ? VOICE_SETTINGS_PROVIDER_FOCUS_TARGET : '/settings/features';
+            await act(async () => { await overflow(screen)!.props.onSelect('readAloud:recovery'); });
+            expect(router.push).toHaveBeenLastCalledWith(target);
+            await act(async () => { await menu.props.onSelect('readAloud:recovery'); });
+            expect(router.push).toHaveBeenLastCalledWith(target);
+        } finally { await screen.unmount(); }
+    });
+
     it.each(['machine', 'engine'] as const)('offers the canonical %s recovery from unavailable read-aloud', async (failure) => {
         const { writeLocalConversationVoiceSettings, readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
         const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
         const { VOICE_SETTINGS_EXECUTION_MACHINE_FOCUS_TARGET, VOICE_SETTINGS_PROVIDER_FOCUS_TARGET } = await import('@/voice/settings/voiceSettingsRouteFocus');
         const { router } = await import('expo-router');
         const features = createRootLayoutFeaturesResponse({ features: {
-            voice: { enabled: true }, execution: { runs: { enabled: true } },
+            voice: { enabled: true },
         } });
         home.answer(serverId, '/v1/features', { body: features });
         home.answer(serverId, '/v1/features/authenticated', { body: features });
@@ -202,7 +235,7 @@ describe('Committed row and native menu availability', () => {
         getStorage().getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({
             experiments: true, featureToggles: { voice: true, 'execution.runs': true, 'voice.agent': true, 'voice.daemonInference': true },
             voice: writeLocalConversationVoiceSettings({ ...voice, providerId: 'happier.voice.xai/realtime-grok',
-                executionMachine: { mode: 'fixed', machineId: 'unreachable-machine', autoMachineId: null },
+                executionMachine: { mode: 'fixed', machineId: 'unreachable-machine' },
             }, { ...local, tts: { ...local.tts,
                 provider: failure === 'machine' ? 'local_neural' : 'acme.speech/missing',
                 localNeural: { ...local.tts.localNeural, model: 'kokoro', execution: 'daemon' },
@@ -434,8 +467,12 @@ describe('Committed row and native menu availability', () => {
         const copy = screen.findHostByTestId('transcript-message-copy:m1');
         if (!copy) throw new Error('Missing child copy action');
         vi.mocked(Clipboard.setStringAsync).mockClear();
-        await act(async () => { await copy.props.onPress(); });
-        expect(Clipboard.setStringAsync).toHaveBeenCalledWith('Useful prompt');
+        // The native press returns void while its clipboard Action is still pending.
+        const copied = waitForTestEvent(screen.subscribe, () => {
+            expect(Clipboard.setStringAsync).toHaveBeenCalledWith('Useful prompt');
+        });
+        await act(async () => { copy.props.onPress(); });
+        await copied;
         const identity = body.props.accessibilityLabel;
         // A structured-only recycled answer has no Read aloud entry either.
         await screen.update(element('agent-text', {
