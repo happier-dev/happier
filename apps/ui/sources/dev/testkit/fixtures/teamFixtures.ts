@@ -6,6 +6,7 @@ import {
     TeamGroupMemberV1Schema,
     TeamMembershipV1Schema,
     TeamInvitationRowV1Schema,
+    TeamInvitationPreviewV1Schema,
     TeamCredentialResourceSummaryV1Schema,
     TeamCredentialSourceResourceAdministrationV1Schema,
     TeamCredentialSourceCandidateV1Schema,
@@ -22,6 +23,7 @@ import {
     type TeamGroupMemberV1,
     type TeamGroupV1,
     type TeamInvitationRowV1,
+    type TeamInvitationPreviewV1,
     type TeamMembershipV1,
     type TeamPolicyV1,
     type TeamSummaryV1,
@@ -133,6 +135,25 @@ export function teamMembershipFixture(
         capabilities: NO_TEAM_MEMBERSHIP_CAPABILITIES_V1,
         joinedAt: 1_000_000_000_000,
         ...overrides,
+    });
+}
+
+/** The shared invitation preview returned before Account authentication or admission. */
+export function teamInvitationPreviewFixture(
+    overrides?: Omit<Partial<TeamInvitationPreviewV1>, 'home' | 'team'> & {
+        home?: Partial<TeamInvitationPreviewV1['home']>;
+        team?: Partial<TeamInvitationPreviewV1['team']>;
+    },
+): TeamInvitationPreviewV1 {
+    return TeamInvitationPreviewV1Schema.parse({
+        role: 'member',
+        historyAccess: 'from_membership',
+        state: 'active',
+        expiresAt: Date.UTC(2030, 0, 1),
+        recipientEmailMask: null,
+        ...overrides,
+        home: { serverId: 'srv_acme_home', displayName: 'Acme', storageMode: null, ...overrides?.home },
+        team: { teamId: 'team-1', name: 'Acme Team', logo: null, accentSeed: 'team-1', ...overrides?.team },
     });
 }
 
