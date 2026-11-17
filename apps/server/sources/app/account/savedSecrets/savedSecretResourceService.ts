@@ -484,7 +484,7 @@ async function isSavedSecretAudienceEligibleInTx(
         }).offerOwnCredential);
 }
 
-async function listAuthorizedAccountIdsForResourcesInTx(
+export async function listAuthorizedAccountIdsForResourcesInTx(
     tx: Tx,
     resourceIds: readonly string[],
 ): Promise<readonly string[]> {

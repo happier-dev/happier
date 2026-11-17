@@ -28,7 +28,8 @@ import { projectDeploymentReceiptActivityV1 } from '@happier-dev/deployment-prot
 import { resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { deploymentTeardownMembershipAdmissionSchema, haveDeploymentMembershipRoutesInTx } from './deploymentMembershipService';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { revokeDeploymentAppMachinesInTx } from './deploymentAppRevocation';
+import { prepareDeploymentAppMachineRevocationInTx } from './deploymentAppRevocation';
+import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
 type Receipt = NonNullable<Awaited<ReturnType<Tx['deployment']['findUnique']>>>;
 /** Detach and Environment removal retire the association while retaining native resource custody. */
@@ -400,6 +401,18 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     if (activatesJoining
         && !await haveDeploymentMembershipRoutesInTx(tx, { environmentId: row.environmentId,
             targetLinkId: link.id, members: joining, mode: 'join' })) return deploymentFailure('deployment_conflict');
+    const accountIds = await resolveProjectSourceAudienceInTx(tx, [loaded.source]);
+    const revokeAppMachines = input.teardownProof ? await prepareDeploymentAppMachineRevocationInTx(tx, {
+        environmentId: loaded.row.id,
+        ...(!removeEnvironment ? { targetLinkId: link.id,
+            ...(!completeTeardown ? { removedMachines: input.teardownProof.machines } : {}) } : {}),
+        publicationAccountIds: accountIds,
+        ...(input.contentUpdate ? { contentArtifactId: nextContent.contentArtifactId } : {}),
+        ...(removeEnvironment || completeTeardown && loaded.row.runtimeTargetLinkId === link.id
+            ? { disableEnvironmentAutomations: { observationOnly: !removeEnvironment } } : {}),
+        ...(removeEnvironment ? { environmentRemoval: { telemetryMachineId: loaded.row.telemetryMachineId,
+            savedSecretResourceIds: (readDeploymentBindingSavedSecretRevisionsV1(loaded.row.referencedSavedSecretRevisions) ?? []).map(capture => capture.resourceId) } } : {}),
+    }) : undefined;
     if (input.contentUpdate) {
         const updated = await updateDeploymentStoredContentInTx(tx, actorAccountId, loaded, nextContent, input.contentUpdate, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1);
         if (!updated.ok) return updated;
@@ -422,7 +435,6 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         await tx.deploymentEnvironment.update({ where: { id: loaded.row.id }, data: { telemetryTokenHash: input.telemetryTokenHash } });
         await publishDeploymentTelemetryMachinesInTx(tx, [input.telemetryMachineId]);
     }
-    const accountIds = await resolveProjectSourceAudienceInTx(tx, [loaded.source]);
     if (input.expectedTargetLinkRevision !== undefined) {
         await tx.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: input.servingDeploymentId ?? row.id, state: 'deployed', revision: { increment: 1 } } });
         // The signed uniform receipt and Domain owner jointly prove joining readiness.
@@ -433,15 +445,14 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     }
     let environmentRevision = loaded.row.revision;
     if (input.teardownProof && !removeEnvironment) {
-        await revokeDeploymentAppMachinesInTx(tx, { environmentId: loaded.row.id, targetLinkId: link.id,
-            ...(!completeTeardown ? { removedMachines: input.teardownProof.machines } : {}) });
+        await revokeAppMachines!();
     }
     if (input.teardownProof && completeTeardown) {
         await tx.deploymentTargetLink.update({ where: { id: link.id }, data: { activeDeploymentId: null,
             state: input.teardownProof.retainedProviderResource ? 'provisioned' : 'configured', revision: { increment: 1 } } });
         if (removeEnvironment) {
             environmentRevision = await removeAdmittedDeploymentEnvironmentInTx(tx, { environment: loaded.row,
-                source: loaded.source, now, knownAccountIds: accountIds });
+                source: loaded.source, now, knownAccountIds: accountIds, revokeAppMachines });
         } else {
             if (loaded.row.runtimeTargetLinkId === link.id) {
                 await disableDeploymentEnvironmentAutomationsInTx(tx, loaded.row.id, { observationOnly: true });

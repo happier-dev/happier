@@ -9,6 +9,7 @@ import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { AutomationValidationError } from './automationValidation';
 import { disableAutomationInTx } from './automationCrudService';
 import { acquireWorkflowPublicationLocksInTx } from '@/app/workflows/acquireWorkflowPublicationLocksInTx';
+import { getWorkflowPublicationAudienceInTx, type WorkflowPublicationAudience } from '@/app/workflows/workflowPublicationAudience';
 
 /** Account erasure has admitted its retired graph. Release only that Account's
  * Automation FK; its retained runs still follow ordinary Account erasure.
@@ -22,17 +23,32 @@ export async function clearErasedAccountDeploymentEnvironmentReferencesInTx(tx: 
     }
 }
 
+async function readDeploymentEnvironmentAutomationDisableSelectionInTx(tx: Tx, environmentId: string,
+    options: Readonly<{ observationOnly?: boolean }> = {},
+) {
+    const candidates = await tx.automation.findMany({ where: { deploymentEnvironmentId: environmentId, deletedAt: null, enabled: true },
+        select: { id: true, accountId: true, templateCiphertext: true }, orderBy: { id: 'asc' } });
+    const jobs = options.observationOnly ? candidates.filter(row => parseAutomationObservationOnlyDefinitionV1(row.templateCiphertext)) : candidates;
+    return jobs.length ? { jobs, scope: { accountId: jobs[0]!.accountId,
+        automationIds: jobs.map(job => job.id), runSourceTriggerWhere: { automation: { deploymentEnvironmentId: environmentId } } } } : null;
+}
+
+/** Enclosing disposition admits the same definition and source-trigger publication as disable. */
+export async function readDeploymentEnvironmentAutomationDisableAudienceInTx(tx: Tx, environmentId: string,
+    options: Readonly<{ observationOnly?: boolean }> = {},
+): Promise<WorkflowPublicationAudience> {
+    const selected = await readDeploymentEnvironmentAutomationDisableSelectionInTx(tx, environmentId, options);
+    return selected ? getWorkflowPublicationAudienceInTx(tx, selected.scope) : { accountIds: [], sessionIds: [] };
+}
+
 /** Environment lifecycle withdraws its existing definitions through the Automation publication owner. */
 export async function disableDeploymentEnvironmentAutomationsInTx(tx: Tx, environmentId: string,
     options: Readonly<{ observationOnly?: boolean }> = {},
 ): Promise<void> {
-    const candidates = await tx.automation.findMany({ where: { deploymentEnvironmentId: environmentId, deletedAt: null, enabled: true },
-        select: { id: true, accountId: true, templateCiphertext: true }, orderBy: { id: 'asc' } });
-    const jobs = options.observationOnly ? candidates.filter(row => parseAutomationObservationOnlyDefinitionV1(row.templateCiphertext)) : candidates;
-    if (!jobs.length) return;
-    await acquireWorkflowPublicationLocksInTx(tx, { accountId: jobs[0]!.accountId,
-        automationIds: jobs.map(job => job.id), runSourceTriggerWhere: { automation: { deploymentEnvironmentId: environmentId } } });
-    for (const job of jobs) {
+    const selected = await readDeploymentEnvironmentAutomationDisableSelectionInTx(tx, environmentId, options);
+    if (!selected) return;
+    await acquireWorkflowPublicationLocksInTx(tx, selected.scope);
+    for (const job of selected.jobs) {
         if (!await disableAutomationInTx(tx, { accountId: job.accountId, automationId: job.id })) {
             throw new Error('Deployment disposition lost locked Automation authority');
         }
