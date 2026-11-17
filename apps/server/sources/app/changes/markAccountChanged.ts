@@ -6,6 +6,7 @@ import { eventRouter } from "@/app/events/connectionEventRouter";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { ChangeKindSchema, readAccountSettingsVersionChangeV1, readArtifactKindsV1, readArtifactKindsChangeHintV1, type ChangeKind } from '@happier-dev/protocol/changes';
 import { PluginDomainChangeHintSchema, buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
+import { AccountKvChangeHintV1Schema } from '@happier-dev/protocol/changes/accountKv';
 import { DISCUSSION_CHANGE_HINT_V1, readDiscussionChangeHintV1, type DiscussionChangeHintV1 } from '@happier-dev/protocol/discussions';
 import { isSessionSystemRecordUnchangedHintV1, readSessionSystemRecordChangeV1, type SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/sessions/follow/changes';
@@ -214,6 +215,22 @@ function compactHint(_kind: ChangeKind, hint: unknown): unknown {
 
     // For unknown hint shapes, keep as-is. The write paths should keep hints small.
     return hint;
+}
+
+async function coalesceAccountKvChangeHintInTx(tx: Tx, accountId: string, entityId: string, hint: unknown): Promise<unknown> {
+    const next = AccountKvChangeHintV1Schema.safeParse(hint);
+    if (!next.success) return hint;
+    // Publication holds the Account writer fence. The retained row must name
+    // every changed key a reader may not have consumed yet, just as full hints
+    // must stay broad. Reuse the existing hint compaction budget for the union.
+    const current = await tx.accountChange.findUnique({
+        where: { accountId_kind_entityId: { accountId, kind: 'kv', entityId } },
+        select: { hint: true },
+    });
+    if (!current) return next.data;
+    const previous = AccountKvChangeHintV1Schema.safeParse(current.hint);
+    if (!previous.success || 'full' in previous.data || 'full' in next.data) return { full: true };
+    return compactHint('kv', { keys: [...new Set([...previous.data.keys, ...next.data.keys])] });
 }
 
 function scheduleAccountChangeWake(
@@ -714,6 +731,7 @@ async function publishAccountChanged(
         const persistedHint = kind === 'discussion'
             ? await coalesceDiscussionChangeHintInTx(tx, accountId, entityId, hint)
             : kind === 'session' ? await coalesceSessionProjectionChangeHintInTx(tx, accountId, entityId, hint)
+            : kind === 'kv' ? await coalesceAccountKvChangeHintInTx(tx, accountId, entityId, hint)
             : hint;
         const rows = await (tx as {
             $queryRawUnsafe: <TRow>(query: string, ...values: unknown[]) => Promise<TRow[]>;
@@ -912,6 +930,7 @@ async function publishAccountChanged(
         : kind === 'discussion'
         ? await coalesceDiscussionChangeHintInTx(tx, accountId, entityId, hint)
         : kind === 'session' ? await coalesceSessionProjectionChangeHintInTx(tx, accountId, entityId, hint, cursor)
+        : kind === 'kv' ? await coalesceAccountKvChangeHintInTx(tx, accountId, entityId, hint)
         : preciseCollectionHint ?? (current ? preserveCollectionFullHint(current.hint, hint) : hint);
 
     const stored = await tx.accountChange.upsert({
