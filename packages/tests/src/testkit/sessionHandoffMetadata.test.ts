@@ -97,7 +97,10 @@ function installSessionResponses(params: Readonly<{
     });
     if (url.pathname === '/v2/sessions') {
       return new Response(JSON.stringify({
-        sessions: [params.listRow],
+        sessions: [{ ...params.listRow,
+          documents: 'omitted', metadataAudience: 'owner', agentStateDocument: 'omitted',
+          metadata: undefined, ownerMetadata: undefined, agentState: undefined,
+        }],
         nextCursor: null,
         hasNext: false,
       }), { status: 200, headers: { 'content-type': 'application/json' } });

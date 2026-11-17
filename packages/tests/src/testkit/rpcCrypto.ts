@@ -1,15 +1,8 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, randomBytes } from 'node:crypto';
+import { decryptWithDataKey } from '../../../../apps/cli/src/api/encryption';
 
 function encodeUtf8Json(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
-}
-
-function decodeUtf8Json(bytes: Uint8Array): any | null {
-  try {
-    return JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return null;
-  }
 }
 
 // Compatible with the CLI `encryptWithDataKey` bundle:
@@ -34,19 +27,8 @@ export function encryptDataKey(value: unknown, dataKey: Uint8Array): Uint8Array 
 
 export function decryptDataKey(bundle: Uint8Array, dataKey: Uint8Array): any | null {
   if (!(dataKey instanceof Uint8Array) || dataKey.length !== 32) return null;
-  if (!(bundle instanceof Uint8Array) || bundle.length < 1 + 12 + 16) return null;
-  if (bundle[0] !== 0) return null;
-  const nonce = bundle.slice(1, 13);
-  const authTag = bundle.slice(bundle.length - 16);
-  const ciphertext = bundle.slice(13, bundle.length - 16);
-  try {
-    const decipher = createDecipheriv('aes-256-gcm', dataKey, nonce);
-    decipher.setAuthTag(Buffer.from(authTag));
-    const decrypted = Buffer.concat([decipher.update(Buffer.from(ciphertext)), decipher.final()]);
-    return decodeUtf8Json(new Uint8Array(decrypted));
-  } catch {
-    return null;
-  }
+  if (!(bundle instanceof Uint8Array)) return null;
+  return decryptWithDataKey(bundle, dataKey);
 }
 
 export function encryptDataKeyBase64(value: unknown, dataKey: Uint8Array): string {
