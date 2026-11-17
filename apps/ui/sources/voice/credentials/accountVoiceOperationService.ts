@@ -679,14 +679,15 @@ export function createAccountVoiceOperationService(input: Readonly<{
       } catch (error) {
         if (rejectedMutation !== null && error === rejectedMutation) throw error;
         if (
-          operationSignal.signal.aborted
+          (mutationDispatched && error instanceof TypeError)
+          || operationSignal.signal.aborted
           || !input.isCurrent()
           || (selectedOperationAuthority !== null
             && selectedOperationAuthority.resolution.state === 'resolved'
             && !selectedOperationAuthority.lease.isAccountCurrent())
         ) {
-          // Account retirement or cancellation prevents consuming the response;
-          // it cannot undo a mutation already sent to the provider.
+          // A transport failure, retirement or cancellation cannot establish
+          // the outcome of a mutation already sent to the provider.
           throw operationError(mutationDispatched
             ? 'voice_account_operation_outcome_unknown'
             : 'voice_account_operation_cancelled');

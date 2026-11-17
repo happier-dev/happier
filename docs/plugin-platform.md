@@ -10371,6 +10371,11 @@ Host-mediated JSON HTTP 422 failures may retain validation locations and known
 validation categories within the operation's existing response-byte budget.
 Provider messages, input values, context and registered credentials are excluded;
 Settings Actions project those structural facts into the existing failure alert.
+After dispatching a mutation, a native Fetch `TypeError` reports the existing
+`voice_account_operation_outcome_unknown` result: the provider may have applied
+the request before its reply was lost. The host does not automatically replay
+the mutation. Known HTTP rejections retain their classified failure, and read
+operations retain their transport error.
 
 In unreleased 0.3, a recipient operation declares no response body with
 `response: { maxBytes: 0, contentTypes: [] }`; both values must appear together.

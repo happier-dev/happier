@@ -1709,8 +1709,22 @@ describe('account Voice operation service', () => {
     }
   });
 
-  it.each(['materialization', 'response', 'responseBody', 'refusal', 'refusalBody'] as const)(
-    'preserves mutation uncertainty when authority retires during %s', async (retirement) => {
+  it('preserves a read transport failure without reporting an uncertain mutation', async () => {
+    const failure = new TypeError('Failed to fetch');
+    const service = createAccountVoiceOperationService({
+      providerId: 'happier.voice.openai/realtime-openai',
+      recipientContract,
+      signal: new AbortController().signal,
+      isCurrent: () => true,
+      fetch: async () => { throw failure; },
+      materializeSecret: async () => 'account-secret',
+    });
+
+    await expect(requestClientAuth(service)).rejects.toBe(failure);
+  });
+
+  it.each(['materialization', 'response', 'responseBody', 'refusal', 'refusalBody', 'transport'] as const)(
+    'preserves mutation uncertainty during %s', async (retirement) => {
       let current = true;
       const mutationContract = normalizeRecipientContractV1({
         ...recipientContract,
@@ -1729,6 +1743,9 @@ describe('account Voice operation service', () => {
       });
       if (declaration.kind !== 'conversation') throw new Error('Expected conversation declaration');
       const fetch = vi.fn(async () => {
+        // A lost PATCH reply can leave the remote mutation applied while the
+        // still-current caller receives only Fetch's native TypeError.
+        if (retirement === 'transport') throw new TypeError('Failed to fetch');
         if (retirement === 'response' || retirement === 'refusal') current = false;
         const body = new ReadableStream<Uint8Array>({
           pull(controller) {
