@@ -44,6 +44,7 @@ import { readWorkflowStepInputIndexV1 } from './workflowComposerDocumentV1.js';
 import { parseWorkflowDefinitionRefV1 } from './workflowDefinitionRefV1.js';
 import { resolveBuiltinWorkflowDefinitionV1 } from './builtins/catalog.js';
 import { projectActionWorkflowSelectionInputV1, readActionWorkflowTargetInputFieldV1 } from '../actions/executor/agentStartAdmission.js';
+import { reviewStartDeferredFieldsV1 } from '../reviews/reviewStart.js';
 
 /**
  * Normalization and semantic validation for the canonical workflow definition.
@@ -860,6 +861,9 @@ function validateLeafInputContract(
   if (leaf.kind === 'action') {
     const spec = findActionSpec(leaf.actionId);
     if (!spec) return; // Contributed contracts are resolved by the admission materializer.
+    if (leaf.actionId === 'review.start') {
+      for (const field of reviewStartDeferredFieldsV1(deferredFields)) deferredFields.add(field);
+    }
     for (const field of Object.keys(spec.contextualDefaults ?? {})) {
       if (!Object.hasOwn(leaf.input, field)) deferredFields.add(field);
     }

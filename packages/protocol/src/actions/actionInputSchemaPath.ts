@@ -30,7 +30,10 @@ export function unwrapActionInputSchema(
       continue;
     }
     if (current instanceof z.ZodMiniPipe) {
-      current = current._zod.def.in as z.ZodMiniType;
+      // A preprocessing transform has no fields; its output owns the input
+      // structure and defaults presented by Action authoring surfaces.
+      current = (current._zod.def.in instanceof z.ZodMiniTransform
+        ? current._zod.def.out : current._zod.def.in) as z.ZodMiniType;
       continue;
     }
     break;

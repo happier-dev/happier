@@ -22,6 +22,7 @@ import { type ActionId } from '../../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import { projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
+import { dispatchReviewRoundAction } from './rounds.js';
 
 export function reviewScopeForInput(input: unknown): 'paths' | undefined {
   const record = readRecord(input);
@@ -33,6 +34,8 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
   workflowSessionScope: WorkflowSessionScopeV1 | null;
 }>): Promise<ActionExecuteResult | null> {
   const { actionId, deps, ctx, parsed, data, executeHostChild, workflowSessionScope } = inv;
+  const roundAction = await dispatchReviewRoundAction({ actionId, deps, ctx, data: parsed.data, executeHostChild });
+  if (roundAction) return roundAction;
 
       const reviewCommentActionId = isActionFamilyId(actionId, ReviewCommentActionIdV1Schema) ? actionId : null;
       if (reviewCommentActionId !== null || actionId === 'review.apply') {

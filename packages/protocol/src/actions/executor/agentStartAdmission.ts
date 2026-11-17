@@ -32,6 +32,7 @@ import { PROFILE_ACTION_OUTPUT_SCHEMAS_V1, parseProfileActionRequestV1 } from '.
 import { SessionCapabilitySelectionAuthoringV1Schema, SessionSkillSelectionAuthoringV1Schema } from '../../reach/sessionCapabilitySelectionV1.js';
 import { actionInputIssueFailure } from './actionInputValidation.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../../bots/templates/botTemplateActionIdsV1.js';
+import { decodeLegacyReviewStartInput, ReviewEngineReviewerSelectionV1Schema, ReviewReviewerSelectionV1Schema, type ReviewReviewerSelectionV1, type ReviewStartInput } from '../../reviews/reviewStart.js';
 
 /** Native Workflow leaves already admitted by materialization retain that host-stamped depth. */
 export function readAdmittedWorkflowLeafStartDepthV1(actionId: string, context: ActionExecutorContext): number | undefined {
@@ -90,6 +91,13 @@ export function isAgentStartActionV1(actionId: string): boolean {
 }
 /** Acquisition admits Agent work only when it carries ordinary Session authoring. */
 export function isAgentStartActionInvocationV1(actionId: string, input: Readonly<Record<string, unknown>>): boolean {
+    if (actionId === 'review.start') {
+        // The Actions front door supplies parsed input; human requests admit no Agent work.
+        const review = input as Pick<ReviewStartInput, 'reviewers' | 'steps'>;
+        return review.reviewers === undefined
+            || review.reviewers.some(reviewer => reviewer.kind !== 'person')
+            || review.steps?.some(step => step.reviewers.some(reviewer => reviewer.kind !== 'person')) === true;
+    }
     return isAgentStartActionV1(actionId)
         || (actionId === 'session.goal.set' && typeof input.objective === 'string' && input.resumeInactiveWithInitialGoal !== false)
         || (actionId === 'machines.managed.acquire' && input.agentStart !== undefined);
@@ -103,11 +111,11 @@ export function requiresActionAgentStartDepthV1(actionId: string): boolean {
         || actionId === 'workflow.trigger.add' || actionId === 'workflow.trigger.update';
 }
 /** Native target input supplied by Workflow Agent selection. */
-export function readActionWorkflowTargetInputFieldV1(actionId: string): 'agentTarget' | 'backendTarget' | 'engineIds' | 'backendTargetKeys' | null {
+export function readActionWorkflowTargetInputFieldV1(actionId: string): 'agentTarget' | 'backendTarget' | 'reviewers' | 'backendTargetKeys' | null {
     if (!isAgentStartActionV1(actionId)) return null;
     return actionId === 'session.spawn_new' ? 'agentTarget'
         : actionId === 'execution.run.start' ? 'backendTarget'
-            : actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys';
+            : actionId === 'review.start' ? 'reviewers' : 'backendTargetKeys';
 }
 /** Workflow selection fields shared by static validation and native admission. */
 export function projectActionWorkflowSelectionInputV1(
@@ -115,12 +123,17 @@ export function projectActionWorkflowSelectionInputV1(
     input: Readonly<Record<string, unknown>>,
     selected: WorkflowResolvedStepSelectionV1 | undefined,
 ): Record<string, unknown> {
-    const projected = { ...input };
+    // Historical Workflow inputs pass through this projection before the Actions front door.
+    // Decode with the Review owner before an inherited target can fill the roster.
+    const projected = { ...(actionId === 'review.start'
+        ? decodeLegacyReviewStartInput(input) as Readonly<Record<string, unknown>> : input) };
     if (!selected || !isAgentStartActionV1(actionId)) return projected;
     const targetField = readActionWorkflowTargetInputFieldV1(actionId);
     if (selected.agentTarget && targetField) {
         if (projected[targetField] === undefined) projected[targetField] = targetField === 'agentTarget' || targetField === 'backendTarget'
-            ? selected.agentTarget : [buildBackendTargetKeyV2(selected.agentTarget)];
+            ? selected.agentTarget : targetField === 'reviewers'
+                ? [{ kind: 'engine', engineId: buildBackendTargetKeyV2(selected.agentTarget) }]
+                : [buildBackendTargetKeyV2(selected.agentTarget)];
     }
     for (const key of ['permissionMode', 'allowedTools', 'unlistedTools', 'connectedServices', 'capabilitySelection', 'transcriptStorage'] as const) {
         if (projected[key] === undefined && selected[key] !== undefined) projected[key] = selected[key];
@@ -293,17 +306,86 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
         }
         return { ok: false, errorCode: 'invalid_parameters' };
     }
-    const targetValues = actionId === 'review.start' ? request.engineIds : request.backendTargetKeys;
-    const projectedTargetValues = actionId === 'review.start' ? selectedInput.engineIds : selectedInput.backendTargetKeys;
+    if (actionId === 'review.start') {
+        const roster = z.array(z.unknown()).safeParse(selectedInput.reviewers);
+        if (!roster.success) return { ok: false, errorCode: 'invalid_parameters' };
+        const requests: AgentStartRequestV1[] = [];
+        const reviewers: ReviewReviewerSelectionV1[] = [];
+        let deferredTarget: Extract<ReturnType<typeof resolveActionAgentStartRequestsV1>, { ok: false }> | undefined;
+        for (const value of roster.data) {
+            // Accepted historical loops defer their item-bound engine until execution.
+            // Preserve concrete siblings for static admission, as native fan-out does.
+            if (value && typeof value === 'object' && 'kind' in value && value.kind === 'engine'
+                && 'engineId' in value && isUnresolvedStartFact(value.engineId)) {
+                const { engineId: _engineId, ...known } = value;
+                const selection = z.omit(z.strictObject(ReviewEngineReviewerSelectionV1Schema.shape), { engineId: true }).safeParse(known);
+                if (!selection.success) return { ok: false, errorCode: 'invalid_parameters' };
+                const resolved = resolveActionAgentStartRequestsV1({ actionId: 'execution.run.start',
+                    input: { ...request, ...selection.data, backendTarget: unresolved, intent: 'review' },
+                    context, baseline, effectiveSelection: selected ? { selection: selected } : undefined });
+                if (!resolved.ok) deferredTarget = resolved;
+                continue;
+            }
+            const parsedReviewer = ReviewReviewerSelectionV1Schema.safeParse(value);
+            if (!parsedReviewer.success) return { ok: false, errorCode: 'invalid_parameters' };
+            const reviewer = parsedReviewer.data;
+            if (reviewer.kind === 'person') {
+                reviewers.push(reviewer);
+                continue;
+            }
+            if (reviewer.kind === 'session') {
+                requests.push({ kind: 'session_target', targetSessionId: reviewer.session.sessionId });
+                reviewers.push(reviewer);
+                continue;
+            }
+            let nativeInput: Record<string, unknown>;
+            if (reviewer.kind === 'model') {
+                nativeInput = reviewer.launch;
+            } else {
+                const { kind: _kind, engineId, options: _options, ...selection } = reviewer;
+                nativeInput = { ...request };
+                // A reviewer's explicit model source replaces the inherited source as a unit.
+                if (selection.modelId !== undefined || selection.modelSelection !== undefined || selection.teamCredentialModel !== undefined) {
+                    delete nativeInput.modelId;
+                    delete nativeInput.modelSelection;
+                    delete nativeInput.teamCredentialModel;
+                    delete nativeInput.teamCredentialSessionBindingConsent;
+                }
+                Object.assign(nativeInput, selection, {
+                    backendTarget: readExecutionRunStartTargetV1(engineId), intent: 'review',
+                });
+            }
+            const nativeSelection = selected ? { selection: {
+                ...selected,
+                ...(reviewer.kind === 'engine' && typeof nativeInput.launchProfileId === 'string'
+                    ? { profileId: nativeInput.launchProfileId } : {}),
+            } } : undefined;
+            const resolved = resolveActionAgentStartRequestsV1({
+                actionId: reviewer.kind === 'model' ? 'session.spawn_new' : 'execution.run.start',
+                input: nativeInput, context, baseline, effectiveSelection: nativeSelection,
+            });
+            const reviewRequests = (values: readonly AgentStartRequestV1[]) => values.map(value => value.kind === 'execution_run'
+                ? { ...value, source: 'review' as const, intent: 'review' as const } : value);
+            if (!resolved.ok) return { ...resolved, knownRequests: [...requests, ...reviewRequests(resolved.knownRequests ?? [])] };
+            requests.push(...reviewRequests(resolved.requests));
+            if (reviewer.kind === 'model') {
+                reviewers.push({ ...reviewer, launch: { ...reviewer.launch, ...resolved.effectiveInput } });
+            } else {
+                const effectiveSelection = Object.fromEntries(Object.keys(ReviewEngineReviewerSelectionV1Schema.shape)
+                    .filter(key => resolved.effectiveInput[key] !== undefined)
+                    .map(key => [key, resolved.effectiveInput[key]]));
+                reviewers.push({ ...reviewer, ...effectiveSelection });
+            }
+        }
+        if (deferredTarget) return { ...deferredTarget, knownRequests: requests };
+        const effectiveInput: Record<string, unknown> = { ...selectedInput, reviewers };
+        delete effectiveInput.backendTarget;
+        return { ok: true, requests, effectiveInput };
+    }
+    const targetValues = request.backendTargetKeys;
+    const projectedTargetValues = selectedInput.backendTargetKeys;
     let targets = actionId === 'execution.run.start' ? [readAgentStartTargetV1(selectedInput.backendTarget)]
-        : (Array.isArray(projectedTargetValues) ? projectedTargetValues : []).map((value) => {
-            if (typeof value !== 'string')
-                return null;
-            const canonical = BackendTargetKeyV2InputSchema.safeParse(value);
-            const key = canonical.success ? canonical.data
-                : resolveExecutionBackendTargetSelectionForValue(value)?.backendTargetKey;
-            return key ? parseBackendTargetKeyV2(key) : null;
-        });
+        : (Array.isArray(projectedTargetValues) ? projectedTargetValues : []).map(readExecutionRunStartTargetV1);
     if (overrideEngine && selected?.agentTarget)
         targets = (targets.length ? targets : [selected.agentTarget]).map(() => selected.agentTarget!);
     const runOptions = resolveRunStartModelAndConfig(request);
@@ -337,9 +419,9 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
             ...(connected !== undefined ? { connectedServices: connected } : {}),
         };
         requests.push({ kind: 'execution_run',
-            source: actionId === 'review.start' ? 'review' : actionId === 'subagents.plan.start' ? 'subagents_plan'
+            source: actionId === 'subagents.plan.start' ? 'subagents_plan'
                 : actionId === 'subagents.delegate.start' ? 'subagents_delegate' : actionId === 'voice_agent.start' ? 'voice_agent' : 'execution_run',
-            intent: intent?.success ? intent.data : actionId === 'review.start' ? 'review'
+            intent: intent?.success ? intent.data
                 : actionId === 'subagents.plan.start' ? 'plan' : actionId === 'subagents.delegate.start' ? 'delegate' : 'voice_agent',
             ...(typeof request.roleId === 'string' ? { roleId: request.roleId } : {}),
             facts: selectedFacts(executionRunStartFactsV1(effective, target, context, baseline)), backendTargets: [target],
@@ -384,11 +466,17 @@ export function resolveActionAgentStartRequestsV1(params: Readonly<{
         effectiveInput.backendTarget = targets[0];
     if (actionId !== 'execution.run.start' && (overrideEngine || targetValues === undefined)) {
         delete effectiveInput.backendTarget;
-        effectiveInput[actionId === 'review.start' ? 'engineIds' : 'backendTargetKeys'] = targets.map((target) => buildBackendTargetKeyV2(target!));
+        effectiveInput.backendTargetKeys = targets.map((target) => buildBackendTargetKeyV2(target!));
     }
     if (projectedConnectedServices)
         effectiveInput.connectedServicesByBackendTargetKey = projectedConnectedServices;
     return { ok: true, requests, effectiveInput };
+}
+function readExecutionRunStartTargetV1(value: unknown): PersistedBackendTargetRefV2 | null {
+    if (typeof value !== 'string') return null;
+    const canonical = BackendTargetKeyV2InputSchema.safeParse(value);
+    const key = canonical.success ? canonical.data : resolveExecutionBackendTargetSelectionForValue(value)?.backendTargetKey;
+    return key ? parseBackendTargetKeyV2(key) : null;
 }
 function selection<Value>(schema: z.core.$ZodType<Value>, value: unknown) {
     if (value === undefined)

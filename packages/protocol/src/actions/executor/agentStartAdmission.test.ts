@@ -478,20 +478,17 @@ describe('canonical Action agent-start adapter', () => {
     expect(result).toMatchObject({ ok: true, requests: [{ kind: 'spawn_new', facts: { agentTarget: roleTarget } }] });
   });
 
-  it('uses authored targets for keyed connections even when the Action target is inherited', () => {
-    const request = { backendTarget: nativeTarget, instructions: 'Review the changes', connectedServices: 'openai:profile-root' };
+  it('projects an inherited Review engine through the canonical roster', () => {
+    const request = { instructions: 'Review the changes', connectedServices: 'openai:profile-root' };
     const resolve = (input: Readonly<Record<string, unknown>>) => resolveActionAgentStartRequestsV1({
       actionId: 'review.start', input, context: {}, baseline: { machineId: 'run-machine', directory: '/repo' },
       effectiveSelection: { selection: { agentTarget: roleTarget } },
     });
-    const baseline = resolve(request);
-    const keyed = resolve({ ...request, connectedServicesByBackendTargetKey: { 'agent:role.agent/agent': 'anthropic:profile-keyed' } });
-    expect(baseline.ok).toBe(true);
-    expect(keyed.ok).toBe(true);
-    if (!baseline.ok || !keyed.ok) throw new Error('expected_inherited_review_target');
-    expect(keyed.requests).toEqual(baseline.requests);
-    expect(keyed.effectiveInput).toMatchObject({ engineIds: ['agent:role.agent/agent'] });
-    expect(keyed.effectiveInput).not.toHaveProperty('backendTarget');
+    const result = resolve(request);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected_inherited_review_target');
+    expect(result.effectiveInput).toMatchObject({ reviewers: [{ kind: 'engine', engineId: 'agent:role.agent/agent' }] });
+    expect(result.effectiveInput).not.toHaveProperty('backendTarget');
   });
 
   it('admits known spawn policy facts while its nonauthority initial input remains dynamic', () => {

@@ -1,4 +1,4 @@
-import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../actionIds.js';
+import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../actionIdsReviewHumanV1.js';
 import { ReviewHumanGetInputV1Schema, ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema, ReviewVerdictActionInputV1Schema } from '../../reviews/reviewHumanV1.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { selectTeamCredentialSourcesForApproval } from './teamCredentialApproval.js';
@@ -13,6 +13,9 @@ import type { PreNormalizedActionSpec } from './definition.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { resolveExecutionRunMachineRuntimeDemand } from '../executor/sessionScope.js';
 
+
+import { ReviewPrepareRoundInputV1Schema, ReviewPreparedRoundV1Schema, ReviewNewRoundInputV1Schema, ReviewNewRoundResultV1Schema } from '../../reviews/reviewRoundActionsV1.js';
+import { REVIEW_PREPARE_ROUND_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1 } from '../actionIds.js';
 
 function createReviewActionSpecs() {
   return Object.freeze([
@@ -56,6 +59,22 @@ function createReviewActionSpecs() {
   inputSchema: ReviewVerdictActionInputV1Schema, outputSchema: ReviewHumanActionStateV1Schema,
 } satisfies PreNormalizedActionSpec,
 
+  {
+    id: REVIEW_PREPARE_ROUND_ACTION_ID_V1, executionPlacement: 'session', approval: { result: 'optional', flow: 'deferred' },
+    title: 'Prepare Review round', safety: 'safe', sideEffectClass: 'external', placements: [],
+    description: 'Consume the admitted first round or prepare the next round and capture its comparison before reviewers run.',
+    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
+    bindings: { mcpToolName: 'review_prepare_round', voiceClientToolName: 'review_prepare_round' },
+    inputSchema: ReviewPrepareRoundInputV1Schema, outputSchema: ReviewPreparedRoundV1Schema,
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: REVIEW_NEW_ROUND_ACTION_ID_V1, executionPlacement: 'session', approval: { result: 'optional', flow: 'deferred' },
+    title: 'New Review round', safety: 'safe', sideEffectClass: 'external', placements: [],
+    description: 'Review current code in the same Review, reusing the accepted workflow or retained native reviewer.',
+    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: true, rpc: false },
+    bindings: { mcpToolName: 'review_new_round', voiceClientToolName: 'review_new_round' },
+    inputSchema: ReviewNewRoundInputV1Schema, outputSchema: ReviewNewRoundResultV1Schema,
+  } satisfies PreNormalizedActionSpec,
   {
     id: 'review.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
     approvalPresentation: { teamCredentialSources: selectTeamCredentialSourcesForApproval },
