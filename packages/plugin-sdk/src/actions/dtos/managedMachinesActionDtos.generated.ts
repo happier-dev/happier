@@ -3,7 +3,7 @@
 
 import type { JsonValue, PluginJsonValueV2 } from '../../identity.js';
 import type { MachinePresetItemV1 } from '../../machineSetup.js';
-import type { InputPredicate, JSONType, MachineSetupNonAccountPresetSourceEntryV1, MachineSetupSourceFactsMapV1, PluginActionWorkflowBlockV1, PluginJsonSchemaV2, PluginUiDatabaseConnectionReadReferenceV1 } from './pluginActionDtoSupport.generated.js';
+import type { ActionFailureCauseV1, InputPredicate, JSONType, MachineSetupNonAccountPresetSourceEntryV1, MachineSetupSourceFactsMapV1, PluginActionWorkflowBlockV1, PluginJsonSchemaV2, PluginUiDatabaseConnectionReadReferenceV1 } from './pluginActionDtoSupport.generated.js';
 
 export type ManagedMachinesActionInputById = {
     readonly "machines.provisioners.list": {
@@ -14067,6 +14067,7 @@ export type ManagedMachinesActionResultById = {
             localCause: 'native_command_failed';
             command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
             exitCode: null | number;
+            failureCause?: ActionFailureCauseV1 | undefined;
             stderr?: string | undefined;
             stderrTruncated?: true | undefined;
         } | {
@@ -14907,6 +14908,7 @@ export type ManagedMachinesActionResultById = {
             localCause: 'native_command_failed';
             command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
             exitCode: null | number;
+            failureCause?: ActionFailureCauseV1 | undefined;
             stderr?: string | undefined;
             stderrTruncated?: true | undefined;
         } | {
@@ -15958,6 +15960,7 @@ export type ManagedMachinesActionResultById = {
                     localCause: 'native_command_failed';
                     command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
                 } | {
@@ -16942,6 +16945,7 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_command_failed';
                 command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
+                failureCause?: ActionFailureCauseV1 | undefined;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
             } | {
@@ -25775,6 +25779,7 @@ export type ManagedMachinesActionResultById = {
                     localCause: 'native_command_failed';
                     command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
                 } | {
@@ -26797,6 +26802,7 @@ export type ManagedMachinesActionResultById = {
                     localCause: 'native_command_failed';
                     command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
                 } | {
@@ -27789,6 +27795,7 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_command_failed';
                 command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
+                failureCause?: ActionFailureCauseV1 | undefined;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
             } | {
@@ -44476,6 +44483,7 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_command_failed';
                 command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
+                failureCause?: ActionFailureCauseV1 | undefined;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
             } | {
@@ -44516,6 +44524,7 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_command_failed';
                 command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
+                failureCause?: ActionFailureCauseV1 | undefined;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
             } | {
@@ -44605,6 +44614,7 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_command_failed';
                 command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
+                failureCause?: ActionFailureCauseV1 | undefined;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
             } | {
@@ -45481,6 +45491,7 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_command_failed';
                 command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
+                failureCause?: ActionFailureCauseV1 | undefined;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
             } | {
@@ -54355,6 +54366,7 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_command_failed';
                 command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
+                failureCause?: ActionFailureCauseV1 | undefined;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
             } | {
@@ -63156,6 +63168,7 @@ export type ManagedMachinesActionResultById = {
                 localCause: 'native_command_failed';
                 command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                 exitCode: null | number;
+                failureCause?: ActionFailureCauseV1 | undefined;
                 stderr?: string | undefined;
                 stderrTruncated?: true | undefined;
             } | {

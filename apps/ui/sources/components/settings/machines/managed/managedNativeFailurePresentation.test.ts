@@ -4,6 +4,19 @@ import { ManagedNativeFailureDetailsV1Schema } from '@happier-dev/protocol/actio
 import { describeManagedActionFailureDiagnostic, describeManagedObservationDiagnostic, describeManagedOperationDiagnostic, describeManagedPresetAvailabilityFailure } from './managedNativeFailurePresentation';
 
 describe('managed native failure Details', () => {
+    it('shows the retained cleanup failure in pending acquisition operation and observation Details', () => {
+        const details = { kind: 'managedNative', nativeCause: { localCause: 'native_command_failed', command: 'up', exitCode: null,
+            failureCause: { phase: 'exec.run', errorClass: 'Error', errorCode: 'plugin_exec_termination_incomplete', httpStatus: null } } };
+        const parsed = ManagedNativeFailureDetailsV1Schema.parse(details);
+        for (const diagnostic of [describeManagedOperationDiagnostic({ errorCode: 'native_acquisition_unconfirmed',
+            error: 'private cleanup prose', details: parsed }),
+            describeManagedObservationDiagnostic({ reason: 'native_acquisition_pending', nativeCause: parsed.nativeCause })]) {
+            expect(diagnostic).toContain('plugin_exec_termination_incomplete');
+            expect(diagnostic).toContain('exec.run');
+            expect(diagnostic).not.toContain('exit 23');
+            expect(diagnostic).not.toContain('private cleanup prose');
+        }
+    });
     it('shows the closed guest carrier reasons in immediate and retained operation Details', () => {
         const details = { kind: 'managedGuestHome', homeOrigin: 'https://home.example.test',
             carrierFailure: { attemptedCarrier: 'https', reason: 'home_unreachable',

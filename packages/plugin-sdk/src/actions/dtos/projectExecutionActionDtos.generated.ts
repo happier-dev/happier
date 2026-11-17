@@ -771,6 +771,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -2779,6 +2780,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -2819,6 +2821,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -2859,6 +2862,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -3477,6 +3481,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -5485,6 +5490,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -5525,6 +5531,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -5565,6 +5572,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -6183,6 +6191,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -8191,6 +8200,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -8231,6 +8241,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -8271,6 +8282,7 @@ export type ProjectExecutionActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {

@@ -4450,6 +4450,12 @@ documented Modal SDK error class, or a closed local qualification cause
 or `native_route_not_found` with a closed route kind and exact HTTP status 404). It excludes native messages, bodies and
 credential material. The controller preserves this fact in the existing
 operation's `managedNative` failure detail; the receipt displays that diagnostic.
+The existing `native_command_failed` fact may retain the canonical content-free
+`failureCause` when Exec throws before returning a process result. Devcontainer
+acquisition keeps that cause beside its pending native-operation handle;
+an unconfirmed cleanup does not establish a native exit status or resource absence.
+Operation and observation Details show the retained cause through the existing
+Action failure presenter. This is unreleased 0.3 behavior.
 For Hetzner `invalid_input` and `uniqueness_error`, the HTTP fact can also carry
 deduplicated `fields` from the documented create-request vocabulary, restricted
 to fields submitted in that request. Dynamic label paths and reflected values

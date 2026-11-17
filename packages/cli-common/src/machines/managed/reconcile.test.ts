@@ -643,7 +643,10 @@ describe('portable managed reconciliation', () => {
         { kind: 'rejected' as const, code: 'provider_unavailable' as const },
         { kind: 'unknown' as const, recovery: { reference: 'native-instance', reason: 'native_command_failed' },
             nativeCause: { httpStatusClass: '5xx' as const } },
-        { kind: 'pending' as const, nativeOperationRef: resource },
+        { kind: 'pending' as const, nativeOperationRef: resource, nativeCause: {
+            localCause: 'native_command_failed', command: 'up', exitCode: null,
+            failureCause: { phase: 'exec.run', errorClass: 'Error', errorCode: 'plugin_exec_termination_incomplete', httpStatus: null },
+        } },
     ])('records the latest $kind acquisition check, including an unchanged unknown outcome', async result => {
         const initial = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'may-exist' });
         const run = boundary(initial);

@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { PluginJsonValueV2 } from '../../identity.js';
-import type { BoundedLegacyJsonValue, PluginPolicyExpressionV2, PluginSettingFieldSchemaV2 } from './pluginActionDtoSupport.generated.js';
+import type { ActionFailureCauseV1, BoundedLegacyJsonValue, PluginPolicyExpressionV2, PluginSettingFieldSchemaV2 } from './pluginActionDtoSupport.generated.js';
 
 export type ConnectedServicesConfigurationActionInputById = {
     readonly "connectedServices.accounts.credentials.save": {
@@ -6307,6 +6307,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     localCause: 'native_command_failed';
                     command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
                 } | {

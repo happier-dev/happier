@@ -1,4 +1,5 @@
 import { PluginError, projectPluginFailureText } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { compareMachineHosts, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MachineProvisionerSizeV1Schema, requiresMachineProvisionerEffectReviewV1, type MachineProvisionerSizeV1, type MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isDeepStrictEqual } from 'node:util';
@@ -240,7 +241,8 @@ export function createDevcontainerProvider(input: Readonly<{
           '--workdir', '/workspace', '--entrypoint', 'sh', '--', source.image,
           '-c', "trap 'exit 0' TERM INT; while :; do sleep 2147483647 & wait $!; done"], undefined, false, managedMachineId, launch.workspaceFolder)
         : await run(cli(), ['up', ...managedFlags(launch, managedMachineId)], undefined, false, managedMachineId, launch.workspaceFolder); }
-      catch { nativeCause = { localCause: 'native_command_failed', command, exitCode: null };
+      catch (error) { nativeCause = { localCause: 'native_command_failed', command, exitCode: null,
+        failureCause: projectActionFailureCauseV1(error, 'exec.run') };
         fail('native_realization_unknown'); }
       if (!completed(result)) {
         nativeCause = commandFailure(result, command);

@@ -10,6 +10,7 @@ import { DevcontainerNativeObservationV1Schema } from './devcontainerV1.js';
 import { ActionInputIssueSchema } from '../../actions/executor/actionInputValidation.js';
 import { MachineSetupSourceApplyV1Schema } from '../setup/machineSetupSourcesV1.js';
 import { HomeEnrollmentCarrierFailureV1Schema } from '../../ssh/commandFailure.js';
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const instant = () => z.number().check(z.gte(0));
@@ -240,6 +241,7 @@ export const MachineProvisionerNativeCauseV1Schema = lazyDefinition(() => z.unio
   z.strictObject({ localCause: z.literal('ssh_keyscan_failed'), resultClass: z.enum(['empty', 'invalid', 'command_failed', 'spawn_failed']) }),
   z.strictObject({ localCause: z.literal('native_command_failed'), command: z.enum(['start', 'restart', 'stop', 'create', 'run', 'up', 'edit', 'update', 'delete']),
     exitCode: z.nullable(z.int()),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
     stderr: z.optional(z.string().check(z.minLength(1), z.maxLength(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1))),
     stderrTruncated: z.optional(z.literal(true)),
   }),

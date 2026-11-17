@@ -35,7 +35,10 @@ export function describeManagedActionFailureDiagnostic(code: string, details?: u
 /** Technical facts and privacy-projected command stderr for the existing Details disclosure. */
 export function describeManagedNativeCause(cause: MachineProvisionerNativeCauseV1): string {
     if ('localCause' in cause && cause.localCause === 'native_command_failed') {
+        const failure = cause.failureCause ? presentActionExecutionFailure({ ok: false,
+            errorCode: cause.failureCause.errorCode ?? 'action_failed', failureCause: cause.failureCause }) : undefined;
         return [cause.command, cause.exitCode === null ? 'interrupted' : `exit ${cause.exitCode}`, cause.stderr,
+            ...(failure?.technicalDetails.filter(detail => detail.key !== 'code').map(detail => detail.value) ?? []),
             cause.stderrTruncated ? 'stderr truncated' : null].filter(Boolean).join(' · ');
     }
     if ('localCause' in cause && cause.localCause === 'plugin_action_input_schema_invalid') {

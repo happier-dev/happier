@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { PluginJsonValueV2 } from '../../identity.js';
+import type { ActionFailureCauseV1 } from './pluginActionDtoSupport.generated.js';
 
 export type AccountPluginDataActionInputById = {
     readonly "account.plugins.data.erase": {
@@ -206,6 +207,7 @@ export type AccountPluginDataActionResultById = {
                         localCause: 'native_command_failed';
                         command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                         exitCode: null | number;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         stderr?: string | undefined;
                         stderrTruncated?: true | undefined;
                     } | {
@@ -379,6 +381,7 @@ export type AccountPluginDataActionResultById = {
                     localCause: 'native_command_failed';
                     command: 'create' | 'delete' | 'edit' | 'restart' | 'run' | 'start' | 'stop' | 'up' | 'update';
                     exitCode: null | number;
+                    failureCause?: ActionFailureCauseV1 | undefined;
                     stderr?: string | undefined;
                     stderrTruncated?: true | undefined;
                 } | {

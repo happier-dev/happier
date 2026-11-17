@@ -12237,8 +12237,14 @@ The shared provider-facts schema owns this allowlist; native messages, response
 bodies, metadata and credentials are excluded. Hetzner input/uniqueness failures
 may additionally carry `fields`: a closed, cardinality-bounded list of documented
 create-request field names, restricted by the native producer to submitted keys.
-It carries no validation messages or dynamic label paths. This extension uses the
-same development direct cut; SDK/controller, Home readers and app must consume
+It carries no validation messages or dynamic label paths.
+The existing closed `native_command_failed` diagnostic also accepts optional
+canonical `failureCause` for thrown Exec failures, without asserting an exit code
+or changing pending acquisition recovery. Its nested cause stays closed and
+content-free. Older records without it remain valid. The inspected `../0.2`
+frontier at `b4bde0b6c4a5cf683ad7c48ef709f76d53f3e5a9`
+has no managed provider-facts owner; no predecessor adapter or new epoch is added.
+This extension uses the same development direct cut; SDK/controller, Home readers and app must consume
 matching schemas before the new diagnostic producer is loaded.
 Acquire's rejected, unknown and
 pending results, provisioner check/options/observation results, and refused or

@@ -4,6 +4,7 @@ import { access, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promise
 import { basename, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { createDevcontainerProvider } from './provider.js';
 import { readDevcontainerEffectReview } from './effectReview.js';
 import { DevcontainerLaunchSchema, DevcontainerReviewQuerySchema, DevcontainerResourceSchema, type DevcontainerLaunch, type DevcontainerResource } from './schemas.js';
@@ -698,6 +699,26 @@ describe('Devcontainer native roles', () => {
     const acquired = await h.provider.acquire(launch, 'managed-a');
     expect(acquired).toMatchObject({ kind: 'pending', nativeCause: { localCause: 'native_command_failed', command: 'up', exitCode: 1 } });
     expect(JSON.stringify(acquired)).not.toContain('private-acquisition-token');
+  });
+  it('retains thrown Exec cleanup uncertainty beside the pending handle and recovers the created container without replay', async () => {
+    const h = native();
+    const nativeRun = h.tools.exec.run;
+    h.tools.exec.run = async (request, options) => {
+      if (request.args?.[0] === 'up') {
+        await nativeRun(request, options);
+        throw new PluginError({ code: 'plugin_exec_termination_incomplete',
+          message: 'private-cleanup-output', retryable: true });
+      }
+      return nativeRun(request, options);
+    };
+    const acquired = DEVCONTAINER_RECONCILIATION_SCHEMAS.result.parse(await h.provider.acquire(launch, 'managed-a'));
+    expect(acquired).toMatchObject({ kind: 'pending', nativeCause: { localCause: 'native_command_failed', command: 'up', exitCode: null,
+      failureCause: { phase: 'exec.run', errorClass: 'Error', errorCode: 'plugin_exec_termination_incomplete', httpStatus: null } } });
+    expect(JSON.stringify(acquired)).not.toContain('private-cleanup-output');
+    if (acquired.kind !== 'pending') throw new Error('Expected uncertain native acquisition');
+    expect(await h.provider.reconcile(acquired.nativeOperationRef.value)).toMatchObject({ kind: 'bound', resource: { value: { containerId } } });
+    expect(h.requests.filter(request => request.args?.[0] === 'up')).toHaveLength(1);
+    expect(h.requests.some(request => ['rm', 'stop'].includes(request.args?.[0] ?? ''))).toBe(false);
   });
   it('uses the selected Podman runtime in advanced CLI review, launch and bootstrap commands', async () => {
     const h = native();
