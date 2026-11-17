@@ -67,6 +67,27 @@ describe('JourneyConfigSlot', () => {
         expect(onPrimary).toHaveBeenCalledTimes(1);
     });
 
+    it('shares the phone action rail between Skip and the primary, as every phone sheet footer does', async () => {
+        const onSkip = vi.fn();
+        const screen = await renderScreen(<JourneyConfigSlot
+            primarySizing="fill"
+            controller={{ body: <Text>Body</Text>, primaryLabel: 'Next', onPrimary: vi.fn(), onSkip, showSkip: true }}
+            testID="phone-config"
+        />);
+        const skip = screen.findHostByTestId('phone-config-skip')!;
+        const primary = screen.findHostByTestId('phone-config-primary')!;
+        // One row holds both, each taking an equal share; Skip comes first, the primary last (nearest the thumb).
+        const row = (node: ReactTestInstance) => { let parent = node.parent;
+            while (parent && (String(parent.type) !== 'View' || flattenStyle(parent.props.style)?.flexDirection !== 'row')) parent = parent.parent;
+            return parent; };
+        expect(screen.findByTestId('phone-config-skip-row')).toBeNull();
+        expect(row(skip)).toBe(row(primary));
+        const shares = row(primary)!.children.map(child => flattenStyle((child as ReactTestInstance).props.style)?.flex);
+        expect(shares).toEqual([1, 1]);
+        await screen.pressByTestIdAsync('phone-config-skip');
+        expect(onSkip).toHaveBeenCalledTimes(1);
+    });
+
     it('renders and drives a pre-auth onboarding controller surface', async () => {
         const onPrimary = vi.fn();
         const onBack = vi.fn();

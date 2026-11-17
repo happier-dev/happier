@@ -174,8 +174,10 @@ function PersonalizePhonePresentation(props: Readonly<{ flow: PersonalizeFlow; t
                         presentation="card"
                     />
                 ) : null}
-                <Text accessibilityRole="header" style={styles.title}>{heading.title}</Text>
-                {flow.page === 'summary' || flow.page === 'style' ? <Text style={styles.description}>{heading.description}</Text> : null}
+                <View style={styles.heading}>
+                    <Text accessibilityRole="header" style={styles.title}>{heading.title}</Text>
+                    <Text style={styles.description}>{heading.description}</Text>
+                </View>
                 <PersonalizeStepBody flow={flow} phone testID={testID} />
             </View>
         </SlideTransitionSwitch>

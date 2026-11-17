@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierModalCardFooterActions } from '@happier-dev/plugin-ui/presentation';
 
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
 import { Text } from '@/components/ui/text/Text';
@@ -42,7 +43,7 @@ export type JourneyConfigSlotLayout = 'scroll' | 'flow';
 export type JourneyConfigSlotProps = Readonly<{
     controller: JourneyConfigControllerSurface;
     layout?: JourneyConfigSlotLayout;
-    /** Scroll layout: fill the phone action rail when Back already lives in the header. */
+    /** Scroll layout on a phone sheet: its actions take the shared phone footer (`HappierModalCardFooterActions`). */
     primarySizing?: 'content' | 'fill';
     testID?: string;
 }>;
@@ -248,7 +249,7 @@ function ConfigFooterHint(props: Readonly<{
 
 export function JourneyConfigSlot(props: JourneyConfigSlotProps): React.ReactElement {
     const styles = stylesheet;
-    useUnistyles();
+    const { theme } = useUnistyles();
     const testID = props.testID ?? 'journey-config-slot';
     const controller = props.controller;
     const layout: JourneyConfigSlotLayout = props.layout ?? 'scroll';
@@ -322,28 +323,42 @@ export function JourneyConfigSlot(props: JourneyConfigSlotProps): React.ReactEle
             {controller.footerHint ? (
                 <ConfigFooterHint footerHint={controller.footerHint} testID={`${testID}-footer`} />
             ) : null}
-            {hasActions ? (
+            {hasActions && props.primarySizing === 'fill' ? (
+                // A phone sheet's footer follows the one phone rule: two actions share the width, three stack
+                // at full width with the primary last, nearest the thumb.
+                <View testID={`${testID}-actions`}>
+                    <HappierModalCardFooterActions phoneSheet gap={theme.space.s10}>
+                        {[
+                            showSkip && controller.onSkip ? <ConfigActionButton key="skip" testID={`${testID}-skip`}
+                                label={controller.skipLabel ?? t('common.skip')} disabled={controller.skipDisabled}
+                                onPress={controller.onSkip} fill /> : null,
+                            showBack && controller.onBack ? <ConfigActionButton key="back" testID={`${testID}-back`}
+                                label={controller.backLabel ?? t('common.back')} onPress={controller.onBack} fill /> : null,
+                            showPrimary && controller.onPrimary ? <ConfigActionButton key="primary" testID={`${testID}-primary`}
+                                label={renderMaybeText(controller.primaryLabel)} disabled={controller.primaryDisabled}
+                                primary fill onPress={controller.onPrimary} /> : null,
+                        ].filter(Boolean)}
+                    </HappierModalCardFooterActions>
+                </View>
+            ) : hasActions ? (
                 <>
                     <View testID={`${testID}-actions`} style={styles.actionBar}>
-                        {showBack || props.primarySizing !== 'fill' ? (
-                            <View style={styles.secondaryActions}>
-                                {showBack && controller.onBack ? (
-                                    <ConfigActionButton
-                                        testID={`${testID}-back`}
-                                        label={controller.backLabel ?? t('common.back')}
-                                        onPress={controller.onBack}
-                                        quiet
-                                    />
-                                ) : null}
-                            </View>
-                        ) : null}
+                        <View style={styles.secondaryActions}>
+                            {showBack && controller.onBack ? (
+                                <ConfigActionButton
+                                    testID={`${testID}-back`}
+                                    label={controller.backLabel ?? t('common.back')}
+                                    onPress={controller.onBack}
+                                    quiet
+                                />
+                            ) : null}
+                        </View>
                         {showPrimary && controller.onPrimary ? (
                             <ConfigActionButton
                                 testID={`${testID}-primary`}
                                 label={renderMaybeText(controller.primaryLabel)}
                                 disabled={controller.primaryDisabled}
                                 primary
-                                fill={props.primarySizing === 'fill'}
                                 onPress={controller.onPrimary}
                             />
                         ) : null}
