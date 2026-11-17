@@ -95,7 +95,7 @@ export function MachineIsolationAddSandboxModal(
     // None ready yet: the first that sets up here, so Continue always leads somewhere (its Set up step).
     here[0] ??
     null;
-  const pickedReady = picked?.action.kind === 'choose' && !picked.action.disabled;
+  const pickedReady = picked !== null && isKindReady(picked);
 
   const { setChrome, onClose } = props;
   const add = React.useCallback(
@@ -340,9 +340,17 @@ function PickedMark() {
   return <Icon name="check" size={16} color={theme.colors.text.primary} />;
 }
 
+/**
+ * Whether a kind can go straight to its preset: the readiness owner calls it ready and its configurator can open.
+ * A kind that still needs setup always passes through its Set up step, so that step is never ticked unseen.
+ */
+function isKindReady(card: ManagedProvisionerCard): boolean {
+  return card.needsSetup !== true && card.action.kind === 'choose' && !card.action.disabled;
+}
+
 function MachineIsolationSetupStep(props: Readonly<{ machineName: string; card: ManagedProvisionerCard }>) {
   const { card } = props;
-  const ready = card.action.kind === 'choose' && !card.action.disabled;
+  const ready = isKindReady(card);
   return (
     <>
       <LeadSentence

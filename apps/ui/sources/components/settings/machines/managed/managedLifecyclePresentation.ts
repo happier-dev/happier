@@ -93,6 +93,15 @@ export type ManagedLifecyclePresentation = Readonly<{
   banner?: Readonly<{ title: string }>;
 }>;
 
+/**
+ * The one destructive action a machine still being created offers (TH MB-6). Once a resource is bound and its
+ * provider can delete it, Delete is that action (it ends the same resource "Cancel creation" would, through its
+ * review); before anything is bound, Cancel creation is the only way to end it. A page never shows both.
+ */
+export function resolveManagedDestructiveAction(machine: Readonly<{ allocation: string; deleteSupported: boolean }>): 'cancelCreation' | 'delete' {
+  return machine.allocation === 'bound' && machine.deleteSupported ? 'delete' : 'cancelCreation';
+}
+
 /** The retained creation receipt owns configured limits; a native expiry supersedes them. */
 export function resolveManagedNativeEndState(input: Readonly<{
   provider: string;

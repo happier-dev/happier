@@ -12,6 +12,7 @@ import {
   selectHeadlineReason,
 } from '@/components/machines/summary/machineResourceSentences';
 import { resolveMachineAttentionWordColor } from '@/components/machines/summary/machineSummaryStripModel';
+import { describeFleetDescription } from '@/components/machines/summary/machineResourceSentences';
 import {
   describeRest,
   useMachineFleetModel,
@@ -34,7 +35,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 export const OverviewMachinesSection = React.memo(
   function OverviewMachinesSection(props: Readonly<{ testID: string }>) {
     const { theme } = useUnistyles();
-    const { homeLabel, status, settled, refresh, fleet, presence, needs } = useMachineFleetModel();
+    const { homeLabel, status, settled, refresh, fleet, presence, needs, reportingCount, onlineCount } = useMachineFleetModel();
     const door = useMachinesDoor();
     const router = useRouter();
     const open = React.useCallback(
@@ -49,13 +50,6 @@ export const OverviewMachinesSection = React.memo(
       () => new Map(fleet.map((entry) => [entry.key, entry])),
       [fleet],
     );
-    const needKeys = React.useMemo(
-      () => new Set(needs.map((entry) => entry.key)),
-      [needs],
-    );
-    const calm = fleet.filter(
-      (entry) => entry.online && !needKeys.has(entry.key),
-    );
     const offline = presence.offline;
     const failed = status === 'error' || status === 'signedOut';
     const reading = !failed && !settled && fleet.length === 0;
@@ -63,7 +57,10 @@ export const OverviewMachinesSection = React.memo(
       ? null
       : settled && fleet.length === 0
           ? t('machines.widgets.body.fleet.noMachines')
-          : describeRest(calm, offline, needs.length);
+          // The Overview's own sentence for the machines online ("Nothing on the 2 machines online needs you."), then
+          // who is offline; never a count of "calm" machines (RU2).
+          : [describeFleetDescription({ subjects: needs, reportingCount, onlineCount, nowMs: Date.now() }),
+              describeRest([], offline, 0)].filter(Boolean).join(' ') || null;
     const tone = resolveMachineAttentionWordColor(theme.colors);
     return (
       <ItemGroup title={t('machines.widgets.machine_fleet')} description={homeLabel}>

@@ -61,6 +61,11 @@ export const ManagedMachineConfigurator = React.memo(
       /** The owning model's next step, drawn in the form column by the surface owner. */
       blocker?: ManagedConfiguratorBlocker;
       compact: boolean;
+      /**
+       * Nothing is left to choose (a delegated preset's review): the receipt is the page body at every width, with its
+       * own Create, instead of an aside beside an empty column or a summary bar over an empty phone page (TH MB-4).
+       */
+      receiptIsBody?: boolean;
       testID: string;
     }>,
   ) {
@@ -83,6 +88,17 @@ export const ManagedMachineConfigurator = React.memo(
         />
       </ItemGroup>
     ) : props.children;
+    if (props.receiptIsBody) {
+      return (
+        <ItemList testID={props.testID}>
+          <PageHeader title={props.title} description={props.description} leading={props.mark} actions={props.actions} />
+          {form}
+          <ItemGroup surface="none">
+            <MachineConfigurationReceipt model={props.receipt} testID={`${props.testID}.receipt`} />
+          </ItemGroup>
+        </ItemList>
+      );
+    }
     if (!props.compact) {
     return (
       <ManagedReceiptPageLayout

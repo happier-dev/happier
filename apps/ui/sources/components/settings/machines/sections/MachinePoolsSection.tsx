@@ -16,7 +16,7 @@ import { isMachinePoolHomeOffline, isMachinePoolRefreshFailed } from '../pools/m
 import { buildMachinePoolRowPresentations, describeMachinePoolAvailability, resolveMachinePoolEnabledMemberLabels } from '@/components/machines/pools/machinePoolRowPresentation';
 import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
 import { CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
-import { machinePoolCollectionHref } from '../collection/machineCollectionModel';
+import { machinePoolCollectionHref, matchesMachineCollectionQuery, normalizeMachineCollectionQuery } from '../collection/machineCollectionModel';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -68,11 +68,14 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
     selectedKey?: string | null;
     /** Opens a pool's page from outside the collection (the rail popover closes, then navigates). */
     onOpen?: (href: string) => void;
+    /** The collection's search: only the Pools it matches are listed, through the collection's own match (TH MB-5). */
+    query?: string;
 }>) {
     const router = useRouter();
     const { theme } = useUnistyles();
     const door = useMachinesDoor();
     const rail = props.variant === 'rail';
+    const query = normalizeMachineCollectionQuery(props.query);
     const projections = useMachinePoolProjections(props.groups);
     const focusReturnReady = projections.every((projection) => Boolean(
         projection
@@ -95,7 +98,10 @@ export const MachinePoolsSection = React.memo(function MachinePoolsSection(props
             const refreshFailed = featureEnabled && !homeOffline
                 && (isMachinePoolRefreshFailed(group.status) || isMachinePoolRefreshFailed(projection.status));
             const unavailable = !featureEnabled || homeOffline || refreshFailed;
-            const rows = buildMachinePoolRowPresentations(projection?.pools ?? [], (view) => memberPreview(view, group.machines));
+            const rows = buildMachinePoolRowPresentations(projection?.pools ?? [], (view) => memberPreview(view, group.machines))
+                .filter(row => matchesMachineCollectionQuery(query, row.view.pool.name));
+            // A search lists what it matched: a Home whose Pools it left out has nothing to say here.
+            if (query && rows.length === 0) return null;
             // A settled disabled Home has no Pool administration surface. Cold discovery and cold
             // discovery failure also stay absent: without an enabled decision or retained Pool row,
             // Settings must not advertise administration that this Home may not support. Once the

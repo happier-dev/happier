@@ -176,7 +176,7 @@ export function buildMachineCollection(input: Readonly<{
     if (input.managedFirstAnswerPending) {
         return { count: 0, machineCount: 0, firstAnswerPending: true, sections: [], presetSections: [] };
     }
-    const query = input.query?.trim().toLocaleLowerCase() ?? '';
+    const query = normalizeMachineCollectionQuery(input.query);
     const nowMs = input.nowMs ?? Date.now();
     let count = 0;
     let machineCount = 0;
@@ -275,9 +275,7 @@ export function buildMachineCollection(input: Readonly<{
                         { machineId: machine.id, installationId: machine.installationId }) } : {}),
                 };
                 })
-                .filter((row) => !query
-                    || row.title.toLocaleLowerCase().includes(query)
-                    || (row.host?.toLocaleLowerCase().includes(query) ?? false))
+                .filter((row) => matchesMachineCollectionQuery(query, row.title, row.host))
                 .sort(compareMachineCollectionRows);
             if (ownershipGroup.key === 'managed' || ownershipGroup.key === 'managedArchived') {
                 const managedRows = managedMachines
@@ -295,7 +293,7 @@ export function buildMachineCollection(input: Readonly<{
                         ...(!awaitingConsent && creation.word ? { presenceWord: creation.word } : {}), reason: null, ownership: null, ownerName: null,
                         ...(enrolledMachineId ? { enrolledMachineId } : {}) };
                     })
-                    .filter(row => !query || row.title.toLocaleLowerCase().includes(query));
+                    .filter(row => matchesMachineCollectionQuery(query, row.title));
                 rows.push(...managedRows);
                 rows.sort(compareMachineCollectionRows);
             }
@@ -322,7 +320,7 @@ export function buildMachineCollection(input: Readonly<{
     });
     const presetSections = input.groups.map((group): MachinePresetCollectionSection => {
         const rows = (input.presetsByServerId?.[group.serverId] ?? [])
-            .filter(preset => !query || (preset.name ?? t('common.machine')).toLocaleLowerCase().includes(query))
+            .filter(preset => matchesMachineCollectionQuery(query, preset.name ?? t('common.machine')))
             .map((preset): MachinePresetCollectionRow => ({ kind: 'preset', presetId: preset.id,
                 serverId: group.serverId, title: preset.name ?? t('common.machine'), preset,
                 audience: preset.owner.kind === 'account' ? t('machinePresets.ownerPersonal')
@@ -415,6 +413,16 @@ export function machinePresetCollectionHref(row: Readonly<{ serverId: string; pr
 
 export function machinePresetCollectionRowKey(row: Readonly<{ serverId: string; presetId: string }>): string {
     return `preset:${row.serverId}:${row.presetId}`;
+}
+
+/** The collection's search as typed, trimmed and case-folded once: machines, presets and pools all match against it. */
+export function normalizeMachineCollectionQuery(raw: string | null | undefined): string {
+    return raw?.trim().toLocaleLowerCase() ?? '';
+}
+
+/** The collection's one query match (machines, presets, pools): an empty search keeps everything. */
+export function matchesMachineCollectionQuery(query: string, ...texts: ReadonlyArray<string | null | undefined>): boolean {
+    return !query || texts.some(text => text?.toLocaleLowerCase().includes(query) ?? false);
 }
 
 /** A machine pool's detail inside the collection, scoped to the Home it belongs to. */

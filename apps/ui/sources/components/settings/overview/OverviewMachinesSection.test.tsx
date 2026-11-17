@@ -98,7 +98,9 @@ describe('Settings › Overview Machines', () => {
         expect(screen.findByTestId('overview.machine.nl2')).toBeNull();
         expect(screen.findByTestId('overview.machine.studio')).toBeNull();
         expect(screen.findByTestId('overview.all')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('machines.widgets.body.fleet.othersCalm');
+        // The Overview summary owner's own sentence, never "N machines are calm".
+        expect(screen.getTextContent()).toContain('machineAttention.fleet.otherOnlineCalm');
+        expect(screen.getTextContent()).not.toContain('machines.widgets.body.fleet.othersCalm');
     });
 
     it('shows that it is reading, never "no machines", until the list has arrived', async () => {
@@ -167,7 +169,7 @@ describe('Settings › Overview Machines', () => {
         });
         expect(model.getCurrent()).toMatchObject({ status: 'error', settled: false, fleet: [{ machine: { id: 'retained' } }] });
         expect(screen.findByTestId('overview.freshness')).not.toBeNull();
-        expect(screen.getTextContent()).toContain('machines.widgets.body.fleet.allCalm');
+        expect(screen.getTextContent()).not.toContain('machines.widgets.body.fleet.allCalm');
         releaseInventoryRead?.();
         await screen.pressByTestIdAsync('overview.retry');
         await vi.waitFor(() => expect(model.getCurrent()).toMatchObject({ status: 'idle', settled: true, fleet: [] }));

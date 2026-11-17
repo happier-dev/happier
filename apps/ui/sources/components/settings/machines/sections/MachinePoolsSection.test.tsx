@@ -277,6 +277,24 @@ describe('MachinePoolsSection', () => {
         await vi.waitFor(() => expect(boundary.requests.some((url) => url.endsWith('/v1/machines/pools/list'))).toBe(true));
     });
 
+    it('lists only the Pools a search matches, through the collection\'s own query match (TH MB-5)', async () => {
+        const staging: MachinePoolViewV1 = { pool: { ...POOL_A.pool, id: '00000000-0000-4000-8000-000000000004', name: 'Staging', members: [] },
+            availability: { state: 'known', connectedCount: 0, enabledCount: 0 } };
+        const builds: MachinePoolViewV1 = { pool: { ...POOL_A.pool, id: '00000000-0000-4000-8000-000000000005', name: 'Builds', members: [] },
+            availability: { state: 'known', connectedCount: 0, enabledCount: 0 } };
+        await act(async () => publishPools([staging, builds]));
+        const { MachinePoolsSection } = await import('./MachinePoolsSection');
+        const row = (screen: Awaited<ReturnType<typeof renderScreen>>, pool: MachinePoolViewV1) =>
+            findTestInstanceByTypeWithProps(screen, Item, { testID: `settings.machinePools.row.${boundary.serverId}.${pool.pool.id}` });
+        const searched = await renderScreen(<MachinePoolsSection groups={[group('idle')]} variant="rail" query="  STAG " />);
+        expect(row(searched, staging)).toBeTruthy();
+        expect(row(searched, builds)).toBeFalsy();
+        await searched.unmount();
+        const unmatched = await renderScreen(<MachinePoolsSection groups={[group('idle')]} variant="rail" query="nothing-like-it" />);
+        expect(row(unmatched, staging)).toBeFalsy();
+        expect(unmatched.getTextContent()).not.toContain('machinePools.title');
+    });
+
     it('describes a saved Pool that has no machines instead of reusing the empty-list copy', async () => {
         const memberless: MachinePoolViewV1 = {
             pool: {

@@ -550,6 +550,9 @@ describe('mounted managed configurator', () => {
         await waitForHomeGovernance(() => expect(storage.getState().machinePoolListStatusByServerId[scopeServerId]).toBe('error'));
       }
       await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.use')?.props.disabled).toBe(disabled));
+      // Nothing is left to choose: the receipt is the page body, never an aside beside an empty column (TH MB-4).
+      expect(screen.findByTestId('managed-config.receipt')).not.toBeNull();
+      expect(screen.findByTestId('managed-config.receipt-aside')).toBeNull();
       if (disabled) expect(screen.getTextContent()).toContain(t('machinePresets.poolNoMachine'));
       else expect(screen.getTextContent()).not.toContain(t('machinePresets.poolNoMachine'));
     } finally { await screen.unmount(); }

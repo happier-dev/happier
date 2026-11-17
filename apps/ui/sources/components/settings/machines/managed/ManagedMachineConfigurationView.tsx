@@ -1019,7 +1019,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                 }, disabled: !maySubmit, ...(poolUnavailableAtReview ? { footnote: t('machinePresets.poolNoMachine') } : {}),
                 loading: busy, testID: props.onUse && !props.createOnUse ? 'managed-config.use' : 'managed-config.create' },
         };
-        return <ManagedMachineConfigurator title={title} mark={receiptMark} compact={compact} testID="managed-config"
+        return <ManagedMachineConfigurator title={title} mark={receiptMark} compact={compact} testID="managed-config" receiptIsBody
             receipt={delegatedReceipt} summary={{ value: '', unit: '', spec: creationPreset.name }}>
             {errorNotice}
         </ManagedMachineConfigurator>;

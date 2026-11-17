@@ -44,3 +44,13 @@ describe('native Ends presentation', () => {
     expect(resolveManagedNativeEndState({ provider: 'Modal', finiteOnly: true })).toBeNull();
   });
 });
+
+describe('the one destructive action of a machine being created (TH MB-6)', () => {
+  it('is Delete once a bound resource can be deleted, and Cancel creation before anything is bound', async () => {
+    const { resolveManagedDestructiveAction } = await import('./managedLifecyclePresentation');
+    expect(resolveManagedDestructiveAction({ allocation: 'bound', deleteSupported: true })).toBe('delete');
+    expect(resolveManagedDestructiveAction({ allocation: 'bound', deleteSupported: false })).toBe('cancelCreation');
+    expect(resolveManagedDestructiveAction({ allocation: 'may-exist', deleteSupported: true })).toBe('cancelCreation');
+    expect(resolveManagedDestructiveAction({ allocation: 'unsubmitted', deleteSupported: true })).toBe('cancelCreation');
+  });
+});

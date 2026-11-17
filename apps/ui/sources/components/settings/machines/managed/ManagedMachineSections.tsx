@@ -73,7 +73,7 @@ import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/
 import { describeKeepCosts, describeRetention, describeRetentionConsequence, formatRetentionDuration, retentionParking } from './managedRetentionPresentation';
 import { describeManagedActionFailureDiagnostic } from './managedNativeFailurePresentation';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
-import { describeManagedLifecycleState, resolveManagedNativeEndState } from './managedLifecyclePresentation';
+import { describeManagedLifecycleState, resolveManagedDestructiveAction, resolveManagedNativeEndState } from './managedLifecyclePresentation';
 import { answerManagedCreationEstablish } from './managedCreationPrompt';
 import { useMachineRecovery } from '@/hooks/machine/useMachineRecovery';
 import { buildManagedInstallationRetryInput, managedCreationState, currentManagedCreationOperation, describeManagedCreation, isManagedCreationCanceledBeforeMade, isManagedMachineResourceAbsent, managedCreationSetup, managedReceiptPowerIntents, readManagedInstallationPrompt, isManagedGuestPayloadStale, type ManagedCreationContext } from './managedCreationPresentation';
@@ -797,7 +797,10 @@ function ManagedMachineFullSections(props: FullSectionProps) {
     const canCancelCreation = !machine.enrolledMachineId && machine.creationState === 'active' && machine.allocation !== 'confirmed-absent';
     const cancelCreation = () => fireAndForget(runConfirmed('machines.managed.cancel', { ...target, expectedIntentRevision: machine.intentRevision }),
         { tag: 'ManagedMachineSections.cancel' });
+    // One destructive action, decided by the lifecycle owner: once a bound resource can be deleted, Delete is it and
+    // the closing Cancel creation row would end the same resource a second way (TH MB-6).
     const canCancelCreationRow = (canManage || creatorScoped) && canCancelCreation
+        && resolveManagedDestructiveAction({ allocation: machine.allocation, deleteSupported: supportedIntents.includes('delete') }) === 'cancelCreation'
         && !describeManagedCreation(machine, creationContext).actions.includes('cancel');
     // Changed here means it differs from the default it would reset to; otherwise say what the rule governs.
     const policyDescription = policyParent && !sameStrictJsonValue(policyParent.policy,

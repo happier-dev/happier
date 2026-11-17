@@ -639,7 +639,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
             {/* The column fills top-down: what follows the machines waits for them, so nothing lands above them and moves. */}
             {selectedKey?.startsWith('poolDraft:') ? <MachinePoolDraftRow /> : null}
             {loading ? null : <>
-                <MachinePoolsSection groups={viewModel.visibleMachineGroups} variant="rail" selectedKey={selectedKey} />
+                <MachinePoolsSection groups={viewModel.visibleMachineGroups} variant="rail" selectedKey={selectedKey} query={searchable ? query : ''} />
                 {presetSections}
             </>}
         </CollectionList>

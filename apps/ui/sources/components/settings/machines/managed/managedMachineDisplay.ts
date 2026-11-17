@@ -33,6 +33,11 @@ export type ManagedProvisionerCard = Readonly<{
   acquire: 'account' | 'daemon';
   /** Native placement/readiness permits setup here, independently of a catalog refresh disabling admission. */
   canSetUpHere: boolean;
+  /**
+   * The readiness owner says this kind is not ready yet (it needs setup, an account or an install), even when its
+   * configurator may already open: a flow with a Set up step shows that step for it, never ticks it as done.
+   */
+  needsSetup?: true;
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;
   repairFailure?: ManagedProvisionerRepairFailure;
   /**

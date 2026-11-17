@@ -185,7 +185,9 @@ export function useMachineFleetModel(owningServerId?: string) {
   const needs = React.useMemo(() => selectAttentionSubjects(attention.entries), [attention.entries]);
   const needsByKey = React.useMemo(() => new Map(needs.map((entry) => [entry.key, entry])), [needs]);
   const presence = React.useMemo(() => partitionMachineFleetPresence(fleet, entry => entry.fleetPresence), [fleet]);
-  return { serverId, homeLabel, status, settled, refresh, fleet, presence, needs, needsByKey };
+  // How many machines report resources and are online: the Overview summary owner's inputs (`describeFleetDescription`).
+  return { serverId, homeLabel, status, settled, refresh, fleet, presence, needs, needsByKey,
+    reportingCount: attention.reportingCount, onlineCount: attention.onlineCount };
 }
 
 function FleetBody(props: MachineWidgetBodyProps) {
