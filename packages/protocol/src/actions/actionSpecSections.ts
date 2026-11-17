@@ -56,17 +56,15 @@ function escapePointer(value: string): string {
   return value.replace(/~/g, '~0').replace(/\//g, '~1');
 }
 
-function describeDefinition(body: unknown, name: string): string {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return `Shared grammar ${name}`;
+function describeDefinition(body: unknown): string {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'Shared grammar';
   const schema = body as JsonSchemaObject;
   if (typeof schema.description === 'string') return schema.description;
   if (typeof schema.title === 'string') return schema.title;
-  if (Array.isArray(schema.enum)) return `${name}: ${schema.enum.length} allowed values`;
-  const properties = schema.properties;
-  if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
-    return `${name}: object fields ${Object.keys(properties).join(', ')}`;
-  }
-  return `${name}: ${typeof schema.type === 'string' ? schema.type : 'alternative shapes'}`;
+  if (Array.isArray(schema.enum)) return `${schema.enum.length} allowed values`;
+  // The path already names this section. Its fields belong to the retrievable
+  // grammar; repeating them here overflowed the complete LiveKit result packet.
+  return typeof schema.type === 'string' ? schema.type : 'alternative shapes';
 }
 
 function schemaSectionPathParts(path: string): string[] {
@@ -101,7 +99,7 @@ export function projectActionSpecSchemaSections(definition: ActionDiscoveryDefin
     if (!definitions || typeof definitions !== 'object' || Array.isArray(definitions)) return schema;
     for (const [name, body] of Object.entries(definitions)) {
       const path = `/${root}/definitions/${escapePointer(name)}`;
-      schemaSections.push({ path, description: describeDefinition(body, name) });
+      schemaSections.push({ path, description: describeDefinition(body) });
     }
     const { definitions: _definitions, ...rootSchema } = schema;
     return rootSchema;
