@@ -102,8 +102,8 @@ const requestShape = () => ({
   workflowPreparation: z.optional(ExternalActionWorkflowPreparationV1Schema),
   resourceContinuation: z.optional(MachineServiceLogsResourceContinuationV1Schema),
   machineServiceLogsGeneration: z.optional(MachineServiceLogsGenerationV1Schema),
-});
   registryThemeContent: ExternalActionRequestEnvelopeV1Schema.shape.registryThemeContent,
+});
 const RequestSchema = lazyZodSchema(() => z.union([
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ApiTokenBindingSchema, { ...requestShape(), apiTokenContentAccess: z.optional(ApiTokenContentAccessSchema) })), (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AccountBindingSchema, requestShape())),
 ]).check(z.superRefine((value, context) => {
@@ -234,10 +234,10 @@ export function openExternalActionRequestV2(params: Readonly<{
   workflowPreparation?: z.infer<typeof ExternalActionWorkflowPreparationV1Schema>;
   resourceContinuation?: z.infer<typeof MachineServiceLogsResourceContinuationV1Schema>;
   machineServiceLogsGeneration?: z.infer<typeof MachineServiceLogsGenerationV1Schema>;
+  registryThemeContent?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['registryThemeContent'];
   apiTokenContentAccess?: ExternalActionApiTokenContentAccessV2 }> | null {
   let phase: Parameters<NonNullable<typeof params.onFailure>>[0]['phase'] = 'envelope_parse';
   const refused = (error?: unknown): null => {
-  registryThemeContent?: z.infer<typeof ExternalActionRequestEnvelopeV1Schema>['registryThemeContent'];
     // Observability must not change cryptographic admission, even if a host's
     // diagnostic sink itself fails. No decoded value is sent to the witness.
     try { params.onFailure?.({ phase, ...(error === undefined ? {} : { error }) }); } catch { /* Best-effort witness. */ }
