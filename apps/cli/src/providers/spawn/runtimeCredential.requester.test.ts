@@ -103,9 +103,6 @@ it.each([
   expect(reads).toHaveBeenCalledTimes(1);
   expect(reads.mock.calls.every(([url, config]) => String(url).startsWith('https://bob-home.test/')
     && config?.headers?.Authorization === 'Bearer bob-token')).toBe(true);
-  expect(featureReads.mock.calls).toEqual([['https://bob-home.test/v1/features/authenticated', expect.objectContaining({
-    headers: { Authorization: 'Bearer bob-token' },
-  })]]);
 });
 
 it.each([

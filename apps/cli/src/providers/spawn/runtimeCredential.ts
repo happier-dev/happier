@@ -9,7 +9,7 @@ import type { ResolvedProviderConnectionRecord } from '../registry/types';
 import { awaitWithinProviderOperation, ProviderOperationAbandonedError, type ProviderOperationLifetime } from '../operationLifetime';
 import { refreshSavedSecretCatalogAdmissionForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
 import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
-import { SavedSecretOperationAdmissionError, assertSavedSecretOperationReferencesReady,
+import { SavedSecretOperationAdmissionError,
   acquireSavedSecretMaterializerForOperation,
   type SavedSecretCatalogOperationAdmissionV1 } from '@/settings/secrets/savedSecretCatalogRead';
 import { createLaunchSecretReferenceOverlayProviderErrorV1 } from '@/settings/secrets/secretReferenceOverlay';
@@ -48,8 +48,8 @@ export async function admitRuntimeProviderSavedSecret(input: Readonly<{
   usageSourceId?: string;
   /** Required companions of the operation's canonically selected transport only. */
   additionalCredentials?: readonly Readonly<{ slotId: string }>[];
-  /** The same operation's full-catalog read, before its transport was selected. */
-  admittedCatalog?: SavedSecretCatalogOperationAdmissionV1;
+  /** The same operation's primary acquisition, before its transport was selected. */
+  admittedPrimaryCredential?: SavedSecretCatalogOperationAdmissionV1;
 }>): Promise<Readonly<
   | ({ ok: true } & SavedSecretCatalogOperationAdmissionV1)
   | { ok: false; error: ProviderErrorV1 }
@@ -73,9 +73,12 @@ export async function admitRuntimeProviderSavedSecret(input: Readonly<{
   let references: { ref: string }[];
   try {
     const slotIds = [credential.slotId, ...(input.additionalCredentials ?? []).map(row => row.slotId)];
+    const admittedPrimaryRef = input.admittedPrimaryCredential
+      ? resolveProviderSecretBindingIdV1(input.providerSettings, connection.connectionId, connection.machineId, credential.slotId)
+      : null;
     references = [...new Set(slotIds)].flatMap(slotId => {
       const ref = resolveProviderSecretBindingIdV1(input.providerSettings, connection.connectionId, connection.machineId, slotId);
-      return ref !== null && parseSavedSecretRefV1(ref).kind === 'shared_resource' ? [{ ref }] : [];
+      return ref !== null && ref !== admittedPrimaryRef && parseSavedSecretRefV1(ref).kind === 'shared_resource' ? [{ ref }] : [];
     });
   } catch (error) {
     // An unparseable binding is a configuration fault, not a Home read.
@@ -91,9 +94,7 @@ export async function admitRuntimeProviderSavedSecret(input: Readonly<{
     return { ok: false, error: createProviderErrorV1('provider_authorization_changed', context) };
   }
   try {
-    const admission = await awaitWithinProviderOperation(input.admittedCatalog?.catalogRead
-      ? Promise.resolve(input.admittedCatalog)
-      : refreshSavedSecretCatalogAdmissionForOperation({
+    const admission = await awaitWithinProviderOperation(refreshSavedSecretCatalogAdmissionForOperation({
       expectedScopeKey: snapshot.scopeKey,
       references,
       ...(input.operationContext ? { operationContext: input.operationContext } : {}),
@@ -106,7 +107,6 @@ export async function admitRuntimeProviderSavedSecret(input: Readonly<{
     if (admitted.scopeKey !== snapshot.scopeKey || current?.scopeKey !== snapshot.scopeKey) {
       return { ok: false, error: createProviderErrorV1('provider_authorization_changed', context) };
     }
-    if (input.admittedCatalog?.catalogRead) assertSavedSecretOperationReferencesReady(admitted, references);
     return { ok: true, snapshot: { ...snapshot, savedSecretResources: admitted.savedSecretResources,
       savedSecretCatalogState: admitted.savedSecretCatalogState,
       settingsSecretsReadKeys: admitted.settingsSecretsReadKeys }, catalogRead: admission.catalogRead };

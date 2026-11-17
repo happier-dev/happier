@@ -825,7 +825,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
         const admitted = await admitRuntimeProviderSavedSecret({
           connection: connectionResolution.record, providerSettings, snapshot, getAccountSettingsSnapshot,
           lifetime: admissionLifetime, additionalCredentials,
-          ...(admittedSavedSecretCatalog ? { admittedCatalog: admittedSavedSecretCatalog } : {}),
+          ...(admittedSavedSecretCatalog ? { admittedPrimaryCredential: admittedSavedSecretCatalog } : {}),
           ...(input.savedSecretOperationContext ? { operationContext: input.savedSecretOperationContext } : {}),
         });
         if (!admitted.ok) return admitted;

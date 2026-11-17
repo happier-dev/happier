@@ -623,9 +623,14 @@ describe('provider spawn authorization resolver', () => {
     let release!: () => void;
     const entered = new Promise<void>(resolve => { enter = resolve; });
     const held = new Promise<void>(resolve => { release = resolve; });
-    const secretReads = vi.spyOn(axios, 'get').mockImplementation(async () => {
+    const secretReads = vi.spyOn(axios, 'get').mockImplementation(async (_url, config) => {
+      const resourceIds: unknown = config?.params?.resourceIds;
+      if (!Array.isArray(resourceIds) || !resourceIds.every(value => typeof value === 'string')) {
+        throw new Error('Expected a finite selected Saved Secret material request');
+      }
+      const selectedResourceIds = new Set<string>(resourceIds);
       enter(); await held;
-      return { status: 200, data: { resources: [{ resourceId, encryptionMode: 'plain', recipientEnvelope: null,
+      const resources = [{ resourceId, encryptionMode: 'plain', recipientEnvelope: null,
         storedContent: sealSavedSecretResourceStoredContentV1({ resourceId, mode: 'plain',
           content: { v: 1, name: 'Provider key', kind: 'apiKey', value: 'admitted-provider-value' } }),
         entry: { ref, source: 'shared_resource', relationship: 'recipient', name: 'Provider key', kind: 'apiKey',
@@ -637,8 +642,16 @@ describe('provider spawn authorization resolver', () => {
         entry: { ref: formatSharedSavedSecretRefV1('provider-companion-key'), source: 'shared_resource', relationship: 'recipient',
           name: 'Companion key', kind: 'apiKey', ownerAccountId: 'owner', revision: 1, materialStatus: 'ready',
           capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false } },
-      }] : [])] } };
+      }] : [])];
+      return { status: 200, data: { resources: resources.filter(row => selectedResourceIds.has(row.resourceId)) } };
     });
+    const expectSelectedMaterialsAcquiredOnce = () => {
+      const requestedResourceIds = secretReads.mock.calls.flatMap(([, config]) => config?.params?.resourceIds ?? []);
+      expect(requestedResourceIds.sort()).toEqual([
+        ...(renamed.endsWith('personal primary') ? [] : [resourceId]),
+        ...(companions ? ['provider-companion-key'] : []),
+      ].sort());
+    };
     // These spies observe the real admission and model owner; no internal result is replaced.
     const resolutions = vi.spyOn(spawnResolution, 'resolveProviderSpawnAuthorization');
     const projections = vi.spyOn(runtimeCatalog, 'resolveProviderRuntimeCatalogSelectionObservation');
@@ -679,7 +692,7 @@ describe('provider spawn authorization resolver', () => {
       result = await pending;
       if (renamed.endsWith('missing')) {
         expect(result).toMatchObject({ ok: false, error: { code: 'provider_secret_missing' } });
-        expect(secretReads).toHaveBeenCalledTimes(1);
+        expectSelectedMaterialsAcquiredOnce();
         return;
       }
       expect(result).toMatchObject({ ok: true });
@@ -699,7 +712,7 @@ describe('provider spawn authorization resolver', () => {
       expect(projections).toHaveBeenCalledTimes(1);
       if (renamed === 'legacy Machine') expect(resolveAddresses).toHaveBeenCalledTimes(1);
       else expect(resolveAddresses).not.toHaveBeenCalled();
-      expect(secretReads).toHaveBeenCalledTimes(1);
+      expectSelectedMaterialsAcquiredOnce();
     } finally {
       release();
       const settled = result ?? await pending.catch(() => undefined);
