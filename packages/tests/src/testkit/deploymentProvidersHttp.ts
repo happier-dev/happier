@@ -29,6 +29,9 @@ export async function startDeploymentProvidersHttp() {
     readRolePassword: 'journey-provider-read-role-only' };
   let vercelDeleted = false;
   let cloudflareDeleted = false;
+  let vercelDomainAttached = false;
+  let vercelDomainVerified = false;
+  let cloudflareDomainAttached = false;
   let rejectNextVercelDeployment = false;
   let rejectNextCloudflareDeployment = false;
   const proxy = await startConnectedAccountTlsRecordingProxy({
@@ -58,7 +61,18 @@ export async function startDeploymentProvidersHttp() {
         }
         if (method === 'GET' && path === `/v13/deployments/${vercel.deploymentId}`) return ok({ id: vercel.deploymentId, projectId: vercel.projectId,
           readyState: 'READY', url: 'journey-vercel.vercel.app' });
-        if (path.endsWith('/domains/journey.example.test/verify') && method === 'POST') return ok({ name: 'journey.example.test', projectId: vercel.projectId, verified: true });
+        const domainPath = `/v9/projects/${vercel.projectId}/domains/journey.example.test`;
+        const domain = () => ({ name: 'journey.example.test', projectId: vercel.projectId, verified: vercelDomainVerified });
+        if (method === 'POST' && path === `/v10/projects/${vercel.projectId}/domains`) {
+          vercelDomainAttached = true;
+          return ok(domain());
+        }
+        if (method === 'POST' && path === `${domainPath}/verify`) {
+          vercelDomainVerified = true;
+          return ok(domain());
+        }
+        if (method === 'DELETE' && path === domainPath) { vercelDomainAttached = false; return ok(null, 204); }
+        if (method === 'GET' && path === domainPath) return vercelDomainAttached ? ok(domain()) : ok({ error: { code: 'not_found' } }, 404);
         if (path === '/v6/domains/journey.example.test/config') return ok({ misconfigured: false });
       }
       if (url.hostname === 'api.cloudflare.com') {
@@ -83,8 +97,11 @@ export async function startDeploymentProvidersHttp() {
         if (method === 'GET' && path === `${base}/builds/builds`) return cf({ builds: { [cloudflare.versionId]: { build_uuid: cloudflare.deploymentId } } });
         if (method === 'GET' && path === `${base}/workers/scripts/${cloudflare.name}/subdomain`) return cf({ enabled: true });
         if (method === 'GET' && path === `${base}/workers/subdomain`) return cf({ subdomain: 'journey' });
-        if (method === 'GET' && path === `${base}/workers/domains`) return cf([{ id: 'journey-domain', hostname: 'journey.example.test',
-          service: cloudflare.name, zone_id: cloudflare.zoneId, zone_name: 'example.test', enabled: true }]);
+        const domain = { id: 'journey-domain', hostname: 'journey.example.test', service: cloudflare.name,
+          zone_id: cloudflare.zoneId, zone_name: 'example.test', enabled: true };
+        if (method === 'GET' && path === `${base}/workers/domains`) return cf(cloudflareDomainAttached ? [domain] : []);
+        if (method === 'PUT' && path === `${base}/workers/domains`) { cloudflareDomainAttached = true; return cf(domain); }
+        if (method === 'DELETE' && path === `${base}/workers/domains/journey-domain`) { cloudflareDomainAttached = false; return cf(null); }
         if (method === 'DELETE' && path === `${base}/workers/workers/${cloudflare.projectId}`) { cloudflareDeleted = true; return cf(null); }
         if (method === 'GET' && path === `${base}/workers/workers/${cloudflare.projectId}`) return cloudflareDeleted
           ? ok({ success: false, errors: [{ code: 10007, message: 'Script not found' }] }, 404)
