@@ -39,7 +39,8 @@ import { t } from '@/text';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createArtifactReadBatchHttpResponse, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse, projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -171,6 +172,9 @@ async function serveHome(): Promise<void> {
                 return createArtifactReadBatchHttpResponse(request.body, artifactId => {
                     const approval = host.approvalArtifacts.get(artifactId);
                     if (approval) return { artifactId, ok: true, artifact: approval, recipientCensus: null };
+                    if (host.access !== null && host.document.header.kind === 'approval-profile.v1' && artifactId === 'profile-artifact') {
+                        return { artifactId, ok: true, artifact: storedArtifact(artifactId), recipientCensus: null };
+                    }
                     const layout = host.document.header.kind === 'widget-area-layout.v1'
                         ? WidgetAreaLayoutV1Schema.safeParse(JSON.parse(host.document.body)) : null;
                     return host.access !== null && layout?.success && buildWidgetSurfaceArtifactIdV1(layout.data.surface) === artifactId
@@ -198,6 +202,12 @@ async function serveHome(): Promise<void> {
                 return Response.json(artifact);
             }
             if (request.path === '/v1/artifacts' && request.method === 'GET') {
+                if (host.document.header.kind === 'approval-profile.v1') {
+                    return createArtifactListHttpResponse(request.url, host.access === null ? [] : [{
+                        ...storedArtifact('profile-artifact'), access: host.access,
+                        ...projectArtifactStoredKind(deriveArtifactStoredKindV1(host.document.header)),
+                    }]);
+                }
                 // The widget catalog enumerates the Home's real inventory, even for inline definitions.
                 const layout = WidgetAreaLayoutV1Schema.safeParse(host.document.header.kind === 'widget-area-layout.v1'
                     ? JSON.parse(host.document.body) : null);
@@ -661,6 +671,34 @@ describe('DocumentShareSheet', () => {
         resetServerFeaturesClientForTests();
         resetScopedHomeActionExecutorsForTests();
         vi.restoreAllMocks();
+    });
+
+    it('reads opened approval-profile Artifacts through the public Action without exposing Account settings profiles', async () => {
+        host.document = { header: { kind: 'approval-profile.v1', name: 'Reviewed deployment', title: 'Reviewed deployment' },
+            body: JSON.stringify({ kind: 'approval-profile.v1', profile: { name: 'Reviewed deployment', actions: {
+                'deployments.deploy': { approvalRequiredSurfaces: ['agent'] },
+            } } }) };
+        host.settings = { actionsSettingsV1: { v: 1, actions: {}, approvalProfiles: [
+            { id: 'custom:legacy', name: 'Legacy settings profile' },
+        ] } };
+        await activateWidgetHome();
+        vi.useRealTimers();
+        const { ActionPolicyOutputSchemas } = await import('@happier-dev/protocol/actions/actionPolicyActionFamily');
+        const execute = createFrontDoorActionExecute();
+        const read = await execute('actions.policy.get', { profiles: true },
+            { serverId: host.serverId, surface: 'ui', authority: 'present_user' });
+        if (!read.ok) throw new Error(read.errorCode);
+        expect(read).toMatchObject({ ok: true });
+        const result = ActionPolicyOutputSchemas['actions.policy.get'].parse(read.result);
+        expect(result).toMatchObject({ profiles: [{ id: 'profile-artifact', access: 'owner',
+            profile: { id: 'profile-artifact', name: 'Reviewed deployment' },
+            revision: { headerVersion: 1, bodyVersion: 1 } }] });
+        expect('profiles' in result && result.profiles).toHaveLength(1);
+        const reads = host.artifactRequests.length;
+        const warm = await execute('actions.policy.get', { profiles: true },
+            { serverId: host.serverId, surface: 'ui', authority: 'present_user' });
+        expect(warm).toMatchObject({ ok: true, result });
+        expect(host.artifactRequests).toHaveLength(reads);
     });
 
     it.each(['owner', 'admin', 'edit', 'view'] as const)('reads attached dashboard grants through the sharing reader as %s, with no idle or unrelated reads', async access => {
