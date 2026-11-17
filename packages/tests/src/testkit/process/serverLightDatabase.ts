@@ -43,7 +43,7 @@ type ServerLightDatabaseStorage = Readonly<{
 // The server keeps its own compiler alias program; only this structural port crosses it.
 const serverStoragePath = '../../../../../apps/server/sources/storage/prisma';
 
-async function createServerLightDatabaseClient(
+export async function createServerLightDatabaseClient(
   provider: ServerLightQueryableDbProvider,
   databaseUrl: string,
 ): Promise<ServerLightDatabaseClient> {
