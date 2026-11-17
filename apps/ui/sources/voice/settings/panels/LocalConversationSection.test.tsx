@@ -5,6 +5,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -494,6 +496,7 @@ describe('LocalConversationSection', () => {
     const declarationContext = pickerProps.declarationContext;
     if (!declarationContext) throw new Error('Expected the Voice model picker declaration context');
     const options = buildSessionModelPickerSections({ ...pickerProps, declarationContext,
+      selected: isTeamCredentialProviderModelPickerValue(pickerProps.selected) ? null : pickerProps.selected,
       hiddenNativeModelKeys: new Set<string>() }).flatMap(section => section.options);
     expect(options.some(option => !option.disabled && option.value?.modelId === 'm1'
       && 'kind' in option.value && option.value.kind === 'team_credential_provider_model')).toBe(true);
@@ -1048,9 +1051,9 @@ describe('LocalConversationSection', () => {
       },
     });
     storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice }, storage.getState().settings));
-    if (askPolicy) storage.getState().applySettingsLocal({ actionsSettingsV1: {
+    if (askPolicy) storage.getState().applySettingsLocal({ actionsSettingsV1: normalizeActionsSettingsV1({
       v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } },
-    } });
+    }) });
     persistedSettings = storage.getState().settings;
     const agentTargetKey = buildAgentUniverseBackendTargetKey(agentId);
     const connectionId = 'voice-openai-compatible-chat';
