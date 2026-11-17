@@ -86,13 +86,11 @@ export const PoolGatewaySection = React.memo(function PoolGatewaySection(
         <Item
           testID={`${props.testID}:first`}
           title={t('settingsProvidersCollection.gateway.poolSectionTitle')}
-          titleAccessory={
-            <Text style={styles.via}>
-              {t('settingsProvidersCollection.gateway.poolSwitchVia', {
-                gateway: firstGatewayTitle,
-              })}
-            </Text>
-          }
+          // The gateway is the title's qualifier: it follows the last word and wraps with it on a phone.
+          titleQualifier={t('settingsProvidersCollection.gateway.poolSwitchVia', {
+            gateway: firstGatewayTitle,
+          })}
+          titleLines={0}
           // Until the Account catalog is current the switch only waits; no machine is involved (D11).
           subtitle={t('settingsProvidersCollection.gateway.poolSwitchCreates', {
             gateway: firstGatewayTitle,
@@ -133,13 +131,10 @@ export const PoolGatewaySection = React.memo(function PoolGatewaySection(
             <Item
               testID={rowTestID}
               title={t('settingsProvidersCollection.gateway.poolSectionTitle')}
-              titleAccessory={
-                <Text style={styles.via}>
-                  {t('settingsProvidersCollection.gateway.poolSwitchVia', {
-                    gateway: choice.title,
-                  })}
-                </Text>
-              }
+              titleQualifier={t('settingsProvidersCollection.gateway.poolSwitchVia', {
+                gateway: choice.title,
+              })}
+              titleLines={0}
               subtitle={
                 waitsForGateway
                   ? t('settingsProvidersCollection.gateway.poolSwitchGatewayOff', { gateway: choice.title })
@@ -284,11 +279,6 @@ const PoolGatewayComparison = React.memo(function PoolGatewayComparison(
 });
 
 const styles = StyleSheet.create((theme) => ({
-  via: {
-    ...Typography.default(),
-    ...happierPageTextMetrics('rowDescription'),
-    color: theme.colors.text.tertiary,
-  },
   comparison: {
     gap: 0,
   },

@@ -18,7 +18,7 @@ export default function ConnectedServicesDevScreen() {
     const params = useLocalSearchParams<{ frame?: string }>();
     const frame = typeof params.frame === 'string' ? params.frame : null;
     const phone = useDeviceType() === 'phone';
-    const entityFrame = frame !== null && ['D1p', 'D2p', 'PLp', 'PLap'].includes(frame);
+    const entityFrame = frame !== null && ['D1p', 'D2p', 'PLp', 'PLap', 'PLG1p', 'PLG2p'].includes(frame);
     return <>
         {/* Entity actions reach screen and parent in the real hidden-child settings stack.
             This detached fixture keeps only its parent header visible on phones, too. */}

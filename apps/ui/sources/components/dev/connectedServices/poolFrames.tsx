@@ -22,7 +22,9 @@ import { ACCOUNTS, CLAUDE, CLAUDE_LAB, DAY, HOUR, LABELS, MIN } from './connecte
 /**
  * Dev-only `/dev/connected-services` frames of the pool slice (lab `csvc` PL, PLp, PLa, PLap, PLS): the
  * real pool page fed by fixtures (the lab's Work pool: Work, Personal, Lab) with no-op mutations, so
- * nothing touches a real account. Null for a frame this slice does not own.
+ * nothing touches a real account. `PLG1`/`PLG2` (lab `rgateway` PL1/PL2) add the "Use in other agents"
+ * section: this pool serving Main gateway, and Main gateway still holding the Lab pool. Null for a frame
+ * this slice does not own.
  */
 export function renderPoolFrame(frame: string): React.ReactNode | null {
     switch (frame) {
@@ -35,6 +37,12 @@ export function renderPoolFrame(frame: string): React.ReactNode | null {
             return <PoolFrame advanced />;
         case 'PLS':
             return <PoolStatesBoard />;
+        case 'PLG1':
+        case 'PLG1p':
+            return <PoolFrame gateway="serving" />;
+        case 'PLG2':
+        case 'PLG2p':
+            return <PoolFrame gateway="replacing" />;
         default:
             return null;
     }
@@ -135,11 +143,48 @@ const AGENT_DEFAULTS = {
     setDefault: () => {},
 };
 
-function PoolFrame(props: Readonly<{ advanced?: boolean; manage?: boolean }>) {
+type GatewayUsage = NonNullable<React.ComponentProps<typeof QualifiedPoolDetailView>['gatewayUsage']>;
+type GatewayFixture = 'serving' | 'replacing';
+
+const LAB_POOL_TARGET = { kind: 'group', service: CLAUDE, groupId: 'lab-pool' } as const;
+
+/** The gateway's slot as the pool section reads it: no writes, every action a no-op. */
+function gatewayUsage(state: GatewayFixture): GatewayUsage {
+    const serving = state === 'serving';
+    return {
+        choices: [{
+            connectionId: 'main-gateway',
+            title: 'Main gateway',
+            detailRoute: '/settings/connected-services/gateway?connectionId=main-gateway',
+            revision: 1,
+            purpose: 'claude',
+            service: CLAUDE,
+            enabled: serving,
+            gatewayOn: true,
+            replacementTarget: serving ? null : LAB_POOL_TARGET,
+            purposeBindingDefaults: {},
+        }],
+        setEnabled: async () => true,
+        firstGateway: null,
+        gatewayContributionChoice: { status: 'unavailable', choices: [] },
+        gatewayDraftRoute: () => null,
+        refresh: async () => {},
+        loading: false,
+        ready: true,
+        error: null,
+        retry: undefined,
+        reviewCurrentState: async () => {},
+        pendingApproval: null,
+        pending: false,
+    };
+}
+
+function PoolFrame(props: Readonly<{ advanced?: boolean; manage?: boolean; gateway?: GatewayFixture }>) {
     const { present } = useConnectedAccountIdentityPrivacy();
     const now = React.useMemo(() => Date.now(), []);
     const group = React.useMemo(() => workPool(now), [now]);
     const quota = React.useMemo(() => labQuota(now), [now]);
+    const gateway = React.useMemo(() => props.gateway ? gatewayUsage(props.gateway) : null, [props.gateway]);
     return (
         <QualifiedPoolDetailView
             group={group}
@@ -158,6 +203,9 @@ function PoolFrame(props: Readonly<{ advanced?: boolean; manage?: boolean }>) {
             now={now}
             initialAdvancedExpanded={props.advanced}
             initialManageMembersOpen={props.manage}
+            gatewayUsage={gateway}
+            presentGatewayTarget={() => 'Lab pool'}
+            onOpenGateway={() => {}}
         />
     );
 }
