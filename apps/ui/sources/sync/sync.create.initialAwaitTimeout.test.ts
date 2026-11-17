@@ -10,6 +10,9 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -42,6 +45,10 @@ describe('sync.create initial awaits', () => {
     let authPing: 'ready' | 'offline' | 'auth-failed';
     let accountModeUnavailable: boolean;
     let cleanupStateSubscription: (() => void) | undefined;
+    let releasedThemes: Readonly<{
+        settings: ReturnType<typeof createAccountSettingsHttpBoundary>;
+        artifacts: ReturnType<typeof createArtifactStoreBoundary>;
+    }> | undefined;
 
     beforeEach(async () => {
         vi.useFakeTimers();
@@ -50,11 +57,18 @@ describe('sync.create initial awaits', () => {
         authPing = 'ready';
         accountModeUnavailable = false;
         cleanupStateSubscription = undefined;
+        releasedThemes = undefined;
         network.resetRequests();
         home = await network.addHome('https://initial-sync.example.test', 'plain-account');
         const { profileDefaults } = await import('./domains/profiles/profile');
         network.setHttpResponder(async (input, init) => {
-            const path = new URL(String(input)).pathname;
+            const url = new URL(String(input));
+            const path = url.pathname;
+            if (releasedThemes) {
+                const response = releasedThemes.settings.handle(input, init)
+                    ?? releasedThemes.artifacts.handle(`${path}${url.search}`, init);
+                if (response) return await response;
+            }
             if (path === '/v1/auth/ping') {
                 if (authPing === 'offline') throw new Error('Network request failed');
                 return Response.json({}, { status: authPing === 'auth-failed' ? 401 : 200 });
@@ -116,6 +130,35 @@ describe('sync.create initial awaits', () => {
         await pending;
         await flushHookEffects({ cycles: 8, turns: 2 });
     }
+
+    it('transfers released themes through real Account restore and Settings refresh', async () => {
+        vi.useRealTimers();
+        const profile = { schemaVersion: 1, id: 'released-ocean', name: 'Released ocean',
+            createdAt: '2026-05-12T00:00:00.000Z', updatedAt: '2026-05-12T00:00:00.000Z',
+            base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} } };
+        releasedThemes = {
+            settings: createAccountSettingsHttpBoundary({ serverUrl: home.serverUrl, initialAccounts: [{
+                accountId: home.accountId, snapshot: { content: { t: 'plain', v: { themeProfiles: [profile] } }, version: 1 },
+            }] }),
+            artifacts: createArtifactStoreBoundary({ ownerAccountId: () => home.accountId, encryptionMode: 'plain' }),
+        };
+        const restored = await restoreServerAccountForTest({ serverUrl: home.serverUrl,
+            accountId: home.accountId, credentials: { token: home.token }, request: network.request });
+        try {
+            const { sync } = await import('./sync');
+            await sync.refreshAccountSettingsFromServer(1, { serverId: restored.serverId, accountId: home.accountId });
+            const rows = releasedThemes.artifacts.list();
+            expect(rows, JSON.stringify(network.httpRequests.map(row => ({
+                path: new URL(row.url).pathname, method: row.method,
+            })))).toHaveLength(1);
+            expect(JSON.parse(releasedThemes.artifacts.readPlainBody(rows[0]!.id)!)).toMatchObject({ name: profile.name });
+            const settings = await releasedThemes.settings.handle(`${home.serverUrl}/v2/account/settings`, {
+                headers: { Authorization: `Bearer ${home.token}` },
+            })!.json();
+            expect(settings.content).toMatchObject({ t: 'plain' });
+            expect(settings.content.v).not.toHaveProperty('themeProfiles');
+        } finally { await restored.dispose(); }
+    });
 
     it('materializes account pets during initial sync when pets.sync is enabled', async () => {
         petsEnabled = true;

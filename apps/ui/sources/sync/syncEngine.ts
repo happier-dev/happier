@@ -9880,8 +9880,6 @@ class Sync {
                 && areServerAccountScopesEqual(scope, getActiveServerAccountScope()),
         }, async guard => {
             guard.check();
-            if (!await this.awaitBootstrapForegroundAcquisition()) throw staleError();
-            guard.check();
             const authority = await captureServerRequestAuthorityForServerAccountScope({ scope, activeRequest: this.requestViaConfiguredSocket });
             let result: TResult;
             try {
@@ -10435,6 +10433,7 @@ class Sync {
             encryption: this.encryption,
             settingsScope,
             requestContext,
+            withThemeProfileLibrary: this.withThemeProfileLibrary,
             pendingSettings: this.pendingSettings,
             getPendingSettings: () => areAccountSettingsScopesEqual(this.pendingSettingsScope, settingsScope)
                 ? this.pendingSettings
