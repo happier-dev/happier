@@ -63,7 +63,9 @@ describe('workspace Sync relationship reversible lifecycle Actions', () => {
     await expect(executorWith({ [dependency]: effect }).execute(actionId as never, input, {
       surface: 'ui', authority: 'present_user', serverId: 'home-a',
     })).resolves.toEqual({ ok: true, result: output });
-    expect(effect).toHaveBeenCalledWith({ input, serverId: 'home-a' });
+    expect(effect).toHaveBeenCalledWith({ input, serverId: 'home-a', context: expect.objectContaining({
+      surface: 'ui', authority: 'present_user', serverId: 'home-a', executeHostReviewedChildAction: expect.any(Function),
+    }) });
   });
 
   it.each(cases)('%s fails closed when its executor dependency is disconnected', async (actionId) => {

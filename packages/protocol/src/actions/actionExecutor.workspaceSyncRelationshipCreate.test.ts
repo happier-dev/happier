@@ -160,14 +160,14 @@ describe('workspace.sync.relationship.create Action', () => {
       serverId: 'home-1',
       operationId: 'link-request-1',
       effectActionId: 'workspace.sync.relationship.create',
-      context,
+      context: expect.objectContaining({ ...context, executeHostReviewedChildAction: expect.any(Function) }),
     }));
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       input,
       operationId: 'link-request-1',
       serverId: 'home-profile',
       serverIdentityId: 'home-1',
-      context,
+      context: expect.objectContaining({ ...context, executeHostReviewedChildAction: expect.any(Function) }),
     }));
   });
 
