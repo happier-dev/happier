@@ -2325,21 +2325,25 @@ describe('createActionExecutor (inventory/discovery)', () => {
 
   it('returns only discovery descriptors for the real Voice spawn search, with schemas available on demand', async () => {
     const executor = createActionExecutor(createDeps());
-    const search = await executor.execute('action.spec.search', { query: 'session spawn new', limit: 5 }, { surface: 'voice' });
+    const search = await executor.execute('action.spec.search', { query: 'muse contributor model selection' }, { surface: 'voice' });
     if (!search.ok) throw new Error('Voice discovery failed');
     const descriptors = search.result.actionSpecs;
     expect(descriptors.length).toBeGreaterThan(0);
-    expect(descriptors.length).toBeLessThanOrEqual(5);
+    expect(descriptors).toHaveLength(20);
     expect(descriptors.some(spec => spec.id === 'session.spawn_new')).toBe(true);
     for (const descriptor of descriptors) {
       expect(descriptor).not.toHaveProperty('inputSchema');
       expect(descriptor).not.toHaveProperty('outputSchema');
     }
-    const bytes = new TextEncoder().encode(JSON.stringify(search.result)).byteLength;
+    const bytes = new TextEncoder().encode(JSON.stringify({ type: 'client_tool_result',
+      tool_call_id: 'chatcmpl-tool-8db299df89f6584d',
+      result: JSON.stringify({ ok: true, ...search.result }), is_error: false })).byteLength;
+    expect(bytes).toBeLessThan(64000);
     console.info(JSON.stringify({ voiceSpawnSearch: { descriptors: descriptors.length, bytes } }));
     const detail = await executor.execute('action.spec.get', { id: 'session.spawn_new' }, { surface: 'voice' });
     if (!detail.ok) throw new Error('Voice schema discovery failed');
     expect(detail.result.actionSpec.inputSchema).toBeDefined();
+    expect(detail.result.actionSpec.inputHints?.fields.length).toBeGreaterThan(0);
     expect(detail.result.schemaSections?.length).toBeGreaterThan(0);
   });
 

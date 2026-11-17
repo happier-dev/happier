@@ -567,7 +567,7 @@ export function searchSerializedActionSpecsForSurface(params: Readonly<{
       && (params.purpose !== 'workflow_step' || isWorkflowStepActionSpecV1(definition))
     ))
     .map(definition => actionDefinitionToSummary(definition, params.includeOutputSchema));
-  return searchActionDefinitionSummaryCandidates([
+  const results = searchActionDefinitionSummaryCandidates([
     ...hostDefinitions,
     ...additionalDefinitions.map((definition) => ({ definition })),
   ], {
@@ -575,6 +575,12 @@ export function searchSerializedActionSpecsForSurface(params: Readonly<{
     limit: params.limit,
     includeOutputSchema: params.includeOutputSchema,
   });
+  // Rank with complete field hints, but fetch invocation details through
+  // action.spec.get. Repeating every matching Action's fields overflowed
+  // LiveKit's complete tool-result packet during ordinary model discovery.
+  return !params.purpose && (params.surface === 'voice' || params.surface === 'agent' || params.surface === 'mcp')
+    ? results.map(definition => ({ ...definition, inputHints: null }))
+    : results;
 }
 
 export function getActionSpecForCatalogSurface(params: Readonly<{

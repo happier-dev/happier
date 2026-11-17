@@ -488,12 +488,17 @@ describe('actionCatalog action-definition adapter', () => {
     const expected = [...listActionSpecsForCatalogSurface({ surface: 'mcp', isActionEnabled })]
       .sort((left, right) => left.title.localeCompare(right.title))
       .slice(0, 2)
-      .map(spec => serializeActionSpec(spec, { surface: 'mcp' }));
+      .map(spec => ({ ...serializeActionSpec(spec, { surface: 'mcp' }), inputHints: null }));
     for (const query of [undefined, '']) {
       const summaries = searchSerializedActionSpecsForSurface({ surface: 'mcp', query, limit: 2, isActionEnabled, includeOutputSchema: false });
       expect(summaries.map(summary => summary.id)).toEqual(expected.map(definition => definition.id));
       expect(summaries.every(summary => summary.outputSchema === undefined)).toBe(true);
       expect(searchSerializedActionSpecsForSurface({ surface: 'mcp', query, limit: 2, isActionEnabled })).toEqual(expected);
+    }
+    for (const purpose of ['workflow_step', 'automation'] as const) {
+      const [spawn] = searchSerializedActionSpecsForSurface({ surface: 'mcp', query: 'session.spawn_new', limit: 1, purpose });
+      expect(spawn?.id).toBe('session.spawn_new');
+      expect(spawn?.inputHints?.fields.length).toBeGreaterThan(0);
     }
   });
 

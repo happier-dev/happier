@@ -2177,7 +2177,11 @@ the same projection; composed refusal/cancellation validation remains in progres
 | CLI presentation, including demoting an ineffective success | `apps/cli/src/cli/actions/commandPresentation.ts`, `.../executeCommand.ts` |
 | Machine-RPC route class for an Action-bearing method | `packages/protocol/src/machines/peer/mediation/rpc/routePolicyV1.ts` |
 
-In 0.3 development, `action.spec.get` returns input and output schemas, hints and examples.
+In 0.3 development, ordinary Agent, MCP and Voice `action.spec.search` ranks
+against complete field hints but returns `inputHints: null`; use `action.spec.get`
+for invocation details. Workflow-step and automation searches retain field hints
+for their pickers, as do UI, API and CLI searches.
+`action.spec.get` returns input and output schemas, hints and examples.
 Agent, MCP, CLI and Voice discovery expose shared definitions as named `schemaSections`;
 read a definition with the same Action `id` and its `schemaPath`. The response's
 `schemaSection.schema` contains that definition's root; nested definitions have
