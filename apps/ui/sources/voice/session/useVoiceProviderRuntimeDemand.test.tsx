@@ -41,7 +41,7 @@ it('admits a catalog-only settings occurrence after activation completes', async
   try {
     commitExternalVoiceProviderRegistration({ token, pluginId: 'test.voice', localId: 'catalog-ready',
       providerId: 'test.voice/catalog-ready', descriptor: null, adapter: null, occurrenceId: 'catalog-occurrence',
-      settingsOperations: { listCatalog: async () => ({ voices: [] }) },
+      settingsOperations: { listCatalog: async () => [] },
     });
     bindVoiceProviderRuntimeDemandActivation(new Set(['test.voice/catalog-ready']), Promise.resolve());
     await expect(operation.ready).resolves.toBeUndefined();
