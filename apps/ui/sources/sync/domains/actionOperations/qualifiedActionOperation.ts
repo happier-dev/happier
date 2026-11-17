@@ -4,8 +4,17 @@ import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/worksp
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { z } from 'zod/mini';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
+import type { ProjectSourceIdentityV1 } from '@happier-dev/protocol/projects/sources/projectSourceIdentityV1';
 
 export type ActionOperationProjectScriptSelection = z.infer<(typeof PROJECT_ACTION_INPUT_SCHEMAS_V1)['projects.script.run']>['selection'];
+
+export type ActionOperationProjectSourceQuery = Readonly<{
+    serverId: string | null;
+    accountId: string | null;
+    machineId: string | null;
+    sourceId: ProjectSourceIdentityV1['id'] | null;
+}>;
+
 
 export type ActionOperationProjectWorkspaceQuery = Readonly<{
     /** Required authenticated Account evidence; unresolved identity fails closed. */

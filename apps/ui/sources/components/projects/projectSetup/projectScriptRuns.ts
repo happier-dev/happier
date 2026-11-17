@@ -32,11 +32,11 @@ export function useProjectScriptRun(
  * Standalone preparation only; a Script's setup phase remains attached to its Script row.
  */
 export function useProjectSetupRun(
-  workspace: WorkspaceAddressV1,
+  workspace: WorkspaceAddressV1 | null,
   accountId: string | null,
 ): ActionOperationProjection | null {
-  return useProjectSetupActionOperation({ accountId, workspace: { ...workspace,
-    serverId: resolveServerProfileScopeIdForIdentifier(workspace.serverId) } });
+  return useProjectSetupActionOperation(workspace ? { accountId, workspace: { ...workspace,
+    serverId: resolveServerProfileScopeIdForIdentifier(workspace.serverId) } } : null);
 }
 
 /** The setup review the checkout is waiting on, held by its preparation or by a Script's setup phase. */

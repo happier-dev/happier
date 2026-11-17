@@ -12,6 +12,7 @@ import { executeProjectFiniteProcess } from '@/workspaces/projectSetup/projectSe
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 
 import { createHostActionOperationRuntime } from './createHostActionOperationRuntime';
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { ManagedNativeOperationSettlement } from '@/machines/managed/managedIntentReconciler';
 import { ManagedResourceV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -45,6 +46,34 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SessionSpawnNewResultV1Schema as preObservationSpawnResult } from '../../../../../packages/protocol/src/sessions/creation/testFixtures/sessionSpawnResultBeforeCommitObservation';
 
 describe('finite host operation custody', () => {
+  it('retains the admitted Project Source through in-flight listing and the full Open result after navigation', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'machine', serverId: 'home',
+      resolveAccountId: async () => 'account', generateOperationId: () => 'source-open' });
+    const input = OpenProjectInputV1Schema.parse({ serverId: 'home', machineId: 'machine',
+      source: { kind: 'source', id: 'source', revision: 1, selector: {
+        provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+        repository: { nameWithOwner: 'team/repo', cloneUrl: 'https://github.com/team/repo.git' }, protocol: 'https' } },
+      materialization: { kind: 'attach' } });
+    let finish!: () => void;
+    let started!: () => void;
+    const running = new Promise<void>(resolve => { started = resolve; });
+    const effect = new Promise<void>(resolve => { finish = resolve; });
+    const opened = { kind: 'opened', setup: 'prepared', directory: '/repo', workspace: {
+      serverId: 'home', machineId: 'machine', workspaceId: 'checkout', rootPath: '/repo' } };
+    // The native Open effect is the boundary; the real finite owner retains and projects it.
+    const execution = runtime.observeExecution({ actionId: 'projects.open', input,
+      execute: async () => { started(); await effect; return { ok: true, result: opened }; } });
+    await running;
+    expect((await runtime.handlers.listV2({})).items).toContainEqual(expect.objectContaining({
+      state: 'running', scope: { accountId: 'account', machineId: 'machine' },
+      domainRef: { kind: 'projectOpen', sourceId: 'source' } }));
+    finish();
+    await execution;
+    const listed = (await runtime.handlers.listV2({})).items;
+    expect(listed).toContainEqual(expect.objectContaining({ state: 'succeeded', domainRef: { kind: 'projectOpen', sourceId: 'source' } }));
+    expect(listed[0]?.result).toBeUndefined();
+    expect(await runtime.handlers.getV2({ operationId: 'source-open' })).toMatchObject({ kind: 'found', operation: { result: opened } });
+  });
 
   it('preserves a Workflow deployment result instead of substituting setup admission', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'machine', serverId: 'home',

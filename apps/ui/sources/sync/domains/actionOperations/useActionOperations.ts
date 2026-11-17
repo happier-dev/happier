@@ -4,6 +4,7 @@ import { actionOperationSelectors, createActionOperationSelectors, selectTermina
 import { actionOperationStore, isActionOperationTerminal } from './actionOperationStore';
 import type { ActionOperationAddress, ActionOperationSessionAddress, ActionOperationProjectScriptQuery, ActionOperationProjectWorkspaceQuery, ActionOperationManagedMachineQuery, ActionOperationProjectServicesQuery } from './qualifiedActionOperation';
 import type { ServerAccountScopeLifetime } from '../scope/serverAccountScope';
+import type { ActionOperationProjectSourceQuery } from './qualifiedActionOperation';
 
 function useActionOperationSelector<T>(selector: () => T): T {
     return React.useSyncExternalStore(
@@ -44,11 +45,12 @@ export type AcceptedActionOperationRead = Readonly<{
     lifetime: ServerAccountScopeLifetime | null;
 }>;
 
-export function useActionOperation(address: ActionOperationAddress, acceptedRead?: AcceptedActionOperationRead) {
+export function useActionOperation(address: ActionOperationAddress | null, acceptedRead?: AcceptedActionOperationRead) {
     const operation = useActionOperationSelector(() => (
-        actionOperationSelectors.selectById(actionOperationStore.getSnapshot(), address)
+        address ? actionOperationSelectors.selectById(actionOperationStore.getSnapshot(), address) : null
     ));
-    const { serverId, operationId } = address;
+    const serverId = address?.serverId;
+    const operationId = address?.operationId;
     const machineId = acceptedRead?.machineId;
     const actionId = acceptedRead?.actionId;
     const lifetime = acceptedRead?.lifetime;
@@ -126,8 +128,12 @@ export function useProjectScriptActionOperation(query: ActionOperationProjectScr
     return useActionOperationSelector(() => actionOperationSelectors.selectForProjectScript(actionOperationStore.getSnapshot(), query));
 }
 
-export function useProjectSetupActionOperation(query: ActionOperationProjectWorkspaceQuery) {
-    return useActionOperationSelector(() => actionOperationSelectors.selectForProjectSetup(actionOperationStore.getSnapshot(), query));
+export function useProjectOpenActionOperation(query: ActionOperationProjectSourceQuery) {
+    return useActionOperationSelector(() => actionOperationSelectors.selectForProjectOpen(actionOperationStore.getSnapshot(), query));
+}
+
+export function useProjectSetupActionOperation(query: ActionOperationProjectWorkspaceQuery | null) {
+    return useActionOperationSelector(() => query ? actionOperationSelectors.selectForProjectSetup(actionOperationStore.getSnapshot(), query) : null);
 }
 
 export function useProjectHeldSetupReviewOperation(query: ActionOperationProjectWorkspaceQuery) {

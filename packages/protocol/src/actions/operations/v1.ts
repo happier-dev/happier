@@ -10,6 +10,7 @@ import { MachineAvailabilityDiagnosticV1Schema } from '../../machines/machineAcc
 import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
 import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
+import { ProjectSourceIdentityV1Schema } from '../../projects/sources/projectSourceIdentityV1.js';
 import { SessionAgentUpdateNoticeV1Schema, SessionSpawnNewActionResultV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 import { MachineServiceHealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
 import { MachineDeploymentDomainReferenceV1Schema } from '../../machines/machineDeploymentDomainReferenceV1.js';
@@ -383,6 +384,7 @@ export const ManagedMachineBootstrapPromptV1Schema = lazyZodSchema(() => z.union
 export type ManagedMachineBootstrapPromptV1 = Readonly<z.infer<typeof ManagedMachineBootstrapPromptV1Schema>>;
 
 export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('projectOpen'), sourceId: ProjectSourceIdentityV1Schema.shape.id }),
   z.strictObject({
     kind: z.literal('machineService'), serverId: ActionOperationIdentifierV1Schema,
     operation: z.enum(['start', 'stop', 'restart']), generation: ActionOperationIdentifierV1Schema,

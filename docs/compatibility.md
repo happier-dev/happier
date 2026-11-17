@@ -1,5 +1,17 @@
 # Compatibility and version skew
 
+## Project Source Open progress (unreleased 0.3)
+
+The Action operation domain-reference union adds `projectOpen`, carrying the
+admitted Source id. Existing operation scope qualifies its Account and Machine;
+the Home transport qualifies the server. Terminal list summaries retain that
+association, while the existing full operation read supplies the canonical Open
+result and actual checkout. Team progress joins the existing Project setup
+observation without inferring readiness from `prepared`. Matching development
+Protocol, CLI and UI readers reload together; older strict readers reject the
+new union arm. No migration, store or compatibility adapter is introduced.
+
+
 ## Workflow command JSON input (unreleased 0.3)
 
 The closed `machines.command.run` input accepts optional strict JSON `stdin`.

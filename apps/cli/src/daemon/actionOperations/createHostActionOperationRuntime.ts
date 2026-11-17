@@ -34,6 +34,7 @@ import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/cry
 import { isDeploymentTargetLinkActionIdV1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { ProjectOpenReceiptPersistenceError, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { carriesNativeConfirmation, type ConfirmationContext } from './nativeConfirmation';
 
 
@@ -78,6 +79,11 @@ function readInitialDomainRef(
   input: unknown,
   requestId: string | undefined,
 ): ActionOperationDomainRefV1 | undefined {
+  if (actionId === 'projects.open') {
+    const parsed = OpenProjectInputV1Schema.safeParse(input);
+    return parsed.success && parsed.data.source.kind === 'source'
+      ? { kind: 'projectOpen', sourceId: parsed.data.source.id } : undefined;
+  }
   if (actionId === 'machines.managed.power.set' || actionId === 'machines.managed.delete' || actionId === 'machines.managed.rebuild') {
     // The Home-scoped operation concerns this guest even when controller admission
     // fails before the native owner can publish its admitted/enriched reference.

@@ -16,6 +16,7 @@ import {
     type ActionOperationAddress,
     type ActionOperationSessionAddress,
     type ActionOperationProjectWorkspaceQuery,
+    type ActionOperationProjectSourceQuery,
     type ActionOperationProjectScriptQuery,
     type ActionOperationManagedMachineQuery,
     type ActionOperationProjectServicesQuery,
@@ -79,6 +80,7 @@ export type ActionOperationSelectors = Readonly<{
     selectForSession(state: ActionOperationStoreSnapshot, address: ActionOperationSessionAddress): readonly ActionOperationProjection[];
     selectForProjectScript(state: ActionOperationStoreSnapshot, query: ActionOperationProjectScriptQuery): ActionOperationProjection | null;
     selectForProjectSetup(state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery): ActionOperationProjection | null;
+    selectForProjectOpen(state: ActionOperationStoreSnapshot, query: ActionOperationProjectSourceQuery): ActionOperationProjection | null;
     selectHeldProjectSetupReview(state: ActionOperationStoreSnapshot, query: ActionOperationProjectWorkspaceQuery): ActionOperationProjection | null;
     selectForManagedMachine(state: ActionOperationStoreSnapshot, query: ActionOperationManagedMachineQuery): ActionOperationProjection | null;
     selectForProjectServices(state: ActionOperationStoreSnapshot, query: ActionOperationProjectServicesQuery): readonly ActionOperationProjection[];
@@ -327,6 +329,23 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         return selected;
     };
 
+    const selectForProjectOpen = (state: ActionOperationStoreSnapshot, query: ActionOperationProjectSourceQuery): ActionOperationProjection | null => {
+        const serverId = normalizeActionOperationServerId(query.serverId);
+        if (!serverId || !query.accountId || !query.machineId || !query.sourceId) return null;
+        selectAll(state);
+        let selected: ActionOperationProjection | null = null;
+        for (const [key, operation] of state.operationsByKey) {
+            const { snapshot } = operation;
+            if (operation.serverId !== serverId || snapshot.scope.accountId !== query.accountId
+                || snapshot.scope.machineId !== query.machineId || snapshot.actionId !== 'projects.open'
+                || snapshot.domainRef?.kind !== 'projectOpen' || snapshot.domainRef.sourceId !== query.sourceId) continue;
+            const projection = readProjection(state, key, operation);
+            const order = selected ? compareOperations(projection, selected) : -1;
+            if (!selected || order < 0 || (order === 0 && key < actionOperationAddressKey({ serverId: selected.serverId, operationId: selected.snapshot.operationId }))) selected = projection;
+        }
+        return selected;
+    };
+
     const selectForProjectScript = (state: ActionOperationStoreSnapshot, query: ActionOperationProjectScriptQuery) => selectProjectOperation(state, query, snapshot => {
         const attachment = snapshot.domainRef;
         if (snapshot.actionId !== 'projects.script.run' || attachment?.kind !== 'projectCommand' || !attachment.script) return false;
@@ -551,6 +570,7 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
         selectForSession,
         selectForProjectScript,
         selectForProjectSetup,
+        selectForProjectOpen,
         selectHeldProjectSetupReview,
         selectForManagedMachine,
         selectForProjectServices,

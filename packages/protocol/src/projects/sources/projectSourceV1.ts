@@ -2,9 +2,11 @@ import type { ScmHostingRepositorySummary } from '../../scm/repositoryProvisioni
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ProjectSetupContentRevisionV1Schema } from '../projectSetupV1.js';
-import { createStoredReadSchema, defineStoredReadProjection } from '../../json/storedReadSchema.js';
+import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { ScmCredentialFreeRepositorySelectorV1Schema, ScmRepositoryContainedSubdirV1Schema } from '../../scm/repositoryClone.js';
-import { AccountPrincipalRefV1Schema, PrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
+import { PrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../teams/principal.js';
+import { ProjectSourceIdentityV1Schema, ProjectSourceOwnerV1Schema } from './projectSourceIdentityV1.js';
+export { ProjectSourceOwnerV1Schema, type ProjectSourceOwnerV1 } from './projectSourceIdentityV1.js';
 import { PromptArtifactRefV1Schema, PromptDocArtifactRefV1Schema } from '../../prompts/library/promptArtifactRefsV1.js';
 import { PromptStackEntryV1Schema, PromptStackEntryAuthoringV1Schema, PromptStackSetEnabledIntentV1Schema } from '../../prompts/library/promptStacksV1.js';
 import { readScmHostingRepositoryIdentity } from '../../scm/hostingRepositoryIdentity.js';
@@ -28,12 +30,6 @@ export function projectSourceRepositorySelectorFromHostingSummaryV1(repository: 
   });
 }
 
-export const ProjectSourceOwnerV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema,
-]));
-// Unlike presentation extras, an ambiguous persisted owner cannot be dropped into validity.
-defineStoredReadProjection(ProjectSourceOwnerV1Schema, () => ProjectSourceOwnerV1Schema);
-export type ProjectSourceOwnerV1 = z.infer<typeof ProjectSourceOwnerV1Schema>;
 export const ProjectSourceGrantV1Schema = lazyZodSchema(() => z.strictObject({ principal: PrincipalRefV1Schema, level: z.literal('view') }));
 export type ProjectSourceGrantV1 = z.infer<typeof ProjectSourceGrantV1Schema>;
 export const SourceAttachmentV1Schema = lazyZodSchema(() => z.discriminatedUnion('purpose', [
@@ -57,9 +53,8 @@ export function normalizeProjectSourceSubdirV1(value: string | null | undefined)
   return value == null ? undefined : ProjectSourceSubdirV1Schema.parse(value);
 }
 export const ProjectSourceV1Schema = lazyZodSchema(() => z.strictObject({
-  id: z.string().check(z.minLength(1)), revision: z.number().check(z.int(), z.positive()), name: z.string().check(z.trim(), z.minLength(1)),
+  ...ProjectSourceIdentityV1Schema.shape,
   repository: z.optional(ProjectSourceRepositorySelectorV1Schema),
-  owner: z.optional(ProjectSourceOwnerV1Schema),
   defaultRef: z.optional(z.string().check(z.trim(), z.minLength(1))), subdir: z.optional(ProjectSourceSubdirV1Schema),
   audience: z.array(ProjectSourceGrantV1Schema), createdByAccountId: z.string().check(z.minLength(1)),
   attachments: z.optional(z.array(SourceAttachmentV1Schema)),
