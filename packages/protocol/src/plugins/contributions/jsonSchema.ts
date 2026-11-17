@@ -6,6 +6,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
  * initialization cycle through contribution identity.
  */
 import { z } from '../../zodRuntimePolicy.js';
+import { ProtocolValueConstraintsSchema, type ProtocolValueConstraint } from '../actions/protocolValueConstraints.js';
 
 /** Shared portable declaration rule: every object remains closed, including union arms. */
 export function isRecursivelyClosedPluginJsonSchemaV2(schema: PluginJsonSchemaV2): boolean {
@@ -126,6 +127,8 @@ export type PluginJsonSchemaV2 = {
   maxLength?: number;
   'x-happier-max-utf8-bytes'?: number;
   'x-happier-max-serialized-utf8-bytes'?: number;
+  'x-happier-length-multiple-of'?: number;
+  'x-happier-value-constraints'?: readonly ProtocolValueConstraint[];
   pattern?: string;
   anyOf?: PluginJsonSchemaV2[];
   oneOf?: PluginJsonSchemaV2[];
@@ -164,6 +167,8 @@ const PluginJsonSchemaV2Definition: z.ZodMiniType<PluginJsonSchemaV2> = lazyZodS
   minLength: z.optional(z.number().check(z.int(), z.nonnegative())), maxLength: z.optional(z.number().check(z.int(), z.nonnegative())), pattern: z.optional(z.string()),
   'x-happier-max-utf8-bytes': z.optional(z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER))),
   'x-happier-max-serialized-utf8-bytes': z.optional(z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER))),
+  'x-happier-length-multiple-of': z.optional(z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER))),
+  'x-happier-value-constraints': z.optional(ProtocolValueConstraintsSchema),
   anyOf: z.optional(z.array(PluginJsonSchemaV2Schema)), oneOf: z.optional(z.array(PluginJsonSchemaV2Schema)), allOf: z.optional(z.array(PluginJsonSchemaV2Schema)),
   not: z.optional(PluginJsonSchemaV2Schema),
 }));
