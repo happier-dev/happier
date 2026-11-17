@@ -1,11 +1,11 @@
 import * as React from 'react';
 
 import { useSetting } from '@/sync/domains/state/storage';
-import { useComposerBannerCollapseRecord, writeComposerBannerCollapse } from '@/sync/domains/state/composerBannerUiState';
+import { readComposerBannerCollapse, useComposerBannerCollapseRecord, writeComposerBannerCollapse } from '@/sync/domains/state/composerBannerUiState';
 
 import {
     isComposerBannerCollapsedInRecord,
-    planComposerBannerCollapseToggle,
+    toggleComposerBannerCollapsedInRecord,
     resolveComposerBannerCollapseState,
     type ComposerBannerCollapseRecord,
 } from './composerBannerCollapse';
@@ -40,18 +40,14 @@ export function ComposerBannerCollapseProvider(props: Readonly<{ children: React
 
     // The toggle handler is handed to memoized badge descriptors, so it stays referentially stable
     // across collapse changes and reads the freshest inputs through refs instead of dependencies.
-    const inputsRef = React.useRef({ remember, persisted, ephemeral });
-    inputsRef.current = { remember, persisted, ephemeral };
+    const rememberRef = React.useRef(remember);
+    rememberRef.current = remember;
     const toggle = React.useCallback((kind: SessionComposerBannerKind, persistence: 'preference' | 'ephemeral') => {
-        const inputs = inputsRef.current;
-        const plan = planComposerBannerCollapseToggle({
-            remember: persistence === 'preference' && inputs.remember,
-            persisted: inputs.persisted,
-            ephemeral: inputs.ephemeral,
-            kind,
-        });
-        if (plan.persisted) writeComposerBannerCollapse(plan.persisted);
-        if (plan.ephemeral) setEphemeral(plan.ephemeral);
+        if (persistence === 'preference' && rememberRef.current) {
+            writeComposerBannerCollapse(toggleComposerBannerCollapsedInRecord(readComposerBannerCollapse(), kind));
+        } else {
+            setEphemeral(previous => toggleComposerBannerCollapsedInRecord(previous, kind));
+        }
     }, []);
 
     const value = React.useMemo(() => ({

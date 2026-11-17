@@ -72,6 +72,19 @@ describe('ComposerBannerCollapseProvider', () => {
         expect(readCollapsed(tree, 'banner')).toBe(true);
     });
 
+    it.each([false, true])('applies both toggles before a render (remember=%s)', async remember => {
+        storage.getState().applySettingsLocal({ sessionComposerRememberBannerVisibility: remember });
+        const first = await renderSurface();
+        const second = remember ? await renderSurface() : first;
+        act(() => {
+            first.root.findByProps({ probeId: 'badge' }).props.onToggle();
+            second.root.findByProps({ probeId: 'banner' }).props.onToggle();
+        });
+        expect(readCollapsed(first, 'badge')).toBe(false);
+        expect(readCollapsed(second, 'banner')).toBe(false);
+        expect(readComposerBannerCollapse()).toEqual({});
+    });
+
     it('keeps collapse out of device storage and out of the next surface while remembering is off', async () => {
         const first = await renderSurface();
         toggleFrom(first, 'badge');

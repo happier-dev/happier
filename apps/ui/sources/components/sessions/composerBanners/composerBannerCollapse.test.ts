@@ -10,7 +10,6 @@ import {
     buildComposerBannerHideAction,
     isComposerBannerCollapsedInRecord,
     normalizeComposerBannerCollapseRecord,
-    planComposerBannerCollapseToggle,
     resolveComposerBannerCollapseState,
     toggleComposerBannerCollapsedInRecord,
 } from './composerBannerCollapse';
@@ -125,56 +124,6 @@ describe('resolveComposerBannerCollapseState', () => {
             persisted: { retiredBannerKind: true },
             ephemeral: {},
         })).toEqual({});
-    });
-});
-
-describe('planComposerBannerCollapseToggle', () => {
-    it('never writes device storage while the remember setting is off', () => {
-        const plan = planComposerBannerCollapseToggle({
-            remember: false,
-            persisted: {},
-            ephemeral: {},
-            kind: 'usageLimitRecovery',
-        });
-
-        expect(plan.persisted).toBeNull();
-        expect(plan.ephemeral).toEqual({ usageLimitRecovery: true });
-    });
-
-    it('never touches ephemeral state while the remember setting is on', () => {
-        const plan = planComposerBannerCollapseToggle({
-            remember: true,
-            persisted: {},
-            ephemeral: {},
-            kind: 'usageLimitRecovery',
-        });
-
-        expect(plan.ephemeral).toBeNull();
-        expect(plan.persisted).toEqual({ usageLimitRecovery: true });
-    });
-
-    it('re-expands from the persisted record without clearing sibling kinds', () => {
-        const plan = planComposerBannerCollapseToggle({
-            remember: true,
-            persisted: { usageLimitRecovery: true, staleSessionRunner: true },
-            ephemeral: {},
-            kind: 'staleSessionRunner',
-        });
-
-        expect(plan.persisted).toEqual({ usageLimitRecovery: true });
-    });
-
-    it('leaves the persisted record intact when toggling with the setting off', () => {
-        const persisted = { usageLimitRecovery: true };
-        const plan = planComposerBannerCollapseToggle({
-            remember: false,
-            persisted,
-            ephemeral: {},
-            kind: 'usageLimitRecovery',
-        });
-
-        expect(plan.persisted).toBeNull();
-        expect(persisted).toEqual({ usageLimitRecovery: true });
     });
 });
 

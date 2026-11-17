@@ -56,31 +56,6 @@ export function resolveComposerBannerCollapseState(params: Readonly<{
     return normalizeComposerBannerCollapseRecord(params.remember ? params.persisted : params.ephemeral);
 }
 
-export type ComposerBannerCollapseTogglePlan = Readonly<{
-    /** Next device record, or `null` when device storage must not be written. */
-    persisted: Record<string, boolean> | null;
-    /** Next session-scoped record, or `null` when ephemeral state must not change. */
-    ephemeral: Record<string, boolean> | null;
-}>;
-
-export function planComposerBannerCollapseToggle(params: Readonly<{
-    remember: boolean;
-    persisted: ComposerBannerCollapseRecord | null | undefined;
-    ephemeral: ComposerBannerCollapseRecord | null | undefined;
-    kind: SessionComposerBannerKind;
-}>): ComposerBannerCollapseTogglePlan {
-    if (params.remember) {
-        return {
-            persisted: toggleComposerBannerCollapsedInRecord(params.persisted, params.kind),
-            ephemeral: null,
-        };
-    }
-    return {
-        persisted: null,
-        ephemeral: toggleComposerBannerCollapsedInRecord(params.ephemeral, params.kind),
-    };
-}
-
 export type ComposerBannerBadgeAccessibility = Readonly<{
     accessibilityLabel: string;
     accessibilityHint: string;
