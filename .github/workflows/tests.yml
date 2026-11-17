@@ -2030,6 +2030,7 @@ jobs:
 
       - name: Run unified Docker release-assets validation
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           INSTALLERS_CHANNEL: ${{ inputs.installers_channel }}
           RELAY_UPGRADE_TO_SOURCE: ${{ inputs.relay_upgrade_to_source }}
           RELAY_UPGRADE_TO_REF: ${{ inputs.relay_upgrade_to_ref }}

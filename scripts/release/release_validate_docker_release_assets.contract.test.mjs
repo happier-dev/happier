@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 import {
   assertDockerReleaseAssetsAvailable,
@@ -13,6 +15,45 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const runScript = resolve(repoRoot, 'scripts', 'release', 'release-assets-e2e', 'run.sh');
+
+test('Docker runtime invocations receive the release token by name without exposing its value', () => {
+  const source = readFileSync(runScript, 'utf8');
+  const header = 'set -euo pipefail\n' + source.slice(source.indexOf('mode="npm"'), source.indexOf('usage()'));
+  const commands = source.split('\n').filter((line) => /run --rm --no-deps/.test(line));
+  assert.ok(commands.some((line) => line.includes('"$remote_service"')));
+  for (const [github, happier, expected] of [
+    ['workflow-token', 'fallback-token', 'workflow-token'],
+    [undefined, 'fallback-token', 'fallback-token'],
+    [undefined, undefined, ''],
+  ]) {
+    const env = { ...process.env, EXPECTED_TOKEN: expected };
+    delete env.GITHUB_TOKEN;
+    delete env.HAPPIER_GITHUB_TOKEN;
+    if (github !== undefined) env.GITHUB_TOKEN = github;
+    if (happier !== undefined) env.HAPPIER_GITHUB_TOKEN = happier;
+    const result = spawnSync('bash', ['-c', `${header}
+      docker() {
+        [[ "\${HAPPIER_GITHUB_TOKEN-}" == "$EXPECTED_TOKEN" ]] || return 31
+        local found=0 previous="" arg
+        for arg in "$@"; do
+          [[ "$arg" != *token* && "$arg" != HAPPIER_GITHUB_TOKEN=* ]] || return 32
+          if [[ "$previous" == -e && "$arg" == HAPPIER_GITHUB_TOKEN ]]; then found=1; fi
+          previous="$arg"
+        done
+        [[ "$found" == 1 ]] || return 33
+        # A child process must inherit the token too, as the Docker CLI does.
+        bash -c '[[ "\${HAPPIER_GITHUB_TOKEN-}" == "$EXPECTED_TOKEN" ]]'
+      }
+      compose_run=(docker compose)
+      compose_remote=(docker compose)
+      compose_images=(docker compose)
+      env_file=unused docker_env_file=unused remote_service=remote-daemon-authenticated-cli-smoke
+      ${commands.join('\n')}
+    `], { env, encoding: 'utf8' });
+    assert.equal(result.status, 0, `Docker token boundary failed (${result.status}): ${result.stderr}`);
+    assert.equal(result.stdout + result.stderr, '');
+  }
+});
 
 test('docker release-assets plans local-build runs through the local harness path', () => {
   const plan = resolveDockerReleaseAssetsPlan({
