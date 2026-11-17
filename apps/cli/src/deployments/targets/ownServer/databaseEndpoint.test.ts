@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readOwnServerDatabaseEndpointForHost } from './databaseEndpoint';
+import { normalizeActionExecutorThrownError, settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { ProjectNativeDockerPort } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 
 const signal = new AbortController().signal;
@@ -9,6 +10,19 @@ const docker = (endpoint: string): ProjectNativeDockerPort => ({ engineId: 'sele
     return { exitCode: 0, stdout: JSON.stringify(endpoint) };
 } });
 describe('selected native database endpoint', () => {
+    it('reports malformed Docker endpoint JSON privately while retaining the transport refusal', async () => {
+        let caught: unknown;
+        try { await readOwnServerDatabaseEndpointForHost({ docker: { engineId: 'selected-engine', async run() {
+            return { exitCode: 0, stdout: 'PRIVATE invalid endpoint JSON' };
+        } }, ports: [port], containerPort: 5432, signal }); } catch (error) { caught = error; }
+        const diagnostics: unknown[] = [];
+        const result = settleActionOutput('deployments.create', { ok: false, ...normalizeActionExecutorThrownError(caught) },
+            undefined, undefined, diagnostic => diagnostics.push(diagnostic));
+        expect(result).toMatchObject({ ok: false, errorCode: 'database_transport_unavailable' });
+        expect(diagnostics).toMatchObject([{ phase: 'deployment.database.endpoint_parse',
+            failureCause: { errorClass: 'SyntaxError' } }]);
+        expect(JSON.stringify([result, diagnostics])).not.toContain('PRIVATE');
+    });
     it('uses the assigned port only when the retained Docker context is local', async () => {
         expect(await readOwnServerDatabaseEndpointForHost({ docker: docker('unix:///var/run/docker.sock'),
             ports: [port, { ...port, target: 3000 }], containerPort: 5432, signal })).toEqual({ host: '127.0.0.1', port: 32123 });

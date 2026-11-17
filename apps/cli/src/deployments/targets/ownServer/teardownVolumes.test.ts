@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { projectNativeComposeReview } from '@/workspaces/projectSetup/nativeComposeReview';
 import { readOwnServerPreviewCleanup, readOwnServerTeardownVolumes, settleOwnServerTeardownVolumes } from './teardownVolumes';
+import { normalizeActionExecutorThrownError, settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 describe('native teardown volume disposition', () => {
-    it('captures only the observed PostgreSQL volume of an admitted standard companion', async () => {
+    it.each([false, true])('captures only observed PostgreSQL data or reports malformed inspection privately: %s', async malformed => {
         const environment = createDeploymentEnvironmentDetailV1();
         Object.assign(environment.environment, { purpose: 'standard', previewCompanionOfEnvironmentId: 'main-preview' });
         environment.content.template = { templateRef: { sourceId: 'apps', itemId: 'postgres', version: '1',
@@ -12,7 +13,7 @@ describe('native teardown volume disposition', () => {
             definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
             data: [{ engine: 'postgres', service: 'db' }],
             volumes: [{ id: 'data', service: 'db', target: '/data', persistent: true, backup: true, consistency: 'logicalDump' }] };
-        const cleanup = await readOwnServerPreviewCleanup({ environment, machineId: 'machine-a', services: ['db'],
+        const operation = readOwnServerPreviewCleanup({ environment, machineId: 'machine-a', services: ['db'],
             render: { projectName: 'companion-project', review: projectNativeComposeReview({ services: { db: {
                 image: 'postgres:17', volumes: [{ type: 'volume', source: 'data', target: '/data' }],
             } } }, '/release', value => value) },
@@ -20,12 +21,23 @@ describe('native teardown volume disposition', () => {
             // Docker process boundary: inventory includes an unrelated owned volume, while inspect identifies the actual data mount.
             async run(args) {
                 if (args[0] === 'volume') return { exitCode: 0, stdout: 'observed-data\nunrelated-data', stderr: '' };
-                if (args[0] === 'inspect') return { exitCode: 0, stdout: JSON.stringify([{ Id: 'container-db',
+                if (args[0] === 'inspect') return { exitCode: 0, stdout: malformed ? 'PRIVATE invalid inspection JSON' : JSON.stringify([{ Id: 'container-db',
                     Config: { Labels: { 'com.docker.compose.project': 'companion-project', 'com.docker.compose.service': 'db' } },
                     Mounts: [{ Type: 'volume', Name: 'observed-data', Destination: '/data', RW: true }] }]), stderr: '' };
                 throw new Error(`Unexpected native command ${args.join(' ')}`);
             } });
-        expect(cleanup).toEqual({ machines: ['machine-a'], volumes: [{ name: 'observed-data', disposition: 'delete', confirmation: 'observed-data' }] });
+        if (!malformed) expect(await operation).toEqual({ machines: ['machine-a'], volumes: [{ name: 'observed-data', disposition: 'delete', confirmation: 'observed-data' }] });
+        else {
+            let caught: unknown;
+            try { await operation; } catch (error) { caught = error; }
+            const diagnostics: unknown[] = [];
+            const result = settleActionOutput('deployments.teardown', { ok: false, ...normalizeActionExecutorThrownError(caught) },
+                undefined, undefined, diagnostic => diagnostics.push(diagnostic));
+            expect(result).toMatchObject({ ok: false, errorCode: 'volume_observation_unavailable' });
+            expect(diagnostics).toMatchObject([{ phase: 'deployment.teardown.preview_volume_parse',
+                failureCause: { errorClass: 'SyntaxError' } }]);
+            expect(JSON.stringify([result, diagnostics])).not.toContain('PRIVATE');
+        }
     });
 
     it('does not authorize data deletion for an ordinary service subset or an unrelated preview subset', async () => {

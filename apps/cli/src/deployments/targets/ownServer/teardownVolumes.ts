@@ -1,4 +1,5 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { DeploymentEnvironmentDetailV1, DeploymentTeardownResourceV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentPreviewCleanupV1Schema, type DeploymentPreviewCleanupV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { NativeComposeActivatedProject, NativeComposeProjectRender } from '@/daemon/local/services/launch/nativeComposeLifecycle';
@@ -44,7 +45,10 @@ export async function readOwnServerPreviewCleanup(input: Readonly<{
     const inspected = await input.run(['inspect', '--type', 'container', ...expected.keys()]);
     if (inspected.exitCode !== 0) return unavailable();
     let rows: unknown;
-    try { rows = JSON.parse(inspected.stdout); } catch { return unavailable(); }
+    try { rows = JSON.parse(inspected.stdout); }
+    catch (error) { throw withActionFailureCauseDiagnostic(createActionExecuteFailureError({ ok: false,
+        errorCode: 'volume_observation_unavailable', error: 'volume_observation_unavailable' }),
+        error, 'deployment.teardown.preview_volume_parse'); }
     const ownedNames = await readNativeComposeProjectVolumeNames({ projects: [input.render.projectName], run: input.run,
         activatedVolumes: input.render.namedVolumes?.map(binding => binding.physicalName) });
     const names = selectNativeComposePreviewVolumeNames({ projectName: input.render.projectName, targets, expected, observations: rows, ownedNames });

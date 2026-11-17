@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { materializeCaddyDomainRouteV1, materializeCaddyInitialConfigV1 } from './caddyRouteMaterialization';
+import { logger } from '@/ui/logger';
 
 describe('Caddy public TLS materialization', () => {
     it('routes an unprobed Domain without active checks, extra path matches or authentication exemptions', () => {
@@ -88,6 +89,15 @@ describe('Caddy public TLS materialization', () => {
         for (const destination of ['javascript:alert(1)', 'https://user:password@example.test', 'https://example.test/?q=1', 'https://example.test/#fragment']) {
             expect(() => location(destination)).toThrowError(expect.objectContaining({ code: 'invalid_parameters' }));
         }
+        const logged = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+        try {
+            expect(() => location('https://[PRIVATE-invalid-host'))
+                .toThrowError(expect.objectContaining({ code: 'invalid_parameters' }));
+            expect(logged).toHaveBeenCalledWith('[Deployment] Domain redirect parse failed', expect.objectContaining({
+                phase: 'deployment.domain.redirect_parse', errorClass: 'TypeError', errorCode: null,
+            }));
+            expect(JSON.stringify(logged.mock.calls)).not.toContain('PRIVATE');
+        } finally { logged.mockRestore(); }
     });
 
     it.each(['app.example.com', 'replay135-cli-dj18.localhost', 'localhost', '127.0.0.1'])('leaves managed issuer selection for %s to Caddy', hostname => {

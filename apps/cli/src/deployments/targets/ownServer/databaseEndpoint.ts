@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { ProjectNativeDockerPort, ProjectNativeRuntimeFacts } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 
 /** The selected Docker transport owns locality; observed native facts own ports. */
@@ -11,7 +12,9 @@ export async function readOwnServerDatabaseEndpointForHost(input: Readonly<{
     // The CLI resolves the selected context and its retained host controls.
     const endpoint = await input.docker.run(['context', 'inspect', '--format', '{{json .Endpoints.docker.Host}}'], input.signal);
     let dockerHost: unknown;
-    try { dockerHost = JSON.parse(endpoint.stdout.trim()); } catch { return refuse(); }
+    try { dockerHost = JSON.parse(endpoint.stdout.trim()); }
+    catch (error) { throw withActionFailureCauseDiagnostic(new PluginError({ code: 'database_transport_unavailable' }),
+        error, 'deployment.database.endpoint_parse'); }
     if (endpoint.exitCode !== 0 || endpoint.stdoutTruncated || typeof dockerHost !== 'string'
         || (!dockerHost.startsWith('unix://') && !dockerHost.startsWith('npipe://'))) return refuse();
     const candidates = input.ports.filter(port => Number(port.target) === input.containerPort

@@ -9,10 +9,13 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import * as domainActions from './ownServerDomainActions';
+import { logger } from '@/ui/logger';
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each([false, true])('prepares private Domain bytes through the atomic owner, stale CAS=%s', async conflict => {
+it.each(['success', 'conflict', 'transport'] as const)('prepares private Domain bytes through the atomic owner: %s', async scenario => {
+    const conflict = scenario === 'conflict';
+    const logged = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
     const content: DeploymentDomainContentV1 = { hostname: 'app.example.test', target: { service: 'api', containerPort: 8080 },
         healthCheck: { path: '/health', expectStatus: 200 },
         cloudflarePreparation: { tunnelId: 'shared-tunnel', owned: [], dnsOwnership: [],
@@ -51,6 +54,7 @@ it.each([false, true])('prepares private Domain bytes through the atomic owner, 
         expect(decodePlainArtifactStoredContent(request.contentUpdate.body))
             .toEqual({ body: JSON.stringify(content) });
         expect(config.headers).toMatchObject({ 'x-admitted-controller': 'controller' });
+        if (scenario === 'transport') throw Object.assign(new Error('PRIVATE transport request bytes'), { code: 'ECONNRESET' });
         return { status: conflict ? 409 : 200, data: conflict ? { ok: false, error: 'deployment_conflict' }
             : { ok: true, environmentId: 'environment', revision: 3, domain: committed } };
     });
@@ -61,7 +65,16 @@ it.each([false, true])('prepares private Domain bytes through the atomic owner, 
         } });
     const context: ActionExecutorContext = { operationAcceptance: { operationId: 'operation', accept() {} } };
     const result = runWithServerHttpBaseUrl('https://home.test', () => writer({ domain, capture, content, context }));
-    if (conflict) await expect(result).rejects.toMatchObject({ code: 'deployment_conflict' });
+    if (scenario === 'transport') {
+        let caught: unknown;
+        try { await result; } catch (error) { caught = error; }
+        expect(caught).toMatchObject({ code: 'outcome_unknown' });
+        expect(logged).toHaveBeenCalledWith('[Deployment] Domain prepared content request failed', expect.objectContaining({
+            phase: 'deployment.domain.prepared_content', errorCode: 'ECONNRESET',
+        }));
+        expect(JSON.stringify(logged.mock.calls)).not.toContain('PRIVATE');
+    }
+    else if (conflict) await expect(result).rejects.toMatchObject({ code: 'deployment_conflict' });
     else expect(await result).toEqual(committed);
     expect(reads.mock.calls.filter(([url]) => String(url).endsWith(`/v1/artifacts/${artifactId}`)),
         'one Artifact load for the admitted Domain content mutation').toHaveLength(1);

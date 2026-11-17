@@ -1,4 +1,4 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createHash } from 'node:crypto';
 import { writeSync } from 'node:fs';
 import { mkdir, realpath } from 'node:fs/promises';
@@ -10,6 +10,7 @@ import { createProtectedLocalStateFileExclusive, ensureProtectedLocalStateDirect
 import { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from '@/plugins/runtime/invocation/services/managedServiceNativeLogBudget';
 import { createManagedServiceNativeLogs } from '@/plugins/runtime/invocation/services/managedServiceNativeLogs';
 import { resolveDeploymentSourcePathForHost, resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './paths';
+import { logger } from '@/ui/logger';
 
 export const OWN_SERVER_STAGE_LOG_RELATIVE_PATH = '.happier/deploy.log' as const;
 export type OwnServerStageLogProvenance = NonNullable<OwnServerDeploymentDetailsV1['stageLogs']>[number];
@@ -288,6 +289,8 @@ async function readStageLogPage(host: Readonly<{
         } finally { await handle.close(); }
     } catch (error) {
         options?.signal?.throwIfAborted();
+        logger.warnLocalFile('[Deployment] Stage log read failed',
+            projectActionFailureCauseV1(error, 'deployment.logs.read', { allowUnknownErrorCode: false }));
         return { kind: 'unavailable', reason: 'unavailable' };
     } finally {
         listeners.delete(changed);

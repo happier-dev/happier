@@ -1,4 +1,5 @@
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 import type { DeploymentDomainContentV1 } from '@happier-dev/deployment-protocol';
 import { nativeCaddyDomainRouteIdsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -162,7 +163,11 @@ function canonicalRedirectDestination(value: string): string {
         if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password
             || url.href.includes('?') || url.href.includes('#')) throw new CaddyDomainMaterializationError();
         return `${url.origin}${url.pathname.replace(/\/$/, '')}`;
-    } catch { throw new CaddyDomainMaterializationError(); }
+    } catch (error) {
+        logger.warnLocalFile('[Deployment] Domain redirect parse failed',
+            projectActionFailureCauseV1(error, 'deployment.domain.redirect_parse', { allowUnknownErrorCode: false }));
+        throw new CaddyDomainMaterializationError();
+    }
 }
 
 /**

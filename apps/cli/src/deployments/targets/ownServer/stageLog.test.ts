@@ -8,6 +8,7 @@ import { MANAGED_SERVICE_NATIVE_LOG_PAGE_BYTES } from '@/plugins/runtime/invocat
 import { createStablePluginUiResourceWatchOwner } from '@/plugins/runtime/invocation/services/uiResourceWatch';
 import { DaemonPluginUiResourceReadRequestSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createHash } from 'node:crypto';
+import { logger } from '@/ui/logger';
 
 describe('operation-owned deployment stage file', () => {
     it('closes an in-flight open range before later-step bytes and joins only repeated selected-step segments', async () => {
@@ -239,18 +240,29 @@ describe('operation-owned deployment stage file', () => {
     });
     it('refuses a missing receipt-owned log without creating a replacement file', async () => {
         const deploymentRoot = await mkdtemp(join(tmpdir(), 'happier-stage-missing-'));
+        const logged = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
         try {
             const instance = resolveOwnServerDeploymentEnvironmentInstanceIdForHost('home', 'environment');
             const placement = { deploymentRoot, environmentInstanceId: instance, deploymentId: 'deployment',
                 machineId: 'runtime', installationId: 'installation', async assertCurrent() {} };
             const file = await openOwnServerDeploymentStageLog(placement);
             file.appendRedacted('stdout', Buffer.from('retained redacted bytes')); await file.close();
+            const host = { deploymentRoot, serverId: 'home', machineId: 'runtime', installationId: 'installation' };
+            const receipt = { deployment: { environmentId: 'environment', id: 'deployment' }, content: {
+                buildMachineId: 'runtime', machines: ['runtime'], ownServer: { stageLogs: [file.provenance] },
+            } };
+            expect(await readOwnServerDeploymentStageLogs(host, receipt)).toMatchObject({ kind: 'page' });
             const directory = join(deploymentRoot, instance, 'releases', 'deployment', '.happier');
             await rename(join(directory, 'deploy.log'), join(directory, 'retained.log'));
+            expect(await readOwnServerDeploymentStageLogs(host, receipt)).toEqual({ kind: 'unavailable', reason: 'unavailable' });
+            expect(logged).toHaveBeenCalledWith('[Deployment] Stage log read failed', expect.objectContaining({
+                phase: 'deployment.logs.read', errorCode: 'ENOENT',
+            }));
+            expect(JSON.stringify(logged.mock.calls)).not.toContain(deploymentRoot);
             await expect(openOwnServerDeploymentStageLog({ ...placement, expected: file.provenance })).rejects.toThrow();
             expect(await readdir(directory)).toEqual(['retained.log']);
             expect(await readFile(join(directory, 'retained.log'), 'utf8')).toBe('retained redacted bytes');
-        } finally { await rm(deploymentRoot, { recursive: true, force: true }); }
+        } finally { logged.mockRestore(); await rm(deploymentRoot, { recursive: true, force: true }); }
     });
     it('never chmods or writes into an existing foreign release without a retained placement', async () => {
         const deploymentRoot = await mkdtemp(join(tmpdir(), 'happier-stage-foreign-'));

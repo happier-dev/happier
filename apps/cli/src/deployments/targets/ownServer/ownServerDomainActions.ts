@@ -29,10 +29,11 @@ import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/proto
 import type { ArtifactRequestAuthorizationHeaders, createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudflareDomainConnectorForTarget } from './cloudflareDomainPreparation';
-import { createActionExecuteFailureError, isActionExecuteFailure, readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError, isActionExecuteFailure, readActionFailureCauseV1, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentException, projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { logger } from '@/ui/logger';
 
 type DomainAction = DeploymentDomainChildActionIdV1;
 // The Domain mode owner presents native setup decisions without reading or
@@ -317,7 +318,11 @@ export function createOwnServerDomainContentWriter(host: Readonly<{
             try {
                 response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`,
                     headers, data: body, ...(context.signal ? { signal: context.signal } : {}), validateStatus: () => true });
-            } catch { return refuse('outcome_unknown'); }
+            } catch (error) {
+                logger.warnLocalFile('[Deployment] Domain prepared content request failed',
+                    projectActionFailureCauseV1(error, 'deployment.domain.prepared_content', { allowUnknownErrorCode: false }));
+                return refuse('outcome_unknown');
+            }
             const result = DeploymentActionOutputSchemasV1[actionId].safeParse(response.data);
             if (!result.success) return refuse('outcome_unknown');
             if (!result.data.ok) return refuse(result.data.error);
