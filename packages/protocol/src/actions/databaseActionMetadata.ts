@@ -13,7 +13,7 @@ const read = { dangerLevel: 'safe', readOnly: true, placementBindings: [], agent
 const write = { dangerLevel: 'writesRemote', readOnly: false, agentDefault: 'ask' } as const;
 const selectedExport = { ...read, approvalInputCustody: 'live_only',
     secretInputPaths: ['result.rows.[].cells.[].value', 'result.rows.[].identity.**.value.value', 'result.completeness.continuation.**.value.value'],
-} as const;
+} satisfies Omit<Metadata, 'title'>;
 
 /** C6's one presentation/classification owner. Missing producers contribute no callable Action. */
 export const databaseActionMetadata = {
