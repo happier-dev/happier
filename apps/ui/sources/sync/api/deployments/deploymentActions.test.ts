@@ -286,40 +286,32 @@ async function answerApprovalSessionPublication(writer: ReturnType<typeof requir
         if (!response) throw new Error('Expected originating Session row');
         return { status: response.status, body: await response.json() };
     } });
-    const { actionSpecToActionDefinitionV1 } = await import('@happier-dev/protocol/actions/actionCatalog');
-    const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
-    const { SessionInputAdmissionResultV1Schema } =
-        await import('@happier-dev/protocol/sessions/messages/sessionInputAdmission');
-    // Terminal publication is external Session IO too; keep its real requester
-    // crypto and advertised input contract instead of replacing sessionSendMessage.
-    const published = new Set<string>();
-    if (!writer.serverIdentityId) throw new Error('Expected Home identity');
-    for (const notificationActionId of ['action.spec.get', 'session.message.send'] as const) {
-        const notificationBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: writer.endpointUrl,
-            serverIdentityId: writer.serverIdentityId, accountId: writer.accountId,
-            machineId: boundary.machine.id, installationId: boundary.machine.installationId ?? undefined,
-            actionId: notificationActionId, tokenEpoch: 0, requesterInvocation: 'required',
-            ...(encryption ? { encryption } : {}), execute: (notificationInput, transport) => {
-                expect(transport.invocation).toMatchObject({ surface: 'mcp', authority: 'account_automation', caller: { kind: 'host' } });
-                if (notificationActionId === 'action.spec.get') return { actionSpec:
-                    actionSpecToActionDefinitionV1(getActionSpec('session.message.send'), { surface: 'mcp', includeOutputSchema: false }) };
-                const message = getActionSpec('session.message.send').inputSchema.parse(notificationInput);
-                expect(message).toMatchObject({ sessionId: sessionId, requestedAction: { v: 1, kind: 'enqueue' }, reply: 'none' });
-                if (!message || typeof message !== 'object' || !('localId' in message)
-                    || typeof message.localId !== 'string') throw new Error('Expected result publication identity');
-                const status = published.has(message.localId) ? 'alreadyAccepted' : 'accepted';
-                published.add(message.localId);
-                return SessionInputAdmissionResultV1Schema.parse({ status, localId: message.localId });
-            } });
-        for (const path of [bindExternalActionExecutionAuthorizationHttpPathV1(notificationActionId), `/v1/actions/${notificationActionId}`]) {
-            homes.answer(serverId, path, { select: async (_body, request) => {
-                const response = await notificationBoundary.handle(new URL(request.url), request.init);
-                if (!response) throw new Error('Expected result publication HTTP boundary');
-                return { status: response.status, body: await response.json() };
-            } });
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { DEFAULT_SESSION_CAPABILITIES } = await import('@happier-dev/protocol/features/payload/capabilities/sessionCapabilities');
+    const { PENDING_INPUT_PROTOCOL_VERSION_V4 } = await import('@happier-dev/protocol/clientCompatibility/primitives');
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    const features = createRootLayoutFeaturesResponse({ capabilities: {
+        serverIdentity: { serverIdentityId: writer.serverIdentityId },
+        session: { ...DEFAULT_SESSION_CAPABILITIES, pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } },
+    } });
+    homes.answer(serverId, '/v1/features', { body: features });
+    homes.answer(serverId, '/v1/features/authenticated', { body: features });
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    const { createSessionPendingHttpBoundary } = await import('@/dev/testkit/harness/sessionPendingHttpBoundary');
+    const pending = createSessionPendingHttpBoundary(sessionId);
+    // Result publication uses durable Pending custody; the real sender retains
+    // its Session codec, input provenance and idempotent publication identity.
+    homes.answer(serverId, `POST /v2/sessions/${sessionId}/pending`, { select: async (_input, request) => {
+        const response = pending.handle(request.url, request.init);
+        if (!response) throw new Error('Expected Pending result publication');
+        for (const row of pending.enqueued.values()) {
+            expect(row.localId).toMatch(/^approval-result:/);
+            expect(row.requestedAction).toEqual({ v: 1, kind: 'enqueue' });
+            expect(row.content.t).toBe(encryption ? 'encrypted' : 'plain');
         }
-    }
-    return published;
+        return { status: response.status, body: await response.json() };
+    } });
+    return pending.enqueued;
 }
 
 async function answerControllerAction(actionId: ActionId, machineId: string,
@@ -1251,7 +1243,7 @@ it.each(['historical own UI', 'web terminal Session'] as const)('consumes one ap
 });
 
 
-it('saves a person’s own UI Variables under Account Ask without a self-approval', async () => {
+it('saves a person’s own UI Variables under Account Ask after review without a self-approval', async () => {
     const actionId = 'deployments.bindings.set';
     await homes.requireUiApproval(serverId, actionId);
     const writer = requireAccount();
@@ -1301,7 +1293,8 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
         },
         failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
             && 'errorCode' in result && typeof result.errorCode === 'string'
-            ? { errorCode: result.errorCode, error: result.errorCode } : null,
+            ? { errorCode: result.errorCode, error: result.errorCode,
+                ...('details' in result ? { details: result.details } : {}) } : null,
     });
     for (const path of [`/v1/machines/${detail.environment.controllerMachineId}`, '/v1/machines/read-batch',
         bindExternalActionExecutionAuthorizationHttpPathV1(actionId), `/v1/actions/${actionId}`]) {
@@ -1314,24 +1307,39 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
             return { status: response.status, body: await response.json() };
         } });
     }
-    const saved = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', authority: 'present_user',
+    const reviews: unknown[] = [];
+    const saved = await createDefaultActionExecutor({ presentUserActionConfirmation: async review => {
+        reviews.push(review);
+        expect(review).toMatchObject({ actionId, input });
+        return true;
+    } }).execute(actionId, input, { surface: 'ui', authority: 'present_user',
         actionCaller: { kind: 'host' }, serverId, expectedAccountId: writer.accountId, actionRequestId: 'person-variables-save' });
     expect(saved, JSON.stringify({ saved, receiverResults, boundaryObservations,
         machineReads: homes.requestsFor('/v1/machines/read-batch').length })).toMatchObject({ ok: true, result });
     expect(effects).toEqual([input]);
+    expect(reviews).toHaveLength(1);
     expect(homes.artifacts(serverId).list()).toHaveLength(0);
     const automated = await createUiDeploymentActionDeps(writer).deploymentAction!(actionId, input,
         { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
             serverId, runtimeAccountId: writer.accountId, actionRequestId: 'agent-variables-save' });
-    // This boundary has no installed Agent approval origin. Preserving its
-    // automation provenance must refuse it rather than grant the person's UI admission.
-    expect(automated).toMatchObject({ ok: false, errorCode: 'approval_origin_unavailable' });
+    // Automation retains its own deferred approval instead of inheriting the
+    // person's interactive confirmation or executing another mutation.
+    expect(automated).toMatchObject({ kind: 'approval_request_created', actionId });
+    const { artifactId } = ActionApprovalRequestCreatedResultSchema.parse(automated);
+    const artifact = await writer.readArtifact(artifactId, { fresh: true, ownerOnly: true });
+    if (typeof artifact?.body !== 'string') throw new Error('Expected readable automation approval');
+    const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+    expect(ApprovalRequestV2Schema.parse(JSON.parse(artifact.body))).toMatchObject({
+        status: 'open', createdBy: { surface: 'agent' }, actionId,
+        actionArgs: input, executionOriginV1: { authority: 'account_automation' },
+    });
     expect(effects).toEqual([input]);
     expect(invocations).toEqual([
         { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } },
+        { surface: 'ui', authority: 'present_user', caller: { kind: 'host' } },
         { surface: 'agent', authority: 'account_automation', caller: { kind: 'host' } },
     ]);
-    expect(homes.artifacts(serverId).list()).toHaveLength(0);
+    expect(homes.artifacts(serverId).list()).toHaveLength(1);
 });
 
 
@@ -1415,7 +1423,32 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
                 (await writer.createArtifactDocument({ artifactId, header, body, idScope })).artifact });
     };
     const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } });
+    const { createApprovalArtifactAccess } = await import('@/sync/ops/actions/approvalReading');
+    const { writeApprovalRequestArtifact } = await import('@/sync/ops/actions/approvalArtifactWriter');
+    const { isApprovalExecutionOriginCurrentForAccountContext } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { sendSessionMessageWithServerScope, projectServerScopedSessionSendMessageResult } =
+        await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage');
+    const read = (artifactId: string) => writer.readArtifact(artifactId, { fresh: true, ownerOnly: true });
     const receiver = createActionExecutor(createActionExecutorBoundaryFixture({ approvalsCreate,
+        approvalsGet: createApprovalArtifactAccess({ read }).get,
+        approvalsUpdate: ({ artifactId, request, expectedStatus }) => writeApprovalRequestArtifact({
+            artifactId, request, expectedStatus, read,
+            write: (basis, header, body) => writer.updateArtifact(artifactId, header, body, basis),
+        }),
+        // This installed source Machine and Account are the runtime boundary;
+        // Artifact transitions, replay admission and effects remain real.
+        isApprovalExecutionOriginCurrent: async ({ origin, reportStale }) => {
+            writer.assertCurrent();
+            return origin.machineId === detail.environment.controllerMachineId
+                && isApprovalExecutionOriginCurrentForAccountContext({ origin,
+                    accountServerId: writer.serverId, accountId: writer.accountId, reportStale });
+        },
+        sessionSendMessage: async ({ sessionId, message, localId, requestedAction, messageMeta, inputAdmission, signal }) =>
+            projectServerScopedSessionSendMessageResult(await sendSessionMessageWithServerScope({
+                sessionId, message, messageLocalId: localId, requestedAction, metaOverrides: messageMeta,
+                serverId: writer.serverId, signal,
+                ...(inputAdmission ? { hostAdmissionOrigin: { kind: 'action', admission: inputAdmission } } : {}),
+            })),
         resolveEnvironmentApprovalScope: createUiDeploymentActionDeps(writer).resolveEnvironmentApprovalScope,
         deploymentAction: async (_actionId, admitted) => { effects.push(admitted); return result; },
     }));
@@ -1447,6 +1480,26 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
             return { status: response.status, body: await response.json() };
         } });
     }
+    const decisionBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: writer.endpointUrl,
+        serverIdentityId: writer.serverIdentityId, accountId: writer.accountId,
+        machineId: boundary.machine.id, installationId: boundary.machine.installationId ?? undefined,
+        actionId: 'approval.request.decide', tokenEpoch: 0, requesterInvocation: 'none',
+        ...(encryption ? { encryption } : {}), execute: async (decisionInput, transport) => {
+            const executed = await receiver.execute('approval.request.decide', decisionInput, {
+                ...uiHost, serverId, serverIdentityId: writer.serverIdentityId, runtimeAccountId: writer.accountId,
+                actionRequestId: transport.requestId, actionsSettings: settings,
+            });
+            return executed.ok ? executed.result : executed;
+        },
+        failure: execution => execution && typeof execution === 'object' && 'ok' in execution && execution.ok === false
+            && 'errorCode' in execution && typeof execution.errorCode === 'string'
+            ? { errorCode: execution.errorCode, error: execution.errorCode } : null,
+    });
+    homes.answer(serverId, '/v1/actions/approval.request.decide', { select: async (_body, request) => {
+        const response = await decisionBoundary.handle(new URL(request.url), request.init);
+        if (!response) throw new Error('Expected source Machine approval decision HTTP boundary');
+        return { status: response.status, body: await response.json() };
+    } });
     const caller = { kind: 'session' as const, sessionId: 'binding-agent-session', starterDepth: 0, turnDepth: 0 };
     const published = await answerApprovalSessionPublication(writer, caller.sessionId, boundary, secret);
     const target = { kind: 'machine' as const, machineId: detail.environment.controllerMachineId };
@@ -1511,7 +1564,7 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
             causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } },
     });
     if (selectsSecret && !catalogProposal) expect(persisted).toMatchObject({ decision: { narrowedInput: selectedInput } });
-    expect(decided, JSON.stringify({ ok: decided.ok, receiverResults, approvalPlacement,
+    expect(decided, JSON.stringify({ ok: decided.ok, receiverResults, approvalPlacement, published: [...published],
         persisted: { status: persisted.status, execution: persisted.execution && { ok: persisted.execution.ok,
             errorCode: persisted.execution.errorCode, error: persisted.execution.error } },
         requests: homes.requests.map(({ method, path }) => ({ method, path })),
