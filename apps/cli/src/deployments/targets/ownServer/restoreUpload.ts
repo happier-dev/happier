@@ -7,7 +7,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { configuration } from '@/configuration';
 import { readTransferPayloadChunk, type TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { AdmittedDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
-import { admitPsqlInput } from './dataQuery';
+import { admitPsqlInput } from './postgresqlInput';
 
 async function* readUploadChunks(upload: AdmittedDeploymentRestoreUpload, signal: AbortSignal) {
     const source: TransferPayloadSource = { kind: 'native', sizeBytes: upload.sizeBytes,

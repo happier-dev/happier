@@ -1,4 +1,4 @@
-import { admitPsqlInput as admitSharedPsqlInput, PostgresqlInputError } from '@happier-dev/databases/postgresql';
+import { admitPsqlInput } from './postgresqlInput';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { postgresqlReadOnlyRoleGuardSql } from '@happier-dev/deployment-protocol';
 import type { DeploymentDataQueryInputV1, DeploymentDataQuerySuccessV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
@@ -52,21 +52,7 @@ export function ownServerReadOnlyRoleGuardSql(engine: 'postgresql' | 'mysql',
 );`;
 }
 
-/** Legacy deployment callers retain PluginError while the shared dialect owns
- * every lexical decision for native query and dump input. */
-function rethrowNativePsqlInputError(error: unknown): never {
-    if (error instanceof PostgresqlInputError) refuse(error.code, error.reason);
-    throw error;
-}
-export function admitPsqlInput(sql: string, mode: 'query' | 'dump'): string;
-export function admitPsqlInput(sql: AsyncIterable<Uint8Array>, mode: 'dump'): Promise<void>;
-export function admitPsqlInput(sql: string | AsyncIterable<Uint8Array>, mode: 'query' | 'dump'): string | Promise<void> {
-    if (typeof sql === 'string') {
-        try { return admitSharedPsqlInput(sql, mode); }
-        catch (error) { return rethrowNativePsqlInputError(error); }
-    }
-    return admitSharedPsqlInput(sql, 'dump').catch(rethrowNativePsqlInputError);
-}
+export { admitPsqlInput } from './postgresqlInput';
 
 /** The response owner supplies the complete envelope budget. Measure each row
  * once, retaining a whole-row prefix that also fits its incompleteness reason. */
