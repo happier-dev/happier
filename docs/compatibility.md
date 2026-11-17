@@ -9401,6 +9401,14 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Automation Database subjects accept the managed deployment arm
+`{kind: 'managed_deployment', environmentId, targetLinkId, databaseName}` under
+the existing server-qualified subject. Existing Environment, worktree and manual
+arms retain their identities. The deployment databases owner projects this closed
+identity from its admitted target, and page reads retain every logical database
+per Link. Emission requires matching development Protocol, SDK, daemon and UI
+readers; no released wire epoch, stored migration or mixed-development adapter changes.
+
 Unreleased 0.3 ACP `projectPromptUsage` accepts an optional native completion
 context and may return a Promise. Existing synchronous projectors remain valid.
 The host awaits that same projection before emitting the ordinary usage event;

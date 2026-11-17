@@ -6154,10 +6154,14 @@ structural selector contains only the canonical subject digest.
 The Database list, Connect and describe read producers return an optional
 `automationSubject` result on their descriptors. The producer resolves worktree
 and manual bindings directly, and deployment services to the existing Environment,
-service and database tuple. Deployment data-service reads retain that result for
-the resource page without enumerating targets again. Managed target bindings have
-no service identity in this contract and return `subject_kind_unavailable` until
-their subject contract is approved.
+service and database tuple. Managed bindings resolve at the deployment databases
+owner to `{serverId, environmentId, targetLinkId, databaseName}`; provider project
+and branch identifiers remain outside Automation identity. Managed bindings remain
+own-only because no full-database shared grant is established by the Environment.
+Deployment data-service reads retain subjects from one target read.
+They retain the existing service-keyed `databaseSubjects` map and all managed
+logical database subjects in `managedDatabaseSubjects[targetLinkId]`. A page must
+select the exact logical database from that collection; a Link can contain several.
 
 Trigger admission seals only referenced leaves in the private accepted snapshot.
 Other Events, Run now, schedules and Session lifecycle admissions leave the value

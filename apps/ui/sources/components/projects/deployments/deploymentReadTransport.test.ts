@@ -43,8 +43,9 @@ describe('deployment scoped read transport', () => {
     beforeEach(async () => { await homes.reset(); });
     afterEach(() => standardCleanup());
 
-    it.each(['deployment_service', 'deployment_service_disabled'] as const)('retains %s database subjects through scoped semantic Actions and reads native size', async kind => {
+    it.each(['deployment_service', 'managed_deployment', 'deployment_service_disabled'] as const)('retains %s database subjects through scoped semantic Actions and reads native size', async kind => {
         const disabled = kind === 'deployment_service_disabled';
+        const nativeKind = kind !== 'managed_deployment';
         const serverIdentityId = 'srv_database_size';
         const serverId = await homes.addHome({ name: 'Database size', serverUrl: 'https://database-size.test',
             serverIdentityId, accountId: 'account-owner', currentAccount: true, active: false });
@@ -55,7 +56,7 @@ describe('deployment scoped read transport', () => {
         const content = { ...detail.content, template: {
             templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1', ref: { kind: 'version' as const, version: '1' } },
             definition: { kind: 'stored' as const, contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, services: ['postgres'],
-            data: [{ service: 'postgres', engine: 'postgres' as const }] } };
+            data: kind === 'managed_deployment' ? [] : [{ service: 'postgres', engine: 'postgres' as const }] } };
         const environmentRef = { serverId, projectSourceId: detail.environment.projectSourceId, environmentId: detail.environment.id };
         const runtimeLink = createDeploymentTargetLinkHeaderV1({ id: 'runtime-link', environmentId: detail.environment.id,
             activeDeploymentId: 'serving-receipt', machines: ['member'],
@@ -67,8 +68,13 @@ describe('deployment scoped read transport', () => {
             placement: { serverId, accountId: 'account-owner', machineId: runtimeMember.machineId, installationId: runtimeMember.installationId },
             automationSubject: { ok: true, subject: { kind: 'database', serverId,
                 target: { kind: 'environment', environmentId: detail.environment.id, service: 'postgres', database: 'receipt-database' } } } };
-        const selected = native;
-        const targets = [selected];
+        const managed = (database: string): DatabaseDescriptorV1 => ({ ...native,
+            target: { kind: 'managed_deployment', environment: environmentRef, targetLinkId: 'managed-link',
+                contribution: { pluginId: 'provider', contributionId: 'data' }, platformProjectId: 'provider-project', branchId: 'branch', database },
+            automationSubject: { ok: true, subject: { kind: 'database', serverId, target: { kind: 'managed_deployment',
+                environmentId: detail.environment.id, targetLinkId: 'managed-link', databaseName: database } } } });
+        const selected = nativeKind ? native : managed('first-database');
+        const targets = nativeKind ? [selected] : [selected, managed('second-database')];
         homes.answer(serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: { ok: true,
             environment: detail.environment, targetLinks: [runtimeLink] } });
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
@@ -126,6 +132,7 @@ describe('deployment scoped read transport', () => {
         const transport = createDeploymentReadTransport(lifetime);
         try {
             const page = await transport.listDataServicePage!(lifetime.scope, {}, { signal: new AbortController().signal });
+            if (nativeKind) {
                 expect(page, JSON.stringify({ page, sizeInputs })).toMatchObject({ ok: true, value: { items: [{ databaseSizes: [{ service: 'postgres',
                     deploymentId: 'serving-receipt', size: { status: 'available', bytes: 4096 } }] }] } });
                 expect(sizeInputs).toMatchObject([{ environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
@@ -141,6 +148,12 @@ describe('deployment scoped read transport', () => {
                         action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: listLocalId } } },
                     { target: { kind: 'machine', machineId: runtimeMember.machineId }, input: { service: 'postgres' } },
                 ]);
+            } else {
+                expect(page).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {}, managedDatabaseSubjects: {
+                    'managed-link': targets.map(target => target.automationSubject),
+                }, databaseSizes: [] }] } });
+                expect(invocations).toHaveLength(1);
+            }
             expect(homes.requests.filter(request => request.path === '/v1/actions/action.invoke').every(request => request.serverId === serverId)).toBe(true);
         } finally { withdraw(); }
     });

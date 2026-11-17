@@ -205,7 +205,12 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     }
                     return [];
                 }));
-                items.push({ environment, title: row.title, content: row.content, databaseSizes, databaseSubjects });
+                const managedDatabaseSubjects: Record<string, AutomationDatabaseSubjectReadV1[]> = {};
+                for (const descriptor of databaseTargets?.targets ?? []) {
+                    if (descriptor.target.kind !== 'managed_deployment' || !descriptor.automationSubject) continue;
+                    (managedDatabaseSubjects[descriptor.target.targetLinkId] ??= []).push(descriptor.automationSubject);
+                }
+                items.push({ environment, title: row.title, content: row.content, databaseSizes, databaseSubjects, managedDatabaseSubjects });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
         }),

@@ -143,10 +143,15 @@ describe('managed database attachment at the deployment owner', () => {
         try {
             const listed = await service.listTargets({ scope: { kind: 'environment', environment } });
             expect(listed).toMatchObject({ targets: [{ target, access: { canRead: true, canWrite: false, reason: 'database_editing_off' } }], completeness: { complete: true } });
+            const automationSubject = { ok: true, subject: { kind: 'database', serverId: environment.serverId,
+                target: { kind: 'managed_deployment', environmentId: environment.environmentId,
+                    targetLinkId: target.targetLinkId, databaseName: target.database } } };
+            expect(listed.targets[0]?.automationSubject).toEqual(automationSubject);
             expect(stored.state.reads).toBe(1);
             expect(requests).toMatchObject([{ headers: { authorization: 'Bearer selected-provider-credential' } }]);
             const resolved = await service.resolve({ operation: 'describe', target }, 'read');
             expect(resolved.descriptor.target).toEqual(target);
+            expect(resolved.descriptor.automationSubject).toEqual(automationSubject);
             await resolved.connection.close();
             await expect(service.resolve({ operation: 'describe', target }, 'write'))
                 .rejects.toMatchObject({ code: 'database_editing_off' });

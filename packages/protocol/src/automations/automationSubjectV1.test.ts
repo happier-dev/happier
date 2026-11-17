@@ -1,13 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import { readPluginAutomationSubjectV1, projectPluginAutomationSubjectsV1 } from './automationPluginSubjectV1.js';
 import { AutomationDatabaseSubjectV1Schema, AutomationSubjectV1Schema, projectAutomationDatabaseSubjectV1,
-    projectAutomationSubjectStructuralV1, automationSubjectKeyV1, automationSubjectSharedKeyV1,
+    projectAutomationSubjectStructuralV1, readAutomationDatabaseSubjectV1, automationSubjectKeyV1, automationSubjectSharedKeyV1,
     automationSubjectKeyMatchesV1, automationSubjectMatchesV1, type AutomationSubjectV1 } from './automationSubjectV1.js';
 import { DatabaseManualTargetV1Schema, DatabaseWorktreeTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
 
 // Canonical serialization order and framing cannot be controlled through UI authoring.
 // These pure identity rules complement, and do not replace, P01.F1–F7.
 describe('automation subject identity', () => {
+    it('resolves managed databases by admitted Home, Environment, Link and logical database only (AM1)', () => {
+        const target = { kind: 'managed_deployment' as const,
+            environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' },
+            targetLinkId: 'link', contribution: { pluginId: 'provider', contributionId: 'database' },
+            platformProjectId: 'provider-project', branchId: 'provider-branch', database: 'app' };
+        const result = readAutomationDatabaseSubjectV1('home', target);
+        expect(result).toEqual({ ok: true, subject: { kind: 'database', serverId: 'home',
+            target: { kind: 'managed_deployment', environmentId: 'environment', targetLinkId: 'link', databaseName: 'app' } } });
+        if (!result.ok) throw new Error('Expected admitted managed database subject');
+        expect(AutomationSubjectV1Schema.parse(result.subject)).toEqual(result.subject);
+        expect(readAutomationDatabaseSubjectV1('home', { ...target, platformProjectId: 'rotated-project', branchId: 'rotated-branch' })).toEqual(result);
+        for (const other of [readAutomationDatabaseSubjectV1('other-home', target),
+            readAutomationDatabaseSubjectV1('home', { ...target, environment: { ...target.environment, environmentId: 'other-environment' } }),
+            readAutomationDatabaseSubjectV1('home', { ...target, targetLinkId: 'other-link' }),
+            readAutomationDatabaseSubjectV1('home', { ...target, database: 'other-database' })]) {
+            if (!other.ok) throw new Error('Expected managed database subject');
+            expect(automationSubjectMatchesV1(result.subject, [{ role: 'operand', subject: other.subject }])).toBe(false);
+        }
+        expect(AutomationDatabaseSubjectV1Schema.safeParse({ ...result.subject,
+            target: { ...result.subject.target, platformProjectId: 'private-provider-project' } }).success).toBe(false);
+    });
     it('separates Homes, kinds and workflows while canonicalizing plugin identity object order', () => {
         const subject: AutomationSubjectV1 = { kind: 'plugin', serverId: 'home', pluginId: 'example.tickets', subjectKindId: 'ticket', identity: { team: 'one', id: 'two' } };
         expect(automationSubjectKeyV1(subject)).toBe(automationSubjectKeyV1({ ...subject, identity: { id: 'two', team: 'one' } }));

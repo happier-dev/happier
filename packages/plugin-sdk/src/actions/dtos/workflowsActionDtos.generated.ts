@@ -2164,6 +2164,11 @@ export type WorkflowsActionInputById = {
                 service: string;
                 database: string;
             } | {
+                kind: 'managed_deployment';
+                environmentId: string;
+                targetLinkId: string;
+                databaseName: string;
+            } | {
                 savedSecretId: string;
                 accountId: string;
                 workspace: {
@@ -2273,6 +2278,11 @@ export type WorkflowsActionInputById = {
                 environmentId: string;
                 service: string;
                 database: string;
+            } | {
+                kind: 'managed_deployment';
+                environmentId: string;
+                targetLinkId: string;
+                databaseName: string;
             } | {
                 savedSecretId: string;
                 accountId: string;
@@ -2464,6 +2474,11 @@ export type WorkflowsActionInputById = {
                     environmentId: string;
                     service: string;
                     database: string;
+                } | {
+                    kind: 'managed_deployment';
+                    environmentId: string;
+                    targetLinkId: string;
+                    databaseName: string;
                 } | {
                     savedSecretId: string;
                     accountId: string;
@@ -2673,6 +2688,11 @@ export type WorkflowsActionInputById = {
                     environmentId: string;
                     service: string;
                     database: string;
+                } | {
+                    kind: 'managed_deployment';
+                    environmentId: string;
+                    targetLinkId: string;
+                    databaseName: string;
                 } | {
                     savedSecretId: string;
                     accountId: string;
@@ -2966,6 +2986,11 @@ export type WorkflowsActionInputById = {
                     service: string;
                     database: string;
                 } | {
+                    kind: 'managed_deployment';
+                    environmentId: string;
+                    targetLinkId: string;
+                    databaseName: string;
+                } | {
                     savedSecretId: string;
                     accountId: string;
                     workspace: {
@@ -3181,6 +3206,11 @@ export type WorkflowsActionInputById = {
                     environmentId: string;
                     service: string;
                     database: string;
+                } | {
+                    kind: 'managed_deployment';
+                    environmentId: string;
+                    targetLinkId: string;
+                    databaseName: string;
                 } | {
                     savedSecretId: string;
                     accountId: string;
@@ -3677,6 +3707,11 @@ export type WorkflowsActionInputById = {
                         service: string;
                         database: string;
                     } | {
+                        kind: 'managed_deployment';
+                        environmentId: string;
+                        targetLinkId: string;
+                        databaseName: string;
+                    } | {
                         savedSecretId: string;
                         accountId: string;
                         workspace: {
@@ -3882,6 +3917,11 @@ export type WorkflowsActionInputById = {
                         environmentId: string;
                         service: string;
                         database: string;
+                    } | {
+                        kind: 'managed_deployment';
+                        environmentId: string;
+                        targetLinkId: string;
+                        databaseName: string;
                     } | {
                         savedSecretId: string;
                         accountId: string;
@@ -19860,6 +19900,11 @@ export type WorkflowsActionResultById = {
                         service: string;
                         database: string;
                     } | {
+                        kind: 'managed_deployment';
+                        environmentId: string;
+                        targetLinkId: string;
+                        databaseName: string;
+                    } | {
                         savedSecretId: string;
                         accountId: string;
                         workspace: ({
@@ -21347,6 +21392,11 @@ export type WorkflowsActionResultById = {
                             environmentId: string;
                             service: string;
                             database: string;
+                        } | {
+                            kind: 'managed_deployment';
+                            environmentId: string;
+                            targetLinkId: string;
+                            databaseName: string;
                         } | {
                             savedSecretId: string;
                             accountId: string;
@@ -22033,6 +22083,11 @@ export type WorkflowsActionResultById = {
                         service: string;
                         database: string;
                     } | {
+                        kind: 'managed_deployment';
+                        environmentId: string;
+                        targetLinkId: string;
+                        databaseName: string;
+                    } | {
                         savedSecretId: string;
                         accountId: string;
                         workspace: ({
@@ -23520,6 +23575,11 @@ export type WorkflowsActionResultById = {
                             environmentId: string;
                             service: string;
                             database: string;
+                        } | {
+                            kind: 'managed_deployment';
+                            environmentId: string;
+                            targetLinkId: string;
+                            databaseName: string;
                         } | {
                             savedSecretId: string;
                             accountId: string;
@@ -23864,6 +23924,11 @@ export type WorkflowsActionResultById = {
                         service: string;
                         database: string;
                     } | {
+                        kind: 'managed_deployment';
+                        environmentId: string;
+                        targetLinkId: string;
+                        databaseName: string;
+                    } | {
                         savedSecretId: string;
                         accountId: string;
                         workspace: ({
@@ -25351,6 +25416,11 @@ export type WorkflowsActionResultById = {
                             environmentId: string;
                             service: string;
                             database: string;
+                        } | {
+                            kind: 'managed_deployment';
+                            environmentId: string;
+                            targetLinkId: string;
+                            databaseName: string;
                         } | {
                             savedSecretId: string;
                             accountId: string;
@@ -25699,6 +25769,11 @@ export type WorkflowsActionResultById = {
                         service: string;
                         database: string;
                     } | {
+                        kind: 'managed_deployment';
+                        environmentId: string;
+                        targetLinkId: string;
+                        databaseName: string;
+                    } | {
                         savedSecretId: string;
                         accountId: string;
                         workspace: ({
@@ -27186,6 +27261,11 @@ export type WorkflowsActionResultById = {
                             environmentId: string;
                             service: string;
                             database: string;
+                        } | {
+                            kind: 'managed_deployment';
+                            environmentId: string;
+                            targetLinkId: string;
+                            databaseName: string;
                         } | {
                             savedSecretId: string;
                             accountId: string;
@@ -28495,6 +28575,11 @@ type WorkflowsActionDefinition3 = {
             environmentId: string;
             service: string;
             database: string;
+        } | {
+            kind: 'managed_deployment';
+            environmentId: string;
+            targetLinkId: string;
+            databaseName: string;
         } | {
             savedSecretId: string;
             accountId: string;

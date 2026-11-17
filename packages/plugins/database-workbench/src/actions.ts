@@ -8,7 +8,8 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 export { databaseActionMetadata, databaseActionOperationClass } from '@happier-dev/database-protocol';
 
 function projectDescriptor(descriptor: database.DatabaseDescriptorV1): database.DatabaseDescriptorV1 {
-    return { ...descriptor, automationSubject: database.readAutomationDatabaseSubjectV1(descriptor.placement.serverId, descriptor.target) };
+    return { ...descriptor, automationSubject: descriptor.automationSubject
+        ?? database.readAutomationDatabaseSubjectV1(descriptor.placement.serverId, descriptor.target) };
 }
 
 export type DatabaseActionProducers = Readonly<{

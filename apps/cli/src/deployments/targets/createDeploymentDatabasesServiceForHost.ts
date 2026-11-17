@@ -1,7 +1,7 @@
 import { PluginError, type DeploymentDatabasesServiceV1, type DeploymentTargetPreparationBaseV1,
     type DeploymentTargetDatabaseRuntimeV1 } from '@happier-dev/plugin-sdk';
-import type { DatabaseCompletenessV1, DatabaseDescriptorV1, DatabaseManagedDeploymentTargetV1,
-    DatabaseOperationClassV1, DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+import { readAutomationDatabaseSubjectV1, type DatabaseCompletenessV1, type DatabaseDescriptorV1, type DatabaseManagedDeploymentTargetV1,
+    type DatabaseOperationClassV1, type DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
 import { builtinDatabaseCapabilities } from '@happier-dev/databases/capabilities';
 import { openOwnServerDatabaseConnectionForHost } from './ownServer/databaseConnection';
 import { readOwnServerDataServiceDeploymentForHost, resolveOwnServerDataQueryDefinitionForHost } from './ownServer/dataQueryScope';
@@ -215,7 +215,8 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                         placement: bound.placement }, bound.invocation);
                     for (const descriptor of result.targets) {
                         if (descriptor.target.kind !== 'managed_deployment') return refuse('target_mismatch');
-                        targets.push({ ...descriptor, target: { ...selected.target, database: descriptor.target.database }, access: summary,
+                        const target: DatabaseManagedDeploymentTargetV1 = { ...selected.target, database: descriptor.target.database };
+                        targets.push({ ...descriptor, target, automationSubject: readAutomationDatabaseSubjectV1(admission.host.serverId, target), access: summary,
                             placement: bound.placement });
                     }
                     if (!result.completeness.complete) completeness = result.completeness;
