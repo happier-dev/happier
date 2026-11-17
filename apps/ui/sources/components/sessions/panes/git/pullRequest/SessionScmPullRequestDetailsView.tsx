@@ -5,7 +5,9 @@ import { useDetailsTabChrome } from '@/components/appShell/panes/details/workspa
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSessionScmDraft } from '@/hooks/session/sourceControl/useSessionScmDraft';
-import { useSessionProjectScmSnapshot } from '@/sync/domains/state/storage';
+import { useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError } from '@/sync/domains/state/storage';
+import { scmStatusSync } from '@/scm/scmStatusSync';
+import { SourceControlUnavailableState } from '@/components/workspaces/scm/states';
 import { t } from '@/text';
 import { useSessionAddressForSessionId } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { SessionScmPullRequestSurface } from '@/components/workspaces/scm/update/ScmPullRequestSurface';
@@ -31,6 +33,7 @@ export function SessionScmPullRequestDetailsView(props: Readonly<{
     onCloseTab: () => void;
 }>) {
     const snapshot = useSessionProjectScmSnapshot(props.sessionId, props.serverId);
+    const snapshotError = useSessionProjectScmSnapshotError(props.sessionId, props.serverId);
     const sessionAddress = useSessionAddressForSessionId(props.sessionId, props.serverId);
     const { machineReachable } = useSessionMachineReachability(props.sessionId, props.serverId);
     const scmDraft = useSessionScmDraft({ sessionId: props.sessionId, serverId: props.serverId });
@@ -67,6 +70,16 @@ export function SessionScmPullRequestDetailsView(props: Readonly<{
         props.onCloseTab();
     }, [props]);
 
+    if (!snapshot && snapshotError) {
+        return (
+            <SourceControlUnavailableState
+                testID="git-pull-request-details-unavailable"
+                details={snapshotError.message}
+                errorCode={snapshotError.errorCode}
+                onRetry={() => scmStatusSync.invalidateFromUser(props.sessionId, props.serverId)}
+            />
+        );
+    }
     if (!snapshot) {
         return <SurfaceStateCard testID="git-pull-request-details-loading" kind="loading" title={t('common.loading')} />;
     }
