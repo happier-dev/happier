@@ -504,8 +504,9 @@ it.each(['partial', 'refusal'] as const)('settles a %s template preview as an Ac
                 : { ok: true, result: { kind: 'partial', phase: 'generation', savedSecrets: [],
                     errorCode: 'deployment_content_unavailable' } } } };
     } });
-    const result = await createUiDeploymentActionDeps(writer).prepareDeploymentTemplateInstantiation!({ input, context: {} });
-    expect(result).toEqual(scenario === 'refusal' ? refusal
+    const result = await createUiDeploymentActionDeps(writer).prepareDeploymentTemplateInstantiation!({ input,
+        context: { actionRequestId: 'template-preview' } });
+    expect(result).toEqual(scenario === 'refusal' ? { ...refusal, requestId: 'template-preview' }
         : { ok: false, errorCode: 'deployment_content_unavailable', error: 'deployment_content_unavailable' });
 });
 
@@ -543,7 +544,7 @@ it.each(['add', 'remove', 'verify', 'invalid target'] as const)(
         environmentId: detail.environment.id, revision: detail.environment.revision + 1, domains: saved, nextCursor: null } }) });
     const deps = createUiDeploymentActionDeps(requireAccount());
     expect(await deps.deploymentAction!(actionId, input, { ...uiHost, actionRequestId: 'domain-original' }))
-        .toEqual(scenario === 'invalid target' ? refusal : success);
+        .toEqual(scenario === 'invalid target' ? { ...refusal, requestId: 'domain-original' } : success);
     expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(1);
     expect(homes.requests.filter(request => request.path === domainPath && request.method === 'POST')).toHaveLength(0);
     if (scenario === 'add') expect(await deps.deploymentAction!('deployments.domains.list', {
@@ -567,7 +568,8 @@ it.each([true, false])('routes current health through the selected native Machin
         return result;
     });
     expect(await createUiDeploymentActionDeps(requireAccount()).deploymentAction!('deployments.health.current', input,
-        { ...uiHost, actionRequestId: 'current-health' })).toEqual(admitted ? result : { ok: false, error: 'deployment_access_denied' });
+        { ...uiHost, actionRequestId: 'current-health' })).toEqual(admitted ? result
+            : { ok: false, errorCode: 'deployment_access_denied', error: 'deployment_access_denied' });
     expect(homes.requestsFor('/v1/actions/deployments.health.current')).toHaveLength(admitted ? 1 : 0);
     expect(homes.requestsFor('/v1/machines/different-controller')).toHaveLength(0);
 });
@@ -854,7 +856,8 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         });
         const actual = await createUiDeploymentActionDeps(requireAccount()).deploymentAction!(actionId, input,
             { ...uiHost, actionRequestId: `native-${kind}` });
-        expect(actual).toEqual(admitted ? result : { ok: false, error: 'deployment_access_denied' });
+        expect(actual).toEqual(admitted ? result
+            : { ok: false, errorCode: 'deployment_access_denied', error: 'deployment_access_denied' });
         expect(environmentReads).toBe(1);
         expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(admitted ? 1 : 0);
         expect(homes.requestsFor('/v1/machines/different-controller')).toHaveLength(0);
@@ -877,7 +880,7 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
             ...(kind === 'runtime' ? { service } : {}), logs: { kind: 'unavailable', reason: 'secret_redaction_unavailable' } });
         await answerControllerAction('deployments.logs.read', machineId, (admitted, transport) => {
             expect(transport.target).toEqual({ kind: 'machine', machineId });
-            expect(admitted).toEqual(input);
+            expect(admitted).toEqual({ ...input, serverId: requireAccount().serverIdentityId });
             return result;
         });
         const focusedHome = await homes.addHome({ name: 'Signed out focused Home',
@@ -886,7 +889,7 @@ describe('deployment record Actions retain receiving-daemon preparation', () => 
         const execute = createFrontDoorActionExecute();
         // Explicit caller custody still wins: its missing credentials must not borrow the operand Home's Account.
         await expect(execute('deployments.logs.read', input, { ...uiHost, serverId: focusedHome }))
-            .rejects.toThrow('action_home_signed_out');
+            .resolves.toEqual({ ok: false, errorCode: 'action_home_signed_out', error: 'action_home_signed_out' });
         const actual = await execute('deployments.logs.read', input, uiHost);
         expect(actual, JSON.stringify(actual)).toMatchObject({ ok: true, result });
         // The live collector supplies an explicit non-default Home and Account.
@@ -1076,7 +1079,7 @@ it.each(['retained child', 'cold preview', 'explicit conflict', 'prepared child'
     const repository = { kind: 'github', deployment: 'https://github.com', repository: 'owner/app' } as const;
     const preview = { templateEnvironmentId: template.id, expectedTemplateRevision: template.revision,
         pullRequestId: child.previewPullRequestId, runtimeTargetLinkId: child.previewTargetLinkId };
-    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId, projectSourceId: template.projectSourceId,
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: requireAccount().serverIdentityId, projectSourceId: template.projectSourceId,
         requestKey: 'ui-retained-preview', protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
         ...(scenario === 'prepared child' ? { ...content, controllerMachineId: child.controllerMachineId, preview }
             : { mode: 'preview', preview: { ...preview, headSha: 'a'.repeat(40), provenance: { v: 1,
@@ -1138,7 +1141,7 @@ it.each(['historical own UI', 'web terminal Session'] as const)('consumes one ap
     const { createApprovalArtifact } = await import('@/sync/ops/actions/approvalArtifactWriter');
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
-    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: terminalProposal ? writer.serverIdentityId : serverId, projectSourceId: 'source',
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: writer.serverIdentityId, projectSourceId: 'source',
         requestKey: 'reviewed-ui-create', controllerMachineId: 'create-controller', ...content,
         protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' });
     const effects: unknown[] = [];
@@ -1257,7 +1260,7 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
         ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
     } });
-    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId,
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: writer.serverIdentityId,
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         set: [{ purpose: 'variable', phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } }], remove: [] });
     const effects: unknown[] = [];
@@ -1274,6 +1277,7 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
         deploymentAction: async (_actionId, admitted) => { effects.push(admitted); return result; },
     }));
     const invocations: unknown[] = [];
+    const receiverResults: unknown[] = [];
     const { encryption } = await writer.resolveAccountEncryption();
     if (!writer.serverIdentityId) throw new Error('Expected Home identity');
     let receivingRequest: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse> | null = null;
@@ -1292,11 +1296,7 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
                 signExternalActionApprovalInput: ({ authorization, ...signed }) => boundary.signApprovalInput({ ...signed, authorizationToken: authorization.token }),
                 actionRequestId: transport.requestId, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
                     actions: { [actionId]: { approvalRequiredSurfaces: ['ui', 'agent'] } } }) });
-            expect(executed, JSON.stringify({ receiverOk: executed.ok,
-                ...(!executed.ok ? { errorCode: executed.errorCode } : {}) })).toMatchObject(
-                transport.invocation.authority === 'account_automation'
-                    ? { ok: false, errorCode: 'approval_origin_unavailable' }
-                    : { ok: true });
+            receiverResults.push(executed);
             return executed.ok ? executed.result : executed;
         },
         failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
@@ -1316,7 +1316,8 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
     }
     const saved = await createDefaultActionExecutor().execute(actionId, input, { surface: 'ui', authority: 'present_user',
         actionCaller: { kind: 'host' }, serverId, expectedAccountId: writer.accountId, actionRequestId: 'person-variables-save' });
-    expect(saved, JSON.stringify({ saved, boundaryObservations, machineReads: homes.requestsFor('/v1/machines/read-batch').length })).toMatchObject({ ok: true, result });
+    expect(saved, JSON.stringify({ saved, receiverResults, boundaryObservations,
+        machineReads: homes.requestsFor('/v1/machines/read-batch').length })).toMatchObject({ ok: true, result });
     expect(effects).toEqual([input]);
     expect(homes.artifacts(serverId).list()).toHaveLength(0);
     const automated = await createUiDeploymentActionDeps(writer).deploymentAction!(actionId, input,
@@ -1392,7 +1393,7 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
         if (!discovered?.secretRef) throw new Error('Expected usable reference from value-free metadata');
         catalogSource = { kind: 'secret', ref: discovered.secretRef, resourceRevision: discovered.updatedAt };
     }
-    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: unsignedCanonical || terminalProposal ? writer.serverIdentityId : serverId,
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: writer.serverIdentityId,
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         set: [{ purpose: 'variable', phase: 'runtime', name: selectsSecret ? 'API_TOKEN' : 'PORT',
             source: catalogSource ?? (selectsSecret ? { kind: 'secret', ref: 'person_selects' } : { kind: 'value', value: '3000' }) }], remove: [] });
@@ -1497,7 +1498,9 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
     const persistedArtifact = await writer.readArtifact(artifactId, { fresh: true, ownerOnly: true });
     if (typeof persistedArtifact?.body !== 'string') throw new Error('Expected readable approval Artifact body');
     const persisted = ApprovalRequestV2Schema.parse(JSON.parse(persistedArtifact.body));
-    expect(persisted, JSON.stringify({ status: persisted.status, execution: persisted.execution })).toMatchObject({ status: 'executed', execution: { ok: true } });
+    expect(persisted, JSON.stringify({ status: persisted.status, execution: persisted.execution,
+        decided, receiverResults, published: [...published],
+        requests: homes.requests.map(({ method, path }) => ({ method, path })) })).toMatchObject({ status: 'executed', execution: { ok: true } });
     expect(persisted.actionArgs).toEqual(input);
     expect(persisted.executionOriginV1.externalActionExecutionAuthorization?.binding.actionId).toBe(
         unsignedCanonical ? undefined : proposalActionId);
@@ -1530,7 +1533,7 @@ it('tears down a person’s own UI Environment under Account Ask after confirmat
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
         ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
     } });
-    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId,
+    const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId: writer.serverIdentityId,
         environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
         targetLinkId: 'target-link', expectedTargetLinkRevision: 1,
         requestKey: 'person-environment-delete', reason: 'manual', ...content });
@@ -1574,16 +1577,17 @@ it.each(['template applied', 'template partial', 'template reviewed partial', 't
     const actionId = template ? 'deployments.templates.instantiate'
         : scenario.startsWith('restore') ? 'deployments.backups.restore' : 'deployments.deploy';
     const input = DeploymentActionInputSchemasV1[actionId].parse(template ? {
-        mode: 'apply', serverId, machineId, projectSourceId: detail.environment.projectSourceId,
+        mode: 'apply', serverId: writer.serverIdentityId, machineId, projectSourceId: detail.environment.projectSourceId,
         templateRef: { sourceId: 'apps', itemId: 'database', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
-        environment: { kind: 'create', name: 'Database', requestKey: 'lost-template', protection: 'nonProduction',
+        environment: { kind: 'create', name: 'Database', requestKey: `lost-template-${scenario}`, protection: 'nonProduction',
             purpose: 'standard', deployerMode: 'managers', controllerMachineId: machineId },
         target: { kind: 'new', installationId: `installation-${machineId}` }, destination: { kind: 'stored' }, bindings: [],
     } : actionId === 'deployments.backups.restore' ? {
-        mode: 'confirm', serverId, environmentId: detail.environment.id, machineId,
+        mode: 'confirm', serverId: writer.serverIdentityId, environmentId: detail.environment.id, machineId,
         installationId: `installation-${machineId}`, targetLinkId: 'target', deploymentId: 'capture',
-        restoreBackupId: 'backup', expectedRevision: 1, prepareOperationId: 'prepared-restore',
-    } : { serverId, environmentId: detail.environment.id, expectedRevision: 1, requestKey: 'lost-deploy',
+        source: { kind: 'repository', snapshotId: 'backup' }, expectedRevision: 1,
+        prepareOperationId: `prepared-restore-${scenario}`,
+    } : { serverId: writer.serverIdentityId, environmentId: detail.environment.id, expectedRevision: 1, requestKey: 'lost-deploy',
         targetLinkId: 'target', expectedTargetLinkRevision: 1, ...content });
     const partial = scenario === 'template partial' || scenario === 'template reviewed partial';
     const reviewedPartial = scenario === 'template reviewed partial';
@@ -1606,9 +1610,9 @@ it.each(['template applied', 'template partial', 'template reviewed partial', 't
     homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
         ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
     } });
-    const requestId = 'lost-http-envelope';
+    const requestId = `lost-http-envelope-${scenario}`;
     const retainedRequestId = readDeploymentActionOperationRequestIdV1(actionId, input) ?? requestId;
-    const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'retained-native', revision: 2,
+    const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: `retained-native-${scenario}`, revision: 2,
         actionId, requestId: retainedRequestId, state: reviewedPartial || restoreFailure ? 'failed' : 'succeeded',
         scope: { accountId: writer.accountId, machineId }, title: 'Native deployment', createdAt: 1,
         startedAt: 1, settledAt: 2, cancellation: 'supported',
