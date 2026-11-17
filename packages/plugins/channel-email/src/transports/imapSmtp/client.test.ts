@@ -401,7 +401,9 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
         state: scenario === 'submit-result-lost' ? 'outcomeUnknown' : 'delivered',
       }));
       if (scenario === 'sent-copy-failed') {
-        expect(logger.warn.mock.calls.map(call => call[1])).toContainEqual({ code: 'sentCopyUnconfirmed' });
+        expect(logger.warn.mock.calls.map(call => call[1])).toContainEqual(expect.objectContaining({
+          code: 'sentCopyUnconfirmed', failureCause: expect.objectContaining({ phase: 'email.smtp_submit' }),
+        }));
       }
       for (const [collection, definition] of [[journey.state, CHANNEL_STATE_COLLECTION], [journey.deliveries, CHANNEL_DELIVERIES_COLLECTION]] as const) {
         const schema = compilePluginJsonSchema(definition.schema);
@@ -951,10 +953,13 @@ describe('IMAP/SMTP transport against real TLS protocol servers', () => {
 
   it('keeps a lost SMTP DATA receipt ambiguous and reconciles the server-saved Sent identity without resending', async () => {
     loseReceipt = true; saveSent = true;
+    const warn = vi.fn();
+    transport = createImapSmtpTransport(account, { ca: imap.getCredentials().cert }, { warn });
     expect(await transport.submitRaw(raw('lost'), { from: mailbox, to: ['sales@example.com'] }, '<lost@example.com>'))
       .toMatchObject({ kind: 'outcomeUnknown' });
     expect(await transport.findSent('<lost@example.com>')).toBe(true);
     expect(submitted).toHaveLength(1);
+    expect(warn).toHaveBeenCalledWith(expect.any(String), { failureCause: expect.objectContaining({ errorClass: 'Error' }) });
   });
 
   it('cancels a pending SMTP receipt and closes the connection rather than leaving a send behind', async () => {

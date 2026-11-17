@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getConversationAttachmentIdRepresentationsV1, readConversationAttachmentIdV1 } from '@happier-dev/channels-protocol/v1';
 import { simpleParser } from 'mailparser';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -11,6 +11,22 @@ import { ConversationAttachmentFetchResultV1Schema, ConversationPollResultV1Sche
 import { createEmailTransportFixture as fixture, mailbox, incoming, config, connection, thread, delivery } from '../testkit/emailTransportFixture.js';
 
 describe('email core with an external contributed raw transport', () => {
+  it.each(['prepare', 'submit'] as const)('retains a safe %s cause without changing effect truth or resubmitting', async phase => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), diagnostic: vi.fn() };
+    const privateDetails = 'private-email-and-credentials';
+    const f = await fixture({ logger });
+    try {
+      const error = Object.assign(new Error(privateDetails), { code: 'ECONNRESET' });
+      if (phase === 'prepare') f.setFetchFailure(error);
+      else f.setSubmitFailure(error);
+      await expect(f.invoke(ids.messageDeliver, delivery)).resolves.toMatchObject(phase === 'prepare'
+        ? { kind: 'notDelivered', retry: 'safe' } : { kind: 'outcomeUnknown' });
+      expect(f.submissions).toHaveLength(phase === 'prepare' ? 0 : 1);
+      expect(logger.warn).toHaveBeenCalledWith(expect.any(String), { failureCause: expect.objectContaining({ errorCode: 'ECONNRESET' }) });
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(privateDetails);
+    } finally { await f.dispose(); }
+  });
+
   it('delivers a registered host notification through its selected Email connection and real raw transport', async () => {
     const f = await fixture();
     try {

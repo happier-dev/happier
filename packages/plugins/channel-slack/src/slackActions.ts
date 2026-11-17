@@ -74,7 +74,7 @@ export async function materializeExactSlackCredentials(
 
 async function exactApi(context: PluginInvocationContext, credentialRef: ConnectedAccountRef) {
   const credentials = await materializeExactSlackCredentials(context, credentialRef);
-  return 'kind' in credentials ? credentials : createSlackApi({ credentials, http: context.services.http });
+  return 'kind' in credentials ? credentials : createSlackApi({ credentials, http: context.services.http, logger: context.services.logger });
 }
 async function readyConnection(context: PluginInvocationContext, input: ConnectionInput, verifyIdentity = false) {
   const config = readSlackConnectionConfiguration(input);

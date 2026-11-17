@@ -28,6 +28,18 @@ function jsonResponse(value: unknown, status = 200): Readonly<{
 }
 
 describe('Telegram Bot API adapter', () => {
+  it('retains a safe send failure cause without replaying an uncertain effect', async () => {
+    const privateDetails = 'private-token-and-message';
+    const warn = vi.fn();
+    const request = vi.fn(async () => { throw Object.assign(new Error(privateDetails), { code: 'ECONNRESET' }); });
+    const api = createTelegramBotApi({ token: privateDetails, http: { request }, logger: { warn } });
+    await expect(api.sendMessage({ chatId: '-100456', text: privateDetails, suppressLinkPreview: true }))
+      .resolves.toEqual({ kind: 'outcomeUnknown' });
+    expect(request).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.any(String), { failureCause: expect.objectContaining({ errorCode: 'ECONNRESET' }) });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(privateDetails);
+  });
+
   it('enforces the native 128-character topic-name boundary before requesting HTTP', async () => {
     const request = vi.fn(async () => jsonResponse({ ok: true, result: { message_thread_id: 17 } }));
     const api = createTelegramBotApi({ token: 'fixture-token', http: { request } });

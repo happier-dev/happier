@@ -27,6 +27,7 @@ import {
   type ConversationProviderSetupResultV1,
 } from '@happier-dev/channels-protocol/v1';
 import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import {
@@ -526,6 +527,9 @@ export async function deliverGithubChannelMessage(
     rethrowConversationProviderLifecycleFailureV1(error, context.signal);
     // This is the endpoint GET, not a comment POST, so GitHub has no message
     // effect to reconcile and the normal delivery owner may retry it safely.
+    context.services.logger.warn('[GitHub] delivery endpoint read failed', {
+      failureCause: projectActionFailureCauseV1(error, 'github.delivery_revalidate', { allowUnknownErrorCode: false }),
+    });
     return safeRetryBeforeGithubCommentPost();
   }
   if (revalidated.status !== 200) {
@@ -571,6 +575,9 @@ export async function deliverGithubChannelMessage(
     return ConversationDeliveryResultV1Schema.parse({ kind: 'outcomeUnknown' });
   } catch (error) {
     if (context.signal.aborted) throw error;
+    context.services.logger.warn('[GitHub] comment send failed', {
+      failureCause: projectActionFailureCauseV1(error, 'github.delivery_send', { allowUnknownErrorCode: false }),
+    });
     return ConversationDeliveryResultV1Schema.parse({ kind: 'outcomeUnknown' });
   }
 }

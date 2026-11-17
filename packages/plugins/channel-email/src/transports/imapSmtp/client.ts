@@ -3,6 +3,8 @@ import type { ImapFlow } from 'imapflow';
 import type SMTPConnection from 'nodemailer/lib/smtp-connection/index.js';
 import type { ConversationDeliveryResultV1 } from '@happier-dev/channels-protocol/v1';
 import type { EmailTransportListSinceResultV1 } from '@happier-dev/email-transports-protocol/v1';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 
 export type ImapSmtpAccount = Readonly<{
   mailbox: string; imapHost: string; imapPort: number; smtpHost: string; smtpPort: number;
@@ -26,7 +28,8 @@ function smtpResponseCode(error: unknown): number | undefined {
   return undefined;
 }
 
-export function createImapSmtpTransport(account: ImapSmtpAccount, tls?: ConnectionOptions, onSentCopyFailure?: () => void) {
+export function createImapSmtpTransport(account: ImapSmtpAccount, tls?: ConnectionOptions,
+  logger?: Pick<PluginInvocationContext['services']['logger'], 'warn'>) {
   const tlsOptions = account.tlsCaPem ? { ...tls, ca: account.tlsCaPem } : tls;
   async function withImap<T>(work: (client: ImapFlow) => Promise<T>, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted();
@@ -202,10 +205,14 @@ export function createImapSmtpTransport(account: ImapSmtpAccount, tls?: Connecti
         }, signal);
         return acceptedResult;
       } catch (error) {
+        logger?.warn(acceptedResult === undefined ? '[Email] SMTP submission failed'
+          : '[Email] Could not save the accepted message in Sent.', {
+          ...(acceptedResult === undefined ? {} : { code: 'sentCopyUnconfirmed' }),
+          failureCause: projectActionFailureCauseV1(error, 'email.smtp_submit', { allowUnknownErrorCode: false }),
+        });
         // SMTP acceptance remains authoritative when best-effort Sent work
         // fails or is cancelled. A failed copy never authorizes another send.
         if (acceptedResult !== undefined) {
-          onSentCopyFailure?.();
           return acceptedResult;
         }
         signal?.throwIfAborted();

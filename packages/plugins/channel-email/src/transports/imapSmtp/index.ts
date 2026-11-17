@@ -47,8 +47,7 @@ async function selectedTransport(input: EmailTransportConnectionInputV1, context
     const encoded = materialized.kind === 'environment' ? materialized.env[IMAP_SMTP_ENVIRONMENT_KEY] : undefined;
     if (!encoded) return { kind: 'notReady', reason: 'credentialInvalid' } as const;
     const value: unknown = JSON.parse(encoded);
-    return { transport: createImapSmtpTransport(accountReader.parse(value), undefined,
-      () => context.services.logger.warn('[Email] Could not save the accepted message in Sent.', { code: 'sentCopyUnconfirmed' })) };
+    return { transport: createImapSmtpTransport(accountReader.parse(value), undefined, context.services.logger) };
   } catch (error) {
     return classifyConversationProviderMaterializationFailureV1(error, context.signal);
   }

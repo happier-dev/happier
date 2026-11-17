@@ -266,7 +266,7 @@ async function createExactTelegramBotApi(
     if (!token) {
       return { kind: 'notReady', reason: 'credentialInvalid', diagnostic: 'The Telegram bot token is unavailable.' };
     }
-    const api = createTelegramBotApi({ token, http: context.services.http });
+    const api = createTelegramBotApi({ token, http: context.services.http, logger: context.services.logger });
     if (identities === undefined) return api;
     // The activation retains public bot identity only. Each poll still asks the
     // host for its current credential; a changed token cannot reuse old identity.

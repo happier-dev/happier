@@ -1,5 +1,7 @@
 import { rethrowConversationProviderLifecycleFailureV1, type ConversationProviderFailureV1 } from '@happier-dev/channels-protocol/v1';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 
 const TELEGRAM_BOT_API_BASE_URL = 'https://api.telegram.org';
 // Cloud Bot API getFile boundary: https://core.telegram.org/bots/api#getfile
@@ -416,6 +418,7 @@ function jsonBody(value: unknown): Uint8Array {
 export function createTelegramBotApi(input: Readonly<{
   token: string;
   http: TelegramHttp;
+  logger?: Pick<PluginInvocationContext['services']['logger'], 'warn'>;
 }>): TelegramBotApi {
   const token = input.token.trim();
   if (!token) throw new Error('Telegram bot token is required');
@@ -435,6 +438,9 @@ export function createTelegramBotApi(input: Readonly<{
       }, options);
       return parseBotApiEnvelope(response.body);
     } catch (error) {
+      input.logger?.warn('[Telegram] request failed', {
+        failureCause: projectActionFailureCauseV1(error, 'telegram.request', { allowUnknownErrorCode: false }),
+      });
       rethrowConversationProviderLifecycleFailureV1(error, options?.signal);
       return null;
     }

@@ -6,6 +6,7 @@ import {
 import { createHash } from 'node:crypto';
 import { isPluginError, PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { isPluginActionHandlerInvocationNotStartedAdvisory } from '@happier-dev/plugin-sdk/actions';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import {
   assertConversationChannelsCoreCallerV1, rethrowConversationProviderLifecycleFailureV1,
   hasCurrentConversationProviderConnectionV1,
@@ -278,7 +279,10 @@ export async function deliverEmailHostMessage(input: unknown, context: PluginInv
         ? { kind: 'notDelivered', retry: 'after', retryAfterMs: raw.retryAfterMs }
         : { kind: 'notDelivered', retry: raw.reason === 'network' || raw.reason === 'rateLimited' ? 'safe' : 'never' };
       const mail = await parseProviderEmail(Buffer.from(raw.mimeBase64, 'base64'), { quotedHistory: 'never', stripSignatures: false, bodyFormat: 'text' }, context);
-      if (isPluginError(mail)) return { kind: 'notDelivered', retry: 'safe' };
+      if (isPluginError(mail)) {
+        context.services.logger.warn('[Email] reply parsing failed', { code: mail.code, retryable: mail.retryable });
+        return { kind: 'notDelivered', retry: 'safe' };
+      }
       const trust = evaluateEmailTrust({ ...mail, strategy: config.trustStrategy });
       const actor = classifyEmailActor({ ...mail, mailbox: config.mailbox, trust });
       const candidate = mail.from === null ? null : normalizeEmailAddress(mail.from);
@@ -305,6 +309,9 @@ export async function deliverEmailHostMessage(input: unknown, context: PluginInv
     rethrowConversationProviderLifecycleFailureV1(error, context.signal);
     // No submit operation has been invoked: only the Email owner can prove
     // these preparation failures are safe to retry with the same custody.
+    context.services.logger.warn('[Email] reply preparation failed', {
+      failureCause: projectActionFailureCauseV1(error, 'email.prepare', { allowUnknownErrorCode: false }),
+    });
     return { kind: 'notDelivered', retry: 'safe' };
   }
   try {
@@ -317,6 +324,9 @@ export async function deliverEmailHostMessage(input: unknown, context: PluginInv
     rethrowConversationProviderLifecycleFailureV1(error, context.signal);
     // Only this submit invocation's host refusal proves no SMTP effect began.
     // A failed Sent lookup cannot establish that about an earlier submission.
+    context.services.logger.warn('[Email] submit invocation failed', {
+      failureCause: projectActionFailureCauseV1(error, 'email.submit', { allowUnknownErrorCode: false }),
+    });
     return isPluginActionHandlerInvocationNotStartedAdvisory(error)
       ? { kind: 'notDelivered', retry: 'safe' }
       : { kind: 'outcomeUnknown' };

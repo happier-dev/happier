@@ -165,10 +165,12 @@ function coreContext(
       },
     },
     signal,
+    // Boundary fixture supplies only the account, HTTP and logger services these Actions use.
     services: {
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), diagnostic: vi.fn() },
       ...services,
       http: services.http.request ? { ...services.http, ...createPluginHttpFixture({ request: services.http.request }) } : services.http,
-    } as PluginInvocationContext['services'],
+    } as unknown as PluginInvocationContext['services'],
   };
 }
 
@@ -1742,14 +1744,16 @@ describe('GitHub Channel Actions', () => {
     };
     const http = {
       request: vi.fn(async (_request: GithubHttpRequestInput) => {
-        throw new Error('GitHub endpoint revalidation network failure');
+        throw Object.assign(new Error('GitHub endpoint revalidation network failure'), { code: 'ECONNRESET' });
       }),
     };
 
+    const context = coreContext({ connectedAccounts, http });
     await expect(deliverGithubChannelMessage(
       githubChannelDeliveryInput('delivery-get-network-failure'),
-      coreContext({ connectedAccounts, http }),
+      context,
     )).resolves.toEqual({ kind: 'notDelivered', retry: 'safe' });
+    expect(context.services.logger.warn).toHaveBeenCalledWith(expect.any(String), { failureCause: expect.objectContaining({ errorCode: 'ECONNRESET' }) });
     expect(http.request).toHaveBeenCalledOnce();
     expect(http.request.mock.calls[0]?.[0]).toMatchObject({
       url: 'https://api.github.com/repos/acme/widgets/issues/1',
@@ -1803,14 +1807,16 @@ describe('GitHub Channel Actions', () => {
       request: vi.fn(async (request: GithubHttpRequestInput) => (
         request.url === 'https://api.github.com/repos/acme/widgets/issues/1'
           ? jsonResponse({ id: 5, number: 1, title: 'Issue title' })
-          : Promise.reject(new Error('GitHub comment POST transport ambiguity'))
+          : Promise.reject(Object.assign(new Error('GitHub comment POST transport ambiguity'), { code: 'ECONNRESET' }))
       )),
     };
 
+    const context = coreContext({ connectedAccounts, http });
     await expect(deliverGithubChannelMessage(
       githubChannelDeliveryInput('delivery-post-ambiguity'),
-      coreContext({ connectedAccounts, http }),
+      context,
     )).resolves.toEqual({ kind: 'outcomeUnknown' });
+    expect(context.services.logger.warn).toHaveBeenCalledWith(expect.any(String), { failureCause: expect.objectContaining({ errorCode: 'ECONNRESET' }) });
     expect(http.request.mock.calls.map(([request]) => request.url)).toEqual([
       'https://api.github.com/repos/acme/widgets/issues/1',
       'https://api.github.com/repos/acme/widgets/issues/1/comments',

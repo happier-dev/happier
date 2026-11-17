@@ -1,4 +1,6 @@
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import { parseRetryAfterHeader } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ConversationDeliveryResultV1, ConversationProviderFailureV1 } from '@happier-dev/channels-protocol/v1';
 import type { SlackMessagePayload } from './slackDelivery.js';
@@ -71,7 +73,8 @@ function failure(response: SlackResponse | null): SlackApiFailure {
   return INVALID_CONFIGURATION;
 }
 
-export function createSlackApi(input: Readonly<{ credentials: SlackCredentials; http: Pick<HttpService, 'request'> }>) {
+export function createSlackApi(input: Readonly<{ credentials: SlackCredentials; http: Pick<HttpService, 'request'>;
+  logger?: Pick<PluginInvocationContext['services']['logger'], 'warn'> }>) {
   async function request(
     method: string, parameters: Readonly<Record<string, unknown>>, options?: RequestOptions,
   ): Promise<SlackResponse | null> {
@@ -93,9 +96,12 @@ export function createSlackApi(input: Readonly<{ credentials: SlackCredentials; 
       let body: unknown = null;
       try { body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(response.body)); } catch { /* Invalid provider response. */ }
       return { status: response.status, headers: response.headers, body };
-    } catch {
-      // Transport exceptions can contain request URLs or tokens. Never project
-      // them into diagnostics, and never replay a send on response loss.
+    } catch (error) {
+      // Keep the cause without request URLs, tokens or response bytes. A lost
+      // response still cannot prove that a send had no effect.
+      input.logger?.warn('[Slack] request failed', {
+        failureCause: projectActionFailureCauseV1(error, 'slack.request', { allowUnknownErrorCode: false }),
+      });
       return null;
     }
   }

@@ -27,7 +27,7 @@ export const incoming = Buffer.from(['From: Alice <alice@example.com>', 'Message
   'Subject: Re: Question', 'Content-Type: text/plain; charset=utf-8', '', 'ANSWER',
   'On Monday, Alice wrote:', '> HISTORY'].join('\r\n'));
 
-export async function createEmailTransportFixture(options: { findSent?: boolean; providerConfig?: typeof config } = {}) {
+export async function createEmailTransportFixture(options: { findSent?: boolean; providerConfig?: typeof config; logger?: PluginServices['logger'] } = {}) {
   const configured = options.providerConfig ?? config;
   const sent = new Map<string, Uint8Array>();
   const submissions: EmailTransportSubmitRawInputV1[] = [];
@@ -40,6 +40,7 @@ export async function createEmailTransportFixture(options: { findSent?: boolean;
   let ambiguous = false;
   let lookupOverride: Uint8Array | undefined;
   let fetchFailure: unknown;
+  let submitFailure: unknown;
   let invokedAtMs = Date.now();
   const receivedAtMs = 1_792_000_000_000;
   function transportAction(role: keyof typeof protocol.operations, run: ActionHandler) {
@@ -59,6 +60,7 @@ export async function createEmailTransportFixture(options: { findSent?: boolean;
       const request = EmailTransportSubmitRawInputV1Schema.parse(input);
       submissions.push(request);
       sent.set(request.messageId, Buffer.from(request.mimeBase64, 'base64'));
+      if (submitFailure !== undefined) throw submitFailure;
       return ambiguous ? { kind: 'outcomeUnknown' } : { kind: 'delivered', providerMessageIds: [request.messageId] };
     }),
     test: transportAction('connectionTest', async () => ({ kind: 'ready', mailbox })),
@@ -134,6 +136,7 @@ export async function createEmailTransportFixture(options: { findSent?: boolean;
     } } };
   }
   email = await createPluginTestkit({ manifest: emailPlugin.manifest, targetedContributionContributors: [transport],
+    ...(options.logger === undefined ? {} : { services: { logger: options.logger } }),
     actionTargets: [coreFacts], resolveCurrentPluginMaterializationRef: () => materializationRef,
     module: { activate(api) {
       return emailPlugin.activate({ ...api, actions: { ...api.actions,
@@ -197,6 +200,7 @@ export async function createEmailTransportFixture(options: { findSent?: boolean;
   return { sent, submissions, facts, connectionReadRequests, receivedAtMs, email, state, materializationRef, setInvocationTime(value: number) { invokedAtMs = value; },
     setAmbiguous(value: boolean) { ambiguous = value; }, replaceFetched(raw: Uint8Array) { lookupOverride = raw; },
     setFetchFailure(error: unknown) { fetchFailure = error; },
+    setSubmitFailure(error: unknown) { submitFailure = error; },
     setMessages(values: readonly (readonly [string, Uint8Array])[]) { for (const [ref, raw] of values) messages.set(ref, raw); refs = values.map(([ref]) => ref); },
     addMessage(ref: string, raw: Uint8Array) { messages.set(ref, raw); },
     setNotFound() { forceNotFound = true; },

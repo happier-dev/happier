@@ -9,8 +9,10 @@ describe('Email parser runtime recovery', () => {
   let f: Awaited<ReturnType<typeof fixture>>;
   let journey: Awaited<ReturnType<typeof createChannelsJourneyFixture>>;
   let admitted: SessionSendRequest[];
+  let warn: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
-    f = await fixture();
+    warn = vi.fn();
+    f = await fixture({ logger: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn(), diagnostic: vi.fn() } });
     admitted = [];
     const sessions = { async get() { return {
       async summary() { return { id: 'fixture-session', machineId: 'fixture-machine', state: 'idle',
@@ -58,6 +60,7 @@ describe('Email parser runtime recovery', () => {
     expect(admitted).toEqual([]);
     expect([...f.state.rows.values()].filter(row => row.value['record-kind'] === 'ingress-census')).toEqual([]);
     await expect(f.invoke(ids.messageDeliver, delivery)).resolves.toMatchObject({ kind: 'notDelivered', retry: 'safe' });
+    expect(warn).toHaveBeenCalledWith(expect.any(String), { code: 'email_parser_syntax_error', retryable: true });
     await expect(f.invoke(ids.attachmentFetch, { ...connection, messageId: '<incoming@example.com>', attachmentIds: ['mime:1'] }))
       .rejects.toMatchObject({ code: 'email_parser_syntax_error', retryable: true });
     expect(f.submissions).toEqual([]);

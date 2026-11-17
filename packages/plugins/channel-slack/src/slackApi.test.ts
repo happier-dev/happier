@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { HttpService } from '@happier-dev/plugin-sdk/http';
 import { ConversationDeliveryResultV1Schema } from '@happier-dev/channels-protocol/v1';
 import { createSlackApi } from './slackApi.js';
@@ -12,6 +12,17 @@ const identity = { teamId: 'T1', appId: 'A1', botUserId: 'U1', botId: 'B1', labe
 const payload = () => createSlackMessagePayload({ channelId: 'C1', text: 'hello', linkPreviewPolicy: 'suppress' });
 
 describe('Slack Web API boundary', () => {
+  it('retains a safe send failure cause without replaying an uncertain effect', async () => {
+    const privateDetails = 'private-token-and-message';
+    const warn = vi.fn();
+    const request = vi.fn(async () => { throw Object.assign(new Error(privateDetails), { code: 'ECONNRESET' }); });
+    const api = createSlackApi({ credentials, http: { request }, logger: { warn } });
+    await expect(api.postMessage(payload())).resolves.toEqual({ kind: 'outcomeUnknown' });
+    expect(request).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(expect.any(String), { failureCause: expect.objectContaining({ errorCode: 'ECONNRESET' }) });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(privateDetails);
+  });
+
   it('updates with the bot credential and treats an uncorrelated update as uncertain without posting a replacement', async () => {
     const requests: string[] = [];
     const api = createSlackApi({ credentials, http: { async request(input) {
