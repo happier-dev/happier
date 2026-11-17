@@ -177,6 +177,12 @@ generic error: each is a user-recoverable state with one useful next action. `jo
 `already_member` return the Team so the client can offer **Open Team** without a second
 lookup.
 
+In 0.3 development source, a new join stays on the Joined page until the person
+continues. Its setup continuation uses `teamSetupPath` to open the registered
+`/teams/:teamId/setup` page on the admission's exact Home. Opening the Team remains
+available separately; an existing member continues to the Team. Neither accepting
+the invitation nor rendering Joined applies Machine setup or opens repositories.
+
 In unreleased 0.3, unauthenticated preview keeps unknown and malformed bearers generic.
 For a known bearer, its existing `unavailable` outcome may carry an optional typed
 `reason`: `expired`, `revoked`, `used`, `team_archived`, or `teams_disabled`. The join
