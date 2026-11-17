@@ -20,7 +20,6 @@ const { AccountTriggersSection } = await import('./AccountTriggersSection');
 const { ScheduledWorkflowSection } = await import('./ScheduledWorkflowSection');
 const { SubjectTriggersSection, SubjectTriggersSectionContent } = await import('./SubjectTriggersSection');
 const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
-const { useSessionTriggers } = await import('./useSessionTriggers');
 const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -121,7 +120,7 @@ describe('Account trigger HTTP read failure and recovery', () => {
         const accountDetailsQuery = JSON.stringify(AutomationDefinitionDetailsRequestSchema.parse({ details: true }));
         const account = await restoreServerAccountForTest({
             serverUrl: `https://session-trigger-demand-${crypto.randomUUID()}.test`,
-            accountId: 'session-trigger-demand',
+            serverIdentityId: 'srv_session-trigger-demand', accountId: 'session-trigger-demand',
             request: homeRequest(async (url, init) => {
                 if (url.pathname === '/v3/automations/query') {
                     const query = AutomationDefinitionDetailsRequestSchema.safeParse(JSON.parse(String(init?.body)));
@@ -131,8 +130,9 @@ describe('Account trigger HTTP read failure and recovery', () => {
             }),
         });
         disposals.push(() => account.dispose());
+        const sessionSection = { subject: { kind: 'session' as const, serverId: 'srv_session-trigger-demand', sessionId: 'demand-session' } };
         function SessionAttachmentRead() {
-            useSessionTriggers('demand-session');
+            useResourceAutomationsSection(sessionSection);
             return null;
         }
         const content = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={presented}>
@@ -315,7 +315,7 @@ describe('Resource Automations section read states', () => {
         expect(screen.findByTestId('subject-triggers-read-retry')).toBeNull();
         await act(async () => gate.resolve());
         await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-read-retry')).not.toBeNull());
-        expect(screen.getTextContent()).toContain('workflows.triggers.section.accountLoadFailed');
+        expect(screen.getTextContent()).toContain('workflows.triggers.section.automationsLoadFailed');
         expect(screen.findByTestId('subject-triggers-starter:nightly')).toBeNull();
 
         fail = false;

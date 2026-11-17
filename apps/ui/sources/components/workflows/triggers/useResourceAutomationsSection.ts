@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
-import type { WorkflowTriggerListRequestV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { WorkflowTriggerListRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 
@@ -87,7 +87,11 @@ export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Re
 /** The selected read owns membership; every section consumes the same admitted rows and editor. */
 function useSelectedAutomationsSection(request: WorkflowTriggerListRequestV1 | null,
     accountLifetime: ServerAccountScopeLifetime | null | undefined, demanded: boolean): SelectedAutomationsSectionRead {
-    const read = useWorkflowTriggerSets(request, accountLifetime, { demanded });
+    return useSelectedAutomationsProjection(useWorkflowTriggerSets(request, accountLifetime, { demanded }), accountLifetime);
+}
+
+function useSelectedAutomationsProjection(read: ReturnType<typeof useWorkflowTriggerSets>,
+    accountLifetime: ServerAccountScopeLifetime | null | undefined): SelectedAutomationsSectionRead {
     const editor = useAccountWorkflowEditor({ read, accountLifetime });
     const projected = React.useMemo(() => read.attachedPage ? projectAccountTriggerRows({
         sets: read.sets, attachedPage: read.attachedPage, accountId: accountLifetime?.scope.accountId,
@@ -98,12 +102,46 @@ function useSelectedAutomationsSection(request: WorkflowTriggerListRequestV1 | n
     return { accountLifetime, read, editor, rows, also, skippedNotSharedCount: read.attachedPage?.skippedNotSharedCount ?? 0 };
 }
 
-/** Action detail selects an Action phase, without inventing a resource or audience. */
-export function useActionAutomationsSection(props: Extract<WorkflowTriggerListRequestV1, { actionId: string }>
-    & Readonly<{ accountLifetime: ServerAccountScopeLifetime | null }>): SelectedAutomationsSectionRead {
-    const { accountLifetime, ...request } = props;
+type ActionTriggerPhase = Extract<WorkflowTriggerListRequestV1, { actionId: string }>['phase'];
+const BOTH_PHASES: readonly ActionTriggerPhase[] = ['before', 'after'];
+
+/**
+ * Action detail selects an Action's before and after attachments (one selected read per phase the Action
+ * offers), without inventing a resource or audience. One section reads both: the editor and rows see one read.
+ */
+export function useActionAutomationsSection(props: Readonly<{ actionId: Extract<WorkflowTriggerListRequestV1, { actionId: string }>['actionId'];
+    phases?: readonly ActionTriggerPhase[]; accountLifetime: ServerAccountScopeLifetime | null }>): SelectedAutomationsSectionRead {
+    const { accountLifetime, actionId } = props;
+    const phases = props.phases ?? BOTH_PHASES;
     const demanded = useLayoutPresentationActive();
-    return useSelectedAutomationsSection(request, accountLifetime, demanded);
+    const beforeRequest = React.useMemo(() => phases.includes('before') ? { actionId, phase: 'before' as const } : null, [actionId, phases]);
+    const afterRequest = React.useMemo(() => phases.includes('after') ? { actionId, phase: 'after' as const } : null, [actionId, phases]);
+    const before = useWorkflowTriggerSets(beforeRequest, accountLifetime, { demanded });
+    const after = useWorkflowTriggerSets(afterRequest, accountLifetime, { demanded });
+    const both = beforeRequest !== null && afterRequest !== null;
+    const sets = React.useMemo(() => both
+        ? [...before.sets, ...after.sets.filter(set => !before.sets.some(held => held.automationId === set.automationId))]
+        : beforeRequest === null ? after.sets : before.sets, [both, beforeRequest, before.sets, after.sets]);
+    const beforePage = before.attachedPage;
+    const afterPage = after.attachedPage;
+    const attachedPage = React.useMemo(() => !both ? (beforeRequest === null ? afterPage : beforePage)
+        : beforePage && afterPage ? { attached: [...beforePage.attached, ...afterPage.attached],
+            nextCursor: beforePage.nextCursor ?? afterPage.nextCursor,
+            skippedNotSharedCount: beforePage.skippedNotSharedCount + afterPage.skippedNotSharedCount } : undefined,
+    [both, beforeRequest, beforePage, afterPage]);
+    const status = before.status === 'failed' || after.status === 'failed' ? 'failed' as const
+        : before.status === 'loading' || after.status === 'loading' ? 'loading' as const : 'ready' as const;
+    const handles = React.useRef({ before, after });
+    handles.current = { before, after };
+    const loadMore = React.useCallback(() => {
+        const { before: b, after: a } = handles.current;
+        if (b.attachedPage?.nextCursor) b.loadMore(); else a.loadMore();
+    }, []);
+    const retry = React.useCallback(() => { handles.current.before.retry(); handles.current.after.retry(); }, []);
+    const acknowledge = React.useCallback((set: WorkflowTriggerSetV1) => {
+        handles.current.before.acknowledge(set); handles.current.after.acknowledge(set);
+    }, []);
+    return useSelectedAutomationsProjection({ sets, attachedPage, status, loadMore, retry, acknowledge }, accountLifetime);
 }
 
 /** Resource section data and mutations, consuming the incumbent read and presentation lifetimes. */

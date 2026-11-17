@@ -4,7 +4,11 @@ import { Stack, useLocalSearchParams } from '@/components/appShell/workspace/des
 import { StyleSheet } from 'react-native-unistyles';
 
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { findActionSpec, getActionSpec, isActionEffectHookableV1, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { AutomationTriggerActionIdV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
+import { SubjectTriggersSectionContent } from '@/components/workflows/triggers/SubjectTriggersSection';
+import { useActionAutomationsSection } from '@/components/workflows/triggers/useResourceAutomationsSection';
+import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { parseQualifiedPluginResourcePolicyId, formatQualifiedPluginResourcePolicyId, type ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 
@@ -12,6 +16,7 @@ import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -167,6 +172,19 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
     const profileSetsAction = approvalProfileSetsAction(profile, props.actionId);
     // A profile shared with this person to use shows its values; only its editors get controls (05 S7 recipient).
     const readOnly = inProfile && targetSettings.profileCapabilities?.canEdit === false;
+    // Workflows run before and after an Action only when its effect can be held (the catalog's hookable rule).
+    const automationsActionId = React.useMemo(() => {
+        const spec = inProfile ? undefined : findActionSpec(props.actionId);
+        const parsed = spec && isActionEffectHookableV1(spec.sideEffectClass) ? AutomationTriggerActionIdV1Schema.safeParse(props.actionId) : null;
+        return parsed?.success ? parsed.data : null;
+    }, [inProfile, props.actionId]);
+    // Until the profile's own row is read, its values are unknown: the rows wait rather than show the Account's as the
+    // profile's and offer edits on them (QA-B E9).
+    const profileLoad: ItemLoadState | null = !inProfile || targetSettings.profileStatus === 'ready' ? null
+        : targetSettings.profileStatus === 'loading' ? { kind: 'loading' }
+            : targetSettings.profileStatus === 'missing'
+                ? { kind: 'failed', reason: t('workflows.triggers.guided.profile.notFoundDescription') }
+                : { kind: 'failed', reason: t('common.requestFailed'), onRetry: targetSettings.retryProfile };
     const writePolicy = useActionPolicyWriter(target);
     const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
     const rawSpawnPolicy = useSetting('sessionAgentSpawnPolicyV1');
@@ -378,7 +396,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                         title={t('settingsActions.sections.whoMayUseIt')}
                         // How "Ask first" and "Allowed" differ, said once above the surfaces. In a profile the
                         // section first says whose answer the rows show, and offers the way back to the Account's.
-                        description={inProfile
+                        description={profileLoad !== null ? undefined : inProfile
                             ? t(profileSetsAction ? 'workflows.triggers.guided.profile.actionSetByProfile'
                                 : 'workflows.triggers.guided.profile.actionFollowsAccount')
                             : parseQualifiedPluginResourcePolicyId(entry.actionId) ? undefined : t('settingsActions.approvalHelpBody')}
@@ -392,9 +410,14 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                             />
                         ) : undefined}
                     >
+                        {profileLoad !== null ? (
+                            <ItemLoadStateRows testID={`settings-actions:action:${entry.actionId}:profile-read`}
+                                state={profileLoad} rows={rows.length} lines={2}
+                                accessibilityLabel={t('settingsActions.sections.whoMayUseIt')} />
+                        ) : null}
                         {/* The loosening warning leads the section holding the Allowed choice, one per exact
                             key, so Keep Ask first restores only that surface. */}
-                        {rows.map(({ target, testIDPrefix, controlState }) => (
+                        {profileLoad !== null ? null : rows.map(({ target, testIDPrefix, controlState }) => (
                             controlState.kind === 'approval' && controlState.approvalLooseningNotice && !readOnly ? (
                                 <ActionApprovalLooseningNotice
                                     key={`${target.id}:loosening`}
@@ -405,7 +428,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                                 />
                             ) : null
                         ))}
-                        {rows.map(({ target, available, testIDPrefix, controlState }) => {
+                        {profileLoad !== null ? null : rows.map(({ target, available, testIDPrefix, controlState }) => {
                             const shouldStackModeControl = compactLayout && controlState.kind === 'approval';
                             const targetModeControl = (
                                 <ActionSettingsTargetModeControl
@@ -441,7 +464,25 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                 <ActionMachineApprovalSection actionId={machineScoped} settings={settings} disabled={!entry.enabled} />
             ) : null}
 
+            {/* A hookable Action's Automations are the shared section (05 S5 Action detail), in place of its Workflows facts. */}
+            {automationsActionId !== null ? (
+                <ActionAutomationsSection actionId={automationsActionId} title={entry.title}
+                    hasFacts={facts.some((fact) => fact.section === 'automations')}>
+                    {facts.filter((fact) => fact.section === 'automations').map((fact) => (
+                        <Item
+                            key={fact.id}
+                            testID={`settings-actions:action:${entry.actionId}:fact:${fact.id}`}
+                            title={t(fact.titleKey)}
+                            subtitle={t(fact.subtitleKey)}
+                            mode="info"
+                            showChevron={false}
+                        />
+                    ))}
+                </ActionAutomationsSection>
+            ) : null}
+
             {(['automations', 'alwaysTrue'] as const).map((section) => {
+                if (section === 'automations' && automationsActionId !== null) return null;
                 const sectionFacts = facts.filter((fact) => fact.section === section);
                 return sectionFacts.length > 0 ? (
                     <ItemGroup
@@ -569,4 +610,19 @@ export const ActionSettingsDetailView = React.memo(function ActionSettingsDetail
             <ActionSettingsDetailContent actionId={actionId} target={props.target} />
         </>
     );
+});
+
+/** The Action's before/after attachments, through the shared selected read and section on the active Account. */
+const ActionAutomationsSection = React.memo(function ActionAutomationsSection(props: Readonly<{
+    actionId: Parameters<typeof useActionAutomationsSection>[0]['actionId'];
+    title: string;
+    /** The Action's own facts about what runs around it ("Scheduled reviews use the Agents setting above"). */
+    hasFacts: boolean;
+    children?: React.ReactNode;
+}>) {
+    const accountLifetime = useActiveServerAccountScopeLifetime();
+    const automations = useActionAutomationsSection({ actionId: props.actionId, accountLifetime });
+    const subject = React.useMemo(() => ({ kind: 'action' as const, actionId: props.actionId }), [props.actionId]);
+    return <SubjectTriggersSectionContent subject={subject} subjectName={props.title} automations={automations}
+        hasRetainedContent={props.hasFacts}>{props.children}</SubjectTriggersSectionContent>;
 });

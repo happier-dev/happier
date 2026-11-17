@@ -235,6 +235,29 @@ describe('ActionSettingsDetailView', () => {
         await vi.waitFor(() => expect(account.persistedSettings.actionsSettingsV1.pluginHostCaptureApprovalWaived).toEqual(['acme.retained']));
     });
 
+    // QA-B E9: before the profile's own row is read, the page must not show the Account's values as the profile's.
+    it('holds a profile target\'s rows in place until its profile is read, without editable controls', async () => {
+        const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
+        const screen = await renderScreen(<ActionSettingsDetailContent actionId="review.start"
+            target={{ kind: 'profile', id: 'unread-profile' }} />);
+        expect(screen.findByTestId('settings-actions:action:review.start:profile-read')).not.toBeNull();
+        expect(renderedProps(Item).some((item) => item.testID === 'settings-actions:action:review.start:target:cli')).toBe(false);
+        expect(renderedProps(SegmentedTabBar).some((bar) => bar.testIDPrefix?.startsWith('settings-actions:action:review.start:target:'))).toBe(false);
+        await screen.unmount();
+    });
+
+    // QA-B E13: a hookable Action hosts the shared Automations section, its Workflows facts inside it.
+    it('hosts the shared Automations section for a hookable Action, keeping its facts in it', async () => {
+        const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
+        const screen = await renderScreen(<ActionSettingsDetailContent actionId="machines.storage.trash.move" />);
+        const section = screen.findByTestId('subject-triggers');
+        expect(section).not.toBeNull();
+        expect(section!.findAll((node) => node.props?.testID === 'settings-actions:action:machines.storage.trash.move:fact:automations').length)
+            .toBeGreaterThan(0);
+        expect(screen.findByTestId('subject-triggers-add')).not.toBeNull();
+        await screen.unmount();
+    });
+
     it('renders approval-capable targets as mode tabs and ordinary placements as switches', async () => {
         const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
 

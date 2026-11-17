@@ -61,11 +61,17 @@ export function useActionSettingsForTarget(
   profileRows: readonly ReadableApprovalProfileV1[];
   machineApprovalProfiles: Readonly<Record<string, string>>;
   settings: ActionsSettingsV1;
+  /**
+   * Whether a profile target's own row is known. Until it is, `settings` are only the Account's, so a profile page
+   * must not present them as the profile's (QA-B E9); `missing` is a settled catalog without this profile.
+   */
+  profileStatus: 'ready' | 'loading' | 'unavailable' | 'missing';
+  retryProfile: () => Promise<void>;
 }> {
   const raw = useSetting('actionsSettingsV1');
   const account = React.useMemo(() => normalizeActionsSettingsV1(raw), [raw]);
   const profileId = target.kind === 'profile' ? target.id : null;
-  const { profiles, profileRows, selectionRow: profileRow, machineApprovalProfiles } = useApprovalProfiles(
+  const { profiles, profileRows, selectionRow: profileRow, machineApprovalProfiles, ready, unavailable, requestCatalog } = useApprovalProfiles(
     profileId, undefined, { demand: target.kind === 'profile' || options?.demandProfiles === true },
   );
   const profile = profileRow?.profile ?? null;
@@ -75,9 +81,13 @@ export function useActionSettingsForTarget(
     () => (profile ? applyApprovalProfileOverlayV1(account, profile) : account),
     [account, profile],
   );
+  const profileStatus = target.kind !== 'profile' || profileRow !== null ? 'ready'
+    : unavailable ? 'unavailable' : ready ? 'missing' : 'loading';
   return React.useMemo(
-    () => ({ account, profile, profileRow, profileCapabilities, profiles, profileRows, machineApprovalProfiles, settings }),
-    [account, profile, profileRow, profileCapabilities, profiles, profileRows, machineApprovalProfiles, settings],
+    () => ({ account, profile, profileRow, profileCapabilities, profiles, profileRows, machineApprovalProfiles, settings,
+      profileStatus, retryProfile: requestCatalog }),
+    [account, profile, profileRow, profileCapabilities, profiles, profileRows, machineApprovalProfiles, settings,
+      profileStatus, requestCatalog],
   );
 }
 

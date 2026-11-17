@@ -40,15 +40,17 @@ import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatu
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { resolveUnknownAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import { useResourceAutomationsSection, type ResourceAutomationsSectionRead } from './useResourceAutomationsSection';
+import { useResourceAutomationsSection, type ResourceAutomationsSectionRead, type SelectedAutomationsSectionRead } from './useResourceAutomationsSection';
+import { createWorkflowTriggerStartWhen } from './workflowTriggerStarts';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
 const NO_STARTERS: readonly SubjectTriggerStarter[] = [];
 
 /** One sentence per kind: what starts from this resource (05 S5). A legacy page offers starters when it has none. */
-function describeAutomationsSection(kind: (TriggerSubject | AutomationSubjectV1)['kind'], empty: boolean): string {
+function describeAutomationsSection(kind: SubjectTriggersSectionProps['subject']['kind'], empty: boolean): string {
   switch (kind) {
+    case 'action': return t('workflows.triggers.section.actionInfo');
     case 'machine': return t(empty ? 'workflows.triggers.section.machineEmpty' : 'workflows.triggers.section.machineInfo');
     case 'environment': return t(empty ? 'workflows.triggers.section.environmentEmpty' : 'workflows.triggers.section.environmentInfo');
     case 'service': return t(empty ? 'workflows.triggers.section.serviceEmpty' : 'workflows.triggers.section.serviceInfo');
@@ -78,9 +80,12 @@ export type SubjectTriggersSectionActions = Readonly<{
   openNewTrigger(anchor: React.RefObject<View | null>): void;
 }>;
 
+/** An Action detail page: its before/after attachments are selected by Action id, never a fabricated resource subject. */
+export type ActionAutomationsSubject = Readonly<{ kind: 'action'; actionId: string }>;
+
 export type SubjectTriggersSectionProps = Readonly<{
       /** A legacy page subject (Machine, Environment, service) keeps its starters; a canonical subject is read as itself. */
-      subject: TriggerSubject | AutomationSubjectV1;
+      subject: TriggerSubject | AutomationSubjectV1 | ActionAutomationsSubject;
       contextSubjects?: readonly AutomationSubjectV1[];
       executionContext?: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'>;
       serverId?: string;
@@ -90,6 +95,12 @@ export type SubjectTriggersSectionProps = Readonly<{
       subjectName: string;
       actionsRef?: React.Ref<SubjectTriggersSectionActions>;
       exactTurnPrefill?: ExactTurnAutomationPrefill;
+      /** A deep link to one of this resource's automations opens its editor once. */
+      revealAutomationId?: string;
+      /** Rows the host composes into the same sheet after the triggers (a Session's "writes here"). */
+      children?: React.ReactNode;
+      /** The host's own rows are held, so the section is neither pending nor empty without triggers. */
+      hasRetainedContent?: boolean;
       deploymentEnvironment?: DeploymentEnvironmentRefV1;
       deploymentSourceName?: string;
       sourceAudience?: readonly PrincipalRefV1[];
@@ -98,22 +109,27 @@ export type SubjectTriggersSectionProps = Readonly<{
 }>;
 
 /** A selected resource's Automations, borrowing the physical host's Account and presentation demand. */
-export const SubjectTriggersSection = React.memo(function SubjectTriggersSection(props: SubjectTriggersSectionProps) {
+export const SubjectTriggersSection = React.memo(function SubjectTriggersSection(props: SubjectTriggersSectionProps
+  & Readonly<{ subject: TriggerSubject | AutomationSubjectV1 }>) {
   const automations = useResourceAutomationsSection(props);
   return <SubjectTriggersSectionContent {...props} automations={automations} />;
 });
 
 /** Hosts with destination children share one intake rather than acquiring a second Session watcher. */
 export const SubjectTriggersSectionContent = React.memo(
-  function SubjectTriggersSectionContent(props: SubjectTriggersSectionProps & Readonly<{ automations: ResourceAutomationsSectionRead }>) {
+  function SubjectTriggersSectionContent(props: SubjectTriggersSectionProps & Readonly<{
+    /** An Action's selected read has no resource Link, placement or Session intake. */
+    automations: SelectedAutomationsSectionRead & Partial<Pick<ResourceAutomationsSectionRead, 'project' | 'link' | 'session'>>;
+  }>) {
     const { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, link, session } = props.automations;
     const presented = useLayoutPresentationActive();
     const linkAnchor = React.useRef<View>(null);
     // Link is offered once this resource's starts can be read; a resource with none never shows a form that cannot succeed.
-    const linkOffered = link.whenStatus === 'ready' ? link.whenOptions.length > 0 : link.whenStatus === 'loading';
+    const linkOffered = !link ? false : link.whenStatus === 'ready' ? link.whenOptions.length > 0 : link.whenStatus === 'loading';
     const router = useRouter();
     const { status } = read;
-    const legacy = 'serverId' in props.subject ? null : props.subject;
+    const legacy = 'serverId' in props.subject || props.subject.kind === 'action' ? null : props.subject;
+    const actionId = props.subject.kind === 'action' ? props.subject.actionId : null;
     const starters = legacy ? SUBJECT_TRIGGER_STARTERS[legacy.kind] : NO_STARTERS;
     const persistentStarters = legacy ? SUBJECT_TRIGGER_PERSISTENT_STARTERS[legacy.kind] : NO_STARTERS;
     const addAnchor = React.useRef<View>(null);
@@ -138,8 +154,12 @@ export const SubjectTriggersSectionContent = React.memo(
         subject: legacy, deploymentEnvironment: props.deploymentEnvironment,
         controllerMachineId: props.controllerMachineId,
       });
+      // An Action page starts from "Before each ⟨Action⟩" (it waits for the result); the sentence can switch to After.
+      const actionWhen = actionId === null ? null : createWorkflowTriggerStartWhen('action:before');
       const trigger = starter === 'nightly' ? buildTriggerDefinition({
         when: subjectStarterWhen('nightly'), enabled: true, sessionId: null,
+      }) : actionWhen?.kind === 'action' ? buildTriggerDefinition({
+        when: { ...actionWhen, actionIds: [actionId!] }, enabled: true, sessionId: null,
       }) : null;
       const intent = session ? session.createSentenceIntent(options) : { name: props.subjectName,
         ...(project ? { project } : {}), ...(eventSeed ? { eventSeed } : {}), ...(trigger ? { trigger } : {}) };
@@ -147,7 +167,7 @@ export const SubjectTriggersSectionContent = React.memo(
       sentenceKey.current += 1;
       setOpening({ kind: 'sentence', anchor, lifetime, key: sentenceKey.current, intent });
       return true;
-    }, [accountLifetime, legacy, props.deploymentEnvironment, props.controllerMachineId, props.subjectName, project, session]);
+    }, [accountLifetime, legacy, actionId, props.deploymentEnvironment, props.controllerMachineId, props.subjectName, project, session]);
     React.useImperativeHandle(props.actionsRef, () => ({ openNewTrigger: (anchor) => { openSentence(null, anchor); } }), [openSentence]);
     const consumedExactTurn = React.useRef<ExactTurnAutomationPrefill | null>(null);
     React.useEffect(() => {
@@ -163,13 +183,14 @@ export const SubjectTriggersSectionContent = React.memo(
     };
     // Nothing known yet: the section keeps its place with its header and two placeholder rows, so the
     // page does not move when the rows land. With nothing retained, a failed read says so in place, with Retry.
-    const unsettled = empty && status !== 'ready';
+    const held = !empty || props.hasRetainedContent === true;
+    const unsettled = !held && status !== 'ready';
     const section = (
       <ItemGroup
         testID="subject-triggers"
         title={t('workflows.triggers.section.title')}
         description={describeAutomationsSection(props.subject.kind, empty && !unsettled)}
-        {...(empty && !unsettled && starters.length === 0 && also.length === 0 && skippedNotSharedCount === 0 ? { surface: 'none' as const } : {})}
+        {...(!held && !unsettled && starters.length === 0 && also.length === 0 && skippedNotSharedCount === 0 ? { surface: 'none' as const } : {})}
         action={
           <View ref={addAnchor} collapsable={false} style={styles.actions}>
             <SectionActionButton
@@ -194,7 +215,8 @@ export const SubjectTriggersSectionContent = React.memo(
       >
         {unsettled ? (
           <ItemLoadStateRows testID="subject-triggers-read" rows={2} accessibilityLabel={t('workflows.triggers.section.title')}
-            state={status === 'failed' ? { kind: 'failed', reason: t('workflows.triggers.section.accountLoadFailed'), onRetry: read.retry }
+            // Nothing held: the whole section failed, said once with its Retry.
+            state={status === 'failed' ? { kind: 'failed', reason: t('workflows.triggers.section.automationsLoadFailed'), onRetry: read.retry }
               : { kind: 'loading' }} />
         ) : empty
           ? starters.filter(starterAvailable).map((starter) => (
@@ -207,6 +229,7 @@ export const SubjectTriggersSectionContent = React.memo(
                 key={`${row.automationId}:${row.triggerId ?? 'manual'}`}
                 row={row}
                 pending={editor.pending.has(row.automationId)}
+                reveal={row.automationId === props.revealAutomationId}
                 onOpen={(anchor) => {
                   void editor.open(row, anchor);
                 }}
@@ -216,6 +239,7 @@ export const SubjectTriggersSectionContent = React.memo(
                 onRemove={editor.remove}
               />
             ))}
+        {props.children}
         {empty ? null : persistentStarters.filter(starterAvailable).map((starter) => (
           <StarterRow key={starter} starter={starter} onOpen={(anchor) => openStarter(starter, anchor)} />
         ))}
@@ -227,7 +251,7 @@ export const SubjectTriggersSectionContent = React.memo(
           <Item testID="subject-triggers-more" title={t('workflows.triggers.section.showMore')} showChevron={false}
             onPress={read.loadMore} />
         ) : null}
-        {rows.length > 0 && status === 'failed' ? (
+        {held && status === 'failed' ? (
           <SurfaceFreshnessLine
             testID="subject-triggers-read"
             tone="warning"
@@ -254,7 +278,7 @@ export const SubjectTriggersSectionContent = React.memo(
         {section}
         {alsoSection}
         {editor.popover}
-        {opening?.kind === 'link' ? (
+        {opening?.kind === 'link' && link ? (
           <ResourceLinkWorkflowSheet anchorRef={opening.anchor} resourceName={props.subjectName} link={link}
             serverId={accountLifetime?.scope.serverId ?? props.serverId ?? null}
             machineId={project?.machineId ?? (legacy ? legacy.machineId : null)} accountLifetime={accountLifetime}
@@ -351,6 +375,8 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
   props: Readonly<{
     row: AccountTriggerRow;
     pending: boolean;
+    /** Deep-linked: the row opens its editor once it is shown. */
+    reveal?: boolean;
     onOpen: (anchor: React.RefObject<View | null>) => void;
     onToggle: (next: boolean) => void;
     /** The editor's stable remover; the Action owns its confirmation. */
@@ -360,6 +386,9 @@ const SubjectTriggerRowView = React.memo(function SubjectTriggerRowView(
   const anchorRef = React.useRef<View>(null);
   const { row } = props;
   const { onRemove } = props;
+  const openRef = React.useRef(props.onOpen);
+  openRef.current = props.onOpen;
+  React.useEffect(() => { if (props.reveal) openRef.current(anchorRef); }, [props.reveal]);
   const menuActions = React.useMemo(() => [{ id: 'remove', title: t('workflows.triggers.row.removeTrigger'),
     icon: 'trash' as const, destructive: true, onPress: () => { void onRemove(row); } }], [onRemove, row]);
   // A page sheet names a trigger by what it runs, its event the quiet line (the column leads with the event).

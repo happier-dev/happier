@@ -332,7 +332,7 @@ describe('Account Workflow Library and settings', () => {
                 ...(next ? { attached: [{ ...page.attached[0]!, automationId: 'inline-action-check', workflowDefinitionId: null, triggerId: 'next' }], nextCursor: null } : {}) }) };
         } });
         const hook = await renderHook((props: { phase: 'before' | 'after' }) => useActionAutomationsSection({
-            actionId: 'session.archive', phase: props.phase, accountLifetime: lifetime,
+            actionId: 'session.archive', phases: [props.phase], accountLifetime: lifetime,
         }), { initialProps: { phase: 'after' },
             wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active={presented}>{children}</PluginSurfaceFocusEligibilityProvider> });
         expect(hook.getCurrent().read.status).toBe('loading');
