@@ -16811,6 +16811,7 @@ const portuguese: TeamsTranslationRoot = {
                 overshoot: 'Os novos pedidos param assim que o consumo registado atinge o limite. Os pedidos já em curso podem terminar.',
                 directNote: 'Os limites cobrem o uso com intermediário e a API externa. O uso direto acontece na máquina de quem recebe e não é registado.',
                 directOnly: 'Todas as pessoas com acesso usam esta credencial diretamente, na sua própria máquina, por isso o Happier não regista nada e nenhum limite se aplica.',
+                accessFirst: 'Os limites contam o uso com intermediário. Dê acesso a alguém primeiro.',
                 requestLimitsOnlyForPersonalUse: 'Os limites de tokens aparecem quando esta credencial exige um contexto de equipa. O uso pessoal também a abre a execuções em segundo plano e à API externa, que só reportam pedidos, por isso só os limites de pedidos cobrem todo o uso.',
                 add: 'Adicionar limite',
                 subjectLabel: 'Aplica-se a',

@@ -227,6 +227,20 @@ describe('TeamCredentialCreateScreen', () => {
         expect(screen.findByTestId('team-credential-create-ceiling:brokered_only')).not.toBeNull();
         expect(screen.findByTestId('team-credential-create-ceiling:brokered_only')?.props.disabled).not.toBe(true);
     });
+    it('asks for access first instead of calling a brokered-only credential direct', async () => {
+        const serverId = await addHome();
+        answerViewer(serverId, true);
+        const candidate = teamCredentialSourceCandidateFixture({ directExportSupport: 'unsupported' });
+        harness.answer(serverId, SOURCES_PATH, { body: { candidates: [candidate],
+            supportedKinds: ['connected_pool'], brokerPresentation: emptyBrokerPresentation() } });
+        if (candidate.source.kind !== 'connected_pool') throw new Error('expected pool fixture');
+        const screen = await renderCreate(serverId, { kind: 'connected_pool',
+            pluginId: candidate.source.target.service.pluginId, localId: candidate.source.target.service.localId,
+            groupId: candidate.source.target.groupId });
+        await waitForTestId(screen, 'team-credential-create-ceiling:brokered_only');
+        expect(screen.getTextContent()).toContain('teams.credentials.limits.accessFirst');
+        expect(screen.getTextContent()).not.toContain('teams.credentials.limits.directOnly');
+    });
     it('offers Machine Pools as accessible radio choices with the Home\u2019s availability, and lets a Pool be cleared', async () => {
         const serverId = await addHome({ machinePoolsEnabled: true });
         answerViewer(serverId, true);

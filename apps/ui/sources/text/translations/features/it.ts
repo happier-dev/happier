@@ -16827,6 +16827,7 @@ const italian: TeamsTranslationRoot = {
                 overshoot: 'Le nuove richieste si fermano quando il consumo registrato raggiunge il massimale. Quelle già in corso possono concludersi.',
                 directNote: 'I massimali coprono l’uso tramite broker e l’API esterna. L’uso diretto avviene sulla macchina di chi riceve e non viene registrato.',
                 directOnly: 'Tutte le persone con accesso usano questa credenziale in modo diretto, sulla propria macchina: Happier non ne registra nulla e nessun massimale può valere.',
+                accessFirst: 'I massimali contano l’uso tramite broker. Prima dai accesso a qualcuno.',
                 requestLimitsOnlyForPersonalUse: 'I massimali di token compaiono quando questa credenziale richiede un contesto di team. L’uso personale la apre anche alle esecuzioni in background e all’API esterna, che riportano solo le richieste: solo i massimali di richieste coprono quindi ogni uso.',
                 add: 'Aggiungi massimale',
                 subjectLabel: 'Si applica a',

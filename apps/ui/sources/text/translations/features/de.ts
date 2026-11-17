@@ -16638,6 +16638,7 @@ const german: TeamsTranslationRoot = {
                 overshoot: 'Neue Anfragen stoppen, sobald der erfasste Verbrauch die Obergrenze erreicht. Bereits laufende Anfragen dürfen zu Ende gehen.',
                 directNote: 'Obergrenzen gelten für die Nutzung über den Broker und die externe API. Direkte Nutzung passiert auf dem Rechner der empfangenden Person und wird nicht erfasst.',
                 directOnly: 'Alle mit Zugriff nutzen diese Zugangsdaten direkt auf ihrem eigenen Rechner. Happier erfasst davon nichts, und keine Obergrenze kann greifen.',
+                accessFirst: 'Obergrenzen zählen die Nutzung über den Broker. Gib zuerst jemandem Zugriff.',
                 requestLimitsOnlyForPersonalUse: 'Token-Obergrenzen erscheinen, wenn diese Zugangsdaten einen Team-Kontext verlangen. Persönliche Nutzung erlaubt auch Hintergrundläufen und der externen API den Zugriff, und diese melden nur Anfragen – daher decken nur Anfrage-Obergrenzen jede Nutzung ab.',
                 add: 'Obergrenze hinzufügen',
                 subjectLabel: 'Gilt für',

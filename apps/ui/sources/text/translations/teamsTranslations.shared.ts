@@ -1085,6 +1085,7 @@ export const english = {
                 overshoot: 'New requests stop once recorded usage reaches the limit. Requests already running may finish.',
                 directNote: 'Limits cover brokered and external API use. Direct use happens on the recipient’s own machine and is not recorded.',
                 directOnly: 'Everyone with access uses this credential directly, on their own machine, so Happier records none of it and no limit can be enforced.',
+                accessFirst: 'Limits count use through the broker. Give someone access first.',
                 requestLimitsOnlyForPersonalUse: 'Token limits appear when this credential requires a Team context. Personal use also lets background runs and the external API use it, and those report requests only, so only request limits can cover every use.',
                 add: 'Add limit',
                 subjectLabel: 'Applies to',

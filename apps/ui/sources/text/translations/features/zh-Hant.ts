@@ -16707,6 +16707,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 overshoot: '已記錄用量達到上限後，新的請求會停止。正在進行的請求可能會跑完。',
                 directNote: '上限涵蓋經中介的用量與外部 API 用量。直接使用發生在接收者自己的機器上，不會被記錄。',
                 directOnly: '所有有權限的人都在自己的機器上直接使用此憑證，因此 Happier 無法記錄任何用量，也無法套用上限。',
+                accessFirst: '上限只計入經中介的用量。請先給某人存取權。',
                 requestLimitsOnlyForPersonalUse: '當此憑證要求團隊情境時，才會出現權杖上限。個人使用還允許背景執行和外部 API 使用它，而它們只回報請求數，因此只有請求上限能涵蓋全部使用。',
                 add: '新增上限',
                 subjectLabel: '適用於',

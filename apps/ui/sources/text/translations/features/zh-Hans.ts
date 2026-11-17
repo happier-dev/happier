@@ -16708,6 +16708,7 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 overshoot: '已记录用量达到上限后，新请求会停止。正在进行的请求可能会跑完。',
                 directNote: '上限涵盖经中转的用量和外部 API 用量。直接使用发生在接收者自己的机器上，不会被记录。',
                 directOnly: '所有有权限的人都在自己的机器上直接使用此凭据，因此 Happier 无法记录任何用量，也无法执行上限。',
+                accessFirst: '上限只计入经中转的用量。请先给某人访问权限。',
                 requestLimitsOnlyForPersonalUse: '当此凭据要求团队上下文时，才会出现令牌上限。个人使用还允许后台运行和外部 API 使用它，而它们只报告请求数，因此只有请求上限能覆盖全部使用。',
                 add: '添加上限',
                 subjectLabel: '适用于',

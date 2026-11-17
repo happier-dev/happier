@@ -16852,6 +16852,7 @@ const polish: TeamsTranslationRoot = {
                 overshoot: 'Nowe żądania zatrzymują się, gdy zapisane zużycie osiągnie limit. Trwające żądania mogą się dokończyć.',
                 directNote: 'Limity obejmują użycie przez pośrednika i zewnętrzne API. Użycie bezpośrednie odbywa się na maszynie odbiorcy i nie jest zapisywane.',
                 directOnly: 'Wszyscy z dostępem korzystają z tych poświadczeń bezpośrednio, na własnej maszynie, więc Happier niczego nie zapisuje i żaden limit nie zadziała.',
+                accessFirst: 'Limity liczą użycie przez pośrednika. Najpierw daj komuś dostęp.',
                 requestLimitsOnlyForPersonalUse: 'Limity tokenów pojawiają się, gdy to poświadczenie wymaga kontekstu zespołu. Użycie osobiste dopuszcza też uruchomienia w tle i zewnętrzne API, które raportują tylko żądania, więc tylko limity żądań obejmują każde użycie.',
                 add: 'Dodaj limit',
                 subjectLabel: 'Dotyczy',

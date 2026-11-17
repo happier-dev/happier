@@ -16882,6 +16882,7 @@ const french: TeamsTranslationRoot = {
                 overshoot: 'Les nouvelles requêtes s’arrêtent dès que la consommation enregistrée atteint le plafond. Les requêtes déjà en cours peuvent se terminer.',
                 directNote: 'Les plafonds couvrent l’usage via le courtier et l’API externe. L’usage direct a lieu sur la machine du destinataire et n’est pas enregistré.',
                 directOnly: 'Toutes les personnes autorisées utilisent cet identifiant en direct, sur leur propre machine : Happier n’en enregistre rien et aucun plafond ne peut s’appliquer.',
+                accessFirst: 'Les plafonds comptent l’usage via le courtier. Donne d’abord accès à quelqu’un.',
                 requestLimitsOnlyForPersonalUse: 'Les plafonds de jetons apparaissent quand cet identifiant exige un contexte d’équipe. L’usage personnel l’ouvre aussi aux exécutions en arrière-plan et à l’API externe, qui ne rapportent que des requêtes : seuls les plafonds de requêtes couvrent donc tous les usages.',
                 add: 'Ajouter un plafond',
                 subjectLabel: 'S’applique à',

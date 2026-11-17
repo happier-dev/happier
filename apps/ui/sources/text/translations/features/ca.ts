@@ -16839,6 +16839,7 @@ const catalan: TeamsTranslationRoot = {
                 overshoot: 'Les sol·licituds noves s’aturen quan el consum registrat arriba al límit. Les que ja s’estan executant poden acabar.',
                 directNote: 'Els límits cobreixen l’ús amb intermediari i l’API externa. L’ús directe passa a la màquina de qui el rep i no es registra.',
                 directOnly: 'Tothom qui hi té accés fa servir aquesta credencial de manera directa, a la seva pròpia màquina, així que Happier no en registra res i cap límit no s’hi pot aplicar.',
+                accessFirst: 'Els límits compten l’ús amb intermediari. Primer dona accés a algú.',
                 requestLimitsOnlyForPersonalUse: 'Els límits de tokens apareixen quan aquesta credencial exigeix un context d’equip. L’ús personal també l’obre a execucions en segon pla i a l’API externa, que només informen de sol·licituds, així que només els límits de sol·licituds cobreixen tot l’ús.',
                 add: 'Afegeix un límit',
                 subjectLabel: 'S’aplica a',
