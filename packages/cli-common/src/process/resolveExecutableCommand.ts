@@ -5,7 +5,7 @@ import { absolutePathFromWorkingDirectory } from '../path/absolutePathFromWorkin
 
 import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from './windows/resolveWindowsCommandInvocation.js';
 
-type ExecutableCommandOptions = Readonly<{ env?: Readonly<Record<string, string | undefined>>; cwd?: string }>;
+type ExecutableCommandOptions = Readonly<{ env?: Readonly<Record<string, string | undefined>>; cwd?: string | undefined }>;
 
 /** Match child_process search semantics when a selected environment omits PATH. */
 export function resolveExecutableSearchPath(
