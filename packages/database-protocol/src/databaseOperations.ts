@@ -142,10 +142,16 @@ export const DatabaseDescriptorV1Schema = z.strictObject({
     placement: z.strictObject({ serverId: name, accountId: name, machineId: name, installationId: name }),
 });
 export type DatabaseDescriptorV1 = z.infer<typeof DatabaseDescriptorV1Schema>;
-export const DatabaseTargetsListInputV1Schema = z.strictObject({
-    scope: z.discriminatedUnion('kind', [
+/** Connect selects a concrete worktree or Environment; Project listing spans worktrees. */
+const databaseTargetsConnectScopes = [
         z.strictObject({ kind: z.literal('worktree'), accountId: name, installationId: name, projectKey: name, workspace: WorkspaceAddressV2Schema }),
         z.strictObject({ kind: z.literal('environment'), environment: DeploymentEnvironmentRefV1Schema }),
+] as const;
+export const DatabaseTargetsConnectScopeV1Schema = z.discriminatedUnion('kind', databaseTargetsConnectScopes);
+export const DatabaseTargetsListInputV1Schema = z.strictObject({
+    scope: z.discriminatedUnion('kind', [
+        ...databaseTargetsConnectScopes,
+        z.strictObject({ kind: z.literal('project'), accountId: name, installationId: name, projectKey: name }),
     ]),
 });
 export type DatabaseTargetsListInputV1 = z.infer<typeof DatabaseTargetsListInputV1Schema>;

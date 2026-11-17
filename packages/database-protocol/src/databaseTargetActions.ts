@@ -1,11 +1,11 @@
 import { z } from 'zod/mini';
 import { projectZodProtocolSchema } from '@happier-dev/protocol/plugins/actions/internalProtocolZodAdapter';
-import { DatabaseTargetsListInputV1Schema, DatabaseDescriptorV1Schema } from './databaseOperations.js';
+import { DatabaseTargetsConnectScopeV1Schema, DatabaseDescriptorV1Schema } from './databaseOperations.js';
 import { DatabaseManualTargetV1Schema } from './databaseTargets.js';
 
 /** Association operands only; Saved Secret bytes stay with the existing secret/admission owner. */
 export const DatabaseTargetsConnectInputV1Schema = z.strictObject({
-    scope: DatabaseTargetsListInputV1Schema.shape.scope,
+    scope: DatabaseTargetsConnectScopeV1Schema,
     savedSecretRef: z.string().check(z.minLength(1)),
     label: z.string(),
 });

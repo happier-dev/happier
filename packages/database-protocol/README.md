@@ -16,6 +16,11 @@ an existing demand `subscriptionId`; this is connection reuse context, never
 an authorization grant. Access admission remains with the access owner and
 the existing Action executor.
 
+Target listing accepts a Project scope to include its existing manual associations
+across worktrees on the selected installation. Connect still selects a concrete
+worktree or Environment scope. Listing reads association metadata without opening
+connections or acquiring Saved Secrets.
+
 Integer, decimal and JSON values retain their original text. SQL NULL and JSON
 null have different tags (`{ type: 'null' }` and `{ type: 'json', value: 'null' }`).
 Rows and columns are ordered arrays so duplicate column labels and zero-row
