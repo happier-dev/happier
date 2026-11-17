@@ -12,9 +12,10 @@ vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createT
 // Navigation is the platform boundary; the picker's own ordering is what is read.
 vi.mock('@/components/appShell/workspace/destinationRoute', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
+const { WorkflowExamplesSection } = await import('./WorkflowExamplesSection');
+
 describe('WorkflowExamplesSection inside a Session', () => {
     it('lists the examples made for a Session first, then the general templates', async () => {
-        const { WorkflowExamplesSection } = await import('./WorkflowExamplesSection');
         const screen = await renderScreen(<WorkflowExamplesSection presentation="list" session={{ sessionId: 's1', machineId: 'm1' }} />);
         const keys = WORKFLOW_STARTER_EXAMPLES_V1.map((example) => example.key);
         const order = screen.findAll((node) => typeof node.props?.testID === 'string' && /^workflow-examples:[a-z-]+$/.test(node.props.testID))

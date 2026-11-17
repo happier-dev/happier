@@ -22,6 +22,9 @@ vi.mock('expo-router', async () => {
 
 installWebLayoutBridge();
 
+// Collect the subject before case timing: a cold source transform is suite setup.
+const { WorkflowExamplesSection } = await import('./WorkflowExamplesSection');
+
 let root: Root | null = null;
 let host: HTMLElement | null = null;
 
@@ -34,7 +37,6 @@ afterEach(async () => {
 
 describe('example tiles, as a browser lays them out', () => {
     it('offers the full Session starter catalog and retains the trigger and exact target when selected', async () => {
-        const { WorkflowExamplesSection } = await import('./WorkflowExamplesSection');
         const { WORKFLOW_STARTER_EXAMPLES_V1, workflowStarterRequiresSession } = await import('@happier-dev/protocol/workflows/builtins/examples');
         const { readDeviceTimeZone } = await import('../triggers/sessionTriggerForm');
         const onUse = vi.fn();
@@ -91,7 +93,6 @@ describe('example tiles, as a browser lays them out', () => {
         );
     });
     it('draws every example through the one Collection card, with no footer band and its Use control in the right slot', async () => {
-        const { WorkflowExamplesSection } = await import('./WorkflowExamplesSection');
         host = document.createElement('div');
         document.body.appendChild(host);
         root = createRoot(host);
@@ -105,7 +106,6 @@ describe('example tiles, as a browser lays them out', () => {
         expect(host.querySelector('[data-testid="workflow-examples:ask-once:chrome.footer"]')?.querySelector('[data-testid$=":use"]')).toBeNull();
     });
     it('draw each example as the small map on the card\'s paper: whole labels in the regular face, lanes wrap, no empty well (DESIGN-7/9 P5)', async () => {
-        const { WorkflowExamplesSection } = await import('./WorkflowExamplesSection');
         const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol/workflows/builtins/examples');
         const { t, tLoose } = await import('@/text');
         host = document.createElement('div');
