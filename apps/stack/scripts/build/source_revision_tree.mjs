@@ -61,7 +61,7 @@ function shapesBase(path) {
     || isRevisionGeneratorInput(path);
 }
 
-/** Bases this controller built or described, newest first. A remote host builds a described base once. */
+/** Bases this controller built, or that a reload's preparation built on any host, newest first. */
 async function readKnownBases(treesRoot) {
   const entries = await readdir(treesRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
   const known = [];
@@ -93,13 +93,22 @@ export async function resolveSourceTreeRevision({ repoDir, treesRoot, rev = 'HEA
     paths = changed;
     break;
   }
-  await mkdir(treesRoot, { recursive: true });
-  await writeFile(join(treesRoot, `${base}${DESCRIBED_SUFFIX}`), '');
+  // The base is recorded as reusable only once a preparation builds it (recordSourceTreeBases).
   const identity = await resolveSourceRevisionIdentity({ repoDir, rev: base, overlay });
   const descriptorPath = await writeSourceRevisionDescriptor({ repoDir, identity, outputDir, fullTree: true,
     ...(base === target ? {} : { commit: { revision: target, paths } }) });
   return { revision: target, base, key: sourceRevisionKey({ revision: target, overlayDigest: identity.overlayDigest }),
     descriptorPath, commitPaths: paths.length };
+}
+
+/** A preparation built (or reused) these bases: later revisions may describe themselves on them.
+ * Recorded only after a preparation succeeds, never when a revision is merely described, so a revision no
+ * host could build never becomes every later reload's base (P03-QUEUE-2, TREE-GENERATED live 1-3). */
+export async function recordSourceTreeBases({ treesRoot, bases }) {
+  await mkdir(treesRoot, { recursive: true });
+  for (const base of new Set(bases)) {
+    if (typeof base === 'string' && /^[a-f0-9]{40,64}$/.test(base)) await writeFile(join(treesRoot, `${base}${DESCRIBED_SUFFIX}`), '');
+  }
 }
 
 async function writeTreeEntry(target, mode, bytes) {

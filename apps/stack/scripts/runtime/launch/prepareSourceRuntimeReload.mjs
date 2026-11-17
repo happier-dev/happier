@@ -8,7 +8,7 @@ import { format } from 'node:util';
 import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter, readLatestBuiltSourceRevision } from '../../build/build_source_runtime.mjs';
 import { canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
 import { prepareSourceQaWebUi } from '../../build/build_source_web_ui.mjs';
-import { prepareSourceTreeRuntimeComponents, resolveSourceTreeRevision, selectsSourceTreeReload, sourceRevisionTreesRoot } from '../../build/source_revision_tree.mjs';
+import { prepareSourceTreeRuntimeComponents, recordSourceTreeBases, resolveSourceTreeRevision, selectsSourceTreeReload, sourceRevisionTreesRoot } from '../../build/source_revision_tree.mjs';
 import { parseArgs } from '../../utils/cli/args.mjs';
 import { resolveSourceQaUiMode } from '../shared/borrowed_expo.mjs';
 import { beginPendingSourceStart, emitSourcePreparationPhase } from '../shared/pending_source_start.mjs';
@@ -176,6 +176,9 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       const [{ server, daemon }] = await Promise.all(preparations);
       if (server) components.server = server;
       if (daemon) components.daemon = daemon;
+      // Later revisions reuse only bases a preparation built (after a failed ancestor, the requested revision).
+      if (treeRevision) await recordSourceTreeBases({ treesRoot: sourceRevisionTreesRoot(stackBaseDir),
+        bases: [...Object.values(remote?.sourceCaptures ?? {}), server?.sourceCapture, daemon?.sourceCapture].map(capture => capture?.base) });
       // The web export follows the server's revision, so this Stack serves one revision.
       // On a source tree it is built from that server tree, never the moving checkout.
       const serverTree = sourceTree ? components.server : null;

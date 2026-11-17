@@ -12,7 +12,7 @@ import { generateServerClients, installServerGeneratorFixture, readGeneratedClie
 import { resolveSourceRevision, resolveSourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
 import { prepareSourceTreeRuntimeComponents, prepareStackSourceRevisionTree, releaseStackSourceRevisionTree, releaseStackSourceTrees,
-  resolveSourceTreeRevision, selectsSourceTreeReload, setSourceRevisionTreeWritable, sourceRevisionTreesRoot, writeSourceRevisionArchive } from './source_revision_tree.mjs';
+  recordSourceTreeBases, resolveSourceTreeRevision, selectsSourceTreeReload, setSourceRevisionTreeWritable, sourceRevisionTreesRoot, writeSourceRevisionArchive } from './source_revision_tree.mjs';
 
 const COMMITTED_MAIN = 'export { marker } from "@happier-dev/shared";';
 const COMMITTED_SHARED = 'export const marker = "committed";';
@@ -644,6 +644,24 @@ for (const id of readdirSync('packages/plugins')) {
 }
 `;
 
+// P03-QUEUE-2 2026-11-17 (TREE-GENERATED live 1-3): describing marked a revision reusable before any host
+// built it, so a broken HEAD stayed every later reload's base until a dependency-shape change.
+test('only a base a preparation built is offered to later revisions', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  const treesRoot = fixture.path('trees');
+  const first = await resolveSourceTreeRevision({ repoDir, treesRoot, outputDir: fixture.path('first') });
+  await writeFile(join(repoDir, 'apps/server/sources/later.ts'), 'export const later = true;\n');
+  await gitIn('add', 'apps/server/sources/later.ts');
+  await gitIn('commit', '--quiet', '-m', 'later');
+  const unbuilt = await resolveSourceTreeRevision({ repoDir, treesRoot, outputDir: fixture.path('unbuilt') });
+  assert.equal(unbuilt.base, unbuilt.revision, 'a described but never built revision is not a base');
+  await recordSourceTreeBases({ treesRoot, bases: [first.revision] });
+  const reused = await resolveSourceTreeRevision({ repoDir, treesRoot, outputDir: fixture.path('reused') });
+  assert.equal(reused.base, first.revision, 'a built base serves its descendants');
+  assert.equal(reused.commitPaths, 1);
+});
+
 test('an incoherent described base cannot refuse a coherent requested revision', async t => {
   const { fixture, repoDir } = await createRevisionFixture(t);
   const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
@@ -657,6 +675,8 @@ test('an incoherent described base cannot refuse a coherent requested revision',
   await gitIn('commit', '--quiet', '-m', 'incoherent intermediate revision');
   const treesRoot = fixture.path('trees');
   const bad = await resolveSourceTreeRevision({ repoDir, treesRoot, outputDir: fixture.path('bad') });
+  // Built once elsewhere (another host's environment), so it is a cache candidate here.
+  await recordSourceTreeBases({ treesRoot, bases: [bad.revision] });
   await writeFile(dependency, 'export const repaired = true;');
   await gitIn('add', 'packages/shared/src/preparation.mjs');
   await gitIn('commit', '--quiet', '-m', 'repair preparation dependency');
