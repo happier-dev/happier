@@ -33,7 +33,7 @@ import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, 
   isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
-  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReadAdmissionV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
 export { DeploymentReadAdmissionV1Schema, isDeploymentNativeReadActionIdV1, isDeploymentReadActionIdV1, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
@@ -989,6 +989,8 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   deploymentLinkEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
   /** Exact non-content Environment operand for Home-authorized reads and binding preparation. */
   deploymentMetadataEnvironmentId: z.optional(DeploymentIdentifierV1Schema),
+  /** Exact non-content receipt operand of a receipt read by its own id; Home binds that receipt's Environment during issuance. */
+  deploymentMetadataReceiptId: z.optional(DeploymentIdentifierV1Schema),
   presetPreparationAdmission: z.optional(z.union([ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema])),
   deploymentPreparationAdmission: z.optional(DeploymentPreparationAdmissionV1Schema),
   deploymentNativeAdmission: z.optional(DeploymentNativeAdmissionV1Schema),
@@ -1006,7 +1008,23 @@ export function projectExternalActionDeploymentMetadataEnvironmentIdV1(actionId:
     || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
     || actionId === DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1 || actionId === DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1
     || isDeploymentApprovalMetadataPreparationActionIdV1(actionId))
-    ? z.looseObject({ environmentId: DeploymentIdentifierV1Schema }).parse(input).environmentId : undefined;
+    ? actionId === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 && readRecord(input)?.environmentId === undefined ? undefined
+      : z.looseObject({ environmentId: DeploymentIdentifierV1Schema }).parse(input).environmentId : undefined;
+}
+/** A receipt read by its own id names no Environment; Home binds the receipt's real Environment at issuance. */
+export function projectExternalActionDeploymentMetadataReceiptIdV1(actionId: string, input: unknown): string | undefined {
+  return actionId === DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 && readRecord(input)?.environmentId === undefined
+    ? z.looseObject({ deploymentId: DeploymentIdentifierV1Schema }).parse(input).deploymentId : undefined;
+}
+export function projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1(input: Readonly<{
+  actionId: string; envelope: ExternalActionRequestEnvelope;
+}>): string | undefined {
+  if (input.envelope.v === 1) return projectExternalActionDeploymentMetadataReceiptIdV1(input.actionId, input.envelope.input);
+  if (input.envelope.deploymentMetadataReceiptId === undefined) return undefined;
+  if (input.actionId !== DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 || input.envelope.deploymentMetadataEnvironmentId !== undefined) {
+    throw new TypeError('Unexpected metadata receipt');
+  }
+  return input.envelope.deploymentMetadataReceiptId;
 }
 export function projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1(input: Readonly<{
   actionId: string; envelope: ExternalActionRequestEnvelope;

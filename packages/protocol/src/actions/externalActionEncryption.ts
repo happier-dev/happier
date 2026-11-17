@@ -38,6 +38,7 @@ import {
   projectExternalActionDiscussionIdV1,
   projectExternalActionDeploymentLinkEnvironmentIdV1,
   projectExternalActionDeploymentMetadataEnvironmentIdV1,
+  projectExternalActionDeploymentMetadataReceiptIdV1,
   type ExternalActionRequestEnvelopeV2, type ExternalActionResponseEnvelopeV2, type ExternalActionTargetV1,
   type ExternalActionExecutionAuthorizationBindingV1,
   type PreparedExternalActionResponseEnvelope,
@@ -176,6 +177,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   const deploymentReadAdmission = projectDeploymentReadAdmissionV1(payload.actionId, payload.input);
   const deploymentLinkEnvironmentId = projectExternalActionDeploymentLinkEnvironmentIdV1(payload.actionId, payload.input);
   const deploymentMetadataEnvironmentId = projectExternalActionDeploymentMetadataEnvironmentIdV1(payload.actionId, payload.input);
+  const deploymentMetadataReceiptId = projectExternalActionDeploymentMetadataReceiptIdV1(payload.actionId, payload.input);
   const deploymentPreparationAdmission = projectDeploymentPreparationAdmissionV1(payload.actionId, payload.input);
   const presetPreparationAdmission = projectExternalActionPresetPreparationEnvelopeAdmissionV1({ actionId: payload.actionId,
     envelope: { v: 1, requestId: payload.requestId, target: payload.target, input: payload.input } });
@@ -197,6 +199,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
     ...(deploymentReadAdmission ? { deploymentReadAdmission } : {}),
     ...(deploymentLinkEnvironmentId === undefined ? {} : { deploymentLinkEnvironmentId }),
     ...(deploymentMetadataEnvironmentId === undefined ? {} : { deploymentMetadataEnvironmentId }),
+    ...(deploymentMetadataReceiptId === undefined ? {} : { deploymentMetadataReceiptId }),
     ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
     ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
     ...(deploymentNativeAdmission ? { deploymentNativeAdmission } : {}),
@@ -285,7 +288,9 @@ export function openExternalActionRequestV2(params: Readonly<{
       !== envelope.deploymentLinkEnvironmentId) return refused();
     phase = 'deployment_metadata_admission';
     if (projectExternalActionDeploymentMetadataEnvironmentIdV1(decoded.data.actionId, decoded.data.input)
-      !== envelope.deploymentMetadataEnvironmentId) return refused();
+      !== envelope.deploymentMetadataEnvironmentId
+      || projectExternalActionDeploymentMetadataReceiptIdV1(decoded.data.actionId, decoded.data.input)
+        !== envelope.deploymentMetadataReceiptId) return refused();
     phase = 'deployment_preparation_admission';
     if (!sameStrictJsonValue(projectExternalActionPresetPreparationEnvelopeAdmissionV1({ actionId: decoded.data.actionId,
       envelope: { v: 1, requestId: decoded.data.requestId, target: decoded.data.target, input: decoded.data.input } }),

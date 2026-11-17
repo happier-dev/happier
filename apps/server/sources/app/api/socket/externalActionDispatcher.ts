@@ -14,7 +14,7 @@ import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExter
     projectExternalActionPresetPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
     projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
-    projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
+    projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1, projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1,
     projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
     projectExternalActionDeploymentReadEnvelopeAdmissionV1, projectExternalActionDiscussionEnvelopeIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
@@ -638,9 +638,11 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         let deploymentNativeAdmission: ReturnType<typeof projectExternalActionDeploymentNativeEnvelopeAdmissionV1>;
         let deploymentLinkEnvironmentId: string | undefined;
         let deploymentMetadataEnvironmentId: string | undefined;
+        let deploymentMetadataReceiptId: string | undefined;
         try {
             presetPreparationAdmission = projectExternalActionPresetPreparationEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentMetadataEnvironmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1({ actionId: request.actionId, envelope: request.envelope });
+            deploymentMetadataReceiptId = projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentLinkEnvironmentId = projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1({ actionId: request.actionId, envelope: request.envelope });
             deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
             approvalDecisionAdmission = projectExternalActionApprovalDecisionEnvelopeAdmissionV1({ actionId: request.actionId, envelope: request.envelope });
@@ -727,6 +729,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...(capturedMachineAdmission?.managedCreationRecovery ? { managedCreationRecovery: true as const } : {}),
                 managedMachineAdmission: capturedMachineAdmission,
                 input: request.envelope.v === 1 ? request.envelope.input
+                : deploymentMetadataReceiptId !== undefined ? { deploymentId: deploymentMetadataReceiptId }
                 : deploymentMetadataEnvironmentId === undefined
                     ? presetPreparationAdmission ?? deploymentNativeAdmission ?? request.envelope.sessionSpawnAdmission ?? managedAdmission?.input
                         ?? (request.actionId === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(request.envelope)?.input : undefined)

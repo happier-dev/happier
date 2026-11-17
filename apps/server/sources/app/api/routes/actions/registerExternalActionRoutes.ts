@@ -27,7 +27,7 @@ import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExter
     projectExternalActionDeploymentReadEnvelopeAdmissionV1, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1,
     projectExternalActionDeploymentNativeEnvelopeAdmissionV1,
     projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1,
-    projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1,
+    projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1, projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1,
     projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
     projectExternalActionDiscussionEnvelopeIdV1, isExternalActionWorkflowActionIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
@@ -728,9 +728,11 @@ export function registerExternalActionRoutes(
             let deploymentNativeAdmission: ReturnType<typeof projectExternalActionDeploymentNativeEnvelopeAdmissionV1>;
             let deploymentLinkEnvironmentId: string | undefined;
             let deploymentMetadataEnvironmentId: string | undefined;
+            let deploymentMetadataReceiptId: string | undefined;
             try {
                 presetPreparationAdmission = projectExternalActionPresetPreparationEnvelopeAdmissionV1({ actionId: actionId.data, envelope: body.data.envelope });
                 deploymentMetadataEnvironmentId = projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1({ actionId: actionId.data, envelope: body.data.envelope });
+                deploymentMetadataReceiptId = projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1({ actionId: actionId.data, envelope: body.data.envelope });
                 deploymentLinkEnvironmentId = projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1({ actionId: actionId.data, envelope: body.data.envelope });
                 deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId: actionId.data, envelope: body.data.envelope });
                 pendingResetStartAdmission = projectExternalActionPendingResetStartEnvelopeAdmissionV1({
@@ -881,6 +883,7 @@ export function registerExternalActionRoutes(
                     managedMachineAdmission: admission,
                     browserSessionId: body.data.envelope.v === 2 ? body.data.envelope.browserSessionId : undefined,
                     input: body.data.envelope.v === 1 ? body.data.envelope.input
+                        : deploymentMetadataReceiptId !== undefined ? { deploymentId: deploymentMetadataReceiptId }
                         : deploymentMetadataEnvironmentId === undefined
                             ? presetPreparationAdmission ?? deploymentNativeAdmission ?? body.data.envelope.sessionSpawnAdmission ?? managedAdmission?.input
                                 ?? (actionId.data === 'machines.managed.acquire' ? readExternalActionManagedAcquireAdmission(body.data.envelope)?.input : undefined)

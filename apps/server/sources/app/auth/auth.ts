@@ -9,7 +9,8 @@ import { projectPrivateLabelForRecipientV1, serializePrivateLabelStoredV1, type 
 import { ApiTokenGrantV1Schema, StoredApiTokenGrantV1Schema, API_TOKEN_FULL_GRANT_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, type ApiTokenGrantDenialReasonV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { projectDeploymentNativeAdmissionV1,
     isDeploymentDomainNativeAdmissionV1, isDeploymentDomainDnsNativeAdmissionV1, isDeploymentEnvironmentUpdateNativeAdmissionV1, isDeploymentBackupConfigureNativeAdmissionV1,
-    createDeploymentCandidatePublicationV1, projectExternalActionDeploymentMetadataEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
+    createDeploymentCandidatePublicationV1, projectExternalActionDeploymentMetadataEnvironmentIdV1,
+    projectExternalActionDeploymentMetadataReceiptIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainChildActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentBackupReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentControllerSetActionIdV1,
     DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -702,6 +703,14 @@ class AuthModule {
         let metadataEnvironmentId: string | undefined;
         try {
             metadataEnvironmentId = projectExternalActionDeploymentMetadataEnvironmentIdV1(input.actionId, inputRecord);
+            // A receipt read by its own id binds that receipt's real Environment. The
+            // storage read still authorizes the actor in that Environment; nothing widens.
+            const receiptId = projectExternalActionDeploymentMetadataReceiptIdV1(input.actionId, inputRecord);
+            if (receiptId !== undefined) {
+                const receipt = await db.deployment.findUnique({ where: { id: receiptId }, select: { environmentId: true } });
+                if (!receipt) throw new ApiTokenOperationError('credential_scope_denied');
+                metadataEnvironmentId = receipt.environmentId;
+            }
         } catch {
             throw new ApiTokenOperationError('credential_scope_denied');
         }

@@ -1719,7 +1719,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (actionId === 'deployments.receipts.get') {
                 const selected = DeploymentActionInputSchemasV1[actionId].safeParse(input);
                 if (!selected.success) return failure('invalid_parameters');
-                const { projection, ...address } = selected.data;
+                const { projection, ...requested } = selected.data;
+                // A receipt read by its own id reads within the Environment Home bound at issuance.
+                const boundEnvironmentId = context.externalActionExecutionAuthorization?.binding.environmentId;
+                const address = requested.environmentId === undefined && boundEnvironmentId !== undefined
+                    ? { ...requested, environmentId: boundEnvironmentId } : requested;
                 try {
                     const result = await storage(actionId, address, context);
                     if ('ok' in result && !result.ok && 'errorCode' in result) return result;

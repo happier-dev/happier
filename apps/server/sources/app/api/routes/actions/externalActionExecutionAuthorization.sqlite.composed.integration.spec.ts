@@ -366,9 +366,11 @@ type TestAdmittedRequester = Readonly<{
 describe("external Action execution authorization", () => {
     let harness: LightSqliteHarness;
 
-    it.each([['plain', 'deployments.receipts.list'], ['plain', 'deployments.receipts.get'], ['plain', 'artifact.get'],
-        ['e2ee', 'deployments.receipts.list'], ['e2ee', 'deployments.receipts.get'], ['e2ee', 'artifact.get']] as const)(
-        'reads owned receipt scope/content through the signed %s %s Action with internal-kind restrictions', async (mode, actionId) => {
+    it.each([['plain', 'deployments.receipts.list', 'environment'], ['plain', 'deployments.receipts.get', 'environment'],
+        ['plain', 'deployments.receipts.get', 'receipt'], ['plain', 'artifact.get', 'environment'],
+        ['e2ee', 'deployments.receipts.list', 'environment'], ['e2ee', 'deployments.receipts.get', 'environment'],
+        ['e2ee', 'deployments.receipts.get', 'receipt'], ['e2ee', 'artifact.get', 'environment']] as const)(
+        'reads owned receipt scope/content through the signed %s %s Action (addressed by %s) with internal-kind restrictions', async (mode, actionId, addressedBy) => {
         const fixture = await createFixture({ qualifiedPat: false });
         const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
         const ownerPublicKey = tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey;
@@ -450,7 +452,8 @@ describe("external Action execution authorization", () => {
         try {
             const origin = await app.listen({ port: 0, host: '127.0.0.1' });
             const input = actionId === 'artifact.get' ? { artifactId: receiptArtifact.artifact.id }
-                : { serverId: homeId, environmentId: environment.environmentId,
+                // A receipt read by its own id names no Environment; Home binds the receipt's own one.
+                : { serverId: homeId, ...(addressedBy === 'receipt' ? {} : { environmentId: environment.environmentId }),
                     ...(actionId === 'deployments.receipts.get' ? { deploymentId: receipt.id } : {}) };
             const target = fixture.envelope.target!;
             const requestId = fixture.envelope.requestId;
@@ -462,6 +465,7 @@ describe("external Action execution authorization", () => {
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
             expect(minted.statusCode, minted.body).toBe(200);
             const root = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            if (actionId !== 'artifact.get') expect(root.binding.environmentId).toBe(environment.environmentId);
             authorizationRequests.set(root.token, { target, installationId: fixture.machine.installationId!, requestId });
             const { projectExternalActionRequesterHttpAuthorization } = await importTestModule<typeof import('../../../../../../cli/src/api/externalActionExecutionAuthorization')>(
                 '../../../../../../cli/src/api/externalActionExecutionAuthorization');
