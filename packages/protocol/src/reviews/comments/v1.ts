@@ -2,7 +2,8 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { StoredJsonContentEnvelopeSchema } from '../../storage/storedJsonContentEnvelope.js';
-import { ReviewFindingSeveritySchema } from '../reviewFindingClassification.js';
+import { ReviewFindingSeveritySchema, ReviewFindingScopeAttributionSchema } from '../reviewFindingClassification.js';
+import { ReviewFindingExtensionsSchema } from '../findingExtensions.js';
 import { ReviewFindingIdentityV1Schema } from './findingIdentity.js';
 import { ReviewTriageStatusSchema } from '../reviewTriageStatus.js';
 
@@ -254,7 +255,6 @@ export const ReviewCommentTransitionV1Schema = lazyZodSchema(() => z.strictObjec
   fromState: z.optional(ReviewCommentStateV1Schema),
   toState: ReviewCommentStateV1Schema,
   reviewTriageStatus: z.optional(ReviewTriageStatusSchema),
-  reviewGroupId: z.optional(z.string().check(z.minLength(1))),
   transitionedAt: z.number().check(z.int(), z.nonnegative()),
   transitionedBy: ReviewCommentActorRefV1Schema,
   reason: z.optional(z.string().check(z.minLength(1))),
@@ -319,13 +319,57 @@ export const ReviewCommentSuggestedFixV1Schema = lazyZodSchema(() => z.strictObj
 export type ReviewCommentSuggestedFixV1 = z.infer<typeof ReviewCommentSuggestedFixV1Schema>;
 
 export const ReviewCommentMetadataV1Schema = lazyZodSchema(() => z.strictObject({
-  /** Panels that materialized this semantic finding, including later deduplicated rounds. */
-  reviewGroupIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   severity: z.optional(z.enum(['info', 'warning', 'error', 'critical'])),
   taxonomyIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   tags: z.optional(z.array(z.string().check(z.minLength(1)))),
 }));
 export type ReviewCommentMetadataV1 = z.infer<typeof ReviewCommentMetadataV1Schema>;
+
+/** Actual producing run and reviewer; location is provenance, never a finding partition. */
+export const ReviewCommentAppearanceInputV1Schema = lazyZodSchema(() => z.strictObject({
+  roundOrdinal: z.number().check(z.int(), z.positive()),
+  runId: z.string().check(z.minLength(1)),
+  reviewerId: z.string().check(z.minLength(1)),
+  machineId: z.optional(z.string().check(z.minLength(1))),
+  sessionId: z.optional(z.string().check(z.minLength(1))),
+}));
+export type ReviewCommentAppearanceInputV1 = z.infer<typeof ReviewCommentAppearanceInputV1Schema>;
+export const ReviewCommentAppearanceV1Schema = lazyZodSchema(() => z.strictObject({
+  ...ReviewCommentAppearanceInputV1Schema.shape,
+  reviewId: z.string().check(z.minLength(1)),
+  commentId: z.string().check(z.minLength(1)),
+}));
+export type ReviewCommentAppearanceV1 = z.infer<typeof ReviewCommentAppearanceV1Schema>;
+
+/** Content-free changes carried by the owning Review Artifact's AccountChange. */
+export const ReviewCommentChangesHintV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1), changes: z.array(z.strictObject({
+    commentId: z.string().check(z.minLength(1)),
+    serverRevision: z.number().check(z.int(), z.positive()),
+    state: ReviewCommentStateV1Schema,
+    reviewTriageStatus: z.optional(ReviewTriageStatusSchema),
+  })),
+}));
+export type ReviewCommentChangesHintV1 = z.infer<typeof ReviewCommentChangesHintV1Schema>;
+
+export function readReviewCommentChangesHintV1(hint: unknown): ReviewCommentChangesHintV1 | undefined {
+  if (!hint || typeof hint !== 'object' || !('reviewComments' in hint)) return undefined;
+  const parsed = ReviewCommentChangesHintV1Schema.safeParse(hint.reviewComments);
+  return parsed.success ? parsed.data : undefined;
+}
+
+export function mergeReviewCommentChangesHintV1(previous: unknown, next: unknown): ReviewCommentChangesHintV1 | undefined {
+  const retained = readReviewCommentChangesHintV1(previous);
+  const incoming = readReviewCommentChangesHintV1(next);
+  if (!retained) return incoming;
+  if (!incoming) return retained;
+  const changes = new Map(retained.changes.map(change => [change.commentId, change]));
+  for (const change of incoming.changes) {
+    const before = changes.get(change.commentId);
+    if (!before || change.serverRevision >= before.serverRevision) changes.set(change.commentId, change);
+  }
+  return { v: 1, changes: [...changes.values()] };
+}
 
 function validateThreadIdentity(value: { id: string; threadId: string; parentCommentId?: string }, ctx: z.core.$RefinementCtx): void {
   if (!value.parentCommentId && value.threadId !== value.id) {
@@ -349,6 +393,10 @@ export const ReviewCommentV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)),
   accountId: z.string().check(z.minLength(1)),
   ...ReviewCommentScopeV1Schema.shape,
+  /** Read projection of the canonical appearance relation, never client-authored content. */
+  appearances: z.optional(z.array(ReviewCommentAppearanceInputV1Schema)),
+  scopeAttribution: z.optional(ReviewFindingScopeAttributionSchema),
+  extensions: z.optional(ReviewFindingExtensionsSchema),
   workspaceId: z.optional(z.string().check(z.minLength(1))),
   sessionId: z.optional(z.string().check(z.minLength(1))),
   runId: z.optional(z.string().check(z.minLength(1))),
@@ -390,6 +438,9 @@ export type ReviewCommentV1 = z.infer<typeof ReviewCommentV1Schema>;
 
 export const ReviewCommentCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({
   ...ReviewCommentScopeV1Schema.shape,
+  appearance: z.optional(ReviewCommentAppearanceInputV1Schema),
+  scopeAttribution: z.optional(ReviewFindingScopeAttributionSchema),
+  extensions: z.optional(ReviewFindingExtensionsSchema),
   workspaceId: z.optional(z.string().check(z.minLength(1))),
   sessionId: z.optional(z.string().check(z.minLength(1))),
   runId: z.optional(z.string().check(z.minLength(1))),
@@ -419,7 +470,6 @@ export const ReviewCommentTransitionRequestV1Schema = lazyZodSchema(() => z.stri
   ...ReviewCommentScopeV1Schema.shape,
   toState: ReviewCommentStateV1Schema,
   reviewTriageStatus: z.optional(ReviewTriageStatusSchema),
-  reviewGroupId: z.optional(z.string().check(z.minLength(1))),
   reason: z.optional(z.string().check(z.minLength(1))),
   evidence: z.optional(z.array(ReviewCommentEvidenceV1Schema)),
   expectedState: ReviewCommentStateV1Schema,
@@ -430,7 +480,7 @@ export const ReviewCommentTransitionRequestV1Schema = lazyZodSchema(() => z.stri
   eventEnvelope: z.optional(StoredJsonContentEnvelopeSchema),
 }).check(z.superRefine(validateReviewCommentScopeV1), z.superRefine((value, ctx) => {
   if (reviewCommentStateTransitionRequiresEvidenceV1(value.toState)
-    && !(value.toState === value.expectedState && (value.reviewTriageStatus !== undefined || value.reviewGroupId !== undefined))
+    && !(value.toState === value.expectedState && value.reviewTriageStatus !== undefined)
     && !value.reason
     && (!value.evidence || value.evidence.length === 0)) {
     ctx.addIssue({

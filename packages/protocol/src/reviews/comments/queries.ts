@@ -2,9 +2,11 @@ import type { ReviewCommentListRequestV1 } from './actions.js';
 import type { ReviewCommentActorRefV1 } from './v1.js';
 import type { ReviewCommentV1 } from './v1.js';
 
-export type ReviewCommentQueryRecordV1 = Pick<ReviewCommentV1, 'workspace' | 'workspaceId' | 'projectId' | 'sessionId' | 'runId' | 'engineId' | 'state' | 'flags' | 'tombstone' | 'author' | 'metadata' | 'id' | 'updatedAt' | 'serverRevision'> & Readonly<{ anchor: Readonly<{ kind?: ReviewCommentV1['anchor']['kind']; filePath?: string; folderPath?: string }> }>;
+export type ReviewCommentQueryRecordV1 = Pick<ReviewCommentV1, 'reviewId' | 'appearances' | 'workspace' | 'workspaceId' | 'projectId' | 'sessionId' | 'runId' | 'engineId' | 'state' | 'flags' | 'tombstone' | 'author' | 'metadata' | 'id' | 'updatedAt' | 'serverRevision'> & Readonly<{ anchor: Readonly<{ kind?: ReviewCommentV1['anchor']['kind']; filePath?: string; folderPath?: string }> }>;
 
 export type ReviewCommentCanonicalFilters = Readonly<{
+    reviewId?: string;
+    roundOrdinal?: number;
     projectId?: string;
     workspace?: ReviewCommentV1["workspace"];
     workspaceId?: string;
@@ -26,6 +28,8 @@ export function canonicalReviewCommentListFilters(
 ): ReviewCommentCanonicalFilters {
     const normalized = normalizeReviewCommentListFilters(filters);
     return {
+        reviewId: normalized.reviewId,
+        roundOrdinal: normalized.roundOrdinal,
         projectId: normalized.projectId,
         workspace: normalized.workspace ? { machineId: normalized.workspace.machineId, path: normalized.workspace.path } : undefined,
         workspaceId: normalized.workspaceId,
@@ -86,13 +90,24 @@ export function matchesReviewCommentListFilters(
     filters: ReviewCommentListRequestV1,
 ): boolean {
     const normalized = normalizeReviewCommentListFilters(filters);
+    if (normalized.reviewId && comment.reviewId !== normalized.reviewId) return false;
+    const appearanceScope = comment.reviewId && (normalized.roundOrdinal || normalized.runId || normalized.sessionId || normalized.engineId);
+    if (normalized.roundOrdinal && !comment.reviewId) return false;
     if (normalized.workspaceId && comment.workspaceId !== normalized.workspaceId) return false;
-    if (normalized.projectId && comment.projectId !== normalized.projectId) return false;
-    if (normalized.workspace && (comment.workspace?.machineId !== normalized.workspace.machineId
+    if (!appearanceScope && normalized.projectId && comment.projectId !== normalized.projectId) return false;
+    if (!appearanceScope && normalized.workspace && (comment.workspace?.machineId !== normalized.workspace.machineId
         || comment.workspace?.path !== normalized.workspace.path)) return false;
-    if (normalized.sessionId && comment.sessionId !== normalized.sessionId) return false;
-    if (normalized.runId && comment.runId !== normalized.runId) return false;
-    if (normalized.engineId && comment.engineId !== normalized.engineId) return false;
+    if (appearanceScope) {
+        if (!comment.appearances?.some(appearance => (!normalized.runId || appearance.runId === normalized.runId)
+            && (!normalized.roundOrdinal || appearance.roundOrdinal === normalized.roundOrdinal)
+            && (!normalized.sessionId || appearance.sessionId === normalized.sessionId)
+            && (!normalized.engineId || appearance.reviewerId === normalized.engineId)
+            && (!normalized.workspace || appearance.machineId === normalized.workspace.machineId))) return false;
+    } else {
+        if (normalized.sessionId && comment.sessionId !== normalized.sessionId) return false;
+        if (normalized.runId && comment.runId !== normalized.runId) return false;
+        if (normalized.engineId && comment.engineId !== normalized.engineId) return false;
+    }
     if (normalized.states.length > 0 && !normalized.states.includes(comment.state)) return false;
     if (!normalized.includeHistory && isHistoryComment(comment)) return false;
     if (normalized.authorKind && comment.author.kind !== normalized.authorKind) return false;

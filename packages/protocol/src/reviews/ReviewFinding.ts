@@ -1,7 +1,8 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { ReviewFindingExtensionsSchema } from './findingExtensions.js';
 
-import { ReviewFindingSeveritySchema, ReviewFindingCategorySchema } from './reviewFindingClassification.js';
+import { ReviewFindingSeveritySchema, ReviewFindingCategorySchema, ReviewFindingScopeAttributionSchema } from './reviewFindingClassification.js';
 import { ReviewCommentScopeV1Schema, ReviewCommentStateV1Schema, validateReviewCommentScopeV1 } from './comments/v1.js';
 export { ReviewFindingSeveritySchema, ReviewFindingCategorySchema, type ReviewFindingSeverity, type ReviewFindingCategory } from './reviewFindingClassification.js';
 
@@ -28,8 +29,10 @@ export const ReviewFindingSchema = lazyZodSchema(() => z.looseObject({
   confidence: z.optional(z.number().check(z.minimum(0), z.maximum(1))),
   suggestion: z.optional(z.string().check(z.minLength(1))),
   patch: z.optional(z.string().check(z.minLength(1))),
+  extensions: z.optional(ReviewFindingExtensionsSchema),
   comment: z.optional(ReviewFindingCommentReferenceV1Schema),
   attributionConfidence: z.optional(z.string().check(z.minLength(1))),
+  scopeAttribution: z.optional(ReviewFindingScopeAttributionSchema),
 }));
 
 export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;

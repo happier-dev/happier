@@ -36,6 +36,17 @@ const OTHER_MATERIAL: AccountScopedCryptoMaterial = {
 };
 
 describe('canonical confidential structural indexes', () => {
+  it('retains host finding attribution and plugin evidence only inside sealed content', () => {
+    const finding = { ...comment(), scopeAttribution: 'pre_existing' as const,
+      extensions: { 'acme.reviewer': { evidence: 'Private plugin evidence' } } };
+    const split = splitReviewCommentV1(finding);
+    expect(split.structural).not.toHaveProperty('scopeAttribution');
+    expect(split.structural).not.toHaveProperty('extensions');
+    const envelope = sealReviewCommentSensitiveEnvelopeV1({ ...split, mode: 'e2ee', material: MATERIAL,
+      randomBytes: size => new Uint8Array(size).fill(2) });
+    const opened = openReviewCommentSensitiveEnvelopeV1({ structural: split.structural, envelope, mode: 'e2ee', material: MATERIAL });
+    expect(opened).toMatchObject({ status: 'available', comment: { scopeAttribution: finding.scopeAttribution, extensions: finding.extensions } });
+  });
   it('keeps raw paths and message hashes within sensitive content', () => {
     const split = splitReviewCommentV1(comment());
     expect(split.structural.anchorIndex).toEqual({ kind: 'line' });
@@ -122,7 +133,6 @@ function comment(overrides: Partial<ReviewCommentV1> = {}): ReviewCommentV1 {
       replacementText: 'const secret = false;',
     },
     metadata: {
-      reviewGroupIds: ['panel-1', 'panel-2'],
       severity: 'error',
       taxonomyIds: ['security.secret'],
       tags: ['private'],

@@ -4,16 +4,17 @@ import { z } from '../../zodRuntimePolicy.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../../crypto/canonicalDigest.js';
 import type { ReviewCommentFingerprintV1, ReviewCommentV1 } from './v1.js';
 
-export type ReviewCommentFindingScopeV1 = readonly [
+export type ReviewCommentFindingScopeV1 = readonly ['review', string, string] | readonly [
   readonly ['workspace', string, string] | readonly ['project', string | undefined],
   string,
   string | null,
 ];
 
-/** The persisted semantic-dedupe scope: a workspace dominates incidental Project linkage. */
+/** A bound Review owns identity; private findings keep their workspace/Session scope. */
 export function reviewCommentFindingScopeV1(comment: Pick<ReviewCommentV1,
-  'findingIdentity' | 'parentCommentId' | 'workspace' | 'projectId' | 'sessionId'>): ReviewCommentFindingScopeV1 | null {
+  'reviewId' | 'findingIdentity' | 'parentCommentId' | 'workspace' | 'projectId' | 'sessionId'>): ReviewCommentFindingScopeV1 | null {
   if (!comment.findingIdentity || comment.parentCommentId) return null;
+  if (comment.reviewId) return ['review', comment.reviewId, comment.findingIdentity];
   return [comment.workspace ? ['workspace', comment.workspace.machineId, comment.workspace.path] : ['project', comment.projectId],
     comment.findingIdentity, comment.sessionId ?? null];
 }

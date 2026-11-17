@@ -80,6 +80,7 @@ export const ReviewCommentStructuralV1Schema = lazyZodSchema(() => z.strictObjec
   id: z.string().check(z.minLength(1)),
   accountId: z.string().check(z.minLength(1)),
   ...ReviewCommentScopeV1Schema.shape,
+  appearances: ReviewCommentV1Schema.shape.appearances,
   workspaceId: z.optional(z.string().check(z.minLength(1))),
   sessionId: z.optional(z.string().check(z.minLength(1))),
   runId: z.optional(z.string().check(z.minLength(1))),
@@ -127,6 +128,8 @@ export type ReviewCommentResourceCryptoV1 = Readonly<{
 }>;
 
 export const ReviewCommentSensitiveContentV1Schema = lazyZodSchema(() => z.strictObject({
+  scopeAttribution: ReviewCommentV1Schema.shape.scopeAttribution,
+  extensions: ReviewCommentV1Schema.shape.extensions,
   anchor: ReviewCommentAnchorV1Schema,
   snapshot: ReviewCommentSnapshotV1Schema,
   body: z.string(),
@@ -292,6 +295,7 @@ export function splitReviewCommentV1(commentInput: ReviewCommentV1): ReviewComme
       id: comment.id,
       accountId: comment.accountId,
       reviewId: comment.reviewId,
+      appearances: comment.appearances,
       projectId: comment.projectId,
       workspace: comment.workspace,
       workspaceId: comment.workspaceId,
@@ -340,6 +344,8 @@ export function splitReviewCommentV1(commentInput: ReviewCommentV1): ReviewComme
       linkedRefs: comment.linkedRefs,
       suggestedFix: comment.suggestedFix,
       metadata: comment.metadata,
+      scopeAttribution: comment.scopeAttribution,
+      extensions: comment.extensions,
     }),
   };
 }
@@ -356,6 +362,7 @@ function reconstructComment(
     id: structural.id,
     accountId: structural.accountId,
     ...(structural.reviewId === undefined ? {} : { reviewId: structural.reviewId }),
+    ...(structural.appearances === undefined ? {} : { appearances: structural.appearances }),
     projectId: structural.projectId,
     ...(structural.workspace === undefined ? {} : { workspace: structural.workspace }),
     ...(structural.workspaceId === undefined ? {} : { workspaceId: structural.workspaceId }),
@@ -385,6 +392,8 @@ function reconstructComment(
     ...(sensitive.linkedRefs === undefined ? {} : { linkedRefs: sensitive.linkedRefs }),
     ...(sensitive.suggestedFix === undefined ? {} : { suggestedFix: sensitive.suggestedFix }),
     ...(sensitive.metadata === undefined ? {} : { metadata: sensitive.metadata }),
+    ...(sensitive.scopeAttribution === undefined ? {} : { scopeAttribution: sensitive.scopeAttribution }),
+    ...(sensitive.extensions === undefined ? {} : { extensions: sensitive.extensions }),
     createdAt: structural.createdAt,
     updatedAt: structural.updatedAt,
     serverRevision: structural.serverRevision,

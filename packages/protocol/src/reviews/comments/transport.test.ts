@@ -19,7 +19,7 @@ const workspace = { machineId: 'machine-1', path: '/repo' };
 const create = { workspace, anchor: { kind: 'file' as const, filePath: 'a.ts' },
   snapshot: { kind: 'none' as const, capturedAt: 1 }, body: 'PRIVATE-body', authorIntent: 'open' as const,
   clientMutationId: 'create-1', fingerprint: { normalizedMessageHash: 'public-dedupe', ruleId: 'PRIVATE-rule' },
-  metadata: { tags: ['PRIVATE-tag'], taxonomyIds: ['PRIVATE-taxonomy'], reviewGroupIds: ['PRIVATE-group'] } };
+  metadata: { tags: ['PRIVATE-tag'], taxonomyIds: ['PRIVATE-taxonomy'] } };
 
 describe('canonical Review Comment client transport', () => {
   it('opens only the demanded encrypted candidate page, keeping continuation when no private filter matches', async () => {
@@ -254,10 +254,9 @@ describe('canonical Review Comment client transport', () => {
       ...input(), evidence: [{ kind: 'reasoning', message: 'PRIVATE-evidence' }], clientMutationId: 'evidence-1',
     })).comment;
     comment = ReviewCommentActionOutputSchemasV1['reviews.comments.transition'].parse(await run('reviews.comments.transition', {
-      ...input(), expectedState: 'open', toState: 'open', reviewGroupId: 'PRIVATE-new-group', reviewTriageStatus: 'defer',
+      ...input(), expectedState: 'open', toState: 'open', reviewTriageStatus: 'defer',
       reason: 'PRIVATE-defer', clientMutationId: 'transition-1',
     })).comment;
-    expect(comment.metadata?.reviewGroupIds).toEqual(['PRIVATE-group', 'PRIVATE-new-group']);
     comment = ReviewCommentActionOutputSchemasV1['reviews.comments.setDisposition'].parse(await run('reviews.comments.setDisposition', {
       ...input(), disposition: 'blocking', clientMutationId: 'disposition-1',
     })).comment;

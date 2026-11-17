@@ -30,7 +30,8 @@ const markers = {
 const createShape = ReviewCommentCreateRequestV1Schema.shape;
 const { anchor: _anchor, snapshot: _snapshot, body: _body, eventEnvelope: _createEvent,
   fingerprint: _fingerprint, linkedRefs: _linkedRefs, suggestedFix: _fix,
-  evidence: _createEvidence, metadata: _metadata, ...createStructural } = createShape;
+  evidence: _createEvidence, metadata: _metadata, scopeAttribution: _scopeAttribution,
+  extensions: _extensions, ...createStructural } = createShape;
 const { reason: _transitionReason, evidence: _transitionEvidence, eventEnvelope: _transitionEvent,
   ...transitionStructural } = ReviewCommentTransitionRequestV1Schema.shape;
 const { nextBody: _nextBody, reason: _editReason, eventEnvelope: _editEvent,
@@ -112,7 +113,8 @@ export type ReviewCommentCommitMutationResponseV1 = z.infer<typeof ReviewComment
 export function projectReviewCommentStructuralMutationV1(actionId: z.input<typeof ReviewCommentMutationActionIdV1Schema>, input: Record<string, unknown>): ReviewCommentStructuralMutationV1 {
   const { anchor, snapshot: _snapshotValue, body: _bodyValue, nextBody: _nextBodyValue,
     reason, evidence, fingerprint, linkedRefs: _refsValue, suggestedFix: _fixValue,
-    metadata: _metadataValue, eventEnvelope: _eventValue, ...structural } = input;
+    metadata: _metadataValue, scopeAttribution: _scopeAttributionValue, extensions: _extensionsValue,
+    eventEnvelope: _eventValue, ...structural } = input;
   return ReviewCommentStructuralMutationV1Schema.parse({ actionId, input: {
     ...structural,
     ...(reason === undefined ? {} : { hasReason: typeof reason === 'string' && reason.length > 0 }),
@@ -183,7 +185,7 @@ export function deriveReviewCommentStructuralMutationV1(params: Readonly<{
   };
   const event = (structural: ReviewCommentStructuralV1, kind: z.infer<typeof ReviewCommentEventV1Schema>['eventKind'], bulkActionId?: string) => ReviewCommentEventV1Schema.parse({
     eventId: params.runtime.createId('review-comment-event'), commentId: structural.id,
-    accountId: params.accountId, reviewId: structural.reviewId, projectId: structural.projectId, workspace: structural.workspace,
+    accountId: structural.accountId, reviewId: structural.reviewId, projectId: structural.projectId, workspace: structural.workspace,
     eventKind: kind, actor: params.actor, createdAt: now, serverRevision: structural.serverRevision,
     bulkActionId, authorDeviceId: mutation.input.authorDeviceId, clientLamport: mutation.input.clientLamport,
     event: { clientMutationId: mutation.input.clientMutationId },
@@ -194,7 +196,6 @@ export function deriveReviewCommentStructuralMutationV1(params: Readonly<{
     clientMutationId: mutation.input.clientMutationId, authorDeviceId: mutation.input.authorDeviceId,
     clientLamport: mutation.input.clientLamport, bulkActionId,
     ...('reviewTriageStatus' in mutation.input ? { reviewTriageStatus: mutation.input.reviewTriageStatus } : {}),
-    ...('reviewGroupId' in mutation.input ? { reviewGroupId: mutation.input.reviewGroupId } : {}),
   });
   if (mutation.actionId === 'reviews.comments.create' || mutation.actionId === 'reviews.comments.reply') {
     const id = params.runtime.createId('review-comment');
@@ -237,7 +238,7 @@ export function deriveReviewCommentStructuralMutationV1(params: Readonly<{
       if (mutation.actionId === 'reviews.comments.transition' || mutation.actionId === 'reviews.comments.bulkTransition') {
         const input = mutation.input;
         if (current.state !== input.expectedState) mutationError('review_comment_conflict', 'Review comment state did not match');
-        if (current.state !== input.toState || (!('reviewTriageStatus' in input && input.reviewTriageStatus) && !('reviewGroupId' in input && input.reviewGroupId))) {
+        if (current.state !== input.toState || (!('reviewTriageStatus' in input && input.reviewTriageStatus))) {
           if (!reviewCommentTransitionAllowedV1(current.state, input.toState)) mutationError('review_comment_invalid_transition', 'Review comment transition is invalid');
         }
         if (current.state !== input.toState && reviewCommentStateTransitionRequiresEvidenceV1(input.toState) && !input.hasReason && !input.evidenceCount) {
@@ -297,7 +298,8 @@ export function applyReviewCommentPreparedSensitiveMutationV1(params: Readonly<{
     const parsed = ReviewCommentCreateRequestV1Schema.parse(input);
     sensitive = { anchor: parsed.anchor, snapshot: plainMutationContent(parsed.snapshot), body: plainMutationContent(parsed.body), edits: [],
       evidence: parsed.evidence, transitions: prepared.structural.transitionHistory.map((item) => ({ ...item, evidence: parsed.evidence })),
-      fingerprint: parsed.fingerprint, linkedRefs: parsed.linkedRefs, suggestedFix: parsed.suggestedFix, metadata: parsed.metadata };
+      fingerprint: parsed.fingerprint, linkedRefs: parsed.linkedRefs, suggestedFix: parsed.suggestedFix, metadata: parsed.metadata,
+      scopeAttribution: parsed.scopeAttribution, extensions: parsed.extensions };
   } else {
     if (!prior || !previous) throw new Error('Review Comment mutation requires its opened previous record');
     sensitive = { ...prior };
@@ -311,7 +313,6 @@ export function applyReviewCommentPreparedSensitiveMutationV1(params: Readonly<{
       sensitive.edits = [...prior.edits, { ...prepared.structural.editHistory[prepared.structural.editHistory.length - 1], previousBody: previous.body, nextBody: sensitive.body, reason: parsed.reason }];
     } else if (mutation.actionId === 'reviews.comments.transition' || mutation.actionId === 'reviews.comments.bulkTransition') {
       sensitive.transitions = [...prior.transitions, { ...prepared.structural.transitionHistory[prepared.structural.transitionHistory.length - 1], reason: input.reason, evidence: input.evidence }];
-      if (typeof input.reviewGroupId === 'string') sensitive.metadata = { ...prior.metadata, reviewGroupIds: [...new Set([...(prior.metadata?.reviewGroupIds ?? []), input.reviewGroupId])] };
     } else if (mutation.actionId === 'reviews.comments.redact') {
       if (mutation.input.redactBody !== false) { sensitive.body = ''; sensitive.edits = []; }
       sensitive.tombstone = { ...prepared.structural.tombstone, reason: input.reason };
