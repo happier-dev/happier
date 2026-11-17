@@ -7,7 +7,7 @@ import type { ScmWorktreeCreateResponse, SessionCreationTargetPreparationRequest
 
 import { realizeWorkspaceCheckoutWithScmWorkspaceSource } from '@/scm/workspace';
 import { ensureSessionDirectory } from '@/daemon/startup/ensureSessionDirectory';
-import { createManagedSessionDirectories } from './managedSessionDirectories';
+import { createManagedSessionDirectories, predictManagedSessionCreationDirectory } from './managedSessionDirectories';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { DirectoryInCheckoutError, resolveDirectoryInCheckout } from '@/workspaces/activation/resolveDirectoryInCheckout';
 import { recordDirectoryPreflightRefusal, type DirectoryPreflightRefusal } from './directoryPreflightDiagnostic';
@@ -67,6 +67,8 @@ export async function prepareSessionCreationTarget(input: Readonly<{
   platform?: NodeJS.Platform;
   /** Target-daemon configuration boundary; absent uses the active server namespace. */
   activeServerDir?: string;
+  /** Already admitted requester placement; predicting a path does not materialize it. */
+  managedWorkspaceRoot?: string;
   signal?: AbortSignal;
   /** Test seam; production always delegates through the canonical SCM owner. */
   createCheckout?: CreateSessionCheckout;
@@ -89,9 +91,12 @@ export async function prepareSessionCreationTarget(input: Readonly<{
   };
   if (request.directory.kind === 'managed') {
     if (!request.sessionCreationTag) return invalidDirectory('managed_tag');
-    const target = createManagedSessionDirectories({ activeServerDir: input.activeServerDir, platform: input.platform }).prepareForCreation({
-      sessionCreationTag: request.sessionCreationTag,
-    });
+    const target = input.managedWorkspaceRoot
+      ? predictManagedSessionCreationDirectory({ root: input.managedWorkspaceRoot,
+        sessionCreationTag: request.sessionCreationTag, platform: input.platform })
+      : createManagedSessionDirectories({ activeServerDir: input.activeServerDir, platform: input.platform }).prepareForCreation({
+        sessionCreationTag: request.sessionCreationTag,
+      });
     return SessionCreationTargetPreparationResultV1Schema.parse({
       ok: true, directory: target.directory, directoryKind: 'managed', directoryCreationRequired: false, checkout: null,
     });

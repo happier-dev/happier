@@ -15,8 +15,25 @@ vi.mock('@/scm/workspace', () => ({
 }));
 
 import { prepareSessionCreationTarget } from './prepareSessionCreationTarget';
+import { createManagedSessionDirectories } from './managedSessionDirectories';
 
 describe('prepareSessionCreationTarget', () => {
+  it('predicts the admitted requester workspace allocation that native spawn will materialize', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-requester-preparation-'));
+    const workspaceRoot = join(activeServerDir, 'member-workspace');
+    try {
+      const sessionCreationTag = SessionCreationTagV1Schema.parse(`create:v1:${'b'.repeat(43)}`);
+      const request = { directory: { kind: 'managed' as const }, sessionCreationTag };
+      const nativeAllocation = createManagedSessionDirectories({ activeServerDir,
+        payloadPlacement: { root: workspaceRoot, agentUid: 1001 } }).prepareForCreation({ sessionCreationTag });
+      const target = await prepareSessionCreationTarget({ request, activeServerDir, managedWorkspaceRoot: workspaceRoot });
+      expect(target).toEqual({ ok: true, directory: join(workspaceRoot, nativeAllocation.allocationId),
+        directoryKind: 'managed', directoryCreationRequired: false, checkout: null });
+      expect(target).toMatchObject({ directory: nativeAllocation.directory });
+      await expect(access(workspaceRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(access(join(activeServerDir, 'session-directories'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(activeServerDir, { recursive: true, force: true }); }
+  });
   it('prepares a managed target deterministically without materializing its private directory', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-managed-preparation-'));
     try {
