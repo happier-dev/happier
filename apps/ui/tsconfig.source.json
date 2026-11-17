@@ -2050,6 +2050,7 @@
     "sources/components/settings/appearance/themeProfiles/index.ts",
     "sources/components/settings/appearance/themeProfiles/themeDevicePickerViewTypes.ts",
     "sources/components/settings/appearance/themeProfiles/themeLibraryViewTypes.ts",
+    "sources/components/settings/appearance/themeProfiles/themePluginShareForm.ts",
     "sources/components/settings/appearance/themeProfiles/themeProfileEditorActions.ts",
     "sources/components/settings/appearance/themeProfiles/themeProfileEditorModel.ts",
     "sources/components/settings/appearance/themeProfiles/themeProfileEditorViewTypes.ts",
