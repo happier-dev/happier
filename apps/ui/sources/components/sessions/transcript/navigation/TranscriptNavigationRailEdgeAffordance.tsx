@@ -62,7 +62,7 @@ export type TranscriptNavigationRailEdgeAffordanceProps = Readonly<{
  * handled by that tabstop; the chevron stays an addressable button for
  * assistive technology browsing by element.
  */
-export function TranscriptNavigationRailEdgeAffordance(props: TranscriptNavigationRailEdgeAffordanceProps) {
+function TranscriptNavigationRailEdgeAffordanceComponent(props: TranscriptNavigationRailEdgeAffordanceProps) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const isTop = props.edge === 'top';
@@ -118,6 +118,12 @@ export function TranscriptNavigationRailEdgeAffordance(props: TranscriptNavigati
         </View>
     );
 }
+
+/**
+ * Memoized: the rail re-renders whenever the current anchor moves (scroll rate on a thread of
+ * short turns), and none of those renders changes this edge's props.
+ */
+export const TranscriptNavigationRailEdgeAffordance = React.memo(TranscriptNavigationRailEdgeAffordanceComponent);
 
 const stylesheet = StyleSheet.create(() => ({
     /**

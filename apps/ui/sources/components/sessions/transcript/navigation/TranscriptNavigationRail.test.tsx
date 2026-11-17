@@ -496,6 +496,33 @@ describe('TranscriptNavigationRail', () => {
             .toBeGreaterThan(readStyleNumber(screen.findByTestId('transcript-navigation-rail.marker-line:turn-2')?.props.style, 'opacity'));
     });
 
+    // On a thread of short turns the current anchor changes at scroll rate: the rail follows it,
+    // but its edge chrome (gradients, chevrons) has nothing new to draw.
+    it('keeps the edge chrome out of a current-anchor change', async () => {
+        const { TranscriptNavigationRail } = await import('./TranscriptNavigationRail');
+        const { TranscriptNavigationRailEdgeAffordance } = await import('./TranscriptNavigationRailEdgeAffordance');
+        const counts = createCommittedFiberRenderCounter();
+        let readRoot: (() => ReturnType<ReturnType<typeof readTestRendererRoot>>) | null = null;
+        const many = buildEntries(200);
+        const store = getTranscriptNavigationVisibilityStore(RAIL_SESSION_ID);
+        act(() => { store.set({ currentAnchorId: 'turn-1', visibleAnchorIds: ['turn-1'] }); });
+        const screen = await renderScreen(<React.Profiler id="rail" onRender={() => { if (readRoot) counts.onCommitRoot(readRoot()); }}>
+            <TranscriptNavigationRail {...baseProps()} entries={many} />
+        </React.Profiler>);
+        readRoot = readTestRendererRoot(screen.tree.root);
+        expect(screen.findByTestId('transcript-navigation-rail.edge.bottom')).toBeTruthy();
+        counts.start();
+        for (let step = 2; step <= 6; step += 1) {
+            await act(async () => {
+                store.set({ currentAnchorId: `turn-${step}`, visibleAnchorIds: [`turn-${step}`] });
+            });
+        }
+        counts.stop();
+        const read = counts.read();
+        expect(read.rendersFor(TranscriptNavigationRail)).toBeGreaterThan(0);
+        expect(read.rendersFor(TranscriptNavigationRailEdgeAffordance)).toBe(0);
+    });
+
     it('fades the rail out softly when it drops below the width threshold', async () => {
         const { TranscriptNavigationRail } = await import('./TranscriptNavigationRail');
 
