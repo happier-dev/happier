@@ -987,6 +987,9 @@ const settingsAppearanceTranslationExtension = {
     importErrors: {
       invalidJson: '貼り付けられたテキストは無効です JSON。',
       unsupportedSchema: 'このテーマ プロファイルのバージョンはサポートされていません。',
+      include_unavailable: ({ path }: { path: string }) => `含まれるテーマファイルを読み取れません: ${path}.`,
+      include_cycle: ({ path }: { path: string }) => `テーマファイルの参照が循環しています: ${path}.`,
+      invalid_theme: '含まれるファイルは有効なテーマではありません。',
       invalidProfile: 'このテーマ プロファイルをインポートできませんでした。',
       tooLarge: 'このテーマ プロファイル JSON は大きすぎます。',
     },

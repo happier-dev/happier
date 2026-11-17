@@ -981,6 +981,9 @@ const settingsAppearanceTranslationExtension = {
     importErrors: {
       invalidJson: 'Вставленный текст недействителен JSON.',
       unsupportedSchema: 'Эта версия профиля темы не поддерживается.',
+      include_unavailable: ({ path }: { path: string }) => `Не удалось прочитать включённый файл темы: ${path}.`,
+      include_cycle: ({ path }: { path: string }) => `Включённые файлы темы образуют цикл: ${path}.`,
+      invalid_theme: 'Включённый файл не содержит допустимую тему.',
       invalidProfile: 'Не удалось импортировать этот профиль темы.',
       tooLarge: 'Этот профиль темы JSON слишком велик.',
     },

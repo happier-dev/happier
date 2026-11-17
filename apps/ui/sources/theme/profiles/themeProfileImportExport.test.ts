@@ -31,10 +31,33 @@ const profileWithDarkAssets: ThemeProfileV1 & { assetAppearance: 'dark' } = {
 };
 
 describe('theme profile import/export', () => {
+    it('resolves local VS Code parent resources before importing the editable copy', async () => {
+        const resources = new Map([
+            ['file:///themes/base.json', JSON.stringify({ colors: { 'editor.background': '#112233', 'editor.foreground': '#445566' } })],
+        ]);
+        const options = { now: profile.updatedAt, resource: { id: 'file:///themes/child.json',
+            read: async (relativePath: string, fromResourceId: string) => {
+                const id = new URL(relativePath, fromResourceId).href;
+                const text = resources.get(id);
+                if (text === undefined) throw new Error('File does not exist');
+                return { id, text };
+            },
+        } };
+        const result = await importThemeProfileFromJson(JSON.stringify({ include: './base.json', name: 'Child', type: 'dark',
+            colors: { 'editor.foreground': '#abcdef' } }), options);
+        expect(result.ok).toBe(true);
+        if (!result.ok) return;
+        expect(result.profile.overrides.dark).toMatchObject({ 'background.canvas': '#112233', 'text.primary': '#abcdef' });
+    });
+    it('reports an unavailable parent instead of importing a partial VS Code theme', async () => {
+        const result = await importThemeProfileFromJson(JSON.stringify({ include: './missing.json', name: 'Child', type: 'dark',
+            colors: { 'editor.background': '#112233' } }), { now: profile.updatedAt });
+        expect(result).toMatchObject({ ok: false, error: 'include_unavailable', relativePath: './missing.json' });
+    });
     it('allocates Artifact-compatible creation ids so the editor route keeps the acknowledged identity', () => {
         expect(ArtifactCreateIdV1Schema.safeParse(createThemeProfileId()).success).toBe(true);
     });
-    it('exports and imports a retained newer document without replacing its unknown presentation', () => {
+    it('exports and imports a retained newer document without replacing its unknown presentation', async () => {
         const raw = { ...profile, schemaVersion: 2, overrides: { light: {}, dark: {} },
             style: { radius: 'future-shape', futureGlow: { strength: 0.7 } },
             futurePresentation: { material: 'ink' } };
@@ -43,7 +66,7 @@ describe('theme profile import/export', () => {
         if (!read.ok) return;
         const exported = exportThemeProfileToJson(read.document);
         expect(JSON.parse(exported).profile).toEqual(raw);
-        const imported = importThemeProfileFromJson(exported, { now: profile.updatedAt });
+        const imported = await importThemeProfileFromJson(exported, { now: profile.updatedAt });
         expect(imported.ok).toBe(true);
         if (imported.ok) {
             expect(imported.document.raw).toEqual({ ...raw, id: imported.profile.id });
@@ -89,13 +112,13 @@ describe('theme profile import/export', () => {
         expect(Object.keys(parsed.profile.overrides.dark).sort()).toEqual([...THEME_PROFILE_PUBLIC_TOKEN_IDS].sort());
     });
 
-    it('imports valid exported JSON', () => {
+    it('imports valid exported JSON', async () => {
         const exported = exportThemeProfileToJson({
             ...profileWithDarkAssets,
             overrides: { light: { 'background.canvas': '#fafafa' }, dark: {} },
         });
 
-        const result = importThemeProfileFromJson(exported, { now: '2026-05-12T00:00:00.000Z' });
+        const result = await importThemeProfileFromJson(exported, { now: '2026-05-12T00:00:00.000Z' });
 
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -106,15 +129,15 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('rejects malformed and unsupported JSON', () => {
-        expect(importThemeProfileFromJson('{not json}', { now: '2026-05-12T00:00:00.000Z' }).ok).toBe(false);
-        expect(importThemeProfileFromJson('{"kind":"other","schemaVersion":1}', { now: '2026-05-12T00:00:00.000Z' }).ok).toBe(false);
-        expect(importThemeProfileFromJson('{"kind":"happier.themeProfile","schemaVersion":2}', { now: '2026-05-12T00:00:00.000Z' }).ok).toBe(false);
-        expect(importThemeProfileFromJson('{"name":"Not a theme","type":"dark"}', { now: '2026-05-12T00:00:00.000Z' }).ok).toBe(false);
+    it('rejects malformed and unsupported JSON', async () => {
+        expect((await importThemeProfileFromJson('{not json}', { now: '2026-05-12T00:00:00.000Z' })).ok).toBe(false);
+        expect((await importThemeProfileFromJson('{"kind":"other","schemaVersion":1}', { now: '2026-05-12T00:00:00.000Z' })).ok).toBe(false);
+        expect((await importThemeProfileFromJson('{"kind":"happier.themeProfile","schemaVersion":2}', { now: '2026-05-12T00:00:00.000Z' })).ok).toBe(false);
+        expect((await importThemeProfileFromJson('{"name":"Not a theme","type":"dark"}', { now: '2026-05-12T00:00:00.000Z' })).ok).toBe(false);
     });
 
-    it('imports supported VS Code theme JSONC payloads with comments and trailing commas', () => {
-        const result = importThemeProfileFromJson(`{
+    it('imports supported VS Code theme JSONC payloads with comments and trailing commas', async () => {
+        const result = await importThemeProfileFromJson(`{
             "name": "Tokyo Night",
             "type": "dark",
             "colors": {
@@ -139,7 +162,7 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('auto-detects and imports a supported VS Code theme JSON payload', () => {
+    it('auto-detects and imports a supported VS Code theme JSON payload', async () => {
         const json = JSON.stringify({
             name: 'Pitch Dark',
             type: 'dark',
@@ -163,7 +186,7 @@ describe('theme profile import/export', () => {
             ],
         });
 
-        const result = importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
+        const result = await importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
 
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -180,7 +203,7 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('paints imported messages with the theme neutral surface and text, not its accent button', () => {
+    it('paints imported messages with the theme neutral surface and text, not its accent button', async () => {
         const json = JSON.stringify({
             name: 'Harbor Light',
             type: 'light',
@@ -193,7 +216,7 @@ describe('theme profile import/export', () => {
             },
         });
 
-        const result = importThemeProfileFromJson(json, { now: '2026-10-23T00:00:00.000Z' });
+        const result = await importThemeProfileFromJson(json, { now: '2026-10-23T00:00:00.000Z' });
 
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -215,7 +238,7 @@ describe('theme profile import/export', () => {
     });
 
 
-    it('warns on unknown public token ids and does not keep them in runtime overrides', () => {
+    it('warns on unknown public token ids and does not keep them in runtime overrides', async () => {
         const json = JSON.stringify({
             kind: 'happier.themeProfile',
             schemaVersion: 1,
@@ -225,7 +248,7 @@ describe('theme profile import/export', () => {
             },
         });
 
-        const result = importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
+        const result = await importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
 
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -234,7 +257,7 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('rejects imported profiles with invalid color values', () => {
+    it('rejects imported profiles with invalid color values', async () => {
         const json = JSON.stringify({
             kind: 'happier.themeProfile',
             schemaVersion: 1,
@@ -244,12 +267,12 @@ describe('theme profile import/export', () => {
             },
         });
 
-        const result = importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
+        const result = await importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
 
         expect(result).toEqual({ ok: false, error: 'invalidProfile' });
     });
 
-    it('rejects imported profiles with non-string color values', () => {
+    it('rejects imported profiles with non-string color values', async () => {
         const json = JSON.stringify({
             kind: 'happier.themeProfile',
             schemaVersion: 1,
@@ -259,13 +282,13 @@ describe('theme profile import/export', () => {
             },
         });
 
-        const result = importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
+        const result = await importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
 
         expect(result).toEqual({ ok: false, error: 'invalidProfile' });
     });
 
 
-    it('rejects imports with too many overrides in one mode', () => {
+    it('rejects imports with too many overrides in one mode', async () => {
         const overrides = Object.fromEntries(
             Array.from({ length: THEME_PROFILE_MAX_OVERRIDES_PER_MODE + 1 }, (_, index) => [`unknown.${index}`, '#ffffff']),
         );
@@ -278,7 +301,7 @@ describe('theme profile import/export', () => {
             },
         });
 
-        const result = importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
+        const result = await importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
 
         expect(result).toEqual({ ok: false, error: 'invalidProfile' });
     });
@@ -302,7 +325,7 @@ describe('theme profile import/export', () => {
         });
     });
 
-    it('keeps canonical token values when deprecated aliases collide during import', () => {
+    it('keeps canonical token values when deprecated aliases collide during import', async () => {
         expect(migrateThemeProfileOverrideTokenIds({
             warningCritical: '#ff0000',
             'state.danger.foreground': '#505050',
@@ -325,7 +348,7 @@ describe('theme profile import/export', () => {
             },
         });
 
-        const result = importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
+        const result = await importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
 
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -333,9 +356,9 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('creates a fresh copy identity without acquiring existing profiles and trims imported names', () => {
+    it('creates a fresh copy identity without acquiring existing profiles and trims imported names', async () => {
         const json = JSON.stringify({ kind: 'happier.themeProfile', schemaVersion: 1, profile: { ...profile, name: '  Imported Ocean  ', overrides: { light: {}, dark: {} } } });
-        const result = importThemeProfileFromJson(json, {
+        const result = await importThemeProfileFromJson(json, {
             generateId: () => 'theme_imported',
             now: '2026-05-12T00:00:00.000Z',
         });
@@ -347,14 +370,14 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('generates a new id when an import uses a reserved built-in preset id', () => {
+    it('generates a new id when an import uses a reserved built-in preset id', async () => {
         const json = JSON.stringify({
             kind: 'happier.themeProfile',
             schemaVersion: 1,
             profile: { ...profile, id: 'premiumDark', overrides: { light: {}, dark: {} } },
         });
 
-        const result = importThemeProfileFromJson(json, {
+        const result = await importThemeProfileFromJson(json, {
             generateId: () => 'theme_imported',
             now: '2026-05-12T00:00:00.000Z',
         });
@@ -365,14 +388,14 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('generates a new id when an import uses a reserved base theme id', () => {
+    it('generates a new id when an import uses a reserved base theme id', async () => {
         const json = JSON.stringify({
             kind: 'happier.themeProfile',
             schemaVersion: 1,
             profile: { ...profile, id: 'light', overrides: { light: {}, dark: {} } },
         });
 
-        const result = importThemeProfileFromJson(json, {
+        const result = await importThemeProfileFromJson(json, {
             generateId: () => 'theme_imported',
             now: '2026-05-12T00:00:00.000Z',
         });
@@ -383,14 +406,14 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('generates a new id when an import uses the reserved editor route id', () => {
+    it('generates a new id when an import uses the reserved editor route id', async () => {
         const json = JSON.stringify({
             kind: 'happier.themeProfile',
             schemaVersion: 1,
             profile: { ...profile, id: 'new', overrides: { light: {}, dark: {} } },
         });
 
-        const result = importThemeProfileFromJson(json, {
+        const result = await importThemeProfileFromJson(json, {
             generateId: () => 'theme_imported',
             now: '2026-05-12T00:00:00.000Z',
         });
@@ -401,14 +424,14 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('generates a new id when an import uses a route-unsafe id', () => {
+    it('generates a new id when an import uses a route-unsafe id', async () => {
         const json = JSON.stringify({
             kind: 'happier.themeProfile',
             schemaVersion: 1,
             profile: { ...profile, id: '../theme/profile?bad=true', overrides: { light: {}, dark: {} } },
         });
 
-        const result = importThemeProfileFromJson(json, {
+        const result = await importThemeProfileFromJson(json, {
             generateId: () => 'theme_imported',
             now: '2026-05-12T00:00:00.000Z',
         });
@@ -419,10 +442,10 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('normalizes blank imported names to the safe default name', () => {
+    it('normalizes blank imported names to the safe default name', async () => {
         const json = JSON.stringify({ kind: 'happier.themeProfile', schemaVersion: 1, profile: { ...profile, name: '   ', overrides: { light: {}, dark: {} } } });
 
-        const result = importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
+        const result = await importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' });
 
         expect(result.ok).toBe(true);
         if (result.ok) {
@@ -430,24 +453,24 @@ describe('theme profile import/export', () => {
         }
     });
 
-    it('rejects imported names that are too long or contain control characters', () => {
+    it('rejects imported names that are too long or contain control characters', async () => {
         for (const name of ['Ocean\u0000Terminal', 'x'.repeat(65)]) {
             const json = JSON.stringify({ kind: 'happier.themeProfile', schemaVersion: 1, profile: { ...profile, name, overrides: { light: {}, dark: {} } } });
 
-            expect(importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' })).toEqual({ ok: false, error: 'invalidProfile' });
+            expect(await importThemeProfileFromJson(json, { now: '2026-05-12T00:00:00.000Z' })).toEqual({ ok: false, error: 'invalidProfile' });
         }
     });
 });
 
 
 describe('portable presentation retention', () => {
-    it('round trips CSS, seeds, corners, typeface and future presentation', () => {
+    it('round trips CSS, seeds, corners, typeface and future presentation', async () => {
         const portable = { ...profile, overrides: { light: {}, dark: {} }, seeds: { canvas: '#112233', accent: '#abcdef' },
             style: { radius: 'round', fontFamily: 'Inter', futureGlow: true }, css: '[data-surface="card"]{opacity:.9}',
             futurePresentation: { blur: 3 } };
         const exported = JSON.parse(exportThemeProfileToJson(portable));
         expect(exported.profile).toMatchObject(portable);
-        const imported = importThemeProfileFromJson(JSON.stringify(exported), { now: portable.updatedAt });
+        const imported = await importThemeProfileFromJson(JSON.stringify(exported), { now: portable.updatedAt });
         expect(imported.ok).toBe(true);
         if (imported.ok) {
             expect(imported.document.raw).toMatchObject({ ...portable, id: imported.profile.id });
@@ -458,9 +481,9 @@ describe('portable presentation retention', () => {
 
 
 describe('Artifact-owned theme capacity', () => {
-    it('imports a CSS-rich profile beyond former settings import limits', () => {
+    it('imports a CSS-rich profile beyond former settings import limits', async () => {
         const portable = { ...profile, overrides: { light: {}, dark: {} }, css: '.card{color:red}\n'.repeat(5000) };
-        const result = importThemeProfileFromJson(JSON.stringify({ kind: 'happier.themeProfile', schemaVersion: 1, profile: portable }),
+        const result = await importThemeProfileFromJson(JSON.stringify({ kind: 'happier.themeProfile', schemaVersion: 1, profile: portable }),
             { now: portable.updatedAt });
         expect(result.ok).toBe(true);
         if (result.ok) expect(result.profile.css).toBe(portable.css);

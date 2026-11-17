@@ -1113,6 +1113,9 @@ const settingsAppearanceTranslationExtension = {
     importErrors: {
       invalidJson: 'The pasted text is not valid JSON.',
       unsupportedSchema: 'This theme profile version is not supported.',
+      include_unavailable: ({ path }: { path: string }) => `The included theme file could not be read: ${path}.`,
+      include_cycle: ({ path }: { path: string }) => `The included theme files form a cycle: ${path}.`,
+      invalid_theme: 'An included theme file is not a valid theme.',
       invalidProfile: 'This theme profile could not be imported.',
       tooLarge: 'This theme profile JSON is too large.',
     },

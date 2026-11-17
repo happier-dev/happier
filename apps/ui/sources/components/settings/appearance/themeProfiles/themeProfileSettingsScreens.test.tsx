@@ -142,6 +142,7 @@ vi.mock('@/text', async () => {
     return {
         ...createTextModuleMock({
             translate: (key: string, params?: Record<string, unknown>) => {
+                if (typeof params?.path === 'string') return `${key}: ${params.path}`;
                 if (typeof params?.name === 'string') return `${params.name} copy`;
                 if (typeof params?.count === 'number') return `Custom theme ${params.count}`;
                 if (typeof params?.formats === 'string') return `Supported formats: ${params.formats}`;
@@ -1014,6 +1015,24 @@ describe('Theme profile import and export screens', () => {
         expect(shared.routerBack).toHaveBeenCalled();
     });
 
+    it('imports a browser theme with its selected parent through the shared resolver', async () => {
+        const child = JSON.stringify({ name: 'Child', type: 'dark', include: './base.json',
+            colors: { 'editor.foreground': '#abcdef' } });
+        const parent = JSON.stringify({ colors: { 'editor.background': '#112233' } });
+        shared.nativePickFiles.mockResolvedValueOnce([
+            { kind: 'web', file: new File([child], 'child.json') },
+            { kind: 'web', file: new File([parent], 'base.json') },
+        ]);
+        const screen = await renderImportScreen();
+        await screen.pressByTestIdAsync('settings-theme-profile-import-file');
+        await vi.waitFor(() => expect(screen.findByTestId('settings-theme-profile-import-json')?.props.value).toBe(child));
+        await submitImport(screen);
+        expect(getThemeProfiles().profiles[0]?.overrides.dark).toMatchObject({
+            'background.canvas': '#112233', 'text.primary': '#abcdef',
+        });
+    });
+
+
     it('imports a theme JSON file picked from disk', async () => {
         const json = exportThemeProfileToJson(baseProfile('shared', { light: { 'background.canvas': '#123456' }, dark: {} }));
         shared.nativePickFiles.mockResolvedValueOnce([{ kind: 'web', file: new File([json], 'theme.json', { type: 'application/json' }) }]);
@@ -1038,6 +1057,20 @@ describe('Theme profile import and export screens', () => {
         expect(getThemeProfiles().profiles[0]?.overrides.light['background.canvas']).toBe('#123456');
         expect(getThemeProfiles().profiles[0]?.overrides.light['text.primary']).toBe('#abcdef');
     });
+
+    it('reports an unavailable included theme file without importing a partial theme', async () => {
+        const json = JSON.stringify({ include: './missing.json', name: 'Child', type: 'light', colors: { 'editor.background': '#123456' } });
+        shared.nativePickFiles.mockResolvedValueOnce([{ kind: 'web', file: new File([json], 'child.json', { type: 'application/json' }) }]);
+        const screen = await renderImportScreen();
+
+        await screen.pressByTestIdAsync('settings-theme-profile-import-file');
+        await submitImport(screen);
+
+        expect(screen.getTextContent()).toContain('./missing.json');
+        expect(getThemeProfiles().profiles).toHaveLength(0);
+        expect(shared.routerBack).not.toHaveBeenCalled();
+    });
+
 
     it('shows the supported import formats hint on the import screen', async () => {
         const screen = await renderImportScreen();

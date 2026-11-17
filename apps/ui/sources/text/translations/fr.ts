@@ -980,6 +980,9 @@ const settingsAppearanceTranslationExtension = {
     importErrors: {
       invalidJson: 'Le texte collé n’est pas du JSON valide.',
       unsupportedSchema: 'Cette version de profil de thème n’est pas prise en charge.',
+      include_unavailable: ({ path }: { path: string }) => `Impossible de lire le fichier de thème inclus: ${path}.`,
+      include_cycle: ({ path }: { path: string }) => `Les fichiers de thème inclus forment un cycle: ${path}.`,
+      invalid_theme: 'Un fichier inclus ne contient pas un thème valide.',
       invalidProfile: 'Ce profil de thème n’a pas pu être importé.',
       tooLarge: 'Le JSON de ce profil de thème est trop volumineux.',
     },

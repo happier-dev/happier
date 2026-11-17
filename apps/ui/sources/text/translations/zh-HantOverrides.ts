@@ -985,6 +985,9 @@ const settingsAppearanceTranslationExtension = {
     importErrors: {
       invalidJson: '貼上的文字無效JSON。',
       unsupportedSchema: '不支援此主題設定檔版本。',
+      include_unavailable: ({ path }: { path: string }) => `無法讀取包含的主題檔案: ${path}.`,
+      include_cycle: ({ path }: { path: string }) => `包含的主題檔案形成循環: ${path}.`,
+      invalid_theme: '包含的檔案不是有效主題。',
       invalidProfile: '無法匯入該主題設定檔。',
       tooLarge: '這個主題配置檔JSON太大了。',
     },

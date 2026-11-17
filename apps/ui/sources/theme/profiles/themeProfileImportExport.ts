@@ -1,4 +1,4 @@
-import { parseThemeImportJsonLikeText } from '@happier-dev/protocol/account/settings/themeProfileExternalThemeImportVsCode';
+import { parseThemeImportJsonLikeText, resolveVsCodeThemeIncludes, ThemeImportIssueError, type ThemeImportIssueCode, type ThemeImportResourceReader } from '@happier-dev/protocol/account/settings/themeProfileExternalThemeImportVsCode';
 import { createThemeProfileFile, ThemeProfileFileEnvelopeSchema } from '@happier-dev/protocol/account/settings/themeProfileFile';
 import { ThemeProfileIdSchema, ThemeProfileNameSchema, isReservedThemeProfileId, migrateThemeProfileOverrideTokenId, migrateThemeProfileOverrideTokenIds } from '@happier-dev/protocol/account/settings/themeProfiles';
 import {
@@ -25,11 +25,13 @@ export type ThemeProfileImportWarning =
 
 export type ThemeProfileImportResult =
     | Readonly<{ ok: true; profile: ThemeProfileV1; document: ThemeProfileDocument; warnings: readonly ThemeProfileImportWarning[] }>
-    | Readonly<{ ok: false; error: 'invalidJson' | 'unsupportedSchema' | 'invalidProfile' }>;
+    | Readonly<{ ok: false; error: 'invalidJson' | 'unsupportedSchema' | 'invalidProfile' }>
+    | Readonly<{ ok: false; error: ThemeImportIssueCode; resourceId: string; relativePath?: string }>;
 
 type ImportOptions = Readonly<{
     now: string;
     generateId?: () => string;
+    resource?: Readonly<{ id: string; read: ThemeImportResourceReader }>;
 }>;
 
 type ExportThemeProfileOptions = Readonly<{
@@ -215,7 +217,7 @@ export const exportThemeProfileToJson = (input: ThemeProfileV1 | ThemeProfileDoc
     return stableStringify(createThemeProfileFile(sanitizedProfile));
 };
 
-export const importThemeProfileFromJson = (json: string, options: ImportOptions): ThemeProfileImportResult => {
+export const importThemeProfileFromJson = (json: string, options: ImportOptions): ThemeProfileImportResult | Promise<ThemeProfileImportResult> => {
     const parsed = parseThemeImportJsonLikeText(json);
     if (parsed === null) {
         return { ok: false, error: 'invalidJson' };
@@ -223,46 +225,59 @@ export const importThemeProfileFromJson = (json: string, options: ImportOptions)
 
     // Files create editable copies; their record identity belongs to the exporting Account.
     const copyId = (options.generateId ?? createThemeProfileId)();
-    let rawProfile: unknown;
     const nativeFile = ThemeProfileFileEnvelopeSchema.safeParse(parsed);
-    if (nativeFile.success) {
-        rawProfile = nativeFile.data.profile;
-    } else {
-        rawProfile = resolveExternalThemeProfileImportProfile(parsed, { ...options, generateId: () => copyId });
-        if (!rawProfile) {
-            return { ok: false, error: 'unsupportedSchema' };
+    const completeImport = (resolved: unknown): ThemeProfileImportResult => {
+        let rawProfile: unknown;
+        if (nativeFile.success) {
+            rawProfile = nativeFile.data.profile;
+        } else {
+            rawProfile = resolveExternalThemeProfileImportProfile(resolved, { ...options, generateId: () => copyId });
+            if (!rawProfile) {
+                return { ok: false, error: 'unsupportedSchema' };
+            }
         }
-    }
 
-    if (!isRecord(rawProfile)) return { ok: false, error: 'invalidProfile' };
-    const name = sanitizeThemeProfileName(rawProfile.name, { defaultBlankName: true });
-    if (!name) return { ok: false, error: 'invalidProfile' };
-    const read = parseThemeProfileDocument({ ...rawProfile,
-        id: copyId, name,
-        createdAt: typeof rawProfile.createdAt === 'string' ? rawProfile.createdAt : options.now,
-        updatedAt: typeof rawProfile.updatedAt === 'string' ? rawProfile.updatedAt : options.now,
-    });
-    if (!read.ok) return { ok: false, error: 'invalidProfile' };
-    // Files import editable copies; source-owned records are admitted by their installer.
-    const document = read.document.profile.source && read.document.profile.source.kind !== 'yours'
-        ? mergeThemeProfileDocumentEdit(read.document, { source: { kind: 'yours' } })
-        : read.document;
-    const warnings: ThemeProfileImportWarning[] = [];
-    const profile = sanitizeProfile(document.profile, options, warnings, {
-        defaultBlankName: true,
-        rejectInvalidColors: true,
-        rejectTooManyOverrides: true,
-    });
-    if (!profile) {
-        return { ok: false, error: 'invalidProfile' };
-    }
+        if (!isRecord(rawProfile)) return { ok: false, error: 'invalidProfile' };
+        const name = sanitizeThemeProfileName(rawProfile.name, { defaultBlankName: true });
+        if (!name) return { ok: false, error: 'invalidProfile' };
+        const read = parseThemeProfileDocument({ ...rawProfile,
+            id: copyId, name,
+            createdAt: typeof rawProfile.createdAt === 'string' ? rawProfile.createdAt : options.now,
+            updatedAt: typeof rawProfile.updatedAt === 'string' ? rawProfile.updatedAt : options.now,
+        });
+        if (!read.ok) return { ok: false, error: 'invalidProfile' };
+        // Files import editable copies; source-owned records are admitted by their installer.
+        const document = read.document.profile.source && read.document.profile.source.kind !== 'yours'
+            ? mergeThemeProfileDocumentEdit(read.document, { source: { kind: 'yours' } })
+            : read.document;
+        const warnings: ThemeProfileImportWarning[] = [];
+        const profile = sanitizeProfile(document.profile, options, warnings, {
+            defaultBlankName: true,
+            rejectInvalidColors: true,
+            rejectTooManyOverrides: true,
+        });
+        if (!profile) {
+            return { ok: false, error: 'invalidProfile' };
+        }
 
-    return {
-        ok: true,
-        profile,
-        document,
-        warnings,
+        return {
+            ok: true,
+            profile,
+            document,
+            warnings,
+        };
     };
+    if (!nativeFile.success && isRecord(parsed) && parsed.include !== undefined) {
+        return resolveVsCodeThemeIncludes({
+            root: { id: options.resource?.id ?? 'theme.json', text: json },
+            read: options.resource?.read ?? (async () => { throw new Error('No local theme resource reader'); }),
+        }).then(completeImport, (error: unknown): ThemeProfileImportResult => {
+            if (!(error instanceof ThemeImportIssueError)) throw error;
+            return { ok: false, error: error.code, resourceId: error.resourceId,
+                ...(error.relativePath === undefined ? {} : { relativePath: error.relativePath }) };
+        });
+    }
+    return completeImport(parsed);
 };
 
 export const sanitizeThemeProfileOverrides = (overrides: ThemeProfileV1['overrides']): ThemeProfileV1['overrides'] => {

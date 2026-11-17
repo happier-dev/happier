@@ -32,6 +32,8 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
     const router = useRouter();
     const { setSetting } = useSettingActionFeedback();
     const [json, setJson] = React.useState('');
+    const [pickedFiles, setPickedFiles] = React.useState<readonly NativePickedFile[]>([]);
+    const pickedFile = pickedFiles[0];
     const [error, setError] = React.useState<string | null>(null);
     const [warnings, setWarnings] = React.useState(0);
     const supportedImportFormats = React.useMemo(
@@ -40,11 +42,27 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
     );
 
     const submit = React.useCallback(async () => {
-        const result = importThemeProfileFromJson(json, {
+        const result = await importThemeProfileFromJson(json, {
             now: nowThemeProfileTimestamp(),
+            ...(pickedFile ? { resource: {
+                id: pickedFile.kind === 'native' ? pickedFile.uri : new URL(pickedFile.file.webkitRelativePath || pickedFile.file.name, 'file:///selected/').href,
+                read: async (relativePath: string, fromResourceId: string) => {
+                    if (pickedFile.kind === 'web') {
+                        const id = new URL(relativePath, fromResourceId).href;
+                        const selected = pickedFiles.find(entry => entry.kind === 'web'
+                            && new URL(entry.file.webkitRelativePath || entry.file.name, 'file:///selected/').href === id);
+                        if (!selected) throw new Error('Included file was not selected');
+                        return { id, text: await readPickedThemeFile(selected) };
+                    }
+                    const file = new File(new File(fromResourceId).parentDirectory, relativePath);
+                    return { id: file.uri, text: await file.text() };
+                },
+            } } : {}),
         });
         if (!result.ok) {
-            setError(t(`settingsAppearance.themeProfiles.importErrors.${result.error}`));
+            setError('resourceId' in result && result.error !== 'invalid_theme'
+                ? t(`settingsAppearance.themeProfiles.importErrors.${result.error}`, { path: result.relativePath ?? result.resourceId })
+                : t(`settingsAppearance.themeProfiles.importErrors.${result.error}`));
             setWarnings(0);
             return;
         }
@@ -55,13 +73,15 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
         if (result.warnings.length === 0) {
             router.back();
         }
-    }, [json, router, setSetting]);
+    }, [json, pickedFile, pickedFiles, router, setSetting]);
 
     const pickFile = React.useCallback(async () => {
         try {
-            const [picked] = await nativePickFiles({ multiple: false });
+            const files = await nativePickFiles({ multiple: true });
+            const picked = files[0];
             if (!picked) return;
             setJson(await readPickedThemeFile(picked));
+            setPickedFiles(files);
             setError(null);
             setWarnings(0);
         } catch {

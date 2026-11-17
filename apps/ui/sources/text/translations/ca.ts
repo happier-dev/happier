@@ -980,6 +980,9 @@ const settingsAppearanceTranslationExtension = {
     importErrors: {
       invalidJson: 'El text enganxat no és vàlid JSON.',
       unsupportedSchema: 'Aquesta versió del perfil del tema no és compatible.',
+      include_unavailable: ({ path }: { path: string }) => `No es pot llegir el fitxer de tema inclòs: ${path}.`,
+      include_cycle: ({ path }: { path: string }) => `Els fitxers de tema inclosos formen un cicle: ${path}.`,
+      invalid_theme: 'Un fitxer de tema inclòs no és un tema vàlid.',
       invalidProfile: 'Aquest perfil de tema no s\'ha pogut importar.',
       tooLarge: 'Aquest perfil del tema JSON és massa gran.',
     },

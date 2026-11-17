@@ -127,7 +127,7 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                     await library.undo(request.input.undoHandle);
                     return { restored: host.readSelection() };
                 case THEME_ACTION_IDS.import: {
-                    const imported = importThemeProfileFromJson(request.input.file.text, { now: new Date().toISOString() });
+                    const imported = await importThemeProfileFromJson(request.input.file.text, { now: new Date().toISOString() });
                     if (!imported.ok) return { ok: false as const, errorCode: 'theme_document_invalid', error: 'theme_document_invalid' };
                     const result = await library.save({ document: imported.document });
                     if (!result.entry) return { ok: false as const, errorCode: 'theme_not_found', error: 'theme_not_found' };

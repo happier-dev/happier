@@ -980,6 +980,9 @@ const settingsAppearanceTranslationExtension = {
     importErrors: {
       invalidJson: 'Wklejony tekst jest nieprawidłowy JSON.',
       unsupportedSchema: 'Ta wersja profilu motywu nie jest obsługiwana.',
+      include_unavailable: ({ path }: { path: string }) => `Nie można odczytać dołączonego pliku motywu: ${path}.`,
+      include_cycle: ({ path }: { path: string }) => `Dołączone pliki motywu tworzą cykl: ${path}.`,
+      invalid_theme: 'Dołączony plik nie zawiera poprawnego motywu.',
       invalidProfile: 'Nie można zaimportować tego profilu motywu.',
       tooLarge: 'Ten profil motywu JSON jest za duży.',
     },
