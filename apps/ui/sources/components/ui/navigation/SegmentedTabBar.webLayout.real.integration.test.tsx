@@ -43,7 +43,7 @@ it('owns selected gradient paint on the addressed tab so authored background rep
     }
 });
 
-it('retains tab focus and local wrapper state when fit measurement turns on and off', async () => {
+it.each(['segmented', 'plain', 'pills'] as const)('retains tab focus and local wrapper state when fit measurement turns on and off (%s)', async presentation => {
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -58,7 +58,7 @@ it('retains tab focus and local wrapper state when fit measurement turns on and 
     async function render(fit: boolean) {
         await act(async () => root.render(
             <View style={{ width: 600 }}>
-                <SegmentedTabBar tabs={tabs} activeTabId="overview" onSelectTab={() => {}} presentation="plain"
+                <SegmentedTabBar tabs={tabs} activeTabId="overview" onSelectTab={() => {}} presentation={presentation}
                     wrapTab={wrapTab} overflow={fit ? { label: 'More', testID: 'pages.more' } : undefined} testIDPrefix="pages" />
             </View>,
         ));

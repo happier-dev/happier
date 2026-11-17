@@ -21,6 +21,22 @@ function createChangingLayout() {
 }
 
 describe('real browser layout convergence', () => {
+    it('distinguishes visible touch reach from an overflowing child cut by its host', async () => {
+        const { container, field } = createChangingLayout();
+        Object.assign(field.style, { position: 'relative', width: '80px', height: '32px' });
+        const reach = document.createElement('div');
+        reach.setAttribute('aria-hidden', 'true');
+        Object.assign(reach.style, { position: 'absolute', top: '-6px', bottom: '-6px', left: '0', right: '0' });
+        field.append(reach, document.createTextNode('Overview'));
+
+        const visible = await measureWebLayout(container, { viewport: { width: 390, height: 300 } });
+        expect(visible.rect('field').clipped).toBe(false);
+
+        field.style.overflow = 'hidden';
+        const hidden = await measureWebLayout(container, { viewport: { width: 390, height: 300 } });
+        expect(hidden.rect('field').clipped).toBe(true);
+    });
+
     it('preserves the document input modality and theme variables for the loaded global keyboard ring', async () => {
         const { container, field } = createChangingLayout();
         field.tabIndex = 0;

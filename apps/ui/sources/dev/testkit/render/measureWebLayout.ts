@@ -291,8 +291,11 @@ export async function measureWebLayout(container: HTMLElement, options: Readonly
             };
             const box = (element: Element) => {
                 const r = element.getBoundingClientRect();
-                const clipped = element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1;
                 const computed = getComputedStyle(element);
+                // Overflow can be intentional (for example, an invisible touch target extending past
+                // its drawn control). It is a hard cut only on an axis the host actually clips.
+                const clipped = (computed.overflowX !== 'visible' && element.scrollWidth > element.clientWidth + 1)
+                    || (computed.overflowY !== 'visible' && element.scrollHeight > element.clientHeight + 1);
                 const topmost = r.width > 0 && r.height > 0
                     ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
                 return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, width: r.width, height: r.height,

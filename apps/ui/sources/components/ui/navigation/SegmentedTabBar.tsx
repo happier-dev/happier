@@ -868,10 +868,8 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
                     awaitingFit ? styles.innerAwaitingFit : null,
                     themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'tab-bar', part: 'root' } : undefined),
                 ]}
-                {...(overflow ? {} : { accessibilityRole: valueChoice ? 'radiogroup' as const : 'tablist' as const, accessibilityLabel: props.accessibilityLabel })}
             >
                 <SegmentedTabRow
-                    owned={overflow != null}
                     role={valueChoice ? 'radiogroup' : 'tablist'}
                     accessibilityLabel={props.accessibilityLabel}
                     style={[
@@ -1053,17 +1051,15 @@ function SegmentedTabBarInner<T extends string>(controlled: SegmentedTabBarProps
 }
 
 /**
- * The tabs' own row when the bar has More (see `tabRow`); without More the track itself is the tablist
- * and the tabs sit straight in it.
+ * The tabs keep one semantic row whether or not fit measurement is enabled. More stands beside it,
+ * so enabling overflow never replaces the mounted tabs or puts the menu inside their tablist.
  */
 function SegmentedTabRow(props: Readonly<{
-    owned: boolean;
     role: 'tablist' | 'radiogroup';
     accessibilityLabel?: string;
     style: React.ComponentProps<typeof View>['style'];
     children: React.ReactNode;
 }>) {
-    if (!props.owned) return <>{props.children}</>;
     return (
         <View style={props.style} accessibilityRole={props.role} accessibilityLabel={props.accessibilityLabel}>
             {props.children}

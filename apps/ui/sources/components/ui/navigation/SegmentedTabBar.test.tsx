@@ -118,12 +118,21 @@ function requireTabSurface(screen: RenderedScreen, testID: string) {
   return surface!;
 }
 
-/** The track the segments sit in. Its padding is the only vertical space the frame may take. */
-function requireTrack(screen: RenderedScreen, testID: string) {
-  // Walk up from the segment to the element that announces itself as the tablist. `.parent` alone
-  // lands on the Pressable mock's wrapper when `findByTestId` returns the host node.
+/** The semantic row owns the accessible name independently of the track paint. */
+function requireTabList(screen: RenderedScreen, testID: string) {
   let node = requireTab(screen, testID).parent;
   while (node && node.props?.accessibilityRole !== 'tablist')
+    node = node.parent;
+  expect(node).toBeTruthy();
+  return node!;
+}
+
+/** The track the segments sit in. Its padding is the only vertical space the frame may take. */
+function requireTrack(screen: RenderedScreen, testID: string) {
+  // The painted track owns the root surface; the semantic tab row sits inside it and
+  // remains mounted when fit measurement turns on or off.
+  let node = requireTab(screen, testID).parent;
+  while (node && !(node.props?.dataSet?.surface === 'tab-bar' && node.props?.dataSet?.part === 'root'))
     node = node.parent;
   expect(node).toBeTruthy();
   return node!;
@@ -925,7 +934,7 @@ describe('SegmentedTabBar', () => {
     expect(beta.props.tabIndex).toBe(0);
     expect(alpha.props.tabIndex).toBe(-1);
     expect(gamma.props.tabIndex).toBe(-1);
-    expect(requireTrack(screen, 'seg:beta').props.accessibilityLabel).toBe(
+    expect(requireTabList(screen, 'seg:beta').props.accessibilityLabel).toBe(
       'Thinking effort',
     );
 
