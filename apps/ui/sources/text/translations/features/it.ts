@@ -2827,6 +2827,7 @@ const actionFamilyTranslations = { it: translated({
             scm_diff_summary: 'Riepiloghi delle modifiche',
             home_governance: 'Amministrazione dell’Home',
             teams: 'Team di lavoro',
+            plugin_collection_sharing: "Condivisione di raccolte di plugin",
             saved_secret_sharing: 'Segreti condivisi',
             personal_saved_secrets: 'Segreti salvati',
         },
@@ -16775,7 +16776,11 @@ const italian: TeamsTranslationRoot = {
                 keepBrokered: 'Mantieni tramite broker',
                 limitsNote: 'L\u2019uso diretto avviene fuori da Happier e non viene registrato.',
             },
-            nativeDisclosure: english.teams.credentials.nativeDisclosure,
+            nativeDisclosure: {
+                title: "Condividere questa chiave con Vercel?",
+                body: "La chiave della fonte selezionata viene comunicata al piano di controllo di Vercel, separatamente dal token di provisioning di Vercel. Vercel conserva la chiave fuori dall’ambiente ospite, ma devi comunque fidarti del custode della fonte e di Vercel. Le richieste configurate aggirano il broker di Happier, quindi non si applicano l’autorizzazione per richiesta, le politiche sul modello e sul corpo né i limiti di richieste, token o costo di Happier. I criteri di corrispondenza del fornitore limitano la sostituzione della chiave; non esaminano il JSON del modello né rifiutano le richieste senza corrispondenza. Imposta budget e restrizioni della chiave presso il gateway o il fornitore; qui non ne viene verificata la copertura. Le regole esistenti possono continuare mentre il controller è offline; in tal caso non è possibile garantire modifiche o rimozione. Ruota o revoca la chiave di origine per interromperne l’uso in modo indipendente; disabilitare l’invio non permette di recuperare una chiave già ricevuta da Vercel. L’attribuzione è un metadato di osservazione, non un’identità di membro autenticata né un riaddebito. I membri che condividono un utente del sistema operativo della sandbox possono leggere e riutilizzare i segnaposto altrui; non sono privati tra membri.",
+                confirm: "Consenti l’invio al fornitore",
+            },
             directUse: {
                 ownerVisibility: "Il proprietario della macchina può esaminare le chiavi e le credenziali selezionate consegnate qui, anche quando i membri avranno utenti separati.",
                 sharedUserVisibility: "Su una macchina condivisa, i membri e l’Agente isolato del proprietario possono leggere le chiavi consegnate direttamente finché condividono un utente Agente. Una configurazione attivata o in attesa non dimostra la separazione tra i membri.",

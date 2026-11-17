@@ -2818,6 +2818,7 @@ const actionFamilyTranslations = { ca: translated({
             scm_diff_summary: 'Resums de canvis',
             home_governance: 'Administració del Home',
             teams: 'Equips',
+            plugin_collection_sharing: "Compartició de col·leccions de connectors",
             saved_secret_sharing: 'Secrets compartits',
             personal_saved_secrets: 'Secrets desats',
         },
@@ -16787,7 +16788,11 @@ const catalan: TeamsTranslationRoot = {
                 keepBrokered: 'Mant\u00e9n amb intermediari',
                 limitsNote: 'L\u2019\u00fas directe passa fora de Happier i no queda registrat.',
             },
-            nativeDisclosure: english.teams.credentials.nativeDisclosure,
+            nativeDisclosure: {
+                title: "Voleu compartir aquesta clau amb Vercel?",
+                body: "La clau de la font seleccionada es revela al pla de control de Vercel, separadament del testimoni d’aprovisionament de Vercel. Vercel manté la clau fora de l’entorn convidat, però encara heu de confiar en el custodi de la font i en Vercel. Les sol·licituds configurades eviten l’intermediari de Happier, de manera que no s’hi apliquen l’autorització per sol·licitud, les polítiques del model i del cos ni els límits de sol·licituds, testimonis o cost de Happier. Els criteris de coincidència del proveïdor restringeixen la substitució de claus; no inspeccionen el JSON del model ni rebutgen les sol·licituds sense coincidència. Establiu pressupostos i restriccions de clau amb la passarel·la o el proveïdor; aquí no se’n verifica la cobertura. Les regles existents poden continuar mentre el controlador està fora de línia, i aleshores no es poden garantir els canvis ni la supressió. Roteu o revoqueu la clau d’origen per aturar-ne l’ús de manera independent; desactivar la tramesa no permet recuperar una clau que Vercel ja ha rebut. L’atribució és una metadada d’observació, no una identitat de membre autenticada ni una imputació de costos. Els membres que comparteixen un usuari del sistema operatiu de l’entorn aïllat poden llegir i reutilitzar els marcadors dels altres; no són privats entre membres.",
+                confirm: "Permet la tramesa al proveïdor",
+            },
             directUse: {
                 ownerVisibility: "El propietari de la màquina pot inspeccionar les claus i les credencials seleccionades que s’hi lliuren, fins i tot quan els membres tinguin usuaris separats.",
                 sharedUserVisibility: "En una màquina compartida, els membres i l’Agent aïllat del propietari poden llegir les claus lliurades directament mentre comparteixin un usuari d’Agent. Una configuració activada o pendent no demostra que els membres estiguin separats.",

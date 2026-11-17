@@ -2729,6 +2729,7 @@ const actionFamilyTranslations = { 'zh-Hans': translated({
             scm_diff_summary: '差异摘要',
             home_governance: 'Home 管理',
             teams: '团队',
+            plugin_collection_sharing: "插件集合共享",
             saved_secret_sharing: '共享密钥',
             personal_saved_secrets: '已保存的密钥',
         },
@@ -16656,7 +16657,11 @@ const simplifiedChinese: TeamsTranslationRoot = {
                 keepBrokered: '\u4fdd\u6301\u7ecf\u4ee3\u7406',
                 limitsNote: '\u76f4\u63a5\u4f7f\u7528\u53d1\u751f\u5728 Happier \u4e4b\u5916\uff0c\u4e0d\u4f1a\u88ab\u8bb0\u5f55\u3002',
             },
-            nativeDisclosure: english.teams.credentials.nativeDisclosure,
+            nativeDisclosure: {
+                title: "要将此密钥共享给 Vercel 吗？",
+                body: "所选来源的密钥会披露给 Vercel 的控制平面，与 Vercel 的资源配置令牌分开。Vercel 将密钥保存在访客环境之外，但你仍需信任来源的保管者和 Vercel。已配置的请求会绕过 Happier 代理，因此 Happier 的逐请求授权、模型和请求正文策略，以及请求数、令牌数或费用限制均不适用。供应商的匹配规则会缩小密钥替换范围，但不会检查模型 JSON，也不会拒绝不匹配的请求。请在网关或供应商处设置预算和密钥限制；此处不会验证其覆盖范围。控制器离线时，现有规则可能继续运行，此时无法保证更改或移除规则。请轮换或撤销上游密钥，以独立停止使用；禁用传递无法收回 Vercel 已收到的密钥。归属信息只是观测元数据，并非经过身份验证的成员身份或费用分摊依据。共享沙箱操作系统用户的成员可以读取并重复使用彼此的占位符；这些占位符在成员之间并不私密。",
+                confirm: "允许向供应商传递密钥",
+            },
             directUse: {
                 ownerVisibility: "即使成员之后使用独立用户，机器所有者仍可查看传送到此处的密钥和所选凭据。",
                 sharedUserVisibility: "在共享机器上，只要成员和所有者的隔离智能体仍共用一个智能体用户，就能读取直接传送的密钥。设置已启用或待完成并不证明成员之间已隔离。",

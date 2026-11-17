@@ -2779,6 +2779,7 @@ const actionFamilyTranslations = { ja: translated({
             scm_diff_summary: '差分の概要',
             home_governance: 'Home の管理',
             teams: 'チーム',
+            plugin_collection_sharing: "プラグインコレクションの共有",
             saved_secret_sharing: '共有シークレット',
             personal_saved_secrets: '保存済みシークレット',
         },
@@ -16711,7 +16712,11 @@ const japanese: TeamsTranslationRoot = {
                 keepBrokered: '\u30d6\u30ed\u30fc\u30ab\u30fc\u7d4c\u7531\u306e\u307e\u307e',
                 limitsNote: '\u76f4\u63a5\u5229\u7528\u306f Happier \u306e\u5916\u3067\u884c\u308f\u308c\u3001\u8a18\u9332\u3055\u308c\u307e\u305b\u3093\u3002',
             },
-            nativeDisclosure: english.teams.credentials.nativeDisclosure,
+            nativeDisclosure: {
+                title: "このキーをVercelと共有しますか？",
+                body: "選択したソースのキーは、Vercelのプロビジョニングトークンとは別に、Vercelのコントロールプレーンに開示されます。Vercelはキーをゲスト環境の外に保持しますが、ソースの管理者とVercelを信頼する必要があります。設定済みのリクエストはHappierのブローカーを経由しないため、Happierのリクエストごとの認可、モデルや本文のポリシー、リクエスト数・トークン数・費用の制限は適用されません。ベンダーの照合条件はキーの置換対象を絞り込みますが、モデルのJSONを検査したり、一致しないリクエストを拒否したりはしません。予算とキーの制限はゲートウェイまたはベンダー側で設定してください。その適用範囲はここでは確認されません。コントローラーがオフラインでも既存のルールは動作し続ける場合があり、その間の変更や削除は保証されません。独立して利用を停止するには、上流のキーを更新または失効させてください。配信を無効にしても、Vercelがすでに受け取ったキーは回収できません。利用者への紐付けは観測用メタデータであり、認証済みのメンバー識別や費用の振り分けではありません。サンドボックスのOSユーザーを共有するメンバーは、互いのプレースホルダーを読み取り再利用できます。これらはメンバー間で非公開ではありません。",
+                confirm: "ベンダーへの配信を許可",
+            },
             directUse: {
                 ownerVisibility: "マシンの所有者は、メンバーごとにユーザーが分離された後も、ここに渡されたキーや選択された認証情報を確認できます。",
                 sharedUserVisibility: "共有マシンでは、メンバーと所有者の隔離されたエージェントが同じエージェント用ユーザーを共有している間、直接渡されたキーを読み取れます。設定が有効または保留中であることは、メンバー間の分離を証明しません。",

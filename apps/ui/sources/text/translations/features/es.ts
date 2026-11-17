@@ -2715,6 +2715,7 @@ const actionFamilyTranslations = { es: translated({
             scm_diff_summary: 'Resúmenes de cambios',
             home_governance: 'Administración del Home',
             teams: 'Equipos',
+            plugin_collection_sharing: "Uso compartido de colecciones de plugins",
             saved_secret_sharing: 'Secretos compartidos',
             personal_saved_secrets: 'Secretos guardados',
         },
@@ -16711,7 +16712,11 @@ const spanish: TeamsTranslationRoot = {
                 keepBrokered: 'Mantener con intermediario',
                 limitsNote: 'El uso directo ocurre fuera de Happier y no queda registrado.',
             },
-            nativeDisclosure: english.teams.credentials.nativeDisclosure,
+            nativeDisclosure: {
+                title: "¿Compartir esta clave con Vercel?",
+                body: "La clave de la fuente seleccionada se revela al plano de control de Vercel, por separado del token de aprovisionamiento de Vercel. Vercel mantiene la clave fuera del entorno invitado, pero debes seguir confiando en el custodio de la fuente y en Vercel. Las solicitudes configuradas eluden el intermediario de Happier, por lo que no se aplican su autorización por solicitud, las políticas del modelo y del cuerpo ni sus límites de solicitudes, tokens o coste. Los criterios de coincidencia del proveedor restringen la sustitución de claves; no inspeccionan el JSON del modelo ni rechazan las solicitudes sin coincidencia. Configura presupuestos y restricciones de claves con la pasarela o el proveedor; aquí no se verifica su cobertura. Las reglas existentes pueden seguir funcionando mientras el controlador está desconectado, y entonces no se pueden garantizar los cambios ni la eliminación. Rota o revoca la clave de origen para detener su uso de forma independiente; desactivar la entrega no permite recuperar una clave que Vercel ya recibió. La atribución son metadatos de observación, no una identidad de miembro autenticada ni una imputación de costes. Los miembros que comparten un usuario del sistema operativo del entorno aislado pueden leer y reutilizar los marcadores de los demás; no son privados entre miembros.",
+                confirm: "Permitir la entrega al proveedor",
+            },
             directUse: {
                 ownerVisibility: "El propietario de la máquina puede inspeccionar las claves y las credenciales seleccionadas que se entreguen aquí, incluso cuando los miembros tengan usuarios separados.",
                 sharedUserVisibility: "En una máquina compartida, los miembros y el Agente aislado del propietario pueden leer las claves entregadas directamente mientras compartan un usuario de Agente. Una configuración activada o pendiente no demuestra que los miembros estén separados.",

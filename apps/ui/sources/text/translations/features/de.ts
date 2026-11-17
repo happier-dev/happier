@@ -2829,6 +2829,7 @@ const actionFamilyTranslations = { de: translated({
             scm_diff_summary: 'Diff-Zusammenfassungen',
             home_governance: 'Home-Verwaltung',
             teams: 'Teams-Verwaltung',
+            plugin_collection_sharing: "Plugin-Sammlungen teilen",
             saved_secret_sharing: 'Geteilte Secrets',
             personal_saved_secrets: 'Gespeicherte Geheimnisse',
         },
@@ -16586,7 +16587,11 @@ const german: TeamsTranslationRoot = {
                 keepBrokered: 'Beim Broker bleiben',
                 limitsNote: 'Direkte Nutzung geschieht au\u00dferhalb von Happier und wird nicht erfasst.',
             },
-            nativeDisclosure: english.teams.credentials.nativeDisclosure,
+            nativeDisclosure: {
+                title: "Diesen Schlüssel mit Vercel teilen?",
+                body: "Der Schlüssel der ausgewählten Quelle wird der Vercel-Steuerungsebene offengelegt, getrennt vom Vercel-Bereitstellungstoken. Vercel hält den Schlüssel außerhalb der Gastumgebung, doch Sie müssen weiterhin dem Verwalter der Quelle und Vercel vertrauen. Die eingerichteten Anfragen umgehen den Happier-Broker. Daher gelten weder Happiers Autorisierung pro Anfrage noch seine Richtlinien zu Modell und Anfrageinhalt oder seine Anfrage-, Token- und Kostenlimits. Die Abgleichregeln des Anbieters grenzen die Schlüsselersetzung ein; sie prüfen weder das Modell-JSON noch lehnen sie nicht passende Anfragen ab. Legen Sie Budgets und Schlüsselbeschränkungen beim Gateway oder Anbieter fest; deren Abdeckung wird hier nicht überprüft. Bestehende Regeln können bei offline geschaltetem Controller weiterlaufen; Änderungen oder Entfernung sind dann nicht garantiert. Rotieren oder widerrufen Sie den ursprünglichen Schlüssel, um die Nutzung unabhängig zu stoppen. Eine deaktivierte Übermittlung kann einen bereits an Vercel übermittelten Schlüssel nicht zurückholen. Die Zuordnung besteht lediglich aus Beobachtungsmetadaten, keine authentifizierte Mitgliedsidentität oder Kostenverrechnung. Mitglieder mit demselben Betriebssystembenutzer in einer Sandbox können die Platzhalter der anderen lesen und wiederverwenden; diese sind zwischen Mitgliedern nicht privat.",
+                confirm: "Übermittlung an den Anbieter erlauben",
+            },
             directUse: {
                 ownerVisibility: "Der Eigentümer des Rechners kann hier übermittelte Schlüssel und ausgewählte Zugangsdaten einsehen, auch wenn Mitglieder später getrennte Benutzer haben.",
                 sharedUserVisibility: "Auf einem geteilten Rechner können Mitglieder und der isolierte Agent des Eigentümers direkt übermittelte Schlüssel lesen, solange sie denselben Agent-Benutzer verwenden. Eine aktivierte oder ausstehende Einrichtung belegt keine Trennung der Mitglieder.",

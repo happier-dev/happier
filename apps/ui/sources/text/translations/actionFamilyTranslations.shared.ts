@@ -183,6 +183,7 @@ export const english = {
         scm_diff_summary: 'Diff summaries',
         home_governance: 'Home administration',
         teams: 'Teams',
+        plugin_collection_sharing: 'Plugin collection sharing',
         saved_secret_sharing: 'Shared secrets',
     },
 } satisfies { actionFamilies: Record<Exclude<ActionIdFamilyV1, 'friends'>, string> };

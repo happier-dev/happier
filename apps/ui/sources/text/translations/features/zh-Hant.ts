@@ -2729,6 +2729,7 @@ const actionFamilyTranslations = { 'zh-Hant': translated({
             scm_diff_summary: '差異摘要',
             home_governance: 'Home 管理',
             teams: '團隊',
+            plugin_collection_sharing: "外掛程式集合分享",
             saved_secret_sharing: '共用密鑰',
             personal_saved_secrets: '已儲存的密鑰',
         },
@@ -16655,7 +16656,11 @@ const traditionalChinese: TeamsTranslationRoot = {
                 keepBrokered: '\u4fdd\u6301\u7d93\u4ee3\u7406',
                 limitsNote: '\u76f4\u63a5\u4f7f\u7528\u767c\u751f\u5728 Happier \u4e4b\u5916\uff0c\u4e0d\u6703\u88ab\u8a18\u9304\u3002',
             },
-            nativeDisclosure: english.teams.credentials.nativeDisclosure,
+            nativeDisclosure: {
+                title: "要將此金鑰分享給 Vercel 嗎？",
+                body: "所選來源的金鑰會揭露給 Vercel 的控制平面，與 Vercel 的資源配置權杖分開。Vercel 將金鑰保存在客體環境之外，但你仍須信任來源的保管者和 Vercel。已設定的請求會繞過 Happier 代理，因此 Happier 的逐一請求授權、模型和請求本文原則，以及請求數、權杖數或費用限制均不適用。供應商的比對規則會縮小金鑰替換範圍，但不會檢查模型 JSON，也不會拒絕不相符的請求。請在閘道或供應商處設定預算和金鑰限制；此處不會驗證其涵蓋範圍。控制器離線時，現有規則可能繼續運作，此時無法保證變更或移除規則。請輪替或撤銷上游金鑰，以獨立停止使用；停用傳遞無法收回 Vercel 已收到的金鑰。歸屬資訊只是觀測中繼資料，並非經過驗證的成員身分或費用分攤依據。共用沙箱作業系統使用者的成員可以讀取並重複使用彼此的預留位置；這些預留位置在成員之間並不私密。",
+                confirm: "允許向供應商傳遞金鑰",
+            },
             directUse: {
                 ownerVisibility: "即使成員之後使用獨立使用者，機器擁有者仍可查看傳送到此處的金鑰和所選憑證。",
                 sharedUserVisibility: "在共用機器上，只要成員和擁有者的隔離代理程式仍共用同一個代理程式使用者，就能讀取直接傳送的金鑰。設定已啟用或待完成並不代表成員之間已隔離。",

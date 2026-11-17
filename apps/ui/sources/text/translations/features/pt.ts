@@ -2812,6 +2812,7 @@ const actionFamilyTranslations = { pt: translated({
             scm_diff_summary: 'Resumos de alterações',
             home_governance: 'Administração do Home',
             teams: 'Equipes',
+            plugin_collection_sharing: "Compartilhamento de coleções de plugins",
             saved_secret_sharing: 'Segredos compartilhados',
             personal_saved_secrets: 'Segredos salvos',
         },
@@ -16759,7 +16760,11 @@ const portuguese: TeamsTranslationRoot = {
                 keepBrokered: 'Manter via intermedi\u00e1rio',
                 limitsNote: 'O uso direto acontece fora do Happier e n\u00e3o \u00e9 registado.',
             },
-            nativeDisclosure: english.teams.credentials.nativeDisclosure,
+            nativeDisclosure: {
+                title: "Compartilhar esta chave com a Vercel?",
+                body: "A chave da fonte selecionada é revelada ao plano de controle da Vercel, separadamente do token de provisionamento da Vercel. A Vercel mantém a chave fora do ambiente convidado, mas você ainda precisa confiar no custodiante da fonte e na Vercel. As solicitações configuradas contornam o intermediário do Happier, portanto a autorização por solicitação, as políticas de modelo e corpo e os limites de solicitações, tokens ou custo do Happier não se aplicam. Os critérios de correspondência do fornecedor restringem a substituição de chaves; não inspecionam o JSON do modelo nem recusam solicitações sem correspondência. Defina orçamentos e restrições de chave no gateway ou fornecedor; a cobertura deles não é verificada aqui. As regras existentes podem continuar enquanto o controlador estiver offline, e alterações ou remoção não podem ser garantidas nesse período. Rotacione ou revogue a chave de origem para interromper o uso de forma independente; desativar o envio não recupera uma chave que a Vercel já recebeu. A atribuição é um metadado de observação, não uma identidade de membro autenticada nem um rateio de custos. Membros que compartilham um usuário do sistema operacional da sandbox podem ler e reutilizar os marcadores uns dos outros; eles não são privados entre membros.",
+                confirm: "Permitir o envio ao fornecedor",
+            },
             directUse: {
                 ownerVisibility: "O proprietário da máquina pode inspecionar as chaves e as credenciais selecionadas entregues aqui, mesmo quando os membros tiverem utilizadores separados.",
                 sharedUserVisibility: "Numa máquina partilhada, os membros e o Agente isolado do proprietário podem ler as chaves entregues diretamente enquanto partilharem um utilizador de Agente. Uma configuração ativada ou pendente não comprova a separação entre membros.",

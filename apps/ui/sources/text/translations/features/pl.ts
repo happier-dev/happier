@@ -2833,6 +2833,7 @@ const actionFamilyTranslations = { pl: translated({
             scm_diff_summary: 'Podsumowania zmian',
             home_governance: 'Administracja Home',
             teams: 'Zespoły',
+            plugin_collection_sharing: "Udostępnianie kolekcji wtyczek",
             saved_secret_sharing: 'Udostępnione sekrety',
             personal_saved_secrets: 'Zapisane sekrety',
         },
@@ -16800,7 +16801,11 @@ const polish: TeamsTranslationRoot = {
                 keepBrokered: 'Zostaw przez brokera',
                 limitsNote: 'U\u017cycie bezpo\u015brednie odbywa si\u0119 poza Happier i nie jest rejestrowane.',
             },
-            nativeDisclosure: english.teams.credentials.nativeDisclosure,
+            nativeDisclosure: {
+                title: "Udostępnić ten klucz Vercel?",
+                body: "Klucz wybranego źródła jest ujawniany warstwie sterowania Vercel, oddzielnie od tokenu aprowizacji Vercel. Vercel przechowuje klucz poza środowiskiem gościa, ale nadal musisz ufać opiekunowi źródła i Vercel. Skonfigurowane żądania omijają brokera Happier, więc autoryzacja każdego żądania, zasady dotyczące modelu i treści oraz limity żądań, tokenów i kosztów Happier nie mają zastosowania. Reguły dopasowania dostawcy zawężają podmianę klucza; nie sprawdzają JSON modelu ani nie odrzucają niedopasowanych żądań. Ustaw budżety i ograniczenia klucza w bramie lub u dostawcy; ich zakres nie jest tutaj weryfikowany. Istniejące reguły mogą działać, gdy kontroler jest offline; nie można wtedy zagwarantować zmian ani usunięcia. Wymień lub unieważnij klucz źródłowy, aby niezależnie zatrzymać użycie; wyłączenie przekazywania nie pozwala odzyskać klucza już otrzymanego przez Vercel. Przypisanie to metadane obserwacyjne, a nie uwierzytelniona tożsamość członka ani rozliczenie kosztów. Członkowie współdzielący użytkownika systemu operacyjnego piaskownicy mogą odczytywać i ponownie wykorzystywać swoje znaczniki zastępcze; nie są one prywatne między członkami.",
+                confirm: "Zezwól na przekazanie dostawcy",
+            },
             directUse: {
                 ownerVisibility: "Właściciel maszyny może przeglądać dostarczone tu klucze i wybrane poświadczenia, nawet gdy członkowie będą już mieli osobnych użytkowników.",
                 sharedUserVisibility: "Na udostępnionej maszynie członkowie i izolowany Agent właściciela mogą odczytywać klucze dostarczone bezpośrednio, dopóki korzystają z tego samego użytkownika Agenta. Włączona lub oczekująca konfiguracja nie dowodzi rozdzielenia członków.",

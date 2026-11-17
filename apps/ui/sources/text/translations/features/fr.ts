@@ -2836,6 +2836,7 @@ const actionFamilyTranslations = { fr: translated({
             scm_diff_summary: 'Résumés des modifications',
             home_governance: 'Administration du Home',
             teams: 'Équipes',
+            plugin_collection_sharing: "Partage de collections de plugins",
             saved_secret_sharing: 'Secrets partagés',
             personal_saved_secrets: 'Secrets enregistrés',
         },
@@ -16830,7 +16831,11 @@ const french: TeamsTranslationRoot = {
                 keepBrokered: 'Garder via le courtier',
                 limitsNote: 'L\u2019usage direct a lieu hors de Happier et n\u2019est pas enregistr\u00e9.',
             },
-            nativeDisclosure: english.teams.credentials.nativeDisclosure,
+            nativeDisclosure: {
+                title: "Partager cette clé avec Vercel ?",
+                body: "La clé de la source sélectionnée est divulguée au plan de contrôle de Vercel, séparément du jeton de provisionnement Vercel. Vercel conserve la clé hors de l’environnement invité, mais vous devez toujours faire confiance au dépositaire de la source et à Vercel. Les requêtes configurées contournent le courtier Happier : l’autorisation par requête, les règles sur le modèle et le corps des requêtes et les limites de requêtes, de jetons ou de coût de Happier ne s’appliquent donc pas. Les critères de correspondance du fournisseur restreignent la substitution de clé ; ils n’inspectent pas le JSON du modèle et ne refusent pas les requêtes sans correspondance. Définissez les budgets et restrictions de clé auprès de la passerelle ou du fournisseur ; leur couverture n’est pas vérifiée ici. Les règles existantes peuvent continuer à s’appliquer lorsque le contrôleur est hors ligne ; leur modification ou suppression ne peut alors être garantie. Renouvelez ou révoquez la clé en amont pour arrêter son utilisation indépendamment ; désactiver la transmission ne peut pas rappeler une clé déjà reçue par Vercel. L’attribution est une métadonnée d’observation, pas une identité de membre authentifiée ni une refacturation. Les membres partageant un utilisateur du système d’exploitation du bac à sable peuvent lire et réutiliser les valeurs de substitution des autres ; elles ne sont pas privées entre membres.",
+                confirm: "Autoriser la transmission au fournisseur",
+            },
             directUse: {
                 ownerVisibility: "Le propriétaire de la machine peut consulter les clés et les identifiants sélectionnés qui y sont transmis, même lorsque les membres ont des utilisateurs distincts.",
                 sharedUserVisibility: "Sur une machine partagée, les membres et l’Agent isolé du propriétaire peuvent lire les clés transmises directement tant qu’ils partagent le même utilisateur d’Agent. Une configuration activée ou en attente ne prouve pas que les membres sont isolés les uns des autres.",
