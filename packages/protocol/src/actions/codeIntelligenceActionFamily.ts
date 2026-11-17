@@ -73,7 +73,11 @@ export const CodeIntelligenceEditApplyInputSchema = lazyZodSchema(() => z.strict
 export const CodeIntelligenceCodeActionApplyInputSchema = lazyZodSchema(() => z.strictObject({
   ...CodeIntelligenceFileActionInputSchema.shape, operation: LanguageIntelligenceCodeActionOperationSchema,
 }));
-function queryOutput(kind: DaemonLspQueryRequest['kind']) {
+type CodeIntelligenceQueryOutputSchema = typeof DaemonLspQueryResponseSchema
+  | z.ZodMiniUnion<readonly [typeof DaemonLspQueryResponseSchema, typeof CodeIntelligenceFallbackResultSchema]>;
+type CodeIntelligenceEditOutputSchema = z.ZodMiniUnion<readonly [typeof DaemonLspQueryResponseSchema, typeof DaemonLspApplyResponseSchema]>;
+
+function queryOutput(kind: DaemonLspQueryRequest['kind']): CodeIntelligenceQueryOutputSchema {
   const semantic = DaemonLspQueryResponseSchema.check(z.superRefine((value, context) => {
     if (value.status === 'ok' && (value.kind !== kind || !value.fileHash)) {
       context.addIssue({ code: 'custom', message: 'An Action answer must match its query and include the disk content hash' });
@@ -81,7 +85,7 @@ function queryOutput(kind: DaemonLspQueryRequest['kind']) {
   }));
   return kind === 'definition' || kind === 'references' ? z.union([semantic, CodeIntelligenceFallbackResultSchema]) : semantic;
 }
-function semanticPreviewOutput(kinds: readonly string[]) {
+function semanticPreviewOutput(kinds: readonly string[]): typeof DaemonLspQueryResponseSchema {
   return DaemonLspQueryResponseSchema.check(z.superRefine((value, context) => {
     if (value.status === 'ok' && (!kinds.includes(value.kind) || !value.fileHash))
       context.addIssue({ code: 'custom', message: 'A semantic preview must include its disk hash and match the requested operation' });
@@ -131,7 +135,7 @@ function editOperationSafety(input: unknown): 'safe' | 'danger' {
     && input.operation !== null && typeof input.operation === 'object' && 'kind' in input.operation
     && input.operation.kind === 'preview' ? 'safe' : 'danger';
 }
-function editOperationOutput(kinds: readonly string[]) {
+function editOperationOutput(kinds: readonly string[]): CodeIntelligenceEditOutputSchema {
   return z.union([semanticPreviewOutput(kinds), DaemonLspApplyResponseSchema]);
 }
 const codeIntelligenceActionSpecs = [
@@ -212,7 +216,13 @@ const codeIntelligenceActionSpecs = [
     description: 'Apply one reviewed server code action, including a declared server command. Server edit requests share the guarded multi-file writer and retain partial results and Undo.' },
 ] as const satisfies readonly PreNormalizedActionSpec[];
 
-function createCodeIntelligenceActionSpecs() {
+export type CodeIntelligenceActionSpecs = ReadonlyArray<{
+  [TId in (typeof codeIntelligenceActionSpecs)[number]['id']]:
+    Omit<Extract<(typeof codeIntelligenceActionSpecs)[number], { id: TId }>, 'description'>
+    & { description: string };
+}[(typeof codeIntelligenceActionSpecs)[number]['id']]>;
+
+function createCodeIntelligenceActionSpecs(): CodeIntelligenceActionSpecs {
   return codeIntelligenceActionSpecs.map(spec => ({
   ...spec,
   description: `${spec.description} Machine and root default to the calling session; supply both for another Machine or outside a session.`,
