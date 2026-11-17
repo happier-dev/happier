@@ -12,6 +12,7 @@ import { readCurrentAppShellPluginUiTranslationRuntime } from '@/components/appS
 import { arePluginContributionIdentitiesEqual } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 import { createPluginLocalizedTextResolver, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+import { HAPPIER_CLOCK_TIME_FORMAT } from '@happier-dev/plugin-ui/presentation';
 import { joinList } from '@/utils/text/joinList';
 import { resolveActionTitle } from '@/text/actionTitles';
 
@@ -78,8 +79,8 @@ export function formatTriggerLastOutcome(age: string, state?: string): string {
 export function formatNextScheduledRunAccessibilityLabel(nextRunAt: number | null, enabled = true, nowMs = Date.now()): string {
     return nextRunAt === null || nextRunAt <= nowMs ? formatNextScheduledRun(null, enabled, nowMs)
         : t('workflows.triggers.row.nextRun', { time: formatWithCachedDateTimeFormatter(nextRunAt, getPreferredLanguage(),
-            { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                second: '2-digit', hourCycle: 'h23', timeZoneName: 'short' }) });
+            { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', ...HAPPIER_CLOCK_TIME_FORMAT,
+                second: '2-digit', timeZoneName: 'short' }) });
 }
 
 /**
@@ -240,7 +241,7 @@ export function formatTriggerSummary(trigger: TriggerSummarySource, context?: Tr
         case 'schedule':
             if (trigger.schedule.kind === 'once') return t('workflows.triggers.once.at', {
                 time: formatWithCachedDateTimeFormatter(trigger.schedule.scheduledAt, getPreferredLanguage(), {
-                    year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+                    year: 'numeric', month: 'short', day: 'numeric', ...HAPPIER_CLOCK_TIME_FORMAT, timeZoneName: 'short',
                 }),
             });
             return trigger.schedule.kind === 'cron' && trigger.schedule.scheduleExpr !== null

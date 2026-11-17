@@ -1,4 +1,15 @@
 /**
+ * The one clock every Happier time reads in: the viewer's own locale clock, as people say it ("3:42 PM",
+ * "15:42"), never a padded hour or seconds. Freshness lines, Event times and schedule summaries ("Every day at
+ * 9:00 AM", "Once at Nov 17, 4:12 PM") spread these options into their own date parts so one page never mixes
+ * two clocks.
+ */
+export const HAPPIER_CLOCK_TIME_FORMAT: Readonly<Pick<Intl.DateTimeFormatOptions, 'hour' | 'minute'>> = Object.freeze({
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
+/**
  * When cached facts were read, as a person says it: the time for a read made today ("10:42"), the
  * day and time for an older one ("26 Sep, 18:44"), in the viewer's own locale clock like every other time
  * on the page. Never seconds or the year.
@@ -10,8 +21,7 @@ export function formatHappierAsOfTime(at: number, now: number = Date.now(), loca
   const locales = locale === undefined ? [] : [locale];
   const read = new Date(at);
   const today = new Date(now);
-  // `numeric` hour: "3:42 PM" as people say it, never a padded "03:42 PM".
-  const time = read.toLocaleTimeString(locales, { hour: 'numeric', minute: '2-digit' });
+  const time = read.toLocaleTimeString(locales, HAPPIER_CLOCK_TIME_FORMAT);
   const sameDay = read.getFullYear() === today.getFullYear()
     && read.getMonth() === today.getMonth()
     && read.getDate() === today.getDate();

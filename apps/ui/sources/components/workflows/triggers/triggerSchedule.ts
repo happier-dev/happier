@@ -1,6 +1,6 @@
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
-import { resolveHappierFutureLocalDateTime, type HappierLocalDateTimeDraft } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_CLOCK_TIME_FORMAT, resolveHappierFutureLocalDateTime, type HappierLocalDateTimeDraft } from '@happier-dev/plugin-ui/presentation';
 
 /** The editor retains a saved instant exactly; editing its fields releases that retained value. */
 export type OnceScheduleDraft = HappierLocalDateTimeDraft & Readonly<{ relative: string; scheduledAt?: number }>;
@@ -157,10 +157,10 @@ export function buildSimpleScheduleCron(schedule: SimpleSchedule): string {
     return `${schedule.minute} ${schedule.hour} * * ${weekdays}`;
 }
 
-/** A schedule's clock in every summary: 24-hour in every locale, as the At field types it (lab T1 "at 02:00"). */
+/** A schedule's clock in every summary: the app's one clock, so "Every day at 9:00 AM" reads like the Event times beside it. */
 export function formatClockTime(schedule: Pick<SimpleSchedule, 'hour' | 'minute'>): string {
     return formatWithCachedDateTimeFormatter(new Date(Date.UTC(2023, 0, 1, schedule.hour, schedule.minute)),
-        getPreferredLanguage(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'UTC' });
+        getPreferredLanguage(), { ...HAPPIER_CLOCK_TIME_FORMAT, timeZone: 'UTC' });
 }
 
 /** The editable field's round-trippable 24-hour value, independent of the display locale. */

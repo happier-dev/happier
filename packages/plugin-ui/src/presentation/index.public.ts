@@ -1083,6 +1083,7 @@ export {
   type HappierSurfaceStateTextRole,
 } from './state/SurfaceState.js';
 export {
+  HAPPIER_CLOCK_TIME_FORMAT,
   formatHappierAsOfTime,
   resolveHappierFreshnessText,
   type HappierFreshnessTextParts,
