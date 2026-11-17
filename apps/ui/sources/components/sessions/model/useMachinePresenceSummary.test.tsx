@@ -64,6 +64,22 @@ describe('reactive Machine presence', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('renders a Session row without a managed-wake Machine once, binding no Home Account for it', async () => {
+        // Every mounted Session row reads its managed-wake Machine; most rows have none. Measured live: each such row
+        // rendered a second time once its own Account binding resolved, for a read that observes nothing.
+        const { useSessionManagedWakeStatus } = await import('@/components/sessions/pending/useSessionManagedWakeStatus');
+        const session = createSessionListRenderableSessionFixture({ id: 'plain-row', encryptionMode: 'plain', active: false });
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useSessionManagedWakeStatus(session, serverId); });
+        try {
+            const bound = await renderHook(() => useServerCredentialAccountScopeBinding(serverId).binding);
+            await waitForHomeGovernance(() => expect(bound.getCurrent()).not.toBeNull());
+            await bound.unmount();
+            expect(hook.getCurrent()).toBeNull();
+            expect(renders).toBe(1);
+        } finally { await hook.unmount(); }
+    });
+
     it('does not resolve a Home inventory until a mounted consumer demands a Machine', async () => {
         const machine = createMachineFixture({ id: 'demanded-machine', activeAt: Date.now() });
         machine.metadata = { ...machine.metadata!, displayName: 'Demanded Machine' };
