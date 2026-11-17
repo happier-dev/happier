@@ -188,6 +188,59 @@ describe("Action occurrence admission through the real router", () => {
         } finally { await app.close(); }
     });
 
+    it("rejects encrypted Database reach claims without opening private target bindings", async () => {
+        const accountId = randomUUID();
+        const automationId = randomUUID();
+        const serverId = await getOrCreateServerIdentityId();
+        const context = { accountId, workspace: { serverId, machineId: randomUUID(),
+            workspaceId: randomUUID(), rootPath: "/private/database-worktree" },
+            installationId: randomUUID(), projectKey: "database-project" };
+        const targets: Extract<AutomationSubjectV1, { kind: "database" }>["target"][] = [
+            DatabaseWorktreeTargetV1Schema.parse({ kind: "worktree", ...context,
+                source: { kind: "env_file", path: ".env.local", variable: "DATABASE_URL" } }),
+            DatabaseManualTargetV1Schema.parse({ kind: "manual", ...context, savedSecretId: randomUUID() }),
+            { kind: "managed_deployment", environmentId: randomUUID(), targetLinkId: randomUUID(), databaseName: "app" },
+        ];
+        await db.account.create({ data: { id: accountId, encryptionMode: "e2ee", ...createSignedAccountContentBinding() } });
+        await db.automation.create({ data: { id: automationId, accountId, name: "Private database checks", enabled: false,
+            templateCiphertext: JSON.stringify({ ...createAutomationWorkflowRecipeFixture({ templateVersion: 1,
+                directory: "/tmp/database-check", prompt: "Check database" }),
+                workflow: { t: "encrypted", c: "private-workflow" } }), templateVersion: 1 } });
+        const material = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: "e2ee",
+            material: { type: "legacy", secret: new Uint8Array(32).fill(7) } }).material;
+        const app = createAuthenticatedTestApp();
+        automationRoutes(app);
+        try {
+            for (const target of targets) {
+                for (const reachesOthers of [false, true]) {
+                    const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
+                    const subject = { kind: "database", serverId, target } as const;
+                    const definition = { kind: "action", phase: "after", actionIds: ["scm.commit.create"], subject };
+                    const envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: "e2ee", material,
+                        randomBytes: length => new Uint8Array(length).fill(1),
+                        binding: { v: 1, automationId, triggerId, triggerRevision: 0, triggerKind: "action" }, definition });
+                    const response = await app.inject({ method: "POST", url: `/v3/automations/${automationId}/triggers`,
+                        headers: { "x-test-user-id": accountId }, payload: { triggerId, trigger: {
+                            kind: "action", phase: "after", actionIds: definition.actionIds, enabled: true,
+                            subjectKind: subject.kind, subjectKey: automationSubjectKeyV1(subject),
+                            reachesOthers, triggerDefinitionEnvelope: envelope,
+                        } } });
+                    expect(response.statusCode, response.body).toBe(reachesOthers ? 409 : 200);
+                    if (reachesOthers) {
+                        expect(response.json()).toEqual({ error: "automation_stored_content_unavailable" });
+                        expect(await db.automationTrigger.findUnique({ where: { id: triggerId } })).toBeNull();
+                    } else {
+                        expect(response.json().triggers.find((trigger: { id: string }) => trigger.id === triggerId))
+                            .toMatchObject({ reachesOthers: false });
+                        const stored = await db.automationTrigger.findUniqueOrThrow({ where: { id: triggerId } });
+                        expect(stored.reachesOthers).toBe(false);
+                        expect(JSON.parse(stored.definitionEnvelope!)).toEqual(envelope);
+                    }
+                }
+            }
+        } finally { await app.close(); }
+    });
+
     it("rejects unproved encrypted reach while preserving own-only encrypted authoring", async () => {
         const accountId = randomUUID();
         const automationId = randomUUID();
