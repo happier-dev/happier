@@ -290,15 +290,10 @@ export function resourceGrantAccessSqlPredicate(input: Readonly<{
             AND ${column('r', 'archivedAt')} IS NULL AND ${memberMatches}))`;
 }
 
-/** Ownership or the highest live direct/Team/Group grant, independent of key readiness. */
-export function resolveResourceGrantAccessFromFacts(row: ResourceGrantAccessFacts, actorAccountId: string): ResourceGrantAccessDecision | null {
-    const access = { ownerAccountId: row.ownerAccountId, encryptionMode: row.encryptionMode };
-    if (row.ownerAccountId === actorAccountId) return { ...access, level: 'owner', matchedGrants: [] };
-    let level: ResourceCallerAccessV1 | null = null;
-    const include = (candidate: ResourceAccessLevelV1) => {
-        if (level === null || accessRank[candidate] > accessRank[level]) level = candidate;
-    };
-    const grants: Readonly<{ principal: ResourceGrantPrincipalFacts; contribution: ResourceGrantContribution }>[] = [
+function resourceGrantPrincipalContributionsFromFacts(row: ResourceGrantAccessFacts): Readonly<{
+    principal: ResourceGrantPrincipalFacts; contribution: ResourceGrantContribution;
+}>[] {
+    return [
         ...row.accountGrants.map(grant => ({ principal: { kind: 'account' as const, accountId: grant.accountId,
             active: grant.account.status === 'active' }, contribution: { kind: 'account' as const, accountId: grant.accountId, accessLevel: grant.accessLevel } })),
         ...row.teamGrants.map(grant => ({ principal: { kind: 'team' as const, memberships: grant.team.memberships.map(member => ({
@@ -311,16 +306,40 @@ export function resolveResourceGrantAccessFromFacts(row: ResourceGrantAccessFact
                 groupArchivedAt: grant.teamGroup.archivedAt }),
         })) }, contribution: { kind: 'group' as const, ...(grant.teamGroupId !== undefined ? { teamGroupId: grant.teamGroupId } : {}), accessLevel: grant.accessLevel } })),
     ];
-    const matchedGrants = resolveResourceGrantMatchedContributionsFromFacts(grants, actorAccountId);
+}
+
+/** Ownership or the highest live direct/Team/Group grant, independent of key readiness. */
+export function resolveResourceGrantAccessFromFacts(row: ResourceGrantAccessFacts, actorAccountId: string): ResourceGrantAccessDecision | null {
+    const access = { ownerAccountId: row.ownerAccountId, encryptionMode: row.encryptionMode };
+    if (row.ownerAccountId === actorAccountId) return { ...access, level: 'owner', matchedGrants: [] };
+    let level: ResourceCallerAccessV1 | null = null;
+    const include = (candidate: ResourceAccessLevelV1) => {
+        if (level === null || accessRank[candidate] > accessRank[level]) level = candidate;
+    };
+    const matchedGrants = resolveResourceGrantMatchedContributionsFromFacts(resourceGrantPrincipalContributionsFromFacts(row), actorAccountId);
     for (const candidate of matchedGrants) include(candidate.accessLevel);
     return level === null ? null : { ...access, level, matchedGrants };
 }
 
 export function resolveResourceGrantAudienceFromFacts(row: ResourceGrantAccessFacts): string[] {
-    const candidates = new Set([row.ownerAccountId, ...row.accountGrants.map(grant => grant.accountId),
-        ...row.teamGrants.flatMap(grant => grant.team.memberships.map(member => member.accountId)),
-        ...row.groupGrants.flatMap(grant => grant.teamGroup.memberships.map(member => member.teamMembership.accountId))]);
-    return [...candidates].filter(accountId => resolveResourceGrantAccessFromFacts(row, accountId) !== null).sort();
+    const audience = new Set([row.ownerAccountId]);
+    for (const grant of resourceGrantPrincipalContributionsFromFacts(row)) {
+        for (const accountId of iterateResourceGrantPrincipalAccountIdsFromFacts(grant.principal)) audience.add(accountId);
+    }
+    return [...audience].sort();
+}
+
+/** One membership census for requested Principals; resource ownership is not membership. */
+export function resolveResourceGrantPrincipalAudiencesFromFacts(row: ResourceGrantAccessFacts, principals: readonly PrincipalRefV1[]): readonly string[][] {
+    const audiences = new Map<string, string[]>();
+    for (const grant of resourceGrantPrincipalContributionsFromFacts(row)) {
+        const contribution = grant.contribution;
+        const id = contribution.kind === 'account' ? contribution.accountId
+            : contribution.kind === 'team' ? contribution.teamId : contribution.teamGroupId;
+        audiences.set(JSON.stringify([contribution.kind, id]), [...new Set(iterateResourceGrantPrincipalAccountIdsFromFacts(grant.principal))].sort());
+    }
+    return principals.map(principal => audiences.get(JSON.stringify([principal.kind,
+        principal.kind === 'account' ? principal.accountId : principal.kind === 'team' ? principal.teamId : principal.groupId])) ?? []);
 }
 
 /** One storage snapshot and one decision per distinct resource in this admission. */
