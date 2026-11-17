@@ -9322,11 +9322,11 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
       allowPermissionApprovalsDescription:
         "Permite que este usuário aprove solicitações de permissão e execute ferramentas na sua máquina.",
       permissionApprovalsDisabledTitle:
-        "A aprovação de permissões está desativada",
+        "Aguardando aprovação",
       permissionApprovalsDisabledPublic:
         "Links públicos são somente leitura. Não é possível aprovar permissões.",
       permissionApprovalsDisabledReadOnly:
-        "Você tem acesso somente leitura a esta sessão.",
+        "Só quem pode editar esta sessão pode responder.",
       permissionApprovalsDisabledInactive:
         "Esta sessão está inativa. Não é possível aprovar permissões.",
       permissionApprovalsDisabledNotGranted:

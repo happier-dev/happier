@@ -9441,11 +9441,11 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       allowPermissionApprovalsDescription:
         "Consente a questo utente di approvare le richieste di permesso ed eseguire strumenti sulla tua macchina.",
       permissionApprovalsDisabledTitle:
-        "L’approvazione dei permessi è disattivata",
+        "In attesa di approvazione",
       permissionApprovalsDisabledPublic:
         "I link pubblici sono di sola lettura. Non è possibile approvare i permessi.",
       permissionApprovalsDisabledReadOnly:
-        "Hai accesso di sola lettura a questa sessione.",
+        "Solo chi può modificare questa sessione può rispondere.",
       permissionApprovalsDisabledInactive:
         "Questa sessione è inattiva. Non è possibile approvare i permessi.",
       permissionApprovalsDisabledNotGranted:

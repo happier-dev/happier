@@ -136,18 +136,36 @@ describe('ToolView (permission pending)', () => {
     });
 
     it('marks a card waiting for the person with the one attention edge, and drops it once settled', async () => {
+        // A viewer who can answer: the edge says the card needs them.
+        const answering = createTestSessionTranscriptSource({
+            interaction: { canSendMessages: true, canApprovePermissions: true },
+            actions: { respondToPermission: async () => {}, answerUserAction: async () => {}, abort: async () => {}, submitMessage: async () => {} },
+        });
         const waiting = await renderWithSessionTranscriptSource(React.createElement(ToolView, {
             tool: makeToolCall({ name: 'execute', state: 'running', input: { command: 'pwd' }, result: null, completedAt: null,
                 permission: { id: 'perm1', status: 'pending' } }),
             metadata: null, messages: [], sessionId: 's1', messageId: 'm1',
-        }));
+        }), answering);
         expect(waiting.findByTestId('tool-view-waiting-edge')).toBeTruthy();
         const settled = await renderWithSessionTranscriptSource(React.createElement(ToolView, {
             tool: makeToolCall({ name: 'execute', state: 'running', input: { command: 'pwd' }, result: null, completedAt: null,
                 permission: { id: 'perm1', status: 'approved' } }),
             metadata: null, messages: [], sessionId: 's1', messageId: 'm1',
-        }));
+        }), answering);
         expect(settled.findByTestId('tool-view-waiting-edge')).toBeNull();
+    });
+
+    it('keeps the attention edge for people who can answer: a read-only viewer sees a quiet card', async () => {
+        const viewer = await renderWithSessionTranscriptSource(React.createElement(ToolView, {
+            tool: makeToolCall({ name: 'execute', state: 'running', input: { command: 'pwd' }, result: null, completedAt: null,
+                permission: { id: 'perm1', status: 'pending' } }),
+            metadata: null, messages: [], sessionId: 's1', messageId: 'm1',
+            interaction: { canSendMessages: true, canApprovePermissions: false, permissionDisabledReason: 'readOnly' },
+        }), createTestSessionTranscriptSource({
+            interaction: { canSendMessages: true, canApprovePermissions: false, permissionDisabledReason: 'readOnly' },
+            actions: { respondToPermission: async () => {}, answerUserAction: async () => {}, abort: async () => {}, submitMessage: async () => {} },
+        }));
+        expect(viewer.findByTestId('tool-view-waiting-edge')).toBeNull();
     });
 
     it('does not show elapsed time while waiting for permission', async () => {

@@ -9666,11 +9666,11 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       allowPermissionApprovals: "Разрешить подтверждение разрешений",
       allowPermissionApprovalsDescription:
         "Позволяет этому пользователю подтверждать запросы разрешений и запускать инструменты на вашем компьютере.",
-      permissionApprovalsDisabledTitle: "Подтверждение разрешений отключено",
+      permissionApprovalsDisabledTitle: "Ожидает подтверждения",
       permissionApprovalsDisabledPublic:
         "Публичные ссылки доступны только для просмотра. Подтверждение разрешений недоступно.",
       permissionApprovalsDisabledReadOnly:
-        "У вас доступ только для чтения к этой сессии.",
+        "Ответить могут только те, кто может редактировать эту сессию.",
       permissionApprovalsDisabledInactive:
         "Эта сессия неактивна. Подтверждение разрешений недоступно.",
       permissionApprovalsDisabledNotGranted:

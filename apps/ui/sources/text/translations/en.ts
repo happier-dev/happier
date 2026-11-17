@@ -10754,11 +10754,11 @@ const enSession = {
     allowPermissionApprovals: 'Allow permission approvals',
     allowPermissionApprovalsDescription:
       'Allows this user to approve permission prompts and run tools on your machine.',
-    permissionApprovalsDisabledTitle: 'Permission approvals are disabled',
+    permissionApprovalsDisabledTitle: 'Waiting for approval',
     permissionApprovalsDisabledPublic:
       'Public links are read-only. Permission approvals are not available.',
     permissionApprovalsDisabledReadOnly:
-      'You have view-only access to this session.',
+      'Only people who can edit this session can answer.',
     permissionApprovalsDisabledInactive:
       'This session is inactive. Permission approvals are not available.',
     permissionApprovalsDisabledNotGranted:

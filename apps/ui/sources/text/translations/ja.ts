@@ -9516,10 +9516,10 @@ localTailscale: {
       allowPermissionApprovals: "権限承認を許可",
       allowPermissionApprovalsDescription:
         "このユーザーが権限リクエストを承認し、あなたのマシンでツールを実行できるようにします。",
-      permissionApprovalsDisabledTitle: "権限承認は無効です",
+      permissionApprovalsDisabledTitle: "承認待ち",
       permissionApprovalsDisabledPublic:
         "公開リンクは閲覧専用です。権限承認は利用できません。",
-      permissionApprovalsDisabledReadOnly: "このセッションは閲覧専用です。",
+      permissionApprovalsDisabledReadOnly: "このセッションを編集できる人だけが回答できます。",
       permissionApprovalsDisabledInactive:
         "このセッションは非アクティブです。権限承認は利用できません。",
       permissionApprovalsDisabledNotGranted:

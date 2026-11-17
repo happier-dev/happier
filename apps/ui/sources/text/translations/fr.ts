@@ -9056,11 +9056,11 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
       allowPermissionApprovalsDescription:
         "Permet à cet utilisateur d’approuver les demandes de permission et d’exécuter des outils sur ta machine.",
       permissionApprovalsDisabledTitle:
-        "Les approbations de permission sont désactivées",
+        "En attente d’approbation",
       permissionApprovalsDisabledPublic:
         "Les liens publics sont en lecture seule. Les approbations de permission ne sont pas disponibles.",
       permissionApprovalsDisabledReadOnly:
-        "Tu as un accès en lecture seule à cette session.",
+        "Seules les personnes qui peuvent modifier cette session peuvent répondre.",
       permissionApprovalsDisabledInactive:
         "Cette session est inactive. Les approbations de permission ne sont pas disponibles.",
       permissionApprovalsDisabledNotGranted:

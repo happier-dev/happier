@@ -9053,11 +9053,11 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
       allowPermissionApprovalsDescription:
         "Pozwala temu użytkownikowi zatwierdzać prośby o uprawnienia i uruchamiać narzędzia na Twojej maszynie.",
       permissionApprovalsDisabledTitle:
-        "Zatwierdzanie uprawnień jest wyłączone",
+        "Czeka na zatwierdzenie",
       permissionApprovalsDisabledPublic:
         "Linki publiczne są tylko do odczytu. Nie można zatwierdzać uprawnień.",
       permissionApprovalsDisabledReadOnly:
-        "Masz dostęp tylko do odczytu do tej sesji.",
+        "Odpowiedzieć mogą tylko osoby, które mogą edytować tę sesję.",
       permissionApprovalsDisabledInactive:
         "Ta sesja jest nieaktywna. Nie można zatwierdzać uprawnień.",
       permissionApprovalsDisabledNotGranted:

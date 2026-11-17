@@ -8889,9 +8889,9 @@ export const zhHans: TranslationStructure = {
       allowPermissionApprovals: "允许审批权限",
       allowPermissionApprovalsDescription:
         "允许此用户批准权限请求（可能会授予对您的机器的访问）。",
-      permissionApprovalsDisabledTitle: "权限审批不可用",
+      permissionApprovalsDisabledTitle: "等待批准",
       permissionApprovalsDisabledPublic: "公开分享为只读，无法批准权限请求。",
-      permissionApprovalsDisabledReadOnly: "只读访问无法批准权限请求。",
+      permissionApprovalsDisabledReadOnly: "只有可以编辑此会话的人才能回答。",
       permissionApprovalsDisabledInactive: "该会话处于非活动状态，无法批准权限请求。",
       permissionApprovalsDisabledNotGranted:
         "拥有者未授予您批准权限请求的权限。",

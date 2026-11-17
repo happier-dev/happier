@@ -134,6 +134,8 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
     const transcriptSource = useSessionTranscriptSource();
     const sourceInteraction = transcriptSource.useInteraction();
     const interaction = props.interaction ?? sourceInteraction;
+    // Whether this viewer can answer a prompt on this card: its footers' controls and its needs-you edge read it.
+    const viewerCanAnswer = interaction.canApprovePermissions && sourceInteraction.canApprovePermissions && transcriptSource.actions !== null;
     const { theme } = useUnistyles();
     const [isExpanded, setIsExpanded] = React.useState(false);
     const find = useTranscriptFindRow(messageId);
@@ -570,7 +572,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                     toolName={normalizedToolName}
                     toolInput={toolForRendering.input}
                     metadata={props.metadata}
-                    canApprovePermissions={interaction.canApprovePermissions && sourceInteraction.canApprovePermissions && transcriptSource.actions !== null}
+                    canApprovePermissions={viewerCanAnswer}
                     disabledReason={interaction.permissionDisabledReason}
                 />
             )}
@@ -585,13 +587,14 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                     toolOutput={declinedApprovalShown ? readToolOutputText(toolForRendering) : null}
                     sessionId={sessionId ?? request.approval.origin?.sessionId ?? ''}
                     metadata={props.metadata}
-                    canApprovePermissions={interaction.canApprovePermissions && sourceInteraction.canApprovePermissions && transcriptSource.actions !== null}
+                    canApprovePermissions={viewerCanAnswer}
                     disabledReason={interaction.permissionDisabledReason}
                 />
             ))}
-            {statusKind === 'permission_pending' ? (
+            {statusKind === 'permission_pending' && viewerCanAnswer ? (
                 // Waiting for the person: the one attention edge every tool card shares (lab P6), drawn over
-                // the card so it never shifts layout when the wait starts or ends.
+                // the card so it never shifts layout when the wait starts or ends. A viewer who cannot answer
+                // sees a quiet card, as on the approval card (`PermissionPromptCard` tone).
                 <View testID="tool-view-waiting-edge" pointerEvents="none" style={styles.waitingEdge} />
             ) : null}
         </TranscriptJumpAttention>

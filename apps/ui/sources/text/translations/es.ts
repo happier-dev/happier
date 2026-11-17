@@ -9216,11 +9216,11 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       allowPermissionApprovalsDescription:
         "Permite que este usuario apruebe solicitudes de permiso y ejecute herramientas en tu máquina.",
       permissionApprovalsDisabledTitle:
-        "La aprobación de permisos está deshabilitada",
+        "Esperando aprobación",
       permissionApprovalsDisabledPublic:
         "Los enlaces públicos son de solo lectura. No se pueden aprobar permisos.",
       permissionApprovalsDisabledReadOnly:
-        "Tienes acceso de solo lectura a esta sesión.",
+        "Solo quienes pueden editar esta sesión pueden responder.",
       permissionApprovalsDisabledInactive:
         "Esta sesión está inactiva. No se pueden aprobar permisos.",
       permissionApprovalsDisabledNotGranted:

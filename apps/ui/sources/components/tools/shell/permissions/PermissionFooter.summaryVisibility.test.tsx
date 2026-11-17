@@ -60,6 +60,23 @@ describe('PermissionFooter summary visibility', () => {
         expect(screen.getTextContent()).not.toContain('SUMMARY');
     });
 
+    it('tells a viewer who cannot answer who can, without repeating the request the card title names', async () => {
+        const screen = await renderScreen(React.createElement(PermissionFooter, {
+            permission: { id: 'p1', status: 'pending' },
+            sessionId: 's1',
+            toolName: 'mcp__happier__action_spec_get',
+            toolInput: { id: 'session.list' },
+            metadata: { flavor: 'claude' },
+            canApprovePermissions: false,
+            disabledReason: 'readOnly',
+        }));
+
+        // The footer explains who can answer; the request itself stays in the card title, named once.
+        const text = screen.getTextContent();
+        expect(text.length).toBeGreaterThan(0);
+        expect(text).not.toMatch(/get action spec|mcp__/i);
+    });
+
     it('does not repeat the request summary (the tool UI already shows it)', async () => {
         const screen = await renderScreen(React.createElement(PermissionFooter, {
             permission: { id: 'p1', status: 'pending' },
