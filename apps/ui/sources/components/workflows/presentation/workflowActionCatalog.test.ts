@@ -175,8 +175,7 @@ describe('workflow executing-machine Action catalog', () => {
         expect(before.length).toBeGreaterThan(0);
         expect(before.every(spec => hookable(spec.id))).toBe(true);
         expect(listActionSpecs().filter(spec => spec.sideEffectClass === 'read').some(spec => before.some(entry => entry.id === spec.id))).toBe(false);
-        // After never offers an Action that settles through a completion contract.
-        expect(after.every(spec => getActionSpec(spec.id as Parameters<typeof getActionSpec>[0]).completion === undefined)).toBe(true);
-        expect(after.every(spec => before.some(entry => entry.id === spec.id))).toBe(true);
+        // Completion changes when After runs, not which hookable Actions can be authored (PROGRAM R25).
+        expect(after.map(spec => spec.id)).toEqual(before.map(spec => spec.id));
     });
 });

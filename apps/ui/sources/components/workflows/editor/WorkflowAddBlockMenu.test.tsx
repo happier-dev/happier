@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { StyleSheet } from 'react-native';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { renderHook, renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -55,6 +55,12 @@ async function serveDefinitions(serverUrl: string, definitions: WorkflowDefiniti
     };
 }
 
+async function serveActionCatalog() {
+    // The real Account-scoped discovery Action reads its admitted choices from
+    // this Home's HTTP settings; the library can be empty for Action insertion.
+    onTestFinished(await serveDefinitions('http://workflow-add-actions.test', []));
+}
+
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -82,12 +88,17 @@ describe('workflow Add Action picker', () => {
         ['Notify', 'add-action:notifications.notify_me', { kind: 'action', actionId: 'notifications.notify_me' }],
         ['If', 'add-if', { kind: 'if' }],
     ] as const)('ranks the %s title above description matches and inserts it on Enter', async (query, optionId, request) => {
+        await serveActionCatalog();
         const onAdd = vi.fn();
         const screen = await renderScreen(<WorkflowAddBlockMenu scopeLabel="Workflow" testID="add" onAdd={onAdd} />);
         await screen.pressByTestIdAsync('add');
         const input = screen.findAll((node) => (node.type as unknown) === 'TextInput' && typeof node.props.onChangeText === 'function')[0]!;
-        await act(async () => { input.props.onChangeText(query); await new Promise(resolve => setTimeout(resolve, 10)); });
+        await act(async () => { input.props.onChangeText(query); });
         const { Item } = await import('@/components/ui/lists/Item');
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findAllByType(Item).find(node => node.props.testID === `selection-list:add-root:option:${optionId}`)).toBeDefined();
+        });
         const rows = screen.findAllByType(Item).filter(node => node.props.testID?.startsWith('selection-list:add-root:option:'));
         expect(rows[0]?.props.testID).toBe(`selection-list:add-root:option:${optionId}`);
         expect(rows[0]?.props.focused).toBe(true);
@@ -128,12 +139,17 @@ describe('workflow Add Action picker', () => {
         expect(screen.findAllByType(SelectionList)).toHaveLength(0);
     });
     it('finds Actions directly from the top-level search and visibly focuses its first match', async () => {
+        await serveActionCatalog();
         const onAdd = vi.fn();
         const screen = await renderScreen(<WorkflowAddBlockMenu scopeLabel="Workflow" testID="add" onAdd={onAdd} />);
         await screen.pressByTestIdAsync('add');
         const input = screen.findAll((node) => (node.type as unknown) === 'TextInput' && typeof node.props.onChangeText === 'function')[0]!;
-        await act(async () => { input.props.onChangeText('Notify me'); await new Promise(resolve => setTimeout(resolve, 10)); });
+        await act(async () => { input.props.onChangeText('Notify me'); });
         const { Item } = await import('@/components/ui/lists/Item');
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findAllByType(Item).find(node => node.props.testID === 'selection-list:add-root:option:add-action:notifications.notify_me')).toBeDefined();
+        });
         const row = screen.findAllByType(Item).find(node => node.props.testID === 'selection-list:add-root:option:add-action:notifications.notify_me');
         expect(row).toBeDefined();
         expect(row?.props.focused).toBe(true);
@@ -157,9 +173,14 @@ describe('workflow Add Action picker', () => {
         ['webhook', 'webhooks.call'],
         ['command', 'machines.command.run'],
     ] as const)('inserts the %s preset through the existing Action leaf', async (preset, actionId) => {
+        await serveActionCatalog();
         const onAdd = vi.fn();
         const screen = await renderScreen(<WorkflowAddBlockMenu scopeLabel="Workflow" testID="add" onAdd={onAdd} />);
         await screen.pressByTestIdAsync('add');
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findByTestId(`selection-list:add-root:option:add-${preset}`)).not.toBeNull();
+        });
         await screen.pressByTestIdAsync(`selection-list:add-root:option:add-${preset}`);
         expect(onAdd).toHaveBeenCalledWith({ kind: 'action', actionId });
         expect(screen.findAllByType(SelectionList)).toHaveLength(0);
@@ -218,6 +239,7 @@ describe('workflow Add Action picker', () => {
         } finally { await dispose(); }
     });
     it('searches the real nested picker and inserts the selected eligible Action', async () => {
+        await serveActionCatalog();
         const onAdd = vi.fn();
         const screen = await renderScreen(<WorkflowAddBlockMenu scopeLabel="Workflow" testID="add" onAdd={onAdd} onUseExample={vi.fn()} />);
         await screen.pressByTestIdAsync('add');
@@ -225,7 +247,10 @@ describe('workflow Add Action picker', () => {
         await screen.pressByTestIdAsync('selection-list:add-root:option:add-action');
         const { listWorkflowStepActionSpecs } = await import('../presentation/workflowActionCatalog');
         const description = listWorkflowStepActionSpecs().find(spec => spec.id === 'notifications.notify_me')!.description;
-        expect(screen.getTextContent()).toContain(description);
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.getTextContent()).toContain(description);
+        });
         // The root's Action explanation may remain once; it is not every row's subtitle.
         expect(screen.getTextContent().split(t('workflows.page.blocks.noAgentTurn')).length).toBeLessThanOrEqual(2);
         const inputs = screen.findAll((node) => (node.type as unknown) === 'TextInput' && typeof node.props.onChangeText === 'function');
