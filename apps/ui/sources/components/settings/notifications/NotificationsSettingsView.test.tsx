@@ -1453,8 +1453,25 @@ describe('NotificationsSettingsView', () => {
         expect(fixture!.catalogWrites).toHaveLength(1);
     });
 
+    it('keeps a failed native permission observation distinct from unsupported notifications in onboarding', async () => {
+        getPushPermissionsMock.mockRejectedValue(new Error('native permission query unavailable'));
+        const screen = await openNotificationsScreen('personalize');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('settingsNotifications.pushTroubleshooting.permission.runtimeUnavailableSubtitle'));
+        expect(screen.getTextContent()).not.toContain('personalize.notificationsUnsupported');
+        expect(screen.getTextContent()).not.toContain('personalize.notificationsNotAllowed');
+        expect(screen.findByTestId('personalize-notifications-needs-you')).toBeTruthy();
+        expect(screen.findByTestId('personalize-notifications-preview')).toBeTruthy();
+        expect(screen.findByTestId('personalize-notifications-allow')).toBeTruthy();
+        getPushPermissionsMock.mockResolvedValue({ status: 'denied', granted: false, canAskAgain: true });
+        modalConfirmMock.mockResolvedValue(true);
+        await act(async () => { screen.pressRow('personalize-notifications-allow'); });
+        await vi.waitFor(() => expect(requestPushPermissionsMock).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('personalize.notificationsAllowed'));
+    });
+
     it('refuses the exact permission operation from onboarding Allow', async () => {
         disabledNotificationAction = 'notifications.push.permission.request';
+        getPushPermissionsMock.mockResolvedValue({ status: 'denied', granted: false, canAskAgain: true });
         disableRemotePush();
         modalConfirmMock.mockResolvedValue(true);
         const screen = await openNotificationsScreen('personalize');

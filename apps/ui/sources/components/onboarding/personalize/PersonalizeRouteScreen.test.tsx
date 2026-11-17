@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { StyleSheet } from 'react-native';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
@@ -17,6 +17,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
+import { loadNotificationsSettingsActionExecutorForTests } from '@/components/settings/notifications/notificationsSettingsCatalogTestHarness';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -31,10 +32,13 @@ async function admitPersonalizeAccount() {
     return { serverId: themeConnection.serverId, accountId: 'alice' };
 }
 
-const boundary = vi.hoisted(() => ({ width: 1440, height: 940, notificationGranted: false, requestNotificationPermission: vi.fn(), setTheme: vi.fn() }));
+const boundary = vi.hoisted(() => ({ width: 1440, height: 940, notificationGranted: false, notificationQueryFails: false, requestNotificationPermission: vi.fn(), setTheme: vi.fn() }));
 // OS notification permission is an external boundary; the diagnostics hook and step remain real.
 vi.mock('@tauri-apps/plugin-notification', () => ({
-    isPermissionGranted: async () => boundary.notificationGranted,
+    isPermissionGranted: async () => {
+        if (boundary.notificationQueryFails) throw new Error('OS permission query unavailable');
+        return boundary.notificationGranted;
+    },
     requestPermission: async () => { boundary.requestNotificationPermission(); boundary.notificationGranted = true; return 'granted'; },
     sendNotification: vi.fn(),
 }));
@@ -72,6 +76,8 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 vi.mock('expo-status-bar', () => ({ setStatusBarStyle: vi.fn() }));
 vi.mock('expo-system-ui', () => ({ setBackgroundColorAsync: vi.fn(async () => {}) }));
 
+const actionExecutorBridge = await loadNotificationsSettingsActionExecutorForTests();
+afterAll(() => actionExecutorBridge.dispose());
 const { PersonalizeRouteScreen } = await import('./PersonalizeRouteScreen');
 const { PersonalizeStepBody } = await import('./PersonalizeStepBody');
 const { ToolStylePreview } = await import('@/components/settings/session/SessionSettingPreviews');
@@ -116,7 +122,9 @@ afterEach(async () => { standardCleanup();
     await themeConnection?.dispose(); themeConnection = undefined;
     await themeHomes.reset();
     boundary.width = 1440; boundary.height = 940; boundary.notificationGranted = false;
+    boundary.notificationQueryFails = false;
     boundary.requestNotificationPermission.mockClear(); vi.mocked(Modal.show).mockClear();
+    vi.mocked(Modal.confirm).mockResolvedValue(false);
     boundary.setTheme.mockClear();
     setReducedMotionPreferenceOverride(null); vi.unstubAllGlobals(); });
 describe('Personalize responsive route', () => {
@@ -302,6 +310,7 @@ describe('Personalize responsive route', () => {
     });
 
     it('keeps notification choices on a supported desktop and asks permission only from Allow', async () => {
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
         vi.stubGlobal('navigator', { userAgent: 'Tauri desktop', maxTouchPoints: 0 });
         const secureStorage = createDesktopSecureStorageBoundary();
         vi.stubGlobal('__TAURI_INTERNALS__', { invoke: secureStorage.invoke });
@@ -318,6 +327,30 @@ describe('Personalize responsive route', () => {
         await screen.pressByTestIdAsync('personalize-flow-allow');
         await vi.waitFor(() => expect(boundary.notificationGranted).toBe(true));
         expect(screen.findByTestId('personalize-flow-allow')).toBeNull();
+    });
+
+    it('preserves a desktop permission observation failure instead of claiming permission was denied', async () => {
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        vi.stubGlobal('navigator', { userAgent: 'Tauri desktop', maxTouchPoints: 0 });
+        const secureStorage = createDesktopSecureStorageBoundary();
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: secureStorage.invoke });
+        boundary.notificationQueryFails = true;
+        const scope = await admitPersonalizeAccount();
+        storage.setState({ settings: settingsDefaults, localSettings: localSettingsDefaults,
+            settingsScope: scope, profileScope: scope });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+        setReducedMotionPreferenceOverride(true);
+        const screen = await renderScreen(route(false));
+        await act(async () => { screen.root.findByType(PersonalizeStepBody).props.flow.open('notifications'); });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('settingsNotifications.pushTroubleshooting.permission.runtimeUnavailableSubtitle'));
+        expect(screen.getTextContent()).not.toContain('personalize.notificationsNotAllowed');
+        expect(screen.getTextContent()).not.toContain('personalize.notificationsUnsupported');
+        expect(screen.findByTestId('personalize-flow-needs-you')).not.toBeNull();
+        expect(boundary.requestNotificationPermission).not.toHaveBeenCalled();
+        boundary.notificationQueryFails = false;
+        await screen.pressByTestIdAsync('personalize-flow-allow');
+        await vi.waitFor(() => expect(boundary.notificationGranted).toBe(true));
+        expect(screen.getTextContent()).toContain('personalize.notificationsAllowed');
     });
 
     it('settles the review to one step and keeps its footnote outside the transition body', async () => {

@@ -11,7 +11,7 @@ import { APPEARANCE_SETTINGS } from '@/components/settings/appearance/appearance
 import { GlassEffectiveStateLine, GlassPresetPreview } from '@/components/settings/appearance/GlassAppearanceControls';
 import { ThemeModePreview } from '@/components/settings/appearance/ThemeModePreview';
 import { buildSettingHref } from '@/components/settings/catalog/settingDeclarations';
-import { useTauriNotificationPermissionDiagnostics } from '@/components/settings/notifications/useTauriNotificationPermissionDiagnostics';
+import { useTauriNotificationPermissionDiagnostics, type TauriNotificationPermissionDiagnosticsStatus } from '@/components/settings/notifications/useTauriNotificationPermissionDiagnostics';
 import { SessionListDensityPreview, SessionListLayoutPreview } from '@/components/settings/session/SessionListPreview';
 import { ToolStylePreview, TranscriptLayoutPreview } from '@/components/settings/session/SessionSettingPreviews';
 import { THINKING_DISPLAY_CHOICES } from '@/components/settings/session/thinkingDisplayChoice';
@@ -406,7 +406,7 @@ function AttentionStep(props: Readonly<{ flow: PersonalizeFlow; testID: string }
 }
 
 type DeviceNotificationPermission = Readonly<{
-    status: 'checking' | 'granted' | 'notGranted' | 'unsupported';
+    status: TauriNotificationPermissionDiagnosticsStatus | 'unsupported';
     /** Asks the OS, framed in-app first. Only ever called from the explicit Allow button. */
     request: () => Promise<void>;
 }>;
@@ -423,7 +423,7 @@ function useDeviceNotificationPermission(): DeviceNotificationPermission {
         let cancelled = false;
         void readPushPermission().then((outcome) => {
             if (cancelled) return;
-            setNativeStatus(!outcome.ok || outcome.permission.status === 'unsupported' ? 'unsupported'
+            setNativeStatus(!outcome.ok ? 'error' : outcome.permission.status === 'unsupported' ? 'unsupported'
                 : outcome.permission.granted ? 'granted' : 'notGranted');
         });
         return () => { cancelled = true; };
@@ -445,7 +445,7 @@ function useDeviceNotificationPermission(): DeviceNotificationPermission {
     }, [execution.execute, execution.isCurrent]);
     if (tauri) {
         return {
-            status: desktop.status === 'error' ? 'notGranted' : desktop.status,
+            status: desktop.status,
             request: desktop.requestPermission,
         };
     }
@@ -461,7 +461,7 @@ function NotificationsStep(props: Readonly<{ flow: PersonalizeFlow; testID: stri
     }
     return (
         <>
-            {permission.status === 'granted' || permission.status === 'notGranted' ? (
+            {permission.status !== 'checking' ? (
                 <View testID={`${props.testID}-permission`} style={styles.permission}>
                     <Icon
                         name={permission.status === 'granted' ? 'check' : 'bell'}
@@ -469,9 +469,11 @@ function NotificationsStep(props: Readonly<{ flow: PersonalizeFlow; testID: stri
                         color={permission.status === 'granted' ? theme.colors.state.success.foreground : theme.colors.text.secondary}
                     />
                     <Text style={styles.permissionText}>
-                        {permission.status === 'granted' ? t('personalize.notificationsAllowed') : t('personalize.notificationsNotAllowed')}
+                        {permission.status === 'error'
+                            ? t('settingsNotifications.pushTroubleshooting.permission.runtimeUnavailableSubtitle')
+                            : permission.status === 'granted' ? t('personalize.notificationsAllowed') : t('personalize.notificationsNotAllowed')}
                     </Text>
-                    {permission.status === 'notGranted' ? (
+                    {permission.status !== 'granted' ? (
                         <RoundButton
                             testID={`${props.testID}-allow`}
                             size="small"
