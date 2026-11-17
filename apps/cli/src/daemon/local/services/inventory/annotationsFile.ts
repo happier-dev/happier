@@ -5,6 +5,7 @@ import { z } from 'zod/mini';
 
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
 
 import type { LocalServiceInventoryAnnotationStore } from './registry';
@@ -62,8 +63,11 @@ export function createLocalServiceInventoryAnnotationsFileStore(input: Readonly<
             let raw: string;
             try {
                 raw = readFileSync(path, 'utf-8');
-            } catch {
-                // No annotations yet (or unreadable): the user simply has none.
+            } catch (error) {
+                if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) {
+                    logger.warnLocalFile('[DAEMON RUN] Local-service inventory annotations read failed',
+                        projectActionFailureCauseV1(error, 'local_service.annotations.read', { allowUnknownErrorCode: false }));
+                }
                 return null;
             }
             try {
@@ -73,8 +77,9 @@ export function createLocalServiceInventoryAnnotationsFileStore(input: Readonly<
                     return null;
                 }
                 return parsed.data;
-            } catch {
-                logger.debug('[DAEMON RUN] Local-service inventory annotations file is corrupt; ignoring it');
+            } catch (error) {
+                logger.warnLocalFile('[DAEMON RUN] Local-service inventory annotations file is corrupt; ignoring it',
+                    projectActionFailureCauseV1(error, 'local_service.annotations.parse', { allowUnknownErrorCode: false }));
                 return null;
             }
         },
