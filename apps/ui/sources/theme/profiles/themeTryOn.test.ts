@@ -56,6 +56,45 @@ function setup() {
 }
 
 describe('one-document theme try-on', () => {
+    it('retains an identical declaration and handle until a real replacement publishes', async () => {
+        const state = setup();
+        const observed: (ThemeTryOnSnapshot | null)[] = [];
+        state.owner.subscribe(() => observed.push(state.owner.read()));
+        const first = state.owner.begin({ document: document('unchanged'), mode: 'dark',
+            origin: { kind: 'editor' }, group: 'palette' });
+        state.setScope({ ...accountScope });
+        const repeated = state.owner.begin({ group: 'palette', origin: { kind: 'editor' },
+            mode: 'dark', document: document('unchanged') });
+        expect(repeated).toBe(first);
+        expect(state.owner.replace(first.previewRef, { document: document('unchanged'), mode: 'dark',
+            origin: { kind: 'editor' }, group: 'palette' })).toBe(first);
+        expect(observed).toEqual([first]);
+        const replacement = state.owner.begin({ document: document('changed'), mode: 'dark',
+            origin: { kind: 'editor' }, group: 'palette' });
+        expect(observed).toEqual([first, replacement]);
+        expect(replacement.previewRef).not.toBe(first.previewRef);
+        await expect(state.owner.keep(first.previewRef)).rejects.toMatchObject({ code: 'theme_preview_stale' });
+        expect(state.owner.read()).toBe(replacement);
+        expect(state.writes()).toBe(0);
+    });
+
+    it.each(['mode', 'origin', 'group', 'selection', 'Account'] as const)(
+        'publishes a real %s change even when the document is unchanged', change => {
+            const state = setup();
+            const first = state.owner.begin({ document: document('same_document'), mode: 'dark', origin: { kind: 'editor' } });
+            let notifications = 0;
+            state.owner.subscribe(() => { notifications++; });
+            if (change === 'Account') state.setScope({ ...accountScope, accountId: 'other-account' });
+            const next = state.owner.begin({ document: document('same_document'),
+                mode: change === 'mode' ? 'light' : 'dark',
+                origin: { kind: change === 'origin' ? 'agent' : 'editor' },
+                ...(change === 'group' ? { group: 'other-group' } : {}),
+                ...(change === 'selection' ? { selection: null } : {}) });
+            expect(next.previewRef).not.toBe(first.previewRef);
+            expect(state.owner.read()).toBe(next);
+            expect(notifications).toBe(1);
+        });
+
     it.each([
         { name: 'captured without an Account', captured: null, active: accountScope },
         { name: 'after logout', captured: accountScope, active: null },

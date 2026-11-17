@@ -4,6 +4,7 @@ import type { RegistryThemeAcquisitionV1 } from '@happier-dev/protocol/registrie
 import type { ThemeLibraryMutationResult, ThemeProfileDocument, ThemeProfileLibrary, ThemeProfileMode, ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { randomUUID } from '@/platform/randomUUID';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 /** Opaque client-local reference; validity is decided by this owner's current preview. */
 export type PreviewRef = string;
@@ -51,8 +52,13 @@ export function createThemeTryOnOwner(deps: Readonly<{
         return { preview, scope };
     };
     const begin = (input: ThemeTryOnInput): ThemeTryOnSnapshot => {
-        const snapshot: ThemeTryOnSnapshot = { ...input, previewRef: randomUUID() };
-        current = { snapshot, scope: deps.captureScope() };
+        const scope = deps.captureScope();
+        const previous = current && areAccountSettingsScopesEqual(current.scope, scope) ? current.snapshot : undefined;
+        const retained = retainDeep<ThemeTryOnSnapshot>(previous,
+            { ...input, previewRef: previous?.previewRef ?? randomUUID() });
+        if (retained === previous) return retained;
+        const snapshot: ThemeTryOnSnapshot = previous ? { ...retained, previewRef: randomUUID() } : retained;
+        current = { snapshot, scope };
         publish();
         return snapshot;
     };
