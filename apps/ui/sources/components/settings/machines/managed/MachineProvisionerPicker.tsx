@@ -93,14 +93,10 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
     handler.current = approval.requestApproval;
     const router = useRouter();
     const [error, setError] = React.useState<string | null>(null);
-    const [repairFailure, setRepairFailure] = React.useState<Readonly<{
+    const [repairOperation, setRepairOperation] = React.useState<Readonly<{
         id: string; binding: ServerCredentialAccountScopeBinding; controller: ManagedControllerV1 | undefined;
-        outcome: NonNullable<ManagedProvisionerCard['repairFailure']>;
-    }> | null>(null);
-    // The repair that just opened an install guide: its card asks to check again, since nothing tells us it's done.
-    const [repairOpened, setRepairOpened] = React.useState<Readonly<{
-        id: string; binding: ServerCredentialAccountScopeBinding; controller: ManagedControllerV1 | undefined;
-    }> | null>(null);
+    } & ({ kind: 'pending' } | { kind: 'opened' }
+        | { kind: 'failed'; outcome: NonNullable<ManagedProvisionerCard['repairFailure']> })> | null>(null);
     const compact = useViewportClass() === 'compact';
     const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller, accountScope: catalog.binding?.scope,
         purpose: props.presetOnly ? 'presentation' : 'repair', declarationsOnly: props.presetOnly, onApprovalPending });
@@ -174,6 +170,9 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
                 onPress: () => open(buildQualifiedPluginContributionKey(provisioner.contribution), undefined), disabled: !catalog.isCurrentFor(buildQualifiedPluginContributionKey(provisioner.contribution)) } }];
         const location = provisioner.descriptor.billing.location;
         const id = buildQualifiedPluginContributionKey(provisioner.contribution);
+        const currentRepair = repairOperation?.id === id && repairOperation.binding === catalog.binding
+            && repairOperation.controller?.machineId === controller?.machineId
+            && repairOperation.controller?.installationId === controller?.installationId ? repairOperation : null;
         const outcome = checks[id];
         // The provisioner's own browser-reachability fact, read by the same owner that refuses its acquire.
         const placement = readMachineProvisionerHostAvailability({ ...(accountHost && accountHost !== 'unavailable' ? accountHost : { host: 'native' as const }),
@@ -208,9 +207,8 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             ...(readiness.repair ? { repairAction: readiness.repair.action,
                 ...(readiness.repair.setupSources ? { setupSources: readiness.repair.setupSources } : {}) } : {}),
             mark: (size: number) => markFor(provisioner, size),
-            repairFailure: repairFailure?.id === id && repairFailure.binding === catalog.binding
-                && repairFailure.controller?.machineId === controller?.machineId
-                && repairFailure.controller?.installationId === controller?.installationId ? repairFailure.outcome : undefined,
+            repairFailure: currentRepair?.kind === 'failed' ? currentRepair.outcome : undefined,
+            ...(currentRepair?.kind === 'pending' ? { repairPending: true as const } : {}),
             // Amber means "needs you": a service nobody connected or a tool not yet installed is an offer, so it stays quiet.
             status: { tone: readiness.tone === 'ready' && location === 'unknown' ? 'attention' : readiness.tone,
                 label: [statusLabel, location === 'unknown' ? t('managedMachines.add.status.billingUnknown') : null].filter(Boolean).join(' · ') },
@@ -223,23 +221,25 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
             // Only the card's own failed check offers Retry here; a failed controller catalog is said once, by the
             // page line and its Retry, while each card keeps the step its own answer gives (Connect pairs with No account).
             : readiness.kind === 'unavailable' ? { kind: 'retry', label: t('common.retry'), onPress: catalog.refresh }
-            : repairAction && repairOpened?.id === id && repairOpened.binding === catalog.binding
-                && repairOpened.controller?.machineId === controller?.machineId
-                && repairOpened.controller?.installationId === controller?.installationId
-                ? { kind: 'retry', label: t('machinePresets.setup.tab.checkAgain'), onPress: () => { setRepairOpened(null); catalog.refresh(); } }
+            // Opening an install guide cannot tell us the install completed: offer its existing check again.
+            : repairAction && currentRepair?.kind === 'opened'
+                ? { kind: 'retry', label: t('machinePresets.setup.tab.checkAgain'), onPress: () => { setRepairOperation(null); catalog.refresh(); } }
             : repairAction ? { kind: 'repair', label: t(readiness.repair?.kind === 'connect' ? 'managedMachines.add.action.connect'
-                : readiness.repair?.kind === 'install' ? 'managedMachines.add.action.getApp' : 'managedMachines.add.action.setUp'), onPress: () => {
+                : readiness.repair?.kind === 'install' ? 'managedMachines.add.action.getApp' : 'managedMachines.add.action.setUp'),
+                disabled: currentRepair?.kind === 'pending', onPress: () => {
                 const binding = catalog.binding;
                 if (!binding?.isCurrent()) return;
                 repairAbort.current?.abort();
                 const abort = new AbortController(); repairAbort.current = abort;
-                setRepairFailure(null);
+                const pending = { kind: 'pending' as const, id, binding, controller };
+                setRepairOperation(pending);
                 void presentation.repair(repairAction, binding, abort.signal).then(outcome => {
                     if (abort.signal.aborted || !binding.isCurrent()) return;
-                    if (outcome.ok) { setRepairOpened({ id, binding, controller }); catalog.refresh(); }
-                    else setRepairFailure({ id, binding, controller, outcome });
-                }).catch(() => { if (!abort.signal.aborted && binding.isCurrent()) setRepairFailure({ id, binding, controller,
-                    outcome: createPluginSurfaceActionFailure('unavailable', 'unavailable') }); });
+                    if (outcome.ok) { setRepairOperation({ kind: 'opened', id, binding, controller }); catalog.refresh(); }
+                    else setRepairOperation({ kind: 'failed', id, binding, controller, outcome });
+                }).catch(() => { if (!abort.signal.aborted && binding.isCurrent()) setRepairOperation({ kind: 'failed', id, binding, controller,
+                    outcome: createPluginSurfaceActionFailure('unavailable', 'unavailable') }); })
+                    .finally(() => setRepairOperation(previous => previous === pending ? null : previous));
             } } : { kind: 'choose', label: t(connectPurpose ? 'managedMachines.add.action.connect' : 'managedMachines.add.action.choose'),
                 onPress: () => open(id, placement.controller, connectPurpose),
                 // Retained checks describe the card; its answering catalog owns whether the handoff is current.

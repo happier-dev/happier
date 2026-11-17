@@ -41,6 +41,8 @@ export type ManagedProvisionerCard = Readonly<{
   needsSetup?: true;
   status: Readonly<{ tone: ManagedStatusTone; label: string }>;
   repairFailure?: ManagedProvisionerRepairFailure;
+  /** The card's existing repair Action is still awaiting confirmation or completion. */
+  repairPending?: true;
   /** The native prerequisite's existing installer and review inputs, consumed by Machine Setup. */
   repairAction?: NonNullable<ManagedProvisionerReadiness['repair']>['action'];
   setupSources?: NonNullable<ManagedProvisionerReadiness['repair']>['setupSources'];

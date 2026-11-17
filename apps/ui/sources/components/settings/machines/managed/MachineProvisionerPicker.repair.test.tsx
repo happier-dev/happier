@@ -134,6 +134,9 @@ describe('mounted provisioner repair', () => {
                 [buildQualifiedPluginContributionKey(optionsIdentity)]: projectedOptions },
         } });
         let repaired = false;
+        let releaseRepair: (() => void) | undefined;
+        const repairResponse = scenario === 'picker' ? new Promise<void>(resolve => { releaseRepair = resolve; }) : undefined;
+        onTestFinished(() => releaseRepair?.());
         let settleRepairApproval: (() => Promise<void>) | undefined;
         boundary.rpc.mockImplementation(async (request: { method: string; payload: unknown }) => {
             if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
@@ -152,6 +155,7 @@ describe('mounted provisioner repair', () => {
             machineId: machine.id, installationId: 'installation', actionId: 'action.invoke', tokenEpoch: 0,
             execute: async (input, { envelope }) => {
                 if (!needsApproval) {
+                    await repairResponse;
                     repaired = true;
                     return { repaired: true };
                 }
@@ -216,6 +220,8 @@ describe('mounted provisioner repair', () => {
         const group = readMachineProvisionerSessionPlacementV1(provisioner.descriptor, {})?.kind === 'controller-local' ? 'local' : 'cloud-sandboxes';
         const card = surface === 'picker' ? `managed-picker.provisioners.${group}.${buildQualifiedPluginContributionKey(contribution)}.action`
             : 'managed-config.repair:systemTool:native-vm';
+        const cardOf = () => screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards)
+            .find(entry => entry.id === buildQualifiedPluginContributionKey(contribution));
         if (scenario === 'missingWithoutRepair') {
             await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.card?.id === buildQualifiedPluginContributionKey(contribution)
                 && node.props.card?.status?.tone === 'none' && node.props.card?.action?.disabled === true).length).toBeGreaterThan(0));
@@ -261,6 +267,7 @@ describe('mounted provisioner repair', () => {
             const { t } = await import('@/text');
             const failureCards = screen.tree.findAll(node => node.props.testID === failureId && node.props.diagnosticCode === projectionFailure);
             expect(failureCards.length).toBeGreaterThan(0);
+            expect(cardOf()?.repairPending).toBeUndefined();
             expect(failureCards.some(node => node.props.title === t('settingsProviders.detail.machineOffline')))
                 .toBe(projectionFailure === 'machine-unavailable');
             expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)).toHaveLength(0);
@@ -275,6 +282,7 @@ describe('mounted provisioner repair', () => {
             expect(screen.findByTestId('managed-config.error')).toBeNull();
             expect(screen.tree.findAll(node => node.props.testID === failureId
                 && node.props.diagnosticCode === 'plugin_surface_client_action_unavailable').length).toBeGreaterThan(0);
+            if (surface === 'picker') expect(cardOf()?.repairPending).toBeUndefined();
             expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)).toHaveLength(0);
             expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(checksBeforeRepair);
             await screen.unmount();
@@ -293,6 +301,13 @@ describe('mounted provisioner repair', () => {
             .toEqual({ confirmReady: true, navigation: [], error: [] });
         expect(boundary.rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)).toHaveLength(0);
         await act(async () => { void screen.pressByTestId('app-shell-confirmation-confirm'); });
+        if (scenario === 'picker') {
+            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/action.invoke')).toHaveLength(1));
+            expect(repaired).toBe(false);
+            expect(cardOf()).toMatchObject({ repairPending: true, action: { disabled: true } });
+            await act(async () => { releaseRepair!(); });
+            await waitForHomeGovernance(() => expect(cardOf()?.repairPending).toBeUndefined());
+        }
         if (needsApproval) {
             await waitForHomeGovernance(() => expect(settleRepairApproval).toBeTypeOf('function'));
             const approvalId = surface === 'picker' ? 'managed-picker.approval' : 'managed-config.approval';
