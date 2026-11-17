@@ -52,6 +52,7 @@ import {
     resolveIdentityConnectionProviderKindPolicy,
 } from "@/app/home/governance/governancePolicy";
 import { inTx, type Tx } from "@/storage/inTx";
+import { readDatabaseErrorCode } from "@/storage/transactionErrors";
 import {
     createTeamIdentityConnectionInTx,
     deleteTeamIdentityConnectionInTx,
@@ -745,35 +746,37 @@ export async function removeTeamIdentityConnectionForActor(
     if (!prepared.ok) return prepared;
     if (prepared.kind === "complete") return { ok: true, value: prepared.value };
 
+    // The first transaction confirmed disablement; a later refusal cannot
+    // describe this as a no-effect failure. Existing Remove resumes this binding.
+    const pending = (reason?: TeamIdentityErrorCodeV1): Result<TeamIdentityConnectionRemoveResultV1> => ({
+        ok: true, value: { outcome: "disabled_pending_completion", ...(reason ? { reason } : {}) },
+    });
     const externalReference = prepared.connection.externalReference;
     if (externalReference.kind !== "workos_sso") {
-        return { ok: false, error: "identity_connection_invalid" };
+        return pending("identity_connection_invalid");
     }
     if (externalReference.connectionId !== null) {
         if (externalReference.organizationId === null) {
-            return { ok: false, error: "identity_connection_invalid" };
+            return pending("identity_connection_invalid");
         }
         const requestPolicy = resolveWorkosPlatformRequestPolicy();
         const platform = dependencies.resolvePlatform
             ? dependencies.resolvePlatform(input.env, requestPolicy)
             : resolveWorkosPlatformConfig(input.env, {}, requestPolicy);
-        if (!platform.available) return { ok: false, error: "workos_platform_unavailable" };
+        if (!platform.available) return pending("workos_platform_unavailable");
         try {
             await createWorkosAdministrationAdapter(platform.client).deleteSsoConnection({
                 organizationId: externalReference.organizationId,
                 connectionId: externalReference.connectionId,
             });
         } catch (error) {
-            return {
-                ok: false,
-                error: error instanceof Error && error.message === "workos_organization_mismatch"
-                    ? "workos_organization_mismatch"
-                    : "identity_provider_unavailable",
-            };
+            return pending(error instanceof Error && error.message === "workos_organization_mismatch"
+                ? "workos_organization_mismatch"
+                : "identity_provider_unavailable");
         }
     }
 
-    return await inTx(async (tx) => {
+    const completion = await inTx<Result<TeamIdentityConnectionRemoveResultV1>>(async (tx) => {
         await acquireTeamIdentityConnectionMutationAdmissionInTx(tx, input);
         const preflight = await resolveTeamIdentityConnectionRemovalPreflightInTx(tx, {
             ...input,
@@ -796,7 +799,11 @@ export async function removeTeamIdentityConnectionForActor(
         }
         if (removed.status === "not_found") return { ok: true, value: { outcome: "already_absent" } };
         return { ok: false, error: mapLifecycleError(removed.status) };
-    }, { isolationLevel: "Serializable" /* WorkOS removal rechecks alternate login routes and retained connection consumers. */ });
+    }, { isolationLevel: "Serializable" /* WorkOS removal rechecks alternate login routes and retained connection consumers. */ }).catch((error: unknown) => {
+        if (readDatabaseErrorCode(error) === null) throw error;
+        return pending();
+    });
+    return completion.ok ? completion : pending(completion.error);
 }
 
 export async function consumeTeamIdentityConnectionTestForActor(

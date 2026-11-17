@@ -541,7 +541,14 @@ export const IdentityConnectionDetailContent = React.memo(function IdentityConne
                 return;
             }
             if (signal.aborted) return;
-            const finishRemoval = () => router.back();
+            const finishRemoval = async (value: TeamIdentityActionOutput<'teams.identity.connections.remove'>) => {
+                if (value.outcome === 'disabled_pending_completion') {
+                    refresh();
+                    await Modal.alertAsync(t('identityAdministration.disabled'), t('identityAdministration.removalPending'));
+                    return;
+                }
+                router.back();
+            };
             const result = await client.execute(
                 'teams.identity.connections.remove',
                 { v: 1, teamId: props.teamId, connectionId: connection.id, expectedRevision: preflight.value.connection.revision },
@@ -551,7 +558,7 @@ export const IdentityConnectionDetailContent = React.memo(function IdentityConne
             if (!result.ok) {
                 if ('approvalPending' in result) return;
                 reportActionFailure(result.failure.code);
-            } else finishRemoval();
+            } else await finishRemoval(result.value);
         } finally { if (!signal.aborted) setPending(null); }
     };
 

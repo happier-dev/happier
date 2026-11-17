@@ -7,6 +7,8 @@ import {
     TeamMembershipV1Schema,
     TeamInvitationRowV1Schema,
     TeamInvitationPreviewV1Schema,
+    TeamIdentityConnectionV1Schema,
+    TeamDirectorySourceSummaryV1Schema,
     TeamCredentialResourceSummaryV1Schema,
     TeamCredentialSourceResourceAdministrationV1Schema,
     TeamCredentialSourceCandidateV1Schema,
@@ -24,6 +26,8 @@ import {
     type TeamGroupV1,
     type TeamInvitationRowV1,
     type TeamInvitationPreviewV1,
+    type TeamIdentityConnectionV1,
+    type TeamDirectorySourceSummaryV1,
     type TeamMembershipV1,
     type TeamPolicyV1,
     type TeamSummaryV1,
@@ -323,4 +327,29 @@ export function teamCredentialViewerFixture(
     overrides?: Partial<TeamCredentialViewerCapabilitiesV1>,
 ): TeamCredentialViewerCapabilitiesV1 {
     return TeamCredentialViewerCapabilitiesV1Schema.parse({ manageCredentials: false, offerOwnCredential: false, ...overrides });
+}
+
+/** A Team-owned OIDC connection; allowed mutations are explicit in each case. */
+export function teamIdentityConnectionFixture(overrides?: Partial<TeamIdentityConnectionV1>): TeamIdentityConnectionV1 {
+    return TeamIdentityConnectionV1Schema.parse({
+        v: 1, id: 'connection-1', teamId: 'team-1',
+        provider: { id: 'provider-1', kind: 'oidc', displayName: 'OIDC' },
+        externalReference: { v: 1, kind: 'oidc' },
+        settings: { v: 1, kind: 'oidc', allowedUsers: [], allowedEmailDomains: [], groupsAny: [], groupsAll: [] },
+        enabled: true, firstEnabledAt: 1, revision: 1, state: 'connected', allowedActions: [],
+        lastObservation: { v: 1, kind: 'oidc' }, lastSuccessfulTest: null, createdAt: 1, updatedAt: 1,
+        ...overrides,
+    });
+}
+
+/** A settled directory projection; lifecycle and permitted mutations stay server-projected. */
+export function teamDirectorySourceFixture(overrides?: Partial<TeamDirectorySourceSummaryV1>): TeamDirectorySourceSummaryV1 {
+    return TeamDirectorySourceSummaryV1Schema.parse({
+        v: 1, id: 'source-1', teamId: 'team-1', kind: 'workos_directory', displayName: 'Example directory',
+        state: 'active', allowedActions: [],
+        sync: { mode: 'events_and_full', attempt: 'succeeded', freshness: 'fresh', lastAttemptAt: null,
+            lastSuccessAt: null, lastFullReconcileAt: null, nextScheduledAt: null },
+        error: null,
+        ...overrides,
+    });
 }

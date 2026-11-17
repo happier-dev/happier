@@ -1,4 +1,5 @@
 import type { WorkOS } from "@workos-inc/node";
+import { TeamIdentityConnectionRemoveResultV1Schema } from "@happier-dev/protocol/teams";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
@@ -22,6 +23,7 @@ import {
 import { listTeamIdentityConnectionsForActor } from "./teamIdentityConnectionAdministration";
 import { setTeamIdentityConnectionEnabledInTx, updateTeamIdentityConnectionInTx } from "./teamIdentityConnectionLifecycle";
 import { inTx } from "@/storage/inTx";
+import { TransactionAcquisitionUnavailableError } from "@/storage/transactionErrors";
 import { TEAM_CHANGE_ENTITY_ID } from "../teamChanges";
 import { listProviderDescriptors, resolveOAuthRuntimeById } from "@/app/auth/providers/identityProviderCatalog";
 
@@ -123,6 +125,75 @@ describe("Team WorkOS administration", () => {
             .toMatchObject({ externalReference: {
                 v: 1, kind: "workos_sso", organizationId: "org_portal_unavailable", connectionId: null,
             } });
+    });
+
+    it("reports disabled pending removal after WorkOS refuses deletion and resumes with the existing removal", async () => {
+        const fixture = await createFixture({ organizationId: "org_remove_pending", connectionId: "conn_remove_pending" });
+        await db.teamIdentityConnection.update({ where: { id: fixture.connection.id }, data: {
+            enabled: true, firstEnabledAt: new Date("2026-11-01T00:00:00.000Z"),
+        } });
+        const deleteConnection = vi.fn().mockRejectedValueOnce(Object.assign(new Error("WorkOS denied deletion"), { status: 403 }))
+            .mockResolvedValue(undefined);
+        const dependencies = platform({ sso: {
+            getConnection: vi.fn(async () => ({
+                id: "conn_remove_pending", organizationId: "org_remove_pending", name: "Acme SSO", type: "SAML", state: "active",
+            })),
+            deleteConnection,
+        } } as unknown as WorkOS);
+        const input = { ...interactiveAuthentication, v: 1 as const, actorAccountId: fixture.actor.id,
+            teamId: fixture.team.id, connectionId: fixture.connection.id, expectedRevision: fixture.connection.revision, env: {} };
+        const result = await removeTeamIdentityConnectionForActor(input, dependencies);
+        expect(result).toEqual({
+            ok: true, value: { outcome: "disabled_pending_completion", reason: "identity_provider_unavailable" },
+        });
+        if (!result.ok) throw new Error(result.error);
+        expect(TeamIdentityConnectionRemoveResultV1Schema.parse(result.value)).toEqual(result.value);
+        const retained = await db.teamIdentityConnection.findUniqueOrThrow({ where: { id: fixture.connection.id } });
+        expect(retained.enabled).toBe(false);
+        expect(await removeTeamIdentityConnectionForActor({ ...input, expectedRevision: retained.revision }, dependencies))
+            .toEqual({ ok: true, value: { outcome: "removed" } });
+        expect(await db.teamIdentityConnection.findUnique({ where: { id: fixture.connection.id } })).toBeNull();
+    });
+
+    it("retains disabled configuration when final storage acquisition fails after WorkOS deletion, then resumes removal", async () => {
+        const fixture = await createFixture({ organizationId: "org_storage_pending", connectionId: "conn_storage_pending" });
+        await db.teamIdentityConnection.update({ where: { id: fixture.connection.id }, data: {
+            enabled: true, firstEnabledAt: new Date("2026-11-01T00:00:00.000Z"),
+        } });
+        let deleted = false;
+        let acquisitionFailed = false;
+        const transaction = db.$transaction;
+        const dependencies = platform({ sso: {
+            getConnection: vi.fn(async () => {
+                if (deleted) throw Object.assign(new Error("Not found"), { status: 404 });
+                return { id: "conn_storage_pending", organizationId: "org_storage_pending", name: "Acme SSO", type: "SAML", state: "active" };
+            }),
+            deleteConnection: vi.fn(async () => {
+                deleted = true;
+                // Database transaction acquisition is the genuine persistence boundary;
+                // the preceding disable transaction and the resumed removal stay real.
+                db.$transaction = new Proxy(transaction, { apply() {
+                    acquisitionFailed = true;
+                    throw new TransactionAcquisitionUnavailableError(new Error("Pool unavailable"));
+                } });
+            }),
+        } } as unknown as WorkOS);
+        const input = { ...interactiveAuthentication, v: 1 as const, actorAccountId: fixture.actor.id,
+            teamId: fixture.team.id, connectionId: fixture.connection.id, expectedRevision: fixture.connection.revision, env: {} };
+        let result: Awaited<ReturnType<typeof removeTeamIdentityConnectionForActor>> | undefined;
+        let failure: unknown;
+        try { result = await removeTeamIdentityConnectionForActor(input, dependencies); }
+        catch (error) { failure = error; }
+        finally { db.$transaction = transaction; }
+        const retained = await db.teamIdentityConnection.findUniqueOrThrow({ where: { id: fixture.connection.id } });
+        expect(deleted).toBe(true);
+        expect(acquisitionFailed).toBe(true);
+        expect(retained.enabled).toBe(false);
+        expect(failure).toBeUndefined();
+        expect(result).toEqual({ ok: true, value: { outcome: "disabled_pending_completion" } });
+        expect(await removeTeamIdentityConnectionForActor({ ...input, expectedRevision: retained.revision }, dependencies))
+            .toEqual({ ok: true, value: { outcome: "removed" } });
+        expect(await db.teamIdentityConnection.findUnique({ where: { id: fixture.connection.id } })).toBeNull();
     });
 
     it("creates Home company bindings without a Team and keeps administrator mutations closed", async () => {

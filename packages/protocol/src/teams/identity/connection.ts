@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from "../../zodRuntimePolicy.js";
 
+import { TeamIdentityErrorCodeV1Schema } from "./errors.js";
 import { TeamIdSchema } from "../membership.js";
 import { IdentityConnectionTestDiagnosticsV1Schema } from "../../identity/testDiagnostics.js";
 import { HOME_IDENTITY_CONNECTION_USER_ACTION_IDS_V1, TEAM_IDENTITY_CONNECTION_USER_ACTION_IDS_V1 } from "./actionIds.js";
@@ -281,9 +282,13 @@ export const IdentityConnectionMutationResultV1Schema = lazyZodSchema(() => z.st
 export const TeamIdentityConnectionMutationResultV1Schema = lazyZodSchema(() => z.safeExtend(IdentityConnectionMutationResultV1Schema, { connection: TeamIdentityConnectionV1Schema }));
 export type TeamIdentityConnectionMutationResultV1 = z.infer<typeof TeamIdentityConnectionMutationResultV1Schema>;
 
-export const TeamIdentityConnectionRemoveResultV1Schema = lazyZodSchema(() => z.strictObject({
-  outcome: z.enum(["removed", "already_absent"]),
-}));
+export const TeamIdentityConnectionRemoveResultV1Schema = lazyZodSchema(() => z.discriminatedUnion("outcome", [
+  z.strictObject({ outcome: z.enum(["removed", "already_absent"]) }),
+  z.strictObject({
+    outcome: z.literal("disabled_pending_completion"),
+    reason: z.optional(TeamIdentityErrorCodeV1Schema),
+  }),
+]));
 export type TeamIdentityConnectionRemoveResultV1 = z.infer<typeof TeamIdentityConnectionRemoveResultV1Schema>;
 
 export const TeamIdentityConnectionRemovalBlockerV1Schema = lazyZodSchema(() => z.enum([

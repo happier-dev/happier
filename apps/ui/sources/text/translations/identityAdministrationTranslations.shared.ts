@@ -146,6 +146,7 @@ export type Words = Readonly<{
     disableBody: (params: { name: string }) => string;
     githubRemoveInstallationTitle: (params: { name: string }) => string;
     githubRemoveInstallationBody: (params: { name: string }) => string;
+    removalPending: string;
     removeBlockedTitle: (params: { name: string }) => string;
     removeImpactPeople: (params: { count: number }) => string;
     removeImpactNobody: string;
@@ -347,6 +348,7 @@ export const en: Words = {
     disableBody: ({ name }: { name: string }) => `People can\u2019t sign in with ${name} until it\u2019s turned back on. Nothing is deleted.`,
     githubRemoveInstallationTitle: ({ name }: { name: string }) => `Remove the installation on ${name}?`,
     githubRemoveInstallationBody: ({ name }: { name: string }) => `This Home stops using the App on ${name}. Nothing changes on GitHub; uninstall it there if you no longer need it.`,
+    removalPending: 'Sign-in is disabled, but removal has not finished. An administrator can try removing the connection again.',
     removeBlockedTitle: ({ name }: { name: string }) => `${name} can\u2019t be removed yet`,
     removeImpactPeople: ({ count }: { count: number }) => count === 1 ? '1 person signs in to this Team with it.' : `${count} people sign in to this Team with it.`,
     removeImpactNobody: 'No one signs in to this Team with it yet.',

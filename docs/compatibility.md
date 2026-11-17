@@ -13293,3 +13293,14 @@ fixed-context host caches do not alias different selected inputs. The watch
 request remains closed and older strict development readers reject this field,
 so emitting it requires matching development SDK, Protocol and UI source. No
 persisted format, wire epoch or mixed-development adapter changes.
+
+## Identity connection removal (unreleased 0.3)
+
+The closed Home and Team connection-removal result adds
+`disabled_pending_completion`, with an optional existing identity failure code.
+The preceding disablement remains effective after an upstream deletion or final
+storage failure; the detail screen refreshes its revision and keeps the existing Remove
+action available to authorized administrators. This does not certify upstream
+or local deletion. Matching development Protocol, server and UI readers must
+reload together; an older strict reader rejects this outcome. No persistence
+format, migration, retry worker or released wire epoch changes.
