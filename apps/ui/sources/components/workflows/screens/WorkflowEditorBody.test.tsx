@@ -3943,6 +3943,25 @@ describe('the Sentence view (round 1116c)', () => {
         await screen.unmount();
     });
 
+    it('keeps Step options attached to a live card after leaving Sentence', async () => {
+        const harness = await loadHarness();
+        const { Popover } = await import('@/components/ui/popover/Popover');
+        const screen = await renderScreen(<Controlled harness={harness} initial={buildDraft(harness)} view="steps" />);
+        await flushHookEffects();
+        await selectColumnTab('main', 'sentence');
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('workflow-editor-sentence-step:analyze');
+        await flushHookEffects();
+        await selectColumnTab('main', 'steps');
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('workflow-editor-step-analyze-customize');
+        const anchor = screen.findAllByType(Popover).find(node => node.props.open)?.props.anchorRef.current;
+        // A retired Sentence card must not clear the retained Steps card's platform ref.
+        expect(anchor).not.toBeNull();
+        expect(anchor?.measureInWindow).toBeTypeOf('function');
+        await screen.unmount();
+    });
+
     it('adds another step through the Steps view\'s own Add, then selects it', async () => {
         const harness = await loadHarness();
         let current: WorkflowEditorDraft | null = null;

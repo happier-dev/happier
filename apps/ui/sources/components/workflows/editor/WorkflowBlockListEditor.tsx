@@ -158,8 +158,6 @@ export type WorkflowBlockListEditorProps = Readonly<{
     anchorRef: React.RefObject<View | null>,
     cardRef?: React.RefObject<View | null>,
   ) => void;
-  /** A retained inspector owns its card refs when responsive layouts remount this document. */
-  cardRefs?: React.RefObject<Map<string, React.RefObject<View | null>>>;
   /** The web Session drop target for Agent steps (J19); absent where no drag source exists. */
   sessionDrop?: WorkflowSessionDrop;
   registerPromptRef?: (blockId: string, focus: (() => void) | null) => void;
@@ -346,10 +344,9 @@ export function WorkflowBlockListEditor(
   const [engagement] = React.useState(createWorkflowRowEngagement);
 
   // A leaf block's row is its card; a container's row spans its whole body, so only its own control anchors.
-  const localCardRefs = React.useRef(
+  const cardRefs = React.useRef(
     new Map<string, React.RefObject<View | null>>(),
   );
-  const cardRefs = props.cardRefs ?? localCardRefs;
   const cardRefFor = React.useCallback(
     (blockId: string): React.RefObject<View | null> => {
       const existing = cardRefs.current.get(blockId);

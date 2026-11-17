@@ -895,9 +895,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         /** What the panel sits beside: the step's card when it has one, else the control. */
         placementRef: React.RefObject<View | null>;
     }> | null>(null);
-    // The inspector survives the phone/wide document remount. Its placement refs
-    // must survive too, so the new list attaches its live cards to the same refs.
-    const stepCardRefs = React.useRef(new Map<string, React.RefObject<View | null>>());
     const promptFocusByBlockId = React.useRef(new Map<string, () => void>());
     /**
      * The one prompt being edited. Every other prompt is its static picture, so a long workflow
@@ -1292,7 +1289,6 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const blockListProps = {
             draftStore,
             readValidation,
-            cardRefs: stepCardRefs,
             highlightedBlockIds: props.highlightedBlockIds,
             list: { kind: 'root' as const },
             depth: 0,
