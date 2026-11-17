@@ -218,3 +218,31 @@ test('a routed payload keeps the generation it started on through a switch, and 
   await dependencies.withDependencyConsumption({ installDir, env }, async () => {});
   assert.deepEqual(await readdir(container), [second]);
 });
+
+test('a Stack process started on the checkout keeps the generation it started on, even when it starts after a switch inventory', async t => {
+  const { fixture, env, installDir } = await setup(t);
+  const first = (await moveInPlaceInstallationIntoGeneration(installDir)).name;
+  const container = join(installDir, '.happier', 'deps', 'node_modules');
+  // The Stack runtime owner records its processes; the process is the boundary.
+  const server = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  t.after(() => server.kill());
+  const stackDir = fixture.path('stacks', 'qa');
+  await mkdir(stackDir, { recursive: true });
+  await writeFile(join(stackDir, 'env'), `HAPPIER_STACK_REPO_DIR=${installDir}\n`);
+  const { writeStackRuntimeStateFile } = await import('../stack/runtime_state.mjs');
+  // The Stack owner runs with its own environment (here, the fixture's stack home).
+  const savedHome = process.env.HAPPIER_STACK_HOME_DIR;
+  process.env.HAPPIER_STACK_HOME_DIR = env.HAPPIER_STACK_HOME_DIR;
+  t.after(() => { if (savedHome === undefined) delete process.env.HAPPIER_STACK_HOME_DIR; else process.env.HAPPIER_STACK_HOME_DIR = savedHome; });
+  await writeStackRuntimeStateFile(join(stackDir, 'stack.runtime.json'), { version: 1, stackName: 'qa', ownerPid: server.pid });
+  await writeFile(join(installDir, 'pnpm-lock.yaml'), '# v2\n');
+  // No Stack inventory at the switch (the storage root is elsewhere): only the start registration can retain it.
+  await dependencies.withDependencyRefresh({ installDir, env, generationInstall: true },
+    async ({ installCwd = installDir, publishInstallation }) => { await fakeInstall(installCwd, 'v2'); await publishInstallation?.(); });
+  assert.deepEqual((await readdir(container)).length, 2, 'the Stack process still holds its generation');
+  assert.ok((await readdir(container)).includes(first));
+  server.kill();
+  await once(server, 'exit');
+  await dependencies.withDependencyConsumption({ installDir, env }, async () => {});
+  assert.deepEqual((await readdir(container)).length, 1);
+});

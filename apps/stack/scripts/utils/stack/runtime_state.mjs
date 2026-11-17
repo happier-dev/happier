@@ -12,7 +12,7 @@ import { withJsonOwnerFileLock } from '../proc/jsonOwnerFileLock.mjs';
 import { normalizeStackRuntimeOwnerStartedAt } from './runtime_owner_incarnation.mjs';
 import { readStackPortAllocations } from './runtime_ports.mjs';
 import { readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
-import { resolveDependencyInstallRoot, waitForDependencyRefresh } from '../proc/dependency_refresh.mjs';
+import { resolveDependencyInstallRoot, retainDependencyGenerationForProcess, waitForDependencyRefresh } from '../proc/dependency_refresh.mjs';
 import { readEnvValueFromFile } from '../env/read.mjs';
 import { getStackRuntimeProcessEntries, getStackRuntimeProcessInstanceFingerprint, normalizeProcessInstanceRecord,
   normalizeRuntimePid, readStackRuntimeProcessMembership } from './runtime_processes.mjs';
@@ -156,7 +156,27 @@ async function writeStackRuntimeStateFileUnlocked(statePath, state) {
   const portAllocations = readStackPortAllocations(reconciled);
   if (portAllocations) reconciled.portAllocations = portAllocations;
   await writeJsonAtomic(statePath, reconciled);
+  await retainStackProcessGenerations(statePath, reconciled);
   return reconciled;
+}
+
+// Stack processes load modules lazily for their whole run: each one recorded
+// here keeps the dependency generation of its checkout that it started on
+// until it exits (the routed-payload rule; writers never drain the record).
+const retainedStackProcesses = new Set();
+async function retainStackProcessGenerations(statePath, state) {
+  const pids = [state?.ownerPid, ...getStackRuntimeProcessEntries(state).map(({ pid }) => pid)]
+    .map(normalizeRuntimePid).filter(pid => pid && !retainedStackProcesses.has(pid) && isPidAlive(pid));
+  if (!pids.length) return;
+  const installDir = await resolveStackRuntimeInstallDir(statePath, process.env);
+  for (const pid of pids) {
+    try {
+      retainDependencyGenerationForProcess({ installDir, pid });
+      retainedStackProcesses.add(pid);
+    } catch (error) {
+      console.warn(`[stack] dependency generation retention failed for pid ${pid}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 }
 
 export async function writeStackRuntimeStateFile(statePath, state) {
@@ -533,12 +553,16 @@ async function assertNoDifferentLiveRuntimeOwner(existing, { stackName, ownerPid
 
 /** A start records its runtime only after the Stack checkout's dependency
  * writer has published; a restart awaits the same readiness before retiring. */
-export async function waitForStackRuntimeDependencies(statePath, options) {
-  const env = options.env ?? process.env;
+async function resolveStackRuntimeInstallDir(statePath, env) {
   const configuredRepoDir = await readEnvValueFromFile(join(dirname(statePath), 'env'), 'HAPPIER_STACK_REPO_DIR');
   const repoDir = getRepoDir(fileURLToPath(new URL('../../../../../', import.meta.url)),
     configuredRepoDir ? { ...env, HAPPIER_STACK_REPO_DIR: configuredRepoDir } : env);
-  await waitForDependencyRefresh({ installDir: resolveDependencyInstallRoot(repoDir), env, signal: options.signal });
+  return resolveDependencyInstallRoot(repoDir);
+}
+
+export async function waitForStackRuntimeDependencies(statePath, options) {
+  const env = options.env ?? process.env;
+  await waitForDependencyRefresh({ installDir: await resolveStackRuntimeInstallDir(statePath, env), env, signal: options.signal });
 }
 
 async function recordStackRuntimeStartUnlocked(

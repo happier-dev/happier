@@ -474,6 +474,14 @@ run_local() {
     if [ "$policy_bootstrap" = 1 ] || [ "$policy_commandClass" = targeted-validation ]; then
       printf '[preferred-execution] local validation preparation ready (kind=%s, component=%s)\n' "$policy_kind" "${local_preparation_component:-.}" >&2
     fi
+    # A local payload consumes its checkout's installed tree for its whole run,
+    # as a routed one does: this process (the payload, after exec) keeps the
+    # dependency generation it starts on until it exits, so a refresh never
+    # retires it underneath (worker custody applies the same rule remotely).
+    if [ -L "$local_preparation_repo/node_modules/.happier-dependency-generation" ]; then
+      node "$script_dir/../scripts/utils/proc/retain_dependency_generation.mjs" "$local_preparation_repo" "$$" \
+        || printf '%s\n' '[preferred-execution] dependency generation retention failed; this payload may lose its installed tree to a concurrent refresh' >&2
+    fi
   fi
   if [ "$local_focused_test" = 1 ]; then
     # The run keeps the worker grant admission would give its class.

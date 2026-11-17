@@ -105,6 +105,38 @@ function nativeFixtureRuntime(stackDir) {
     env: { HAPPIER_STACK_STORAGE_DIR: dirname(stackDir) } });
 }
 
+test('a local payload keeps the dependency generation it starts on until it exits', { skip: process.platform === 'win32' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-local-retention-', parentDir: dirname(repoRoot) });
+  const owners = fixture.path('apps/stack/scripts/utils/dev_targets');
+  await mkdir(owners, { recursive: true });
+  await writeFile(fixture.path('package.json'), JSON.stringify({ private: true, packageManager: 'pnpm@12.14.0' }));
+  await writeFile(fixture.path('pnpm-lock.yaml'), '# local retention fixture\n');
+  await writeFile(fixture.path('pnpm-workspace.yaml'), 'packages:\n  - apps/*\n');
+  await writeFile(fixture.path('apps/stack/package.json'), JSON.stringify({ name: '@happier-dev/stack' }));
+  await writeFile(join(owners, 'remote_dependency_bootstrap.mjs'), '');
+  // A generation-managed checkout: its root names the current generation.
+  const generation = 'g000000001-0000abcd';
+  await mkdir(fixture.path(`.happier/deps/node_modules/${generation}/node_modules`), { recursive: true });
+  await mkdir(fixture.path('node_modules'), { recursive: true });
+  await symlink(`../.happier/deps/node_modules/${generation}/node_modules`, fixture.path('node_modules/.happier-dependency-generation'));
+  const env = { ...executionNeutralEnv, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, CI: '1',
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1', HAPPIER_STACK_DISABLE_REFRESH_DEPS: '1',
+    HAPPIER_STACK_HOME_DIR: fixture.path('home'), HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks') };
+  const result = spawnSync('/bin/sh', [launcher, `--repo=${fixture.root}`, '--cwd=.', '--local', '--', 'node', '-e',
+    'console.log("PAYLOAD " + process.pid)'], { cwd: repoRoot, env, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const pid = /PAYLOAD (\d+)/.exec(result.stdout)?.[1];
+  assert.ok(pid, result.stdout);
+  const records = [];
+  const walk = async dir => { for (const entry of await readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) await walk(path);
+    else if (entry.name.startsWith(`retain-${pid}-`)) records.push(JSON.parse(await readFile(path, 'utf8')));
+  } };
+  await walk(fixture.root);
+  assert.deepEqual(records, [{ pid: Number(pid), generation }], 'the payload process registered the generation it started on');
+});
+
 test('a sibling basis prepares its own dependencies on first dispatch even for an unclassified command', { skip: process.platform === 'win32' }, async t => {
   // L12-JOURNEY-ACCEPT 2026-11-17: `--repo <sibling> -- pnpm --dir packages/tests exec node
   // scripts/run-vitest-with-heartbeat.mjs …` reached its runner with no node_modules ("vitest not found").
