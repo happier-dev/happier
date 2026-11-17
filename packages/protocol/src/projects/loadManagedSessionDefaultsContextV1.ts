@@ -22,7 +22,9 @@ export const ProjectSessionDefaultsGetOutputV1Schema = lazyZodSchema(() => z.str
   unavailableDefaults: z.optional(z.array(ActionExecuteFailureSchema)),
   teamName: z.optional(z.string()),
 }));
-export type ProjectSessionDefaultsGetOutputV1 = z.infer<typeof ProjectSessionDefaultsGetOutputV1Schema>;
+export type ProjectSessionDefaultsGetOutputV1 = Omit<z.infer<typeof ProjectSessionDefaultsGetOutputV1Schema>, 'unavailableDefaults'> & Readonly<{
+  unavailableDefaults?: readonly ActionExecuteFailure[];
+}>;
 
 type TeamRead = Readonly<{ id: string; name?: string; policy: Readonly<{
   managedDefaults?: ManagedDefaultsV1 | null; homeDefaults?: ManagedSessionDefaultsV1 | null;
