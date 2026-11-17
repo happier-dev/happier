@@ -282,7 +282,6 @@ async function writeRevisionEntry(target, mode, bytes) {
  * @returns {Promise<string[]>} the revision capture's path list
  */
 export async function applySourceRevision({ captureDir, sourceDir, files, ownerDirs = [], descriptor, env = process.env, signal }) {
-  const shipped = await readDeclaredShippedPaths(captureDir, ownerDirs);
   // Authored untracked paths (the controller's --exclude-standard list) are other lanes' uncommitted
   // work and never enter a revision capture, even under a package's shipped `files` dirs: only ignored
   // generated outputs may survive through that rule (untracked vault.json, 2026-11-16).
@@ -290,6 +289,8 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
   const result = new Set();
   const drift = [];
   for (const path of files) {
+    const entry = descriptor.tree[path];
+    if (!entry && !Object.hasOwn(descriptor.overlay, path)) continue;
     const target = join(captureDir, path);
     const bytes = await readCheckoutBytes(target);
     if (Object.hasOwn(descriptor.overlay, path)) {
@@ -299,12 +300,6 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
         await writeRevisionEntry(target, descriptor.tree[path]?.[0] ?? '100644', selected);
         result.add(path);
       }
-      continue;
-    }
-    const entry = descriptor.tree[path];
-    if (!entry) {
-      if (bytes !== null && !untracked.has(path) && isRevisionKeptUntrackedPath(path, shipped)) result.add(path);
-      else await rm(target, { force: true, recursive: true });
       continue;
     }
     if (bytes && gitBlobId(bytes) === entry[1]) { result.add(path); continue; }
@@ -322,6 +317,17 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
     if (!owner || isWorkspaceBuildInputIgnoredPath(posix.relative(owner, path))) continue;
     await writeRevisionEntry(join(captureDir, path), descriptor.tree[path]?.[0] ?? '100644', blob);
     result.add(path);
+  }
+  // Publication declarations belong to the selected revision plus overlay. A later
+  // package's checkout manifest must not admit itself or its generated outputs.
+  const selectedOwners = ownerDirs.filter(dir => result.has(`${dir.replaceAll('\\', '/').replace(/\/$/, '')}/package.json`));
+  const shipped = await readDeclaredShippedPaths(captureDir, selectedOwners);
+  for (const path of files) {
+    if (Object.hasOwn(descriptor.tree, path) || Object.hasOwn(descriptor.overlay, path)) continue;
+    const target = join(captureDir, path);
+    const bytes = await readCheckoutBytes(target);
+    if (bytes !== null && !untracked.has(path) && isRevisionKeptUntrackedPath(path, shipped)) result.add(path);
+    else await rm(target, { force: true, recursive: true });
   }
   if (drift.length) {
     throw new BuildInputDriftError(`[source-revision] capture differs from ${descriptor.key} at ${drift.length} path(s) (first: ${drift[0]}); the checkout or its mirror moved after the revision was described`);
