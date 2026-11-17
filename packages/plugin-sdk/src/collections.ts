@@ -21,6 +21,7 @@ import type { Disposable, PluginCancellationOptions } from './lifecycle.js';
 import type { ProtocolComposableSchema, ProtocolSchemaOutput } from './protocol/protocolFacade.js';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { ResourceAccessGrantRowV1, ResourceCallerAccessV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
+import type { PluginCollectionSharingListRequestV1 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 
 /**
  * Target-artifact code for one static Collection migration identity. The host
@@ -126,7 +127,7 @@ export type PluginCollectionSharing<TValue extends Readonly<Record<string, JsonV
         grants: readonly ResourceAccessGrantRowV1[];
     }>>;
     revokeGrant(rowId: string, request: Readonly<{ principal: PrincipalRefV1 }>, options?: PluginCancellationOptions): Promise<Readonly<{ changed: boolean }>>;
-    sharedWithMe(request?: Readonly<{ cursor?: string; limit?: number }>, options?: PluginCancellationOptions): Promise<Readonly<{
+    sharedWithMe(request?: Readonly<Pick<PluginCollectionSharingListRequestV1, 'cursor' | 'limit' | 'sharedWithTeamId'>>, options?: PluginCancellationOptions): Promise<Readonly<{
         rows: readonly PluginSharedCollectionRow<TValue>[];
         nextCursor?: string;
     }>>;

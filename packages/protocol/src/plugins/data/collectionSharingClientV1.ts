@@ -11,7 +11,7 @@ import {
   PluginCollectionSharingGrantsResponseV1Schema, PluginCollectionSharingListResponseV1Schema,
   PluginCollectionSharingMutationResponseV1Schema, PluginCollectionSharingResourceV1Schema,
   type PluginCollectionSharingAddressV1, type PluginCollectionSharingResourceV1,
-  type PluginCollectionSharingSetGrantRequestV1,
+  type PluginCollectionSharingSetGrantRequestV1, type PluginCollectionSharingListRequestV1,
 } from './collectionSharingV1.js';
 
 type OperationKind = 'read' | 'mutation';
@@ -150,10 +150,11 @@ export function createPluginCollectionSharingClientV1<TValue extends PluginColle
       validateIdentity(resource, target);
       return (await open(resource, false)).logical;
     },
-    sharedWithMe: async (input: Readonly<{ cursor?: string; limit?: number }> = {}) => {
+    sharedWithMe: async (input: Readonly<Pick<PluginCollectionSharingListRequestV1, 'cursor' | 'limit' | 'sharedWithTeamId'>> = {}) => {
       const result = parse(PluginCollectionSharingListResponseV1Schema,
         await request(paths.sharedWithMe, { ...identity, readerContext: contractRef,
-          ...(input.cursor === undefined ? {} : { cursor: input.cursor }), ...(input.limit === undefined ? {} : { limit: input.limit }) }));
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }), ...(input.limit === undefined ? {} : { limit: input.limit }),
+          ...(input.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: input.sharedWithTeamId }) }));
       const rows = await Promise.all(result.resources.map(async resource => {
         const opened = await open(resource);
         await prepareRecipients(opened);

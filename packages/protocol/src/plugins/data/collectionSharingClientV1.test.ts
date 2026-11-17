@@ -5,7 +5,7 @@ import { bytesToHex } from '@noble/hashes/utils';
 import { createPluginCollectionSharingClientV1 } from './collectionSharingClientV1.js';
 import { normalizePluginAccountCollectionContractV1, type PluginCollectionMutationErrorV1 } from './collectionsV1.js';
 import { encodePluginCollectionLogicalValueV1 } from './collectionLogicalCodecV1.js';
-import { PluginCollectionSharingPutRequestV1Schema, PluginCollectionSharingSetGrantRequestV1Schema, type PluginCollectionSharingResourceV1 } from './collectionSharingV1.js';
+import { PluginCollectionSharingListRequestV1Schema, PluginCollectionSharingPutRequestV1Schema, PluginCollectionSharingSetGrantRequestV1Schema, type PluginCollectionSharingResourceV1 } from './collectionSharingV1.js';
 import { signAccountContentKeyBindingV1 } from '../../crypto/accountContentKeyBindingV1.js';
 import { openEncryptedDataKeyEnvelopeV1 } from '../../crypto/encryptedDataKeyEnvelopeV1.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
@@ -118,7 +118,11 @@ describe('Collection sharing client through authenticated transport', () => {
             content: parsed.content, projection: parsed.projection } };
         }
         const projected = { ...resource, access: accountId === 'owner' ? 'owner' : 'edit', encryptedDataKey: wraps.get(accountId) ?? null };
-        return { status: 200, body: path.endsWith('/shared-with-me') ? { resources: [projected], nextCursor: null } : projected };
+        if (path.endsWith('/shared-with-me')) {
+          const selected = PluginCollectionSharingListRequestV1Schema.parse(body);
+          return { status: 200, body: { resources: selected.sharedWithTeamId === 'selected-team' ? [projected] : [], nextCursor: null } };
+        }
+        return { status: 200, body: projected };
       },
     });
     const ownerClient = createPluginCollectionSharingClientV1<Document>(options('owner'));
@@ -126,7 +130,7 @@ describe('Collection sharing client through authenticated transport', () => {
     await expect(ownerClient.setGrant('document', { principal: { kind: 'account', accountId: 'peer' }, accessLevel: 'edit', expectedRevision: 1 })).resolves.toEqual({ changed: true });
     const shared = await peerClient.get({ ownerAccountId: 'owner', rowId: 'document' });
     expect(shared).toMatchObject({ ownerAccountId: 'owner', access: 'edit', value });
-    expect((await peerClient.sharedWithMe({})).rows).toEqual([shared]);
+    expect((await peerClient.sharedWithMe({ sharedWithTeamId: 'selected-team' })).rows).toEqual([shared]);
     const edited = await peerClient.put({ ownerAccountId: 'owner', value: { ...value, note: 'Edited privately' }, expectedRevision: shared.revision });
     expect(edited.value.note).toBe('Edited privately');
     await expect(peerClient.put({ ownerAccountId: 'owner', value, expectedRevision: shared.revision })).rejects.toMatchObject({ code: 'collection_revision_conflict' });

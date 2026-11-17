@@ -146,6 +146,20 @@ describe('Collection sharing database contract', () => {
                 { kind: 'account', accountId: keyless.id },
             ]));
             expect(listed.grants).toHaveLength(4);
+            // A scoped Team page includes an independently admitted owner;
+            // the ordinary shared-with-me projection continues to omit it.
+            const scoped = { pluginId, collectionId: ref.collectionId, readerContext: ref, sharedWithTeamId: team.id };
+            expect(await listSharedCollectionResources(owner.id, scoped)).toMatchObject({ resources: [{ rowId: address.rowId, sharedWithTeamScope: 'team_and_group' }] });
+            expect(await listSharedCollectionResources(groupGuest.id, scoped)).toMatchObject({ resources: [{ rowId: address.rowId, sharedWithTeamScope: 'group' }] });
+            expect(await listSharedCollectionResources(owner.id, { ...scoped, sharedWithTeamId: undefined }))
+                .toMatchObject({ resources: [] });
+            const { countTeamSharedCollectionsInTx } = await import('./sharingResourceService');
+            for (const actor of [owner, groupGuest, directGuest]) {
+                expect(await inTx(tx => countTeamSharedCollectionsInTx(tx, { actorAccountId: actor.id, sharedWithTeamId: team.id })))
+                    .toEqual({ ok: true, collections: [{ collection: { pluginId, collectionId: ref.collectionId }, count: 1 }] });
+            }
+            expect(await inTx(tx => countTeamSharedCollectionsInTx(tx, { actorAccountId: teamGuest.id, sharedWithTeamId: team.id })))
+                .toEqual({ ok: true, collections: [] });
             const mutation = () => ({ ...address, writerContext: ref, expectedRevision: revision,
                 content: resourceContent, projection: { title: 'Guest edit' } });
             for (const { actor } of explicit) {

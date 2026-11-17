@@ -76,7 +76,7 @@ const PluginHostedWebAccountDataCollectionOperationV1Schema = lazyZodSchema(() =
     arguments: z.tuple([PluginCollectionRowIdV1Schema, z.pick(PluginCollectionSharingRevokeGrantRequestV1Schema, { principal: true })]) }),
   z.strictObject({ kind: z.literal('data'), operation: z.literal('collection.sharing.sharedWithMe'),
     definition: PluginHostedWebAccountDataDefinitionV1Schema,
-    arguments: z.tuple([z.pick(PluginCollectionSharingListRequestV1Schema, { cursor: true, limit: true })]) }),
+    arguments: z.tuple([z.pick(PluginCollectionSharingListRequestV1Schema, { cursor: true, limit: true, sharedWithTeamId: true })]) }),
   z.strictObject({ kind: z.literal('data'), operation: z.literal('collection.sharing.get'),
     definition: PluginHostedWebAccountDataDefinitionV1Schema,
     arguments: z.tuple([z.pick(PluginCollectionSharingAddressV1Schema, { ownerAccountId: true, rowId: true })]) }),

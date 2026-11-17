@@ -4,6 +4,7 @@ import { asProtocolZod } from '../actions/internalProtocolZodAdapter.js';
 import { PluginIdSchema } from '../pluginId.js';
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PrincipalRefV1Schema } from '../../teams/principal.js';
+import { ResourceTeamShareScopeV1Schema } from '../../teams/resourceGrantAccessV1.js';
 import { ResourceAccessGrantRowV1Schema, ResourceCallerAccessV1Schema, ResourceAccessRecipientCensusV1Schema,
   ResourceRecipientKeyEnvelopeInputV1Schema, ResourceRecipientKeyEnvelopesV1Schema,
   ResourceRecipientKeyEnvelopeCommitInputV1Schema, ResourceRecipientKeyEnvelopeCommitResponseV1Schema } from '../../teams/resourceGrantAccessV1.js';
@@ -54,6 +55,7 @@ export type PluginCollectionSharingGetRequestV1 = z.infer<typeof PluginCollectio
 export const PluginCollectionSharingResourceV1Schema = lazyZodSchema(() => z.strictObject({
   ...address(), access: ResourceCallerAccessV1Schema, encryptionMode: z.enum(['plain', 'e2ee']),
   encryptedDataKey: z.nullable(z.string()), row: PluginCollectionRowV1Schema,
+  sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
 }));
 export type PluginCollectionSharingResourceV1 = z.infer<typeof PluginCollectionSharingResourceV1Schema>;
 export const PluginCollectionSharingPutRequestV1Schema = lazyZodSchema(() => z.strictObject({
@@ -63,6 +65,7 @@ export const PluginCollectionSharingPutRequestV1Schema = lazyZodSchema(() => z.s
 export type PluginCollectionSharingPutRequestV1 = z.infer<typeof PluginCollectionSharingPutRequestV1Schema>;
 export const PluginCollectionSharingListRequestV1Schema = lazyZodSchema(() => z.strictObject({
   ...identity(), readerContext: PluginCollectionContractRefV1Schema, cursor: z.optional(z.string()),
+  sharedWithTeamId: z.optional(z.string().check(z.minLength(1))),
   limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1))),
 }));
 export type PluginCollectionSharingListRequestV1 = z.infer<typeof PluginCollectionSharingListRequestV1Schema>;

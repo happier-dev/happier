@@ -34,6 +34,13 @@ const tasksDeclaration = {
 } as const;
 
 describe('hosted-web Collection UI-query bridge contract', () => {
+  it('preserves the selected Team on a shared Collection page through the hosted bridge', () => {
+    const request = requireSchema('PluginHostedWebAccountDataBridgeRequestV1Schema');
+    expect(request.safeParse({ kind: 'request', operation: {
+      kind: 'data', operation: 'collection.sharing.sharedWithMe', definition: tasksDeclaration,
+      arguments: [{ sharedWithTeamId: 'selected-team', cursor: 'next-page', limit: 2 }],
+    } }).success).toBe(true);
+  });
   it('uses the Account Data bridge operation kind', () => {
     expect(Collections.PLUGIN_HOSTED_WEB_ACCOUNT_DATA_BRIDGE_KIND_V1)
       .toBe('accountData');
