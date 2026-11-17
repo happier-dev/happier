@@ -3399,7 +3399,7 @@ const artifactsBrowserTranslations = { ja: {
             earlier: ({ n, quote }) => `以前はバージョン ${n}：「${quote}」`,
             count: ({ count }) => `${count}件の会話`,
             countUnavailable: 'コメント数を取得できません',
-            refineHint: 'コメントする語句を選択してください',
+            replyPlaceholder: '返信…', refineHint: 'コメントする語句を選択してください',
             noComments: 'コメントはまだありません',
             noCommentsHint: 'テキストを選択してコメントするか、エージェントをメンションして返信や編集の提案を依頼できます。',
             commentsUnavailable: 'コメントは現在利用できません。',

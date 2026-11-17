@@ -165,6 +165,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
         earlier: (params: Readonly<{ n: number; quote: string }>) => string;
         count: (params: Readonly<{ count: number }>) => string;
         countUnavailable: string;
+        replyPlaceholder: string;
         refineHint: string;
         noComments: string;
         noCommentsHint: string;
@@ -373,6 +374,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             earlier: ({ n, quote }) => `Earlier on version ${n}: “${quote}”`,
             count: ({ count }) => `${count} ${count === 1 ? 'conversation' : 'conversations'}`,
             countUnavailable: 'Comment count unavailable',
+            replyPlaceholder: 'Reply…',
             refineHint: 'Select the words to comment on',
             noComments: 'No comments yet',
             noCommentsHint: 'Select text to comment, or mention an agent to have it answer or propose an edit.',

@@ -3349,7 +3349,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             earlier: ({ n, quote }) => `先前在版本 ${n}：「${quote}」`,
             count: ({ count }) => `${count}個對話`,
             countUnavailable: '無法取得評論數',
-            refineHint: '選取要評論的文字',
+            replyPlaceholder: '回覆…', refineHint: '選取要評論的文字',
             noComments: '尚無評論',
             noCommentsHint: '選取文字即可評論，或提及代理讓它回覆或提出修改建議。',
             commentsUnavailable: '評論暫時無法使用。',

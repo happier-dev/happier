@@ -3443,7 +3443,7 @@ const artifactsBrowserTranslations = { ru: {
             earlier: ({ n, quote }) => `Ранее в версии ${n}: «${quote}»`,
             count: ({ count }) => `${count} ${count === 1 ? 'обсуждение' : 'обсуждений'}`,
             countUnavailable: 'Число комментариев недоступно',
-            refineHint: 'Выделите слова, которые хотите прокомментировать',
+            replyPlaceholder: 'Ответить…', refineHint: 'Выделите слова, которые хотите прокомментировать',
             noComments: 'Пока нет комментариев',
             noCommentsHint: 'Выделите текст, чтобы прокомментировать, или упомяните агента, чтобы он ответил или предложил правку.',
             commentsUnavailable: 'Комментарии сейчас недоступны.',

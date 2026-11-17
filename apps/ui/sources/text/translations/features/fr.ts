@@ -3456,7 +3456,7 @@ const artifactsBrowserTranslations = { fr: {
             earlier: ({ n, quote }) => `Auparavant dans la version ${n} : « ${quote} »`,
             count: ({ count }) => `${count} ${count === 1 ? 'conversation' : 'conversations'}`,
             countUnavailable: 'Nombre de commentaires indisponible',
-            refineHint: 'Sélectionne les mots à commenter',
+            replyPlaceholder: 'Répondre…', refineHint: 'Sélectionne les mots à commenter',
             noComments: 'Aucun commentaire pour l’instant',
             noCommentsHint: 'Sélectionne du texte pour commenter, ou mentionne un agent pour qu’il réponde ou propose une modification.',
             commentsUnavailable: 'Les commentaires ne sont pas disponibles pour le moment.',

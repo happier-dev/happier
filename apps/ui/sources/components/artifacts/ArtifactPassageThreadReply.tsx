@@ -105,6 +105,7 @@ function Reply(props: Readonly<{
             roster={roster} onRefreshParticipants={participants.refresh} availability="available"
             disabled={composerBlocked || unavailable} value={value} onChange={draft.setComposer}
             onSend={(content, attachments) => { void send(content, attachments); }} draftAddress={draftAddress}
-            prepareParticipantMentions={prepareParticipantMentions} recipients={recipients} contextItems={contextItems} focusOnOpen />
+            prepareParticipantMentions={prepareParticipantMentions} recipients={recipients} contextItems={contextItems} focusOnOpen
+            placeholder={t('artifacts.browser.passage.replyPlaceholder')} />
     </View>;
 }

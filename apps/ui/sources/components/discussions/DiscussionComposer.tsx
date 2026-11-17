@@ -150,6 +150,8 @@ export function DiscussionComposer(props: Readonly<{
     contextItems?: readonly AgentInputAttachmentsRowItem[];
     /** Opened for writing (a comment just started): the field takes the caret once, when it can. */
     focusOnOpen?: boolean;
+    /** What the empty field says; a narrow host (a Doc passage thread) passes a shorter line than the Discussion's own. */
+    placeholder?: string;
 }>): React.ReactElement {
     const { scope, availability, disabled, accountLifetime } = props;
     const controlsDisabled = disabled || props.isSendDisabled === true;
@@ -425,7 +427,7 @@ export function DiscussionComposer(props: Readonly<{
         } finally { if (sending.current === attempt) sending.current = null; }
     }, [accountLifetime, disabled, getDraftsSnapshot, onSendProp, prepareSubmission, presenceTarget, prepareParticipantMentions, props.discussionId, settleSubmission]);
 
-    const placeholder = t('session.collaboration.discussion.messagePlaceholder');
+    const placeholder = props.placeholder ?? t('session.collaboration.discussion.messagePlaceholder');
     // `@` as a control and the one-line addressing rule beside send (lab T2-A): the trigger is written into
     // the document and the field focused, so the composer's own suggestions open on it.
     const focusRequestRef = React.useRef<(() => void) | null>(null);

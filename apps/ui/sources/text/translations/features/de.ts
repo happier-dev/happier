@@ -3449,7 +3449,7 @@ const artifactsBrowserTranslations = { de: {
             earlier: ({ n, quote }) => `Zuvor in Version ${n}: „${quote}“`,
             count: ({ count }) => `${count} ${count === 1 ? 'Unterhaltung' : 'Unterhaltungen'}`,
             countUnavailable: 'Anzahl der Kommentare nicht verfügbar',
-            refineHint: 'Wähle die Wörter aus, die du kommentieren möchtest',
+            replyPlaceholder: 'Antworten…', refineHint: 'Wähle die Wörter aus, die du kommentieren möchtest',
             noComments: 'Noch keine Kommentare',
             noCommentsHint: 'Wähle Text zum Kommentieren aus oder erwähne einen Agenten, damit er antwortet oder eine Änderung vorschlägt.',
             commentsUnavailable: 'Kommentare sind gerade nicht verfügbar.',

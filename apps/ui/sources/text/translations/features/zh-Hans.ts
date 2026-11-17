@@ -3349,7 +3349,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             earlier: ({ n, quote }) => `此前在版本 ${n}：“${quote}”`,
             count: ({ count }) => `${count}个对话`,
             countUnavailable: '无法获取评论数',
-            refineHint: '选择要评论的文字',
+            replyPlaceholder: '回复…', refineHint: '选择要评论的文字',
             noComments: '还没有评论',
             noCommentsHint: '选择文字即可评论，或提及智能体让它回复或提出修改建议。',
             commentsUnavailable: '评论暂时不可用。',
