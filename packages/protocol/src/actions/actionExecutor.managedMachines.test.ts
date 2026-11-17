@@ -51,7 +51,8 @@ describe('unexpected Action failure diagnostics', () => {
     expect(failure).toMatchObject({ errorCode: 'RPC_FORBIDDEN', failureCause: error.failureCause });
     expect(failure).not.toHaveProperty('details');
     expect(JSON.stringify(failure)).not.toContain('PRIVATE_TOKEN');
-    expect(ActionOperationFailureV1Schema.parse(failure)).toEqual(failure);
+    // The adapter carries a private symbol sidecar; JSON retains only the public failure.
+    expect(ActionOperationFailureV1Schema.parse(failure)).toEqual(JSON.parse(JSON.stringify(failure)));
     const privateFields = normalizeActionExecutorThrownError(Object.assign(new TypeError('token=PRIVATE_TOKEN'), {
       code: 'token=PRIVATE_TOKEN', details: { token: 'PRIVATE_TOKEN', phase: 'PRIVATE_PHASE' },
     }));

@@ -19,6 +19,7 @@ import { waitForSessionAwarenessV1 } from '../sessions/awareness/waitV1.js';
 import { CurrentUiContextSnapshotV1Schema } from '../plugins/ui/currentUiContext.js';
 import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
 import { DeploymentEnvironmentGetResultV1Schema } from '../deployments/deploymentActionsV1.js';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceStartApprovalReviewV1Schema } from '../local/services/launcher/v1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
@@ -230,12 +231,12 @@ describe('ActionExecutor prepared invocation', () => {
       if (actionId === 'deployments.environments.get') {
         expect(input).toEqual({ serverId: 'home', environmentId: 'staging' });
         return DeploymentEnvironmentGetResultV1Schema.parse({ ok: true,
-        environment: { v: 1, id: 'staging', serverId: 'home', projectSourceId: 'source', revision: 1,
+        environment: createDeploymentEnvironmentHeaderV1({ v: 1, id: 'staging', serverId: 'home', projectSourceId: 'source', revision: 1,
           owner: { kind: 'account', accountId: 'owner' }, protection: 'nonProduction', purpose: 'standard',
           deployerMode: 'managers', controllerMachineId: 'controller', createdByAccountId: 'owner',
           contentArtifactId: 'environment-content', contentHeaderVersion: 1, contentBodyVersion: 1,
           capabilities: { role: 'manager', read: true, deploy: true, manage: true,
-            manageBindings: true, manageTargets: true, delete: true }, createdAtMs: 1, updatedAtMs: 1 }, targetLinks: [] });
+            manageBindings: true, manageTargets: true, delete: true }, createdAtMs: 1, updatedAtMs: 1 }), targetLinks: [] });
       }
       dispatches += 1;
       return { ok: false, errorCode: 'deployment_boundary_observed', error: 'deployment_boundary_observed' };

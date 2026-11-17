@@ -18,12 +18,12 @@ describe('model favorite Action', () => {
   });
   it('preserves the child choice refusal through Action start error normalization', async () => {
     const childChoice = projectExecutionRunChildChoiceV1({ agentTargetKey: 'agent:codex' });
-    // Session RPC is the system boundary. The Action parser, launch policy and failure classifier stay real.
-    const executor = createActionExecutor({ executionRunStart: async () => {
-      throw Object.assign(new Error('Choose a model'), { code: 'execution_run_child_choice_required', details: {
+    // The CLI Session RPC adapter returns its normalized typed refusal; arbitrary Error codes stay private.
+    const executor = createActionExecutor({ executionRunStart: async () => ({
+      ok: false, code: 'execution_run_child_choice_required', message: 'Choose a model', details: {
         childChoice, executionRunStart: { v: 1, runCreation: 'noRunCreated' },
-      } });
-    }, executionRunCheckProtocolV2: async () => ({ ok: true }) });
+      },
+    }), executionRunCheckProtocolV2: async () => ({ ok: true }) });
     expect(await executor.execute('execution.run.start', { sessionId: 'session', intent: 'delegate',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, instructions: 'Task',
       permissionMode: 'default', runClass: 'bounded', ioMode: 'request_response', retentionPolicy: 'ephemeral' }, { surface: 'rpc' }))

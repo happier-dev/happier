@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
 import { WorkflowBlockSchema, WorkflowIngressBlockSchema, WorkflowInsertBlockV1Schema } from '../workflows/workflowV1.js';
 
@@ -27,18 +27,18 @@ describe('workflow effect Actions', () => {
   });
 
   it('passes effect inputs unchanged to the host and retains typed failure output', async () => {
-    const calls: unknown[] = [];
+    const calls: { input: unknown; context: ActionExecutorContext }[] = [];
     // Only the machine/network effect boundaries are replaced; Action admission stays real.
     const executor = createActionExecutor({
-      webhookCall: async (input: unknown, context: unknown) => {
+      webhookCall: async (input, context) => {
         calls.push({ input, context });
         return { ok: false, errorCode: 'webhook_failed', error: 'webhook_failed', details: { status: 302, body: 'moved' } };
       },
-      machineCommandRun: async (input: unknown, context: unknown) => {
+      machineCommandRun: async (input, context) => {
         calls.push({ input, context });
         return { exitCode: 0, stdout: '$(touch unwanted)', stderr: '' };
       },
-    } as unknown as ActionExecutorDeps);
+    } satisfies ActionExecutorDeps);
     // The effect is already host-approved; policy defaults are covered by the adjacent Action suite.
     const context = { surface: 'cli' as const, authority: 'present_user' as const, bypassApprovals: true,
       externalActionTarget: { kind: 'machine' as const, machineId: 'machine', project: { machineId: 'machine', directory: '/workspace' } },
@@ -50,6 +50,9 @@ describe('workflow effect Actions', () => {
     expect(await executor.execute('webhooks.call', { url: 'https://example.test/hook', body: { value: 1 } }, context))
       .toEqual({ ok: false, errorCode: 'webhook_failed', error: 'webhook_failed', requestId: context.actionRequestId,
         details: { status: 302, body: 'moved' } });
-    expect(calls[0]).toEqual({ input: command, context });
+    expect(calls[0]?.input).toEqual(command);
+    expect(calls[0]?.context).toMatchObject(context);
+    expect(calls[0]?.context).not.toHaveProperty('externalActionCredential');
+    expect(calls[0]?.context).not.toHaveProperty('externalActionExecutionAuthorization');
   });
 });
