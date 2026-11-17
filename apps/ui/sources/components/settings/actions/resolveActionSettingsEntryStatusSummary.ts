@@ -8,6 +8,7 @@ import {
 import type { ActionSettingsTargetState } from './buildActionSettingsEntries';
 import type { ActionSettingsTargetDefinition } from './actionSettingsTargetDefinitions';
 import { getActionTargetApprovalPolicy } from './actionSettingsTargetApproval';
+import { getActionSettingsTargetDefaultSelected } from './actionSettingsTargetSelection';
 
 export type ActionSettingsEntryStatusTarget = Readonly<{
     id: ActionSettingsTargetId;
@@ -88,8 +89,13 @@ export function resolveActionSettingsEntryStatusSummary(params: Readonly<{
         summary[key] += 1;
         const index = audiences.findIndex((entry) => entry.audience === audience);
         const previous = index === -1 ? { audience, allowedCount: 0, askFirstCount: 0, offCount: 0 } : audiences[index]!;
+        // A departure is a choice away from the target's declared default: an approval other than the
+        // inherited default, or a switch the person turned away from where it starts (opt-in placements start off).
         const departs = params.settings.actions[params.actionId]?.enabled === false
-            || (controlState.kind === 'approval' ? controlState.value !== 'default' : controlState.value === 'off');
+            || (controlState.kind === 'approval' ? controlState.value !== 'default'
+                : (controlState.value === 'on') !== getActionSettingsTargetDefaultSelected({
+                    settings: params.settings, actionId: params.actionId, targetId: target.id, target: target.definition,
+                }));
         const next = { ...previous, [key]: previous[key] + 1, ...(departs || previous.departed ? { departed: true } : {}) };
         if (index === -1) audiences.push(next);
         else audiences[index] = next;
@@ -102,6 +108,8 @@ export function listActionSettingsEntryStatusParts(
     summary: ActionSettingsEntryStatusSummary,
 ): readonly ActionSettingsEntryStatusPart[] {
     const parts: ActionSettingsEntryStatusPart[] = summary.allowedCount === 0 && summary.askFirstCount === 0 && summary.offCount > 0
+        // "Off" is a departure too: an Action that only starts off (an untouched opt-in placement) says nothing.
+        && summary.audiences.some((audience) => audience.departed === true)
         ? [{ labelKey: 'settingsActions.status.allOff', partial: false }]
         // Each audience is named once: by the state most of its surfaces have (a tie reads as the stricter one),
         // marked partial when some surfaces differ, so a row never repeats "Some integrations".

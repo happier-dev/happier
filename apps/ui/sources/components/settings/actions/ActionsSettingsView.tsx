@@ -122,12 +122,12 @@ function ActionSettingsRowAccessory(props: Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    // On a phone a row keeps one control: the Action's page holds the switch in its header and the status line says
-    // when it is off. The row reads the window itself, so a resize across the breakpoint updates a list row in place.
+    // On a phone a row keeps one control, the enable switch (UI refinements ruling, WAVE-ACCEPT-1117C); the row itself
+    // still opens the Action. The row reads the window itself, so a resize across the breakpoint updates it in place.
     const narrowLayout = useActionSettingsNarrowLayout();
     return (
         <View style={styles.actionRightAccessory}>
-            {props.onEnabledChange && !narrowLayout ? (
+            {props.onEnabledChange ? (
                 <Switch
                     testID={`${props.testIDPrefix}:enabled`}
                     accessibilityLabel={props.entry.title}
@@ -135,14 +135,16 @@ function ActionSettingsRowAccessory(props: Readonly<{
                     onValueChange={props.onEnabledChange}
                 />
             ) : null}
-            <View
-                testID={`${props.testIDPrefix}:configure`}
-                style={styles.actionConfigureIcon}
-                accessibilityRole="image"
-                accessibilityLabel={t('settingsActions.configureActionAccessibilityLabel')}
-            >
-                <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
-            </View>
+            {narrowLayout && props.onEnabledChange ? null : (
+                <View
+                    testID={`${props.testIDPrefix}:configure`}
+                    style={styles.actionConfigureIcon}
+                    accessibilityRole="image"
+                    accessibilityLabel={t('settingsActions.configureActionAccessibilityLabel')}
+                >
+                    <Icon name="caret-right" size={16} color={theme.colors.text.secondary} />
+                </View>
+            )}
         </View>
     );
 }

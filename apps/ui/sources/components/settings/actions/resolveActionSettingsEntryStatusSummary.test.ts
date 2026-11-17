@@ -162,4 +162,12 @@ describe('resolveActionSettingsEntryStatusSummary', () => {
             danger: null,
         })).toEqual([{ labelKey: 'settingsActions.status.agentAskFirst', partial: false }]);
     });
+    it('does not count an opt-in placement left at its default (off) as a change', () => {
+        const settings = normalizeActionsSettings({ v: 1, actions: {} });
+        const summary = resolveActionSettingsEntryStatusSummary({
+            settings, actionId: 'review.start', targets: [target('agent_input_chips', 'on', 'review.start')],
+        });
+        expect(summary.audiences.every((audience) => audience.departed !== true)).toBe(true);
+        expect(listActionSettingsEntryStatusParts(summary)).toEqual([]);
+    });
 });

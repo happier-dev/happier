@@ -487,10 +487,9 @@ describe('ActionsSettingsView', () => {
     );
   });
 
-  // DESIGN-ACCEPT-1116-D (X-routed P3): on a phone the row held a switch and a chevron beside text that wrapped to
-  // four lines. A phone row keeps one control (DESIGN.md "Phones recompose"): the row opens the Action, whose page
-  // holds the enable switch in its header; the status line still says when it is off.
-  it('keeps one control on a phone: the chevron to the Action, not a second switch beside it', async () => {
+  // A phone row keeps one control (DESIGN.md "Phones recompose"). WAVE-ACCEPT-1117C (UI refinements ruling) keeps
+  // that control the enable switch, as on wide rows; the row itself still opens the Action, so no chevron beside it.
+  it('keeps one control on a phone: the enable switch, while the row still opens the Action', async () => {
     capture.reset();
     // The window is the platform boundary: a phone-sized one, read the way every layout hook reads it.
     const { Dimensions } = await import('react-native');
@@ -500,8 +499,8 @@ describe('ActionsSettingsView', () => {
 
       const screen = await renderScreen(<ActionsSettingsView />);
 
-      expect(await screen.findByTestId('settings-actions:action:review.start:configure')).toBeTruthy();
-      expect(screen.findAllByTestId('settings-actions:action:review.start:enabled')).toHaveLength(0);
+      expect(await screen.findByTestId('settings-actions:action:review.start:enabled')).toBeTruthy();
+      expect(screen.findAllByTestId('settings-actions:action:review.start:configure')).toHaveLength(0);
       const reviewRow = renderedProps(Item).find((item) => item.testID === 'settings-actions:action:review.start');
       (reviewRow?.onPress as () => void)();
       expect(capture.routerPush).toHaveBeenCalledWith('/settings/actions/review.start');

@@ -31,6 +31,17 @@ export function getActionSettingsTargetPreferenceSelected(params: Readonly<{
     return actionEntry?.disabledSurfaces.includes(target.surface) !== true;
 }
 
+/** The selection a target has when its Action carries no choice of its own (opt-in placements start off). */
+export function getActionSettingsTargetDefaultSelected(params: Readonly<{
+    settings: ActionsSettingsV1;
+    actionId: ActionSettingsActionId;
+    targetId: ActionSettingsTargetId;
+    target?: ActionSettingsTargetDefinition;
+}>): boolean {
+    const { [params.actionId]: _ownChoice, ...actions } = params.settings.actions;
+    return getActionSettingsTargetPreferenceSelected({ ...params, settings: { ...params.settings, actions } });
+}
+
 export function getActionSettingsTargetSelected(params: Readonly<{
     settings: ActionsSettingsV1;
     actionId: ActionSettingsActionId;
