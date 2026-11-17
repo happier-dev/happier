@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { create as createTar } from 'tar';
@@ -96,8 +97,15 @@ beforeAll(async () => {
     ...(process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL ? { DATABASE_URL: process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL } : {}) } });
   account = await fixture.createAccount('member');
   const githubBootstrap = await githubFixture();
+  const userHome = join(testDir, 'user-home');
+  await mkdir(userHome, { recursive: true });
+  // This Machine starts without an external Agent; never discover or alter a
+  // developer's system Codex while exercising the real managed installer.
+  const agentPath = (process.env.PATH ?? '').split(delimiter).filter(directory =>
+    !['codex', 'codex.cmd', 'codex.exe'].some(name => existsSync(join(directory, name)))).join(delimiter);
   const enrolled = await fixture.enrollDaemon(account, { env: {
     ...features,
+    HOME: userHome, USERPROFILE: userHome, PATH: agentPath,
     NODE_OPTIONS: [fixture.sourceOptions, ...(githubBootstrap ? ['--import', githubBootstrap] : [])].join(' '),
     HAPPIER_BACKEND_CLI_SOURCE_PREFERENCES_JSON: JSON.stringify({ codex: 'managed-first' }),
   } });
@@ -218,14 +226,20 @@ it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('TS.E.a
 
 it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('J6 requires person consent for an unreviewed Agent install and inherits the approved Session parent review', async () => {
   if (!fixture || !ui) throw new Error('Agent fixture unavailable');
+  await fixture.assertKnownGoodSessionControl(account, {
+    target: { serverId: fixture.serverId, machineId }, workspaceDir,
+  });
   const inventory = await action('machines.agents.list', { machineId, agentId: 'codex', refresh: true });
   if (!inventory.ok) throw new Error(inventory.errorCode);
-  if (MachinesAgentsListOutputSchema.parse(inventory.result).items.some(item => item.agentId === 'codex' && item.installed)) {
+  const codex = MachinesAgentsListOutputSchema.parse(inventory.result).items.find(item => item.agentId === 'codex');
+  if (codex?.installed) {
+    expect(codex.managed, 'Only a fixture-owned installation may be removed').toBe(true);
     const removed = await action('machines.agents.uninstall', { machineId, agentId: 'codex' }, true);
     if (!removed.ok) throw new Error(removed.errorCode);
     const job = DaemonAgentInstallStartResponseSchema.parse(removed.result);
     if (!job.ok) throw new Error('Could not remove the preceding test Agent installation');
-    expect(await action('machines.agents.install.status', { machineId, jobId: job.jobId, cursor: 0, waitForTerminal: true }))
+    const removal = await action('machines.agents.install.status', { machineId, jobId: job.jobId, cursor: 0, waitForTerminal: true });
+    expect(removal)
       .toMatchObject({ ok: true, result: { done: true, outcome: { kind: 'succeeded' } } });
   }
   for (const [actionId, mode] of [
@@ -237,7 +251,7 @@ it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('J6 req
     const result = await account.execute('workflow.run.start', { runId: randomUUID(),
       source: { kind: 'inline', definition: { version: 1,
         defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-          approvalProfileId: 'builtin:full-trust', terminal: { mode: 'plain' } },
+          conversation: { kind: 'fresh' }, approvalProfileId: 'builtin:full-trust', terminal: { mode: 'plain' } },
         blocks: [{ kind: 'step', id: 'agent-install', inputMode: 'none',
           document: { text: '', references: [], attachments: [] }, input: [], result: { kind: 'text' } }],
       } }, executionTarget: { kind: 'session' } }, {
