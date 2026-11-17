@@ -2,8 +2,9 @@
 // Exported before the public barrel so its leaf module evaluates first: host modules reached through the
 // public barrel's import cycle read this binding during evaluation (Systemic 2026-11-10 16:42Z).
 export { orderWidgetGroupCellsForStack } from './layout/widgetGroupLayout.js';
-export * from './index.public.js';
+export { HappierThemeSurfaceScope, useHappierThemeSurfaceOverridesEnabled, useThemeSurfaceBinder, useThemeSurfaceBinding, resolveThemeSurfaceState, resolveThemeSurfaceAddress, type ThemeSurfaceStateFacts } from './themeSurfaceBinding.js';
 export { resolveHappierThemeSurfaceStyle } from './themeSurface.js';
+export * from './index.public.js';
 // Host-only: the page count line a core main screen's head draws under its band; plugins reach the same owner
 // through `PageHeader`'s `count` (one drawing, one formatting rule).
 export { formatHappierPageCount, HappierPageCountLine, type HappierPageCountLineTextRender } from './layout/PageCountLine.js';
