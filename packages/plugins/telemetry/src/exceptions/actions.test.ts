@@ -101,6 +101,17 @@ describe('native exception Actions on the collector', () => {
         nextCursor: { at: 2000, id: 'exception:b' },
         stacktrace: expect.stringContaining('at total'),
       });
+      // J2 detail: the 7-day trend and Requests affected come from the same retained occurrences.
+      expect(await read({ window: { since: 0, until: 3000, bucketMs: 1000 } })).toMatchObject({
+        status: 'ok',
+        trend: [
+          { since: 0, until: 1000, count: 0 },
+          { since: 1000, until: 2000, count: 1 },
+          { since: 2000, until: 3000, count: 1 },
+        ],
+        requestsAffected: 1,
+      });
+      await expect(read({ window: { since: 0, until: 10_000_000, bucketMs: 1 } })).rejects.toMatchObject({ code: 'invalid_parameters' });
       exceptions = false;
       expect(await read()).toEqual({ status: 'disabled' });
       exceptions = true;
@@ -175,7 +186,7 @@ describe('native exception Actions on the collector', () => {
         code: 'deployment_access_denied',
       });
       expect(published).toHaveLength(2);
-      expect(admissions).toBe(7);
+      expect(admissions).toBe(9);
     } finally {
       projection?.stop();
       await lease.release();

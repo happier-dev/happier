@@ -33,6 +33,11 @@ export const exceptionOccurrencesReadInputSchema = defineProtocolObject(
     ),
     /** Demand one occurrence's redacted stack; list items never carry stacks. */
     occurrenceId: text.optional(),
+    /** Demand the group's per-bucket counts and Requests affected over an authored retained window. */
+    window: defineProtocolObject(
+      { since: time, until: time, bucketMs: defineProtocolNumber({ integer: true, minimum: 1 }) },
+      { policy: 'closed' },
+    ).optional(),
   },
   { policy: 'closed' },
 );
@@ -73,6 +78,10 @@ export const exceptionOccurrencesReadResultSchema = defineProtocolUnion([
       ).optional(),
       /** Redacted app text; consumers frame it as data, never as instructions. */
       stacktrace: maybe(defineProtocolString()),
+      /** Counts per bucket over retained occurrences; older history has expired, not fallen to zero. */
+      trend: defineProtocolArray(defineProtocolObject({ since: time, until: time, count: time }, { policy: 'closed' })).optional(),
+      /** Distinct traces the group reached in the window; occurrences without trace context are not counted. */
+      requestsAffected: time.optional(),
     },
     { policy: 'closed' },
   ),

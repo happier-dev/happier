@@ -205,6 +205,21 @@ FROM groups JOIN latest ON latest.fingerprint = groups.fingerprint AND latest.po
    const row = rows[0];
    return row ? { at: Number(row.at), serviceVersion: typeof row.serviceVersion === 'string' ? row.serviceVersion : null } : null;
   },
+  /** One group's counts per authored bucket and the distinct traces it reached, over retained occurrences only. */
+  async exceptionTrend(input: Readonly<{ worktree: string; fingerprint: string; since: number; until: number; bucketMs: number }>): Promise<Readonly<{
+   buckets: readonly Readonly<{ since: number; until: number; count: number }>[]; requestsAffected: number }>> {
+   const where = 'worktree = ? AND fingerprint = ? AND at >= ? AND at < ?';
+   const params = [input.worktree, input.fingerprint, input.since, input.until];
+   const rows = await db.query(`SELECT (at - ?) / ? AS bucket, COUNT(*) AS count FROM captureExceptions WHERE ${where} GROUP BY bucket ORDER BY bucket LIMIT ?`,
+    [input.since, input.bucketMs, ...params, limits.maximumResultRows]);
+   const counts = new Map(rows.map(row => [Number(row.bucket), Number(row.count)]));
+   const [affected] = await db.query(`SELECT COUNT(DISTINCT traceId) AS requests FROM captureExceptions WHERE ${where} AND traceId IS NOT NULL`, params);
+   const buckets: { since: number; until: number; count: number }[] = [];
+   for (let start = input.since, index = 0; start < input.until; start += input.bucketMs, index++) {
+    buckets.push({ since: start, until: Math.min(start + input.bucketMs, input.until), count: counts.get(index) ?? 0 });
+   }
+   return { buckets, requestsAffected: Number(affected?.requests ?? 0) };
+  },
   async exceptionOccurrences(input: CaptureExceptionOccurrencesInput): Promise<readonly CaptureExceptionOccurrence[]> {
    const predicates = ['worktree = ?', 'fingerprint = ?'];
    const params: DaemonDatabaseValue[] = [input.worktree, input.fingerprint];
