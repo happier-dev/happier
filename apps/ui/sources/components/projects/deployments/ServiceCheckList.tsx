@@ -334,6 +334,9 @@ export function ServiceCheckList(
           render: (row) => <CheckCardBody facts={factsOf(row)} bars={bars(row)} />,
           heightAtNormalText: HAPPIER_DATA_METRICS.plotHeightPx + HAPPIER_DATA_METRICS.blockGapPx + 24,
         },
+        // The value and uptime sit beside the trend in the body, so the card has no facts line. Without this the
+        // card falls back to its byline as the foot and says line 2 twice.
+        facts: () => null,
         // What it is, or why it fails (lab B2): the row's line 2 without its phone bars.
         description: (row) => (
           <CheckByline row={row} facts={factsOf(row)} scope={scope} stale={staleOf(row)} loading={settling} columns />
