@@ -17,7 +17,8 @@ export function ThemeDevicePickerHost(props: Readonly<{
     const picker = useThemeDevicePicker({ enabled: true, theme: props.theme,
         currentClientId: apiSocket.getSocketId() ?? '', unnamedDeviceLabel: t('themeDevices.unnamed'),
         onDismiss: props.onDismiss, onDistribution: props.onDistribution }, props.execute);
-    return <ThemeDevicePickerPopover themeName={props.theme.name} anchorRef={props.anchorRef} onDismiss={props.onDismiss}>
+    return <ThemeDevicePickerPopover themeName={props.theme.name} anchorRef={props.anchorRef} onDismiss={props.onDismiss}
+        list={picker.rows.length > 0}>
         <ThemeDevicePickerView {...picker} testID="theme-device-picker" />
     </ThemeDevicePickerPopover>;
 }

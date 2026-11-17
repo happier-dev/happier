@@ -18,6 +18,7 @@ export type ThemeDevicePickerInput = Readonly<{
 /** One discovery per open or explicit retry; no device history, polling or library writes. */
 export function useThemeDevicePicker(input: ThemeDevicePickerInput, execute: ThemeUiActionExecute): ThemeDevicePickerViewProps {
     const [state, setState] = React.useState<ThemeDevicePickerViewProps['state']>('loading');
+    const [failure, setFailure] = React.useState<unknown>(null);
     const [rows, setRows] = React.useState<readonly ThemeDevicePickerRow[]>([]);
     const [dispatching, setDispatching] = React.useState(false);
     const [retry, setRetry] = React.useState(0);
@@ -32,7 +33,11 @@ export function useThemeDevicePicker(input: ThemeDevicePickerInput, execute: The
                 computer: candidate.state?.computer ?? false, current: candidate.id === input.currentClientId,
                 checked: candidate.id !== input.currentClientId, outcome: null })).sort((left, right) => Number(right.current) - Number(left.current)));
             setState('ready');
-        }).catch(() => { if (!controller.signal.aborted) setState('error'); });
+        }).catch(error => {
+            if (controller.signal.aborted) return;
+            setFailure(error);
+            setState('error');
+        });
         return () => controller.abort();
     }, [execute, input.enabled, input.currentClientId, retry]);
     const onToggle = React.useCallback((id: string) => {
@@ -71,6 +76,6 @@ export function useThemeDevicePicker(input: ThemeDevicePickerInput, execute: The
             });
         }).finally(() => setDispatching(false));
     }, [dispatching, rows, execute, input.theme, input.onDistribution, input.unnamedDeviceLabel]);
-    return { themeName: input.theme.name, mode: input.theme.mode, state, rows, dispatching,
+    return { themeName: input.theme.name, mode: input.theme.mode, state, failure, rows, dispatching,
         onToggle, onUse, onRetry: () => setRetry(value => value + 1), onDismiss: input.onDismiss };
 }

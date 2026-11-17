@@ -25,6 +25,8 @@ export type ThemeDevicePickerViewProps = Readonly<{
   mode: ThemeProfileMode;
   /** The on-demand discovery read: rows keep their last value while it refreshes. */
   state: 'loading' | 'ready' | 'error';
+  /** Why the last read failed (the Action's error); the status line says it in the person's words. */
+  failure?: unknown;
   rows: readonly ThemeDevicePickerRow[];
   /** True while the selected targets are being applied. */
   dispatching: boolean;

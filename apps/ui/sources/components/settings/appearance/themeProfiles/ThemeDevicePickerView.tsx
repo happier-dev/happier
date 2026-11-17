@@ -7,6 +7,8 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
@@ -57,26 +59,26 @@ export const ThemeDevicePickerView = React.memo(function ThemeDevicePickerView(
         </Text>
       </View>
       {props.state === 'loading' && props.rows.length === 0 ? (
-        <Text
-          variant="body"
-          style={styles.line}
+        <SurfaceStateCard
+          kind="loading"
+          size="line"
+          lineDensity="menu"
+          title={t('themeDevices.loading')}
           testID={props.testID ? `${props.testID}:loading` : undefined}
-        >
-          {t('themeDevices.loading')}
-        </Text>
+        />
       ) : props.state === 'error' && props.rows.length === 0 ? (
-        <View style={styles.lineRow}>
-          <Text variant="body" style={[styles.line, styles.lineFill]}>
-            {t('themeDevices.failed')}
-          </Text>
-          <RoundButton
-            size="small"
-            display="inverted"
-            title={t('themeDevices.retry')}
-            onPress={props.onRetry}
-            testID={props.testID ? `${props.testID}:retry` : undefined}
-          />
-        </View>
+        <SurfaceStateCard
+          kind="warning"
+          size="line"
+          lineDensity="menu"
+          title={resolveActionExecutionErrorMessage(props.failure, t('themeDevices.failed'), { safeToRetry: true })}
+          action={{
+            label: t('themeDevices.retry'),
+            onPress: props.onRetry,
+            testID: props.testID ? `${props.testID}:retry` : undefined,
+          }}
+          testID={props.testID ? `${props.testID}:failed` : undefined}
+        />
       ) : (
         <View
           accessibilityRole="list"
@@ -223,14 +225,6 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'column',
     alignItems: 'stretch',
     paddingTop: theme.space.s8,
-  },
-  lineRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingRight: theme.space.s12,
-  },
-  lineFill: {
-    flex: 1,
   },
   applied: {
     color: theme.colors.text.tertiary,

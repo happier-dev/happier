@@ -127,4 +127,14 @@ describe('ThemeDevicePickerView', () => {
     expect(applied.onUse).not.toHaveBeenCalled();
     await done.unmount();
   });
+
+  it('says a failed device read as the one status line with Try again, and offers nothing to apply', async () => {
+    const input = props({ state: 'error', rows: [], failure: new Error('socket closed') });
+    const screen = await renderScreen(<ThemeDevicePickerView {...input} />);
+    expect(screen.tree.findAll((node) => typeof node.type === 'string' && node.props?.testID === 'picker:failed').length).toBe(1);
+    expect(find(screen, 'picker:use')).toBeUndefined();
+    await pressTestInstanceAsync(find(screen, 'picker:retry')!);
+    expect(input.onRetry).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+  });
 });

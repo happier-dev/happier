@@ -8,13 +8,16 @@ export function ThemeDevicePickerPopover(props: Readonly<{
     themeName: string;
     anchorRef: React.RefObject<unknown>;
     onDismiss: () => void;
+    /** The body lists devices. Without a list (finding them, or a failed read) it takes only its status line's height. */
+    list?: boolean;
     children: React.ReactNode;
 }>) {
+    const list = props.list ?? true;
     return <Popover open anchorRef={props.anchorRef} onRequestClose={props.onDismiss} placement="bottom"
         phonePresentation="sheet" accessibilityLabel={t('themeDevices.title', { name: props.themeName })}
         sheetHeader="none" portal={{ web: true, native: true, matchAnchorWidth: false, sizeToContent: true }}>
         {/* The recycler needs a definite viewport; the existing overlay cap still bounds this room. */}
-        {({ maxHeight }) => <FloatingOverlay scrollEnabled={false} scrollViewStyle={{ height: maxHeight, minHeight: 0 }}>
+        {({ maxHeight }) => <FloatingOverlay scrollEnabled={false} scrollViewStyle={list ? { height: maxHeight, minHeight: 0 } : { maxHeight, minHeight: 0 }}>
             {props.children}
         </FloatingOverlay>}
     </Popover>;
