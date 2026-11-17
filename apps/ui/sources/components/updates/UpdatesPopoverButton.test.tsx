@@ -37,11 +37,10 @@ vi.mock('expo-router', async () => {
 
 // The real Updates owner and content render beneath; only the portal host and the overlay
 // surface (platform presentation boundaries) are replaced.
-vi.mock('@/components/ui/popover', () => ({
-    Popover: (props: Record<string, unknown> & { children: (layout: { maxHeight: number; maxWidth: number }) => React.ReactNode }) => (
-        React.createElement('Popover', props, props.children({ maxHeight: 600, maxWidth: 500 }))
-    ),
-}));
+vi.mock('@/components/ui/popover', async importOriginal => {
+    const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
+    return createInlinePopoverModuleMock(importOriginal);
+});
 
 vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     FloatingOverlay: (props: Record<string, unknown>) => React.createElement('FloatingOverlay', props, props.children as React.ReactNode),
@@ -111,10 +110,9 @@ async function activateAccount() {
 
 function seedMachines(machines: Machine[]) {
     const serverId = getActiveServerSnapshot().serverId;
-    storage.setState({
-        machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-        machineListByServerId: { [serverId]: machines },
-        machineListStatusByServerId: { [serverId]: 'idle' },
+    storage.getState().applyMachines(machines, true, {
+        sourceServerId: serverId,
+        sourceAccountId: 'account-a',
     });
 }
 
@@ -126,6 +124,9 @@ function updatableStudio() {
     } });
 }
 
+// Source collection owns the cold dependency graph; cases measure Updates interactions.
+const { UpdatesPopoverButton } = await import('./UpdatesPopoverButton');
+
 describe('UpdatesPopoverButton', () => {
     afterEach(async () => {
         standardCleanup();
@@ -134,7 +135,6 @@ describe('UpdatesPopoverButton', () => {
         await act(async () => { storage.setState(initialStorageState, true); });
     });
     it('opens the same Updates content from a menu row trigger', async () => {
-        const { UpdatesPopoverButton } = await import('./UpdatesPopoverButton');
         const screen = await renderScreen(<UpdatesPopoverButton summary={TWO} variant="footer"
             renderTrigger={({ onPress, open }) => <Pressable testID="updates-menu-row" onPress={onPress}
                 accessibilityState={{ expanded: open }} />} />);
@@ -143,7 +143,6 @@ describe('UpdatesPopoverButton', () => {
         expect(screen.findAllByTestId('updates.content.popover').length).toBeGreaterThan(0);
     });
     it('is absent at zero, and a closed pill renders no detail content', async () => {
-        const { UpdatesPopoverButton } = await import('./UpdatesPopoverButton');
         const screen = await renderScreen(<UpdatesPopoverButton summary={NONE} variant="pill" testID="pill" />);
         expect(screen.findAllHostsByTestId('pill')).toHaveLength(0);
 
@@ -155,7 +154,6 @@ describe('UpdatesPopoverButton', () => {
 
     it('opens the real content in the popover density, and removes it again on close', async () => {
         routerMock.spies.push.mockClear();
-        const { UpdatesPopoverButton } = await import('./UpdatesPopoverButton');
         const screen = await renderScreen(<UpdatesPopoverButton summary={TWO} variant="pill" testID="pill" />);
 
         await act(async () => {
@@ -172,7 +170,6 @@ describe('UpdatesPopoverButton', () => {
 
     it('on the phone header, goes to Settings › Updates instead of opening a popover', async () => {
         routerMock.spies.push.mockClear();
-        const { UpdatesPopoverButton } = await import('./UpdatesPopoverButton');
         const screen = await renderScreen(<UpdatesPopoverButton summary={TWO} variant="header" testID="header" />);
         await act(async () => {
             await screen.findByTestId('header')?.props.onPress({});
@@ -184,7 +181,6 @@ describe('UpdatesPopoverButton', () => {
     it('the open header says "not checked" when an online machine was never asked, like the pill', async () => {
         await activateAccount();
         seedMachines([createMachineFixture({ id: 'studio', activeAt: Date.now() })]);
-        const { UpdatesPopoverButton } = await import('./UpdatesPopoverButton');
         const screen = await renderScreen(<UpdatesPopoverButton summary={TWO} variant="pill" testID="pill" />);
         await act(async () => {
             await screen.findByTestId('pill')?.props.onPress({});
@@ -195,7 +191,6 @@ describe('UpdatesPopoverButton', () => {
 
     it('the sidebar entry is a compact mark with a count; its sentence is the accessible name and the tooltip', async () => {
         const FAILED: UpdatesSummary = { actionableCount: 0, manualCount: 0, failedCount: 3, runningCount: 0, phase: 'failed', status: 'failed', visible: true };
-        const { UpdatesPopoverButton } = await import('./UpdatesPopoverButton');
         const screen = await renderScreen(<UpdatesPopoverButton summary={FAILED} variant="pill" testID="pill" />);
         const pill = screen.findByTestId('pill');
         expect(pill?.props.accessibilityLabel).toBe('updates.a11y.pillFailed');
@@ -213,7 +208,6 @@ describe('UpdatesPopoverButton', () => {
         modal.confirm.mockClear();
         rpc.invoke.mockClear();
         seedMachines([updatableStudio()]);
-        const { UpdatesPopoverButton } = await import('./UpdatesPopoverButton');
         const screen = await renderScreen(<UpdatesPopoverButton summary={TWO} variant="pill" testID="pill" />);
         await act(async () => {
             await screen.findByTestId('pill')?.props.onPress({});
