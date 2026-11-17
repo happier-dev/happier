@@ -385,7 +385,7 @@ async function applyAttachmentInTx(tx: Tx, actorAccountId: string, serverId: str
     } else if (intent.kind === 'detach') {
         return { ok: true as const, attachments: attachments.filter(attachment => intent.purpose === 'context'
             ? !(attachment.purpose === 'context' && attachment.entry.id === intent.attachmentId)
-            : !(attachment.purpose === intent.purpose && attachment.purpose !== 'context'
+            : !(attachment.purpose === intent.purpose
                 && attachment.ref.artifactId === intent.ref.artifactId
                 && attachment.ref.kind === intent.ref.kind
                 && (attachment.ref.serverId ?? serverId) === (intent.ref.serverId ?? serverId))) };
@@ -519,7 +519,7 @@ export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, in
         if (defaults?.ok && defaults.write) { await defaults.write(); await publishInTx(tx, [source]); }
         const leaf = defaults?.ok ? { ok: true as const, sessionDefaults: defaults.sessionDefaults }
             : previousDefaults!;
-        return leaf.ok ? { ...leaf, source, canManage: loaded.canManage, canManageSessionDefaults: loaded.canManageOwner } : leaf;
+        return { ...leaf, source, canManage: loaded.canManage, canManageSessionDefaults: loaded.canManageOwner };
     }
     const nextOwner = sourceOwner(next);
     const ownerChanged = !isDeepStrictEqual(loaded.owner, nextOwner);
@@ -546,8 +546,8 @@ export async function updateProjectSourceInTx(tx: Tx, actorAccountId: string, in
     const admission = await resolveProjectSourceAdmissionInTx(tx, actorAccountId, next.audience, authentication, [nextOwner]);
     const leaf = defaults?.ok ? { ok: true as const, sessionDefaults: defaults.sessionDefaults }
         : previousDefaults!;
-    return leaf.ok ? { ...leaf, source: next, canManage: admission.canManage(nextOwner, next.audience),
-        canManageSessionDefaults: admission.canManageOwner(nextOwner) } : leaf;
+    return { ...leaf, source: next, canManage: admission.canManage(nextOwner, next.audience),
+        canManageSessionDefaults: admission.canManageOwner(nextOwner) };
 }
 
 /** Tombstone metadata uniformly; retained Environment and receipt references keep their identity. */
