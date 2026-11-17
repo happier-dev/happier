@@ -26,6 +26,10 @@ import { beforeAccountChangePublication } from '@/app/changes/markAccountChanged
 import { fenceSessionAccountCursorAudienceInTx, readSessionAccountCursorAudienceInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
+import { resourceGrantArmWheres } from '@/app/teams/resourceGrantAccess';
+import { resourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
+import { qualifyTeamOperationAuthenticationInTx, resolveTeamActorContextInTx, type TeamActorContext } from '@/app/teams/actorContext';
+
 type DiscussionMutationAudienceInput = Readonly<{
     discussionId: string; actorAccountId?: string; additionalAccountIds?: readonly string[];
     additionalSessionIds?: readonly string[]; includeParticipantSessions?: boolean;
@@ -366,6 +370,35 @@ export function discussionCandidateWhere(accountId: string): Prisma.DiscussionWh
         { grants: { some: { principalKind: 'team', team: { memberships: { some: { accountId } } } } } },
         { grants: { some: { principalKind: 'group', teamGroup: { memberships: { some: { teamMembership: { accountId } } } } } } },
     ] };
+}
+
+/** Count and ordered pages share exact selected-Team grant admission, without
+ * opening content or treating Team administration as Group membership.
+ */
+export async function readDiscussionTeamScopedIdsInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string; sharedWithTeamId: string; authentication: SessionAccessAuthentication;
+    admittedTeamActor?: TeamActorContext;
+}>) {
+    const actor = input.admittedTeamActor ?? await resolveTeamActorContextInTx(tx, { actorAccountId: input.actorAccountId, teamId: input.sharedWithTeamId });
+    if (!actor?.capabilities.viewTeam) return { ok: false as const, error: 'discussion_not_found' as const };
+    const qualification = await qualifyTeamOperationAuthenticationInTx(tx, { context: actor,
+        authenticationAuthority: input.authentication.authority, authenticationEvidence: input.authentication.authenticationEvidence,
+        env: input.authentication.env });
+    if (!qualification.ok) return qualification;
+    const arms = resourceGrantArmWheres(input.actorAccountId, input.sharedWithTeamId);
+    const independent = { OR: [{ ownerAccountId: input.actorAccountId }, { grants: { some: arms.account } }] };
+    const [teams, groups] = await Promise.all([
+        tx.discussionGrant.findMany({ where: { principalKind: 'team', teamId: input.sharedWithTeamId,
+            OR: [arms.team, { discussion: independent }] }, select: { discussionId: true } }),
+        tx.discussionGrant.findMany({ where: { principalKind: 'group', teamGroup: {
+            teamId: input.sharedWithTeamId, archivedAt: null, team: { archivedAt: null },
+        }, OR: [arms.group, { discussion: independent }] }, select: { discussionId: true } }),
+    ]);
+    const teamIds = new Set(teams.map(row => row.discussionId)), groupIds = new Set(groups.map(row => row.discussionId));
+    const resourceIds = [...new Set([...teamIds, ...groupIds])];
+    const shareScopes = new Map(resourceIds.map(id => [id,
+        resourceTeamShareScopeV1({ team: teamIds.has(id), group: groupIds.has(id) })!]));
+    return { ok: true as const, resourceIds, shareScopes };
 }
 
 /** SQL projection of the same reachability prefilter for correlated/paged reads.

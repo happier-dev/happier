@@ -75,12 +75,16 @@ function ownerFromRow(row: SourceRow) {
 
 /** Current membership and credential owners decide; Home governance never grants Source management. */
 export async function resolveProjectSourceAdmissionInTx(tx: Tx, actorAccountId: string, grants: readonly ProjectSourceGrantV1[], authentication: Authentication,
-    owners: readonly ProjectSourceOwnerV1[] = []) {
-    const account = await tx.account.findUnique({ where: { id: actorAccountId }, select: { status: true } });
-    const active = account?.status === 'active';
+    owners: readonly ProjectSourceOwnerV1[] = [], admittedTeamActor?: TeamActorContext) {
+    const accountStatus = admittedTeamActor ? admittedTeamActor.accountStatus
+        : (await tx.account.findUnique({ where: { id: actorAccountId }, select: { status: true } }))?.status;
+    const active = accountStatus === 'active';
     const teamIds = [...new Set([...grants.map(grant => grant.principal), ...owners]
         .flatMap(principal => principal.kind === 'account' ? [] : [principal.teamId]))];
-    const contexts = await resolveTeamActorContextsInTx(tx, { teamIds, actorAccountId });
+    const contexts = new Map(await resolveTeamActorContextsInTx(tx, {
+        teamIds: teamIds.filter(teamId => teamId !== admittedTeamActor?.team.id), actorAccountId,
+    }));
+    if (admittedTeamActor && teamIds.includes(admittedTeamActor.team.id)) contexts.set(admittedTeamActor.team.id, admittedTeamActor);
     const qualified = await qualifyTeamOperationAuthenticationsInTx(tx, { contexts: [...contexts.values()], ...authentication });
     const groupIds = await resolveEffectiveTeamGroupIdsForAccountInTeamsInTx(tx, { teamIds, accountId: actorAccountId });
     const groups = new Map([...groupIds].map(([teamId, ids]) => [teamId, new Set(ids)]));

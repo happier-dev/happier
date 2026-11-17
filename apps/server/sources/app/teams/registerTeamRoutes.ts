@@ -1,11 +1,14 @@
 import { TEAM_LOGO_REQUEST_MAX_BODY_BYTES_V1, TeamLogoSetInputV1Schema } from '@happier-dev/protocol/teams/logo';
 import { TeamCreateInputV1Schema, TeamErrorV1Schema, TeamPolicySetInputV1Schema, TeamRefInputV1Schema, TeamUpdateInputV1Schema, teamErrorHttpStatusV1, type TeamErrorCodeV1, type TeamErrorV1 } from '@happier-dev/protocol/teams';
 import { TeamSummaryV1Schema, TeamsListInputV1Schema, TeamsPageV1Schema } from '@happier-dev/protocol/teams/projections';
+import { TeamSharedResourcesSummaryInputV1Schema, TeamSharedResourcesSummaryV1Schema } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
+import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 
 import type { Fastify } from "@/app/api/types";
 import { homeDomainActionPathForMethod } from "@/app/api/routes/actions/homeDomainActionRoute";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
-import { inTx } from "@/storage/inTx";
+import { inReadSnapshot, inTx } from "@/storage/inTx";
+import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
 
 import {
     archiveTeamInTx,
@@ -24,6 +27,7 @@ import {
 import { registerTeamCredentialResourceRoutes } from "./credentials/registerTeamCredentialResourceRoutes";
 import { readTeamOperationAuthenticationFromRequest } from "./actorContext";
 import { createTeamRouteApp } from "./teamRouteApp";
+import { readTeamSharedResourcesSummaryInTx } from './sharedResources';
 
 /**
  * The Team lifecycle transports.
@@ -84,6 +88,21 @@ export function registerTeamRoutes(
     // feature gate. Register them on the base app so the Team-domain denial
     // projection cannot overwrite that distinct transport contract.
     registerTeamCredentialResourceRoutes(app, env);
+
+    teamsApp.post(homeDomainActionPathForMethod(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, 'POST'), {
+        preHandler: app.authenticate, attachValidation: true,
+        schema: { body: TeamSharedResourcesSummaryInputV1Schema,
+            response: { 200: TeamSharedResourcesSummaryV1Schema, ...TEAM_ERROR_RESPONSES } },
+    }, async (request, reply) => {
+        if (request.validationError) return sendTeamError(reply, 'invalid_team_input');
+        const result = await inReadSnapshot(tx => readTeamSharedResourcesSummaryInTx(tx, {
+            actorAccountId: request.userId, teamId: request.body.teamId,
+            authentication: readTeamOperationAuthenticationFromRequest(request, env),
+            sessionAuthentication: readSessionAccessAuthenticationFromRequest(request),
+        }));
+        if (!result.ok) return sendTeamError(reply, result.error);
+        return reply.send(result.summary);
+    });
 
     teamsApp.post(homeDomainActionPathForMethod("teams.list", "POST"), {
         preHandler: app.authenticate,

@@ -20,6 +20,7 @@ import {
     resolveTeamActorContextInTx,
     resolveTeamActorContextsInTx,
     type TeamOperationAuthenticationContext,
+    type TeamActorContext,
 } from "../actorContext";
 import { resolveTeamCredentialCapabilities } from "../capabilities";
 import { readTeamCredentialBrokerPlacement } from "./brokerPlacementResolver";
@@ -961,11 +962,11 @@ type CredentialReadInput = Readonly<{
 }>;
 
 /** Recipient metadata counts share the catalog's admitted candidate owner. */
-export async function countTeamCredentialResourcesInTx(tx: Tx, input: CredentialReadInput) {
+export async function countTeamCredentialResourcesInTx(tx: Tx, input: CredentialReadInput & Readonly<{ admittedTeamActor?: TeamActorContext }>) {
     if (!await isServerFeatureEnabledForHome('teams.credentialResources', { tx, env: input.authentication.env })) {
         return { ok: false as const, error: 'feature_disabled' as const };
     }
-    const actor = await resolveTeamActorContextInTx(tx, input);
+    const actor = input.admittedTeamActor ?? await resolveTeamActorContextInTx(tx, input);
     if (!actor?.capabilities.viewTeam) return { ok: false as const, error: 'not_found_or_not_visible' as const };
     const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
     if (!qualification.ok) return qualification;

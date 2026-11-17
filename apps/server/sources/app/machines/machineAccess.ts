@@ -10,6 +10,7 @@ import { isMachinePublishedContentSafeV1 } from '@happier-dev/protocol/machines/
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { MachineRecipientKeyEnvelopePageQueryV1Schema, type AccessibleMachineAccessV1, type MachineAdmission, type MachineAccessRoleV1, type MachineAccessRefusalV1, type MachineAccessRefusalCode, type MachineAccessGrantRowV1, type MachineAccessGrantsListResultV1, type MachineAccessMutationResultV1, type MachineAccessRecipientCensusResponseV1, type MachineRecipientKeyEnvelopeCommitInputV1, type MachineRecipientKeyEnvelopeCommitResponseV1, type MachineRecipientKeyEnvelopePageQueryV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { type PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import { resourceTeamShareScopeV1, type ResourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -28,7 +29,7 @@ import { withManagedWakeAvailabilityInTx } from './managed/managedWakeAvailabili
 import type { MachineSerializationRow } from './machineSerialization';
 import { getDbProviderFromEnv } from '@/storage/db';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { projectResourceGrantRows, validateResourceGrantPrincipalInTx } from '@/app/teams/resourceGrantAccess';
+import { projectResourceGrantRows, resourceGrantArmWheres, validateResourceGrantPrincipalInTx } from '@/app/teams/resourceGrantAccess';
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from '@/app/encryption/accountRecipientEnvelopeReadiness';
 import { RECIPIENT_READINESS_SELECT } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
 import { resolveAccountDisplayLabelV1, ACCOUNT_DISPLAY_PROFILE_SELECT } from '@/app/account/profile/accountDisplayProfile';
@@ -187,8 +188,11 @@ export async function resolveCurrentMachineRecipientAccountIdsInTx(tx: Tx, machi
 export async function listMachineCandidatesInTx(
     tx: Tx,
     actorAccountId: string,
-    options: Readonly<{ includeRevokedOwned?: boolean }> = {},
+    options: Readonly<{ includeRevokedOwned?: boolean; sharedWithTeamId?: string }> = {},
 ): Promise<string[]> {
+    if (options.sharedWithTeamId) {
+        return [...(await listScopedTeamMachineCandidatesInTx(tx, actorAccountId, options.sharedWithTeamId)).keys()];
+    }
     const [owned, direct, memberships, groupMemberships] = await Promise.all([
         tx.machine.findMany({ where: { accountId: actorAccountId, ...(options.includeRevokedOwned ? {} : { revokedAt: null }) }, select: { id: true } }),
         tx.machineGrant.findMany({ where: { principalKind: 'account', accountId: actorAccountId }, select: { machineId: true } }),
@@ -205,6 +209,39 @@ export async function listMachineCandidatesInTx(
     }
     return expandMachineIdsWithManagedGuestsInTx(tx,
         [...owned.map(row => row.id), ...direct.map(row => row.machineId), ...teams.map(row => row.machineId), ...groups.map(row => row.machineId)]);
+}
+
+/** Preserve the qualifying grant arms, including inherited controller access, for scoped rows. */
+export async function listScopedTeamMachineCandidatesInTx(tx: Tx, actorAccountId: string, teamId: string): Promise<Map<string, ResourceTeamShareScopeV1>> {
+    const grants = resourceGrantArmWheres(actorAccountId, teamId);
+    const [teams, groups] = await Promise.all([
+        tx.machineGrant.findMany({ where: { principalKind: 'team', ...grants.team }, select: { machineId: true } }),
+        tx.machineGrant.findMany({ where: { principalKind: 'group', ...grants.group }, select: { machineId: true } }),
+    ]);
+    const [teamIds, groupIds] = await Promise.all([
+        expandMachineIdsWithManagedGuestsInTx(tx, teams.map(row => row.machineId)),
+        expandMachineIdsWithManagedGuestsInTx(tx, groups.map(row => row.machineId)),
+    ]);
+    const team = new Set(teamIds);
+    const group = new Set(groupIds);
+    return new Map([...new Set([...teamIds, ...groupIds])].sort().map(id => [id,
+        resourceTeamShareScopeV1({ team: team.has(id), group: group.has(id) })!]));
+}
+
+/** The Machine list's candidate/role owners, with no content, keys or native probes. */
+export async function countScopedTeamMachinesInTx(tx: Tx, params: Readonly<{
+    actorAccountId: string; sharedWithTeamId: string;
+}>): Promise<Readonly<{ ok: true; count: number }>> {
+    const candidates = await listMachineCandidatesInTx(tx, params.actorAccountId, params);
+    const roles = await resolveEffectiveMachineAccessForMachinesInTx(tx, {
+        machineIds: candidates, accountIds: [params.actorAccountId],
+    });
+    const machineIds = candidates.filter(id => roles.get(id)?.get(params.actorAccountId));
+    let count = 0;
+    for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: 2 })) {
+        count += await tx.machine.count({ where: { id: { in: [...ids] }, kind: 'persistent', revokedAt: null } });
+    }
+    return { ok: true, count };
 }
 
 function resourceMode(row: MachineFacts): 'plain' | 'e2ee' | null {

@@ -241,6 +241,12 @@ export function plannedChangesAffectMachineResources(planned: PlannedChangeActio
     return planned.unsupportedChanges.length > 0 || planned.machineResourcesAffect;
 }
 
+/** Team counts include the resource catalogs plus Session, sharing and Discussion membership. */
+export function plannedChangesAffectTeamSharedResources(planned: PlannedChangeActions): boolean {
+    return plannedChangesAffectMachineResources(planned) || planned.invalidate.artifacts
+        || planned.changes.some(change => change.kind === 'session' || change.kind === 'share' || change.kind === 'discussion');
+}
+
 export function accountChangeKindsAffectManagedMachineInventory(
     changeKinds: readonly string[] | undefined,
     entityIds: readonly string[] | undefined,

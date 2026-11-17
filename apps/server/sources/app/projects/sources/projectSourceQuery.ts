@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { ProjectSourcesFailureV1, ProjectSourcesListInputV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import type { TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
+import type { TeamActorContext, TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
 import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE } from '@/app/teams/memberships/effectiveMembership';
 import type { Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
@@ -35,12 +35,14 @@ export async function resolveProjectSourceQueryScopeInTx(tx: Tx, input: Readonly
     sharedWithTeamId?: string;
     includeDeleted?: boolean;
     authentication?: Partial<TeamOperationAuthenticationContext>;
+    /** The summary's same-transaction structural admission; Source qualification remains native. */
+    admittedTeamActor?: TeamActorContext;
 }>): Promise<Readonly<{ ok: true; where: Prisma.Sql; sharedWithTeamGroupIds: ReadonlySet<string> }> | Readonly<{ ok: false; error: ProjectSourcesFailureV1['error'] }>> {
     const memberships = await tx.teamMembership.findMany({ where: { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE,
         accountId: input.actorAccountId }, select: { teamId: true } });
     const grants = memberships.map(({ teamId }) => ({ principal: { kind: 'team' as const, teamId }, level: 'view' as const }));
     const owner = { kind: 'account' as const, accountId: input.actorAccountId };
-    const admission = await resolveProjectSourceAdmissionInTx(tx, input.actorAccountId, grants, input.authentication ?? {}, [owner]);
+    const admission = await resolveProjectSourceAdmissionInTx(tx, input.actorAccountId, grants, input.authentication ?? {}, [owner], input.admittedTeamActor);
     if (!admission.active) return { ok: false, error: 'source_unavailable' };
     if (input.sharedWithTeamId && !admission.admittedTeam(input.sharedWithTeamId)) {
         return memberships.some(({ teamId }) => teamId === input.sharedWithTeamId)
@@ -81,6 +83,7 @@ export function projectSourceListFiltersSql(input: ProjectSourcesListInputV1): P
 
 export async function countScopedTeamProjectSourcesInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; sharedWithTeamId: string; authentication?: Partial<TeamOperationAuthenticationContext>;
+    admittedTeamActor?: TeamActorContext;
 }>): Promise<Readonly<{ ok: true; count: number }> | Readonly<{ ok: false; error: ProjectSourcesFailureV1['error'] }>> {
     const scope = await resolveProjectSourceQueryScopeInTx(tx, input);
     if (!scope.ok) return scope;

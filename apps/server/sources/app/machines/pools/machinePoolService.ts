@@ -9,6 +9,7 @@ import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGua
 import { db, isPrismaUniqueConstraintError } from "@/storage/db";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
+import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
 import { readActiveTeamMembershipsInTx } from '@/app/teams/actorContext';
 import {
     getMachineDaemonPresenceInventory,
@@ -21,7 +22,7 @@ import { acquireTeamCredentialBrokerPoolAdmissionInTx, clearTeamCredentialBroker
 import { acquireMachinePoolMutationFenceInTx } from "./machinePoolMutationFence";
 import { validateMachinePoolMembersInTx } from './machinePoolMemberAdmission';
 import { canReadMachinePoolTeamInTx, canSetMachinePoolAudienceInTx, CUSTODIAN_POOL_ACCESS, TEAM_POOL_ACCESS, machinePoolAudience, readableMachinePoolTeamsInTx,
-    readMachinePoolPublicationAudienceInTx, resolveMachinePoolAccessInTx, type MachinePoolActor } from './machinePoolAccess';
+    readMachinePoolPublicationAudienceInTx, resolveMachinePoolAccessInTx, scopedMachinePoolWhereInTx, type MachinePoolActor } from './machinePoolAccess';
 import type { MachinePoolAccessV1, MachinePoolAudienceV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { prepareMachinePoolPrivateLabelsForWriteInTx, projectMachinePoolPrivateLabelForRecipient } from './privateLabels';
 
@@ -203,6 +204,20 @@ export async function listMachinePools(params: Readonly<{
         [accountId, await inventoryFor(accountId, params.io, pools)] as const)));
     return stored.map(pool => projectPool(pool, inventories.get(pool.accountId)!, pool.accountId === params.accountId
         ? CUSTODIAN_POOL_ACCESS : TEAM_POOL_ACCESS, params.accountId));
+}
+
+/** Team overview reads the same pool relation without members, labels or presence. */
+export async function countScopedTeamMachinePoolsInTx(tx: Tx, params: Readonly<{
+    actorAccountId: string; sharedWithTeamId: string;
+    authentication?: MachinePoolActor['authentication'];
+    admittedTeamActor?: MachinePoolActor['admittedTeamActor'];
+}>): Promise<Readonly<{ ok: true; count: number }> | Readonly<{ ok: false; error: 'not_found' }>> {
+    if (!await isServerFeatureEnabledForHome('machines.pools', { tx, env: params.authentication?.env })) {
+        return { ok: false, error: 'not_found' };
+    }
+    const where = await scopedMachinePoolWhereInTx(tx, { accountId: params.actorAccountId,
+        authentication: params.authentication, admittedTeamActor: params.admittedTeamActor }, params.sharedWithTeamId);
+    return { ok: true, count: await tx.machinePool.count({ where }) };
 }
 
 export async function getMachinePool(params: Readonly<{

@@ -6,13 +6,16 @@ import { admitDiscussionQuoteSourcesInTx, discussionQuoteSourceKey, resolveDiscu
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { resolveDiscussionContextInTx, resolveDiscussionContextsInTx, discussionCandidateWhere, discussionCandidateSql,
-    isDiscussionRecipientKeyPreparationRequiredInTx, type DiscussionContext } from './access';
+    isDiscussionRecipientKeyPreparationRequiredInTx, isDiscussionCredentialCurrentInTx, readDiscussionTeamScopedIdsInTx, type DiscussionContext } from './access';
 import { buildDiscussionListCursorPredicate, decodeDiscussionListCursorV1, encodeDiscussionListCursorV1 } from './pagination';
 import { DISCUSSION_MESSAGE_SELECT, DISCUSSION_SELECT, loadDiscussionViewerFactsInTx, projectDiscussionAccountActorsInTx, projectDiscussionCapabilitiesV1, projectDiscussionMessageV1, projectDiscussionSummaryV1, validateDiscussionStoredContent, admitDiscussionStoredMessage, type AdmittedDiscussionMessageRow, type DiscussionRow, type DiscussionMessageRow } from './projection';
 import { discussionFailure, discussionSuccess, type DiscussionResult } from './serviceTypes';
 import { projectDiscussionMessageDeliveriesInTx } from './deliveryProjection';
 import { prismaRuntime as sql } from '@/storage/prisma';
 import { discussionJsonText, discussionSqlName as name, discussionSqlTimestamp } from './readSql';
+
+import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 
 /** Only the authenticated runtime/original supplies an executable destination. */
 function contentDestination(authentication: SessionAccessAuthentication) {
@@ -246,6 +249,26 @@ export async function readDiscussionMessageInTx(tx: Tx, input: Reader & Readonly
 }>): Promise<DiscussionResult<DiscussionMessageV1>> {
     const read = await readDiscussionMessageWithContextInTx(tx, input);
     return read.ok ? discussionSuccess(read.value.message) : read;
+}
+
+/** Summary counts active admitted identities without title, message or key reads. */
+export async function countDiscussionsInTx(tx: Tx, input: Parameters<typeof readDiscussionTeamScopedIdsInTx>[1]) {
+    if (!await isServerFeatureEnabledForHome('sessions.conversations', { tx })) {
+        return { ok: false as const, error: 'discussions_unavailable' as const };
+    }
+    if (!await isDiscussionCredentialCurrentInTx(tx, { accountId: input.actorAccountId, authentication: input.authentication })) {
+        return { ok: false as const, error: 'discussion_not_found' as const };
+    }
+    const scoped = await readDiscussionTeamScopedIdsInTx(tx, input);
+    if (!scoped.ok) return scoped;
+    let count = 0;
+    for (const ids of portableQueryChunks({ values: scoped.resourceIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+        count += await tx.discussion.count({ where: { id: { in: [...ids] }, archivedAt: null,
+            ...(input.authentication.sessionRuntimePrincipal ? { participants: { some: {
+                sessionId: input.authentication.sessionRuntimePrincipal.sessionId, removedAt: null,
+            } } } : {}) } });
+    }
+    return { ok: true as const, count };
 }
 
 /** Candidate grants narrow before paging; current admission still decides every returned row. */

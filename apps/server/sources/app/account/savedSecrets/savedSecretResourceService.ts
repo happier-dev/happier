@@ -76,11 +76,15 @@ import {
 } from "@/app/encryption/savedSecretRecipientEnvelopeCensus";
 import { resolveShareAccountSubjectsInTx, resolveShareSubjectInTx } from "@/app/teams/shareEligibility";
 import {
+    qualifyTeamOperationAuthenticationInTx,
     qualifyTeamOperationAuthenticationsInTx,
     resolveTeamActorContextInTx,
     resolveTeamActorContextsInTx,
     type TeamOperationAuthenticationContext,
+    type TeamActorContext,
 } from "@/app/teams/actorContext";
+import { resourceGrantArmWheres } from '@/app/teams/resourceGrantAccess';
+import { resourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { resolveTeamCredentialCapabilities } from "@/app/teams/capabilities";
 import {
     ACCOUNT_DISPLAY_PROFILE_SELECT,
@@ -931,6 +935,45 @@ function projectRow(
         },
     });
     return projected.success ? projected.data : projectCorruptRow(row, accountId);
+}
+
+/** Selected-Team discovery reads grant identities, never material or recipient keys.
+ * Ownership/direct access can admit a scoped resource, but cannot invent its
+ * selected-Team audience. Group administration alone never supplies Group use.
+ */
+async function readSavedSecretScopedResourceIdsInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string; sharedWithTeamId: string; authentication?: TeamOperationAuthenticationContext;
+    admittedTeamActor?: TeamActorContext;
+}>) {
+    if (!await isServerFeatureEnabledForHome('teams', { tx })) return { ok: false as const, error: 'forbidden' as const };
+    const actor = input.admittedTeamActor ?? await resolveTeamActorContextInTx(tx, { actorAccountId: input.actorAccountId, teamId: input.sharedWithTeamId });
+    if (!actor?.capabilities.viewTeam) return { ok: false as const, error: 'forbidden' as const };
+    const qualified = await qualifyTeamOperationAuthenticationInTx(tx, { context: actor, ...input.authentication });
+    if (!qualified.ok) return qualified;
+    const arms = resourceGrantArmWheres(input.actorAccountId, input.sharedWithTeamId);
+    const independent = { OR: [{ ownerAccountId: input.actorAccountId },
+        { accountGrants: { some: arms.account } }] };
+    const [teams, groups] = await Promise.all([
+        tx.savedSecretTeamGrant.findMany({ where: { teamId: input.sharedWithTeamId,
+            OR: [arms.team, { resource: independent }] }, select: { resourceId: true } }),
+        tx.savedSecretGroupGrant.findMany({ where: {
+            teamGroup: { teamId: input.sharedWithTeamId, ...ACTIVE_SAVED_SECRET_GROUP_GRANT_WHERE.teamGroup },
+            OR: [arms.group, { resource: independent }] }, select: { resourceId: true } }),
+    ]);
+    const teamIds = new Set(teams.map(row => row.resourceId)), groupIds = new Set(groups.map(row => row.resourceId));
+    const resourceIds = [...new Set([...teamIds, ...groupIds])].sort();
+    const shareScopes = new Map(resourceIds.map(id => [id,
+        resourceTeamShareScopeV1({ team: teamIds.has(id), group: groupIds.has(id) })!]));
+    return { ok: true as const, resourceIds, shareScopes };
+}
+
+/** Count and page consume the same viewer-qualified Team grant selection. */
+export async function countSavedSecretResourcesInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string; sharedWithTeamId: string; authentication?: TeamOperationAuthenticationContext;
+    admittedTeamActor?: TeamActorContext;
+}>) {
+    const scoped = await readSavedSecretScopedResourceIdsInTx(tx, input);
+    return scoped.ok ? { ok: true as const, count: scoped.resourceIds.length } : scoped;
 }
 
 /** Lists only resources currently authorized for the Account. */

@@ -19,3 +19,4 @@ export * from './directory/index.js';
 export * from './externalGroupBindings/index.js';
 export * from './resourceGrantAccessV1.js';
 export * from './resourceRecipientKeyPreparationV1.js';
+export * from './teamShareableResourceKindV1.js';

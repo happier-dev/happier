@@ -24,6 +24,7 @@ import {
     resolveTeamActorContextInTx, qualifyTeamOperationAuthenticationInTx,
     resolveTeamActorContextsInTx, qualifyTeamOperationAuthenticationsInTx,
     readActiveTeamMembershipsInTx,
+    type TeamActorContext,
 } from "@/app/teams/actorContext";
 import { listQualifiedConnectedAccountsInTx } from "@/app/api/routes/connect/qualifiedConnectedAccounts/credentialRepository";
 import { createQualifiedConnectedAccountIdentityDigest } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
@@ -136,13 +137,13 @@ function projectPreset(row: StoredPreset): ManagedMachinePresetV1 {
 }
 
 async function resolvePresetAccessInTx(tx: Tx, context: PresetContext, owner: ManagedMachinePresetV1["owner"],
-    operation: 'read' | 'manage' | 'archive'): Promise<Readonly<{ teamArchivedAt: Date | null }> | null> {
+    operation: 'read' | 'manage' | 'archive', admittedTeamActor?: TeamActorContext): Promise<Readonly<{ teamArchivedAt: Date | null }> | null> {
     if (owner.kind === "account") {
         if (owner.accountId !== context.accountId) return null;
         return (await tx.account.findUnique({ where: { id: context.accountId }, select: { status: true } }))?.status === AccountStatus.active
             ? { teamArchivedAt: null } : null;
     }
-    const actor = await resolveTeamActorContextInTx(tx, { teamId: owner.teamId, actorAccountId: context.accountId });
+    const actor = admittedTeamActor ?? await resolveTeamActorContextInTx(tx, { teamId: owner.teamId, actorAccountId: context.accountId });
     if (!actor) return null;
     const permitted = operation === 'read' ? actor.teamCapabilities.viewTeam
         : operation === 'archive' && actor.team.archivedAt !== null ? actor.teamCapabilities.restoreTeam
@@ -924,6 +925,32 @@ export async function getMachinePresetInTx(tx: Tx, params: PresetPreparationCont
         : await resolvePresetAccessInTx(tx, params, ownerOf(row), 'read') : null;
     if (!row || !access) return { kind: "refused", code: "preset_not_found" };
     return { kind: "found", preset: projectPreset(inheritPresetOwnerArchive(row, access.teamArchivedAt)) };
+}
+
+/** Both Team counts and pages consume preset read admission and inherited archive state here. */
+async function scopedPresetListWhereInTx(tx: Tx, context: PresetContext, input: Readonly<{
+    homeId: string; sharedWithTeamId: string; includeArchived?: boolean;
+    admittedTeamActor?: TeamActorContext;
+}>): Promise<Readonly<{ where: Prisma.ManagedMachinePresetWhereInput; teamArchivedAt: Date | null }>> {
+    const access = await resolvePresetAccessInTx(tx, context, { kind: 'team', teamId: input.sharedWithTeamId }, 'read', input.admittedTeamActor);
+    return { where: !access || !input.includeArchived && access.teamArchivedAt !== null
+        ? { id: { in: [] } }
+        : { homeId: input.homeId, teamId: input.sharedWithTeamId,
+            ...(!input.includeArchived ? { archivedAt: null } : {}) },
+        teamArchivedAt: access?.teamArchivedAt ?? null };
+}
+
+/** Aggregate only; opaque setup and launch declarations stay unopened. */
+export async function countScopedTeamMachinePresetsInTx(tx: Tx, params: Readonly<{
+    actorAccountId: string; sharedWithTeamId: string; includeArchived?: boolean;
+    authentication?: PresetContext['authentication'];
+    admittedTeamActor?: TeamActorContext;
+}>): Promise<Readonly<{ ok: true; count: number }> | Readonly<{ ok: false; error: 'permission_denied' }>> {
+    const homeId = await readCurrentServerIdentityId(process.env, tx);
+    if (!homeId) return { ok: false, error: 'permission_denied' };
+    const scope = await scopedPresetListWhereInTx(tx, { accountId: params.actorAccountId,
+        authentication: params.authentication }, { ...params, homeId });
+    return { ok: true, count: await tx.managedMachinePreset.count({ where: scope.where }) };
 }
 
 export async function listMachinePresets(params: PresetContext & Readonly<{ input: ManagedMachinePresetListInputV1 }>): Promise<ManagedMachinePresetListResultV1> {

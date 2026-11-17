@@ -13,6 +13,7 @@ type TeamArtifactQuery = Readonly<{
     actorAccountId: string;
     sharedWithTeamId: string;
     authentication?: Parameters<typeof resolveProjectSourceQueryScopeInTx>[1]['authentication'];
+    admittedTeamActor?: Parameters<typeof resolveProjectSourceQueryScopeInTx>[1]['admittedTeamActor'];
 }>;
 type QueryFailure = Readonly<{ ok: false; error: ProjectSourcesFailureV1['error'] }>;
 

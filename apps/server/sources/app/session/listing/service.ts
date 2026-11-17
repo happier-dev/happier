@@ -449,6 +449,21 @@ async function listSessionRowsForAccount(params: Readonly<{
     }));
 }
 
+export async function countScopedTeamSessionsInTx(tx: Tx, params: Readonly<{
+    actorAccountId: string; sharedWithTeamId: string; authentication: SessionAccessAuthentication;
+    storage?: 'active' | 'archived';
+}>): Promise<Readonly<{ ok: true; count: number }> | Readonly<{ ok: false; error: 'audience' }>> {
+    if (!isSessionCollaborationEnabled()) return { ok: false, error: 'audience' };
+    const access = await resolveEffectiveSessionAccessWhere({ tx, accountId: params.actorAccountId,
+        capability: 'readTranscript', mode: 'effective_access_v1', authentication: params.authentication });
+    const audience = await createApplicableAudienceWhere({ tx, accountId: params.actorAccountId,
+        audiences: [{ kind: 'team', teamId: params.sharedWithTeamId }], authentication: params.authentication,
+        collectiveAccessSnapshot: access.collectiveAccessSnapshot });
+    return { ok: true, count: await tx.session.count({ where: conjoinSessionListWhereInputs(
+        access.where, audience, createSessionListStorageWhere(params.storage ?? 'active'),
+    ) }) };
+}
+
 async function listFilteredSessionsForAccount(params: Readonly<{
     userId: string;
     authentication: SessionAccessAuthentication;

@@ -26,6 +26,7 @@ import {
     planSyncActionsFromHomeWake,
     plannedChangesAffectProfileCatalog,
     plannedChangesAffectMachineResources,
+    plannedChangesAffectTeamSharedResources,
     plannedChangesAffectManagedMachineInventory,
     plannedChangesAffectSessionListQuery,
     plannedChangesAffectUsageQuery,
@@ -98,6 +99,8 @@ export type HomeAccountChangeEvent = Readonly<{
     accountSettingsAffects?: boolean;
     /** Producer-admitted resource/source/access relevance; absent events remain conservative. */
     machineResourcesAffect?: boolean;
+    /** Summary count relevance from the incumbent planner; absence retains recovery. */
+    teamSharedResourcesAffect?: boolean;
     /** Retained managed list membership/content; ordinary Machine presence does not alter it. */
     managedMachineInventoryAffect?: boolean;
     /** Canonical planner row ids; absent remains a full inventory recovery. */
@@ -149,6 +152,7 @@ type HomeAccountChangeDetails = Readonly<{
     publicProfileAffects?: boolean;
     accountSettingsAffects?: boolean;
     machineResourcesAffect?: boolean;
+    teamSharedResourcesAffect?: boolean;
     managedMachineInventoryAffect?: boolean;
     /** Canonical planner row ids; absent remains a full inventory recovery. */
     managedMachineChangedIds?: readonly string[];
@@ -422,6 +426,7 @@ export function publishHomeAccountChangeWake(
         sessionListQueryAffects: plannedChangesAffectSessionListQuery(planned),
         accountSettingsAffects: planned.invalidate.settings,
         machineResourcesAffect: plannedChangesAffectMachineResources(planned),
+        teamSharedResourcesAffect: plannedChangesAffectTeamSharedResources(planned),
         managedMachineInventoryAffect: plannedChangesAffectManagedMachineInventory(planned),
         profileCatalogAffects: plannedChangesAffectProfileCatalog(planned),
         publicProfileAffects: planned.invalidate.publicProfile,
@@ -552,6 +557,9 @@ export function publishHomeAccountChangeForRouting(
             || changeKinds.includes('account')))),
         machineResourcesAffect: details?.source === 'connected' || details?.source === 'snapshot'
             || (details?.machineResourcesAffect ?? accountChangeKindsAffectMachineResources(rawKinds, entityIds)),
+        teamSharedResourcesAffect: details?.source === 'connected' || details?.source === 'snapshot'
+            || (details?.teamSharedResourcesAffect ?? (readinessWakePlan
+                ? plannedChangesAffectTeamSharedResources(readinessWakePlan) : true)),
         managedMachineInventoryAffect: details?.source === 'connected' || details?.source === 'snapshot'
             // The managed list is a Machine resource: a producer that rules Machine resources out rules it out too.
             || (details?.managedMachineInventoryAffect ?? (details?.machineResourcesAffect === false ? false

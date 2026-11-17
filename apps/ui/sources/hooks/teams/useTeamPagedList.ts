@@ -4,7 +4,7 @@ import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { loadTeamPageRange, type TeamPageOutcome } from '@/sync/engine/teams/loadTeamPageRange';
-import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 
 /**
  * The paged lifetime for Team reads with one mounted owner.
@@ -67,7 +67,10 @@ export function useTeamPagedList<TRow>(params: Readonly<{
     /** Domain identity for admitted rows whose consumers require reference reuse. */
     getRowKey?: (row: TRow) => string;
     /** Optional AccountChange invalidation for the exact Home owning this page. */
-    accountChange?: Readonly<{ serverId: string; entityId: string }>;
+    accountChange?: Readonly<{ serverId: string }> & (
+        | Readonly<{ entityId: string; affects?: never }>
+        | Readonly<{ entityId?: never; affects: (event: HomeAccountChangeEvent) => boolean }>
+    );
 }>): TeamPagedList<TRow> {
     const { key, enabled, getRowKey } = params;
     const [state, setState] = React.useState<ListState<TRow>>(initialState<TRow>);
@@ -175,14 +178,20 @@ export function useTeamPagedList<TRow>(params: Readonly<{
 
     const accountChangeServerId = params.accountChange?.serverId ?? '';
     const accountChangeEntityId = params.accountChange?.entityId ?? '';
+    const accountChangeHasPredicate = params.accountChange?.affects !== undefined;
+    const accountChangeAffects = React.useRef(params.accountChange?.affects);
+    accountChangeAffects.current = params.accountChange?.affects;
     React.useEffect(() => {
-        if (!enabled || accountChangeServerId === '' || accountChangeEntityId === '') return;
+        if (!enabled || accountChangeServerId === '' || (!accountChangeHasPredicate && accountChangeEntityId === '')) return;
         return subscribeHomeAccountChange((event) => {
             if (event.serverId !== accountChangeServerId) return;
-            if (event.entityIds !== undefined && !event.entityIds.includes(accountChangeEntityId)) return;
+            const affects = accountChangeAffects.current;
+            if (affects) {
+                if (!affects(event)) return;
+            } else if (event.entityIds !== undefined && !event.entityIds.includes(accountChangeEntityId)) return;
             void load('refresh');
-        }, { reconnect: { readNotCurrent: () => stateRef.current.status !== 'ready' } });
-    }, [enabled, accountChangeServerId, accountChangeEntityId, load]);
+        }, { serverIds: [accountChangeServerId], reconnect: { readNotCurrent: () => stateRef.current.status !== 'ready' } });
+    }, [enabled, accountChangeServerId, accountChangeEntityId, accountChangeHasPredicate, load]);
 
     const loadMore = React.useCallback(() => load('more'), [load]);
     const reload = React.useCallback(() => load('refresh'), [load]);

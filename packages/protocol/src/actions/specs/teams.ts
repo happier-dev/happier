@@ -52,6 +52,8 @@ import {
   TeamInvitationsPageV1Schema,
 } from '../../teams/invitation.js';
 import { TeamLogoSetInputV1Schema } from '../../teams/logo.js';
+import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '../../teams/actionIdsV1.js';
+import { TeamSharedResourcesSummaryInputV1Schema, TeamSharedResourcesSummaryV1Schema } from '../../teams/teamShareableResourceKindV1.js';
 import {
   TeamMemberAddInputV1Schema,
   TeamMemberManagementSetInputV1Schema,
@@ -265,6 +267,7 @@ export type TeamActionSpecs = readonly [
   ...ReturnType<typeof teamCredentialActionRow>[],
   ActionSpec<'teams.list', typeof TeamsListInputV1Schema, typeof TeamsPageV1Schema>,
   ActionSpec<'teams.get', typeof TeamRefInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<typeof TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, typeof TeamSharedResourcesSummaryInputV1Schema, typeof TeamSharedResourcesSummaryV1Schema>,
   ActionSpec<'teams.create', typeof TeamCreateInputV1Schema, typeof TeamSummaryV1Schema>,
   ActionSpec<'teams.update', typeof TeamUpdateInputV1Schema, typeof TeamSummaryV1Schema>,
   ActionSpec<'teams.logo.set', typeof TeamLogoSetInputV1Schema, typeof TeamSummaryV1Schema>,
@@ -488,6 +491,16 @@ function createTeamActionSpecs(): TeamActionSpecs {
     path: '/v1/teams/get',
     inputSchema: TeamRefInputV1Schema,
     outputSchema: TeamSummaryV1Schema,
+    inputHints: { fields: [TEAM_ID_FIELD] },
+  }),
+  homeDomainActionRow({
+    id: TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, approval: { result: 'required' },
+    mcp: true,
+    title: 'Summarize Team shared resources',
+    description: 'Read per-kind counts of resources shared with this Team and admitted for the authenticated Account.',
+    safety: 'safe', sideEffectClass: 'read',
+    cliPath: ['teams', 'shared-resources', 'summary'], path: '/v1/teams/shared-resources/summary',
+    inputSchema: TeamSharedResourcesSummaryInputV1Schema, outputSchema: TeamSharedResourcesSummaryV1Schema,
     inputHints: { fields: [TEAM_ID_FIELD] },
   }),
   homeDomainActionRow({

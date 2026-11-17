@@ -1,14 +1,17 @@
 import type { MachinePoolAccessV1, MachinePoolAudienceV1 } from '@happier-dev/protocol/machines/pools/v1';
 import type { Tx } from '@/storage/inTx';
+import type { Prisma } from '@prisma/client';
+import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE } from '@/app/teams/memberships/effectiveMembership';
 import {
     resolveTeamActorContextInTx, resolveTeamActorContextsInTx,
     readActiveTeamMembershipsInTx,
     qualifyTeamOperationAuthenticationInTx, qualifyTeamOperationAuthenticationsInTx,
     type TeamOperationAuthenticationContext,
+    type TeamActorContext,
 } from '@/app/teams/actorContext';
 import { readTeamResourcePublicationAudienceInTx } from '@/app/teams/resourcePublicationAudience';
 
-export type MachinePoolActor = Readonly<{ accountId: string; authentication?: Partial<TeamOperationAuthenticationContext> }>;
+export type MachinePoolActor = Readonly<{ accountId: string; authentication?: Partial<TeamOperationAuthenticationContext>; admittedTeamActor?: TeamActorContext }>;
 export type MachinePoolIdentity = Readonly<{ accountId: string; teamId: string | null }>;
 
 export const CUSTODIAN_POOL_ACCESS = { canManage: true, canResolve: true, canViewMembers: true } as const;
@@ -29,9 +32,21 @@ export async function resolveMachinePoolAccessInTx(tx: Tx, actor: MachinePoolAct
 }
 
 export async function canReadMachinePoolTeamInTx(tx: Tx, actor: MachinePoolActor, teamId: string): Promise<boolean> {
-    const context = await resolveTeamActorContextInTx(tx, { teamId, actorAccountId: actor.accountId });
+    const context = actor.admittedTeamActor ?? await resolveTeamActorContextInTx(tx, { teamId, actorAccountId: actor.accountId });
     return Boolean(context && context.team.archivedAt === null && context.teamCapabilities.viewTeam
         && (await qualifyTeamOperationAuthenticationInTx(tx, { ...actor.authentication, context })).ok);
+}
+
+/** Count and list share custody and current Team access before reading pool content. */
+export async function scopedMachinePoolWhereInTx(tx: Tx, actor: MachinePoolActor,
+    teamId: string): Promise<Prisma.MachinePoolWhereInput> {
+    const canReadTeam = await canReadMachinePoolTeamInTx(tx, actor, teamId);
+    return { teamId, OR: [
+        { accountId: actor.accountId },
+        ...(canReadTeam ? [{ account: { teamMemberships: { some: {
+            ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE, teamId,
+        } } } }] : []),
+    ] };
 }
 
 /** Resolve a whole list's Team witnesses once, without one membership query per pool. */
