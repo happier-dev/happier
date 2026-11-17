@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { createDatabaseWorkbenchPlacements } from './placements.js';
 
 it('admits project and Session rail tabs and details destinations with the same renderer', () => {
@@ -13,6 +14,8 @@ it('admits project and Session rail tabs and details destinations with the same 
             ],
         },
     });
+    // The published manifest owner admits every view id (the host loads nothing a manifest refuses).
+    expect(PluginManifestV2Schema.safeParse(plugin.manifest).success).toBe(true);
     const views = plugin.manifest.contributes.ui?.views ?? [];
     expect(views).toHaveLength(8);
     expect(new Set(views.map(view => view.id)).size).toBe(8);

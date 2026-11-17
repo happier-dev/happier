@@ -1,5 +1,8 @@
 import * as React from 'react';
-import type { DatabaseRelationV1 } from '@happier-dev/database-protocol';
+import type {
+  DatabaseDescriptorV1,
+  DatabaseRelationV1,
+} from '@happier-dev/database-protocol';
 import {
   ErrorState,
   Item,
@@ -31,12 +34,20 @@ function rowsLabel(approxRows: string | null): string | undefined {
   return Number.isFinite(value) ? compactCount.format(value) : approxRows;
 }
 
-/** The access word, once, in the rail header; the Popover says what it means (decision E). */
-function AccessWord(props: Readonly<{ targetKey: string }>) {
+/** What a rail press asks for; the page navigates in place, the Session rail opens a details tab. */
+export type RailIntent = Readonly<
+  | { mode: 'overview' }
+  | { mode: 'console' }
+  | { mode: 'data' | 'structure'; relation: DatabaseRelationV1 }
+>;
+
+/** The access word, once, at the database identity (decision E); the Popover says what it means. */
+export function AccessWord(
+  props: Readonly<{ descriptor: DatabaseDescriptorV1 }>,
+) {
   const translate = usePluginTranslation();
-  const instance = useWorkbenchInstance();
   const [open, setOpen] = React.useState(false);
-  const access = instance.target(props.targetKey).access;
+  const access = props.descriptor.access;
   if (!access) return null;
   const word = access.canWrite
     ? translate('plugins.database.access.canEdit', 'Can edit')
@@ -79,6 +90,35 @@ function AccessWord(props: Readonly<{ targetKey: string }>) {
   );
 }
 
+/** One fact line under the name: engine and where it came from, the same facts the Dev servers row shows. */
+export function databaseFacts(descriptor: DatabaseDescriptorV1): string {
+  return [descriptor.engine, descriptor.origin.label]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** The database identity the page leads with; the Session rail uses the same header as its picker trigger. */
+export function DatabaseIdentity(
+  props: Readonly<{ descriptor: DatabaseDescriptorV1 }>,
+) {
+  return (
+    <Stack gap="xsmall">
+      <Text
+        variant="heading"
+        value={props.descriptor.label}
+        numberOfLines={1}
+      />
+      <Text
+        variant="meta"
+        tone="secondary"
+        value={databaseFacts(props.descriptor)}
+        numberOfLines={1}
+      />
+      <AccessWord descriptor={props.descriptor} />
+    </Stack>
+  );
+}
+
 function SchemaGroup(
   props: Readonly<{
     targetKey: string;
@@ -86,6 +126,9 @@ function SchemaGroup(
     query: string;
     expanded: boolean;
     onToggle: (schema: string) => void;
+    selected: DatabaseRelationV1 | undefined;
+    onOpen: (intent: RailIntent) => void;
+    structure: boolean;
   }>,
 ) {
   const translate = usePluginTranslation();
@@ -101,12 +144,7 @@ function SchemaGroup(
         }
       />
       {props.expanded ? (
-        <SchemaRelations
-          targetKey={props.targetKey}
-          schema={props.schema}
-          query={props.query}
-          translate={translate}
-        />
+        <SchemaRelations {...props} translate={translate} />
       ) : null}
     </>
   );
@@ -119,9 +157,11 @@ function SchemaRelations(
     schema: string;
     query: string;
     translate: PluginTranslate;
+    selected: DatabaseRelationV1 | undefined;
+    onOpen: (intent: RailIntent) => void;
+    structure: boolean;
   }>,
 ) {
-  const location = useWorkbenchLocation();
   const { relations, status, error, refresh } = useDatabaseSchemaRelations(
     props.targetKey,
     props.schema,
@@ -153,8 +193,8 @@ function SchemaRelations(
     <>
       {shown.map((relation) => {
         const value: DatabaseRelationV1 = {
-          ...(location.relation?.database
-            ? { database: location.relation.database }
+          ...(props.selected?.database
+            ? { database: props.selected.database }
             : {}),
           schema: props.schema,
           name: relation.name,
@@ -168,19 +208,18 @@ function SchemaRelations(
                   'plugins.database.rail.matview',
                   'materialized view',
                 );
+        const rows = rowsLabel(relation.approxRows);
         return (
           <Item
             key={relation.name}
             title={relation.name}
-            selected={sameRelation(location.relation, value)}
+            selected={sameRelation(props.selected, value)}
             {...(kind ? { subtitle: kind } : {})}
-            {...(rowsLabel(relation.approxRows)
-              ? { detail: rowsLabel(relation.approxRows) }
-              : {})}
+            {...(rows ? { detail: rows } : {})}
             onPress={() =>
-              void location.navigate({
+              props.onOpen({
                 relation: value,
-                mode: location.mode === 'structure' ? 'structure' : 'data',
+                mode: props.structure ? 'structure' : 'data',
               })
             }
           />
@@ -190,24 +229,37 @@ function SchemaRelations(
   );
 }
 
-/** Identity, access, Find a table, the database's own pages, then its schemas. */
-export function WorkbenchRail(props: Readonly<{ targetKey: string }>) {
+/**
+ * The workbench list column: Find a table, the database's own pages, then its schemas. The page and the Session
+ * rail mount this one list; only what a press opens differs.
+ */
+export function WorkbenchRailList(
+  props: Readonly<{
+    targetKey: string;
+    /** What is open now; nothing is selected when nothing is open. */
+    selected: Readonly<{
+      mode: RailIntent['mode'];
+      relation?: DatabaseRelationV1;
+    }> | null;
+    onOpen: (intent: RailIntent) => void;
+    showOverview: boolean;
+  }>,
+) {
   const translate = usePluginTranslation();
-  const instance = useWorkbenchInstance();
-  const location = useWorkbenchLocation();
-  const descriptor = instance.target(props.targetKey);
   const { schemas, status, error, refresh } = useDatabaseRelations(
     props.targetKey,
   );
   const [query, setQuery] = React.useState('');
   const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(
-    () => new Set(location.relation ? [location.relation.schema] : []),
+    () =>
+      new Set(props.selected?.relation ? [props.selected.relation.schema] : []),
   );
   // The first schema opens by itself once known, unless the person already chose what is open.
   const firstSchema = schemas[0]?.name;
   React.useEffect(() => {
-    if (firstSchema && expanded.size === 0) setExpanded(new Set([firstSchema]));
-  }, [firstSchema]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (firstSchema)
+      setExpanded((held) => (held.size === 0 ? new Set([firstSchema]) : held));
+  }, [firstSchema]);
   const toggle = React.useCallback(
     (schema: string) =>
       setExpanded((held) => {
@@ -218,81 +270,110 @@ export function WorkbenchRail(props: Readonly<{ targetKey: string }>) {
       }),
     [],
   );
+  const mode = props.selected?.mode;
+  return (
+    <Stack gap="medium">
+      <TextField
+        label={translate('plugins.database.rail.find', 'Find a table')}
+        placeholder={translate('plugins.database.rail.find', 'Find a table')}
+        value={query}
+        onChange={setQuery}
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+      <ItemGroup surface="none">
+        {props.showOverview ? (
+          <Item
+            title={translate('plugins.database.rail.overview', 'Overview')}
+            selected={mode === 'overview'}
+            onPress={() => props.onOpen({ mode: 'overview' })}
+          />
+        ) : null}
+        <Item
+          title={translate('plugins.database.rail.console', 'Console')}
+          selected={mode === 'console'}
+          onPress={() => props.onOpen({ mode: 'console' })}
+        />
+      </ItemGroup>
+      {status === 'loading' && schemas.length === 0 ? (
+        <LoadingState layout="line" rows={6} rowShape="compact" />
+      ) : null}
+      {status === 'unavailable' ? (
+        <ErrorState
+          layout="line"
+          kind="unavailable"
+          title={translate(
+            'plugins.database.rail.schemasFailed',
+            'Schemas could not be read',
+          )}
+          details={error instanceof Error ? error.message : undefined}
+          onRetry={refresh}
+          retryLabel={translate('plugins.database.retry', 'Try again')}
+        />
+      ) : null}
+      {status === 'empty' ? (
+        <Text
+          tone="secondary"
+          variant="meta"
+          value={translate(
+            'plugins.database.rail.noSchemas',
+            'This database has no schemas yet',
+          )}
+        />
+      ) : null}
+      <ItemGroup surface="none">
+        {schemas.map((schema) => (
+          <SchemaGroup
+            key={schema.name}
+            targetKey={props.targetKey}
+            schema={schema.name}
+            query={query}
+            expanded={expanded.has(schema.name) || query.trim().length > 0}
+            onToggle={toggle}
+            selected={props.selected?.relation}
+            onOpen={props.onOpen}
+            structure={mode === 'structure'}
+          />
+        ))}
+      </ItemGroup>
+    </Stack>
+  );
+}
+
+/** The page's rail: identity, then the list; presses navigate the page in place. */
+export function WorkbenchRail(props: Readonly<{ targetKey: string }>) {
+  const instance = useWorkbenchInstance();
+  const location = useWorkbenchLocation();
+  const descriptor = instance.target(props.targetKey);
+  const open = React.useCallback(
+    (intent: RailIntent) => {
+      void location.navigate(
+        intent.mode === 'overview'
+          ? { mode: 'overview', relation: undefined }
+          : intent.mode === 'console'
+            ? { mode: intent.mode }
+            : { mode: intent.mode, relation: intent.relation },
+      );
+    },
+    [location],
+  );
+  const selected = React.useMemo(
+    () => ({
+      mode: location.mode,
+      ...(location.relation ? { relation: location.relation } : {}),
+    }),
+    [location.mode, location.relation],
+  );
   return (
     <ScrollArea>
       <Stack gap="medium">
-        <Stack gap="xsmall">
-          <Text variant="heading" value={descriptor.label} numberOfLines={1} />
-          <Text
-            variant="meta"
-            tone="secondary"
-            value={[descriptor.engine, descriptor.origin.label]
-              .filter(Boolean)
-              .join(' · ')}
-            numberOfLines={1}
-          />
-          <AccessWord targetKey={props.targetKey} />
-        </Stack>
-        <TextField
-          label={translate('plugins.database.rail.find', 'Find a table')}
-          placeholder={translate('plugins.database.rail.find', 'Find a table')}
-          value={query}
-          onChange={setQuery}
-          autoCapitalize="none"
-          autoCorrect={false}
+        <DatabaseIdentity descriptor={descriptor} />
+        <WorkbenchRailList
+          targetKey={props.targetKey}
+          selected={selected}
+          onOpen={open}
+          showOverview
         />
-        <ItemGroup surface="none">
-          <Item
-            title={translate('plugins.database.rail.overview', 'Overview')}
-            selected={location.mode === 'overview'}
-            onPress={() =>
-              void location.navigate({ mode: 'overview', relation: undefined })
-            }
-          />
-          <Item
-            title={translate('plugins.database.rail.console', 'Console')}
-            selected={location.mode === 'console'}
-            onPress={() => void location.navigate({ mode: 'console' })}
-          />
-        </ItemGroup>
-        {status === 'loading' && schemas.length === 0 ? (
-          <LoadingState layout="line" rows={6} rowShape="compact" />
-        ) : null}
-        {status === 'unavailable' ? (
-          <ErrorState
-            layout="line"
-            kind="unavailable"
-            title={translate(
-              'plugins.database.rail.schemasFailed',
-              'Schemas could not be read',
-            )}
-            details={error instanceof Error ? error.message : undefined}
-            onRetry={refresh}
-            retryLabel={translate('plugins.database.retry', 'Try again')}
-          />
-        ) : null}
-        {status === 'empty' ? (
-          <Text
-            tone="secondary"
-            variant="meta"
-            value={translate(
-              'plugins.database.rail.noSchemas',
-              'This database has no schemas yet',
-            )}
-          />
-        ) : null}
-        <ItemGroup surface="none">
-          {schemas.map((schema) => (
-            <SchemaGroup
-              key={schema.name}
-              targetKey={props.targetKey}
-              schema={schema.name}
-              query={query}
-              expanded={expanded.has(schema.name) || query.trim().length > 0}
-              onToggle={toggle}
-            />
-          ))}
-        </ItemGroup>
       </Stack>
     </ScrollArea>
   );

@@ -9,7 +9,8 @@ export function createDatabaseWorkbenchPlacements(renderers: Readonly<{
         const { kind } = target;
         for (const [name, renderer] of [['database', renderers.databaseRenderer], ['insights', renderers.insightsRenderer]] as const) {
             for (const container of ['rightSidebarTab', 'detailsPane'] as const) {
-                const common = { id: `${name}-${kind}-${container}`, renderer,
+                // Local ids are lowercase kebab (the manifest's contribution-id pattern).
+                const common = { id: `${name}-${kind}-${container === 'rightSidebarTab' ? 'rail' : 'details'}`, renderer,
                     title: name === 'database' ? 'Database' : 'Insights' };
                 if (container === 'rightSidebarTab') {
                     views.push(kind === 'session'

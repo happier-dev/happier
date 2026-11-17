@@ -22,6 +22,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { renderSurface as renderPanel } from './DatabasesPanel.js';
 import { renderSurface as renderPage } from './WorkbenchPage.js';
+import { renderSurface as renderRail } from './DatabaseRailTab.js';
 import { WORKBENCH_PAGE_VIEW_ID } from './views.js';
 
 (
@@ -306,5 +307,41 @@ describe('Database workbench surfaces', () => {
     } finally {
       await fixture.dispose();
     }
+  });
+  it('opens a table from the Session rail tab as a details tab at that table', async () => {
+    const executeAction = daemonAnswers([descriptor]);
+    const openSurface = vi.fn(async () => {});
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'rail', mountNonce: 'rail' }, authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope }),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-session-rail' }, container: 'rightSidebarTab' },
+        target: { kind: 'session', sessionId: 'session-1' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { executeAction, openSurface },
+    });
+    try {
+      await settle(20);
+      // Controls in order: the database picker, Console, the public schema, then its tables (invoices first).
+      const controls = await fixture.getAllByRole('button');
+      expect(controls).toHaveLength(5);
+      await act(async () => { await fixture.press(controls[3]!); });
+      expect(openSurface).toHaveBeenCalledWith(expect.objectContaining({
+        view: expect.objectContaining({ localId: 'database-session-details' }), subPath: 'data/public/invoices',
+        input: expect.objectContaining({ descriptor: expect.objectContaining({ label: 'billing_dev' }) }) }));
+    } finally { await fixture.dispose(); }
+  });
+
+  it('renders the details tab the rail opened, at its table', async () => {
+    const executeAction = daemonAnswers([descriptor]);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'details', mountNonce: 'details' }, authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-session-details' }, container: 'detailsPane' },
+        target: { kind: 'session', sessionId: 'session-1' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { executeAction },
+    });
+    try {
+      await settle(20);
+      expect(await fixture.getByText('48,212')).toBeTruthy();
+    } finally { await fixture.dispose(); }
   });
 });

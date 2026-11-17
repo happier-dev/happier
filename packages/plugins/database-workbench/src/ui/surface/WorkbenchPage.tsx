@@ -118,7 +118,7 @@ function OverviewPane(props: Readonly<{ targetKey: string }>) {
   );
 }
 
-function WorkbenchMain(props: Readonly<{ targetKey: string }>) {
+export function WorkbenchMain(props: Readonly<{ targetKey: string }>) {
   const location = useWorkbenchLocation();
   const [reviewing, setReviewing] = React.useState(false);
   const closeReview = React.useCallback(() => setReviewing(false), []);

@@ -17,7 +17,8 @@
       "default": "./dist/manifest.js"
     },
     "./happier-plugin-ui/database-panel-native": "./src/ui/surface/DatabasesPanel.tsx",
-    "./happier-plugin-ui/database-workbench-native": "./src/ui/surface/WorkbenchPage.tsx"
+    "./happier-plugin-ui/database-workbench-native": "./src/ui/surface/WorkbenchPage.tsx",
+    "./happier-plugin-ui/database-rail-native": "./src/ui/surface/DatabaseRailTab.tsx"
   },
   "files": [
     "src",
