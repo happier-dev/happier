@@ -28,6 +28,18 @@ const savedId = AutomationTriggerIdSchema.parse('trigger-saved');
 const lifecycleKinds = Object.keys(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1);
 
 describe('workflow trigger starts (the "When it runs" card)', () => {
+  it('authors contextual Session and PR starts without replacing a deliberate Any scope', () => {
+    const context = { session: { subject: { kind: 'session', serverId: 'home', sessionId: 'session-a' },
+      pullRequestLinks: [{ repository: 'acme/widgets', number: 7 }] } } as const;
+    expect(buildWorkflowTriggerStartOptions([], undefined, context).map(option => option.id))
+      .toEqual(expect.arrayContaining(['session:prComment', 'session:ciFailed']));
+    expect(createWorkflowTriggerStartWhen('session:turnEnds', null, context))
+      .toMatchObject({ subject: context.session.subject });
+    expect(createWorkflowTriggerStartWhen('session:needsYou', { kind: 'turnEnds' }, context))
+      .not.toHaveProperty('subject');
+    expect(createWorkflowTriggerStartWhen('session:ciFailed', null, context))
+      .toEqual({ kind: 'ciFailed', pullRequest: context.session.pullRequestLinks[0] });
+  });
   it('lists Time, then Sessions, then each plugin\'s declared Events grouped by plugin, and reads every start back', () => {
     const options = buildWorkflowTriggerStartOptions([
       { eventRef: { pluginId: 'happier.github', localId: 'pr-opened' }, title: 'A pull request opens', pluginName: 'GitHub' },

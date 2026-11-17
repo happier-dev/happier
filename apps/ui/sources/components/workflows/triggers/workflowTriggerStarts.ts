@@ -10,8 +10,8 @@ import type { WorkflowActivityLiveFact } from '@/sync/domains/workflows/workflow
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
-import { buildTriggerDefinition, createDefaultWhen, isSessionLifecycleWhen, type TriggerWhenValue } from './sessionTriggerForm';
-import { TRIGGER_LIFECYCLE_GLYPHS } from './triggerEventGroups';
+import { buildTriggerDefinition, createDefaultWhen, isSessionLifecycleWhen, SESSION_TRIGGER_WHEN_KINDS, type TriggerWhenValue } from './sessionTriggerForm';
+import { resolveTriggerEventGroup, TRIGGER_LIFECYCLE_GLYPHS } from './triggerEventGroups';
 import { editWorkflowTriggerDraft, type WorkflowTriggerDraft } from './workflowTriggerDraft';
 
 /**
@@ -120,6 +120,11 @@ export type WorkflowTriggerStartOption = Readonly<{
 /** A resource host ("Automate this…" on an environment): its own starts lead the menu under its name (Q5). */
 export type WorkflowTriggerStartContext = Readonly<{
     resource?: Readonly<{ title: string; startIds: readonly string[] }>;
+    /** The host Session seeds new starts; an existing row's deliberate Any selection wins. */
+    session?: Readonly<{
+        subject: Extract<AutomationSubjectV1, { kind: 'session' }>;
+        pullRequestLinks?: readonly Readonly<{ repository: string; number: number }>[];
+    }>;
 }>;
 
 const SCHEDULE_ID = 'schedule';
@@ -141,6 +146,9 @@ export function readWorkflowTriggerStartId(when: TriggerWhenValue): string | nul
         }
         case 'action':
             return actionStartId(when.phase);
+        case 'prComment':
+        case 'ciFailed':
+            return `session:${when.kind}`;
         default:
             return null;
     }
@@ -170,6 +178,10 @@ export function buildWorkflowTriggerStartOptions(
             id: sessionId(kind), group: t('workflows.triggers.card.groupSessions'), section: 'builtin',
             title: t(`workflows.triggers.card.sessionStart.${kind}`), glyph: TRIGGER_LIFECYCLE_GLYPHS[kind],
         })),
+        ...(context?.session === undefined ? [] : SESSION_TRIGGER_WHEN_KINDS.flatMap((kind): WorkflowTriggerStartOption[] =>
+            kind === 'prComment' || kind === 'ciFailed' ? [{
+                group: t('workflows.triggers.card.groupSessions'), section: 'builtin',
+                ...resolveTriggerEventGroup({ kind }), id: `session:${kind}` }] : [])),
     ];
     // Grouped by plugin, by plugin name; a plugin keeps its declaration order.
     const plugins = [...new Map(events.map((event) => [event.eventRef.pluginId, event.pluginName])).entries()]
@@ -202,7 +214,8 @@ export const ACTION_PHASE_GLYPHS = { before: 'sign-in', after: 'sign-out' } as c
  * trigger keeps the Action and subject already chosen; before starts waiting for its result (the
  * consequential default, said on its row), and after carries no wait policy.
  */
-export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhenValue | null): TriggerWhenValue | null {
+export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhenValue | null,
+    context?: WorkflowTriggerStartContext): TriggerWhenValue | null {
     if (id === SCHEDULE_ID) return createDefaultWhen('schedule');
     const phase = ACTION_PHASES.find((candidate) => id === actionStartId(candidate));
     if (phase !== undefined) {
@@ -221,10 +234,16 @@ export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhe
         if (kept?.kind === kind) return kept;
         return {
             kind,
-            ...(kept?.subject === undefined ? {} : { subject: kept.subject }),
+            ...(kept === null ? context?.session === undefined ? {} : { subject: context.session.subject }
+                : kept.subject === undefined ? {} : { subject: kept.subject }),
             ...(kept?.nextTimeOnly === undefined ? {} : { nextTimeOnly: kept.nextTimeOnly }),
             ...(kept?.policy === undefined ? {} : { policy: kept.policy }),
         };
+    }
+    if (context?.session !== undefined) {
+        const kind = SESSION_TRIGGER_WHEN_KINDS.find(kind => (kind === 'prComment' || kind === 'ciFailed') && id === `session:${kind}`);
+        if (kind === 'prComment' || kind === 'ciFailed') return previous?.kind === kind ? previous
+            : createDefaultWhen(kind, context.session.pullRequestLinks);
     }
     if (id.startsWith('event:')) {
         const ref = id.slice('event:'.length);
@@ -301,11 +320,13 @@ export function addWorkflowTriggerWhen(params: Readonly<{
     draft: WorkflowTriggerDraft;
     when: TriggerWhenValue;
     seed?: WorkflowTriggerDraftSeedIntent;
+    sessionId?: string | null;
     onChangeDraft: (next: WorkflowTriggerDraft) => void;
     updateIncomplete: (update: (current: WorkflowTriggerIncomplete) => WorkflowTriggerIncomplete) => void;
 }>): void {
     const clientId = createWorkflowTriggerClientId();
-    const next = commitWorkflowTriggerWhen({ draft: params.draft, row: { kind: 'new', clientId }, when: params.when, enabled: true });
+    const next = commitWorkflowTriggerWhen({ draft: params.draft, row: { kind: 'new', clientId }, when: params.when, enabled: true,
+        sessionId: params.sessionId });
     if (next !== null) params.onChangeDraft(next);
     else params.updateIncomplete((current) => ({ ...current, pending: [...current.pending, { clientId, when: params.when,
         ...params.seed }] }));

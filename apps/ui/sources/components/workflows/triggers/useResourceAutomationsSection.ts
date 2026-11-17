@@ -19,6 +19,8 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { useAccountWorkflowEditor } from './AccountTriggersSection';
 import { projectAccountTriggerRows, type AccountTriggerRow, type TriggerSubject } from './accountTriggerRows';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
+import { useSessionWorkflowContext, type SessionWorkflowContextRead } from './useSessionWorkflowContext';
+import { createSessionWorkflowSentenceIntent, type SessionWorkflowSentenceOptions, type WorkflowSentenceEditorIntent } from '../authoring/workflowSentenceAuthoring';
 import { useWorkflowActionCatalog } from '../presentation/useWorkflowActionCatalog';
 import { useWorkflowTriggerEventOptions } from './useWorkflowTriggerEventOptions';
 import { buildResourceWorkflowTriggerStartOptions, type ResourceWorkflowTriggerStartOption } from './workflowTriggerStarts';
@@ -65,6 +67,10 @@ export type SelectedAutomationsSectionRead = Readonly<{
 export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Readonly<{
     project: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'> | undefined;
     audience: readonly PrincipalRefV1[] | undefined;
+    /** Session lifetime and Channels context stay separate from the selected subject's attachments. */
+    session: (SessionWorkflowContextRead & Readonly<{
+        createSentenceIntent(options?: SessionWorkflowSentenceOptions): WorkflowSentenceEditorIntent | null;
+    }>) | null;
     link: Readonly<{
         whenOptions: readonly ResourceWorkflowTriggerStartOption[];
         whenStatus: 'idle' | 'loading' | 'ready' | 'unavailable';
@@ -123,6 +129,14 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const legacyMachineId = legacySubject?.machineId;
     const project = React.useMemo(() => props.executionContext ?? (legacyMachineId ? { machineId: legacyMachineId, directory: '~' } : undefined),
         [props.executionContext, legacyMachineId]);
+    const sessionContext = useSessionWorkflowContext(subject?.kind === 'session' ? subject.sessionId : null,
+        { demanded, accountLifetime });
+    const createSentenceIntent = React.useCallback((options?: SessionWorkflowSentenceOptions) => subject?.kind === 'session'
+        ? createSessionWorkflowSentenceIntent({ name: props.subjectName ?? '', project,
+            session: { subject, ...(Array.isArray(sessionContext.pullRequestLinks)
+                ? { pullRequestLinks: sessionContext.pullRequestLinks } : {}) } }, options) : null,
+    [subject, props.subjectName, project, sessionContext.pullRequestLinks]);
+    const session = subject?.kind === 'session' ? { ...sessionContext, createSentenceIntent } : null;
     const actionScope = React.useMemo(() => subject?.kind === 'session'
         ? { kind: 'session' as const, sessionId: subject.sessionId, serverId }
         : { kind: 'machine' as const, machineId: project?.machineId ?? (subject?.kind === 'machine' ? subject.machineId : null), serverId },
@@ -188,5 +202,5 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
         missingAudience, issue: reviewIssue, loading: reviewLoading,
         retryReview, submit: submitLink }),
     [whenOptions, whenStatus, linkDraft, setDraft, missingAudience, reviewIssue, reviewLoading, retryReview, submitLink]);
-    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, audience, link };
+    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, audience, session, link };
 }

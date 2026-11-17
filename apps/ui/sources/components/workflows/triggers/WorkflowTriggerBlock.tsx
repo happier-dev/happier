@@ -51,6 +51,8 @@ import {
 } from './formatTriggerSummary';
 import {
   buildTriggerDefinition,
+  isSessionLifecycleWhen,
+  type SessionLifecycleWhen,
   type TriggerWhenValue,
 } from './sessionTriggerForm';
 import { REPEAT_LABEL_KEYS, useStoredSessionItem } from './TriggerPopover';
@@ -65,6 +67,7 @@ import { useTriggerScheduleCommands } from './useTriggerScheduleCommands';
 import {
   readWorkflowTriggerStartId,
   type WorkflowTriggerStartOption,
+  type WorkflowTriggerStartContext,
 } from './workflowTriggerStarts';
 
 const styles = StyleSheet.create((theme) => ({
@@ -102,14 +105,7 @@ const styles = StyleSheet.create((theme) => ({
   selectBox: { flexGrow: 0, flexShrink: 1, minWidth: 0, alignSelf: 'flex-start', maxWidth: '100%' },
 }));
 
-type SessionEventKind = Extract<
-  TriggerWhenValue['kind'],
-  'turnEnds' | 'needsYou' | 'sessionArchived' | 'sessionStarts'
->;
-type SessionEventWhen = Extract<
-  TriggerWhenValue,
-  Readonly<{ kind: SessionEventKind }>
->;
+type SessionEventWhen = SessionLifecycleWhen;
 type ScheduleWhen = Extract<TriggerWhenValue, Readonly<{ kind: 'schedule' }>>;
 export type ActionWhen = Extract<TriggerWhenValue, Readonly<{ kind: 'action' }>>;
 
@@ -161,6 +157,10 @@ export function WorkflowTriggerBlock(
     machineId: string | null;
     serverId: string | null;
     accountLifetime?: ServerAccountScopeLifetime | null;
+    /** The authored lifetime Session, independent of the watched source. */
+    sessionId?: string;
+    /** Borrowed by the existing PR picker and scope controls; carries no independent read or controller. */
+    sessionContext?: WorkflowTriggerStartContext['session'];
     eventEdit?: Readonly<{ automationId: string; triggerId: string }>;
     initialEventSeed?: React.ComponentProps<typeof TriggerPluginEventRows>['initialEventSeed'];
     onEditSeedApplied?: React.ComponentProps<
@@ -305,11 +305,7 @@ export function WorkflowTriggerBlock(
           onChange={props.onChangeWhen}
         />
       ) : null}
-      {when !== null &&
-      (when.kind === 'turnEnds' ||
-        when.kind === 'needsYou' ||
-        when.kind === 'sessionArchived' ||
-        when.kind === 'sessionStarts') ? (
+      {when !== null && isSessionLifecycleWhen(when) ? (
         <SessionEventTrackRows
           testID={props.testID}
           when={when}

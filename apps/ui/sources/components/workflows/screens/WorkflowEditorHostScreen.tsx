@@ -2049,6 +2049,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                     const section = {
                         accountLifetime: props.accountLifetime,
                         testIDPrefix: 'workflow-editor',
+                        startContext: definitionDraftSeed?.startContext,
                         workflowDefinitionId: saved?.definitionId,
                         set: triggers.set,
                         draft: triggers.draft,

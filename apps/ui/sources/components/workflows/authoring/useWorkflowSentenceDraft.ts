@@ -20,6 +20,7 @@ import { createWorkflowTriggerIncompleteSeed } from '../triggers/workflowTrigger
 import { prepareWorkflowSentenceEditorEntry, type WorkflowSentenceEditorIntent } from './workflowSentenceAuthoring';
 
 export type WorkflowSentenceDraft = Readonly<{
+    startContext: WorkflowSentenceEditorIntent['startContext'];
     draftStore: WorkflowEditorDraftStore;
     onChange: (draft: WorkflowEditorDraft, label?: string) => void;
     readonly step: WorkflowActionLeafV1 | null;
@@ -138,7 +139,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
             if (isCurrent()) setSaving(false);
         }
     };
-    return { draftStore: source.store, onChange, get step() { return readStep(); }, get operands() { return readStep()?.input ?? {}; },
+    return { startContext: source.intent.startContext, draftStore: source.store, onChange, get step() { return readStep(); }, get operands() { return readStep()?.input ?? {}; },
         changeStep, changeOperand, project, changeProject: setProject, triggers: { ...triggers, setDraft: next => {
             const before = { draft: source.store.get(), triggers: triggers.captureSnapshot() };
             const after = { ...before, triggers: triggers.captureSnapshot(next) };

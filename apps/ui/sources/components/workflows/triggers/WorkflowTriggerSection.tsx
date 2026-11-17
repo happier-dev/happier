@@ -36,7 +36,6 @@ import {
     formatScheduledRunQualifier,
     formatTriggerSummary,
     readNextScheduledRunRefreshAtMs,
-    readSessionLifecycleKind,
 } from './formatTriggerSummary';
 import { readScheduleWhen, readTriggerWhen, type TriggerWhenValue } from './sessionTriggerForm';
 import { FieldSelect } from './TriggerPopover';
@@ -139,11 +138,7 @@ function rowWhen(row: WorkflowTriggerRowModel, set: WorkflowTriggerSetV1 | null,
     }
     // A drafted session event (the card only drafts Account kinds; schedules are read above).
     if (input?.kind === 'sessionLifecycle') {
-        const kind = readSessionLifecycleKind(input.events);
-        if (kind === 'turnEnds' && input.policy.kind === 'currentTurn') {
-            return { kind, sourceSessionId: input.sourceSessionId, sourceTurnId: input.policy.sourceTurnId };
-        }
-        return { kind, sourceSessionId: input.sourceSessionId, ...(input.policy.kind === 'firstMatch' ? { nextTimeOnly: true as const } : {}) };
+        return readTriggerWhen(input);
     }
     const saved = row.kind === 'saved' ? set?.triggers.find((trigger) => trigger.id === row.triggerId) : null;
     return saved ? readTriggerWhen(saved) : null;
@@ -207,6 +202,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const { theme } = useUnistyles();
 
     const change = props.onChangeDraft;
+    const sessionContext = props.startContext?.session;
+    const lifetimeSessionId = sessionContext?.subject.sessionId ?? props.set?.scopeSessionId;
     // One Runs on per trigger set: a pending change, the set's, or the editor's Where for a new set.
     const runsOn = props.draft.context?.project ?? props.set?.project ?? props.whereTarget;
     const runsOnDiffers = runsOn !== null && props.whereTarget !== null
@@ -275,7 +272,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
 
     // A complete When joins the draft; an incomplete one stays on screen until it is.
     const editRow = (row: WorkflowTriggerRowModel, when: TriggerWhenValue) => {
-        const next = commitWorkflowTriggerWhen({ draft: props.draft, row: rowRef(row), when, enabled: row.enabled });
+        const next = commitWorkflowTriggerWhen({ draft: props.draft, row: rowRef(row), when, enabled: row.enabled,
+            sessionId: lifetimeSessionId });
         if (next === null && row.kind === 'new') {
             // A previously complete add must leave the save draft while its replacement is incomplete.
             setPending(current => [...current, { clientId: row.clientId, when, enabled: row.enabled }]);
@@ -289,7 +287,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const editPending = (clientId: string, when: TriggerWhenValue) => {
         const enabled = pending.find(item => item.clientId === clientId)?.enabled ?? true;
         const previousWhen = resolvedPending.find(item => item.clientId === clientId)?.when;
-        const next = commitWorkflowTriggerWhen({ draft: props.draft, row: { kind: 'new', clientId }, when, enabled });
+        const next = commitWorkflowTriggerWhen({ draft: props.draft, row: { kind: 'new', clientId }, when, enabled,
+            sessionId: lifetimeSessionId });
         setPending(current => next === null
             ? current.some(item => item.clientId === clientId)
                 ? current.map(item => item.clientId === clientId
@@ -305,7 +304,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     // The When select's choice; a session event keeps its Session, and choosing the same start keeps the rows as they are.
     const selectStart = (when: TriggerWhenValue | null, id: string, apply: (next: TriggerWhenValue) => void) => {
         if (when !== null && readWorkflowTriggerStartId(when) === id) return;
-        const next = createWorkflowTriggerStartWhen(id, when);
+        const next = createWorkflowTriggerStartWhen(id, when, props.startContext);
         if (next !== null) apply(next);
     };
     // This Account's set has no trigger; the library may still list others' triggers on this workflow.
@@ -331,6 +330,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     onSelectStart={(id) => selectStart(when, id, (next) => editRow(row, next))}
                     {...placement}
                     accountLifetime={props.accountLifetime}
+                    sessionId={lifetimeSessionId}
+                    sessionContext={sessionContext}
                     {...(savedSchedule ? { savedNextRunAt: props.set?.enabled ? readNextRunAt(row) : null } : {})}
                     {...(row.kind === 'saved' && props.set && row.trigger.kind === 'pluginEvent'
                         ? { eventEdit: { automationId: props.set.automationId, triggerId: row.triggerId } } : {})}
@@ -365,7 +366,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                 initialEventSeed={item.eventSeed}
                 onStartsOpenChange={demandCatalog}
                 onSelectStart={(id) => selectStart(item.when, id, (next) => editPending(item.clientId, next))}
-                {...placement} accountLifetime={props.accountLifetime}
+                {...placement} accountLifetime={props.accountLifetime} sessionId={lifetimeSessionId} sessionContext={sessionContext}
                 onChangeWhen={(when) => editPending(item.clientId, when)}
                 onRemove={() => setPending(current => current.filter(candidate => candidate.clientId !== item.clientId))} />
         )),
@@ -380,8 +381,9 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
         </Text>
     );
     const addStart = (id: string) => {
-        const when = createWorkflowTriggerStartWhen(id);
-        if (when !== null) addWorkflowTriggerWhen({ draft: props.draft, when, onChangeDraft: change, updateIncomplete });
+        const when = createWorkflowTriggerStartWhen(id, null, props.startContext);
+        if (when !== null) addWorkflowTriggerWhen({ draft: props.draft, when, onChangeDraft: change, updateIncomplete,
+            sessionId: lifetimeSessionId });
     };
     if (props.presentation === 'sentence') {
         // The same rows, handlers and pickers as the card: each line's detail chip opens that trigger's own block.

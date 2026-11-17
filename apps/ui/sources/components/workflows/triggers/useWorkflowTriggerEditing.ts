@@ -36,6 +36,7 @@ import {
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
 import type { WorkflowActionCallerContext } from '@/sync/domains/workflows/callWorkflowAction';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { matchesWorkflowTriggerQuery, workflowTriggerQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
 
 export type WorkflowTriggerEditing = Readonly<{
     set: WorkflowTriggerSetV1 | null;
@@ -79,9 +80,17 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
     initialIncomplete?: WorkflowTriggerIncomplete;
 }>): WorkflowTriggerEditing {
-    const request = React.useMemo(() => params.definitionId === null ? null : { workflow: params.definitionId }, [params.definitionId]);
+    const lifetimeSessionId = params.lifetimeSession?.sessionId;
+    const request = React.useMemo(() => params.definitionId === null ? null : lifetimeSessionId === undefined
+        ? { workflow: params.definitionId } : { lifetimeSession: { sessionId: lifetimeSessionId } },
+    [params.definitionId, lifetimeSessionId]);
     const { sets, status, retry, acknowledge } = useWorkflowTriggerSets(request, params.accountLifetime);
-    const listedSet = params.definitionId === null ? null : sets[0] ?? null;
+    // The Account workflow query excludes Session-lifetime rows. Its admitted lifetime page can
+    // contain other workflows and Account destinations, so select this workflow within its lifetime.
+    const workflowQueryKey = params.definitionId === null ? null : workflowTriggerQueryKey({ workflow: params.definitionId });
+    const listedSet = workflowQueryKey === null ? null : lifetimeSessionId === undefined ? sets[0] ?? null
+        : sets.find(candidate => candidate.scopeSessionId === lifetimeSessionId
+            && matchesWorkflowTriggerQuery(workflowQueryKey, candidate) === true) ?? null;
     const activeScope = useActiveServerAccountScope();
     const scope = params.accountLifetime === undefined ? activeScope : params.accountLifetime?.scope ?? null;
     const scopeKey = scope ? serverAccountScopeKeySuffix(scope) : null;

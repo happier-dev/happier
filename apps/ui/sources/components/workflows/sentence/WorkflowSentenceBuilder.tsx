@@ -149,6 +149,7 @@ function WorkflowSentenceBuilderBody(
     <WorkflowTriggerSection
       presentation="sentence"
       accountLifetime={lifetime}
+      startContext={sentence.startContext}
       testIDPrefix={TEST_ID}
       set={triggers.set}
       draft={triggers.draft}

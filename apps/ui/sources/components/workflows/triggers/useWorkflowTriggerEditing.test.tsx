@@ -110,6 +110,16 @@ function listRows() {
 function persistedTrigger(id: string, value: AutomationTriggerDefinitionInput, revision = 1, automationId = 'set-1'): AutomationDefinitionDetail['triggers'][number] {
     const base = { ...value, id: AutomationTriggerIdSchema.parse(id), revision, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null };
     if (value.kind === 'schedule') return AutomationTriggerDetailSchema.parse({ ...base, nextRunAt: null });
+    if (value.kind === 'prComment' || value.kind === 'ciFailed') {
+        const sourceSessionId = rows.find(row => row.id === automationId)?.scopeSessionId;
+        if (!sourceSessionId) throw new Error('PR fixture requires its admitted lifetime Session');
+        const envelope = 'triggerDefinitionEnvelope' in value ? value.triggerDefinitionEnvelope
+            : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding: {
+                v: 1, automationId, triggerId: AutomationTriggerIdSchema.parse(id), triggerRevision: revision, triggerKind: value.kind,
+            }, definition: { kind: value.kind, pullRequest: value.pullRequest } });
+        return AutomationTriggerDetailSchema.parse({ id, kind: value.kind, enabled: value.enabled, revision,
+            createdAt: 1, updatedAt: 1, sourceSessionId, triggerDefinitionEnvelope: JSON.stringify(envelope) });
+    }
     if (value.kind === 'sessionLifecycle') return createWorkflowAutomationTriggerDetailFixture(automationId,
         { triggerId: AutomationTriggerIdSchema.parse(id), trigger: value }, revision);
     // The server boundary stores private Event input in its revision-bound envelope.
@@ -882,6 +892,104 @@ describe('workflow trigger editing lifetime', () => {
         await act(async () => { await hook.getCurrent().remove('t1'); });
         expect(hook.getCurrent().sets).toEqual([]);
         expect(rows[0]?.triggers).toEqual([]);
+    });
+    it.each(['prComment', 'ciFailed'] as const)('edits saved %s in the shared section using its saved lifetime without an intake context', async kind => {
+        const { WorkflowTriggerSection } = await import('./WorkflowTriggerSection');
+        const { WorkflowTriggerBlock } = await import('./WorkflowTriggerBlock');
+        seed(set);
+        rows = rows.map(row => AutomationDefinitionDetailSchema.parse({ ...row, scopeSessionId: 'session-a' }));
+        rows = rows.map(row => AutomationDefinitionDetailSchema.parse({ ...row, triggers: [persistedTrigger('t1', {
+            kind, enabled: true, pullRequest: { repository: 'acme/widgets', number: 7 },
+        }, 1, row.id)] }));
+        // Channels owns the remote binding write; retain real requester admission and transport.
+        const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+        const { SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1, SessionPullRequestBindingInputV1Schema,
+            SessionPullRequestBindingResultV1Schema } = await import('@happier-dev/channels-protocol/v1');
+        const attachments: ReturnType<typeof SessionPullRequestBindingInputV1Schema.parse>[] = [];
+        await answerExternalActionAccountForHome(home, serverId, { machineId: projectTarget.machineId, actionId: 'action.invoke', tokenEpoch: 0,
+            execute(input) {
+                const invocation = getActionSpec('action.invoke').inputSchema.parse(input);
+                expect(invocation.action).toEqual({ pluginId: 'happier.channels', localId: SESSION_PULL_REQUEST_BINDING_ACTION_ID_V1 });
+                const attachment = SessionPullRequestBindingInputV1Schema.parse(invocation.input);
+                if (attachment.kind !== 'attach') throw new Error('Expected the saved trigger binding update');
+                attachments.push(attachment);
+                return SessionPullRequestBindingResultV1Schema.parse({ kind: 'attached', bindingId: 'binding-a' });
+            } });
+        const hook = await renderHook(() => useWorkflowTriggerEditing({ definitionId, sourceKey: 'saved-pr', projectTarget,
+            lifetimeSession: { sessionId: 'session-a' } }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().set?.scopeSessionId).toBe('session-a'));
+        const editor = hook.getCurrent();
+        const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="saved-pr" set={editor.set} draft={editor.draft}
+            onChangeDraft={editor.setDraft} status={editor.status} onRetry={editor.retry} stepsUnsaved={false}
+            whereTarget={projectTarget} whereSummary="/repo" inputs={[]} />);
+        const block = screen.findAll(node => node.type === WorkflowTriggerBlock)[0];
+        if (!block) throw new Error('Expected the saved PR editor');
+        await act(async () => { block.props.onChangeWhen({ kind, pullRequest: { repository: 'acme/widgets', number: 8 } }); });
+        await act(async () => { expect(await hook.getCurrent().save(definitionId, () => true)).toBe('saved'); });
+        expect(rows[0]).toMatchObject({ scopeSessionId: 'session-a' });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().set?.triggers).toMatchObject([{ kind,
+            pullRequest: { repository: 'acme/widgets', number: 8 } }]));
+        expect(attachments).toMatchObject([{ kind: 'attach', sessionId: 'session-a', pullRequest: { repository: 'acme/widgets', number: 8 },
+            target: { automationId: set.automationId, triggerKind: kind } }]);
+    });
+
+    it('supplies Session context and Account destinations through one shared physical-Account census', async () => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { resolvePortableServerIdentityForRoutingId } = await import('@/sync/domains/server/resolvePortableServerIdentityForRoutingId');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        seed(set);
+        rows = rows.map(row => AutomationDefinitionDetailSchema.parse({ ...row, scopeSessionId: 'session-a' }));
+        const example = WORKFLOW_STARTER_EXAMPLES_V1.find(value => value.key === 'daily-summary-in-session')!;
+        const selection = materializeWorkflowStarterExample(example, { session: { sessionId: 'session-a', machineId: 'm1' } });
+        if (selection.status !== 'ready') throw new Error('Session-bound example required');
+        const destination = AutomationDefinitionDetailSchema.parse({ ...rows[0], id: 'account-destination', scopeSessionId: null,
+            workflowDefinitionId: null, executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
+                workspace: { directory: '/repo' }, executionTarget: { kind: 'session' }, inlineDefinition: selection.example.definition,
+            } } } });
+        rows = [...rows, destination];
+        installRow(destination.id);
+        const subject = { kind: 'session', serverId: resolvePortableServerIdentityForRoutingId(serverId)!, sessionId: 'session-a' } as const;
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const retirement = new AbortController();
+        const physical = await captureLazyActionAccountContext(serverId, retirement.signal);
+        const physicalServerUrl = (await import('@/sync/domains/server/serverProfiles')).getServerProfileById(serverId)?.serverUrl;
+        let presented = false;
+        try {
+            const focusedServerId = await home.addHome({ name: 'Another focused Home', serverUrl: `https://session-focused-${crypto.randomUUID()}.test`,
+                accountId: 'another-account' });
+            publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+            storage.setState({ profileScope: { serverId: focusedServerId, accountId: 'another-account' },
+                settingsScope: { serverId: focusedServerId, accountId: 'another-account' } });
+            const hook = await renderHook(() => useResourceAutomationsSection({ subject, subjectName: 'Review', accountLifetime: physical.accountLifetime }), {
+                wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active={presented}>{children}</PluginSurfaceFocusEligibilityProvider>,
+            });
+            expect(listRequests()).toEqual([]);
+            presented = true;
+            await hook.rerender();
+            await waitForHomeGovernance(() => expect(hook.getCurrent().session?.status).toBe('ready'));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().session?.read.status).toBe('ready'));
+            expect(hook.getCurrent().session?.read.sets).toMatchObject([{ scopeSessionId: 'session-a' }]);
+            expect(hook.getCurrent().session?.sets.map(value => value.automationId).sort())
+                .toEqual(['account-destination', set.automationId].sort());
+            expect(hook.getCurrent().session?.pullRequestLinks).toMatchObject({ status: 'unavailable' });
+            const queries = listRequests();
+            expect(queries.map(query => query.serverUrl)).toEqual(queries.map(() => physicalServerUrl));
+            expect(queries.map(query => query.input).filter(query => query && typeof query === 'object' && !('subject' in query) && !('scopeSessionId' in query))).toHaveLength(1);
+            expect(queries.map(query => query.input).filter(query => query && typeof query === 'object' && 'scopeSessionId' in query)).toHaveLength(1);
+            expect(hook.getCurrent().session?.createSentenceIntent()).toMatchObject({
+                trigger: { kind: 'sessionLifecycle', subject }, lifetimeSession: { sessionId: subject.sessionId },
+                startContext: { session: { subject } },
+            });
+            await hook.unmount();
+            retirement.abort();
+            physical.dispose();
+            const beforeRetiredMount = home.requests.length;
+            await renderHook(() => useResourceAutomationsSection({ subject, accountLifetime: physical.accountLifetime }));
+            await flushHookEffects();
+            expect(home.requests.slice(beforeRetiredMount).filter(request => request.path === '/v3/automations/query'
+                || request.path === '/v1/plugins/data/query')).toEqual([]);
+        } finally { physical.dispose(); }
     });
     it('reads Session and Account Habits while the real pull-request observer attachment is pending', async () => {
         // A native client runs this portable Account Action locally; browser placement requires an advertised daemon receiver.

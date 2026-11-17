@@ -17,8 +17,10 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 import { readWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import type { WorkflowActionLeafV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import * as authoring from './useWorkflowSentenceDraft';
+import { createSessionWorkflowSentenceIntent } from './workflowSentenceAuthoring';
 import { editWorkflowTriggerDraft } from '../triggers/workflowTriggerDraft';
 
 // Expo's native randomness adapter is outside the Node host renderer.
@@ -50,6 +52,7 @@ async function sourceHome() {
     const requests: string[] = [];
     let beforeCreate: (() => Promise<Response | undefined>) | undefined;
     const restored = await restoreServerAccountForTest({ serverUrl: 'https://sentence-authoring.test', accountId,
+        serverIdentityId: 'srv_sentence-authoring',
         configureSocket: configureConnectedServerSocketBoundary,
         request: async (input, init) => {
             const url = new URL(String(input));
@@ -111,6 +114,57 @@ it('saves a Session-lifetime sentence without a Project and carries that lifetim
     expect(saved.definition.blocks).toEqual([message]);
     await act(async () => { expect(await hook.getCurrent().save()).toEqual({ status: 'unchanged' }); });
     expect(home.automations.creates).toHaveLength(1);
+});
+
+it.each(['session', 'project', 'machine', 'any'] as const)('keeps Session lifetime while the shared sentence watches %s scope', async kind => {
+    const home = await sourceHome();
+    const subject = { kind: 'session', serverId: resolvePortableServerIdentityForRoutingId(home.lifetime.scope.serverId)!, sessionId: 'lifetime-session' } as const;
+    const startContext = { session: { subject } };
+    if (kind === 'session') {
+        const other = await renderHook(() => authoring.useWorkflowSentenceDraft({ name: 'Another Session workflow', step: message,
+            trigger, lifetimeSession: { sessionId: subject.sessionId } }, home.lifetime));
+        await act(async () => { expect(await other.getCurrent().save()).toEqual({ status: 'applied' }); });
+        await other.unmount();
+    }
+    const watched = kind === 'session' ? subject : kind === 'project'
+        ? { kind, serverId: subject.serverId, projectKey: 'project-a' } as const : kind === 'machine'
+            ? { kind, serverId: subject.serverId, machineId: 'machine-a' } as const : undefined;
+    const intent = createSessionWorkflowSentenceIntent({ name: 'Session automation', session: startContext.session },
+        kind === 'session' ? undefined : { subject: watched });
+    if (intent === null) throw new Error('Expected Session intake');
+    const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ ...intent, step: message }, home.lifetime));
+    expect(hook.getCurrent().triggers.draft.adds).toMatchObject([{ trigger: { kind: 'sessionLifecycle' } }]);
+    await act(async () => { expect(await hook.getCurrent().save(), JSON.stringify(home.requests)).toEqual({ status: 'applied' }); });
+    expect(home.automations.creates.at(-1)).toMatchObject({ scopeSessionId: subject.sessionId });
+    await vi.waitFor(() => expect(hook.getCurrent().triggers.set?.triggers[0]?.kind).toBe('sessionLifecycle'));
+    const savedTrigger = hook.getCurrent().triggers.set!.triggers[0];
+    expect(savedTrigger).toMatchObject({ kind: 'sessionLifecycle', policy: { kind: 'everyMatch' } });
+    if (watched === undefined) expect(savedTrigger).not.toHaveProperty('subject');
+    else expect(savedTrigger).toHaveProperty('subject', watched);
+    const entry = hook.getCurrent().openInEditor();
+    expect(entry && readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, home.lifetime.scope))
+        .toMatchObject({ startContext, lifetimeSession: { sessionId: subject.sessionId },
+            triggers: { rows: [{ trigger: { kind: 'sessionLifecycle', policy: { kind: 'everyMatch' } } }] } });
+});
+
+it('carries exact-turn intake through the same sentence create Action', async () => {
+    const home = await sourceHome();
+    const subject = { kind: 'session', serverId: resolvePortableServerIdentityForRoutingId(home.lifetime.scope.serverId)!, sessionId: 'lifetime-session' } as const;
+    const source = { name: 'This turn', session: { subject } };
+    const exactTurnPrefill = { sourceSessionId: subject.sessionId, sourceServerId: home.lifetime.scope.serverId,
+        sourceTurnId: 'turn-a', events: ['parentTurnCompleted'] as const };
+    expect(createSessionWorkflowSentenceIntent(source, { exactTurnPrefill: { ...exactTurnPrefill, sourceSessionId: 'another-session' } })).toBeNull();
+    expect(createSessionWorkflowSentenceIntent(source, { exactTurnPrefill: { ...exactTurnPrefill, sourceServerId: 'another-home' } })).toBeNull();
+    expect(createSessionWorkflowSentenceIntent(source, { subject: undefined, exactTurnPrefill })).toBeNull();
+    const intent = createSessionWorkflowSentenceIntent(source, { exactTurnPrefill });
+    if (intent === null) throw new Error('Expected exact-turn intake');
+    const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ ...intent, step: message }, home.lifetime));
+    expect(hook.getCurrent().triggers.draft.adds).toMatchObject([{ trigger: { subject, policy: { kind: 'currentTurn', sourceTurnId: 'turn-a' } } }]);
+    await act(async () => { expect(await hook.getCurrent().save(), JSON.stringify(home.requests)).toEqual({ status: 'applied' }); });
+    expect(home.automations.creates[0]).toMatchObject({ scopeSessionId: subject.sessionId });
+    await vi.waitFor(() => expect(hook.getCurrent().triggers.set?.triggers[0]).toMatchObject({
+        subject, policy: { kind: 'currentTurn', sourceTurnId: 'turn-a' },
+    }));
 });
 
 it('retains the failed create identity and current edits, then uses the ordinary revision owner on retry', async () => {

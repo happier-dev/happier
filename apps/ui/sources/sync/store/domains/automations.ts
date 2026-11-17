@@ -11,7 +11,7 @@ import { getAutomationDefinitionRunCauseAt } from '@/sync/domains/automations/au
 import { loadSyncTuning } from '@/sync/runtime/syncTuning';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowTriggerListRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
-import { isWorkflowTriggerSetAttachedToSession } from '@/sync/domains/workflows/workflowTriggerSession';
+import { projectSessionWorkflowTriggerSets } from '@/sync/domains/workflows/workflowTriggerSession';
 import { matchesWorkflowTriggerQuery, workflowTriggerQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
 
 import type { StoreGet, StoreSet } from './_shared';
@@ -111,14 +111,13 @@ export function createWorkflowTriggerSetSelector(queryKey: string, includeEmpty 
         previousFacts = state.workflowTriggerSetsById;
         previousIds = ids;
         previousAccountIds = accountIds;
-        const selectedIds = sessionId === null ? ids ?? [] : [...new Set([...(ids ?? []), ...(accountIds ?? [])])];
-        const scopedIds = sessionId === null ? undefined : new Set(ids);
-        const next = selectedIds.flatMap((id) => {
-            const value = state.workflowTriggerSetsById[id];
-            if (value && sessionId !== null && !scopedIds?.has(id) && !isWorkflowTriggerSetAttachedToSession(value, sessionId)) return [];
+        const querySets = (ids ?? []).flatMap(id => state.workflowTriggerSetsById[id] ?? []);
+        const selected = sessionId === null ? querySets : projectSessionWorkflowTriggerSets(sessionId, querySets,
+            (accountIds ?? []).flatMap(id => state.workflowTriggerSetsById[id] ?? []));
+        const next = selected.filter((value) => {
             // Manual Account Automations keep their owned steps after reviewed conversion too.
-            return value && (includeEmpty || value.triggers.length > 0
-                || (queryKey === 'account_inline' && (value.legacy || value.target))) ? [value] : [];
+            return includeEmpty || value.triggers.length > 0
+                || (queryKey === 'account_inline' && Boolean(value.legacy || value.target));
         });
         if (next.length === previous.length && next.every((value, index) => previous[index] === value)) return previous;
         previous = next;
