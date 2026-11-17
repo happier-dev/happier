@@ -167,15 +167,16 @@ resolve_command_policy() {
     native_policy_loaded=1
   fi
   resolve_native_command_policy "$@" || exit $?
-  require_sibling_basis_bootstrap
 }
 
 # A --repo sibling basis is its own checkout with its own lockfile, and its
 # replica may never have been installed: an unclassified payload (`pnpm exec
 # node <runner>`) would otherwise reach a tree without node_modules. Its own
-# bootstrap installs on first dispatch and only verifies readiness when warm.
-require_sibling_basis_bootstrap() {
-  if [ -n "${command_repo_root-}" ] && [ "${policy_placement-}" = worker-eligible ]; then policy_bootstrap=1; fi
+# bootstrap runs before every worker-eligible sibling payload: it installs on
+# first dispatch and only verifies readiness when warm. Only the preparation
+# step is added; the payload's own policy (admission, locks) is unchanged.
+sibling_basis_needs_bootstrap() {
+  [ "${policy_bootstrap-0}" = 1 ] || { [ -n "${command_repo_root-}" ] && [ "${policy_placement-}" = worker-eligible ]; }
 }
 
 resolve_self_publisher_policy() {
@@ -205,7 +206,7 @@ resolve_self_publisher_policy() {
   # The same manifest owner resolves aliases, preparation and admission. Its
   # shell-quoted assignments preserve package paths and tool unions verbatim.
   case "$self_publisher_policy" in
-    policy_placement=*) eval "$self_publisher_policy"; require_sibling_basis_bootstrap ;;
+    policy_placement=*) eval "$self_publisher_policy" ;;
     *) printf '%s\n' '[preferred-execution] invalid package command policy' >&2; exit 2 ;;
   esac
   nested_worker_tool=$policy_workerTool
@@ -455,7 +456,7 @@ run_local() {
     fi
     # Prefer checkout-owned preparation and its package tools. Older --repo
     # checkouts may lack either entrypoint; the executor still supports them.
-    if [ "$policy_bootstrap" = 1 ]; then
+    if sibling_basis_needs_bootstrap; then
       local_bootstrap_script="$local_preparation_repo/apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs"
       [ -f "$local_bootstrap_script" ] || local_bootstrap_script="$script_dir/../scripts/utils/dev_targets/remote_dependency_bootstrap.mjs"
       node "$local_bootstrap_script" \
@@ -1137,7 +1138,8 @@ if [ "${policy_workspaceSync-1}" != 0 ] && ! command -v mutagen >/dev/null 2>&1;
   printf '%s\n' '[preferred-execution] controller synchronization requires mutagen on PATH; install Mutagen or restore the controller PATH before remote execution' >&2
   exit 127
 fi
-requires_remote_dependencies=$policy_bootstrap
+requires_remote_dependencies=0
+sibling_basis_needs_bootstrap && requires_remote_dependencies=1
 requires_remote_workspace_preparation=0
 [ "$command_class" = targeted-validation ] && requires_remote_workspace_preparation=1
 remote_validation_kind=$policy_kind
