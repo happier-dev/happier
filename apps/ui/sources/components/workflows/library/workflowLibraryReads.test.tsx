@@ -1073,6 +1073,28 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         } finally { account.dispose(); }
     });
 
+    it('keeps workflow picker ownership from admitted access through the shared Link options owner', async () => {
+        await saved(definitionId, 'Release checks');
+        await saved(secondId, 'Release checks');
+        const boundary = home.artifacts(serverId);
+        boundary.replaceStoredRow({ ...boundary.read(secondId)!, ownerAccountId: 'sharing-owner' });
+        boundary.seedAccountGrant(secondId, accountId, 'edit');
+        const { useTriggerThenOptions } = await import('../triggers/useTriggerThenOptions');
+        const picker = await renderHook((enabled: boolean) => useTriggerThenOptions({ libraryEnabled: enabled }), { initialProps: false });
+        expect(picker.getCurrent().workflowOptions).toEqual([]);
+        expect(artifactInventoryReads()).toHaveLength(0);
+
+        await picker.rerender(true);
+        await waitForHomeGovernance(() => expect(picker.getCurrent().workflowOptions.some(option => option.ref === secondId)).toBe(true));
+        const options = picker.getCurrent().workflowOptions;
+        expect(options.find(option => option.ref === definitionId)).toMatchObject({ title: 'Release checks' });
+        expect(options.find(option => option.ref === definitionId)?.origin).toBeUndefined();
+        expect(options.find(option => option.ref === secondId)).toMatchObject({ title: 'Release checks', origin: 'shared' });
+        expect(options.some(option => option.origin === 'builtin')).toBe(true);
+        expect(artifactInventoryReads()).toHaveLength(1);
+        expect(home.requests.filter(request => request.path === '/v1/artifacts/read')).toHaveLength(0);
+    });
+
     it('keeps admitted shared titles on the first cached render and withdraws locked, removed, or foreign-scope facts', async () => {
         await storage.getState().activateSettingsScope({ serverId, accountId });
         await saved(definitionId, 'Shared scheduled title');
