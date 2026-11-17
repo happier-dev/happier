@@ -9368,6 +9368,14 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 ACP `projectPromptUsage` accepts an optional native completion
+context and may return a Promise. Existing synchronous projectors remain valid.
+The host awaits that same projection before emitting the ordinary usage event;
+CodeBuddy uses the native Session identity, effective environment and cancellation
+signal to read correlated native facts when ACP usage is absent. Matching SDK,
+Agent and host development readers reload together. This is an in-process SDK
+change, without a wire epoch, persisted format, adapter or additional collector.
+
 Unreleased 0.3 engine-only plugins use the closed `databaseEngines` contribution
 family, with closed capability entries and the existing daemon activation ABI.
 The platform owns the structural capability grammar; database-protocol supplies

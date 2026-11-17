@@ -987,6 +987,16 @@ Loaded-daemon replay requires the orchestrator's next authorized reload.
 
 ## Native Agent seam
 
+In 0.3 development, ACP prompt usage projection may complete asynchronously at
+the existing prompt-response boundary. The host supplies the native Session id,
+effective process environment and cancellation signal to the
+Agent's optional completion context. CodeBuddy reads its existing native journal
+only when the ACP result has no usage, correlating the result's user message and
+conversation request with immutable native message identities. The ordinary
+Session usage publisher remains the accounting owner. Missing native facts remain
+unavailable; this adds no collector, background reader, polling or synthesized
+counters. Matching SDK, Agent and host development readers reload together.
+
 Native skill changes use the strict `catalog-changed` runtime event with
 `catalog: 'skills'`. The existing native Session publication owner records one
 content-free `agentState.nativeCatalogChangesV1.skills` token from its runtime

@@ -4,6 +4,7 @@ import { CODEBUDDY_ACP_RUNTIME_DECLARATION } from '../acp/runtimeDeclaration.js'
 import { CODEBUDDY_TERMINAL_SURFACE } from '../terminal/contribution.js';
 import { prepareCodeBuddyConnectedAccount } from './connectedAccounts.js';
 import { codeBuddyNativeSandboxSettings } from './launchSettings.js';
+import { createCodeBuddyPromptUsage } from './usage.js';
 export { codeBuddyExternalSessionsContribution } from '../externalSessions/contribution.js';
 
 // CodeBuddy Code 2.162 invokes lazily discovered tools through this native ACP wrapper.
@@ -35,7 +36,7 @@ async function prepare(request: Pick<AgentSessionOpenRequest, 'configuration' | 
   const nativeSettingsArgs = request.configuration?.nativeSandbox === undefined ? []
     : ['--settings', JSON.stringify(codeBuddyNativeSandboxSettings(request.configuration.nativeSandbox))];
   const options: AgentAcpRuntimeOptions = { transport: { ...transport, args: [...transport.args, ...(account?.args ?? nativeSettingsArgs)], ...(account ? { env: account.env } : {}) },
-    definition: { ...definition, toolNameResolver: resolveCodeBuddyAcpToolName,
+    definition: { ...definition, toolNameResolver: resolveCodeBuddyAcpToolName, usage: createCodeBuddyPromptUsage(),
       ...(account ? { models: account.models } : {}) } };
   return { options, dispose: () => account?.dispose() };
 }

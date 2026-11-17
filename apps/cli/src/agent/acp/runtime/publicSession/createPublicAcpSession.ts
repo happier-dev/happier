@@ -1555,12 +1555,16 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       : {}),
     ...(options.definition?.usage?.projectPromptUsage
       ? {
-          projectPromptUsage: ({ usage, promptResponse }: Readonly<{
+          projectPromptUsage: ({ usage, promptResponse, providerSessionId, signal, env }: Readonly<{
             usage: unknown;
             promptResponse: unknown;
+            providerSessionId: string;
+            signal: AbortSignal;
+            env: Readonly<NodeJS.ProcessEnv>;
           }>) => options.definition!.usage!.projectPromptUsage({
             usage: AgentRuntimeJsonValueV1Schema.parse(usage),
             promptResponse: AgentRuntimeJsonValueV1Schema.parse(promptResponse),
+            completion: { providerSessionId, signal, env },
           }),
         }
       : {}),

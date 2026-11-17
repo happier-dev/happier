@@ -397,6 +397,9 @@ export interface AcpBackendOptions {
   projectPromptUsage?: (input: Readonly<{
     usage: unknown;
     promptResponse: unknown;
+    providerSessionId: string;
+    signal: AbortSignal;
+    env: Readonly<NodeJS.ProcessEnv>;
   }>) => unknown;
 
   /** Plugin-owned interpretation of nonstandard prompt stop reasons. */
@@ -2408,13 +2411,13 @@ export class AcpBackend implements CatalogAcpBackend {
     this.waitingForResponse = true;
     this.responseCompletionError = null;
     this.emit({ type: 'status', status: 'running' });
-    void held.response.then((answer) => {
+    void held.response.then(async (answer) => {
       if ('error' in answer) {
         const error = asRecord(answer.error);
         this.failPendingResponseWait(new RequestError(Number(error?.code ?? -32603), String(error?.message ?? 'ACP prompt failed'), error?.data));
         return;
       }
-      this.handlePromptResponseForTurn(answer.result, turnGeneration, () => undefined);
+      await this.handlePromptResponseForTurn(answer.result, turnGeneration);
     });
     return true;
   }
@@ -2432,15 +2435,16 @@ export class AcpBackend implements CatalogAcpBackend {
     this.sessionHolderAdoption?.release();
   }
 
-  private handlePromptResponseForTurn(
+  private async handlePromptResponseForTurn(
     promptResponse: unknown,
     turnGeneration: number,
-    emitPromptUsage: (promptResponse: unknown) => void,
-  ): boolean {
+    readPromptUsage?: (promptResponse: unknown) => Promise<AgentMessage | null>,
+  ): Promise<boolean> {
+    const telemetry = readPromptUsage ? await readPromptUsage(promptResponse) : null;
     if (this.disposed) return true;
-    if (turnGeneration !== this.turnGeneration) return true;
     // Completion evidence settles lifecycle before some Agents return prompt usage.
-    emitPromptUsage(promptResponse);
+    if (telemetry) this.emit(telemetry);
+    if (turnGeneration !== this.turnGeneration) return true;
     if (this.closedTurnGeneration === turnGeneration) return true;
 
     if (this.pendingPromptResponseTurnGeneration === turnGeneration) {
@@ -2704,20 +2708,20 @@ export class AcpBackend implements CatalogAcpBackend {
           })
         : rawPromptRequest;
 
-      const emitPromptUsage = (promptResponse: any): void => {
-        const observation = buildAcpPromptUsageObservation({
+      const completionContext = { providerSessionId: promptRequest.sessionId, signal: this.connection.signal,
+        env: this.providerTurnSourceEnv };
+      const readPromptUsage = async (promptResponse: unknown): Promise<AgentMessage | null> => {
+        const observation = await buildAcpPromptUsageObservation({
           provider: this.options.agentName,
           promptResponse,
           ...(this.options.projectPromptUsage
-            ? { projectUsage: this.options.projectPromptUsage }
+            ? { projectUsage: input => this.options.projectPromptUsage!({ ...input, ...completionContext }) }
             : {}),
         });
         const telemetry = observation ? buildTokenCountAgentMessageFromUsageObservation(observation) : null;
-        if (telemetry) {
-          this.emit({ ...telemetry,
+        return telemetry ? { ...telemetry,
             ...(typeof options.metadata?.promptId === 'string' ? { turnId: options.metadata.promptId } : {}),
-          });
-        }
+          } : null;
       };
 
       const correlatedProviderEffectSentinel = Symbol('acp-correlated-provider-effect');
@@ -2827,8 +2831,8 @@ export class AcpBackend implements CatalogAcpBackend {
         // the prompt response itself remains pending.
         this.pendingPromptResponseTurnGeneration = turnGeneration;
         void promptPromise
-          .then((res: any) => {
-            const completedTurn = this.handlePromptResponseForTurn(res, turnGeneration, emitPromptUsage);
+          .then(async (res: unknown) => {
+            const completedTurn = await this.handlePromptResponseForTurn(res, turnGeneration, readPromptUsage);
             if (!completedTurn) scheduleNoUpdateCompletionIfNeeded();
           })
           .catch((error) => {
@@ -2845,8 +2849,8 @@ export class AcpBackend implements CatalogAcpBackend {
       if (promptSubmissionEvidence === correlatedProviderCompletionSentinel) {
         this.pendingPromptResponseTurnGeneration = turnGeneration;
         void promptPromise
-          .then((res: any) => {
-            const completedTurn = this.handlePromptResponseForTurn(res, turnGeneration, emitPromptUsage);
+          .then(async (res: unknown) => {
+            const completedTurn = await this.handlePromptResponseForTurn(res, turnGeneration, readPromptUsage);
             if (!completedTurn) scheduleNoUpdateCompletionIfNeeded();
           })
           .catch(() => {
@@ -2865,7 +2869,7 @@ export class AcpBackend implements CatalogAcpBackend {
 
       // Best-effort: emit token usage when the ACP agent reports it in the PromptResponse.
       // ACP standardizes per-turn usage under `usage` (RFC: session-usage).
-      const promptResponseCompletedTurn = this.handlePromptResponseForTurn(promptResponse, turnGeneration, emitPromptUsage);
+      const promptResponseCompletedTurn = await this.handlePromptResponseForTurn(promptResponse, turnGeneration, readPromptUsage);
       if (promptResponseCompletedTurn) {
         return { kind: 'accepted_by_prompt_response' };
       }
@@ -2962,12 +2966,12 @@ export class AcpBackend implements CatalogAcpBackend {
     }
     if (outcome !== transportWriteSentinel) {
       transportWriteReceipt.cancel();
-      this.handlePromptResponseForTurn(outcome, turnGeneration, () => {});
+      await this.handlePromptResponseForTurn(outcome, turnGeneration);
       return;
     }
     void promptPromise.then(
-      (response) => {
-        this.handlePromptResponseForTurn(response, turnGeneration, () => {});
+      async (response) => {
+        await this.handlePromptResponseForTurn(response, turnGeneration);
       },
       (error: unknown) => {
         if (this.disposed || !this.waitingForResponse) return;

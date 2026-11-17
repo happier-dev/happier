@@ -207,7 +207,13 @@ export type AgentAcpPromptUsageDefinition = Readonly<{
   projectPromptUsage(input: Readonly<{
     usage: JsonValue;
     promptResponse: JsonValue;
-  }>): JsonValue | null;
+    /** Native completion evidence; present when the host settles a prompt response. */
+    completion?: Readonly<{
+      providerSessionId: string;
+      env: Readonly<Record<string, string | undefined>>;
+      signal: AbortSignal;
+    }>;
+  }>): JsonValue | null | Promise<JsonValue | null>;
 }>;
 
 /** Provider-declared quota diagnostic carried as ordinary ACP assistant output. */

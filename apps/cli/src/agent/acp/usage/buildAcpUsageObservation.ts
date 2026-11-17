@@ -80,21 +80,20 @@ export function buildAcpSessionUpdateUsageObservation(params: Readonly<{
 }
 
 /** Read direct or metadata-envelope prompt usage after any provider-owned counter projection. */
-export function buildAcpPromptUsageObservation(params: Readonly<{
+export async function buildAcpPromptUsageObservation(params: Readonly<{
     provider: string;
     promptResponse: unknown;
     projectUsage?: (input: Readonly<{
         usage: unknown;
         promptResponse: unknown;
     }>) => unknown;
-}>): UsageObservation | null {
+}>): Promise<UsageObservation | null> {
     const promptResponse = asRecord(params.promptResponse);
     if (!promptResponse) return null;
     const metadata = asRecord(promptResponse._meta);
     const usage = asRecord(promptResponse.usage) ?? asRecord(metadata?.usage);
-    if (!usage) return null;
     const projectedUsage = params.projectUsage
-        ? asRecord(params.projectUsage({ usage, promptResponse }))
+        ? asRecord(await params.projectUsage({ usage, promptResponse }))
         : usage;
     if (!projectedUsage) return null;
     return extractUsageObservationFromTokenCountMessage({

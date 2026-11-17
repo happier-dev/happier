@@ -18,8 +18,8 @@ it('keeps partial ACP counters through telemetry into the runtime without synthe
 });
 
 describe('buildAcpPromptUsageObservation', () => {
-  it('preserves witnessed FX counter overlap through the real producer and runtime carrier', () => {
-    const observation = buildAcpPromptUsageObservation({ provider: 'fx',
+  it('preserves witnessed FX counter overlap through the real producer and runtime carrier', async () => {
+    const observation = await buildAcpPromptUsageObservation({ provider: 'fx',
       promptResponse: { modelId: 'fixture-model', usage: { inputTokens: 17, outputTokens: 7,
         cacheReadTokens: 5, cacheWriteTokens: 2, reasoningTokens: 3 } },
       projectUsage: FX_PROMPT_USAGE.projectPromptUsage,
@@ -34,8 +34,8 @@ describe('buildAcpPromptUsageObservation', () => {
     }
   });
 
-  it.each(['modelId', 'model'] as const)('retains a model witnessed inside prompt usage (%s)', modelKey => {
-    const observation = buildAcpPromptUsageObservation({ provider: 'fixture', promptResponse: {
+  it.each(['modelId', 'model'] as const)('retains a model witnessed inside prompt usage (%s)', async modelKey => {
+    const observation = await buildAcpPromptUsageObservation({ provider: 'fixture', promptResponse: {
       usage: { [modelKey]: 'usage-model', inputTokens: 7, outputTokens: 3 },
     } });
     const message = buildTokenCountAgentMessageFromUsageObservation(observation!);
@@ -43,17 +43,17 @@ describe('buildAcpPromptUsageObservation', () => {
       .toMatchObject({ modelId: 'usage-model', tokens: { input: 7, output: 3 } });
   });
 
-  it('retains the provider-projected model when the response has no model and prefers an explicit response model', () => {
+  it('retains the provider-projected model when the response has no model and prefers an explicit response model', async () => {
     for (const modelId of [undefined, 'response-model']) {
-      expect(buildAcpPromptUsageObservation({ provider: 'fixture',
+      expect(await buildAcpPromptUsageObservation({ provider: 'fixture',
         promptResponse: { modelId, _meta: { usage: { inputTokens: 7 } } },
         projectUsage: ({ usage }) => ({ ...usage as Record<string, unknown>, modelId: 'projected-model' }),
       })).toMatchObject({ modelId: modelId ?? 'projected-model', tokens: { input: 7 } });
     }
   });
 
-  it('reads usage from the ACP prompt metadata envelope', () => {
-    expect(buildAcpPromptUsageObservation({
+  it('reads usage from the ACP prompt metadata envelope', async () => {
+    expect(await buildAcpPromptUsageObservation({
       provider: 'test',
       promptResponse: {
         _meta: {
@@ -67,8 +67,8 @@ describe('buildAcpPromptUsageObservation', () => {
     });
   });
 
-  it('uses provider projection for non-additive token classes and trusted cost', () => {
-    expect(buildAcpPromptUsageObservation({
+  it('uses provider projection for non-additive token classes and trusted cost', async () => {
+    expect(await buildAcpPromptUsageObservation({
       provider: 'grok',
       promptResponse: {
         _meta: {
