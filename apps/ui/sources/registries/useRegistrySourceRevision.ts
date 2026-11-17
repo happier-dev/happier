@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { listRegistrySourcesV1, registrySourceSupportsKindV1, type RegistryKindV1 } from '@happier-dev/protocol/registries';
+import { listRegistrySourcesV1, registrySourceSupportsKindV1, type RegistryKindV1, type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { usePromptLibraryCatalogSelection } from '@/sync/store/usePromptLibraryCatalog';
 import type { PromptLibraryCatalogValueSnapshot } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjection, useAppShellPluginUiProjectionSubscription } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { projectPluginRegistrySources } from './pluginRegistrySources';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { registrySourceRevision } from './registrySourceRevision';
@@ -22,19 +22,32 @@ export function useRegistryListSourceSelection(kind: RegistryKindV1 | undefined,
 }
 
 /** A selected listing consumes its configured descriptor without acquiring the source-list catalog. */
-export function useRegistrySourceDescriptor(sourceId: string, enabled = true) {
-    return useRegistrySourceSelection(enabled, [sourceId], undefined, undefined, true).sources.find(source => source.id === sourceId);
+export function useRegistrySourceDescriptor(sourceId: string, enabled = true): RegistrySourceDescriptorV1 | undefined {
+    const presented = useLayoutPresentationActive();
+    const active = enabled && presented;
+    const projection = useAppShellPluginUiProjectionSubscription();
+    const readPluginSources = React.useCallback(() => registrySourceRevision(
+        projectPluginRegistrySources(projection.getSnapshot().pluginUiProjection), [sourceId]), [projection, sourceId]);
+    const pluginSelection = React.useSyncExternalStore(active ? projection.subscribe : noSubscription,
+        readPluginSources, readPluginSources);
+    const pluginSources = React.useMemo(() => JSON.parse(pluginSelection) as RegistrySourceDescriptorV1[], [pluginSelection]);
+    const select = React.useCallback((snapshot: PromptLibraryCatalogValueSnapshot<'registry-sources'>) => registrySourceRevision(
+        listRegistrySourcesV1({ record: snapshot.value ?? { v: 2, sources: [], disabledSourceIds: [] }, pluginSources }), [sourceId]),
+    [pluginSources, sourceId]);
+    const selection = usePromptLibraryCatalogSelection('registry-sources', select, undefined, { enabled: active });
+    return React.useMemo(() => (JSON.parse(selection) as RegistrySourceDescriptorV1[])[0], [selection]);
 }
 
-function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly string[], kind?: RegistryKindV1, scope?: ServerAccountScope, includeDescriptors = false) {
+function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly string[], kind?: RegistryKindV1, scope?: ServerAccountScope) {
     const presented = useLayoutPresentationActive();
+    const active = enabled && presented;
     // A Machine still establishing may carry the only source of this kind (Deploy an app's starters), so an empty
     // selection waits for it; a known catalog never does (below).
-    const pluginsResolving = useAppShellPluginUiProjection(value => value.phase === 'establishing' || value.hasEstablishingMembers === true);
-    const activeSources = useAppShellPluginUiProjection(value => scope === undefined ? value.pluginUiProjection?.registrySourcesById : undefined);
+    const pluginsResolving = useAppShellPluginUiProjection(value => value.phase === 'establishing' || value.hasEstablishingMembers === true, active);
+    const activeSources = useAppShellPluginUiProjection(value => scope === undefined ? value.pluginUiProjection?.registrySourcesById : undefined, active);
     const readSources = React.useCallback(() => scope ? readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true })?.registrySourcesById : undefined,
         [scope?.serverId, scope?.accountId]);
-    const scopedSources = React.useSyncExternalStore(scope ? subscribeCommittedAppShellPluginUiProjection : noSubscription, readSources, readSources);
+    const scopedSources = React.useSyncExternalStore(scope && active ? subscribeCommittedAppShellPluginUiProjection : noSubscription, readSources, readSources);
     const registrySourcesById = scope === undefined ? activeSources : scopedSources;
     const pluginSources = React.useMemo(() => projectPluginRegistrySources(registrySourcesById ? { registrySourcesById } : null), [registrySourcesById]);
     const sourceIdsKey = JSON.stringify(sourceIds);
@@ -54,12 +67,11 @@ function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly strin
         // selection waits for the first declarations; each admitted source reports its own failure.
         const selectionKnown = selectedIds?.length === 0 || matchingIds.length > 0;
         const resolving = snapshot.value === null && snapshot.status === 'loading' || pluginsResolving && !selectionKnown;
-        return JSON.stringify([fingerprint(consumedIds), fingerprint(priorIds), consumedIds ?? null, resolving,
-            includeDescriptors ? sources.filter(source => selectedIds?.includes(source.id)) : []]);
-    }, [selectedIds, priorIds, pluginSources, kind, pluginsResolving, includeDescriptors]);
-    const selection = usePromptLibraryCatalogSelection('registry-sources', select, scope, { enabled: enabled && presented });
-    const [fingerprint, priorFingerprint, consumedIds, resolving, sources] = React.useMemo(
-        () => JSON.parse(selection) as [string, string, string[] | null, boolean, ReturnType<typeof listRegistrySourcesV1>], [selection]);
+        return JSON.stringify([fingerprint(consumedIds), fingerprint(priorIds), consumedIds ?? null, resolving]);
+    }, [selectedIds, priorIds, pluginSources, kind, pluginsResolving]);
+    const selection = usePromptLibraryCatalogSelection('registry-sources', select, scope, { enabled: active });
+    const [fingerprint, priorFingerprint, consumedIds, resolving] = React.useMemo(
+        () => JSON.parse(selection) as [string, string, string[] | null, boolean], [selection]);
     const previous = lifetime.current;
     // Changing the query's source selection acquires new rows while retaining the
     // former rows inert. Only a change to their consumed configuration retires them.
@@ -69,5 +81,5 @@ function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly strin
         fingerprint, revision, generation, sourceIds: consumedIds ?? undefined };
     // An unanswered source owner cannot retire a hydrated list or certify an empty one.
     const ids = resolving ? previous?.sourceIds : consumedIds ?? undefined;
-    return React.useMemo(() => ({ revision, sourceIds: ids, resolving, sources }), [revision, ids, resolving, sources]);
+    return React.useMemo(() => ({ revision, sourceIds: ids, resolving }), [revision, ids, resolving]);
 }

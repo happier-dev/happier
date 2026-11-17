@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { MarketplaceIndexSourceSnapshotV1Schema, deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
 import { HAPPIER_PICKS_SOURCE_ID, registryMarketplaceSourceV1, createRegistryHostV1,
-    REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistrySourceV1 } from '@happier-dev/protocol/registries';
+    REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, projectPluginRegistrySourceDeclarationV1, type RegistrySourceV1 } from '@happier-dev/protocol/registries';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL } from '@happier-dev/protocol/marketplace';
 import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
@@ -39,6 +39,7 @@ const [{ usePluginCatalog }, { usePromptLibraryCatalogValue }] = await Promise.a
 ]);
 const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { useRegistrySourceRevision, useRegistrySourceDescriptor } = await import('./useRegistrySourceRevision');
+const { projectPluginRegistrySources } = await import('./pluginRegistrySources');
 const { useRegistrySources } = await import('./useRegistrySources');
 const { useSourceTitle } = await import('@/components/store/StoreKindPage');
 const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
@@ -954,6 +955,90 @@ describe('registry item last-known reads through the Account and HTTP owners', (
                 expect(hook.getCurrent().sources).toContainEqual(expect.objectContaining({ id: sourceId }));
             });
         } finally { await act(async () => { await replacement.rollback(); }); }
+    });
+    it('keeps a hidden registry list revision quiet for plugin source publications and reads the latest on resume', async () => {
+        await setupHome('hidden-list-plugin-source-cost');
+        let renders = 0;
+        let revision = '';
+        const Probe = React.memo(function Probe(props: { enabled: boolean }) {
+            renders++;
+            revision = useRegistrySourceRevision(props.enabled);
+            return null;
+        });
+        const value: ShellValue = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+            phase: 'current', interactionEnabled: true, machineId: null, serverId: null, platform: 'web', accountLifetime: null,
+            reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {} };
+        const tree = (shell: ShellValue, enabled: boolean) => <AppShellPluginUiProjectionValueProvider value={shell}>
+            <PluginSurfaceFocusEligibilityProvider active={enabled} presentationActive={enabled}><Probe enabled={enabled} /></PluginSurfaceFocusEligibilityProvider>
+        </AppShellPluginUiProjectionValueProvider>;
+        const screen = await renderScreen(tree(value, false));
+        const before = renders;
+        let latest = value;
+        for (let index = 1; index <= 10; index++) {
+            const declaration = projectPluginRegistrySourceDeclarationV1({ pluginId: 'com.acme.hidden-list', pluginVersion: '1.0.0',
+                definition: { id: 'extensions', title: `Latest list catalog ${index}`, format: 'happier-catalog',
+                    kinds: ['browserExtension'], url: 'https://registry-plugin-hidden-list.test/catalog.json' } });
+            latest = { ...value, pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, registrySourcesById: { [declaration.id]: declaration } } };
+            await screen.update(tree(latest, false));
+        }
+        expect(renders - before).toBe(0);
+        await screen.update(tree(latest, true));
+        await waitForHomeGovernance(() => expect(getPromptLibraryCatalogValue(storage.getState().settingsScope!, 'registry-sources').status).toBe('ready'));
+        expect(revision).toContain('Latest list catalog 10');
+        const held = revision;
+        await screen.update(tree({ ...latest, phase: 'establishing', hasEstablishingMembers: true }, true));
+        expect(revision).toBe(held);
+    });
+    it.each([true, false])('keeps an addressed descriptor quiet for unrelated plugin source publications (presented: %s)', async presented => {
+        const { sourceId, fixture } = await setupHome(`addressed-plugin-source-cost-${presented}`);
+        let renders = 0;
+        let title: string | undefined;
+        const Probe = React.memo(function Probe(props: { sourceId: string }) {
+            renders++;
+            title = useRegistrySourceDescriptor(props.sourceId)?.title;
+            return null;
+        });
+        const value: ShellValue = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+            phase: 'current', interactionEnabled: true, machineId: null, serverId: null, platform: 'web', accountLifetime: null,
+            reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {} };
+        const tree = (shell: ShellValue, active: boolean, selectedId = sourceId) => <AppShellPluginUiProjectionValueProvider value={shell}>
+            <PluginSurfaceFocusEligibilityProvider active={active} presentationActive={active}><Probe sourceId={selectedId} /></PluginSurfaceFocusEligibilityProvider>
+        </AppShellPluginUiProjectionValueProvider>;
+        const screen = await renderScreen(tree(value, true));
+        await waitForHomeGovernance(() => expect(title).toBe('Private catalog'));
+        await screen.update(tree(value, presented));
+        const before = { renders, requests: fixture.requests.length };
+        for (let index = 1; index <= 10; index++) {
+            const declaration = projectPluginRegistrySourceDeclarationV1({ pluginId: 'com.acme.unrelated', pluginVersion: '1.0.0',
+                definition: { id: 'extensions', title: `Unrelated extensions ${index}`, format: 'happier-catalog',
+                    kinds: ['browserExtension'], url: 'https://registry-plugin-unrelated.test/catalog.json' } });
+            await screen.update(tree({ ...value, pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION,
+                registrySourcesById: { [declaration.id]: declaration } } }, presented));
+        }
+        expect(renders - before.renders).toBe(0);
+        expect(fixture.requests.length - before.requests).toBe(0);
+        expect(title).toBe('Private catalog');
+        const declaration = (name: string) => projectPluginRegistrySourceDeclarationV1({ pluginId: 'com.acme.addressed', pluginVersion: '1.0.0',
+            definition: { id: 'extensions', title: name, format: 'happier-catalog', kinds: ['browserExtension'],
+                url: 'https://registry-plugin-addressed.test/catalog.json' } });
+        const shell = (name: string): ShellValue => {
+            const source = declaration(name);
+            return { ...value, pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, registrySourcesById: { [source.id]: source } } };
+        };
+        const pluginSource = projectPluginRegistrySources(shell('Plugin catalog').pluginUiProjection)[0];
+        if (!pluginSource) throw new Error('Expected the canonical plugin source descriptor');
+        // A hidden first selection still reads its addressed snapshot without acquiring a subscription.
+        await screen.update(tree(shell('Plugin catalog'), false, pluginSource.id));
+        expect(title).toBe('Plugin catalog');
+        const pluginHiddenRenders = renders;
+        await screen.update(tree(shell('Latest plugin catalog'), false, pluginSource.id));
+        expect(renders - pluginHiddenRenders).toBe(0);
+        await screen.update(tree(shell('Latest plugin catalog'), true, pluginSource.id));
+        expect(title).toBe('Latest plugin catalog');
+        await screen.update(tree(shell('Renamed plugin catalog'), true, pluginSource.id));
+        expect(title).toBe('Renamed plugin catalog');
+        await screen.update(tree(shell('Renamed plugin catalog'), true));
+        expect(title).toBe('Private catalog');
     });
     it('keeps an addressed listing title quiet for unrelated source publications and current across selection and presentation', async () => {
         const serverUrl = 'https://registry-listing-title.test';
