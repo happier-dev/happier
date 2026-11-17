@@ -42,11 +42,9 @@ import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolve
 import type { WorkflowArtifactRevisionV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 import {
-    createWorkflowDefinition,
     deleteWorkflowDefinition,
     getWorkflowDefinition,
     isWorkflowDefinitionConflictError,
-    updateWorkflowDefinition,
 } from '@/sync/domains/workflows/workflowDefinitionActions';
 import {
     buildWorkflowDefinitionCandidate,
@@ -105,6 +103,7 @@ import { useWorkflowTriggerEditing } from '../triggers/useWorkflowTriggerEditing
 import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, WorkflowTriggerSnapshotRestoreError, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
 import { useWorkflowEditorHistory, useWorkflowEditorHistoryLabels, workflowEditorSnapshotsEqual } from '../editor/useWorkflowEditorHistory';
 import { createWorkflowEditorReadable, useWorkflowEditorSelector, type WorkflowEditorDraftStore } from '../editor/workflowEditorDraftStore';
+import { saveWorkflowEditorDefinition, type PendingWorkflowDefinitionCreate } from '../editor/saveWorkflowEditorDefinition';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { createExecutionRunStartContentChip } from '@/components/sessions/runs/launcher/executionRunStartChips';
@@ -212,11 +211,7 @@ export type WorkflowEditorSource =
     }>;
 
 type SavedRevision = Readonly<{ definitionId: string; revision: WorkflowArtifactRevisionV1 }>;
-type PendingDefinitionCreate = Readonly<{
-    input: Pick<Parameters<typeof createWorkflowDefinition>[0], 'definitionId' | 'definition' | 'metadata' | 'intendedTriggers'>;
-    draft: WorkflowEditorDraft;
-    description: string;
-}>;
+
 
 const NO_WORKFLOW_INPUTS: WorkflowEditorDraft['inputs'] = [];
 /** One empty identity, so clearing highlights that are already clear does not re-render the editor. */
@@ -514,7 +509,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const [savePending, setSavePending] = React.useState(false);
     // A failed create may already be committed. Save and a deliberate Copy are
     // distinct intents; each retries its original id and content until readback.
-    const pendingDefinitionCreatesRef = React.useRef<{ save: PendingDefinitionCreate | null; copy: PendingDefinitionCreate | null }>({ save: null, copy: null });
+    const pendingDefinitionCreatesRef = React.useRef<{ save: PendingWorkflowDefinitionCreate | null; copy: PendingWorkflowDefinitionCreate | null }>({ save: null, copy: null });
     const [deletePending, setDeletePending] = React.useState(false);
     const deletePendingRef = React.useRef(false);
     const deleteAbortRef = React.useRef<AbortController | null>(null);
@@ -1138,73 +1133,42 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             let persisted = saved;
             try {
                 if (definitionChanged && validation.normalizedDefinition !== undefined) {
-                    const savedDescription = description.trim();
-                    const metadata = {
-                        title: draft.name.trim(),
-                        ...(savedDescription.length === 0 ? {} : { description: savedDescription }),
-                        ...(draft.captureProvenance === undefined ? {} : { captureProvenance: draft.captureProvenance }),
-                    };
-                    const acknowledge = (result: Awaited<ReturnType<typeof createWorkflowDefinition>>, acceptedDraft: WorkflowEditorDraft, acceptedDescription: string) => {
-                        savedDraftRef.current = acceptedDraft;
-                        savedDescriptionRef.current = acceptedDescription;
-                        persisted = { definitionId: result.definitionId, revision: result.revision };
-                        setSaved(persisted);
-                        setDefinitionAccess(result.access);
-                        setSavedAtMs(Date.now());
-                        setSavedByAgent(false);
-                        setSaveConflict(null);
-                    };
                     const createIntent = copying ? 'copy' : 'save';
-                    const pendingCreate = pendingDefinitionCreatesRef.current[createIntent];
-                    if (copying || persisted === null || pendingCreate !== null) {
-                        const retained = pendingCreate ?? {
-                            input: { definitionId: randomUUID(), definition: validation.normalizedDefinition, metadata,
-                                ...(triggers.intendedTriggers === undefined ? {} : { intendedTriggers: triggers.intendedTriggers }) },
-                            draft, description,
-                        };
-                        pendingDefinitionCreatesRef.current[createIntent] = retained;
-                        const result = await createWorkflowDefinition({ ...retained.input, accountLifetime,
-                            ...(caller === undefined ? {} : { context: caller, signal: caller.signal }),
-                        });
-                        if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
-                        acknowledge(result, retained.draft, retained.description);
-                        pendingDefinitionCreatesRef.current[createIntent] = null;
-                    }
-                    if (copying) {
-                        // Copy is a document-identity transition. Retire A's
-                        // producers and history at the existing source boundary,
-                        // while this Save continues persisting B's captured Where.
-                        sourceGenerationRef.current += 1;
-                        sourceIsCurrent = captureSourceGeneration();
-                        setAgentSession(null);
-                        setAgentDraft(null);
-                        setAgentSeedState((current) => ({ ...current, seed: null }));
-                        observedAgentRevisionRef.current = null;
-                        setHighlightedBlockIds(NO_HIGHLIGHTED_BLOCKS);
-                        pendingRetargetRef.current = null;
-                        setRetargetFailed(false);
-                        setTestSourcePending(false);
-                        setTestSource(null);
-                        setTestRun(null);
-                        pendingRunIdRef.current = null;
-                        history.reset();
-                        pendingDefinitionCreatesRef.current = { save: null, copy: null };
-                    }
-                    // Rejoin with the retained bytes first. Edits made while its
-                    // outcome was unknown then use the ordinary revision owner,
-                    // never different content under the unresolved create id.
-                    if (persisted !== null && (definitionHasChanges(draft) || description !== savedDescriptionRef.current)) {
-                        const result = await updateWorkflowDefinition({
-                            definitionId: persisted.definitionId,
-                            expectedRevision: persisted.revision,
-                            definition: validation.normalizedDefinition,
-                            metadata, accountLifetime,
-                            ...(triggers.intendedTriggers === undefined ? {} : { intendedTriggers: triggers.intendedTriggers }),
-                            ...(caller === undefined ? {} : { context: caller, signal: caller.signal }),
-                        });
-                        if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
-                        acknowledge(result, draft, description);
-                    }
+                    persisted = await saveWorkflowEditorDefinition({ draft, description, definition: validation.normalizedDefinition,
+                        ...(triggers.intendedTriggers === undefined ? {} : { intendedTriggers: triggers.intendedTriggers }),
+                        saved: persisted, baseline: { draft: savedDraftRef.current ?? initialDraftBaselineRef.current, description: savedDescriptionRef.current },
+                        pendingCreate: pendingDefinitionCreatesRef.current[createIntent],
+                        retainCreate: (pending) => { pendingDefinitionCreatesRef.current[createIntent] = pending; },
+                        copying, accountLifetime: lifetime, ...(caller === undefined ? {} : { caller }), isCurrent,
+                        acknowledge: (result, acceptedDraft, acceptedDescription, kind) => {
+                            savedDraftRef.current = acceptedDraft;
+                            savedDescriptionRef.current = acceptedDescription;
+                            persisted = { definitionId: result.definitionId, revision: result.revision };
+                            setSaved(persisted);
+                            setDefinitionAccess(result.access);
+                            setSavedAtMs(Date.now());
+                            setSavedByAgent(false);
+                            setSaveConflict(null);
+                            if (copying && kind === 'created') {
+                                // Copy changes document identity at the existing source boundary.
+                                sourceGenerationRef.current += 1;
+                                sourceIsCurrent = captureSourceGeneration();
+                                setAgentSession(null);
+                                setAgentDraft(null);
+                                setAgentSeedState((current) => ({ ...current, seed: null }));
+                                observedAgentRevisionRef.current = null;
+                                setHighlightedBlockIds(NO_HIGHLIGHTED_BLOCKS);
+                                pendingRetargetRef.current = null;
+                                setRetargetFailed(false);
+                                setTestSourcePending(false);
+                                setTestSource(null);
+                                setTestRun(null);
+                                pendingRunIdRef.current = null;
+                                history.reset();
+                                pendingDefinitionCreatesRef.current = { save: null, copy: null };
+                            }
+                        },
+                    });
                 }
                 if (persisted === null || !isCurrent()) return { status: 'refused', reason: 'draft_retired' };
                 if (project !== null || rememberedProject !== null) {

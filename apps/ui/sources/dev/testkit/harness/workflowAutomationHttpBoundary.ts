@@ -22,6 +22,9 @@ import { createAutomationPluginEventTriggerDefinitionV1, sealAutomationTriggerDe
 /** The HTTP owner seals plain Event configuration and projects its public observation separately. */
 function createdTriggerDetail(automationId: string, row: AutomationTriggerCreateRequest) {
     const trigger = row.trigger;
+    if (trigger.kind === 'action' && 'triggerDefinitionEnvelope' in trigger) return AutomationTriggerDetailSchema.parse({ ...trigger, id: row.triggerId,
+        revision: 0, createdAt: 1, updatedAt: 1,
+        triggerDefinitionEnvelope: JSON.stringify(trigger.triggerDefinitionEnvelope) });
     if (trigger.kind !== 'pluginEvent') return AutomationTriggerDetailSchema.parse({ ...trigger, id: row.triggerId,
         revision: 1, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
         ...(trigger.kind === 'runLifecycle' ? { remainingOccurrences: 1, status: { state: 'waiting', runId: null } }

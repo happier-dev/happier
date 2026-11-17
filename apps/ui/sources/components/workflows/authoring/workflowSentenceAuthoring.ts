@@ -4,7 +4,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
 import { storeWorkflowDefinitionDraftSeed, type WorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 
 export type WorkflowSentenceEditorIntent = Readonly<Pick<WorkflowDefinitionDraftSeed,
-    'name' | 'description' | 'trigger' | 'payloadSchema' | 'eventSeed' | 'project' | 'executionTarget'> & {
+    'name' | 'description' | 'definition' | 'trigger' | 'payloadSchema' | 'eventSeed' | 'project' | 'executionTarget'> & {
     step?: WorkflowActionLeafV1;
 }>;
 
@@ -12,7 +12,7 @@ export type WorkflowSentenceEditorIntent = Readonly<Pick<WorkflowDefinitionDraft
 export function prepareWorkflowSentenceEditorEntry(intent: WorkflowSentenceEditorIntent, accountLifetime: ServerAccountScopeLifetime) {
     if (!accountLifetime.isCurrent()) return null;
     const { step, ...seed } = intent;
-    const definition = step === undefined ? undefined : WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [step] });
+    const definition = step === undefined ? seed.definition : WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [step] });
     const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({ ...seed, ...(definition === undefined ? {} : { definition }), initialView: 'sentence' }, accountLifetime);
     return { pathname: '/workflows/[id]' as const, params: { id: 'new', definitionDraftSeedId, serverId: accountLifetime.scope.serverId } };
 }
