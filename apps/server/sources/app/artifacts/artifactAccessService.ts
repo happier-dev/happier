@@ -6,6 +6,7 @@ import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/en
 import { type ArtifactAccessErrorCodeV1, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetStorageInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactAccessGrantsListResponseV1, type ArtifactAccessGrantMutationResponseV1, type ArtifactAccessRecipientCensusResponseV1, type ArtifactCallerAccessV1, type ArtifactRecipientKeyEnvelopeCommitInputV1, type ArtifactRecipientKeyEnvelopeCommitResponseV1, type ArtifactRecipientKeyEnvelopeInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
 import type { AccountAdmissionIntent } from '@/app/encryption/accountSessionOwnerMetadataFence';
@@ -188,7 +189,7 @@ export async function acquireArtifactPublicationLocksInTx(tx: Tx, artifactId: st
     // Head/budget writes and grant/envelope mutations share the parent lock.
     // Take it before child rows: physical deletion cascades to those rows and
     // cleans AccountChange FKs, reversing a child-first publication's order.
-    if (getDbProviderFromEnv(process.env, "postgres") === "postgres") {
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres")) === "postgres") {
         await tx.$queryRawUnsafe('SELECT "id" FROM "Artifact" WHERE "id" = $1 FOR NO KEY UPDATE', artifactId);
     } else {
         await tx.$queryRawUnsafe('SELECT `id` FROM `Artifact` WHERE `id` = ? FOR UPDATE', artifactId);
