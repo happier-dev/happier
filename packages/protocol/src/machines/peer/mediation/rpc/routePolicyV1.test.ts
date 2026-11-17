@@ -25,6 +25,33 @@ async function importRpcPolicy() {
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('keeps Provider preparation and verification under their exact admitted root and installation', async () => {
+    const { resolveMachineRpcExternalActionEffectV1: resolve } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'provider-root', binding: {
+      accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      actionId: 'providers.connections.endpoint.set', requestId: 'set-endpoint', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } }).binding;
+    const describe = RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE;
+    // Control: an existing direct command spends its original signed root.
+    expect(resolve(RPC_METHODS.BASH, { ...binding, actionId: 'machines.command.run' })).toBe('machines.command.run');
+    expect(resolve(describe, { ...binding, actionId: 'machines.command.run' })).not.toBe('machines.command.run');
+    expect(resolve(describe, binding)).toBe(binding.actionId);
+    // Standalone reads keep their own purpose.
+    expect(resolve(describe, { ...binding, actionId: 'providers.connections.describe' })).toBe('providers.connections.describe');
+    expect(resolve(RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE, binding)).toBe(binding.actionId);
+    expect(resolve(RPC_METHODS.DAEMON_PROVIDERS_PROBE, binding)).toBeNull();
+    expect(resolve(describe, binding, { machineId: 'machine', installationId: 'other' })).toBeNull();
+    expect(resolve(describe, binding, { machineId: 'other', installationId: 'installation' })).toBeNull();
+    expect(resolve(describe, { ...binding, target: { kind: 'machine', machineId: 'other' } })).toBeNull();
+    for (const actionId of ['providers.connections.create_custom', 'providers.connections.create_contribution'] as const) {
+      const created = { ...binding, actionId };
+      expect(resolve(describe, created)).toBe(actionId);
+      expect(resolve(RPC_METHODS.DAEMON_PROVIDERS_PROBE, created)).toBe(actionId);
+      expect(resolve(RPC_METHODS.DAEMON_PROVIDERS_MODELS, created)).not.toBe(actionId);
+    }
+  });
   it('retains each native sign-in root on only its declared terminal phases', async () => {
     const { resolveMachineRpcExternalActionEffectV1: resolve, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'sign-in-root', binding: {

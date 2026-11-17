@@ -1,5 +1,6 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { createProviderActionExecuteV1 } from '@happier-dev/protocol/providers/executeProviderActionV1';
+import { resolveProviderActionRpcEffectV1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
@@ -71,7 +72,8 @@ export function createCliProviderActionExecuteV1(params: Readonly<{
       return params.callMachineAction({
       machineId, serverId: params.serverId, method, request: request.input, signal: context.signal,
       authority: context.authority, authorization: context.rpcSessionAuthorization,
-      context, effectActionId: request.actionId, exactMachine: true,
+      context, effectActionId: resolveProviderActionRpcEffectV1(method,
+        context.externalActionExecutionAuthorization?.binding.actionId ?? request.actionId) ?? request.actionId, exactMachine: true,
       ...(operationTimeoutMs === null ? { timeoutMs: null } : {}),
       });
     },

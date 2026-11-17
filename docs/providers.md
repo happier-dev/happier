@@ -1603,6 +1603,14 @@ approval digest or stale-edit condition. Duplicate/custom-copy preserves effecti
 constraints. Routing, model and effective-policy facts enter the existing
 security fingerprints; localized `publicHeaderHints` are presentation only.
 
+In 0.3 development, `providers/providerActionIdsV1.ts` owns Provider Action RPC
+routes and their admitted effect purpose. Machine endpoint review reads the
+connection under the original `providers.connections.endpoint.set` admission.
+Account connection creation similarly retains its creation admission for the
+saved connection's probe and published-health read. The CLI and Machine RPC
+policy consume that same projection on the exact admitted Machine installation;
+these internal reads do not create another Action admission.
+
 Authentication uses the canonical credential destinations, including arbitrary
 validated custom HTTP-header names. A transport's `additionalCredentials` names
 independently bound Saved Secret slots needed by that transport. Selected-slot

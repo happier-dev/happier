@@ -28,11 +28,62 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { DaemonProviderConnectionViewV1Schema } from '@happier-dev/protocol/rpc/providers';
+import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 describe('Provider default preference Action at its Account Settings boundary', () => {
   const originalRequirement = configuration.clientEncryptionRequirement;
   const originalActiveServerDir = configuration.activeServerDir;
   let directory: string | undefined;
+  it('prepares machine endpoint confirmation with the admitted mutation purpose and leaves cancellation unwritten', async () => {
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'provider-root', binding: {
+      accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      actionId: 'providers.connections.endpoint.set', requestId: 'set-endpoint', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } });
+    const connection = DaemonProviderConnectionViewV1Schema.parse({ connectionId: 'pc_closed_port', contributionKey: null,
+      displayName: 'Own source', providerName: 'Custom', icon: null, role: 'named', displayNameMode: 'custom',
+      sourceStatus: 'available', probeCapability: 'catalog', manualModelPolicy: 'allowed', compatibility: [],
+      grants: { accountEnabled: false, enabledMachineIds: [] }, credential: null,
+      endpoints: [{ endpointTemplateId: 'openai-responses', protocol: 'openai-responses',
+        baseUrl: 'http://127.0.0.1:1/v1', defaultBaseUrl: 'http://127.0.0.1:1/v1', effectiveSource: 'template' }],
+      scope: 'machine', authorized: true, authorizationError: null, revision: 0,
+      runtime: { health: 'not_checked', modelCount: null, checkedAt: null },
+    });
+    const previews: unknown[] = [];
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      presentUserActionConfirmation: async input => { previews.push(input.preview); return false; },
+      providerActionExecute: createCliProviderActionExecuteV1({ credentials: { token: 'owner', encryption: null },
+        serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+        // Home/Machine delivery is the system boundary. Its effect policy stays real.
+        callMachineAction: async input => {
+          const binding = input.context?.externalActionExecutionAuthorization?.binding;
+          if (binding && (input.effectActionId !== binding.actionId
+            || resolveMachineRpcExternalActionEffectV1(input.method, binding,
+              { machineId: input.machineId, installationId: 'installation' }) !== input.effectActionId)) {
+            throw Object.assign(new Error('Action purpose refused'), { code: 'action_forbidden', status: 401 });
+          }
+          if (input.method !== RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE) throw new Error('Cancelled policy must not write');
+          return { status: 'success', connections: [connection], available: [], discoveryCandidates: [],
+            diagnosticsTruncated: false, diagnostics: [], availableTruncated: false };
+        } }),
+    });
+    const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home',
+      externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target } as const;
+    // Control: an ordinary standalone describe still reaches the same network boundary.
+    expect(await executor.execute('providers.connections.describe', { machineId: 'machine', connectionId: connection.connectionId },
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' }))
+      .toMatchObject({ ok: true, result: { connections: [{ connectionId: connection.connectionId }] } });
+    expect(await executor.execute('providers.connections.endpoint.set', { action: 'setEndpointOverride',
+      machineId: 'machine', connectionId: connection.connectionId, expectedRevision: 0, scope: 'machine',
+      endpointTemplateId: 'openai-responses', baseUrl: 'http://127.0.0.1:49997/v1' }, context))
+      .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(previews).toMatchObject([{ providerEndpointPolicyReview: { scope: 'machine', machineId: 'machine',
+      before: { baseUrl: 'http://127.0.0.1:1/v1' }, after: { baseUrl: 'http://127.0.0.1:49997/v1' } } }]);
+  });
   it.each(['owner', 'missing'] as const)('reads the %s Session binding through authenticated MCP Action dispatch', async scenario => {
     const credentials = { token: 'binding-reader-token', encryption: null };
     const launchBinding = { v: 1, connectionId: 'pc_work', contributionKey: null, connectionRevision: 3,

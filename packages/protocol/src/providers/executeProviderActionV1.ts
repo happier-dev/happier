@@ -5,7 +5,8 @@ import { createRpcCallError } from '../rpc/errors.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { createProviderErrorV1, ProviderErrorV1Schema, providerErrorFromRpcFailure } from './errors.js';
 import { PROVIDER_ACTION_OUTPUT_SCHEMAS_V1, PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1, resolveProviderActionOwnerV1, type ProviderActionRequestV1 } from './providerActionsV1.js';
-import type { ProviderActionIdV1 } from './providerActionIdsV1.js';
+import { resolveProviderActionRpcRouteV1 } from './providerActionIdsV1.js';
+export { resolveProviderActionRpcRouteV1 } from './providerActionIdsV1.js';
 import type { ProviderConnectionId } from './ids.js';
 import type { ProviderDefaultModelSelectionMutationV1 } from './selection/v1.js';
 import type { AccountSettingsMutationResult } from '../account/settings/accountSettingMutationV1.js';
@@ -14,7 +15,6 @@ import { readSessionProviderBindingMetadataStateV1, type SessionProviderBindingS
 import { readSessionModelSelectionIntentSourceV1 } from './selection/v1.js';
 
 type AccountActionId = 'providers.defaults.set' | 'providers.models.source_visibility.set' | 'providers.gateways.choose';
-type RpcActionId = Exclude<ProviderActionIdV1, AccountActionId>;
 type RpcRequest = Exclude<ProviderActionRequestV1, { actionId: AccountActionId }>;
 
 function rpcErrorContext(request: RpcRequest) {
@@ -46,44 +46,6 @@ function rpcErrorContext(request: RpcRequest) {
     ...(connectionId ? { connectionId } : {}),
     ...(typeof input.sourceProfileId === 'string' ? { sourceProfileId: input.sourceProfileId } : {}),
   };
-}
-
-type ProviderActionRpcRouteV1 = Readonly<{ method: string; mutation: boolean }>;
-export function resolveProviderActionRpcRouteV1(actionId: RpcActionId): ProviderActionRpcRouteV1;
-export function resolveProviderActionRpcRouteV1(actionId: ProviderActionIdV1): ProviderActionRpcRouteV1 | null;
-/** The execution and Machine admission owners consume the same native route. */
-export function resolveProviderActionRpcRouteV1(actionId: ProviderActionIdV1): ProviderActionRpcRouteV1 | null {
-  switch (actionId) {
-    case 'providers.defaults.set':
-    case 'providers.gateways.choose':
-    case 'providers.models.source_visibility.set': return null;
-    case 'providers.connections.describe': return { method: RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE, mutation: false };
-    case 'providers.models.list': return { method: RPC_METHODS.DAEMON_PROVIDERS_MODELS, mutation: false };
-    case 'providers.models.projection':
-    case 'providers.models.refresh': return { method: RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION, mutation: false };
-    case 'providers.probe': return { method: RPC_METHODS.DAEMON_PROVIDERS_PROBE, mutation: false };
-    case 'providers.usage.refresh': return { method: RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH, mutation: false };
-    case 'providers.binding.status': return { method: RPC_METHODS.DAEMON_PROVIDERS_BINDING_STATUS, mutation: false };
-    case 'providers.legacy.prepare': return { method: RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREPARE_SOURCE, mutation: true };
-    case 'providers.models.load':
-    case 'providers.models.cancel_load': return { method: RPC_METHODS.DAEMON_PROVIDERS_MODEL_LOAD, mutation: true };
-    case 'providers.models.manual.add':
-    case 'providers.models.manual.remove':
-    case 'providers.models.visibility.set':
-    case 'providers.models.visibility.reset':
-    case 'providers.models.visibility.bulk':
-    case 'providers.models.experimental.confirm': return { method: RPC_METHODS.DAEMON_PROVIDERS_MODEL_SETTINGS_MUTATE, mutation: true };
-    case 'providers.connections.create_contribution':
-    case 'providers.connections.create_custom':
-    case 'providers.connections.enable_detected':
-    case 'providers.connections.start_local':
-    case 'providers.connections.update':
-    case 'providers.connections.endpoint.set':
-    case 'providers.connections.duplicate':
-    case 'providers.connections.delete':
-    case 'providers.connections.enabled.set':
-    case 'providers.connections.secrets.bind': return { method: RPC_METHODS.DAEMON_PROVIDERS_CONNECTION_MUTATE, mutation: true };
-  }
 }
 
 /** Save verification consumes the existing probe once, for Actions and the SDK facade. */

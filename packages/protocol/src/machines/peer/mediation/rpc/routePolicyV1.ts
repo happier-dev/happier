@@ -19,6 +19,7 @@ import { ACTION_INVOKE_ACTION_ID_V1, isExecutionRunStartActionIdV1, isWorkspaceS
 import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD } from '../../../../daemon/agentSignInMethods.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../rpc/methods.js';
 import { isApprovalDecisionReviewerBindingV1 } from '../../../../actions/externalActionBindingAuthority.js';
+import { isProviderActionIdV1, resolveProviderActionRpcEffectV1 } from '../../../../providers/providerActionIdsV1.js';
 
 const WORKFLOW_RUN_START_METHOD = 'workflow.run.start' satisfies WorkflowActionIdV1;
 
@@ -1148,6 +1149,12 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
   binding?: ExternalActionExecutionAuthorizationV1['binding'],
   selectedTarget?: Readonly<{ machineId: string; installationId: string }>,
   reviewedChild?: ReviewedActionChildHttpProofV1): string | null {
+  if (binding && isProviderActionIdV1(binding.actionId)) {
+    // Preparation uses the same admitted Provider root, on its selected installation.
+    return binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? resolveProviderActionRpcEffectV1(method, binding.actionId) : null;
+  }
   const signIn = binding && readMachineAgentSignInOperationV1(binding.actionId);
   if (binding && signIn) {
     const phase = method === RPC_METHODS.DAEMON_TERMINAL_CLOSE
