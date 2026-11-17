@@ -4,6 +4,7 @@ import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1
 import { ThemeInstallResultSchema, type ThemeActionOutput } from '@happier-dev/protocol/actions/themeActionFamily';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { useThemeLibraryInventory } from '@/sync/store/useThemeProfiles';
@@ -23,12 +24,14 @@ type Listing = Readonly<{ sourceId: string; itemId: string }>;
 /** Selected acquisition, Actions and the shared overlay feed the existing Store listing presentation. */
 export function StoreThemeListingController(props: Readonly<{ listing: Listing;
     children(view: StoreThemeListingViewProps): React.ReactNode }>) {
+    const presented = useLayoutPresentationActive();
     const scope = useAccountSettingsScope();
     const { execute, ready } = useMountedActionExecution(scope);
     const owner = getThemeTryOnOwner();
-    const preview = React.useSyncExternalStore(owner.subscribe, owner.read, owner.read);
-    const library = useThemeLibraryInventory();
-    const sources = useRegistrySources('theme');
+    const subscribePreview = React.useCallback((listener: () => void) => presented ? owner.subscribe(listener) : () => {}, [presented, owner]);
+    const preview = React.useSyncExternalStore(subscribePreview, owner.read, owner.read);
+    const library = useThemeLibraryInventory(presented);
+    const sources = useRegistrySources('theme', presented);
     const preference = useLocalSetting('themePreference');
     const mode = resolveThemeRuntimeVisualTheme(preference, useColorScheme());
     const { sourceId, itemId } = props.listing;

@@ -8,6 +8,7 @@ import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/prompt
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ThemeProfileArtifactHeaderSchema } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 let routeParams: Record<string, string | undefined> = {};
 installPromptRegistriesCommonModuleMocks({ storage: original => original(), text: () => vi.importActual('@/text'),
@@ -17,7 +18,7 @@ const { StoreListingBody } = await import('./StoreListing');
 const { StoreThemeListing } = await import('./StoreThemeListing');
 const { ThemeTryBarHost } = await import('@/theme/ThemeTryBarHost');
 const { ThemeTryBar } = await import('@/components/settings/appearance/themeProfiles/ThemeTryBar');
-const { getThemeTryOnOwner } = await import('@/theme/profiles/themeTryOnRuntime');
+const { getThemeTryOnOwner, getThemeRegistryLifecycle } = await import('@/theme/profiles/themeTryOnRuntime');
 const { storage } = await import('@/sync/domains/state/storage');
 const { useRegistryItems } = await import('@/registries/useRegistryItems');
 const { storeKinds } = await import('./catalog/storeKinds');
@@ -75,11 +76,36 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     if (picked.kind !== 'theme') throw new Error('Expected the theme browse reference');
     const reference = { type: 'registryItem' as const, kind: picked.kind, sourceId: picked.sourceId, itemId: picked.itemId };
     routeParams = { selection: JSON.stringify(reference) };
-    const screen = await renderScreen(<><StoreListingBody reference={reference} presentation="pane" onClose={() => {}} /><ThemeTryBarHost /></>);
+    let listingCommits = 0;
+    const countListing = () => { listingCommits++; };
+    const closeListing = () => {};
+    const listingSurface = (presented: boolean, presentation: 'pane' | 'page' = 'pane', currentReference = reference) => <>
+        <PluginSurfaceFocusEligibilityProvider active={presented}>
+            <React.Profiler id="theme-listing" onRender={countListing}>
+                <StoreListingBody reference={currentReference} presentation={presentation} onClose={closeListing} />
+            </React.Profiler>
+        </PluginSurfaceFocusEligibilityProvider>
+        <ThemeTryBarHost />
+    </>;
+    const screen = await renderScreen(listingSurface(true));
     const view = () => screen.findAllByType(StoreThemeListing)[0]?.props;
     await vi.waitFor(() => expect(view()?.facesState, view()?.facesError ?? undefined).toBe('ready'));
     expect(acquisitions).toBe(1);
     expect(view()?.facts.map(fact => fact.key)).toEqual(['includes', 'changes', 'worksOn', 'licence']);
+    const faces = (await getThemeRegistryLifecycle().prepareStorePreview({ sourceId, itemId: 'palette' },
+        { expectedScope: storage.getState().settingsScope })).item.payload.themes;
+    await screen.update(listingSurface(false));
+    listingCommits = 0;
+    for (let index = 1; index <= 10; index++) {
+        const face = faces[index % faces.length]!;
+        await act(async () => { getThemeTryOnOwner().begin({ document: face.document, mode: face.mode,
+            origin: { kind: 'store', listing: { sourceId, itemId: 'palette' } } }); });
+    }
+    expect(listingCommits).toBe(0);
+    await screen.update(listingSurface(true));
+    expect(view()?.tryingFaceId).toBe(faces[10 % faces.length]!.key);
+    expect(acquisitions).toBe(1);
+    await act(async () => { await view()!.onRevert(); });
     await act(async () => { await view()!.onTryFace('dark'); });
     await vi.waitFor(() => expect(view()?.tryingFaceId).toBe('dark'));
     await act(async () => { await view()!.onRevert(); });
@@ -110,7 +136,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     const selectedListing = readStoreListingRoute(destination.params);
     if (selectedListing?.kind !== 'store') throw new Error('Expected the same Store listing route');
     expect(selectedListing.reference).toEqual(reference);
-    await screen.update(<><StoreListingBody reference={selectedListing.reference} presentation="page" onClose={() => {}} /><ThemeTryBarHost /></>);
+    await screen.update(listingSurface(true, 'page', selectedListing.reference));
     await vi.waitFor(() => expect(view()?.installed).toBe(true));
     expect(view()?.name).toBe('Palette');
     expect(acquisitions).toBe(1);
@@ -128,7 +154,7 @@ it('opens one theme acquisition through the shared listing body and retries Keep
     await act(async () => { await bar().onRevert(); });
     expect(getThemeTryOnOwner().read()).toBeNull();
     routeParams = { selection: JSON.stringify(reference) };
-    await screen.update(<><StoreListingBody reference={reference} presentation="pane" onClose={() => {}} /><ThemeTryBarHost /></>);
+    await screen.update(listingSurface(true));
     await vi.waitFor(() => expect(view()?.facesState).toBe('ready'));
     let otherPreview: ReturnType<ReturnType<typeof getThemeTryOnOwner>['begin']>;
     await act(async () => { otherPreview = getThemeTryOnOwner().begin({ document: tried.document!, mode: tried.mode, origin: { kind: 'agent' } }); });
