@@ -20,6 +20,7 @@ import { readSessionStopConfirmationFailure } from '@happier-dev/protocol/action
 import { SessionStopResultSchema } from '@happier-dev/protocol/sessions/control/contract';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 import type { InactiveSessionResumeResult } from '@/session/services/requestInactiveSessionResume';
+import { isFullSessionId } from '@/session/query/resolveSessionId';
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionDelete' | 'sessionOpen' | 'sessionFork' | 'sessionContinueWithReplay' | 'sessionRollback' | 'checkpointCodeRollback' | 'sessionCheckpoint' | 'sessionRestore' | 'sessionContinuationInspect' | 'sessionAgentTransition' | 'sessionArchiveSet'> & Required<Pick<ActionExecutorDeps, 'sessionOpen' | 'sessionFork' | 'sessionRollback'>>;
 
 export function createCliSessionLifecycleActionDeps(
@@ -55,8 +56,13 @@ export function createCliSessionLifecycleActionDeps(
 
     sessionDelete: async ({ input, context, deleteFromHome }) => {
       if (!params.credentials) return notSupported();
+      // An admitted immutable id cannot become another Session's tag after deletion.
+      const authorization = context.externalActionExecutionAuthorization;
+      const sessionId = input.sessionId.trim();
+      const expectedSessionAddress = context.expectedSessionAddress ?? (authorization && isFullSessionId(sessionId)
+        ? { serverId: authorization.binding.serverIdentityId, sessionId } : undefined);
       const transport = await resolveTransportForSession(input.sessionId, context.signal,
-        { context, actionId: 'session.delete' }, context.expectedSessionAddress);
+        { context, actionId: 'session.delete' }, expectedSessionAddress);
       // Home remains the authority for absent Sessions; no native authority is fabricated.
       if (!transport.ok) return transport.code === 'session_not_found'
         ? deleteFromHome() : { ok: false, errorCode: transport.code, error: transport.code };

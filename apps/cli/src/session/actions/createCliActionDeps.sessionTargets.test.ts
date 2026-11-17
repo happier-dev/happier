@@ -52,6 +52,8 @@ import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClie
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { executeSessionDelete } from '@happier-dev/protocol/actions/executor/session/delete';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -510,6 +512,51 @@ describe('CLI Session target composition', () => {
     });
     return { deps, get, session, credentials, records, patchedSessionIds };
   }
+
+  it.each(['plain', 'e2ee'] as const)('recovers an absent admitted native Delete without resolving another Session tag (%s)', async mode => {
+    const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(37));
+    const signer = { privateKey: keys.secretKey, installationId: 'delete-installation',
+      ...(mode === 'e2ee' ? { secret: new Uint8Array(32).fill(38) } : {}) };
+    const { deps, get, credentials } = setup(null, signer);
+    const reads: string[] = [];
+    const read = get.getMockImplementation()!;
+    get.mockImplementation(async (url, config) => {
+      reads.push(new URL(String(url)).pathname);
+      if (String(url).endsWith(`/v2/sessions/${sessionId}`)) return { status: 404, data: { error: 'Session not found' } };
+      return read(url, config);
+    });
+    const tagLookup = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { sessions: [
+      createSessionRecordFixture({ id: managerId, encryptionMode: 'plain', metadata: '{}' }),
+    ] } });
+    const deletions: string[] = [];
+    vi.spyOn(axios, 'request').mockImplementation(async request => {
+      expect(request.method).toBe('DELETE');
+      deletions.push(String(request.url));
+      return { status: 404, data: { error: 'Session not found or not owned by user' } };
+    });
+    const input = { sessionId };
+    const target = { kind: 'machine' as const, machineId: 'machine-selected' };
+    const requestId = 'already-absent-delete';
+    // Home authorization is the external boundary; native resolution and idempotent recovery stay real.
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-delete', binding: {
+      accountId: 'account-1', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: mode,
+      serverIdentityId: context.serverId, custodianAccountId: 'account-1', machineId: target.machineId,
+      installationId: signer.installationId, actionId: 'session.delete', requestId, target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(ExternalActionRequestEnvelopeSchema.parse({
+        v: 1, target, requestId, input })),
+    } });
+    const homeDeps = createAccountServerActionDeps({ token: credentials.token, credentials,
+      serverId: context.serverId, serverIdentityId: context.serverId, serverHttpBaseUrl: home,
+      externalActionMachineRequestPrivateKey: signer.privateKey, externalActionMachineInstallationId: signer.installationId });
+    expect(await executeSessionDelete({ input,
+      context: { ...context, actionRequestId: requestId, externalActionTarget: target,
+        externalActionExecutionAuthorization: authorization },
+      deps: { ...deps, homeDomainAction: homeDeps.homeDomainAction }, isDeferredApprovalResult: () => false,
+    })).toMatchObject({ ok: true, result: { success: true } });
+    expect(reads.sort()).toEqual(['/v1/account/encryption/currentness', `/v2/sessions/${sessionId}`].sort());
+    expect(tagLookup).not.toHaveBeenCalled();
+    expect(deletions).toEqual([`${home}/v1/sessions/${sessionId}`]);
+  });
 
   it('binds the canonical reference resolver and manager read to the exact Home', async () => {
     const { deps } = setup();
