@@ -151,6 +151,45 @@ export function buildSessionAccessProjectionSelect(accountId: string, context: S
 }
 export type SessionAccessProjectionRow = Prisma.SessionGetPayload<{ select: ReturnType<typeof buildSessionAccessProjectionSelect> }>;
 
+/** The access projection a Session delivery decides from, with the layout its payload projects to. */
+export function buildSessionDeliveryAccessSelect(accountIds: readonly string[], context: SessionAccessProjectionContext = {}) {
+    return { ...buildSessionAccessProjectionSelectForAccounts(accountIds, context), metadataLayoutVersion: true } as const;
+}
+export type SessionDeliveryAccessRow = SessionAccessProjectionRow & Readonly<{ metadataLayoutVersion: number }>;
+
+/**
+ * A committed write's access facts for its recipients, by Account: each row was read inside the
+ * write's transaction after its Session lock (the lock a grant change takes too), so it is the
+ * state the write commits with. The local fan-out decides each recipient socket's delivery from it
+ * instead of reading the Session again (OWNER-RULINGS 2026-11-16 "Remove overbuilt re-reads");
+ * an access change committed later reaches clients through its own access-loss push.
+ */
+export type SessionDeliveryAccess = ReadonlyMap<string, SessionDeliveryAccessRow>;
+
+/**
+ * Completes a write's delivery access for its recipients in the write's transaction: Accounts the
+ * writer's own locked read already covers are reused, every other recipient shares one read.
+ */
+export async function readSessionDeliveryAccessInTx(tx: Tx, input: Readonly<{
+    sessionId: string;
+    recipientAccountIds: readonly string[];
+    known: SessionDeliveryAccess;
+}>): Promise<SessionDeliveryAccess> {
+    const missing = [...new Set(input.recipientAccountIds)].filter(accountId => !input.known.has(accountId));
+    if (missing.length === 0) return input.known;
+    const access = new Map(input.known);
+    // The Account-set reader's bind boundary (resolveSessionAccessForAccountsInTx).
+    for (let offset = 0; offset < missing.length; offset += 100) {
+        const batch = missing.slice(offset, offset + 100);
+        const row = await tx.session.findUnique({ where: { id: input.sessionId },
+            select: withSessionContentSelect(buildSessionDeliveryAccessSelect(batch,
+                await readSessionAccessProjectionContextInTx(tx, batch))) }).then(decodeSessionStoredContent);
+        if (!row) return input.known;
+        for (const accountId of batch) access.set(accountId, row);
+    }
+    return access;
+}
+
 export interface ApplicableSessionGrant {
     readonly source: SessionAccessSource;
     readonly accessLevel: Exclude<SessionAccessLevel, "owner">;

@@ -8,7 +8,7 @@ import { projectSessionInputRepliesFromTurnInTx } from './messages/sessionMessag
 import * as z from 'zod/mini';
 import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer } from "./messages/sessionInputAdmission";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { assertSessionCapabilityInTx, assertSessionOwnerInTx, buildSessionAccessProjectionSelect, resolveSessionAccessForOperation, type SessionCapabilityAssertion, type EffectiveSessionAccess, type SessionCapability } from "@/app/session/access/sessionAccess";
+import { assertSessionCapabilityInTx, assertSessionOwnerInTx, buildSessionDeliveryAccessSelect, readSessionDeliveryAccessInTx, resolveSessionAccessForOperation, type SessionCapabilityAssertion, type EffectiveSessionAccess, type SessionCapability, type SessionDeliveryAccess } from "@/app/session/access/sessionAccess";
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { resolveCurrentSessionRecipientAccountIdsInTx } from "@/app/session/access/sessionRecipients";
@@ -779,6 +779,8 @@ export type SessionMutationContextResult =
         sessionActivityBadgeInputs: SessionActivityBadgeInputs;
         /** The same locked Session read, for writers that decide from its turn and storage facts. */
         sessionState: SessionMutationContextState;
+        /** The same locked read's access facts for the actor, which the write's fan-out decides from. */
+        deliveryAccess: SessionDeliveryAccess;
       }
     | { ok: false; error: "session-not-found" | "forbidden" };
 
@@ -852,7 +854,7 @@ async function readSessionMutationContextInTx(
     // One Session read (after the Session lock) serves the context, the access decision and the
     // current recipients: the access projection already carries the recipient census's Session facts.
     const row = await tx.session.findUnique({ where: { id: params.sessionId },
-        select: withSessionContentSelect({ ...buildSessionAccessProjectionSelect(params.actorUserId), ...contextSelect }) }).then(decodeSessionStoredContent);
+        select: withSessionContentSelect({ ...buildSessionDeliveryAccessSelect([params.actorUserId]), ...contextSelect }) }).then(decodeSessionStoredContent);
     if (!row) return { ok: false, error: "session-not-found" };
     const session = pickSelectedFields(row, contextSelect);
     const admitted: SessionCapabilityAssertion = params.kind === "owner" && !params.admittedAccess
@@ -870,6 +872,7 @@ async function readSessionMutationContextInTx(
         recipientAccountIds: await resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: params.sessionId, session: row }),
         sessionActivityBadgeInputs: toSessionActivityBadgeInputs(session),
         sessionState: session,
+        deliveryAccess: new Map([[params.actorUserId, row]]),
     };
 }
 
@@ -954,6 +957,8 @@ export type CreateSessionMessageResult =
         attentionImpact: SessionMessageAttentionImpact;
         message: SessionMessageWriteRow;
         recipientCursors: RecipientCursor[];
+        /** Server-internal: the recipients' committed access facts for the local fan-out. */
+        deliveryAccess: SessionDeliveryAccess;
         readyProjection?: SessionReadyProjectionUpdate;
       }
     | {
@@ -966,6 +971,8 @@ export type CreateSessionMessageResult =
         /** Present when the content changed: the stored revision it replaced. */
         previousRevision?: Readonly<{ updatedAt: Date; sourceUpdatedAt: Date | null }>;
         recipientCursors: RecipientCursor[];
+        /** Server-internal: the recipients' committed access facts for the local fan-out. */
+        deliveryAccess: SessionDeliveryAccess;
       }
     | {
         ok: true;
@@ -1267,6 +1274,8 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
                 attentionImpact,
                 message: toSessionMessageWriteRow(updated),
                 recipientCursors,
+                deliveryAccess: await readSessionDeliveryAccessInTx(params.tx, { sessionId: params.sessionId,
+                    recipientAccountIds: recipientCursors.map(cursor => cursor.accountId), known: access.deliveryAccess }),
             }),
         };
     }
@@ -1312,6 +1321,8 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
             // append only when it names exactly this base.
             previousRevision: { updatedAt: existing.updatedAt, sourceUpdatedAt: existing.sourceUpdatedAt },
             recipientCursors,
+            deliveryAccess: await readSessionDeliveryAccessInTx(params.tx, { sessionId: params.sessionId,
+                recipientAccountIds: recipientCursors.map(cursor => cursor.accountId), known: access.deliveryAccess }),
         }),
     };
 }
@@ -1632,6 +1643,8 @@ async function createSessionMessageAttempt(
                 attentionImpact,
                 message: toSessionMessageWriteRow(created),
                 recipientCursors,
+                deliveryAccess: await readSessionDeliveryAccessInTx(tx, { sessionId,
+                    recipientAccountIds: recipientCursors.map(cursor => cursor.accountId), known: access.deliveryAccess }),
                 ...(readyProjection ? { readyProjection } : {}),
             });
         }, { isolationLevel: "ReadCommitted" });
@@ -2617,6 +2630,8 @@ export type ApplySessionTurnMutationResult =
         rollbackEligibleTurnStarts?: number[];
         /** Server-internal: an applied mutation's Session recipient projection, returned by its own update (null when nothing applied). */
         recipientProjection: SessionTranscriptPublicationRecipientProjectionRow | null;
+        /** Server-internal: an applied mutation's recipients' committed access facts for the local fan-out. */
+        deliveryAccess?: SessionDeliveryAccess;
       }
     | {
         ok: false;
@@ -3039,6 +3054,7 @@ function createSessionTurnAppliedResult(params: {
     badgeAttentionChanged: boolean;
     rollbackEligibleTurnStarts?: number[];
     recipientProjection: SessionTranscriptPublicationRecipientProjectionRow;
+    deliveryAccess: SessionDeliveryAccess;
 }): SessionWriteInTxResult<Extract<ApplySessionTurnMutationResult, { ok: true }>> {
     const result = {
         ok: true,
@@ -3051,6 +3067,7 @@ function createSessionTurnAppliedResult(params: {
         recipientCursors: params.recipientCursors,
         badgeAttentionChanged: params.badgeAttentionChanged,
         recipientProjection: params.recipientProjection,
+        deliveryAccess: params.deliveryAccess,
         ...(params.rollbackEligibleTurnStarts !== undefined
             ? { rollbackEligibleTurnStarts: params.rollbackEligibleTurnStarts }
             : {}),
@@ -3193,6 +3210,8 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             return sessionRecipientPublicationResult({ ok: true as const, didApply: true, receipt,
                 ...state, lastRuntimeIssue: null, latestTurnStatusObservedAt: params.turnMutation.observedAt,
                 recipientCursors, recipientProjection: publication,
+                deliveryAccess: await readSessionDeliveryAccessInTx(tx, { sessionId,
+                    recipientAccountIds: recipientCursors.map(cursor => cursor.accountId), known: access.deliveryAccess }),
                 badgeAttentionChanged: didSessionActivityBadgeSignalChange(toSessionActivityBadgeInputs(session),
                     { ...toSessionActivityBadgeInputs(session), lastRuntimeIssue: null }),
             });
@@ -3499,6 +3518,8 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             recipientCursors,
             badgeAttentionChanged,
             recipientProjection: publication,
+            deliveryAccess: await readSessionDeliveryAccessInTx(tx, { sessionId: params.turnMutation.sessionId,
+                recipientAccountIds: recipientCursors.map(cursor => cursor.accountId), known: access.deliveryAccess }),
             ...(rollbackEligibleTurnStarts !== undefined ? { rollbackEligibleTurnStarts } : {}),
         });
 }

@@ -57,6 +57,7 @@ export async function publishSessionTurnMutationUpdate(params: {
                 payload,
                 recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
                 skipSenderConnection: accountId === params.actorUserId ? skipSenderConnection : undefined,
+                deliveryAccess: params.result.deliveryAccess,
             });
         }));
     }

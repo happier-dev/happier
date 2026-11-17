@@ -21,7 +21,7 @@ import {
     type SocketRoomEmitter,
     type SocketRoomEventName,
 } from "./socketRoomEmitter";
-import { buildSessionAccessProjectionSelect, resolveSessionAccessForOperation } from "@/app/session/access/sessionAccess";
+import { buildSessionAccessProjectionSelect, resolveSessionAccessForOperation, type SessionDeliveryAccess, type SessionDeliveryAccessRow } from "@/app/session/access/sessionAccess";
 import type { Socket } from "socket.io";
 import type { Prisma } from "@prisma/client";
 import { readSessionAccessAuthenticationFromSocket } from "@/app/session/access/sessionAccessAuthentication";
@@ -380,6 +380,8 @@ class EventRouter {
         accountChangeFromCursor?: number;
         /** The rows that transaction stored for the Account; row-demand sockets receive them authorized. */
         accountChangeRows?: readonly AccountChangeRowFacts[];
+        /** A Session write's committed access facts by recipient: this node's sockets are decided from them. */
+        deliveryAccess?: SessionDeliveryAccess;
     }): void | Promise<void> {
         if (params.accountChangeFromCursor !== undefined && params.recipientFilter?.type === 'account-stored-content-v3') {
             return this.emitAccountChangeWake({ userId: params.userId, fromCursor: params.accountChangeFromCursor,
@@ -390,7 +392,8 @@ class EventRouter {
             eventName: 'update',
             payload: params.payload,
             recipientFilter: params.recipientFilter || { type: 'all-user-authenticated-connections' },
-            skipSenderConnection: params.skipSenderConnection
+            skipSenderConnection: params.skipSenderConnection,
+            committedAccess: params.deliveryAccess?.get(params.userId),
         });
     }
 
@@ -482,6 +485,7 @@ class EventRouter {
         skipSenderConnection?: ClientConnection;
         /** Row-demand sockets receive their own authorized page from `emitAccountChangeWake`. */
         exceptAccountChangeRowsSockets?: boolean;
+        committedAccess?: SessionDeliveryAccessRow;
     }): void | Promise<void> {
         if (params.recipientFilter.type === "all-interested-in-session") {
             return this.emitToCredentialQualifiedSessionConnections({
@@ -764,6 +768,8 @@ class EventRouter {
         eventName: SocketRoomEventName;
         payload: unknown;
         skipSenderConnection?: ClientConnection;
+        /** The write's committed access row for this Account; only this node's own sockets use it. */
+        committedAccess?: SessionDeliveryAccessRow;
     }): Promise<void> {
         const payloadType = resolveEventFanoutPayloadType(params.payload);
         const payloadBytes = shouldSampleEventFanoutPayloadBytes()
@@ -809,7 +815,7 @@ class EventRouter {
                 try {
                     this.broadcastServerSideEvent?.(CREDENTIAL_QUALIFIED_SESSION_DELIVERY_EVENT, delivery);
                 } finally {
-                    await this.receiveCredentialQualifiedSessionDelivery(localIo, delivery);
+                    await this.receiveCredentialQualifiedSessionDelivery(localIo, delivery, params.committedAccess);
                 }
                 return;
             }
@@ -817,6 +823,7 @@ class EventRouter {
             const deliveredCount = await this.emitToQualifiedSessionSockets({
                 accountId: params.userId,
                 sessionId: params.sessionId,
+                committedAccess: params.committedAccess,
                 live: classifyLiveSessionDelivery(params.eventName, params.payload),
                 sockets: [...this.userConnections.get(params.userId) ?? []]
                     .filter(connection => connection !== params.skipSenderConnection && this.shouldSendToConnection(connection, {
@@ -853,6 +860,8 @@ class EventRouter {
     async receiveCredentialQualifiedSessionDelivery(
         localIo: LocalSocketRoomEmitter,
         rawDelivery: unknown,
+        /** Publishing node only: its own write's committed access row (never part of the envelope). */
+        committedAccess?: SessionDeliveryAccessRow,
     ): Promise<void> {
         const delivery = parseCredentialQualifiedSessionDelivery(rawDelivery);
         if (!delivery) {
@@ -860,7 +869,7 @@ class EventRouter {
             return;
         }
         try {
-            await this.emitToQualifiedSocketsOnReceivingNode(localIo, delivery);
+            await this.emitToQualifiedSocketsOnReceivingNode(localIo, delivery, committedAccess);
         } catch (error) {
             recordEventFanoutDrop({ eventName: delivery.eventName, reason: "no_matching_connections" });
             log(
@@ -873,6 +882,7 @@ class EventRouter {
     private async emitToQualifiedSocketsOnReceivingNode(
         localIo: LocalSocketRoomEmitter,
         delivery: CredentialQualifiedSessionDeliveryV1,
+        committedAccess?: SessionDeliveryAccessRow,
     ): Promise<void> {
         const sockets = await localIo.in([
             `session:${delivery.sessionId}:${delivery.accountId}`,
@@ -885,6 +895,7 @@ class EventRouter {
         const deliveredCount = await this.emitToQualifiedSessionSockets({
             accountId: delivery.accountId,
             sessionId: delivery.sessionId,
+            committedAccess,
             live,
             sockets: sockets.filter(socket => socket.id !== delivery.skipSocketId
                 && socket.data.userId === delivery.accountId
@@ -928,11 +939,13 @@ class EventRouter {
      * A publisher's live event is admitted by the consumption owner, which holds each
      * socket's answer until the Session access-change push retires it, so only durable
      * deliveries are decided here, and a refusal here withdraws that socket's live delivery
-     * too. The publisher's held audience names the Accounts.
+     * too. The publisher's held audience names the Accounts. A write that hands over its committed
+     * access row (`SessionDeliveryAccess`) is decided from that row, with no Session read here.
      */
     private async emitToQualifiedSessionSockets<S extends SessionDeliverySocket>(params: Readonly<{
         accountId: string;
         sessionId: string;
+        committedAccess?: SessionDeliveryAccessRow;
         live: ReturnType<typeof classifyLiveSessionDelivery>;
         sockets: readonly S[];
         emit: (socket: S, isSessionOwner: boolean, metadataLayoutVersion: number) => boolean;
@@ -982,7 +995,7 @@ class EventRouter {
             readBeyondRow = true;
             throw new Error("Session delivery decision needs a read snapshot");
         } }) as Tx;
-        const rowOnly = await decide(rowOnlyReader, await inReadSnapshot(tx => tx.session.findUnique({
+        const rowOnly = await decide(rowOnlyReader, params.committedAccess ?? await inReadSnapshot(tx => tx.session.findUnique({
             where: { id: params.sessionId }, select: withSessionContentSelect(select),
         }).then(decodeSessionStoredContent), {
             // The access row loads relations: one joined statement where Prisma's relationJoins exist,

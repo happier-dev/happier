@@ -1195,10 +1195,12 @@ export function sessionUpdateHandler(
                     ? buildNewMessageUpdate(observedMessage, observation.sessionId, cursor, randomKeyNaked(12), options)
                     : buildMessageUpdatedUpdate(observedMessage, observation.sessionId, cursor, randomKeyNaked(12),
                         append ? { ...options, append } : options);
-                eventRouter.emitUpdate({
+                // Awaited, so this Session's queued fan-out stays in commit order.
+                await eventRouter.emitUpdate({
                     userId: accountId,
                     payload,
                     recipientFilter: { type: "all-interested-in-session", sessionId: observation.sessionId },
+                    deliveryAccess: result.deliveryAccess,
                 });
             }));
             if (result.didWrite) {

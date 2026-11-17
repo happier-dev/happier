@@ -173,13 +173,15 @@ export function transcriptObservationWriteCostContract(provider: "sqlite" | "pos
             expect(result.recipientCursors.map(cursor => cursor.accountId).sort()).toEqual([owner.id, viewer.id].sort());
         }
         const cost = {
-            // One Session read serves the mutation context, the access decision and the current recipients.
-            // PostgreSQL adds the audience census. SQLite (no census) links each change row to the written
-            // Session without an existence read (RED at HEAD 660e99616d9: 3).
+            // One Session read serves the mutation context, the access decision, the current recipients and
+            // the actor's delivery access. PostgreSQL adds the audience census. SQLite (no census) links each
+            // change row to the written Session without an existence read (RED at HEAD 660e99616d9: 3).
+            // One more read decides every other recipient's delivery (the viewer's) in this transaction;
+            // the fan-out no longer reads each recipient's row (was 1 per recipient with a socket).
             sessionRowReads: inTransaction.filter(isSessionRowRead).length / lines,
         };
         console.info("ACCOUNT_MESSAGE_WRITE_COST", JSON.stringify({ provider, lines, ...cost, transactionRequests: inTransaction.length / lines }));
-        expect(cost).toEqual({ sessionRowReads: provider === "sqlite" ? 1 : 2 });
+        expect(cost).toEqual({ sessionRowReads: provider === "sqlite" ? 2 : 3 });
     });
 
     it("still evaluates remote alerts per line when a follower's policy selects streamed messages", async () => {
