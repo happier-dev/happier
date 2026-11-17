@@ -1473,6 +1473,14 @@ resolveServerFeaturesSnapshot?: () =>
                         verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
                 },
                 machineServiceAction: request => apiMachineForSessions.executeMachineServiceAction(request),
+                // Same receiving lifecycle owner as the startup factory; never re-enter Machine RPC,
+                // which would lose this invocation's approval origin.
+                machineReboot: request => {
+                  const ingress = resolveRequesterIngress(request.context);
+                  return apiMachineForSessions.executeMachineRebootAction({ ...request, context: { ...request.context,
+                    ...(ingress?.machineAdmission ? { machineAdmission: ingress.machineAdmission,
+                      verifyMachineAdmissionCurrent: ingress.verifyMachineAdmissionCurrent } : {}) } });
+                },
                 openProject: async (input, context) => {
                   const ingress = resolveRequesterIngress(context);
                   if (!ingress?.machineAdmission || !ingress.verifyMachineAdmissionCurrent) {
