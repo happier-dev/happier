@@ -4,23 +4,48 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { View } from 'react-native';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { HAPPIER_STATE_LINE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { installWebLayoutBridge, measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
 import { buildCapabilityCollectionAnatomy } from '@/components/capabilities/row/buildCapabilityCollectionAnatomy';
 import { CustomModal } from '@/modal/components/CustomModal';
 import { CapabilityAddModalBody, capabilityAddChrome, type CapabilityAddModalConfig } from './CapabilityAddModal';
 
-// The window's size is the platform boundary: jsdom has no viewport for react-native-web to read, so the test sets it.
-const viewport = vi.hoisted(() => ({ width: 1440 }));
-vi.mock('react-native', async () => ({
-    ...(await vi.importActual<Record<string, unknown>>('react-native-web')),
-    useWindowDimensions: () => ({ width: viewport.width, height: 800, scale: 1, fontScale: 1 }),
-}));
+vi.mock('react-native', async () => vi.importActual('react-native-web'));
+vi.mock('react-native-reanimated', async () => {
+    const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+    const { View, ScrollView, Text } = await vi.importActual<typeof import('react-native-web')>('react-native-web');
+    return createReanimatedModuleMock({ hostComponents: { View, ScrollView, Text } });
+});
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 installWebLayoutBridge();
+
+// Both device classification and layout read RNW Dimensions. Feed its real DOM
+// boundary so they observe the same viewport (62cdaaeafb2).
+const viewportProperties = [
+    { target: document.documentElement, key: 'clientWidth' },
+    { target: document.documentElement, key: 'clientHeight' },
+    { target: window.screen, key: 'width' },
+    { target: window.screen, key: 'height' },
+];
+const previousDescriptors = viewportProperties.map(({ target, key }) => Object.getOwnPropertyDescriptor(target, key));
+function setViewport(width: number) {
+    viewportProperties.forEach(({ target, key }) => Object.defineProperty(target, key, {
+        configurable: true, value: key === 'width' || key === 'clientWidth' ? width : 800,
+    }));
+    window.dispatchEvent(new Event('resize'));
+}
+afterEach(() => {
+    viewportProperties.forEach(({ target, key }, index) => {
+        const descriptor = previousDescriptors[index];
+        if (descriptor) Object.defineProperty(target, key, descriptor);
+        else Reflect.deleteProperty(target, key);
+    });
+    window.dispatchEvent(new Event('resize'));
+});
 
 type Entry = Readonly<{ name: string; added: boolean }>;
 const entries: readonly Entry[] = [
@@ -41,9 +66,8 @@ const config: CapabilityAddModalConfig<Entry> = {
         anatomy: buildCapabilityCollectionAnatomy<Entry>({
             title: (entry) => entry.name,
             description: () => 'Create and edit documents, with tracked changes and comments, in a long enough line to wrap.',
-            // A row that was already added says so at its title line's end and has no button; the others carry one.
+            // Browse records open their details; Add lives in the detail footer.
             whereSummary: (entry) => (entry.added ? 'Added' : null),
-            action: (entry) => (entry.added ? null : <View testID={`add-button:${entry.name}`} style={{ width: 56, height: 28 }} />),
             facts: () => ({}),
             accessibilityLabel: (entry) => entry.name,
             testID: (entry) => `row:${entry.name}`,
@@ -57,7 +81,7 @@ const config: CapabilityAddModalConfig<Entry> = {
 };
 
 it.each([1440, 390])('lands once on asynchronously admitted results without pushing a phone (%i px)', async (width) => {
-    viewport.width = width;
+    setViewport(width);
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -87,7 +111,7 @@ it.each([1440, 390])('lands once on asynchronously admitted results without push
             await render();
             expect(preview('docx')).not.toBeNull();
             expect(preview('webapp-testing')).toBeNull();
-            viewport.width = 390;
+            await act(async () => setViewport(390));
             measuredWidth = 390;
             await render();
             expect(preview('docx')).toBeNull();
@@ -101,34 +125,61 @@ it.each([1440, 390])('lands once on asynchronously admitted results without push
 it.each([
     [1440, 24],
     [390, 16],
-])('puts the dialog title, tools band and rows on one edge (%i px: %i px from the card)', async (width, edge) => {
-    viewport.width = width;
+])('keeps its header and catalog on their responsive edges (%i px: %i px from the card)', async (width, edge) => {
+    setViewport(width);
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
+    // One mode has no chooser (717576ac290); this geometry case exercises a
+    // real choice so that its tools band is present on both responsive paths.
+    const choosing: CapabilityAddModalConfig<Entry> = {
+        ...config,
+        catalog: { ...config.catalog, groups: [{ key: 'available', title: 'Available skills', itemKeys: entries.map((entry) => entry.name) }] },
+        modes: [...config.modes, {
+            key: 'url', label: 'From a URL', icon: 'link', kind: 'input', renderBody: () => null,
+        }],
+    };
     try {
         await act(async () => root.render(
             <CustomModal
                 visible
                 onClose={() => {}}
-                config={{ id: 'add', type: 'custom', component: CapabilityAddModalBody as never, props: { config } as never, chrome: capabilityAddChrome(config) }}
+                config={{ id: 'add', type: 'custom', component: CapabilityAddModalBody as never, props: { config: choosing } as never, chrome: capabilityAddChrome(choosing) }}
             />,
         ));
-        const layout = await measureWebLayout(document.body, { viewport: { width, height: 800 }, texts: ['Add a skill', 'Added', 'docx'], settle: (replay) => act(replay) });
+        const layout = await measureWebLayout(document.body, { viewport: { width, height: 800 }, texts: ['Add a skill', 'Available skills', 'Added', 'docx'], settle: (replay) => act(replay) });
         const card = layout.rect('modal-card-header');
         const title = layout.textRects('Add a skill').find((rect) => rect.width > 1)!;
         const band = layout.rect('add:mode:browse');
         const close = layout.rect('add:close');
-        // The first tab sits a segmented-bar padding inside the band's edge; the title and the rows' text sit on it.
-        const bandEdge = band.left - card.left - 2;
-        expect.soft(Math.abs(bandEdge - edge)).toBeLessThanOrEqual(2);
+        // The shared Add frame (717576ac290) puts desktop modes beside the
+        // title; a phone gives them their own band on the body's content edge.
+        if (width === 390) {
+            expect.soft(Math.abs(band.left - card.left - 2 - edge)).toBeLessThanOrEqual(2);
+            expect.soft(band.top).toBeGreaterThanOrEqual(card.bottom);
+        } else {
+            expect.soft(band.left).toBeGreaterThan(title.right);
+            expect.soft(band.right).toBeLessThan(close.left);
+            expect.soft(band.top).toBeLessThan(title.bottom);
+            expect.soft(band.bottom).toBeGreaterThan(title.top);
+        }
         expect.soft(Math.abs(title.left - card.left - edge)).toBeLessThanOrEqual(2);
-        expect.soft(Math.abs(layout.textRects('docx')[0]!.left - card.left - edge)).toBeLessThanOrEqual(2);
-        // The close button keeps the same inset at the other end, and the rows' trailing controls end on it.
+        const list = layout.rect('add:list');
+        const rowTitle = layout.textRects('docx')[0]!;
+        // The desktop catalog is its own side pane (19145ebc224), with its
+        // headings on its rows' edge; the phone catalog occupies the whole card.
+        expect.soft(Math.abs(rowTitle.left - layout.textRects('Available skills')[0]!.left)).toBeLessThanOrEqual(2);
+        expect.soft(rowTitle.left).toBeGreaterThanOrEqual(list.left);
+        expect.soft(rowTitle.right).toBeLessThanOrEqual(list.right);
         expect.soft(Math.abs(card.right - close.right - edge)).toBeLessThanOrEqual(2);
-        expect.soft(Math.abs(card.right - layout.rect('add-button:docx').right - edge)).toBeLessThanOrEqual(2);
+        if (width === 390) {
+            expect.soft(Math.abs(rowTitle.left - card.left - edge)).toBeLessThanOrEqual(2);
+        }
+        // The held-state meta remains whole in the list beside its detail.
         const added = layout.textRects('Added')[0]!;
-        expect.soft(Math.abs(added.right - layout.rect('add-button:docx').right)).toBeLessThanOrEqual(1);
+        expect.soft(added.left).toBeGreaterThanOrEqual(rowTitle.left);
+        expect.soft(added.right).toBeLessThanOrEqual(list.right);
+        expect.soft(added.clipped).toBe(false);
     } finally {
         await act(async () => root.unmount());
         host.remove();
@@ -136,7 +187,7 @@ it.each([
 });
 
 it('stands a failed registry line on the rows: its sentence on their titles, its Retry on their trailing edge', async () => {
-    viewport.width = 1440;
+    setViewport(1440);
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
@@ -149,7 +200,6 @@ it('stands a failed registry line on the rows: its sentence on their titles, its
                 description: () => 'Create and edit documents.',
                 mark: (entry) => <View testID={`mark:${entry.name}`} style={{ width: 20, height: 20 }} />,
                 facts: () => ({}),
-                // The title line's trailing meta ("Built into Happier") marks the rows' trailing edge.
                 whereSummary: () => 'Built in',
                 accessibilityLabel: (entry) => entry.name,
                 testID: (entry) => `row:${entry.name}`,
@@ -163,11 +213,15 @@ it('stands a failed registry line on the rows: its sentence on their titles, its
                 config={{ id: 'add', type: 'custom', component: CapabilityAddModalBody as never, props: { config: failing } as never, chrome: capabilityAddChrome(failing) }} />,
         ));
         const sentence = 'Curated marketplace · Couldn’t reach this registry.';
-        const layout = await measureWebLayout(document.body, { viewport: { width: 1440, height: 800 }, texts: [sentence, 'docx', 'Built in', 'Retry'], settle: (replay) => act(replay) });
+        const layout = await measureWebLayout(document.body, { viewport: { width: 1440, height: 800 }, texts: [sentence, 'docx', 'Retry'], settle: (replay) => act(replay) });
         const rowTitle = layout.textRects('docx')[0]!;
         // Visible text edges; the rows' own focus-ring arithmetic leaves a sub-3 px remainder (was ~20 px).
         expect.soft(Math.abs(layout.textRects(sentence)[0]!.left - rowTitle.left)).toBeLessThanOrEqual(3);
-        expect.soft(Math.abs(layout.textRects('Retry')[0]!.right - layout.textRects('Built in')[0]!.right)).toBeLessThanOrEqual(3);
+        // The published line anatomy owns its trailing inset. Title meta ends
+        // before a separate accessory cell (06f49678e9a), so it is no edge peer.
+        // d3bfdb57b1c puts the label here while its hit pad reaches past it.
+        const line = layout.rect('add:sourceFailure:curated');
+        expect.soft(line.right - layout.textRects('Retry')[0]!.right).toBeCloseTo(HAPPIER_STATE_LINE_METRICS.paddingHorizontalPx, 0);
     } finally {
         await act(async () => root.unmount());
         host.remove();
@@ -175,7 +229,7 @@ it('stands a failed registry line on the rows: its sentence on their titles, its
 });
 
 it('opens a listing whose icon row is mark + name, its purpose and facts on the content edge', async () => {
-    viewport.width = 1440;
+    setViewport(1440);
     const host = document.createElement('div');
     document.body.appendChild(host);
     const root = createRoot(host);
