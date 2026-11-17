@@ -11,7 +11,10 @@ import { ConnectedServiceMark } from '@/components/settings/connectedServices/Co
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { useMachineField } from '@/sync/store/hooks';
 import { t } from '@/text';
+
+import { confirmMachineSignInScope } from './machineSignInScope';
 
 /** One row's state in words: the native sign-in owner's reported status, never a local guess. */
 function describeSignIn(row: MachineCliSignInRow): string {
@@ -67,8 +70,13 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     presented: props.presented,
   });
   const terminalHost = useAgentSignInTerminalHost();
+  const hostUser = useMachineField(props.machineId, 'metadata', 'username', { serverId: props.serverId }) ?? null;
   const open = React.useCallback(
-    (row: MachineCliSignInRow) => {
+    async (row: MachineCliSignInRow) => {
+      // A sign-in into an OS user other people's Sessions run as is theirs to use too: say so before it starts.
+      const confirmed = await confirmMachineSignInScope({ scope: row.authentication?.signInScope,
+        tool: row.title, machine: props.machineName, hostUser });
+      if (!confirmed) return;
       const target = {
         serverId: props.serverId,
         machineId: props.machineId,
@@ -79,7 +87,7 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
       if (terminalHost) terminalHost.open(target);
       else showAgentSignInTerminalSheet(target);
     },
-    [props.machineId, props.machineName, props.serverId, terminalHost],
+    [hostUser, props.machineId, props.machineName, props.serverId, terminalHost],
   );
   // Only CLIs whose sign-in the Machine could read: one it can't check (today: not installed there) belongs to the
   // Agents tab's install flow, not to a wall of "Couldn't check" rows here.
@@ -126,7 +134,7 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
                 size="small"
                 display="secondary"
                 title={t('machinePresets.setup.tab.signInAction')}
-                onPress={() => open(row)}
+                onPress={() => { void open(row); }}
               />
             ) : undefined
           }
