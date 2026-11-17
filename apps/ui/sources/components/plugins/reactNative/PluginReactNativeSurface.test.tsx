@@ -1179,6 +1179,31 @@ describe('PluginReactNativeSurface', () => {
         expect(widget.findByTestId('plugin-rn-ui-loading')).toBeNull();
     });
 
+    it('draws the loading placeholder while an ephemeral input picker\'s first artifact loads, never an empty picker', async () => {
+        // An Action field's picker is its modal's whole body, not optional content: with no placeholder the
+        // card stood empty above its Cancel until the view arrived.
+        const pending = createDeferred<PluginReactNativeSurfaceModule>();
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const picker = await renderScreen(<PluginReactNativeSurface
+            surfaceId="surface_picker"
+            renderContext={{ ...defaultRenderContext, surface: createPluginSurfaceContextFixture({
+                mount: { kind: 'embedded', role: 'ephemeralInput', presentation: 'content' },
+            }) }}
+            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            load={() => pending.promise}
+            loadPolicy={{ source: 'installedArtifact' }}
+            cacheKey="cache_embedded_ephemeral_picker"
+            embeddedPresentation="content"
+            targetedFallback={null}
+        />);
+        await flushHookEffects({ cycles: 1, turns: 2 });
+        expect(picker.findByTestId('plugin-rn-ui-loading')).toBeTruthy();
+        pending.resolve({ renderSurface: () => React.createElement('PluginNativeSurface', { testID: 'plugin-native-picker' }) });
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        expect(picker.findByTestId('plugin-native-picker')).toBeTruthy();
+        expect(picker.findByTestId('plugin-rn-ui-loading')).toBeNull();
+    });
+
     it('retries a nonpersisted loader failure with a fresh mount attempt', async () => {
         const healthyModule = {
             renderSurface: () => React.createElement('PluginNativeSurface', { testID: 'plugin-native-loader-retry-healthy' }),

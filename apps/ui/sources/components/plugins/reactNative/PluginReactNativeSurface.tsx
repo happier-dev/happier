@@ -166,6 +166,10 @@ type PendingPluginReactNativeModuleState = LoadedPluginReactNativeModuleState & 
     writeFence: PluginReactNativeModuleRegistryWriteFence | null;
 }>;
 
+function isEphemeralInputMount(mount: PluginReactNativeSurfaceProps['renderContext']['surface']['mount']): boolean {
+    return mount.kind === 'embedded' && mount.role === 'ephemeralInput';
+}
+
 const loadedModuleRegistry = getInstalledPluginReactNativeModuleRegistry();
 let nextPluginReactNativeMountOwnerId = 0;
 const defaultWatchdog = createPluginReactNativeWatchdog();
@@ -805,8 +809,10 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
                 // slot, so keep that slot visible while loading too. Composer-owned chrome keeps its placeholder.
                 // A widget's body is the card's content, not optional chrome: it takes the frame's one first-load look,
                 // so a card never stands empty while its view arrives (owner 2026-11-11, OWNER-1330-COAT 01).
+                // An ephemeral input (an Action field's picker) is its modal's whole body, so it keeps the placeholder too.
                 widgetFrameBody ? <WidgetFrameLoadingBody testID="plugin-rn-ui-loading" accessibilityLabel={t('common.loading')} />
                 : props.embeddedPresentation === 'content' && props.stateFallback === undefined && props.targetedFallback == null
+                    && !isEphemeralInputMount(props.renderContext.surface.mount)
                     ? null
                     : <PluginSurfaceFallback testID="plugin-rn-ui-loading" state="loading" />
             ) : props.stateFallback !== undefined ? props.stateFallback : (
