@@ -10,7 +10,15 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import { createProjectManifestActionClient } from './projectManifestActionClient';
 import { matchesRetainedCheckout } from '@/sync/ops/actions/projectSetupTrustConsent';
 
+import type { ProjectSharedSetupChangeV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
+import type { ProjectSetupSetInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
+
 export type ProjectSetupDecision = 'thisTime' | 'untilChanged' | 'skip';
+export type ProjectSharedSetupUpdateRequest = Readonly<{
+  projectRef: ProjectSetupSetInputV1['projectRef'];
+  expectedRevision: ProjectSetupSetInputV1['expectedRevision'];
+  review: Extract<ProjectSharedSetupChangeV1, { kind: 'changed' }>;
+}>;
 
 export type ProjectSetupConsentDecisionResult =
   | Readonly<{ kind: 'remembered'; operation: ActionOperationSnapshotV1 }>

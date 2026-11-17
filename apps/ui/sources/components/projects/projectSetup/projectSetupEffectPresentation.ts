@@ -17,6 +17,7 @@ const ProjectSetupReviewPresentationSchema = z.object({
 });
 
 export type ProjectSetupReviewPresentation = z.infer<typeof ProjectSetupReviewPresentationSchema>;
+const ProjectSetupLifecycleCommandsSchema = z.object({ setup: z.array(z.unknown()), teardown: z.array(z.unknown()) });
 
 export function readProjectSetupReviewPresentation(reviewedEffect: unknown): ProjectSetupReviewPresentation | null {
   const presentation = reviewedEffect && typeof reviewedEffect === 'object' && 'presentation' in reviewedEffect
@@ -33,7 +34,11 @@ export function readProjectSetupReviewPresentation(reviewedEffect: unknown): Pro
 export function listReviewedSetupCommands(
   reviewedEffect: unknown,
 ): readonly string[] | null {
-  const commands =
+  const lifecycle = reviewedEffect && typeof reviewedEffect === 'object' && 'lifecycle' in reviewedEffect
+    ? ProjectSetupLifecycleCommandsSchema.safeParse(reviewedEffect.lifecycle) : null;
+  // Lifecycle consent displays both phases. Command-only reviews (for example a Script approval)
+  // retain their selected command list and do not acquire lifecycle meaning.
+  const commands = lifecycle?.success ? [...lifecycle.data.setup, ...lifecycle.data.teardown] :
     reviewedEffect &&
     typeof reviewedEffect === 'object' &&
     'commands' in reviewedEffect

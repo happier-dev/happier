@@ -15,7 +15,10 @@ import {
   type ProjectPrepareInputV1,
   type ProjectWorkerNoAcceptanceFailureDetailsV1,
 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type ArtifactActionResultV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ProjectSharedSetupV1Schema, PROJECT_SETUP_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
+import { ProjectSourcesUpdateInputV1Schema, ProjectSourcesUpdateOutputV1Schema, type ProjectSourcePublicationPatchV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema,
   type ProjectOrganizationUpdateInputV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
@@ -43,7 +46,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { HappyError } from '@/utils/errors/errors';
 
 type ActionInvocation = (
-  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare' | 'projects.organization.update' | 'projects.setup.set' | 'artifact.get' | typeof PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
+  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare' | 'projects.organization.update' | 'projects.setup.set' | 'artifact.get' | 'artifact.create' | 'projects.sources.update' | typeof PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
   input: unknown,
   context?: Parameters<ReturnType<typeof createFrontDoorActionExecute>>[2],
 ) => ReturnType<ReturnType<typeof createFrontDoorActionExecute>>;
@@ -96,6 +99,8 @@ export function createProjectManifestActionClient(
       | 'projects.organization.update'
       | 'projects.setup.set'
       | 'projects.prepare'
+      | 'artifact.create'
+      | 'projects.sources.update'
       | typeof PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
     actionInput: unknown,
     schema: core.$ZodType<T>,
@@ -164,6 +169,26 @@ export function createProjectManifestActionClient(
     reassignWorktreePorts(confirmation: Readonly<{ confirmed: true }>) {
       return invoke(PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
         ProjectWorktreePortsReassignInputSchema.parse({ workspace: input.workspace }), WorktreePortsResultV1Schema, confirmation);
+    },
+    /** The existing Artifact Action owns Account-mode encoding; Source update owns recipient preparation. */
+    createSharedSetup(manifest: ProjectManifestV1, title: string) {
+      return invoke('artifact.create', ArtifactActionInputSchemasV1['artifact.create'].parse({
+        header: { kind: PROJECT_SETUP_ARTIFACT_KIND_V1, title },
+        body: JSON.stringify(ProjectSharedSetupV1Schema.parse({ kind: PROJECT_SETUP_ARTIFACT_KIND_V1, manifest })),
+      }), ArtifactActionOutputSchemasV1['artifact.create']);
+    },
+    attachSharedSetup(request: Readonly<{
+      sourceId: string; expectedRevision: number;
+      publication: ArtifactActionResultV1<'artifact.create'>;
+      patch?: ProjectSourcePublicationPatchV1;
+    }>) {
+      return invoke('projects.sources.update', ProjectSourcesUpdateInputV1Schema.parse({
+        serverId: input.workspace.serverId, sourceId: request.sourceId, expectedRevision: request.expectedRevision,
+        patch: { ...request.patch, attachment: { kind: 'attach', attachment: {
+          purpose: 'setup', ref: { kind: 'doc', serverId: input.workspace.serverId, artifactId: request.publication.artifactId },
+          contentRevision: request.publication.revision,
+        } } },
+      }), ProjectSourcesUpdateOutputV1Schema);
     },
     /** Upstream is read only for the person's explicit update review. */
     async reviewSharedSetup(sourceId: string) {

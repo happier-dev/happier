@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { listReviewedSetupCommands, readProjectSetupReviewPresentation } from './projectSetupEffectPresentation';
 
 describe('safe producer setup review presentation', () => {
+  it('shows every command covered by lifecycle consent once, keeping command-only reviews scoped', () => {
+    const setup = { kind: 'command', command: 'echo setup' };
+    const teardown = { kind: 'command', command: 'echo teardown' };
+    expect(listReviewedSetupCommands({ purpose: 'setup', commands: [setup], lifecycle: { setup: [setup], teardown: [teardown] } }))
+      .toEqual(['echo setup', 'echo teardown']);
+    expect(listReviewedSetupCommands({ commands: [teardown] })).toEqual(['echo teardown']);
+  });
   it('retains additive committed evidence without changing the legacy fileState or admitting unknown fields', () => {
     const provenance = { file: '.happier/project.json', kind: 'repository', headCommit: 'abc123',
       fileState: 'unknown', committed: { commit: 'abc123', bytes: 'private' } };
