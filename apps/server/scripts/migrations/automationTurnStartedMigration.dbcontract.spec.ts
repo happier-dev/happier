@@ -1,4 +1,5 @@
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -6,7 +7,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { describe, expect, it } from 'vitest';
 
 import { applyPostgresMigrations, applySqliteMigrations } from '../prismaMigrations';
-import { splitMigrationStatements } from '../../sources/migrations/missingMigrationReconciliation';
+import { runPrismaMigrateCli } from '../prismaMigrateCli';
 
 const serverRoot = join(import.meta.dirname, '../..');
 const previousMigration = '20261116195000_automation_subject_action_projection_final';
@@ -58,6 +59,9 @@ async function proveUpgrade(provider: Provider, db: Database, upgrade: () => Pro
     const metadata = provider === 'sqlite' ? await db.query(`SELECT type,name,sql FROM sqlite_master
         WHERE tbl_name='AutomationRun' AND type IN ('index','trigger') ORDER BY type,name`) : null;
     const foreignKeys = provider === 'sqlite' ? await db.query('PRAGMA foreign_key_list("AutomationRun")') : null;
+    // Refuse the new value before upgrading: a current-schema fixture would fail this control.
+    await expect(insert('AutomationRun', { ...run, id: 'before-upgrade-start', occurrenceKey: 'before-upgrade-occurrence',
+        causeSessionLifecycleEvent: 'parentTurnStarted' })).rejects.toThrow();
     await upgrade();
     for (const [index, table] of tables.entries()) {
         expect(await db.query(`SELECT * FROM ${q(table)} ORDER BY ${q('id')}`)).toEqual(before[index]);
@@ -128,14 +132,51 @@ describe('Session turn-start cause storage upgrade', () => {
     const mysqlUrl = process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID && process.env.HAPPIER_TEST_MYSQL_DATABASE_URL;
     (mysqlUrl ? it : it.skip)('preserves MySQL enum values and rejects malformed turn-start causes', async () => {
         const { createDbMaintenanceClient } = await import('../../sources/storage/prisma');
-        const client = await createDbMaintenanceClient('mysql', mysqlUrl || undefined);
+        const scratch = await mkdtemp(join(tmpdir(), 'happier-turn-start-mysql-'));
+        const migrationsDir = join(scratch, 'migrations');
+        const databaseName = `turn_started_${randomUUID().replaceAll('-', '')}`;
+        const targetUrl = new URL(mysqlUrl!);
+        targetUrl.pathname = `/${databaseName}`;
+        const admin = await createDbMaintenanceClient('mysql', mysqlUrl || undefined);
+        const client = await createDbMaintenanceClient('mysql', targetUrl.toString());
         const db: Database = { execute: sql => client.$executeRawUnsafe(sql),
             query: sql => client.$queryRawUnsafe<Record<string, unknown>[]>(sql) };
+        // Reuse the canonical provider migration owner against an isolated database,
+        // not the launcher's already-current template.
+        const deploy = () => runPrismaMigrateCli({ serverRoot, schemaPath: join(scratch, 'schema.prisma'), args: ['deploy'],
+            env: { ...process.env, DATABASE_URL: targetUrl.toString(), HAPPIER_DB_PROVIDER: 'mysql' }, quiet: true });
+        let created = false;
         try {
+            await admin.$executeRawUnsafe(`CREATE DATABASE \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+            created = true;
+            const root = join(serverRoot, 'prisma/mysql');
+            await copyFile(join(root, 'schema.prisma'), join(scratch, 'schema.prisma'));
+            await mkdir(migrationsDir, { recursive: true });
+            await copyFile(join(root, 'migrations/migration_lock.toml'), join(migrationsDir, 'migration_lock.toml'));
+            for (const entry of await readdir(join(root, 'migrations'), { withFileTypes: true })) {
+                if (entry.isDirectory() && entry.name <= previousMigration) {
+                    await cp(join(root, 'migrations', entry.name), join(migrationsDir, entry.name), { recursive: true });
+                }
+            }
+            await deploy();
+            const ledgerSql = 'SELECT migration_name,checksum FROM _prisma_migrations ORDER BY migration_name';
+            const before = await db.query(ledgerSql);
+            expect(before.at(-1)?.migration_name).toBe(previousMigration);
             await proveUpgrade('mysql', db, async () => {
-                const sql = await readCorrection('mysql');
-                for (const statement of splitMigrationStatements(sql)) await db.execute(statement);
+                await mkdir(join(migrationsDir, migrationId));
+                await writeFile(join(migrationsDir, migrationId, 'migration.sql'), await readCorrection('mysql'));
+                await deploy();
             });
-        } finally { await client.$disconnect(); }
+            const after = await db.query(ledgerSql);
+            expect(after.filter(row => row.migration_name !== migrationId)).toEqual(before);
+            expect(after.at(-1)?.migration_name).toBe(migrationId);
+            await deploy();
+            expect(await db.query(ledgerSql)).toEqual(after);
+        } finally {
+            await client.$disconnect();
+            if (created) await admin.$executeRawUnsafe(`DROP DATABASE \`${databaseName}\``);
+            await admin.$disconnect();
+            await rm(scratch, { recursive: true, force: true });
+        }
     }, 120_000);
 });
