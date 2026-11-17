@@ -53,6 +53,8 @@ const createSessionCreationImmutableRecipeSchema = () => z.strictObject({
   modelSelection: z.nullable(SessionModelSelectionV1Schema),
   profileId: z.nullable(z.string().check(z.trim(), z.minLength(1))),
   approvalProfileId: z.optional(SessionAuthoringSelectionFieldsV1.approvalProfileId),
+  /** Host-resolved creation provenance; absent from public launch selections. */
+  approvalProfileTeamOrGroupDerived: z.optional(z.boolean()),
   identity: z.optional(SessionIdentityAdditionsV1Schema),
   memoryEnabled: z.optional(z.boolean()),
   promptStack: z.optional(SessionPromptStackV1Schema),

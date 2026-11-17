@@ -735,6 +735,10 @@ describe('callMachineRpc', () => {
     const input = { executionTarget: { serverId: 'home', machineId: 'machine-session' },
       creationKey: 'caller-creation-key', directory: { kind: 'managed' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } as const;
+    const sessionCreationDefaults = {
+      context: { projectDefaults: { approvalProfileId: 'shared-project-profile' } },
+      authoredChoices: { executionTarget: input.executionTarget, agentTarget: input.agentTarget },
+    };
     const nestedInput = { discussionId: 'discussion', participant: { kind: 'model', participantSlotId: input.creationKey,
       launch: { executionTarget: input.executionTarget, directory: input.directory, agentTarget: input.agentTarget } } } as const;
     const expectedSpawnInput = callerKind === 'nested-human'
@@ -786,6 +790,11 @@ describe('callMachineRpc', () => {
       const { openExternalActionRequesterAccountContextV1 } = await import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1');
       expect(openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization, purpose: { kind: 'external_action' },
         machineId: 'machine-session', installationId: 'installed-current', serverIdentityId: 'srv_home', installationPrivateKey: installation.secretKey })).toEqual({ token });
+      if (callerKind === 'human') expect(openExternalActionRequesterAccountContextV1({
+        authorization: request.executionAuthorization, purpose: { kind: 'external_action' },
+        machineId: 'machine-session', installationId: 'installed-current', serverIdentityId: 'srv_home',
+        installationPrivateKey: installation.secretKey, includeInvocation: true,
+      })).toMatchObject({ invocation: { sessionCreationDefaults } });
       expect(JSON.stringify(request)).not.toContain(token);
       return { status: 200, data: { v: 1, actionId: 'session.spawn_new', requestId: request.envelope.requestId,
         execution: { ok: true, result: { type: 'success', disposition: 'created', sessionId: 'bob-session',
@@ -807,7 +816,7 @@ describe('callMachineRpc', () => {
     });
     const result = await executor.execute(callerKind === 'nested-human' ? 'discussion.invite' : 'session.spawn_new',
       callerKind === 'nested-human' ? nestedInput : input, callerKind !== 'unbound-agent'
-      ? { surface: 'cli', authority: 'present_user' } : { surface: 'agent', causalPermissionAuthority: null,
+      ? { surface: 'cli', authority: 'present_user', ...(callerKind === 'human' ? { sessionCreationDefaults } : {}) } : { surface: 'agent', causalPermissionAuthority: null,
         actionCaller: { kind: 'host' } });
     if (callerKind === 'human' || callerKind === 'nested-human') {
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: callerKind === 'human'

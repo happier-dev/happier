@@ -178,6 +178,8 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   attestedContext?: import('@happier-dev/protocol').SessionAttestedContextV1;
   memoryEnabled?: boolean;
   approvalProfileId?: string | null;
+  /** Creation resolver provenance; never accepted from ordinary Action authoring. */
+  approvalProfileTeamOrGroupDerived?: boolean;
   promptStack?: import('@happier-dev/protocol/sessions/context/sessionContextV1').SessionPromptStackV1;
   /** Fresh birth validates required qualified documents before any runner is dispatched. */
   preparePromptStack?: () => Promise<void>;
@@ -603,6 +605,7 @@ async function dispatchCommittedSpawn(args: Readonly<{
     identity: _creationOwnedIdentity,
     memoryEnabled: _creationOwnedMemoryEnabled,
     approvalProfileId: _creationOwnedApprovalProfileId,
+    approvalProfileTeamOrGroupDerived: _creationOwnedApprovalProfileTeamOrGroupDerived,
     promptStack: _creationOwnedPromptStack,
     primaryTeamId: _creationOwnedPrimaryTeamId,
     originKind: _originKind,
@@ -1012,7 +1015,8 @@ export async function createSpawnedSession(
     ...(params.managedTargetPlacement ? { managedTargetPlacement: params.managedTargetPlacement } : {}),
     ...(params.identity !== undefined ? { identity: params.identity } : {}),
     ...(params.memoryEnabled !== undefined ? { memoryEnabled: params.memoryEnabled } : {}),
-    ...(params.approvalProfileId !== undefined ? { approvalProfileId: params.approvalProfileId } : {}),
+    ...(params.approvalProfileId !== undefined ? { approvalProfileId: params.approvalProfileId,
+      approvalProfileTeamOrGroupDerived: params.approvalProfileTeamOrGroupDerived ?? false } : {}),
     ...(params.promptStack !== undefined ? { promptStack: params.promptStack } : {}),
     ...(typeof params.initialTitle === 'string' && params.initialTitle.trim().length > 0
       ? { initialTitle: params.initialTitle.trim() }

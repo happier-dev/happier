@@ -957,6 +957,7 @@ async function executeExternalActionRequest(input: Readonly<{
       ...(invocation.callerInputConstraints ? { callerInputConstraints: invocation.callerInputConstraints } : {}),
       ...(invocation.workspaceWrites ? { workspaceWrites: invocation.workspaceWrites } : {}),
       ...(ownInvocation?.defaultSessionId ? { defaultSessionId: ownInvocation.defaultSessionId } : {}),
+      ...(ownInvocation?.sessionCreationDefaults ? { sessionCreationDefaults: ownInvocation.sessionCreationDefaults } : {}),
     } : {}),
     ...(admittedAuthorization ? projectExternalActionWorkflowSessionLeafContextV1(admittedAuthorization) : {}),
     ...(sessionActionOrigin ? {

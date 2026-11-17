@@ -55,7 +55,7 @@ export function daemonLaunchRequiresCommittedSession(
     return true;
   }
   if (options.workspaceWrites !== undefined) return true;
-  if (options.approvalProfileId !== undefined) return true;
+  if (options.approvalProfileId !== undefined || options.approvalProfileTeamOrGroupDerived !== undefined) return true;
   if (options.capabilitySelection !== undefined) return true;
   if (options.requesterSessionBootstrap) return true;
   if ((options.promptStack?.length ?? 0) > 0) return true;
@@ -231,6 +231,7 @@ export function withoutFreshSessionCreationFields(options: SpawnSessionOptions):
     identity: _initialIdentity,
     memoryEnabled: _initialMemoryEnabled,
     approvalProfileId: _initialApprovalProfileId,
+    approvalProfileTeamOrGroupDerived: _initialApprovalProfileTeamOrGroupDerived,
     promptStack: _initialPromptStack,
     manager: _manager,
     initialSessionRolesV1: _initialSessionRolesV1,

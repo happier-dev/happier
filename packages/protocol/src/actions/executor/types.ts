@@ -925,6 +925,18 @@ export type ActionExecutorContext = Readonly<{
   /** Invocation-private original placement from admitted host preparation; never requester or wire authority. */
   admittedMachineTarget?: ActionPreparedMachineTargetV1;
 
+  /** One creation-owner context load, retained within this invocation only. */
+  sessionCreationDefaults?: Readonly<{
+    context: import('../../teams/managedDefaults.js').ManagedSessionDefaultsContext;
+    managedPresetAcquisition?: import('../../machines/managed/actionsV1.js').ManagedAcquireInputV1;
+    managedPresetControllerAccess?: import('../../machines/managed/managedMachineV1.js').ManagedControllerAccessV1;
+    authoredChoices: Readonly<{
+      executionTarget?: SessionSpawnNewInputV2['executionTarget'];
+      agentTarget?: SessionSpawnNewInputV2['agentTarget'];
+      sessionPlacement?: import('../../sessions/creation/sessionPlacementSelectionV1.js').SessionPlacementSelectionV1;
+    }>;
+  }>;
+
   /**
    * Exact machine admitted by a mounted host for an execution run.
    * This is host context rather than Action input, so an Action caller cannot

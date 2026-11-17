@@ -221,6 +221,7 @@ const SpawnDaemonSessionRequestCompatSchema = lazyZodSchema(() => (<I extends z.
   identity: z.optional(asHostProtocolZod(SessionIdentityAdditionsV1Schema)),
   memoryEnabled: z.optional(z.boolean()),
   approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
+  approvalProfileTeamOrGroupDerived: z.optional(z.boolean()),
   promptStack: z.optional(asHostProtocolZod(SessionPromptStackV1Schema)),
   initialAccess: z.optional(SessionInitialAccessDraftV1Schema),
   initialTriggers: z.optional(z.array(asHostProtocolZod(SessionInitialTriggerAdmissionV1Schema))),
@@ -309,7 +310,7 @@ export const SpawnDaemonSessionRequestSchema = lazyZodSchema(() => z.pipe(SpawnD
       message: 'Discussion participant creation cannot submit initial work', input: ctx.value });
     return z.NEVER;
   }
-  if ((request.identity !== undefined || request.memoryEnabled !== undefined || request.promptStack !== undefined || request.approvalProfileId !== undefined)
+  if ((request.identity !== undefined || request.memoryEnabled !== undefined || request.promptStack !== undefined || request.approvalProfileId !== undefined || request.approvalProfileTeamOrGroupDerived !== undefined)
     && (request.existingSessionId || request.type === 'resume-session')) {
     ctx.issues.push({ code: "custom", path: ['identity'], message: 'Initial identity, memory choice and context require fresh Session creation', input: ctx.value });
     return z.NEVER;
@@ -462,6 +463,7 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'identity',
   'memoryEnabled',
   'approvalProfileId',
+  'approvalProfileTeamOrGroupDerived',
   'promptStack',
   'initialAccess',
   'initialTriggers',

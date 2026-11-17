@@ -18,7 +18,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionManagedCont
 import { computeExternalActionRequestEnvelopeDigestV1 } from '../../actions/externalActionExecutionAuthorization.js';
 import { readExternalActionBindingAuthority } from '../../actions/externalActionBindingAuthority.js';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '../../machines/managed/enrollmentIdentityV1.js';
-import { ManagedEnrollmentInstallationV1Schema } from '../../machines/managed/actionsV1.js';
+import { ManagedAcquireInputV1Schema, ManagedEnrollmentInstallationV1Schema } from '../../machines/managed/actionsV1.js';
 import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { ManagedWakeTargetV1Schema, type ManagedWakeTargetV1 } from '../../machines/managed/managedIntentV1.js';
 import type { AccessibleMachineAccessV1 } from '../../machines/machineAccessV1.js';
@@ -41,6 +41,9 @@ import { isPresentUserHostInvocation, isPluginActionInvokeConfirmationV1 } from 
 import { ActionRequestAttributionV1Schema, materializeActionRequestAttributionV1, type ActionRequestAttributionV1 } from '../../actions/actionRequestAttributionV1.js';
 import type { ActionExecutorContext } from '../../actions/executor/types.js';
 import { readHostReviewedParentV1 } from '../../actions/executor/deploymentRoleChild.js';
+import { ManagedSessionDefaultsContextV1Schema } from '../../teams/managedDefaults.js';
+import { SessionPlacementSelectionV1Schema } from './sessionPlacementSelectionV1.js';
+import { ManagedControllerAccessV1Schema } from '../../machines/managed/managedMachineV1.js';
 export { SessionRequesterInstallationSealedBootstrapV1Schema } from './sessionRequesterBootstrapSchemasV1.js';
 
 /** Same serialized fields as the credential custodian's access.key owner, on a private carrier only. */
@@ -113,6 +116,17 @@ export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.e
   callerInputConstraints: z.optional(CallerInputConstraintsV1Schema),
   workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
   defaultSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  /** Creation-owner selection bound to this request by the existing private admission box. */
+  sessionCreationDefaults: z.optional(z.strictObject({
+    context: ManagedSessionDefaultsContextV1Schema,
+    managedPresetAcquisition: z.optional(ManagedAcquireInputV1Schema),
+    managedPresetControllerAccess: z.optional(ManagedControllerAccessV1Schema),
+    authoredChoices: z.strictObject({
+      executionTarget: z.optional(SessionSpawnNewInputV2Schema.shape.executionTarget),
+      agentTarget: z.optional(SessionSpawnNewInputV2Schema.shape.agentTarget),
+      sessionPlacement: z.optional(SessionPlacementSelectionV1Schema),
+    }),
+  })),
   /** Admitted host operation facts; the receiving issuer still matches the declared child plan. */
   reviewedParent: z.optional(WorkflowApprovedOperationParentV1Schema),
   /** The designed host confirmation, bound before dispatch; the common review owner admits it once. */
@@ -161,6 +175,7 @@ export function projectExternalActionRequesterInvocationContextV1(
     ...(context.callerInputConstraints !== undefined ? { callerInputConstraints: context.callerInputConstraints } : {}),
     ...(workspaceWrites !== undefined ? { workspaceWrites } : {}),
     ...(context.defaultSessionId != null ? { defaultSessionId: context.defaultSessionId } : {}),
+    ...(context.sessionCreationDefaults ? { sessionCreationDefaults: context.sessionCreationDefaults } : {}),
     ...retained,
   });
   return parsed.success ? parsed.data : null;

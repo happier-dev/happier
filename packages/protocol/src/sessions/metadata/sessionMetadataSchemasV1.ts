@@ -1076,6 +1076,7 @@ const SessionOwnerRollbackRangesV1Schema = lazyZodSchema(() => z.strictObject({
 const SessionOwnerRuntimeV1Schema = lazyZodSchema(() => z.strictObject({
   ...AgentSessionToolPolicyShapeV1,
   approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
+  approvalProfileTeamOrGroupDerived: z.optional(z.boolean()),
   workspaceWrites: z.optional(z.enum(['allow', 'deny'])),
   nativeSandbox: z.optional(z.enum(['on', 'off'])),
   externalSessionOperationV1: z.optional(ExternalSessionOperationStateV1Schema),
@@ -2052,6 +2053,7 @@ const RELEASED_NATIVE_SESSION_COMPATIBILITY_KEYS = [
 
 const RUNTIME_OWNER_KEYS = [
   'approvalProfileId',
+  'approvalProfileTeamOrGroupDerived',
   'allowedTools',
   'unlistedTools',
   'workspaceWrites',

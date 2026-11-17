@@ -4,6 +4,27 @@ import * as metadataWriters from './metadataWriters.js';
 import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol';
 
 describe('metadataWriters', () => {
+  it('retains creation approval provenance in private metadata and clears it on deliberate acceptance', () => {
+    const metadata = metadataWriters.applyInitialSessionCreationFactsToMetadata({}, {
+      approvalProfileId: 'team-profile', approvalProfileTeamOrGroupDerived: true,
+    });
+    const owner = createSessionOwnerMetadataV1({ metadata });
+    expect(owner.ok).toBe(true);
+    if (!owner.ok) throw new Error('Invalid owner metadata');
+    expect(owner.ownerMetadata.runtime).toMatchObject({ approvalProfileId: 'team-profile',
+      approvalProfileTeamOrGroupDerived: true });
+    const captured = projectSessionOwnerCompatibilityViewV1({
+      sharedMetadata: projectSessionSharedMetadataV1({ metadata }), ownerMetadata: owner.ownerMetadata,
+    });
+    expect(captured.approvalProfileTeamOrGroupDerived).toBe(true);
+    const accepted = metadataWriters.applySessionStateUpdatesToMetadata(captured, [{
+      fieldId: 'intent.approvalProfileId', value: 'team-profile',
+    }]);
+    expect(accepted).toMatchObject({ approvalProfileId: 'team-profile', approvalProfileTeamOrGroupDerived: false });
+    expect(metadataWriters.applySessionStateUpdatesToMetadata(accepted, [{
+      fieldId: 'intent.approvalProfileId', value: 'team-profile',
+    }])).toBe(accepted);
+  });
   it('retains an admitted native sandbox choice through birth metadata and its strict owner envelope', () => {
     const metadata = metadataWriters.applyInitialSessionCreationFactsToMetadata({}, { nativeSandbox: 'off' });
     const owner = createSessionOwnerMetadataV1({ metadata });

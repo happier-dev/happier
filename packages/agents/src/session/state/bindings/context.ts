@@ -59,7 +59,8 @@ export const sessionApprovalProfileBinding: SessionStateBinding<'intent.approval
   read: (metadata) => ({ value: z.nullable(ApprovalProfileIdV1Schema).parse(metadata.approvalProfileId ?? null), updatedAt: null }),
   write: (metadata, update) => {
     const approvalProfileId = z.nullable(ApprovalProfileIdV1Schema).parse(update.value);
-    return metadata.approvalProfileId === approvalProfileId ? metadata : { ...metadata, approvalProfileId };
+    return metadata.approvalProfileId === approvalProfileId && metadata.approvalProfileTeamOrGroupDerived !== true
+      ? metadata : { ...metadata, approvalProfileId, approvalProfileTeamOrGroupDerived: false };
   },
 };
 

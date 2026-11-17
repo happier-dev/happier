@@ -51,6 +51,7 @@ import {
   isReviewedDeploymentChild,
   isReviewedSessionAgentReadinessChild,
   dispatchOriginalAccountAction,
+  readExternalActionRequesterInvocation,
   type ExternalActionMachineRequestSigningKey,
   type DeploymentArchiveOriginForHost,
   type DeploymentChildDerivationRefusal,
@@ -162,6 +163,7 @@ export async function dispatchRequesterSessionSpawnNewRpc(params: Readonly<{
   const execution = await dispatchOriginalAccountAction({ credentials: params.credentials, actionId: 'session.spawn_new',
     input: projectSessionSpawnNewActionInputV2(parsed.data), target: { kind: 'machine', machineId }, serverHttpBaseUrl: params.serverUrl,
     serverIdentityId: params.serverIdentityId, requestId: params.context?.actionRequestId ?? randomUUID(),
+    ...(params.context ? { invocation: readExternalActionRequesterInvocation(params.context) } : {}),
     ...(params.context?.authority ? { authority: params.context.authority } : {}),
     ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
     ...(signal ? { signal } : {}) });

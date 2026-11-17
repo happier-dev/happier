@@ -1195,6 +1195,18 @@ The inspected `../0.2` frontier at
 carrier at this source seam, including scoped staged and unstaged changes.
 No wire epoch, migration or predecessor adapter is introduced.
 
+Session creation also carries the creation owner's optional `sessionCreationDefaults`
+inside this existing private invocation. The captured selected-scope context and
+original authored target and placement choices, plus any already-bound preset
+acquisition and its controller access projection, travel under the exact requester admission and
+installation seal; the receiving executor consumes them without selecting defaults
+again. They are absent from public Action inputs and Session metadata. Matching
+Protocol and CLI/daemon development readers reload together; older strict readers
+can reject this optional private member. The inspected `../0.2` frontier at
+`87aaa83f6b81c92a4ceee5816df2e566ed429bc7` has no requester-invocation carrier,
+and no epoch, migration or adapter is added.
+
+
 ## Direct Machine RPC simplification (unreleased 0.3)
 
 Direct RPC request/response envelopes drop `commandReceipt`; route-policy rows

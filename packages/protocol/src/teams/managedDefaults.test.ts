@@ -2,12 +2,127 @@ import { describe, expect, it } from 'vitest';
 import { qualifiedPurposeKey } from '../connect/connectedAccountPurposeBindings.js';
 import { readMachineIsolationV1 } from '../machines/machineIsolationV1.js';
 import { ManagedDefaultsV1Schema, projectManagedSessionDefaultsLayers, readManagedDefaultsV1, resolveManagedSessionDefaults } from './managedDefaults.js';
+import * as managedDefaults from './managedDefaults.js';
+import { buildBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 
 const key = 'agent:example.agent/example';
 const mode = (permissionMode: 'read-only' | 'safe-yolo' | 'yolo') => ({ permissionModeByAgentTargetKey: { [key]: permissionMode } });
 const isolatedMachine = readMachineIsolationV1({ isolationV1: { environment: 'managed-guest', provisionerId: 'example.machine/guest' } });
 
 describe('managed Session defaults', () => {
+  it('chooses the project Agent before per-Agent facets and preserves an explicit Agent', () => {
+    const personalAgent = { kind: 'agent' as const, identity: { pluginId: 'example.agent', localId: 'personal' } };
+    const sharedAgent = { kind: 'agent' as const, identity: { pluginId: 'example.agent', localId: 'shared' } };
+    const input = { agentTargetKey: key, personalProjectDefaults: { defaultAgentTarget: personalAgent,
+      permissionModeByAgentTargetKey: { [buildBackendTargetKeyV2(personalAgent)]: 'read-only' as const } },
+      projectDefaults: { defaultAgentTarget: sharedAgent } };
+    expect(resolveManagedSessionDefaults(input).agentTarget).toMatchObject({ value: personalAgent, source: 'personal-project' });
+    expect(resolveManagedSessionDefaults(input).permissionMode).toMatchObject({ value: 'read-only', source: 'personal-project' });
+    expect(resolveManagedSessionDefaults({ ...input, personalProjectDefaults: {} }).agentTarget)
+      .toMatchObject({ value: sharedAgent, source: 'project' });
+    expect(resolveManagedSessionDefaults({ ...input, explicitChoices: { defaultAgentTarget: sharedAgent } }).agentTarget)
+      .toMatchObject({ value: sharedAgent, source: 'explicit' });
+  });
+  it('builds one Team context and fills only an absent member approval choice from the Machine', () => {
+    const team = { id: 'team-a', policy: { managedDefaults: { team: mode('safe-yolo'), groups: {} } }, managedDefaultsGroupIds: [] };
+    const context = managedDefaults.buildManagedSessionDefaultsContext({ team,
+      memberDefaults: mode('read-only'), creationMachineApprovalProfileId: 'machine-profile',
+      projectSourceDefaults: { sourceId: 'source-a', owner: { kind: 'team', teamId: 'team-a' }, defaults: { approvalProfileId: 'project-profile' } },
+    });
+    expect(context.primaryTeamId).toBe('team-a');
+    expect(context.memberDefaults).toEqual({ ...mode('read-only'), approvalProfileId: 'machine-profile' });
+    expect(resolveManagedSessionDefaults({ ...context, agentTargetKey: key }).approvalProfileId)
+      .toMatchObject({ value: 'project-profile', source: 'project', teamOrGroupDerived: true });
+    const machine = managedDefaults.buildManagedSessionDefaultsContext({ memberDefaults: mode('read-only'), creationMachineApprovalProfileId: 'machine-profile' });
+    expect(resolveManagedSessionDefaults({ ...machine, agentTargetKey: key })).toMatchObject({
+      permissionMode: { value: 'read-only', source: 'member' },
+      approvalProfileId: { value: 'machine-profile', source: 'machine', teamOrGroupDerived: false },
+    });
+    expect(managedDefaults.buildManagedSessionDefaultsContext({ memberDefaults: { approvalProfileId: null }, creationMachineApprovalProfileId: 'machine-profile' }).memberDefaults?.approvalProfileId).toBeNull();
+    const mismatched = managedDefaults.buildManagedSessionDefaultsContext({ team, primaryTeamId: 'team-b',
+      projectSourceDefaults: { sourceId: 'source-a', owner: { kind: 'team', teamId: 'team-a' }, defaults: mode('yolo') } });
+    expect(mismatched.projectDefaults).toEqual(mode('yolo'));
+    expect(mismatched.teamDefaults).toBeNull();
+    const personalSource = managedDefaults.buildManagedSessionDefaultsContext({
+      projectSourceDefaults: { sourceId: 'personal-source', owner: { kind: 'account', accountId: 'owner' }, defaults: { approvalProfileId: 'shared-profile' } },
+    });
+    expect(personalSource.primaryTeamId).toBeNull();
+    expect(resolveManagedSessionDefaults({ ...personalSource, agentTargetKey: key }).approvalProfileId)
+      .toMatchObject({ value: 'shared-profile', source: 'project', teamOrGroupDerived: true });
+  });
+  it('completes the captured context with the chosen Machine without losing selected scopes or member facets', () => {
+    const captured = managedDefaults.buildManagedSessionDefaultsContext({ primaryTeamId: 'team-a',
+      team: { id: 'team-a', policy: { managedDefaults: { team: mode('safe-yolo'), groups: {} }, homeDefaults: mode('yolo') } },
+      memberDefaults: mode('read-only'), personalDefaultsRow: {},
+      projectSourceDefaults: { sourceId: 'source-a', owner: { kind: 'account', accountId: 'source-owner' }, defaults: {} },
+    });
+    const completed = managedDefaults.buildManagedSessionDefaultsContext({ context: captured,
+      creationMachineApprovalProfileId: 'machine-profile' });
+    expect(completed).toMatchObject({ ...captured,
+      memberDefaults: { ...mode('read-only'), approvalProfileId: 'machine-profile' }, memberApprovalProfileSource: 'machine' });
+    expect(resolveManagedSessionDefaults({ ...completed, agentTargetKey: key }).approvalProfileId)
+      .toMatchObject({ value: 'machine-profile', source: 'machine' });
+    const retained = managedDefaults.buildManagedSessionDefaultsContext({ context: completed });
+    expect(retained.memberApprovalProfileSource).toBe('machine');
+    expect(managedDefaults.buildManagedSessionDefaultsContext({ context: completed,
+      memberDefaults: { approvalProfileId: null }, creationMachineApprovalProfileId: 'other-profile' }).memberDefaults)
+      .toEqual({ approvalProfileId: null });
+  });
+  it('sessionDefaults.memberSlotProfileSource preserves member fields and reports the winning approval source', () => {
+    const input = {
+      agentTargetKey: key,
+      memberDefaults: { ...mode('read-only'), approvalProfileId: 'member-profile' },
+      projectDefaults: { approvalProfileId: 'project-profile' },
+      teamDefaults: { team: { ...mode('safe-yolo'), approvalProfileId: 'team-profile' }, groups: {} },
+    };
+    expect(resolveManagedSessionDefaults(input)).toMatchObject({
+      permissionMode: { value: 'read-only', source: 'member' },
+      approvalProfileId: { value: 'project-profile', source: 'project', teamOrGroupDerived: true },
+    });
+    expect(resolveManagedSessionDefaults({ ...input, projectDefaults: {} })).toMatchObject({
+      approvalProfileId: { value: 'member-profile', source: 'member', teamOrGroupDerived: false },
+    });
+    const explicitInput = { ...input, explicitChoices: { ...mode('yolo'), approvalProfileId: null } };
+    expect(resolveManagedSessionDefaults(explicitInput)).toMatchObject({
+      approvalProfileId: { value: null, source: 'explicit', teamOrGroupDerived: false },
+    });
+  });
+
+  // TEAM-SETUP-1116 F: project-specific intent precedes general member preferences.
+  it('selects personal project then Team project per field before member defaults', () => {
+    const model = { v: 1 as const, updatedAt: 1,
+      ref: { agentTargetKey: key, providerConnectionId: null, modelId: 'team-project-model' } };
+    const input = {
+      agentTargetKey: key,
+      personalProjectDefaults: mode('read-only'),
+      projectDefaults: { ...mode('safe-yolo'), modelByAgentTargetKey: { [key]: model } },
+      memberDefaults: mode('yolo'),
+    };
+    const resolved = resolveManagedSessionDefaults(input);
+    expect(resolved.permissionMode).toMatchObject({ value: 'read-only', source: 'personal-project' });
+    expect(resolved.model).toMatchObject({ value: model, source: 'project' });
+    expect(resolveManagedSessionDefaults({ ...input, personalProjectDefaults: {} }).permissionMode)
+      .toMatchObject({ value: 'safe-yolo', source: 'project' });
+    expect(resolveManagedSessionDefaults({ ...input, personalProjectDefaults: {}, projectDefaults: {} }).permissionMode)
+      .toMatchObject({ value: 'yolo', source: 'member' });
+  });
+
+  it('preserves explicit Automatic and locked policy above both project layers', () => {
+    const model = { v: 1 as const, updatedAt: 1,
+      ref: { agentTargetKey: key, providerConnectionId: null, modelId: 'project-model' } };
+    const input = {
+      agentTargetKey: key,
+      personalProjectDefaults: { ...mode('read-only'), modelByAgentTargetKey: { [key]: model } },
+      projectDefaults: mode('safe-yolo'),
+      explicitChoices: { ...mode('yolo'), modelByAgentTargetKey: { [key]: null } },
+    };
+    expect(resolveManagedSessionDefaults(input).model).toMatchObject({ value: null, source: 'explicit' });
+    expect(resolveManagedSessionDefaults(input).permissionMode).toMatchObject({ value: 'yolo', source: 'explicit' });
+    expect(resolveManagedSessionDefaults({ ...input,
+      policyDefaults: { values: mode('safe-yolo'), locked: true, organization: 'Policy owner' },
+    }).permissionMode).toMatchObject({ value: 'safe-yolo', source: 'policy', lock: { organization: 'Policy owner' } });
+  });
+
   it('defaults an isolated Machine native sandbox off without changing approval intent', () => {
     const result = resolveManagedSessionDefaults({ agentTargetKey: key, nativeSandboxAvailable: true,
       machineIsolation: isolatedMachine,

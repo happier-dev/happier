@@ -16,6 +16,7 @@ import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedO
 import { DeploymentChildRpcV1Schema } from '../../deployments/deploymentChildRpcV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../../auth/apiTokenGrant.js';
 import { recordPresentUserApprovalV1 } from '../../actions/executor/approvalReview.js';
+import { SessionPlacementSelectionV1Schema } from './sessionPlacementSelectionV1.js';
 
 const request = {
   kind: 'requester_session_bootstrap_v1',
@@ -30,6 +31,52 @@ const request = {
 } as const;
 
 describe('requester bootstrap installation confidentiality', () => {
+  it.each(['plain', 'e2ee'] as const)('retains one private Session defaults selection under its exact requester admission (%s)', accountEncryptionMode => {
+    const receiver = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
+    const target = { kind: 'machine' as const, machineId: 'shared-machine' };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'session-admission', binding: {
+      accountId: 'requester', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: target.machineId, installationId: 'installation', accountEncryptionMode,
+      actionId: 'session.spawn_new', requestId: 'create-session', requestEnvelopeDigest: 'a'.repeat(43), target,
+    } });
+    const sessionCreationDefaults = { context: {
+      memberDefaults: { approvalProfileId: 'member-profile' },
+      projectDefaults: { approvalProfileId: 'project-profile' },
+      primaryTeamId: 'linked-team',
+    }, managedPresetControllerAccess: { installationPublicKey: encodeBase64(receiver.publicKey, 'base64url'),
+      custodian: { accountId: 'custodian' } }, authoredChoices: { sessionPlacement: SessionPlacementSelectionV1Schema.parse({
+      kind: 'machine', target: { serverId: 'home', machineId: target.machineId },
+      configuredSandbox: { kind: 'sandbox', configuredSandboxId: 'project-sandbox', lifecycle: 'fresh',
+        provisioner: { pluginId: 'acme.sandbox', localId: 'isolated' }, presetId: 'sandbox-preset' },
+      projectFiles: { kind: 'copy_once' },
+    }) }, managedPresetAcquisition: ManagedMachineActionInputSchemasV1['machines.managed.acquire'].parse({
+      selection: { kind: 'preset', homeId: 'home', id: 'selected-preset', revision: 3 },
+      controller: { machineId: 'selected-controller', installationId: 'selected-installation' },
+    }) };
+    const invocation = bootstrap.projectExternalActionRequesterInvocationContextV1({
+      actionCaller: { kind: 'host' }, surface: 'cli', authority: 'present_user', sessionCreationDefaults,
+    });
+    expect(invocation).toMatchObject({ sessionCreationDefaults });
+    if (!invocation) throw new Error('Expected a private Session invocation');
+    const sealed = bootstrap.sealExternalActionRequesterAccountContextV1({ authorization,
+      credentials: { token: 'requester-token',
+        secret: accountEncryptionMode === 'e2ee' ? encodeBase64(new Uint8Array(32).fill(19), 'base64') : null,
+        encryption: null }, invocation,
+      purpose: { kind: 'external_action' }, installationPublicKey: receiver.publicKey, randomBytes: tweetnacl.randomBytes });
+    const input = { authorization: sealed, purpose: { kind: 'external_action' as const }, machineId: target.machineId,
+      installationId: 'installation', serverIdentityId: 'home', installationPrivateKey: receiver.secretKey, includeInvocation: true as const };
+    expect(bootstrap.openExternalActionRequesterAccountContextV1(input)).toMatchObject({
+      credentials: { token: 'requester-token' }, invocation: { sessionCreationDefaults },
+    });
+    for (const binding of [
+      { ...sealed.binding, accountId: 'another-requester' },
+      { ...sealed.binding, requestEnvelopeDigest: 'b'.repeat(43) },
+      { ...sealed.binding, requestId: 'another-session' },
+    ]) expect(bootstrap.openExternalActionRequesterAccountContextV1({ ...input, authorization: { ...sealed, binding } })).toBeNull();
+    expect(bootstrap.ExternalActionRequesterInvocationV1Schema.safeParse({ ...invocation,
+      sessionCreationDefaults: { ...sessionCreationDefaults, approvalProfileIsTeamOrGroupDerived: true } }).success).toBe(false);
+  });
+
   it.each([undefined, 'requester', 'another-person'] as const)(
     'projects only the requester approval as an invocation confirmation (%s)', decidingAccountId => {
     const actionId = 'machines.agentIsolation.set';
