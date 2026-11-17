@@ -12807,8 +12807,8 @@ deleteWarning: "Les connexions et données des sites enregistrées dans ce profi
                 subtitle: 'Autorisez la lecture des ressources et leurs mises à jour en direct depuis le HTML de sessions qui ne vous appartiennent pas. Désactivé par défaut ; aucune demande d’approbation disponible.',
             },
             contextual_ui: {
-                title: 'UI contextuelle',
-                subtitle: 'Affichée dans les surfaces d’UI contextuelles sans emplacement dédié.',
+                title: "Où elle apparaît",
+                subtitle: "Partout où son plugin l’affiche.",
             },
 
             voice: {
@@ -15027,6 +15027,7 @@ settingsSession: {
     deleteAccountCleanupFailed: "Le Home a confirmé la suppression, mais cet appareil n’a pas pu terminer l’effacement des données locales. Rouvre Happier et déconnecte-toi si le compte apparaît encore.",
     encryptionUpdateFailed: "Échec de la mise à jour du réglage de chiffrement",
     encryptionPluginDataBlocks: "Ce compte contient des données de plugins qui ne peuvent pas encore être transférées entre les modes de chiffrement. Rien n’a été modifié. Continuez à utiliser le mode de chiffrement actuel jusqu’à ce que la conversion des données de plugins soit prise en charge.",
+    encryptionPluginDataBlocksTitle: "Impossible de changer le chiffrement pour l’instant",
     encryptionInventoryChanged: "Les données du compte ne correspondent plus à cette conversion. Actualisez et réessayez.",
     encryptionRequiredByHome: "Ce Home exige le chiffrement de bout en bout.",
     encryptionPlainOnlyHome: "Ce Home n’autorise pas le chiffrement de bout en bout.",

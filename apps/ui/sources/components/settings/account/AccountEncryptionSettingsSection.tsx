@@ -42,6 +42,12 @@ type AccountEncryptionModePresentation = Readonly<{
     downgradeUnverified: boolean;
 }>;
 
+
+/** A refused switch changed nothing, so it is named as a refusal rather than an error. */
+function encryptionRefusalTitle(error: unknown): string {
+    return error instanceof HappyError && error.code === 'plugin_collections_not_empty'
+        ? t('settingsAccount.encryptionPluginDataBlocksTitle') : t('common.error');
+}
 export const AccountEncryptionSettingsSection = React.memo(function AccountEncryptionSettingsSection() {
     const auth = useAuth();
     const { theme } = useUnistyles();
@@ -140,7 +146,7 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                 return;
             }
             await Modal.alertAsync(
-                t('common.error'),
+                encryptionRefusalTitle(error),
                 error instanceof HappyError
                     ? error.message
                     : t(
@@ -416,7 +422,7 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                                                         return;
                                                     }
                                                 }
-                                                await Modal.alertAsync(t('common.error'), e.message);
+                                                await Modal.alertAsync(encryptionRefusalTitle(e), e.message);
                                                 return;
                                             }
                                             await Modal.alertAsync(t('common.error'), t('settingsAccount.encryptionUpdateFailed'));

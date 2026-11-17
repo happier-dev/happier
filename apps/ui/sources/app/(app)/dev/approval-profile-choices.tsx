@@ -76,10 +76,8 @@ export default function ApprovalProfileChoicesDevScreen() {
           />
         ))}
       </ItemGroup>
-      <ItemGroup
-        title="Composer chip"
-        description="The same three states in the composer."
-      >
+      {/* The composer's chip row sits on no section sheet, so its missing-profile line takes no row inset there. */}
+      <View>
         <View style={styles.chips}>
           {STATES.map((state) => (
             <ApprovalProfileSelect
@@ -94,7 +92,7 @@ export default function ApprovalProfileChoicesDevScreen() {
             />
           ))}
         </View>
-      </ItemGroup>
+      </View>
     </ItemList>
   );
 }

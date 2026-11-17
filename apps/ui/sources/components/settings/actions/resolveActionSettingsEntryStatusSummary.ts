@@ -99,11 +99,13 @@ export function listActionSettingsEntryStatusParts(
 ): readonly ActionSettingsEntryStatusPart[] {
     const parts: ActionSettingsEntryStatusPart[] = summary.allowedCount === 0 && summary.askFirstCount === 0 && summary.offCount > 0
         ? [{ labelKey: 'settingsActions.status.allOff', partial: false }]
+        // Each audience is named once: by the state most of its surfaces have (a tie reads as the stricter one),
+        // marked partial when some surfaces differ, so a row never repeats "Some integrations".
         : summary.audiences.flatMap((audience) => {
             const total = audience.allowedCount + audience.askFirstCount + audience.offCount;
-            return ([['allowedCount', 'Allowed'], ['askFirstCount', 'AskFirst'], ['offCount', 'Off']] as const).flatMap(([key, suffix]) => (
-                audience[key] > 0 ? [{ labelKey: `settingsActions.status.${audience.audience}${suffix}` as const, partial: audience[key] < total }] : []
-            ));
+            const [key, suffix] = ([['offCount', 'Off'], ['askFirstCount', 'AskFirst'], ['allowedCount', 'Allowed']] as const)
+                .reduce((best, candidate) => audience[candidate[0]] > audience[best[0]] ? candidate : best);
+            return total === 0 ? [] : [{ labelKey: `settingsActions.status.${audience.audience}${suffix}` as const, partial: audience[key] < total }];
         });
     if (summary.danger) parts.push({ labelKey: `settingsActions.status.${summary.danger}`, partial: false });
     return parts;

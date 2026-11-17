@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { prepareApprovalRequest } from '@happier-dev/protocol/actions/executor/approvalPreparation';
+import { ActionDefinitionSummaryV1Schema } from '@happier-dev/protocol/actions/actionDefinitionV1';
 
 import { confirmActionReview } from '@/components/approvals/ActionConfirmationReview';
 import { presentActionApproval } from '@/components/approvals/actionApprovalPresentation';
@@ -16,6 +17,14 @@ import { t } from '@/text';
  * `confirmActionReview`). Here the carried review is built by the same protocol preparation and shown through the
  * same presenter; Confirm reaches no Machine.
  */
+/** The receiving daemon's catalog entry for this press, with the bundled Triage manifest's own title and description. */
+const TRIAGE_TRANSITION = ActionDefinitionSummaryV1Schema.parse({
+  id: 'happier.triage/actions/work-items/transition-v1',
+  title: 'Change Work Item status',
+  description: 'Uses the task source’s declared native transition.',
+  safety: 'safe', placements: [], slash: null, bindings: null, examples: null, surfaces: { ui: true }, inputHints: null,
+});
+
 export default function ContextualReviewDevScreen() {
   const scope = useActiveServerAccountScope();
   const [answer, setAnswer] = React.useState<string | null>(null);
@@ -38,7 +47,7 @@ export default function ContextualReviewDevScreen() {
       input,
       actionArgs: input,
       context: { surface: 'ui' },
-      deps: {},
+      deps: { listContributedActionDefinitions: () => [TRIAGE_TRANSITION] },
     });
     if (!prepared || 'errorCode' in prepared) {
       setAnswer(

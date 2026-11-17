@@ -1,4 +1,6 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { readContributedActionReviewV1 } from '@happier-dev/protocol/actions/contributedActionReviewV1';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PROVIDER_CONNECTION_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/providers/providerActionIdsV1';
 import { buildApprovalPreviewSummary, readTeamCredentialApprovalSources } from '@happier-dev/protocol/actions/actionExecutor';
@@ -134,6 +136,13 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
         return { title, summary: input.authoredSummary?.trim() || null, confirmLabel: input.kind === 'confirmation' ? title : null };
     }
     const spec = getActionSpec(parsed.data);
+    // A pressed contribution is named by its own declaration (title, verb), never the generic host Action.
+    const contributed = spec.id === 'action.invoke' ? readContributedActionReviewV1(input.preview) : null;
+    if (contributed) {
+        const verb = contributed.confirmVerb === undefined ? '' : resolvePluginLocalizedStringV2Text(contributed.confirmVerb).trim();
+        return { title: contributed.title, summary: contributed.description ?? null,
+            confirmLabel: verb || (input.kind === 'confirmation' ? contributed.title : resolveActionConfirmVerb(undefined)) };
+    }
     if (spec.id === 'settings.invoke') {
         const operation = SettingsDeclarationActionInputSchemasV1['settings.invoke'].safeParse(input.actionArgs);
         const credential = operation.success ? operation.data.input : null;

@@ -12969,8 +12969,8 @@ deleteWarning: "Se borran los inicios de sesión y datos de sitios guardados en 
                 subtitle: 'Permite lecturas de recursos y actualizaciones en directo desde HTML en sesiones que no son tuyas. Desactivado por defecto; no hay solicitudes de aprobación.',
             },
             contextual_ui: {
-                title: 'UI contextual',
-                subtitle: 'Se muestra en superficies de UI contextual que no tienen una ubicación dedicada.',
+                title: "Dónde aparece",
+                subtitle: "Donde su plugin la muestre.",
             },
 
             voice: {
@@ -15163,6 +15163,7 @@ settingsSession: {
     deleteAccountCleanupFailed: "El Home confirmó la eliminación, pero este dispositivo no pudo terminar de borrar los datos locales. Vuelve a abrir Happier y cierra sesión si la cuenta aún aparece.",
     encryptionUpdateFailed: "No se pudo actualizar la configuración de cifrado.",
     encryptionPluginDataBlocks: "Esta cuenta tiene datos de plugins que aún no se pueden trasladar entre modos de cifrado. No se ha cambiado nada. Sigue usando el modo de cifrado actual hasta que se admita la conversión de datos de plugins.",
+    encryptionPluginDataBlocksTitle: "Aún no se puede cambiar el cifrado",
     encryptionInventoryChanged: "Los datos de la cuenta ya no coinciden con esta conversión. Actualiza y vuelve a intentarlo.",
     encryptionRequiredByHome: "Este Home requiere cifrado de extremo a extremo.",
     encryptionPlainOnlyHome: "Este Home no permite el cifrado de extremo a extremo.",

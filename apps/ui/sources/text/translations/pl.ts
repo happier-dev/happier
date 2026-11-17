@@ -12798,8 +12798,8 @@ deleteWarning: "Spowoduje to usunięcie zapisanych logowań i danych witryn prof
                 subtitle: 'Zezwól na odczyt zasobów i aktualizacje na żywo z HTML w sesjach, których nie jesteś właścicielem. Domyślnie wyłączone; prośby o zatwierdzenie nie są dostępne.',
             },
             contextual_ui: {
-                title: 'Interfejs kontekstowy',
-                subtitle: 'Wyświetlane w kontekstowych powierzchniach UI bez dedykowanego miejsca.',
+                title: "Gdzie się pojawia",
+                subtitle: "Tam, gdzie pokazuje ją jej wtyczka.",
             },
 
             voice: {
@@ -14992,6 +14992,7 @@ settingsSession: {
     deleteAccountCleanupFailed: "Home potwierdził usunięcie, ale to urządzenie nie zakończyło czyszczenia danych lokalnych. Otwórz Happier ponownie i wyloguj się, jeśli konto nadal jest widoczne.",
     encryptionUpdateFailed: "Nie udało się zaktualizować ustawienia szyfrowania",
     encryptionPluginDataBlocks: "To konto zawiera dane wtyczek, których nie można jeszcze przenosić między trybami szyfrowania. Nic nie zostało zmienione. Korzystaj z obecnego trybu szyfrowania, dopóki konwersja danych wtyczek nie będzie obsługiwana.",
+    encryptionPluginDataBlocksTitle: "Nie można jeszcze zmienić szyfrowania",
     encryptionInventoryChanged: "Dane konta nie odpowiadają już tej konwersji. Odśwież i spróbuj ponownie.",
     encryptionRequiredByHome: "Ten Home wymaga szyfrowania end-to-end.",
     encryptionPlainOnlyHome: "Ten Home nie zezwala na szyfrowanie end-to-end.",

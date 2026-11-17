@@ -12,6 +12,19 @@ import { SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
 describe('the shared Action approval presentation owner', () => {
+    it('names a pressed contribution by its carried declaration, not the generic host Action', () => {
+        const actionArgs = { action: { pluginId: 'happier.triage', localId: 'work-items/transition-v1' }, input: { itemId: 'LIN-482' } };
+        const preview = { actionId: 'action.invoke', actionArgs, summary: 'Invoke contributed action.',
+            contributedAction: { title: 'Change task status', confirmVerb: 'Change status',
+                description: 'Applies the selected status transition in its source.', fields: [] } };
+
+        expect(presentActionApproval({ actionId: 'action.invoke', actionArgs, preview, kind: 'confirmation' })).toEqual({
+            title: 'Change task status',
+            summary: 'Applies the selected status transition in its source.',
+            confirmLabel: 'Change status',
+        });
+    });
+
     it.each(['en', 'fr'] as const)('names admitted Team membership operands and preserves authored copy in %s', async language => {
         await preloadTranslations(language);
         setPreferredLanguageFromSettings(language);

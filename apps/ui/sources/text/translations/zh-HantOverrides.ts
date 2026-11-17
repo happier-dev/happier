@@ -10734,8 +10734,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 subtitle: '允許他人工作階段中的 HTML 讀取資源並接收即時更新。預設關閉；不支援核准提示。',
             },
             contextual_ui: {
-                title: '情境式 UI',
-                subtitle: '顯示在沒有專用位置的情境式 UI 介面中。',
+                title: "顯示位置",
+                subtitle: "由其外掛決定顯示的位置。",
             },
 
             voice: {
@@ -12315,6 +12315,7 @@ settingsSession: {
         deleteAccountCleanupFailed: "Home已確認刪除，但此裝置未能完成本機資料清理。請重新開啟 Happier；如果仍顯示此帳戶，請登出。",
         encryptionUpdateFailed: '無法更新加密設定',
         encryptionPluginDataBlocks: "此帳戶包含尚無法在加密模式之間移轉的外掛資料。未進行任何變更。請繼續使用目前的加密模式，直到支援外掛資料轉換。",
+        encryptionPluginDataBlocksTitle: "暫時無法切換加密方式",
         encryptionInventoryChanged: "帳戶資料與此次轉換已不相符。請重新整理後再試。",
         encryptionRequiredByHome: "此 Home 要求使用端對端加密。",
         encryptionPlainOnlyHome: "此 Home 不允許使用端對端加密。",

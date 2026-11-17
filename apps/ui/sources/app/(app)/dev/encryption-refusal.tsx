@@ -14,7 +14,7 @@ import { t } from '@/text';
 export default function EncryptionRefusalDevScreen() {
   React.useEffect(() => {
     void Modal.alertAsync(
-      t('common.error'),
+      t('settingsAccount.encryptionPluginDataBlocksTitle'),
       t('settingsAccount.encryptionPluginDataBlocks'),
     );
   }, []);

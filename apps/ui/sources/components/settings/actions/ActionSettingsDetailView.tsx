@@ -99,8 +99,11 @@ function getTargetSubtitle(
     target: ActionSettingsTargetEntry,
     controlState: ActionSettingsTargetControlState,
     actionId: ActionSettingsActionId,
+    placementTitles: readonly string[],
 ): string {
-    const subtitle = t(target.subtitleKey);
+    // "Where it appears" names the surfaces this Action declares, by their own titles, never their ids.
+    const subtitle = target.id === 'contextual_ui' && placementTitles.length > 0
+        ? placementTitles.join(' · ') : t(target.subtitleKey);
     const withReason = target.reasonKey ? `${subtitle} ${t(target.reasonKey)}` : subtitle;
     // Default reads as "inherit", so name the Source Control preference that makes the inherited default ask.
     if (controlState.kind === 'approval' && controlState.value === 'default' && controlState.approvalAskedBySourceControl) {
@@ -256,6 +259,8 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
         entry?.targets.filter((row) => targetMatchesSearch(row, searchQuery) && (!inProfile || isProfileTargetRow(row))) ?? []
     ), [entry?.targets, inProfile, searchQuery]);
     const orderedTargets = React.useMemo(() => orderTargetsByCategory(filteredTargets), [filteredTargets]);
+    const placementTitles = React.useMemo(() => entry?.targets.flatMap((row) => row.definition.kind === 'placement'
+        ? [t(row.titleKey)] : []) ?? [], [entry?.targets]);
     // Only Actions whose spec declares Machine approval scope offer per-Machine preferences.
     const machineScoped = React.useMemo(() => {
         if (inProfile) return null;
@@ -447,7 +452,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                                     key={target.id}
                                     testID={testIDPrefix}
                                     title={t(target.titleKey)}
-                                    subtitle={getTargetSubtitle(target, controlState, entry.actionId)}
+                                    subtitle={getTargetSubtitle(target, controlState, entry.actionId, placementTitles)}
                                     mode={available && !readOnly ? 'interactive' : 'info'}
                                     disabled={!entry.enabled || !available}
                                     showChevron={false}

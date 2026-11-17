@@ -39,9 +39,9 @@ describe('resolveActionSettingsEntryStatusSummary', () => {
             danger: 'external',
         });
         expect(listActionSettingsEntryStatusParts(summary).map((part) => part.labelKey)).toEqual([
+            // Each audience once, by the state most of its surfaces have (integrations: 2 ask first of 4).
             'settingsActions.status.humanAskFirst', 'settingsActions.status.agentAskFirst',
-            'settingsActions.status.integrationAllowed', 'settingsActions.status.integrationAskFirst',
-            'settingsActions.status.integrationOff',
+            'settingsActions.status.integrationAskFirst',
             'settingsActions.status.external',
         ]);
     });
@@ -132,8 +132,25 @@ describe('resolveActionSettingsEntryStatusSummary', () => {
             audiences: [{ audience: 'integration', allowedCount: 1, askFirstCount: 0, offCount: 1 }],
             danger: null,
         })).toEqual([
-            { labelKey: 'settingsActions.status.integrationAllowed', partial: true },
+            // A tie reads as the stricter state, once.
             { labelKey: 'settingsActions.status.integrationOff', partial: true },
+        ]);
+    });
+
+    it('names each audience once per row, by the state most of its surfaces have', () => {
+        expect(listActionSettingsEntryStatusParts({
+            allowedCount: 3,
+            askFirstCount: 2,
+            offCount: 1,
+            unavailableCount: 0,
+            audiences: [
+                { audience: 'agent', allowedCount: 0, askFirstCount: 1, offCount: 0 },
+                { audience: 'integration', allowedCount: 3, askFirstCount: 1, offCount: 1 },
+            ],
+            danger: null,
+        })).toEqual([
+            { labelKey: 'settingsActions.status.agentAskFirst', partial: false },
+            { labelKey: 'settingsActions.status.integrationAllowed', partial: true },
         ]);
     });
 });

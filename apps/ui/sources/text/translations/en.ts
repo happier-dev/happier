@@ -14847,9 +14847,8 @@ const enSettingsActions = {
       subtitle: 'Available to trusted built-in and installed plugins.',
     },
     contextual_ui: {
-      title: 'Contextual UI',
-      subtitle:
-        'Shown in contextual UI surfaces that do not have a dedicated placement.',
+      title: "Where it appears",
+      subtitle: "Wherever its plugin shows it.",
     },
     foreign_session_html: {
       title: 'HTML in other people’s Sessions',
@@ -18192,6 +18191,7 @@ const enSettingsAccount = {
     'The Home confirmed deletion, but this device could not finish clearing local data. Reopen Happier, then sign out if this account still appears.',
   encryptionUpdateFailed: 'Failed to update encryption setting',
   encryptionPluginDataBlocks: "This Account has plugin data that cannot move between encryption modes yet. Nothing was changed. Keep using the current encryption mode until plugin data conversion is supported.",
+  encryptionPluginDataBlocksTitle: "Can’t switch encryption yet",
   encryptionInventoryChanged: "Account data no longer matches this conversion. Refresh and try again.",
   encryptionRequiredByHome: "This Home requires end-to-end encryption.",
   encryptionPlainOnlyHome: "This Home does not allow end-to-end encryption.",

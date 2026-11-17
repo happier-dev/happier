@@ -13086,8 +13086,8 @@ deleteWarning: "Isso exclui os logins e dados de sites salvos no perfil e fecha 
                 subtitle: 'Permita leituras de recursos e atualizações ao vivo por HTML em sessões que não são suas. Desativado por padrão; pedidos de aprovação não estão disponíveis.',
             },
             contextual_ui: {
-                title: 'UI contextual',
-                subtitle: 'Mostrado em superfícies contextuais da UI que não têm um posicionamento dedicado.',
+                title: "Onde aparece",
+                subtitle: "Onde o plugin a mostrar.",
             },
 
             voice: {
@@ -15273,6 +15273,7 @@ settingsSession: {
     deleteAccountCleanupFailed: "O Home confirmou a exclusão, mas este dispositivo não conseguiu terminar de limpar os dados locais. Reabra o Happier e saia se a conta ainda aparecer.",
     encryptionUpdateFailed: "Falha ao atualizar a configuração de criptografia",
     encryptionPluginDataBlocks: "Esta conta tem dados de plugins que ainda não podem ser transferidos entre modos de criptografia. Nada foi alterado. Continue usando o modo de criptografia atual até que a conversão de dados de plugins seja compatível.",
+    encryptionPluginDataBlocksTitle: "Ainda não é possível mudar a criptografia",
     encryptionInventoryChanged: "Os dados da conta já não correspondem a esta conversão. Atualize e tente novamente.",
     encryptionRequiredByHome: "Este Home exige criptografia de ponta a ponta.",
     encryptionPlainOnlyHome: "Este Home não permite criptografia de ponta a ponta.",

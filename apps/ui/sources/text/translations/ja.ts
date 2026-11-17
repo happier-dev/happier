@@ -13266,8 +13266,8 @@ deleteWarning: "このプロファイルに保存されたログイン情報と�
                 subtitle: '自分が所有しないセッションのHTMLに、リソースの読み取りとライブ更新を許可します。初期設定ではオフで、承認の確認画面は利用できません。',
             },
             contextual_ui: {
-                title: "コンテキスト UI",
-                subtitle: "専用の表示先を持たないコンテキスト UI 上に表示されます。",
+                title: "表示される場所",
+                subtitle: "プラグインが表示する場所。",
             },
 
             voice: {
@@ -15441,6 +15441,7 @@ settingsSession: {
     deleteAccountCleanupFailed: "Homeは削除を確認しましたが、この端末のローカルデータを完全に消去できませんでした。Happier を開き直し、アカウントが残っている場合はログアウトしてください。",
     encryptionUpdateFailed: "暗号化設定の更新に失敗しました",
     encryptionPluginDataBlocks: "このアカウントには、暗号化モード間でまだ移行できないプラグインデータがあります。変更は行われていません。プラグインデータの変換がサポートされるまで、現在の暗号化モードを使い続けてください。",
+    encryptionPluginDataBlocksTitle: "まだ暗号化を切り替えられません",
     encryptionInventoryChanged: "アカウントのデータがこの変換の内容と一致しなくなりました。更新して再試行してください。",
     encryptionRequiredByHome: "このHomeではエンドツーエンド暗号化が必要です。",
     encryptionPlainOnlyHome: "このHomeではエンドツーエンド暗号化を使用できません。",

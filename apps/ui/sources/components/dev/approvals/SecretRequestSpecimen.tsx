@@ -70,7 +70,7 @@ function buildRequest(variant: string, serverId: string, accountId: string, arti
     } : {}),
     createdAtMs: Date.now() - 90_000,
     updatedAtMs: Date.now() - 90_000,
-    createdBy: { surface: 'agent' },
+    createdBy: { surface: 'agent', agentId: 'codex' },
     requestedSurface: 'agent',
     actionId,
     actionArgs,

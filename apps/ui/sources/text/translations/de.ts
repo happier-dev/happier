@@ -12892,8 +12892,8 @@ deleteWarning: "Gespeicherte Anmeldungen und Website-Daten dieses Profils werden
                 subtitle: 'Für vertrauenswürdige integrierte und installierte Plugins verfügbar.',
             },
             contextual_ui: {
-                title: 'Kontextbezogene UI',
-                subtitle: 'Wird in kontextbezogenen Oberflächen ohne eigene Platzierung gezeigt.',
+                title: "Wo es erscheint",
+                subtitle: "Überall, wo sein Plugin es anzeigt.",
             },
             foreign_session_html: {
                 title: 'HTML in Sessions anderer Personen',
@@ -15254,6 +15254,7 @@ settingsSession: {
         deleteAccountCleanupFailed: "Das Home hat die Löschung bestätigt, aber dieses Gerät konnte die lokalen Daten nicht vollständig entfernen. Öffne Happier erneut und melde dich ab, falls das Konto noch erscheint.",
         encryptionUpdateFailed: 'Die Verschlüsselungseinstellung ließ sich nicht ändern',
         encryptionPluginDataBlocks: "Dieses Konto enthält Plugin-Daten, die noch nicht zwischen Verschlüsselungsmodi übertragen werden können. Es wurde nichts geändert. Verwende den aktuellen Verschlüsselungsmodus weiter, bis die Konvertierung von Plugin-Daten unterstützt wird.",
+        encryptionPluginDataBlocksTitle: "Verschlüsselung kann noch nicht gewechselt werden",
         encryptionInventoryChanged: "Die Kontodaten passen nicht mehr zu dieser Umstellung. Aktualisiere die Ansicht und versuche es erneut.",
         encryptionRequiredByHome: "Dieses Home erfordert Ende-zu-Ende-Verschlüsselung.",
         encryptionPlainOnlyHome: "Dieses Home erlaubt keine Ende-zu-Ende-Verschlüsselung.",

@@ -13190,8 +13190,8 @@ deleteWarning: "Le credenziali e i dati dei siti salvati nel profilo vengono eli
                 subtitle: 'Consenti letture e aggiornamenti in tempo reale delle risorse da HTML in sessioni che non ti appartengono. Disattivato per impostazione predefinita; le richieste di approvazione non sono disponibili.',
             },
             contextual_ui: {
-                title: "UI contestuale",
-                subtitle: "Mostrata nelle superfici UI contestuali che non hanno un posizionamento dedicato.",
+                title: "Dove appare",
+                subtitle: "Ovunque il suo plugin la mostri.",
             },
 
             voice: {
@@ -15377,6 +15377,7 @@ settingsSession: {
     deleteAccountCleanupFailed: "L’Home ha confermato l’eliminazione, ma questo dispositivo non ha completato la cancellazione dei dati locali. Riapri Happier ed esci se l’account è ancora visibile.",
     encryptionUpdateFailed: "Impossibile aggiornare l’impostazione di crittografia",
     encryptionPluginDataBlocks: "Questo account contiene dati dei plugin che non possono ancora essere trasferiti tra modalità di crittografia. Non è stato modificato nulla. Continua a usare la modalità di crittografia attuale finché non sarà supportata la conversione dei dati dei plugin.",
+    encryptionPluginDataBlocksTitle: "Non è ancora possibile cambiare la crittografia",
     encryptionInventoryChanged: "I dati dell’account non corrispondono più a questa conversione. Aggiorna e riprova.",
     encryptionRequiredByHome: "Questo Home richiede la crittografia end-to-end.",
     encryptionPlainOnlyHome: "Questo Home non consente la crittografia end-to-end.",
