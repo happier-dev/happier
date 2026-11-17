@@ -79,7 +79,7 @@ export function useScopedPrincipalNameRead<T>(
   const [reading, setReading] = React.useState<Readonly<{
     binding: typeof binding;
     key: string;
-    value: T;
+    value: T | null;
   }> | null>(null);
   React.useEffect(() => {
     if (!binding || key === null) return;
@@ -92,6 +92,11 @@ export function useScopedPrincipalNameRead<T>(
     ).then((value) => {
       if (!abort.signal.aborted && binding.isCurrent())
         setReading({ binding, key, value });
+    }, () => {
+      // Optional name reads settle unavailable; retiring a row only withdraws
+      // its interest and must not leave a rejected promise or publish old data.
+      if (!abort.signal.aborted && binding.isCurrent())
+        setReading({ binding, key, value: null });
     });
     return () => {
       abort.abort();
