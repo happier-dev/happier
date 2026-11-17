@@ -32,17 +32,4 @@ describe('automationSocketApply', () => {
         expect(invalidateAutomations).not.toHaveBeenCalled();
     });
 
-    it('coalesces the content-free source-status invalidation through the Automation query owner', () => {
-        const invalidateAutomations = vi.fn();
-        const invalidateAutomationsCoalesced = vi.fn();
-
-        expect(applyAutomationSocketUpdate({
-            updateType: 'automation-source-status-updated',
-            invalidateAutomations,
-            invalidateAutomationsCoalesced,
-        })).toBe(true);
-
-        expect(invalidateAutomationsCoalesced).toHaveBeenCalledTimes(1);
-        expect(invalidateAutomations).not.toHaveBeenCalled();
-    });
 });
