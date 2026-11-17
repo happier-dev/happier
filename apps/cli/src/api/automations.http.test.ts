@@ -1,10 +1,36 @@
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
-import { deleteAutomationDefinition, reconcileAutomationDefinition, runAutomationNowReceipt } from './automations';
+import { deleteAutomationDefinition, listAutomationDefinitions, reconcileAutomationDefinition, runAutomationNowReceipt } from './automations';
 import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { runWithServerHttpBaseUrl } from './client/serverHttpBaseUrl';
+import { AutomationDefinitionListRequestSchema, AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 
 describe('Automation HTTP transport', () => {
+  it('reads an attached Action trigger page instead of the ordinary Account inventory', async () => {
+    const server = Fastify();
+    const selection = { actionId: 'projects.sources.read', phase: 'after' as const, limit: 20, cursor: 'previous-page' };
+    const attachedPage = AutomationDefinitionListResponseSchema.parse({
+      automations: [], attached: [], skippedNotSharedCount: 2, nextCursor: 'next-page',
+    });
+    const requests: string[] = [];
+    server.addHook('onRequest', async request => { requests.push(`${request.method} ${request.url}`); });
+    server.get('/v3/automations', async () => ({ automations: [], nextCursor: null }));
+    server.post('/v3/automations/query', async request => {
+      const query = AutomationDefinitionListRequestSchema.parse(request.body);
+      expect(query).toEqual(selection);
+      expect(request.headers.authorization).toBe('Bearer test-token');
+      return attachedPage;
+    });
+    const address = await server.listen({ host: '127.0.0.1', port: 0 });
+    try {
+      await expect(runWithServerHttpBaseUrl(address, () => listAutomationDefinitions({ token: 'test-token' })))
+        .resolves.toEqual({ automations: [], nextCursor: null });
+      await expect(runWithServerHttpBaseUrl(address, () => listAutomationDefinitions({ token: 'test-token', ...selection })))
+        .resolves.toEqual(attachedPage);
+      expect(requests).toEqual(['GET /v3/automations?limit=100', 'POST /v3/automations/query']);
+    } finally { await server.close(); }
+  });
+
   it('retains a confirmed transaction rollback instead of reporting an uncertain definition write', async () => {
     const server = Fastify();
     server.put('/v3/automations/:id', async (_request, reply) => reply.code(503).send({

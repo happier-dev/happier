@@ -58,40 +58,24 @@ function throwAutomationMutationHttpError(status: number, body: unknown): never 
   throw error;
 }
 
-function automationDefinitionListInput(params: Readonly<Partial<AutomationDefinitionListRequest>>) {
-  return {
-    ...(params.limit === undefined ? {} : { limit: params.limit }),
-    ...(params.cursor === undefined ? {} : { cursor: params.cursor }),
-    ...(params.healthCheckSources === undefined ? {} : { healthCheckSources: params.healthCheckSources }),
-    ...(params.subject === undefined ? {} : { subject: params.subject }),
-    ...(params.contextSubjects === undefined ? {} : { contextSubjects: params.contextSubjects }),
-    ...(params.workflowDefinitionId === undefined ? {} : { workflowDefinitionId: params.workflowDefinitionId }),
-    ...(params.workflowDefinitionIds === undefined ? {} : { workflowDefinitionIds: params.workflowDefinitionIds }),
-    ...(params.scopeSessionId === undefined ? {} : { scopeSessionId: params.scopeSessionId }),
-    ...(params.scope === undefined ? {} : { scope: params.scope }),
-    ...(params.managedTarget === undefined ? {} : { managedTarget: params.managedTarget }),
-    ...(params.includeUnindexedManagedTargets === undefined ? {} : { includeUnindexedManagedTargets: params.includeUnindexedManagedTargets }),
-    ...(params.managedTargetUnindexed === undefined ? {} : { managedTargetUnindexed: params.managedTargetUnindexed }),
-  };
-}
-
 export async function listAutomationDefinitions(params: Readonly<Partial<AutomationDefinitionListRequest> & {
   token: string;
   signal?: AbortSignal;
 }>): Promise<AutomationDefinitionListResponse> {
-  const query = AutomationDefinitionListRequestSchema.parse(automationDefinitionListInput(params));
+  const { token, signal, ...input } = params;
+  const query = AutomationDefinitionListRequestSchema.parse(input);
   const search = new URLSearchParams({ limit: String(query.limit) });
   if (query.cursor) search.set('cursor', query.cursor);
   if (query.workflowDefinitionId) search.set('workflowDefinitionId', query.workflowDefinitionId);
   if (query.scopeSessionId) search.set('scopeSessionId', query.scopeSessionId);
   if (query.scope) search.set('scope', query.scope);
   const options = {
-    headers: { Authorization: `Bearer ${params.token}` },
-    ...(params.signal === undefined ? {} : { signal: params.signal }),
+    headers: { Authorization: `Bearer ${token}` },
+    ...(signal === undefined ? {} : { signal }),
     timeout: AUTOMATION_HTTP_TIMEOUT_MS,
     validateStatus: () => true,
   };
-  const response = query.healthCheckSources !== undefined || query.subject !== undefined || query.workflowDefinitionIds !== undefined || query.managedTarget !== undefined || query.managedTargetUnindexed !== undefined
+  const response = query.healthCheckSources !== undefined || query.subject !== undefined || query.actionId !== undefined || query.workflowDefinitionIds !== undefined || query.managedTarget !== undefined || query.managedTargetUnindexed !== undefined
     ? await axios.post(`${resolveServerHttpBaseUrl()}/v3/automations/query`, query, options)
     : await axios.get(
     `${resolveServerHttpBaseUrl()}/v3/automations?${search.toString()}`,
@@ -122,10 +106,11 @@ export async function listAutomationDefinitionDetails(params: Readonly<Partial<A
   token: string;
   signal?: AbortSignal;
 }>): Promise<AutomationDefinitionDetailsResponse> {
-  const query = AutomationDefinitionDetailsRequestSchema.parse({ ...automationDefinitionListInput(params), details: true });
+  const { token, signal, ...input } = params;
+  const query = AutomationDefinitionDetailsRequestSchema.parse({ ...input, details: true });
   const response = await axios.post(`${resolveServerHttpBaseUrl()}/v3/automations/query`, query, {
-    headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.token}` },
-    ...(params.signal === undefined ? {} : { signal: params.signal }),
+    headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${token}` },
+    ...(signal === undefined ? {} : { signal }),
     timeout: AUTOMATION_HTTP_TIMEOUT_MS,
     validateStatus: () => true,
   });
