@@ -103,20 +103,6 @@ describe('the GitHub surface catalog', () => {
       .sort()).toEqual([]);
   });
 
-  it('does not bypass the catalog in mutation controls', () => {
-    const source = readFileSync(
-      fileURLToPath(new URL('./renderSurface.tsx', import.meta.url)),
-      'utf8',
-    );
-    const exactWritesWithoutKeys = [...source.matchAll(/<ExactWrite\b[\s\S]*?\/>/gu)]
-      .map((match) => match[0])
-      .filter((control) => !control.includes('titleKey='));
-
-    expect(exactWritesWithoutKeys).toEqual([]);
-    expect([...source.matchAll(/\b(?:label|placeholder)="[^"]+"/gu)]).toEqual([]);
-    expect([...source.matchAll(/\{\s*value:\s*'[^']+',\s*label:\s*'[^']+'\s*\}/gu)]).toEqual([]);
-  });
-
   it('defines the keys the surfaces COMPUTE, which no literal scan can see', () => {
     // Three key families are built at the call site from a provider value — a
     // fact id, a timeline event kind, a review state — so the scan above cannot

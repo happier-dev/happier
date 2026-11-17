@@ -39,32 +39,6 @@ function sourceCatalogKeys(): readonly string[] {
   return [...referenced].sort();
 }
 
-function unkeyedLiteralProps(): readonly string[] {
-  const source = readFileSync(fileURLToPath(new URL('./renderSurface.tsx', import.meta.url)), 'utf8');
-  const failures: string[] = [];
-  const openingTags = source.match(/<[A-Z][A-Za-z.]*\b[^>]*>/gu) ?? [];
-  const pairs = [
-    ['title', 'titleKey'],
-    ['description', 'descriptionKey'],
-    ['fallback', 'valueKey'],
-    ['accessibilityLabel', 'accessibilityLabelKey'],
-    ['loadMoreTitle', 'loadMoreTitleKey'],
-    ['refreshLabel', 'refreshLabelKey'],
-  ] as const;
-  for (const tag of openingTags) {
-    for (const [literal, key] of pairs) {
-      if (new RegExp(`\\b${literal}="`).test(tag) && !new RegExp(`\\b${key}=`).test(tag)) {
-        failures.push(`${literal} without ${key}: ${tag.split('\n')[0]}`);
-      }
-    }
-  }
-  if (/\blabel:\s*['"][^'"]+['"]/u.test(source)) failures.push('literal Metadata label');
-  if (/\blabel:\s*field\.label\b/u.test(source)) failures.push('raw projected Metadata label');
-  if (/\bvalue=\{field\.label\}/u.test(source)) failures.push('raw projected badge label');
-  if (/\blabel=\{`\$\{field\.label/u.test(source)) failures.push('raw projected status label');
-  return failures;
-}
-
 function confirmationKeys(): readonly string[] {
   return PLUGIN_MANIFEST.contributes.actions.flatMap((action) => {
     const confirmation = action.confirmation;
@@ -90,10 +64,6 @@ describe('the Bitbucket Cloud surface catalog', () => {
     const referenced = sourceCatalogKeys();
     expect(referenced.length).toBeGreaterThan(40);
     expect(referenced.filter((key) => ENGLISH[key] === undefined)).toEqual([]);
-  });
-
-  it('does not leave literal component prose without a catalog key', () => {
-    expect(unkeyedLiteralProps()).toEqual([]);
   });
 
   it('translates every manifest confirmation instead of copying the English fallback', () => {

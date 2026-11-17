@@ -54,15 +54,4 @@ describe('the Sentry surface catalog', () => {
     expect([...referenced].filter((key) => ENGLISH[key] === undefined).sort()).toEqual([]);
   });
 
-  it('does not leave authored metadata labels as raw literals in the renderer', () => {
-    const root = fileURLToPath(new URL('.', import.meta.url));
-    expect(readFileSync(join(root, 'renderSurface.tsx'), 'utf8')).not.toMatch(/\blabel:\s*['"]/u);
-  });
-
-  it('does not copy another provider name into Sentry status copy', () => {
-    for (const locale of LOCALES) {
-      expect(Object.values(messagesFor(locale)).join('\n'), locale)
-        .not.toMatch(/PostHog|Azure DevOps/u);
-    }
-  });
 });

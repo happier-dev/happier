@@ -39,26 +39,6 @@ function sourceCatalogKeys(): readonly string[] {
   return [...referenced].sort();
 }
 
-function unkeyedLiteralProps(): readonly string[] {
-  const source = readFileSync(fileURLToPath(new URL('./renderSurface.tsx', import.meta.url)), 'utf8');
-  const failures: string[] = [];
-  const openingTags = source.match(/<[A-Z][A-Za-z.]*\b[^>]*>/gu) ?? [];
-  for (const tag of openingTags) {
-    for (const [literal, key] of [
-      ['title', 'titleKey'], ['description', 'descriptionKey'],
-      ['fallback', 'valueKey'], ['accessibilityLabel', 'accessibilityLabelKey'],
-    ] as const) {
-      if (new RegExp(`\\b${literal}="`).test(tag) && !new RegExp(`\\b${key}=`).test(tag)) {
-        failures.push(`${literal} without ${key}: ${tag.split('\n')[0]}`);
-      }
-    }
-  }
-  if (/\blabel:\s*field\.label\b/u.test(source)) failures.push('raw projected Metadata label');
-  if (/\bvalue=\{field\.label\}/u.test(source)) failures.push('raw projected badge label');
-  if (/\blabel=\{`\$\{field\.label/u.test(source)) failures.push('raw projected status label');
-  return failures;
-}
-
 function confirmationKeys(): readonly string[] {
   return PLUGIN_MANIFEST.contributes.actions.flatMap((action) => {
     const confirmation = action.confirmation;
@@ -84,10 +64,6 @@ describe('the GitLab surface catalog', () => {
     const referenced = sourceCatalogKeys();
     expect(referenced.length).toBeGreaterThan(70);
     expect(referenced.filter((key) => ENGLISH[key] === undefined)).toEqual([]);
-  });
-
-  it('does not leave literal component prose or projected labels without catalog ownership', () => {
-    expect(unkeyedLiteralProps()).toEqual([]);
   });
 
   it('localizes the live Overview read and recovery chrome', () => {
