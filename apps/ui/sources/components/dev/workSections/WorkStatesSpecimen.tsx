@@ -3,7 +3,9 @@ import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { publishMakeCoordinatorNotice } from '@/components/sessions/coordinator/MakeCoordinatorDialog';
 import { SessionWorkDigestContent } from '@/components/sessions/work/SessionWorkDigest';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SessionWorkMapView } from '@/components/sessions/work/SessionWorkMapView';
 import { WorkItemRow } from '@/components/sessions/work/WorkItemRow';
 import { WorkSection } from '@/components/sessions/work/WorkSection';
@@ -246,9 +248,15 @@ function WorkPane(props: Readonly<{ wide?: boolean }>) {
   );
 }
 
+/** The notice a finished Make coordinator leaves when no rule is on (lab V3 P3), through the dialog's own publisher. */
+const showNoRuleNotice = () =>
+  publishMakeCoordinatorNotice({ serverId: 'specimen', sessionId: 'coordinator', name: 'Daily coordinator', ruleOn: false });
+
 export function WorkStatesSpecimen() {
   return (
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
+      <RoundButton testID="specimen-coordinator-notice" size="small" display="secondary"
+        title="Show the no-rule coordinator notice" onPress={showNoRuleNotice} />
       <WorkPane />
       <WorkPane wide />
     </ScrollView>

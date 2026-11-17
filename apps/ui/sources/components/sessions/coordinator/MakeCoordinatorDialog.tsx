@@ -78,6 +78,21 @@ const KEEP_CAPTIONS = {
 const MANAGED_BY_NONE = '__none__';
 
 /**
+ * The notice a finished Make coordinator leaves (also drawn by `/dev/work-sections?scene=states`). Coordinator is
+ * derived from the Follow relation (Z1): with no rule on, the session is only set up until it manages a session.
+ */
+export function publishMakeCoordinatorNotice(input: Readonly<{ serverId: string; sessionId: string; name: string; ruleOn: boolean }>) {
+    publishPresentationNotice({
+        key: `session-coordinator:${input.serverId}:${input.sessionId}`,
+        severity: 'info',
+        message: input.ruleOn
+            ? t('sessionCoordinator.make.done', { name: input.name })
+            : t('sessionCoordinator.make.doneNoRule', { name: input.name }),
+        emphasis: input.name,
+    });
+}
+
+/**
  * "Make coordinator…" (C1 §6, lab P3 M/M1/M2/MA): one dialog that shows what will happen and asks only what it
  * can't answer for you. Role, Managed by, where to keep it and what it hears about start from Settings →
  * Coordination; Protocol prepares the suggestions and the one `session.coordinator.enable` Action applies the
@@ -171,15 +186,7 @@ export function MakeCoordinatorDialog(props: MakeCoordinatorDialogProps) {
                     : t('sessionCoordinator.make.roleHeldNote'));
             return;
         }
-        publishPresentationNotice({
-            key: `session-coordinator:${serverId}:${sessionId}`,
-            severity: 'info',
-            // Coordinator is derived from the Follow relation (Z1): with no rule on it is only set up until it manages a session.
-            message: draft.rules.some((rule) => rule.enabled)
-                ? t('sessionCoordinator.make.done', { name })
-                : t('sessionCoordinator.make.doneNoRule', { name }),
-            emphasis: name,
-        });
+        publishMakeCoordinatorNotice({ serverId, sessionId, name, ruleOn: draft.rules.some((rule) => rule.enabled) });
         onClose();
     };
     const submitRef = React.useRef(submit);
