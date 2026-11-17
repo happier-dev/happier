@@ -152,6 +152,9 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
     let releasing = false;
 
     const handshake = IrohProviderBrokerHandshakeSchema.parse({ v: payload.v, kind: 'provider_broker', authority });
+    // Only Home's refusal recorded by this refresh path is superseded by a later
+    // accepted refresh; a target application refusal is never erased by one.
+    let homeRefreshRefusalRecorded = false;
     const readFreshHandshake = async () => {
         if (releasing) {
           throw new MachineCarrierError('broker_consumer_closed', 'Provider broker consumer has been withdrawn.');
@@ -166,10 +169,13 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
         if (!freshOpen.ok) {
           signal?.throwIfAborted();
           const body = providerBrokerApplicationFailureBody(freshOpen, payload.v === 1 ? payload.resourceId : undefined);
-          if (recordOutcome && payload.v === 1) recordOutcome(SessionRuntimeTeamCredentialDenialDetailsV1Schema.parse({
-            v: 1, resourceId: payload.resourceId, reasonCode: body.error.code,
-            ...(body.error.usageLimit ? { usageLimit: body.error.usageLimit } : {}),
-          }));
+          if (recordOutcome && payload.v === 1) {
+            recordOutcome(SessionRuntimeTeamCredentialDenialDetailsV1Schema.parse({
+              v: 1, resourceId: payload.resourceId, reasonCode: body.error.code,
+              ...(body.error.usageLimit ? { usageLimit: body.error.usageLimit } : {}),
+            }));
+            homeRefreshRefusalRecorded = true;
+          }
           else if (payload.v === 1 && payload.consumer.kind === 'session') {
             try {
               logger.infoFile('[provider-broker-application]', { stage: 'evidence_capture',
@@ -197,6 +203,12 @@ export function createProviderBrokerMachineCarrierTunnelOpen(input: Readonly<{
           throw new MachineCarrierError(verified.reasonCode, 'Fresh Provider broker authority was rejected.');
         }
         signal?.throwIfAborted();
+        // Home admitted this turn's stream again: its own earlier refusal of
+        // the same turn no longer describes the binding.
+        if (homeRefreshRefusalRecorded) {
+          homeRefreshRefusalRecorded = false;
+          recordOutcome?.(null);
+        }
         return IrohProviderBrokerHandshakeSchema.parse({
           v: payload.v,
           kind: 'provider_broker',
