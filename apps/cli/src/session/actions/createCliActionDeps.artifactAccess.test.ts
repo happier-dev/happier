@@ -14,6 +14,7 @@ import { ArtifactPrivateRevisionMetadataV1Schema } from '@happier-dev/protocol/a
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { decodeBase64, decryptWithDataKey, encodeBase64, encryptWithDataKey, libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
 import type { StoredCredentials } from '@/persistence';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 
 afterEach(() => vi.restoreAllMocks());
@@ -84,6 +85,7 @@ it.each([{ mode: 'plain', signed: false }, { mode: 'plain', signed: true }, { mo
   const reads: string[] = [];
   let shared = false;
   let abortTitleRead: AbortController | undefined;
+  let rejectTitleAuthorization = false;
   vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
     const path = new URL(String(url)).pathname;
     authorize(options, { method: 'GET', path });
@@ -108,7 +110,9 @@ it.each([{ mode: 'plain', signed: false }, { mode: 'plain', signed: true }, { mo
     if (selected) return { status: 200, data: selected };
     if (path === '/v1/artifacts/unavailable-definition') {
       if (abortTitleRead) { abortTitleRead.abort(); throw new DOMException('Cancelled', 'AbortError'); }
-      return { status: 403, data: { error: 'artifact_access_forbidden' } };
+      return rejectTitleAuthorization
+        ? { status: 403, data: { error: 'artifact_access_forbidden' } }
+        : { status: 503, data: { error: 'artifact_read_unavailable' } };
     }
     throw new Error(`Unexpected read: ${path}`);
   });
@@ -155,6 +159,14 @@ it.each([{ mode: 'plain', signed: false }, { mode: 'plain', signed: true }, { mo
   expect(writes).toEqual(['layout', 'grant']);
   expect(reads.filter(path => path === `/v1/artifacts/${definition.id}`)).toHaveLength(1);
   expect(reads).not.toContain('/v1/artifacts');
+  if (signed) {
+    const acknowledgedWrites = [...writes];
+    rejectTitleAuthorization = true;
+    await expect(host.artifactAccessAction!({ actionId: 'artifact.access.grants.set',
+      input: { artifactId, principal: { kind: 'account', accountId: 'denied-recipient' }, accessLevel: 'view' }, context }))
+      .rejects.toMatchObject({ code: 'action_forbidden' });
+    expect(writes).toEqual(acknowledgedWrites);
+  }
   if (!signed) {
     const first = layout.items[0]!;
     if (first.kind !== 'widget') throw new Error('Missing fixture widget');
@@ -210,6 +222,7 @@ it('lists an owned Artifact through signed Session Action read admission without
   const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
   const executor = createActionExecutor(createCliActionDeps({ token: credentials.token, credentials,
     sessionId: 'source-session', mode: 'plain', ctx: null, serverId: 'profile', serverIdentityId: 'home', serverHttpBaseUrl,
+    rawSession: { metadata: JSON.stringify(createTestMetadata()) },
     externalActionMachineRequestPrivateKey: nacl.sign.keyPair().secretKey, externalActionMachineInstallationId: 'installation',
   }));
   const context = { surface: 'mcp' as const, authority: 'account_automation' as const, defaultSessionId: 'source-session',

@@ -6,9 +6,13 @@ import { PROFILE_ROWS_ROUTE_V1, PROFILE_RECORDS_ROUTE_V1, PROFILE_REFERENCE_GUAR
   ProfileRecordV1Schema, ProfileRowMutationV1Schema, ProfileRowsListResponseV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryRowsListResponseV1Schema, PromptLibraryRowMutationV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 
 const http = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }));
-vi.mock('axios', () => ({ default: http }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: Object.assign(actual.default.create(), actual.default, http) };
+});
 const artifactRows = new Map<string, Record<string, unknown>>();
 
 describe('CLI admitted Artifact attribution', () => {
@@ -17,10 +21,20 @@ describe('CLI admitted Artifact attribution', () => {
     http.get.mockReset();
     http.post.mockReset();
     artifactRows.clear();
-    http.get.mockImplementation(async (url: string) => ({ status: 200, data: artifactRows.get(url.split('/').at(-1)!)
+    let rulesRevision = 1;
+    let rulesContent: unknown = { t: 'plain', v: { key: 'skill-rules', value: { v: 1, rules: [] } } };
+    http.get.mockImplementation(async (url: string) => ({ status: 200, data: new URL(url).pathname === PROMPT_LIBRARY_ROWS_ROUTE_V1
+      ? PromptLibraryRowsListResponseV1Schema.parse({ status: 'listed', rows: [{ key: 'skill-rules', revision: rulesRevision, content: rulesContent }] }) : artifactRows.get(url.split('/').at(-1)!)
       ?? (url.endsWith('/v1/account/encryption/currentness') ? createAccountEncryptionCurrentnessFixture()
         : { mode: 'plain', updatedAt: 1 }) }));
-    http.post.mockImplementation(async (_url: string, input: Record<string, unknown>) => {
+    http.post.mockImplementation(async (url: string, input: Record<string, unknown>) => {
+      if (new URL(url).pathname === `${PROMPT_LIBRARY_ROWS_ROUTE_V1}/skill-rules`) {
+        const mutation = PromptLibraryRowMutationV1Schema.parse(input);
+        expect(mutation.expectedRevision).toBe(rulesRevision);
+        rulesContent = mutation.content;
+        rulesRevision += 1;
+        return { status: 200, data: { status: 'updated', revision: rulesRevision, cursor: rulesRevision } };
+      }
       artifactRows.set(String(input.id), { ...input, ownerAccountId: 'bundle-account', access: 'owner', encryptionMode: 'plain',
         headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
       return { status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } };
