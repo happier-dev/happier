@@ -179,7 +179,7 @@ function NotifyFrame(props: Readonly<{ phone: boolean; armed: boolean; failed?: 
             <CommitProposalView proposal={null} phase="writing" branch="v0.3" modelLabel="Opus 5.5"
                 layout={props.phone ? 'phone' : 'wide'} actions={EDIT_ACTIONS} active={false} isGenerating
                 notify={<RunWorkNotifyOperation source={{ kind: 'execution_run', sessionId: 'session-1', runId: 'run-commit-plan' }}
-                    selectedOutput={NOTIFY_OUTPUT} read={read} />} />
+                    selectedOutput={NOTIFY_OUTPUT} read={read} sheet />} />
         </View>
     );
 }

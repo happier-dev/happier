@@ -62,7 +62,9 @@ export const ScmCommitsView = React.memo(function ScmCommitsView(props: ScmCommi
     const notify = notifySource && viewModel?.comparison && viewModel.resultId
         ? <RunWorkNotifications serverId={bound.serverId}
             source={notifySource}
-            selectedOutput={{ output: 'commitPlan', comparisonId: viewModel.comparison.id, resultId: viewModel.resultId }} /> : null;
+            selectedOutput={{ output: 'commitPlan', comparisonId: viewModel.comparison.id, resultId: viewModel.resultId }}
+            // The one Notify me row presentation: its own sheet, as on a Session Run.
+            sheet /> : null;
     const onShowInGit = props.onShowInGit;
     const actions = React.useMemo(() => (onShowInGit ? { ...plan.actions, onShowInGit } : plan.actions), [onShowInGit, plan.actions]);
     const failureNotice = plan.phase === 'ready' && bound.generationFailure ? (
