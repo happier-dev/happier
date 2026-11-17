@@ -308,6 +308,45 @@ describe('Account Workflow Library and settings', () => {
         expect(home.requests.filter(request => request.method === 'GET' && request.path.startsWith('/v3/automations?'))).toEqual([]);
     });
 
+    it.each([false, true])('names a selected saved Workflow without hydrating its trigger set or opening the picker (addressed=%s)', async (addressed) => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        const definitionId = '11111111-1111-4111-8111-111111111111';
+        try {
+            const target = fixture().target;
+            if (target?.kind !== 'inline') throw new Error('Expected an inline fixture Workflow');
+            await account.createArtifactDocument({ artifactId: definitionId,
+                header: WorkflowDefinitionArtifactHeaderV1Schema.parse({ kind: 'workflow-definition.v1', definitionId,
+                    revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Release readiness' } }),
+                body: JSON.stringify(WorkflowDefinitionArtifactBodyV1Schema.parse({
+                    kind: 'workflow-definition.v1', definition: target.definition,
+                })) });
+            home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+                automations: [], attached: [{ automationId: 'selected-saved', triggerId: 'before', workflowDefinitionId: definitionId,
+                    relation: 'direct', enabled: true, revision: 1,
+                    summary: { kind: 'action', phase: 'before', actionIds: ['session.archive'] },
+                    setUpBy: { accountId: 'account-a', displayName: 'Owner' } }],
+                nextCursor: null, skippedNotSharedCount: 0,
+            }) });
+            if (addressed) {
+                const focusedServerId = await home.addHome({ name: 'Other focus',
+                    serverUrl: `https://selected-title-${crypto.randomUUID()}.test`, accountId: 'account-b' });
+                publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+                storage.setState({ profileScope: { serverId: focusedServerId, accountId: 'account-b' },
+                    settingsScope: { serverId: focusedServerId, accountId: 'account-b' } });
+            }
+            const hook = await renderHook(() => useResourceAutomationsSection({
+                subject: { kind: 'machine', serverId, machineId: project.machineId }, accountLifetime: account.accountLifetime,
+            }), { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider> });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().rows[0]?.subtitle).toContain('Release readiness'));
+            expect(hook.getCurrent().read.sets).toEqual([]);
+            expect(home.requests.filter(request => request.path === '/v3/automations/selected-saved')).toEqual([]);
+            await hook.unmount();
+        } finally { account.dispose(); }
+    });
+
     it('reads Action attachments through the shared selected controller with paging and phase changes', async () => {
         const { useActionAutomationsSection } = await import('./useResourceAutomationsSection');
         const { WorkflowAttachedTriggerPageV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');

@@ -96,7 +96,7 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
     const actionOptions = props.accountLifetime === undefined ? {} : { accountLifetime: props.accountLifetime };
     // History is the open settings' pushed page (the same shell, popover or sheet), so it opens where the person is.
     const [open, setOpen] = React.useState<Readonly<{ set: WorkflowTriggerSetV1; triggerId: AccountTriggerRow['triggerId']; anchor: React.RefObject<View | null>; refusal?: string; history?: boolean }> | null>(null);
-    const thenOptions = useTriggerThenOptions({ ...actionOptions, libraryEnabled: open !== null, sets });
+    const thenOptions = useTriggerThenOptions({ ...actionOptions, libraryEnabled: open !== null, sets, attachedPage: props.read.attachedPage });
     const openTriggerAsWorkflow = useOpenTriggerAsWorkflow(props.accountLifetime);
     const add = React.useCallback(async (request: Parameters<typeof addWorkflowTrigger>[0],
         accountLifetime: ServerAccountScopeLifetime | null) => {

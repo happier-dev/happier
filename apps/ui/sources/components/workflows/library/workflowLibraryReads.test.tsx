@@ -19,7 +19,7 @@ import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/wor
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowAttachedTriggerPageV1Schema, WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { deriveArtifactCoarseKindV1, deriveArtifactKindV1, deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { decodeBase64 } from '@/encryption/base64';
@@ -1093,6 +1093,41 @@ describe('Workflow library reads through real Account Actions and HTTP', () => {
         expect(options.some(option => option.origin === 'builtin')).toBe(true);
         expect(artifactInventoryReads()).toHaveLength(1);
         expect(home.requests.filter(request => request.path === '/v1/artifacts/read')).toHaveLength(0);
+    });
+
+    it('names cold selected attachments with one exact header batch and no library census', async () => {
+        const target = getActiveServerSnapshot();
+        const credentials = await TokenStorage.getCredentialsForServerUrl(target.serverUrl, { serverId: target.serverId });
+        if (!credentials) throw new Error('Expected saved Account credentials');
+        const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+        await restoreConnectionToActiveServer(credentials);
+        const { sync } = await import('@/sync/sync');
+        expect(await sync.awaitBootstrapForegroundAcquisition()).toBe(true);
+        await storage.getState().activateSettingsScope({ serverId, accountId });
+        await saved(definitionId, 'Attached checks');
+        await saved(secondId, 'Other checks');
+        storage.setState({ artifacts: {} });
+        const readStart = home.requests.length;
+        const attachedPage = WorkflowAttachedTriggerPageV1Schema.parse({ attached: [definitionId, secondId, definitionId].map((workflowDefinitionId, index) => ({
+            automationId: `attached-${index}`, triggerId: `trigger-${index}`, workflowDefinitionId,
+            relation: 'direct', enabled: true, revision: 1,
+            summary: { kind: 'action', phase: 'before', actionIds: ['machines.command.run'] },
+            setUpBy: { accountId, displayName: null },
+        })), nextCursor: null, skippedNotSharedCount: 0 });
+        const { useAccountWorkflowEditor } = await import('../triggers/AccountTriggersSection');
+        const { projectAccountTriggerRows } = await import('../triggers/accountTriggerRows');
+        const sets: readonly import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1').WorkflowTriggerSetV1[] = [];
+        const read = { sets, attachedPage, status: 'ready' as const, retry() {}, loadMore() {}, acknowledge() {} };
+        const hook = await renderHook(() => {
+            const options = useAccountWorkflowEditor({ read });
+            return projectAccountTriggerRows({ sets, attachedPage, resolveWorkflowTitle: options.resolveWorkflowTitle });
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().map(row => row.subtitle))
+            .toEqual(['Attached checks', 'Other checks', 'Attached checks']));
+        const records = home.requests.slice(readStart).filter(request => new URL(request.path, request.serverUrl).pathname.startsWith('/v1/artifacts'));
+        expect(records).toHaveLength(1);
+        expect(records[0]?.path).toBe('/v1/artifacts/read');
+        expect(records[0]?.input).toMatchObject({ artifactIds: [definitionId, secondId], projection: 'headers' });
     });
 
     it('keeps admitted shared titles on the first cached render and withdraws locked, removed, or foreign-scope facts', async () => {

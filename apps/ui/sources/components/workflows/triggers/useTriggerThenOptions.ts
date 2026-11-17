@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { WorkflowAttachedTriggerPageV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import {
     listBuiltinWorkflowReferenceOptions,
@@ -24,18 +24,21 @@ const KEEP_GOING_REF = 'builtin:keep-going';
  * and the Account's definition list. Rows read a workflow's name through the same resolver.
  */
 export function useTriggerThenOptions(options?: Readonly<{ libraryEnabled?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;
-    sets?: readonly WorkflowTriggerSetV1[] }>): Readonly<{
+    sets?: readonly WorkflowTriggerSetV1[]; attachedPage?: WorkflowAttachedTriggerPageV1 }>): Readonly<{
     workflowOptions: readonly TriggerWorkflowOption[];
     resolveWorkflowTitle: (ref: string) => string | null;
 }> {
     const libraryEnabled = options?.libraryEnabled ?? true;
     const libraryOptions = useWorkflowLibraryReferenceOptions({ enabled: libraryEnabled,
         ...(options?.accountLifetime === undefined ? {} : { accountLifetime: options.accountLifetime }) });
-    const references = React.useMemo(() => (options?.sets ?? []).flatMap(set => {
-        if (!set.target) return [];
-        const then = readTriggerThen(set.target);
-        return then.kind === 'runWorkflow' && then.ref !== null ? [then.ref] : [];
-    }), [options?.sets]);
+    const references = React.useMemo(() => [
+        ...(options?.sets ?? []).flatMap(set => {
+            if (!set.target) return [];
+            const then = readTriggerThen(set.target);
+            return then.kind === 'runWorkflow' && then.ref !== null ? [then.ref] : [];
+        }),
+        ...(options?.attachedPage?.attached ?? []).flatMap(row => row.workflowDefinitionId === null ? [] : [row.workflowDefinitionId]),
+    ], [options?.sets, options?.attachedPage]);
     const resolveWorkflowTitle = useWorkflowReferenceTitles(references, true, options?.accountLifetime);
     const workflowOptions = React.useMemo((): readonly TriggerWorkflowOption[] => [
         ...(libraryEnabled ? listBuiltinWorkflowReferenceOptions() : [])

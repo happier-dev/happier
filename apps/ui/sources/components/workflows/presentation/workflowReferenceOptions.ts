@@ -21,6 +21,7 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { isArtifactOnlyHomeAccountChange, subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { sync } from '@/sync/sync';
 
 function workflowReferenceHeaderTitle(header: DecryptedArtifact['rawHeader'] | null | undefined): string | null {
     if (header?.kind !== 'workflow-definition.v1') return null;
@@ -46,8 +47,8 @@ export function listBuiltinWorkflowReferenceOptions(): readonly WorkflowReferenc
 
 /**
  * Names for already-admitted references, not an options/catalog demand. The trigger reader has
- * resolved its targets before publishing rows. Active-Account headers and plugin contributions use
- * admitted stores; addressed saved references read only their exact headers without listing options.
+ * resolved its targets before publishing rows. Cached headers and plugin contributions use admitted
+ * stores; missing or addressed saved references read only their exact headers without listing options.
  */
 export function useWorkflowReferenceTitles(refs: readonly string[], enabled = true, accountLifetime?: ServerAccountScopeLifetime | null): (ref: string) => string | null {
     accountLifetime = useWorkflowAccountLifetime(accountLifetime);
@@ -55,7 +56,7 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
     const lifetime = accountLifetime === undefined ? activeLifetime : accountLifetime;
     const language = useSetting('preferredLanguage');
     const requested = React.useMemo(() => refs.map(ref => ({ ref, parsed: parseWorkflowDefinitionRefV1(ref) })), [refs]);
-    const artifactIds = React.useMemo(() => requested.flatMap(({ parsed }) => parsed?.kind === 'artifact' ? [parsed.artifactId] : []), [requested]);
+    const artifactIds = React.useMemo(() => [...new Set(requested.flatMap(({ parsed }) => parsed?.kind === 'artifact' ? [parsed.artifactId] : []))], [requested]);
     const pluginsEnabled = enabled && requested.some(({ parsed }) => parsed?.kind === 'plugin');
     const useStore = getStorage();
     const headers = useStore(useShallow(state => artifactIds.map(id => {
@@ -63,9 +64,22 @@ export function useWorkflowReferenceTitles(refs: readonly string[], enabled = tr
         return enabled && lifetime?.isCurrent() && areAccountSettingsScopesEqual(state.settingsScope, lifetime.scope)
             && artifact?.isDecrypted && artifact.ownerAccountId && artifact.access ? artifact.rawHeader ?? null : null;
     })));
-    const addressedReadEnabled = enabled && artifactIds.length > 0 && lifetime?.isCurrent() === true
-        && !areServerAccountScopesEqual(activeLifetime?.scope, lifetime.scope);
+    const addressed = !areServerAccountScopesEqual(activeLifetime?.scope, lifetime?.scope);
+    const addressedReadEnabled = enabled && artifactIds.length > 0 && lifetime?.isCurrent() === true && addressed;
     const artifactKey = JSON.stringify(artifactIds);
+    React.useEffect(() => {
+        if (!enabled || addressed || !activeLifetime?.isCurrent() || !lifetime?.isCurrent()) return;
+        const state = useStore.getState();
+        const sameScope = areAccountSettingsScopesEqual(state.settingsScope, lifetime.scope);
+        const missing = (JSON.parse(artifactKey) as string[]).filter(id => !sameScope || state.artifacts[id] === undefined);
+        if (missing.length === 0) return;
+        const controller = new AbortController();
+        const retirement = activeLifetime.onRetire(() => controller.abort());
+        // Demand starts with the visible references. Later store deletions withdraw their names;
+        // they never turn into a second read that could resurrect an already removed row.
+        void sync.refreshArtifactsByIds(missing, { signal: controller.signal }).catch(() => {});
+        return () => { controller.abort(); retirement.dispose(); };
+    }, [activeLifetime, addressed, artifactKey, enabled, lifetime, useStore]);
     const [addressedRead, setAddressedRead] = React.useState<Readonly<{
         lifetime: ServerAccountScopeLifetime; artifactKey: string; titles: readonly (string | null)[];
     }> | null>(null);
