@@ -4,6 +4,7 @@ import { projectAgentSessionProviderBindingV1 } from '@happier-dev/protocol/prov
 import { isModelRefGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { CallerInputConstraintsV1, ModelSelectionApplyPolicy, ProviderBoundModelRef, ProviderModelDescriptorV1, ProviderRuntimeBindingBasisV1, QualifiedConnectedAccountPurposeBindingsV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { SessionModelRefSchema, projectSessionModelRefToExecutionModelSelection, type SessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 
 import { configuration } from '@/configuration';
 import { readStoredCredentials } from '@/persistence';
@@ -71,7 +72,7 @@ export type SessionModelTransitionProviderTargetAuthorizer = (
 export function resolveDaemonSessionModelTransitionAuthority(params: Readonly<{
   trackedAgentId: string | null;
   authorizedAgentId?: string | null;
-  trackedSelection: ProviderBoundModelRef | null;
+  trackedSelection: SessionModelRef | null;
   trackedSessionBindingMetadata:
     SessionProviderBindingMetadataV1 | null;
   requestAgentId: string;
@@ -85,7 +86,12 @@ export function resolveDaemonSessionModelTransitionAuthority(params: Readonly<{
   const trackedAgentId = params.trackedAgentId
     ?? params.authorizedAgentId
     ?? null;
-  const trackedSelection = params.trackedSelection;
+  // Spawn intent can be V1 or V2; this same-binding operation is Account-only.
+  // The canonical projection keeps Team custody separate from its native tuple.
+  const trackedSelection = params.trackedSelection === null ? null
+    : projectSessionModelRefToExecutionModelSelection(
+      SessionModelRefSchema.parse(params.trackedSelection),
+    ).modelSelection ?? null;
   const trackedMetadata = params.trackedSessionBindingMetadata;
   if (
     trackedAgentId === null

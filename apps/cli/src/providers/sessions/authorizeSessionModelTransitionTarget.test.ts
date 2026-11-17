@@ -341,7 +341,7 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
     });
   });
 
-  it('replaces child-authored Provider authority with the daemon-tracked session facts', async () => {
+  it.each([1, 2] as const)('replaces child-authored Provider authority with daemon-tracked V%i session facts', async (version) => {
     const trackedSelection = provider('pc_restarted', 'model-at-launch');
     const runtimeBindingBasis = externalRuntimeBindingBasis(trackedSelection);
     const activeTargetBase = active(
@@ -385,9 +385,12 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
       ...trackedSelection,
       modelId: 'requested-next-model',
     };
+    const trackedModelRef = version === 1 ? trackedSelection : {
+      ...trackedSelection, source: 'account_provider_connection' as const,
+    };
     const authority = resolveDaemonSessionModelTransitionAuthority({
       trackedAgentId: 'codex',
-      trackedSelection,
+      trackedSelection: trackedModelRef,
       trackedSessionBindingMetadata:
         activeTarget.sessionBindingMetadata!,
       requestAgentId: 'codex',
@@ -410,7 +413,7 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
     const authorizeProviderTarget = vi.fn();
     await expect(authorizeDaemonSessionModelTransitionProviderTarget({
       trackedAgentId: 'codex',
-      trackedSelection,
+      trackedSelection: trackedModelRef,
       trackedSessionBindingMetadata:
         activeTarget.sessionBindingMetadata!,
       requestAgentId: 'codex',
@@ -427,7 +430,7 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
 
     expect(() => resolveDaemonSessionModelTransitionAuthority({
       trackedAgentId: 'codex',
-      trackedSelection,
+      trackedSelection: trackedModelRef,
       trackedSessionBindingMetadata: {
         ...activeTarget.sessionBindingMetadata!,
         contributionKey: 'provider.incoherent',
@@ -435,6 +438,26 @@ describe('createSessionModelTransitionAuthorizer routing', () => {
       requestAgentId: 'codex',
       requestedSelection,
     })).toThrow('session_model_transition_daemon_authority_mismatch');
+  });
+
+  it('keeps a tracked Team source out of Account same-binding authorization', async () => {
+    const requestedSelection = provider('pc_team_neighbor', 'model-next');
+    const trackedSelection = {
+      source: 'team_resource' as const,
+      teamId: 'team-transition', resourceId: 'resource-transition',
+      expectedResourceRevision: 1, deliveryMode: 'brokered' as const,
+      agentTargetKey: requestedSelection.agentTargetKey, modelId: 'model-active',
+    };
+    await expect(authorizeDaemonSessionModelTransitionProviderTarget({
+      trackedAgentId: 'codex', trackedSelection,
+      trackedSessionBindingMetadata: active(requestedSelection, {
+        runtimeBindingBasis: externalRuntimeBindingBasis(requestedSelection),
+      }).sessionBindingMetadata,
+      requestAgentId: 'codex', requestedSelection,
+      authorizeProviderTarget: async () => {
+        throw new Error('Team source must never reach Account authorization');
+      },
+    })).rejects.toThrow('session_model_transition_daemon_authority_mismatch');
   });
 
   it('accepts an exact authorized external Agent only when catalog identity is absent', () => {
