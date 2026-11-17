@@ -189,10 +189,17 @@ export async function withSessionHandoffRequesterBootstrap(params: Readonly<{
             verifyMachineAdmissionCurrent: async () => active && await context.verifyMachineAdmissionCurrent!() } : context,
         existingSessionId: parsed.data.input.sessionId }).catch(() => null);
     if (!custody) return refused();
+    let captureAccount: import('@/daemon/sessionEncryption/requesterAccountActionContext').RequesterAccountActionContext | null = null;
     try {
+        const observedServerIdentityId = await boundary.getObservedServerIdentityId() ?? '';
+        if (capture && context.callerInputAuthorization) {
+            captureAccount = await custody.admitted.projectHandoffCaptureAccountContext(
+                context.callerInputAuthorization, observedServerIdentityId, context.signal);
+        }
         const authorization = context.callerInputAuthorization
-            ? await custody.admitted.projectExternalActionAuthorization(context.callerInputAuthorization,
-                await boundary.getObservedServerIdentityId() ?? '', context.signal) : undefined;
+            ? capture ? captureAccount?.authorization
+                : await custody.admitted.projectExternalActionAuthorization(context.callerInputAuthorization,
+                    observedServerIdentityId, context.signal) : undefined;
         if (context.callerInputAuthorization && !authorization) { await custody.cleanupOnFailure(); return refused(); }
         if (!readOnly && parsed.data.kind === 'requester_session_handoff_bootstrap_v1') {
             const binding = await custody.admitted.bindExistingSession(parsed.data.input.sessionId);
@@ -214,6 +221,7 @@ export async function withSessionHandoffRequesterBootstrap(params: Readonly<{
         return refused();
     }
     finally {
+        await captureAccount?.dispose();
         if (readOnly) { active = false; await custody.cleanupOnFailure(); }
     }
 }

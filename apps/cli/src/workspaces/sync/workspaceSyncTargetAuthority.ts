@@ -3165,8 +3165,19 @@ export function createWorkspaceSyncTargetAuthority(
         admittedTarget = { machineId: localMachineId, rootPath: independentTarget.rootPath, approvalRoot: null,
           facts: [], workspace: independentTarget, endpoint: independentTarget, physicalEndpoint: undefined,
           assertCurrent: async () => { signal?.throwIfAborted(); } };
+      } else if (targetRouting && dependencies.localWorkspaceRefId !== undefined) {
+        const target = resolveWorkspaceRef(getSnapshot(request.bootstrapOperationId), request.targetWorkspaceRefId, localServerId);
+        if (request.targetWorkspaceRefId !== dependencies.localWorkspaceRefId
+          || targetRouting.targetMachineId !== localMachineId || !isLocalWorkspace(target)
+          || target.rootPath !== targetRouting.targetRootPath) {
+          throw authorityError('workspace_sync_child_unavailable', 'The captured native target does not resolve to this endpoint');
+        }
+        independentTarget = target;
+        admittedTarget = { machineId: localMachineId, rootPath: target.rootPath, approvalRoot: null,
+          facts: [], workspace: target, endpoint: target, physicalEndpoint: undefined,
+          assertCurrent: async () => { signal?.throwIfAborted(); } };
       }
-      if (sourceWriterTargetRouting && targetRouting && !targetRouting.targetManaged) {
+      if (sourceWriterTargetRouting && targetRouting && !targetRouting.targetManaged && !independentTarget) {
         if (sourceInvocation) {
           independentTarget = resolveWorkspaceRef(sourceInvocation, request.targetWorkspaceRefId, localServerId);
           admittedTarget = { machineId: localMachineId, rootPath: independentTarget.rootPath, approvalRoot: null,

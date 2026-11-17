@@ -198,6 +198,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
   const targetAccountRowRequests: string[] = [];
   let requesterProjectionReads = 0;
   const requesterMachineAuthorityReads: string[] = [];
+  const requesterAdmissionReads: string[] = [];
   const requesterRowRequests: Array<Readonly<{ path: string; body: unknown }>> = [];
   const requesterRows = createProjectAccountRowsHttpBoundary(rows), ownerRows = createProjectAccountRowsHttpBoundary(custodianRows);
   const targetRows = createProjectAccountRowsHttpBoundary(targetAccountRows);
@@ -459,6 +460,10 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       const bearer = config?.headers?.Authorization;
       const requester = typeof bearer === 'string' && bearer.startsWith('Bearer ')
         && readAccountIdFromToken(bearer.slice(7)) === 'member-a';
+      if (requester && (artifactPath === '/v1/account/profile'
+        || artifactPath === '/v1/account/encryption/currentness' || artifactPath === '/v2/account/settings')) {
+        requesterAdmissionReads.push(artifactPath);
+      }
       if (requester && (url.endsWith('/v1/account/profile') || url.endsWith('/v1/machines/machine'))
         && new Error().stack?.includes('readRequesterMachineAdmissionCurrent')) requesterMachineAuthorityReads.push(new URL(url).pathname);
       const targetAccount = config?.headers?.Authorization === `Bearer ${targetCredentials.token}`;
@@ -916,6 +921,6 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     },
     sourcePath, targetPath, sourceRef: fixture.sourceRef, targetRef,
     request, account, authorization, credentials, wire, envelope, prepareInvocation, prepareActionIngress, executeRelationshipAction, executeNativeRelationshipAction, executeApprovalDecision, homeActionRequests, adoptHomeAuthorization, rpc, targetRpc, targetMachine, targetInstallation, targetResource, sourceResource, sourceResourceMode, accountMode,
-    memberReads: () => memberReads, requesterProjectionReads: () => requesterProjectionReads, requesterRowRequests, requesterMachineAuthorityReads, rpcDiagnostics, targetRpcDiagnostics, approvalArtifacts,
+    memberReads: () => memberReads, requesterProjectionReads: () => requesterProjectionReads, requesterRowRequests, requesterMachineAuthorityReads, requesterAdmissionReads, rpcDiagnostics, targetRpcDiagnostics, approvalArtifacts,
     targetAccountRows, targetAccountRowRequests, seedRequests, authorizeSourceRequest };
 }

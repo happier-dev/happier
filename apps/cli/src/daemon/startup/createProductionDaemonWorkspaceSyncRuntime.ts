@@ -2794,8 +2794,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           if (!await custody.isCurrent()) throw compositionError('project_requester_authority_unavailable', 'Requester Sync custody is unavailable');
         },
         release: async () => {
-          lifetime.abort();
-          try { await native.release(); } finally { try { await custody.release(); } finally { await bootstrap.dispose(); } }
+          try { await native.release(); } finally {
+            lifetime.abort();
+            try { await custody.release(); } finally { await bootstrap.dispose(); }
+          }
         } });
       captured = true;
       const capture = runtime!.handoffAdapter.resolvePrivateExecution?.({ operationId: request.operationId });
@@ -3135,9 +3137,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       }
       return targetAuthority.releaseConflictResolutionCaptureHere(request);
     },
-    recoverConflictResolutionAtTarget: async (request, signal, context) => {
+    recoverConflictResolutionAtTarget: async (request, signal) => {
       const native = await managedNative(request.relationshipId, request.targetWorkspaceRefId);
-      return native ? native.recoverConflictResolutionHere(request, signal) : targetAuthority.recoverConflictResolutionHere(request, signal, context);
+      return native ? native.recoverConflictResolutionHere(request, signal) : targetAuthority.recoverConflictResolutionHere(request, signal);
     },
     hasRetainedRecoveryAdmission: targetAuthority.hasRetainedRecoveryAdmission,
     readFileAtTarget: async (request, signal) => {

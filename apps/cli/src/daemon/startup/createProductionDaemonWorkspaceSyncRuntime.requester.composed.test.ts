@@ -24,10 +24,11 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, creat
 import { ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows.testkit';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
-import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { sealExternalActionRequesterAccountContextV1, sealSessionRequesterHandoffWorkspaceCaptureRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { encodeStoredCredentials } from '@/persistence';
-import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
+import { dispatchOriginalAccountAction, prepareExternalActionHandoffPreflightAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { createWorkspaceSyncRelationshipCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { recoverPrivateWorkspaceSyncExecutions } from './recoverPrivateWorkspaceSyncExecutions';
 import { workspaceCheckoutNativeBoundary as native } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
@@ -35,10 +36,10 @@ import { createRequesterWorkspaceSyncFixture } from './createRequesterWorkspaceS
 import { registerMachineWorkspaceSyncRpcHandlers, resolvePrivateWorkspaceSyncTargetExecution } from '@/api/machine/rpcHandlers.workspaceSync';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { WorkspaceSyncSourceWriterTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { WorkspaceSyncSourceWriterTargetRoutingV1Schema, SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
-import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema, SessionHandoffWorkspaceCaptureResultV3Schema, WorkspaceSyncTargetBootstrapPrepareV1Schema, WorkspaceSyncTargetBootstrapPrepareResultV1Schema, WorkspaceSyncTargetBootstrapReleaseV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { WorkspaceSyncController } from '@/workspaces/sync/workspaceSyncController';
 import { deriveWorkspaceSyncEndpointId } from '@/workspaces/sync/transport/workspaceSyncBrokerProtocol';
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
@@ -919,40 +920,78 @@ it.skipIf(process.platform !== 'linux').each([true, false])(
 // HANDOFF-MEMBER-CAPTURE-1114 (owner ruling 2026-11-15): a Can use requester's handoff
 // copy into another person's separate-users Machine runs inside their own member
 // capture; Manage keeps today's native placement.
-it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)(
-  'captures a %s handoff copy at the TARGET owner, routes its signed preflight there and releases it', async role => {
+it.skipIf(process.platform !== 'linux').each([
+  ['use', 'before-effects refusals'], ['use', 'retained custody'], ['manage', 'native control'],
+] as const)(
+  'captures a %s handoff copy at the TARGET owner (%s)', async (role, scenario) => {
   executionBoundary.member = role === 'use';
-  const setup = await createRequesterWorkspaceSyncFixture({ role, socketIo });
-  const { installed, fixture, targetPath, custodianRef, account } = setup;
+  const sourceKey = tweetnacl.sign.keyPair();
+  const setup: Awaited<ReturnType<typeof createRequesterWorkspaceSyncFixture>> = await createRequesterWorkspaceSyncFixture({ role, socketIo,
+    readHomePost: async (_url, body) => {
+      const mint = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+      if (!mint.success || !mint.data.handoffPreflight) return undefined;
+      // Authenticated Home is the boundary: its admitted peer projection is
+      // consumed by the real handoff authorization producer and RPC ingress.
+      expect(mint.data.handoffPreflight.authorization).toEqual(root);
+      return { status: 200, data: setup.adoptHomeAuthorization({ ...root, token: 'handoff-target-preflight', binding: {
+        ...root.binding, machineId: setup.installed.machineId, installationId: setup.installed.installation.installationId,
+        custodianAccountId: 'requester', target: mint.data.envelope.target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(mint.data.envelope),
+        handoffPreflight: { rootRequestId: root.binding.requestId, rootRequestEnvelopeDigest: root.binding.requestEnvelopeDigest },
+      } }) };
+    } });
+  const { installed, fixture, targetPath, custodianRef } = setup;
   const home = installed.homeServerIdentityId;
-  const disposed = vi.fn(async () => {});
   const admission = { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: installed.machineId,
     installationId: installed.installation.installationId, role, encryptionMode: 'plain' as const };
-  // The handoff ingress hands its admitted requester bootstrap to the capture; only its release is observed here.
-  const context = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
-    callerInputAuthorization: account.authorization, verifyMachineAdmissionCurrent: async () => installed.isHomeCurrent(),
-    machineAdmission: admission,
-    requesterSessionBootstrap: { dispose: disposed } as unknown as NonNullable<RpcHandlerContext['requesterSessionBootstrap']> };
+  const root = setup.adoptHomeAuthorization({ v: 1, token: 'handoff-root', binding: {
+    accountId: 'member-a', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+    custodianAccountId: 'member-a', serverIdentityId: home, machineId: 'member-source', installationId: 'member-source-installation',
+    actionId: 'session.handoff', requestId: 'handoff-copy', requestEnvelopeDigest: 'A'.repeat(43),
+    target: { kind: 'machine', machineId: 'member-source' },
+    handoffAdmission: { sessionId: 'moved-session', sourceMachineId: 'member-source', sourceInstallationId: 'member-source-installation',
+      targetMachineId: installed.machineId, targetInstallationId: installed.installation.installationId } } });
+  // The installed fixture first starts before Sync composition. Rebind its
+  // public receiver once the actual runtime is available, as production does.
+  installed.machine.setRPCHandlers({ spawnSession: async () => { throw new Error('No Session spawn expected'); },
+    stopSession: async () => true, requestShutdown() {} });
   const action = { kind: 'copy_once' as const, contentPolicy: setup.request.actionInput.contentPolicy };
-  const capture = (input: Partial<Readonly<{ operationId: string; targetPath: string; release: true }>> = {}) =>
-    fixture.parent.workspaceSync.captureHandoffWorkspace!({ sessionId: 'moved-session', sourceMachineId: 'member-source',
-      targetMachineId: installed.machineId, operationId: 'handoff-copy', accountServerId: home,
-      sourceRootPath: '/member/workspace', targetPath, workspaceAction: action, ...input }, context);
+  const capture = async (input: Partial<Readonly<{ operationId: string; targetPath: string; release: true }>> = {}) => {
+    const request = sealSessionRequesterHandoffWorkspaceCaptureRpcRequestV1({
+      request: { kind: 'requester_session_handoff_workspace_capture_v1', input: {
+        sessionId: 'moved-session', sourceMachineId: 'member-source', targetMachineId: installed.machineId,
+        operationId: 'handoff-copy', accountServerId: home, sourceRootPath: '/member/workspace', targetPath,
+        workspaceAction: action, ...input }, requesterBootstrap: {
+        v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(setup.credentials) } },
+      installationId: installed.installation.installationId,
+      installationPublicKey: Buffer.from(installed.installation.publicKey, 'base64url'), randomBytes: tweetnacl.randomBytes });
+    const authorization = await prepareExternalActionHandoffPreflightAuthorization({ authorization: root, input: request,
+      machineId: installed.machineId, sourceMachineId: 'member-source', sourceInstallationId: 'member-source-installation',
+      privateKey: Buffer.from(sourceKey.secretKey).toString('base64url'), serverHttpBaseUrl: installed.serverHttpBaseUrl });
+    if (!authorization) throw new Error('The actual handoff peer authorization producer refused the capture');
+    return SessionHandoffWorkspaceCaptureResultV3Schema.parse(readMachineActionRpcResult(await installed.invoke(
+      RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3, request,
+      { actorAccountId: admission.actorAccountId, role, callerAuthority: 'present_user', callerInputAuthorization: authorization })));
+  };
   if (role === 'manage') {
     expect(await capture()).toEqual({ ok: true, capture: 'not_required' });
     expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-copy' })).toBeNull();
     return;
   }
-  // Any path outside the member's own folder gets the checkout owner's one refusal, and nothing is captured.
-  // The handoff RPC handler turns the thrown owner refusal into its typed result.
-  await expect(capture({ operationId: 'handoff-arbitrary', targetPath: custodianRef.rootPath }))
-    .rejects.toMatchObject({ code: 'workspace_private_checkout_review_required' });
-  expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-arbitrary' })).toBeNull();
-
+  const admissionReadsBeforeCapture = setup.requesterAdmissionReads.length;
   const captured = await capture();
+  const captureAdmissionReads = setup.requesterAdmissionReads.slice(admissionReadsBeforeCapture);
+  expect(captureAdmissionReads.filter(path => path === '/v1/account/profile')).toHaveLength(1);
+  expect(captureAdmissionReads.filter(path => path === '/v2/account/settings')).toHaveLength(1);
   expect(captured).toMatchObject({ ok: true, capture: 'member', targetRootPath: targetPath, targetWorkspaceRefId: setup.targetRef.id });
   if (!captured.ok || captured.capture !== 'member') throw new Error('Member capture is unavailable');
-  expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-copy' })?.execution.nativeSync).toBeDefined();
+  const retainedCapture = fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-copy' });
+  if (!retainedCapture?.execution.nativeSync) throw new Error('The actual retained member capture is unavailable');
+  expect(await retainedCapture.execution.accountRowsCustody.isCurrent()).toBe(true);
+  await expect(retainedCapture.execution.assertTransferCurrent()).resolves.toBeUndefined();
+  let releaseTarget: (() => Promise<unknown>) | undefined;
+  try {
+  if (scenario === 'before-effects refusals') {
   // Both endpoint rows exist in the requester's Account after the capture.
   const persisted = await readProjectAccountRows({ credentials: setup.credentials, serverId: home,
     selection: { kinds: ['workspace-ref'] } });
@@ -961,24 +1000,19 @@ it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)(
     expect.objectContaining({ id: setup.targetRef.id, machineId: installed.machineId, rootPath: targetPath }),
   ]));
 
-  // The signed SOURCE-writer preflight reaches the member capture, never the host-native owner.
-  const hostNative = vi.spyOn(fixture.parent.workspaceSync, 'preflightHandoffTargetReplacement');
+  }
+
+  // Both scenarios use the installed ingress and the same retained member owner.
+  let borrowerGrantCurrent = true;
   const ingress = new RpcHandlerManager({ scopePrefix: installed.machineId, localMachineId: installed.machineId,
     encryptionMode: 'plain', logger: () => {},
     authorizeRequest: incoming => authorizeMachineRpcRequest(incoming, { machineId: installed.machineId,
       resolveInstallationId: () => installed.installation.installationId,
       resolveCustodianAccountId: async () => 'requester', resolveHomeServerIdentityId: async () => home,
       // Home's current admission is the network boundary.
-      verifyMachineAdmission: async () => true,
+      verifyMachineAdmission: async incoming => incoming.context.machineId === 'member-source' || borrowerGrantCurrent,
       resolvePrivateWorkspaceSyncTargetExecution: input => resolvePrivateWorkspaceSyncTargetExecution(fixture.parent.handoffAdapter, input) }) });
   registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: ingress, service: fixture.parent.workspaceSync });
-  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'handoff-root', binding: {
-    accountId: 'member-a', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
-    custodianAccountId: 'member-a', serverIdentityId: home, machineId: 'member-source', installationId: 'member-source-installation',
-    actionId: 'session.handoff', requestId: 'handoff-copy', requestEnvelopeDigest: 'A'.repeat(43),
-    target: { kind: 'machine', machineId: 'member-source' },
-    handoffAdmission: { sessionId: 'moved-session', sourceMachineId: 'member-source', sourceInstallationId: 'member-source-installation',
-      targetMachineId: installed.machineId, targetInstallationId: installed.installation.installationId } } });
   const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1,
     sourceWriter: { machineId: 'member-source', installationId: 'member-source-installation' },
     source: { v: 1, phase: 'prepare', operationId: 'handoff-copy', accountServerId: home, sourceMachineId: 'member-source',
@@ -988,18 +1022,161 @@ it.skipIf(process.platform !== 'linux').each(['use', 'manage'] as const)(
       callerAuthority: 'present_user', workspaceWrites: 'allow' } },
     target: { v: 1, phase: 'preflight', operationId: 'handoff-copy', accountServerId: home,
       targetMachineId: installed.machineId, targetRootPath: targetPath } });
+  await native.identity.run('member', async () => writeFile(join(targetPath, 'existing.txt'), 'member-reviewed target bytes'));
+  const retainedNative = retainedCapture.execution.nativeSync;
+  if (scenario === 'before-effects refusals') {
+  const hostNative = vi.spyOn(fixture.parent.workspaceSync, 'preflightHandoffTargetReplacement');
+  const fingerprint = await native.identity.run('member', async () => computeWorkspaceSyncRootFingerprint(targetPath));
   const preflight = await ingress.handleRequest({
     method: `${installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT}`,
-    params: { v: 1, operationId: 'handoff-copy', serverId: home, machineId: installed.machineId, targetPath },
+    params: { v: 1, operationId: 'handoff-copy', serverId: home, machineId: installed.machineId, targetPath,
+      destinationIntent: 'materialize_from_source_workspace' },
     callerAuthority: 'present_user', machineAdmission: admission, callerInputAuthorization: root,
     workspaceSyncSourceWriterTargetRouting: routing });
-  expect(preflight).not.toHaveProperty('errorCode');
+  expect(preflight).toMatchObject({ type: 'approval_required', approval: {
+    machineId: installed.machineId, canonicalRoot: targetPath, serverId: home, operationId: 'handoff-copy',
+    rootFingerprint: fingerprint, consequences: ['replace_nonempty_workspace_target'],
+  } });
+  expect(await native.identity.run('member', () => readFile(join(targetPath, 'existing.txt'), 'utf8')))
+    .toBe('member-reviewed target bytes');
+  const loan = await retainedNative.acquireLocalRoot({ ownerId: 'member-preflight-no-loan', canonicalRoot: targetPath, operation: 'sync' });
+  expect(loan).not.toHaveProperty('kind');
+  if (!('kind' in loan)) await loan.release();
   expect(hostNative).not.toHaveBeenCalled();
   // The member folder stays the member's: the host cannot read it.
   await expect(realpath(targetPath)).rejects.toMatchObject({ code: 'EACCES' });
+  }
+
+  // The same real member owner admits target custody only under the SOURCE's
+  // exact write ceiling, then retains it for terminal cleanup.
+  const prepareRequest = WorkspaceSyncTargetBootstrapPrepareV1Schema.parse({ v: 1,
+    bootstrapOperationId: 'handoff-copy', owner: { kind: 'copy_once', operation: {
+      v: 1, operationId: 'handoff-copy', controllerMachineId: 'member-source',
+      alphaWorkspaceRefId: captured.sourceWorkspaceRefId, betaWorkspaceRefId: captured.targetWorkspaceRefId,
+      contentPolicy: action.contentPolicy } }, targetWorkspaceRefId: captured.targetWorkspaceRefId,
+    endpointRole: 'beta', policyDigest: action.contentPolicy.policyDigest, createIfMissing: true,
+    targetBootstrap: 'use_existing' });
+  const prepareRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...routing,
+    target: { ...routing.target, phase: 'prepare' } });
+  const prepare = async (selectedRouting = prepareRouting, authorization = root, request = prepareRequest, receivingAdmission = admission) => {
+    const result = await ingress.handleRequest({
+    method: `${installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`,
+    params: request, callerAuthority: authorization.binding.sessionActionOrigin ? 'account_automation' : 'present_user',
+    machineAdmission: receivingAdmission, callerInputAuthorization: authorization,
+    ...(authorization.binding.sessionActionOrigin ? { sessionActionOrigin: authorization.binding.sessionActionOrigin } : {}),
+    workspaceSyncSourceWriterTargetRouting: selectedRouting });
+    const prepared = WorkspaceSyncTargetBootstrapPrepareResultV1Schema.safeParse(result);
+    if (prepared.success && prepared.data.state === 'ready') releaseTarget = () => release(
+      WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...selectedRouting,
+        target: { ...selectedRouting.target, phase: 'release' } }),
+      { ...releaseRequest, bootstrapOperationId: request.bootstrapOperationId, targetWorkspaceRefId: request.targetWorkspaceRefId });
+    return result;
+  };
+  const probe = async () => retainedNative.acquireLocalRoot({ ownerId: 'member-target-custody-probe',
+    canonicalRoot: targetPath, operation: 'sync' });
+  const releaseRequest = WorkspaceSyncTargetBootstrapReleaseV1Schema.parse({ v: 1,
+    bootstrapOperationId: 'handoff-copy', targetWorkspaceRefId: captured.targetWorkspaceRefId, reason: 'abort' });
+  const releaseRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...prepareRouting,
+    target: { ...prepareRouting.target, phase: 'release' } });
+  const release = (selectedRouting = releaseRouting, request = releaseRequest) => ingress.handleRequest({
+    method: `${installed.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE}`,
+    params: request, callerAuthority: 'present_user',
+    // Home authenticates the SOURCE writer's own socket; retained target custody
+    // supplies the original borrower, without a fresh borrower grant or Root.
+    machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'member-a',
+      ...selectedRouting.sourceWriter, role: 'manage', encryptionMode: 'plain' },
+    workspaceSyncSourceWriterTargetRouting: selectedRouting });
+  releaseTarget = () => release();
+  if (scenario === 'before-effects refusals') {
+  for (const rejected of [
+    { request: { ...prepareRequest, targetWorkspaceRefId: 'another-target' },
+      refusal: { errorCode: 'agent_isolation_unavailable', effectAttempted: false } },
+    { routing: WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...prepareRouting,
+      target: { ...prepareRouting.target, targetRootPath: '/another/target' } }),
+      refusal: { errorCode: 'agent_isolation_unavailable', effectAttempted: false } },
+    { routing: WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...prepareRouting,
+      sourceWriter: { machineId: 'other-source', installationId: 'other-installation' } }),
+      refusal: { code: 'bootstrap_definition_conflict' } },
+    { admission: { ...admission, actorAccountId: 'another-borrower' },
+      refusal: { errorCode: 'RPC_FORBIDDEN', effectAttempted: false } },
+  ]) {
+    expect(await prepare(rejected.routing, root, rejected.request, rejected.admission))
+      .toMatchObject(rejected.refusal);
+    const available = await probe();
+    expect(available).not.toHaveProperty('kind');
+    if (!('kind' in available)) await available.release();
+  }
+  const deniedRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...prepareRouting,
+    source: { ...prepareRouting.source, sourceContext: { ...prepareRouting.source.sourceContext, workspaceWrites: 'deny' } } });
+  const deniedPrepare = await prepare(deniedRouting);
+  expect(deniedPrepare).toMatchObject({ code: 'workspace_write_denied' });
+  const deniedOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+    caller: { kind: 'session', sessionId: 'moved-session', starterDepth: 0, turnDepth: 0 },
+    sourceTurnId: 'handoff-source-turn', requestId: 'handoff-copy', callerPermissionMode: 'read-only', workspaceWrites: 'deny' });
+  const originAuthorization = setup.adoptHomeAuthorization({ ...root, token: 'handoff-origin-denied', binding: {
+    ...root.binding, sessionActionOrigin: deniedOrigin,
+    sessionActionSource: { machineId: 'member-source', installationId: 'member-source-installation' } } });
+  const { workspaceWrites: _explicitCeiling, ...originSourceContext } = prepareRouting.source.sourceContext;
+  const deniedOriginRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...prepareRouting,
+    source: { ...prepareRouting.source, sourceContext: { ...originSourceContext,
+      callerAuthority: 'account_automation', sessionActionOrigin: deniedOrigin } } });
+  expect(await prepare(deniedOriginRouting, originAuthorization)).toMatchObject({ code: 'workspace_write_denied' });
+  const unacquired = await probe();
+  expect(unacquired).not.toHaveProperty('kind');
+  if (!('kind' in unacquired)) await unacquired.release();
+  expect(await native.identity.run('member', () => readFile(join(targetPath, 'existing.txt'), 'utf8')))
+    .toBe('member-reviewed target bytes');
+
+  } else {
+  expect(await prepare()).toMatchObject({ state: 'ready', created: false });
+  expect(await probe()).toMatchObject({ kind: 'overlap' });
+  for (const substituted of [
+    { ...releaseRouting, sourceWriter: { machineId: 'other-source', installationId: 'other-installation' } },
+    { ...releaseRouting, source: { ...releaseRouting.source, sourceRootPath: '/another/source' } },
+    { ...releaseRouting, source: { ...releaseRouting.source, sourceContext: {
+      ...releaseRouting.source.sourceContext, workspaceWrites: 'deny' } } },
+    { ...releaseRouting, source: { ...releaseRouting.source, sourceContext: {
+      ...releaseRouting.source.sourceContext, machineAdmission: {
+        ...releaseRouting.source.sourceContext.machineAdmission, actorAccountId: 'another-borrower' } } } },
+  ]) {
+    expect(await release(WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(substituted)))
+      .toMatchObject({ code: 'bootstrap_definition_conflict' });
+    expect(await probe()).toMatchObject({ kind: 'overlap' });
+  }
+  const unknownOperation = 'never-prepared-handoff';
+  expect(await release(WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ ...releaseRouting,
+    target: { ...releaseRouting.target, operationId: unknownOperation } }),
+    { ...releaseRequest, bootstrapOperationId: unknownOperation })).toEqual({ ok: true, released: false });
+  expect(await probe()).toMatchObject({ kind: 'overlap' });
+  borrowerGrantCurrent = false;
+  expect(await prepare()).toHaveProperty('errorCode');
+  expect(await probe()).toMatchObject({ kind: 'overlap' });
+  expect(await release()).toEqual({ ok: true, released: true });
+  expect(await release()).toEqual({ ok: true, released: false });
+  const released = await probe();
+  expect(released).not.toHaveProperty('kind');
+  if (!('kind' in released)) await released.release();
+  expect(await native.identity.run('member', () => readFile(join(targetPath, 'existing.txt'), 'utf8')))
+    .toBe('member-reviewed target bytes');
+  borrowerGrantCurrent = true;
+  }
 
   // The SOURCE's terminal call releases the capture and the admitted bootstrap.
   expect(await capture({ release: true })).toEqual({ ok: true, capture: 'released' });
   expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-copy' })).toBeNull();
-  expect(disposed).toHaveBeenCalledTimes(1);
+  expect(await retainedCapture.execution.accountRowsCustody.isCurrent()).toBe(false);
+  await expect(retainedCapture.execution.assertTransferCurrent()).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
+  expect(await native.identity.run('member', () => readFile(join(targetPath, 'existing.txt'), 'utf8')))
+    .toBe('member-reviewed target bytes');
+
+  if (scenario === 'before-effects refusals') {
+  // The positive capture passes before testing a path outside the member's own folder.
+  // The lifecycle boundary owns refusal; the checkout owner tests its exact diagnostic.
+  await expect(capture({ operationId: 'handoff-arbitrary', targetPath: custodianRef.rootPath }))
+    .resolves.toMatchObject({ ok: false });
+  expect(fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: 'handoff-arbitrary' })).toBeNull();
+  expect(await native.identity.run('member', () => readFile(join(targetPath, 'existing.txt'), 'utf8')))
+    .toBe('member-reviewed target bytes');
+  }
+  } finally { await releaseTarget?.(); await capture({ release: true }); }
 });

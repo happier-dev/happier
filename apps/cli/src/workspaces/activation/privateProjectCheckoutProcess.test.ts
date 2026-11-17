@@ -139,8 +139,13 @@ it.skipIf(process.platform !== 'linux').each(['empty', 'same_machine', 'local_gi
       await bootstrap.ownershipHandles?.[0]?.bindCurrentRootIdentity();
       if (seed) expect(await boundary.identity.run('member', () => readFile(join(rootPath, 'seed.txt'), 'utf8'))).toBe('member seed');
       await expect(realpath(rootPath)).rejects.toMatchObject({ code: 'EACCES' });
-      if (mode === 'local_git') await expect(process.inspectCheckout()).rejects.toMatchObject({ code: 'workspace_private_checkout_required', details: { reason: 'workspace_git_metadata_shared' } });
-      else expect(await process.inspectCheckout()).toMatchObject({ rootPath, directory: rootPath });
+      if (mode === 'local_git') await boundary.identity.run('member', async () => {
+        const metadata = await lstat(join(rootPath, '.git'));
+        expect(metadata.isDirectory()).toBe(true);
+        expect(metadata.isSymbolicLink()).toBe(false);
+        await expect(lstat(join(rootPath, '.git', 'commondir'))).rejects.toMatchObject({ code: 'ENOENT' });
+      });
+      expect(await process.inspectCheckout()).toMatchObject({ rootPath, directory: rootPath });
       await expect(process.prepareBootstrapHere({ ...request, targetWorkspaceRefId: 'source' })).rejects.toMatchObject({ code: 'workspace_private_checkout_required' });
       if (mode === 'same_machine') {
         const resolutionDirectory = join(workspaceRoot, '.happier', 'workspace-sync', 'resolution');
@@ -269,7 +274,7 @@ vi.mock('node:child_process', async importOriginal => {
     if (command !== 'sudo') throw new Error('Only the member native launch is expected');
     expect(args.slice(0, 2)).toEqual(['-n', '-u']);
     expect(args.slice(-2)).toEqual(['/opt/happier/cli/current/happier', 'agent-launch']);
-    return spawnWorkspaceCheckoutNativeBoundary();
+    return spawnWorkspaceCheckoutNativeBoundary(actual.spawn, options);
   } };
 });
 

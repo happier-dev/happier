@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
+import type { ChildProcessWithoutNullStreams, SpawnOptions, spawn } from 'node:child_process';
+import { PassThrough, type Readable, type Writable } from 'node:stream';
 
 type Mount = Readonly<{ path: string; backing: string; uid: number; gid: number; mode: number }>;
 
@@ -11,7 +11,7 @@ export const workspaceCheckoutNativeBoundary = {
   identity: new AsyncLocalStorage<'daemon' | 'member'>(),
   mounts: [] as Mount[],
   accountLookups: new Map<string, string>(),
-  launch: undefined as undefined | ((input: PassThrough, output: PassThrough) => Promise<void>),
+  launch: undefined as undefined | ((input: Readable, output: Writable) => Promise<void>),
   childFailure: undefined as unknown,
   phases: [] as string[],
   runAsUsers: [] as string[],
@@ -63,40 +63,35 @@ export function workspaceCheckoutFilesystemBoundary(actual: typeof import('node:
   } as typeof actual;
 }
 
-export type WorkspaceCheckoutNativeChild = EventEmitter & {
-  stdin: PassThrough;
-  stdout: PassThrough;
-  stderr: PassThrough;
-  pid: undefined;
-  exitCode: number | null;
-  signalCode: null;
-  killed: boolean;
-};
+export type WorkspaceCheckoutNativeChild = ChildProcessWithoutNullStreams;
 
-export function spawnWorkspaceCheckoutNativeBoundary(): WorkspaceCheckoutNativeChild {
+/** A real OS carrier supplies the PID and pipe closure that the process supervisor
+ * owns; the real worker still runs beneath the native identity/filesystem boundary. */
+export function spawnWorkspaceCheckoutNativeBoundary(spawnChild: typeof spawn, options: SpawnOptions): WorkspaceCheckoutNativeChild {
   const boundary = workspaceCheckoutNativeBoundary;
   boundary.phases.push('native_spawn');
-  const input = new PassThrough();
   class NativeOutput extends PassThrough {
     override emit(event: string | symbol, ...values: unknown[]): boolean {
       return boundary.identity.run('daemon', () => super.emit(event, ...values));
     }
   }
   const output = new NativeOutput();
-  const child = Object.assign(new EventEmitter(), { stdin: input, stdout: output, stderr: new PassThrough(),
-    pid: undefined, exitCode: null as number | null, signalCode: null, killed: false });
+  // The virtual member cwd belongs to the worker's OS boundary; the carrier
+  // only transports its frames and keeps the ordinary supervisor's lifecycle.
+  const child = spawnChild('/bin/cat', [], { ...options, cwd: undefined, stdio: 'pipe' });
+  if (!child.stdin || !child.stdout || !child.stderr) throw new Error('Native worker pipes are unavailable');
+  const input = child.stdout;
+  const framed = Object.assign(child, { stdin: child.stdin, stdout: output, stderr: child.stderr });
+  child.once('close', () => { boundary.phases.push('native_closed'); });
   queueMicrotask(() => {
     void boundary.identity.run('member', async () => {
       try {
         if (!boundary.launch) throw new Error('Missing native operation fixture');
         await boundary.launch(input, output);
-        child.exitCode = 0;
-      } catch (error) { boundary.childFailure = error; child.exitCode = 1; }
+      } catch (error) { boundary.childFailure = error; }
       boundary.phases.push('native_worker_ended');
-      output.end(); child.stderr.end();
-      child.emit('exit', child.exitCode, null); child.emit('close', child.exitCode, null);
-      boundary.phases.push('native_closed');
+      output.end();
     });
   });
-  return child;
+  return framed;
 }

@@ -314,6 +314,9 @@ export type AdmittedRequesterSessionBootstrap = Readonly<{
     isHomeIdentityCurrent?: () => boolean | Promise<boolean>): void;
   projectExternalActionAuthorization(authorization: ExternalActionExecutionAuthorizationV1,
     observedServerIdentityId: string, signal?: AbortSignal): Promise<ExternalActionExecutionAuthorizationV1 | null>;
+  /** Host-local capture facet; reuses this bootstrap's admitted Account facts. */
+  projectHandoffCaptureAccountContext(authorization: ExternalActionExecutionAuthorizationV1,
+    observedServerIdentityId: string, signal?: AbortSignal): Promise<import('./requesterAccountActionContext').RequesterAccountActionContext | null>;
   bindSession(sessionId: string, sessionCreationTag: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
   /** Existing-Session adoption retains the original immutable creation recipe. */
   bindExistingSession(sessionId: string): Promise<Readonly<{ path: string; cleanup(): Promise<void> }> | null>;
@@ -502,6 +505,12 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
         isRuntimeHomeIdentityCurrent = isHomeIdentityCurrent;
       },
       projectExternalActionAuthorization,
+      projectHandoffCaptureAccountContext: async (authorization, serverIdentityId, signal) => {
+        const { projectRequesterSessionCaptureAccountContext } = await import('./requesterAccountActionProjection');
+        return await projectRequesterSessionCaptureAccountContext({ authorization, serverIdentityId,
+          bootstrap: projectionBootstrap, ...(signal ? { signal } : {}), currentness: initializationSettingsWitness,
+          accountSettingsContext, savedSecretOperationContext, settingsPublication, observation: accountObservation });
+      },
     }),
       cleanupOnFailure: async () => {
         await dispose();

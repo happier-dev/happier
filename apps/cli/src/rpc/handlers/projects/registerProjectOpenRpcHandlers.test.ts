@@ -157,7 +157,7 @@ vi.mock('node:child_process', async original => {
       if (command !== 'sudo' || !workspaceCheckoutNativeBoundary.launch) return actual.spawn(command, args, options);
       expect(args.slice(-2)).toEqual(['/opt/happier/cli/current/happier', 'agent-launch']);
       workspaceCheckoutNativeBoundary.runAsUsers.push(args[2]!);
-      return spawnWorkspaceCheckoutNativeBoundary();
+      return spawnWorkspaceCheckoutNativeBoundary(actual.spawn, options);
     },
     execFile: execFileBoundary,
   };

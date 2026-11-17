@@ -24,7 +24,7 @@ export function spawnRequesterWorkspaceSyncProcessBoundary(
   actual: typeof import('node:child_process'), command: string, args: readonly string[],
   options: import('node:child_process').SpawnOptions, member: boolean,
 ): ChildProcess | WorkspaceCheckoutNativeChild {
-  if (command === 'sudo' && args.at(-1) === 'agent-launch') return spawnWorkspaceCheckoutNativeBoundary();
+  if (command === 'sudo' && args.at(-1) === 'agent-launch') return spawnWorkspaceCheckoutNativeBoundary(actual.spawn, options);
   if (args.includes('synchronizer')) {
     expect(native.identity.getStore()).toBe(member ? 'member' : undefined);
     return actual.spawn('/bin/cat', [], options);

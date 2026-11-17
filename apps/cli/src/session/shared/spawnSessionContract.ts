@@ -115,6 +115,8 @@ export function deserializeNativeForkSourceV1(value: string): NativeForkSource {
  * depends on the high-level handler graph merely to describe a spawn request or response.
  */
 export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
+  /** Admitted managed creation identity carried to native Project files custody. */
+  managedCreation?: import('@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1').SessionManagedCreationV1;
   /** Birth-only private provenance; never an existing Session mutation. */
   authoringOrigin?: import('@happier-dev/protocol/plugins/ui').PluginUiNewSessionSeedOriginV1;
   /** Authored Session ceiling, committed before the native runner opens. */
