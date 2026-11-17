@@ -76,7 +76,9 @@ export const CommitProposalView = React.memo(function CommitProposalView(props: 
     const insets = useSafeAreaInsets();
     const phone = props.layout === 'phone';
     const { proposal, actions } = props;
-    // One keyed root child retains registration/cancellation state as partial groups become usable.
+    // Writing, the row rides on the state card; once groups arrive it is a keyed root child that stays mounted as
+    // more groups become usable. Crossing from writing to the first groups remounts it: its armed state is the
+    // Follow owner's and is read back, and only an in-flight toggle's spinner is lost.
     const notify = props.isGenerating && props.notify
         ? <View key="notify" testID="commit-proposal-notify" style={styles.startPicker}>{props.notify}</View> : null;
     const hookEvidence = useCommitHookEvidence(proposal?.outcome?.kind === 'hookChanged' ? proposal.outcome : null, actions.readHookDiff);
@@ -150,7 +152,9 @@ export const CommitProposalView = React.memo(function CommitProposalView(props: 
                         reason={props.error ?? undefined}
                         action={props.onRetryRestore ? { label: t('common.retry'), onPress: props.onRetryRestore } : undefined} />
                 ) : props.phase === 'writing' ? (
-                    <SurfaceStateCard testID="commit-proposal-writing" kind="loading" title={t('commitProposal.none.writing')} />
+                    // Notify me sits with the state it qualifies, as on every other Notify me host.
+                    <SurfaceStateCard testID="commit-proposal-writing" kind="loading" title={t('commitProposal.none.writing')}
+                        actionFooter={notify} />
                 ) : (
                     <SurfaceStateCard
                         testID="commit-proposal-none"
@@ -167,7 +171,7 @@ export const CommitProposalView = React.memo(function CommitProposalView(props: 
                         actionFooter={props.start?.options}
                     />
                 )}
-                {notify}
+                {props.phase === 'writing' ? null : notify}
             </View>
         );
     }
