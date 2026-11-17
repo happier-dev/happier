@@ -9,16 +9,59 @@ import { HappyError } from '@/utils/errors/errors';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { createProjectManifestActionClient } from './projectManifestActionClient';
 import { matchesRetainedCheckout } from '@/sync/ops/actions/projectSetupTrustConsent';
-
 import type { ProjectSharedSetupChangeV1 } from '@happier-dev/protocol/projects/projectSetupChangeV1';
-import type { ProjectSetupSetInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
+import type { ProjectSetupSetInputV1, ProjectSetupSetOutputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
+import type { ProjectPrepareResultV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 
 export type ProjectSetupDecision = 'thisTime' | 'untilChanged' | 'skip';
+export type ProjectSharedSetupUpdateDecision = 'keep' | Exclude<ProjectSetupDecision, 'skip'>;
 export type ProjectSharedSetupUpdateRequest = Readonly<{
   projectRef: ProjectSetupSetInputV1['projectRef'];
   expectedRevision: ProjectSetupSetInputV1['expectedRevision'];
   review: Extract<ProjectSharedSetupChangeV1, { kind: 'changed' }>;
 }>;
+type AcceptedSetup = Extract<ProjectSetupSetOutputV1, { ok: true }>;
+export type ProjectSharedSetupUpdateDecisionResult =
+  | Readonly<{ kind: 'kept' }>
+  | Readonly<{ kind: 'unavailable'; code: string }>
+  | Readonly<{ kind: 'accepted'; setup: AcceptedSetup; preparation: ProjectPrepareResultV1 }>
+  | Readonly<{ kind: 'acceptedConsentUnavailable'; setup: AcceptedSetup; code: string }>;
+
+/** One human update choice commits the reviewed copy, then enters the existing preparation owner.
+ * The controller consumes that operation's pushed review to finish the same choice; no Trust is
+ * written from proposed facts and a failed preparation leaves its accepted-copy receipt visible.
+ */
+export async function decideProjectSharedSetupUpdate(input: ProjectSharedSetupUpdateRequest & Readonly<{
+  scope: ServerAccountScope;
+  workspace: WorkspaceAddressV1;
+  decision: ProjectSharedSetupUpdateDecision;
+  signal?: AbortSignal;
+  execute?: Parameters<typeof createProjectManifestActionClient>[0]['execute'];
+  onApprovalPending?: Parameters<typeof createProjectManifestActionClient>[0]['onApprovalPending'];
+}>): Promise<ProjectSharedSetupUpdateDecisionResult> {
+  if (input.decision === 'keep') return { kind: 'kept' };
+  const readiness = input.review.setupReadiness;
+  const reviewedEffectDigest = readiness.kind === 'notRequired'
+    ? readiness.reviewedEffectDigest : input.review.setupReview?.reviewedEffectDigest;
+  if (!reviewedEffectDigest) return { kind: 'unavailable',
+    code: readiness.kind === 'unknown' || readiness.kind === 'needsReview' ? readiness.code : 'project_setup_review_unavailable' };
+  const client = createProjectManifestActionClient({ workspace: input.workspace, expectedAccountId: input.scope.accountId,
+    signal: input.signal, execute: input.execute, onApprovalPending: input.onApprovalPending });
+  let setup: AcceptedSetup | undefined;
+  try {
+    const accepted = await client.setSetup({ projectRef: input.projectRef, expectedRevision: input.expectedRevision,
+      intent: { kind: 'accept', sourceId: input.review.selection.sourceId, expectedSelection: input.review.selection } });
+    if (!accepted.ok) return { kind: 'unavailable', code: accepted.errorCode };
+    setup = accepted;
+    if (readiness.kind === 'notRequired') return { kind: 'accepted', setup,
+      preparation: { kind: 'notRequired', reviewedEffectDigest: readiness.reviewedEffectDigest } };
+    const preparation = await client.prepare({ phase: 'setup', expectedEffectDigest: reviewedEffectDigest });
+    return { kind: 'accepted', setup, preparation };
+  } catch (error) {
+    const code = (error instanceof HappyError ? error.code : readRpcErrorCode(error)) ?? 'project_setup_review_unavailable';
+    return setup ? { kind: 'acceptedConsentUnavailable', setup, code } : { kind: 'unavailable', code };
+  }
+}
 
 export type ProjectSetupConsentDecisionResult =
   | Readonly<{ kind: 'remembered'; operation: ActionOperationSnapshotV1 }>

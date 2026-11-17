@@ -811,7 +811,8 @@ changes** choice resumes the retained preparation operation with its reviewed
 effect digest; an automation or plugin cannot self-grant remembered Trust. The
 digest covers setup, teardown and executable autostart together, including teardown-only
 definitions. Use the target's readiness result rather than inferring no effect
-from an empty setup list or a missing review.
+from an empty setup list or a missing review. An accepted update whose preparation
+cannot continue remains an accepted copy with an unavailable consent result.
 
 For names-only environment import, request `projects.inspect` with
 `read: { kind: 'imports' }`. Its `environmentImport` contains requirements and

@@ -24,7 +24,8 @@ import {
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import type { ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
-import { decideProjectSetupConsent, type ProjectSetupDecision } from './projectSetupConsentDecision';
+import { decideProjectSetupConsent, decideProjectSharedSetupUpdate, type ProjectSetupDecision,
+  type ProjectSharedSetupUpdateDecision, type ProjectSharedSetupUpdateRequest } from './projectSetupConsentDecision';
 import { useProjectHeldSetupReview, useProjectSetupRun } from './projectScriptRuns';
 import { useActionOperationStopControl } from '@/components/inbox/actionOperations/useActionOperationStopControl';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
@@ -144,6 +145,11 @@ export function useProjectScriptsController(
   const [consent, setConsent] = React.useState<
     (ProjectSetupConsent & Readonly<{ scopeKey: string }>) | null
   >(null);
+  // The person's one update choice follows only the preparation it just admitted.
+  const [sharedUpdate, setSharedUpdate] = React.useState<Readonly<{
+    scopeKey: string; operationId: string; reviewedEffectDigest: string;
+    decision: Exclude<ProjectSharedSetupUpdateDecision, 'keep'>;
+  }> | null>(null);
   const [reviewOpenScope, setReviewOpenScope] = React.useState<string | null>(null);
   // A held review opens the card; its decision, made here, on another device or on an approval, closes it
   // again (the card must not stay open on a review that no longer exists).
@@ -200,7 +206,7 @@ export function useProjectScriptsController(
         return entries.length === Object.keys(previous.values).length ? previous
           : { scopeKey, values: Object.fromEntries(entries) };
       });
-      setCreations(null); setPending(null); setFailure(null); setConsent(null); setReviewOpenScope(null); setChoiceRequest(null); setRetained(null);
+      setCreations(null); setPending(null); setFailure(null); setConsent(null); setSharedUpdate(null); setReviewOpenScope(null); setChoiceRequest(null); setRetained(null);
     });
     return () => { retirement?.dispose(); lifetime.abort(); runAborts.forEach(cancellation => cancellation.abort()); runAborts.clear(); };
   }, [binding, lifetime, runAborts, scopeKey]);
@@ -384,6 +390,62 @@ export function useProjectScriptsController(
     [binding, client, dispatch, execute, heldOperation, lifetime, onChanged, scopeKey, workspace],
   );
 
+  const decideSharedSetupUpdate = React.useCallback(async (request: ProjectSharedSetupUpdateRequest,
+    decision: ProjectSharedSetupUpdateDecision) => {
+    if (!binding?.isCurrent()) return null;
+    const result = await dispatch('sharedSetupUpdate', () => decideProjectSharedSetupUpdate({ ...request,
+      scope: { serverId: binding.serverId, accountId: binding.accountId }, workspace, decision,
+      signal: lifetime.signal, execute, onApprovalPending: registration => requestApprovalRef.current(registration),
+    }));
+    if (!result || result.kind === 'kept') return result;
+    if (result.kind === 'unavailable' || result.kind === 'acceptedConsentUnavailable') {
+      setFailure({ key: 'sharedSetupUpdate', code: result.code });
+      if (result.kind === 'acceptedConsentUnavailable') onChanged();
+      return result;
+    }
+    onChanged(); // The copy is accepted even if subsequent consent or native preparation refuses.
+    if ('operation' in result.preparation) {
+      const operation = result.preparation.operation;
+      publishAcceptedOperation(binding, operation);
+      setRetained({ scopeKey, address: { serverId: workspace.serverId, operationId: operation.operationId } });
+      if (decision !== 'keep' && request.review.setupReview) setSharedUpdate({ scopeKey,
+        operationId: operation.operationId, reviewedEffectDigest: request.review.setupReview.reviewedEffectDigest, decision });
+    } else if (result.preparation.kind === 'pendingApproval') {
+      // Released standalone review shapes cannot establish retained invocation custody.
+      setFailure({ key: 'sharedSetupUpdate', code: 'project_setup_requester_review_unavailable' });
+    }
+    return result;
+  }, [binding, dispatch, execute, lifetime, onChanged, scopeKey, workspace]);
+
+  React.useEffect(() => {
+    const choice = sharedUpdate?.scopeKey === scopeKey ? sharedUpdate : null;
+    if (!choice || !binding?.isCurrent() || lifetime.signal.aborted
+      || retainedOperation?.snapshot.operationId !== choice.operationId) return;
+    const operation = retainedOperation.snapshot;
+    if (!operation.setupReview) {
+      if (operation.state === 'succeeded') setSharedUpdate(null);
+      else if (operation.state === 'failed' || operation.state === 'cancelled') {
+        setSharedUpdate(null);
+        setFailure({ key: 'sharedSetupUpdate', code: operation.error?.errorCode ?? 'cancelled' });
+      }
+      return;
+    }
+    setSharedUpdate(null);
+    void dispatch('sharedSetupUpdate', async () => {
+      const result = await decideProjectSetupConsent({ scope: { serverId: binding.serverId, accountId: binding.accountId },
+        workspace, reviewedEffectDigest: choice.reviewedEffectDigest, decision: choice.decision,
+        operation: retainedOperation, signal: lifetime.signal, execute,
+        onApprovalPending: registration => requestApprovalRef.current(registration) });
+      if (result.kind === 'unavailable' || result.kind === 'changed') {
+        const code = result.kind === 'changed' ? 'project_setup_effect_changed' : result.code;
+        throw Object.assign(new Error(code), { code });
+      }
+      if (result.kind === 'remembered') publishAcceptedOperation(binding, result.operation);
+      onChanged();
+      return result;
+    });
+  }, [binding, dispatch, execute, lifetime, onChanged, retainedOperation, scopeKey, sharedUpdate, workspace]);
+
   // Add to project file: one structured edit of the canonical document, one guarded write.
   const add = React.useCallback(
     async (key: string, source: ProjectNativeRefV1) => {
@@ -427,6 +489,8 @@ export function useProjectScriptsController(
     dismissChoice,
     chooseForRun,
     prepare,
+    decideSharedSetupUpdate,
+    sharedSetupUpdatePending: sharedUpdate?.scopeKey === scopeKey || Boolean(pendingKeys.sharedSetupUpdate),
     pendingKeys,
     failure,
     consent: heldReview && heldOperation ? { ...heldReview, operation: heldOperation }

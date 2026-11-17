@@ -15,6 +15,8 @@ import { createManagedMachineSelectionDraft } from '@/sync/domains/state/newSess
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { ManagedMachineV1, ManagedMachinePublicFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { projectSharedSetupDigestV1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 
 
 import { createDeferred } from '@/dev/testkit';
@@ -46,6 +48,107 @@ function operation(serverId: string): ActionOperationProjection {
 describe('Project Scripts Setup controls', () => {
     beforeEach(async () => { await harness.reset(); actionOperationStore.reset(); rpc.machine.mockReset(); });
     afterEach(() => standardCleanup());
+
+    it.each(['thisTime', 'untilChanged'] as const)('accepts and consents to a shared update with one %s decision', async decision => {
+        const { useProjectScriptsController } = await import('./useProjectScriptsController');
+        const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const home = await harness.addHome({ name: 'Shared update', serverUrl: 'https://shared-update.test', accountId: 'alice' });
+        const serverId = resolveServerProfileScopeIdForIdentifier(home);
+        const workspace = { serverId, workspaceId: 'checkout', machineId: 'machine-1', rootPath: '/repo' };
+        const projectRef = { serverId, projectKey: 'project' };
+        const selection = { sourceId: 'shared', contentRevision: { headerVersion: 1, bodyVersion: 2 }, digest: projectSharedSetupDigestV1({ version: 1 }) };
+        const review = { kind: 'changed' as const, selection,
+            before: { effectiveManifest: null, origins: [] }, after: { effectiveManifest: null, origins: [] },
+            setupReadiness: { kind: 'needsReview' as const, code: 'project_setup_consent_required' as const },
+            setupReview: { reviewedEffectDigest: 'effect', reviewedEffect: { commands: ['updated'] } } };
+        const initial = { ...operation(serverId).snapshot, state: 'accepted' as const,
+            domainRef: { kind: 'projectCommand' as const, purpose: 'setup' as const, serverId,
+                machineId: workspace.machineId, workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace } };
+        const held = { ...initial, revision: 10, state: 'running' as const,
+            setupReview: { kind: 'pendingApproval' as const, code: 'project_setup_consent_required' as const, ...review.setupReview } };
+        const requests: Array<{ id: string; input: unknown }> = [];
+        const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
+            // The native confirmation presenter is the real UI boundary; approval policy stays active.
+            presentUserActionConfirmation: async () => true,
+            // Passive native inspection and retained-operation refresh are daemon RPC boundaries.
+            projectDefinitionAction: async () => ProjectDefinitionInspectOutputSchema.parse({
+                definition: { basis: { kind: 'absent' }, document: null },
+                detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
+                importCandidates: [],
+                setupReadiness: review.setupReadiness, setupReview: review.setupReview,
+            }),
+            actionOperationAction: async () => ({ kind: 'found', operation: held }),
+            // Protected Account writes and native preparation are the process boundaries.
+            projectsSetupSet: async ({ input }) => {
+                requests.push({ id: 'projects.setup.set', input });
+                return { ok: true, row: { setupSelection: selection }, revision: 4, effectiveDefinition: review.after };
+            },
+            projectAction: async ({ actionId, input }) => {
+                requests.push({ id: actionId, input });
+                return { operation: { ...initial, revision: requests.length === 2 ? 2 : 11, state: 'running' as const } };
+            },
+        }), 'alice'));
+        const homes = [serverId];
+        const hook = await renderHook(() => useProjectScriptsController(workspace, () => {},
+            useServerCredentialAccountScopeBindings(homes).get(serverId) ?? null, { execute }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().ready).toBe(true));
+            await act(async () => {
+                const result = await hook.getCurrent().decideSharedSetupUpdate({ projectRef, expectedRevision: 3, review }, decision);
+                expect(result?.kind, JSON.stringify(result)).toBe('accepted');
+                expect(result).toMatchObject({ kind: 'accepted', preparation: { operation: { operationId: initial.operationId } } });
+            });
+            expect(requests).toEqual([
+                { id: 'projects.setup.set', input: { projectRef, workspace, expectedRevision: 3,
+                    intent: { kind: 'accept', sourceId: selection.sourceId, expectedSelection: selection } } },
+                { id: 'projects.prepare', input: { workspace, phase: 'setup', expectedEffectDigest: 'effect' } },
+            ]);
+            expect(hook.getCurrent().sharedSetupUpdatePending).toBe(true);
+            // Initial acceptance has no review yet. The existing owner push resumes the person's choice.
+            await act(async () => { actionOperationStore.mergeSnapshots({ serverId, snapshots: [held] }); });
+            await waitForHomeGovernance(() => expect(requests, JSON.stringify(hook.getCurrent().failure)).toHaveLength(3));
+            expect(requests[2]).toEqual({ id: 'projects.prepare', input: { workspace, phase: 'setup',
+                heldOperationId: initial.operationId, expectedEffectDigest: 'effect', consentScope: decision } });
+            expect(hook.getCurrent().sharedSetupUpdatePending).toBe(false);
+        } finally { await hook.unmount(); }
+    });
+
+    it('keeps shared content and consent unchanged, and refuses acceptance without a lifecycle review', async () => {
+        const { decideProjectSharedSetupUpdate } = await import('./projectSetupConsentDecision');
+        const workspace = { serverId: 'home', workspaceId: 'checkout', machineId: 'machine', rootPath: '/repo' };
+        const review = { kind: 'changed' as const,
+            selection: { sourceId: 'shared', contentRevision: { headerVersion: 1, bodyVersion: 2 }, digest: projectSharedSetupDigestV1({ version: 1 }) },
+            before: { effectiveManifest: null, origins: [] }, after: { effectiveManifest: null, origins: [] },
+            setupReadiness: { kind: 'unknown' as const, code: 'project_setup_review_unavailable' } };
+        let effects = 0;
+        const input = { scope: { serverId: 'home', accountId: 'alice' }, workspace,
+            projectRef: { serverId: 'home', projectKey: 'project' }, expectedRevision: 3 as const, review,
+            execute: async () => { effects++; throw new Error('No Action may be issued'); } };
+        expect(await decideProjectSharedSetupUpdate({ ...input, decision: 'keep' })).toEqual({ kind: 'kept' });
+        expect(await decideProjectSharedSetupUpdate({ ...input, decision: 'untilChanged' }))
+            .toEqual({ kind: 'unavailable', code: 'project_setup_review_unavailable' });
+        expect(effects).toBe(0);
+    });
+
+    it('accepts a canonically empty lifecycle without creating a consent operation', async () => {
+        const { decideProjectSharedSetupUpdate } = await import('./projectSetupConsentDecision');
+        const home = await harness.addHome({ name: 'Empty lifecycle', serverUrl: 'https://empty-lifecycle.test', accountId: 'alice' });
+        const serverId = resolveServerProfileScopeIdForIdentifier(home);
+        const workspace = { serverId, workspaceId: 'checkout', machineId: 'machine', rootPath: '/repo' };
+        const review = { kind: 'changed' as const,
+            selection: { sourceId: 'shared', contentRevision: { headerVersion: 1, bodyVersion: 2 }, digest: projectSharedSetupDigestV1({ version: 1 }) },
+            before: { effectiveManifest: null, origins: [] }, after: { effectiveManifest: null, origins: [] },
+            setupReadiness: { kind: 'notRequired' as const, reviewedEffectDigest: 'empty-lifecycle' } };
+        let accepted = 0;
+        const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({ projectsSetupSet: async () => {
+            accepted++;
+            return { ok: true, row: { setupSelection: review.selection }, revision: 4, effectiveDefinition: review.after };
+        } }), 'alice'));
+        const result = await decideProjectSharedSetupUpdate({ scope: { serverId, accountId: 'alice' }, workspace,
+            projectRef: { serverId, projectKey: 'project' }, expectedRevision: 3, review, decision: 'untilChanged', execute });
+        expect(result).toMatchObject({ kind: 'accepted', preparation: { kind: 'notRequired', reviewedEffectDigest: 'empty-lifecycle' } });
+        expect(accepted).toBe(1);
+    });
 
     it('discards picker intent for another checkout, Account, or a removed portable Script', async () => {
         const { useProjectScriptsController } = await import('./useProjectScriptsController');
@@ -111,7 +214,8 @@ describe('Project Scripts Setup controls', () => {
         };
         const requests: unknown[] = [];
         const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
-
+            // This case models the person accepting the retained lifecycle review.
+            presentUserActionConfirmation: async () => true,
             projectAction: async ({ actionId: id, input }) => {
                 requests.push({ id, input });
                 return { operation: requests.length === 1 ? held : { ...held, revision: 2, setupReview: undefined } };
@@ -125,7 +229,7 @@ describe('Project Scripts Setup controls', () => {
             await act(async () => { await hook.getCurrent().run('checked', { kind: 'named', name: 'checked' }); });
             expect(hook.getCurrent().retainedOperation?.snapshot.setupReview).toBeDefined();
             await act(async () => { await hook.getCurrent().prepare('reviewed', 'thisTime'); });
-            expect(requests[1]).toEqual({ id: 'projects.prepare', input: {
+            expect(requests[1], JSON.stringify(hook.getCurrent().failure)).toEqual({ id: 'projects.prepare', input: {
                 workspace: { serverId, workspaceId: 'worker-copy', machineId: 'worker', rootPath: '/copy' },
                 phase: 'setup', expectedEffectDigest: 'reviewed', consentScope: 'thisTime', heldOperationId: 'operation-1',
             } });
