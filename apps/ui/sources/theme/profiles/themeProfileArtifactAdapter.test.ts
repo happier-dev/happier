@@ -32,7 +32,7 @@ describe('captured theme Artifact adapter', () => {
             readSelection: () => ({ light: null, dark: null }), writeSelection: () => {} });
         const document = (id: string) => {
             const parsed = parseThemeProfileDocument({ schemaVersion: 2, id, name: id, createdAt: 'old', updatedAt: 'old',
-                base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: {} }, assetAppearance: 'dark',
+                base: { light: 'light', dark: 'dark' }, overrides: { light: { 'background.canvas': '#fafafa' }, dark: { 'background.canvas': '#171717' } }, assetAppearance: 'dark',
                 style: { futurePresentation: { glow: true } }, css: '.surface { color: red; }'.repeat(1000) });
             if (!parsed.ok) throw new Error('Invalid fixture');
             return parsed.document;
@@ -50,6 +50,8 @@ describe('captured theme Artifact adapter', () => {
                 document: parsed?.ok ? { id: parsed.document.profile.id } : parsed }), { cause: error });
         });
         await library(adapter()).save({ document: document(sibling) });
+        expect(adapter().list().find(row => row.entry.id === first)?.entry).toMatchObject({ modes: ['light', 'dark'],
+            miniatures: { light: { mode: 'light', canvas: '#fafafa' }, dark: { mode: 'dark', canvas: '#171717' } } });
         expect(JSON.parse(home.boundary.readPlainBody(first)!)).toMatchObject({ schemaVersion: 2, style: { futurePresentation: { glow: true } } });
         // A fresh retained-client projection starts without any opened bodies.
         store.setState({ ...createArtifactsDomain({ set: store.setState, get: store.getState }) }, true);

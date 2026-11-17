@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import * as React from 'react';
-import { beforeEach, expect, it } from 'vitest';
+import { beforeEach, expect, it, vi } from 'vitest';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
@@ -22,6 +22,7 @@ import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/acc
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPolicySettings';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { observeStorageSubscriptionDeliveries } from '@/dev/testkit/performance/storageSubscriptionCensus';
 
 const collectionScope = { serverId: 'selector-home', accountId: 'selector-account' };
 const defaultSpace = createDefaultCollectionSpaceV1('sessionWork');
@@ -230,6 +231,61 @@ it('reads no stored device-local value when a useLocalSetting consumer rerenders
     await act(async () => { storage.getState().applyLocalSettings({ desktopOverlayEnabled: !stored }); });
     expect(hook.getCurrent()).toBe(!stored);
     await hook.unmount();
+});
+
+it('withdraws inactive local-setting and preview demand and resumes the current key-scoped value', async () => {
+    storage.getState().applyLocalSettings({ themePreference: 'light' });
+    const counter = createRenderCommitCounter();
+    let computations = 0;
+    const select = (value: 'light' | 'dark' | 'adaptive') => { computations++; return value; };
+    const deliveries = observeStorageSubscriptionDeliveries(paths => paths.some(path =>
+        path[0] === 'state' && path[1] === 'localSettings' && path[2] === 'themePreference'));
+    const previewSubscribe = vi.spyOn(useSettingsPreviewStore, 'subscribe');
+    const hook = await renderHook((enabled: boolean) => {
+        useRenderCommitCounter(counter);
+        return useLocalSetting('themePreference', select, enabled);
+    }, { initialProps: false });
+    try {
+        expect(previewSubscribe).not.toHaveBeenCalled();
+        computations = 0;
+        counter.reset();
+        for (let index = 0; index < 10; index++) await act(async () => {
+            storage.getState().applyLocalSettings({ themePreference: index % 2 ? 'light' : 'dark' });
+            useSettingsPreviewStore.setState({ local: { themePreference: { owner: Symbol('preview'), value: index % 2 ? 'dark' : 'light' } } });
+        });
+        expect(deliveries.count).toBe(0);
+        expect(computations).toBe(0);
+        expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+        await hook.rerender(true);
+        expect(previewSubscribe).toHaveBeenCalledTimes(1);
+        expect(hook.getCurrent()).toBe('dark');
+        await act(async () => { useSettingsPreviewStore.setState({ local: {} }); });
+        expect(hook.getCurrent()).toBe('light');
+        deliveries.reset(); counter.reset(); computations = 0;
+        await act(async () => {
+            storage.getState().applyLocalSettings({ uiFontScale: 1.15 });
+            useSettingsPreviewStore.setState({ local: { uiFontScale: { owner: Symbol('other'), value: 1.2 } } });
+        });
+        expect(deliveries.count).toBe(0);
+        expect(computations).toBe(0);
+        expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+        await act(async () => { storage.getState().applyLocalSettings({ themePreference: 'dark' }); });
+        expect(deliveries.count).toBe(1);
+        expect(hook.getCurrent()).toBe('dark');
+        expect(counter.read()).toEqual({ renders: 1, commits: 1 });
+        await act(async () => { useSettingsPreviewStore.setState({ local: { themePreference: { owner: Symbol('preview'), value: 'adaptive' } } }); });
+        expect(hook.getCurrent()).toBe('adaptive');
+        expect(storage.getState().localSettings.themePreference).toBe('dark');
+        await hook.rerender(false);
+        deliveries.reset(); counter.reset(); computations = 0;
+        await act(async () => {
+            storage.getState().applyLocalSettings({ themePreference: 'light' });
+            useSettingsPreviewStore.setState({ local: {} });
+        });
+        expect(deliveries.count).toBe(0);
+        expect(computations).toBe(0);
+        expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+    } finally { await hook.unmount(); previewSubscribe.mockRestore(); deliveries.restore(); }
 });
 
 it('does not recompute settings projections for other store domains', async () => {

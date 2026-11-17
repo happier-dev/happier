@@ -4,7 +4,7 @@ import {
     THEME_ACTION_IDS, type ThemeActionOutput,
 } from '@happier-dev/protocol/actions/themeActionFamily';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { projectThemeLibraryEntry } from '@/theme/profiles/themeProfilePresentation';
+import { projectThemeLibraryEntry, projectThemeMiniature } from '@/theme/profiles/themeProfilePresentation';
 import type { ThemeLibraryEntry, ThemeProfileDocument } from '@/theme/profiles/themeProfileTypes';
 import type { ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
 import type { ThemeUiActionExecute } from '@/components/settings/appearance/themeProfiles/useThemeActionExecution';
@@ -40,6 +40,7 @@ export type ThemeActionCardFacts = Readonly<{
 
 /** A card previews the Action's chosen appearance without changing the library header. */
 function projectTryEntry(call: TranscriptThemeTry) {
+    if (!call.input.document) return null;
     return projectThemeLibraryEntry({ ...call.input.document,
         profile: { ...call.input.document.profile, assetAppearance: call.input.mode },
     });
@@ -80,9 +81,9 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
     const sourcePlugin = t('settingsAppearance.themeProfiles.sourcePlugin');
     const options = React.useMemo(() => input.options.map(option => {
         const entry = projectTryEntry(option.call);
-        return { key: option.id, name: entry.name,
-            description: resolveCustomThemeSourceLabel(entry.source, { sourceYours, sourceStore, sourcePlugin }),
-            miniature: entry.miniature };
+        return { key: option.id, name: entry?.name ?? t('settingsAppearance.themeProfiles.defaultTheme'),
+            description: resolveCustomThemeSourceLabel(entry?.source ?? { kind: 'yours' }, { sourceYours, sourceStore, sourcePlugin }),
+            miniature: entry?.miniature ?? projectThemeMiniature({ assetAppearance: option.call.input.mode, overrides: { light: {}, dark: {} } }) };
     }), [input.options, sourceYours, sourceStore, sourcePlugin]);
     const invoke = execute;
     const perform = React.useCallback((operation: ThemeResultOperation, effect: () => Promise<void>) => {
@@ -134,14 +135,16 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         } else if (failure && retryOperation.current) perform(failure.operation, retryOperation.current);
         else perform('try', replay);
     }, [preparedCss.error, preparedCss.retry, failure, selected, perform, replay, tryOption, invoke]);
-    const display = entry ?? (call.actionId === THEME_ACTION_IDS.apply ? facts.appliedTheme : null);
+    const display = entry ?? (call.actionId === THEME_ACTION_IDS.apply ? facts.appliedTheme
+        : selected?.input.document === null ? { name: t('settingsAppearance.themeProfiles.defaultTheme'), mode: selected.input.mode,
+            miniature: projectThemeMiniature({ assetAppearance: selected.input.mode, overrides: { light: {}, dark: {} } }) } : null);
     if (!display) return null;
-    const editTarget: ThemeActionCardEdit | null = outcome.kind === 'preview' && selected
+    const editTarget: ThemeActionCardEdit | null = outcome.kind === 'preview' && selected?.input.document
         ? { kind: 'document', document: selected.input.document }
-        : outcome.kind === 'kept' ? { kind: 'entry', entry: outcome.output.entry }
+        : outcome.kind === 'kept' && outcome.output.entry ? { kind: 'entry', entry: outcome.output.entry }
             : outcome.kind === 'applied' && facts.entry ? { kind: 'entry', entry: facts.entry } : null;
     const deviceTarget: ThemeDevicePickerInput['theme'] | null = outcome.kind === 'kept'
-        ? { reference: outcome.output.entry.reference, mode: outcome.output.applied.mode, name: display.name }
+        ? { reference: outcome.output.entry?.reference ?? null, mode: outcome.output.applied.mode, name: display.name }
         : outcome.kind === 'applied' && call.actionId === THEME_ACTION_IDS.apply
             ? { reference: call.input.ref, mode: outcome.output.applied.mode, name: display.name } : null;
     const phase: ThemeResultPhase = (preparedCss.error ? { kind: 'failed' as const, operation: 'try' as const,

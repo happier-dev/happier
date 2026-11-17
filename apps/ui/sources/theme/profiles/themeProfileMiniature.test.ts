@@ -1,10 +1,33 @@
 import { describe, expect, it } from 'vitest';
 import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { ThemeLibraryEntrySchema } from '@happier-dev/protocol/actions/themeActionFamily';
 import { projectThemeLibraryEntry, projectThemeMiniaturePalette, projectThemeProfileDocumentPresentation } from './themeProfilePresentation';
 import { FontFamilies } from '@/constants/Typography';
 import { resolveThemeProfile } from './resolveThemeProfile';
 
 describe('theme miniature projection', () => {
+    it('projects both authored modes while keeping seed-only and single-mode documents in their own mode', () => {
+        const parsed = parseThemeProfileDocument({ schemaVersion: 1, id: 'paired', name: 'Paired', createdAt: 'now', updatedAt: 'now',
+            base: { light: 'light', dark: 'dark' }, assetAppearance: 'dark', seeds: { canvas: '#172033', accent: '#aabbcc' },
+            overrides: { light: { 'background.canvas': '#fafafa' }, dark: { 'background.canvas': '#171717' } } });
+        if (!parsed.ok) throw new Error('Invalid fixture');
+        const entry = projectThemeLibraryEntry(parsed.document);
+        expect(entry.modes).toEqual(['light', 'dark']);
+        expect(entry.miniatures?.light).toMatchObject({ mode: 'light', canvas: '#fafafa' });
+        expect(entry.miniatures?.dark).toMatchObject({ mode: 'dark', canvas: '#171717', accent: '#aabbcc' });
+        expect(entry.miniature).toBe(entry.miniatures?.dark);
+        expect(ThemeLibraryEntrySchema.parse(entry)).toEqual(entry);
+        const single = projectThemeLibraryEntry({ ...parsed.document,
+            profile: { ...parsed.document.profile, overrides: { light: {}, dark: parsed.document.profile.overrides.dark } } });
+        expect(single.modes).toEqual(['dark']);
+        expect(single.miniatures?.light).toBeUndefined();
+        const seeded = projectThemeLibraryEntry({ ...parsed.document,
+            profile: { ...parsed.document.profile, overrides: { light: {}, dark: {} } } });
+        expect(seeded.modes).toEqual(['dark']);
+        const inferred = projectThemeLibraryEntry({ ...parsed.document,
+            profile: { ...parsed.document.profile, assetAppearance: undefined, overrides: { light: {}, dark: parsed.document.profile.overrides.dark } } });
+        expect(inferred.modes).toEqual(['dark']);
+    });
     it('resolves seeds before explicit overrides and preserves corner shape in a compact header', () => {
         const parsed = parseThemeProfileDocument({ schemaVersion: 1, id: 'theme', name: 'Theme', createdAt: 'now', updatedAt: 'now', base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: { 'text.secondary': '#999999', 'syntax.keyword': '#123456' } }, assetAppearance: 'dark', seeds: { canvas: '#172033', accent: '#aabbcc' }, style: { radius: 'sharp', fontFamily: 'Future Font' }, css: 'body { color: red }' });
         if (!parsed.ok) throw new Error('Invalid fixture');

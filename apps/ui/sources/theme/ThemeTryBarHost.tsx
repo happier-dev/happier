@@ -4,9 +4,10 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { ThemeTryBar } from '@/components/settings/appearance/themeProfiles/ThemeTryBar';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { getThemeTryOnOwner } from './profiles/themeTryOnRuntime';
-import { projectThemeLibraryEntry } from './profiles/themeProfilePresentation';
+import { projectThemeMiniature } from './profiles/themeProfilePresentation';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 
 /** The shared preview owner hands controls here when its origin has no visible presenter. */
 export function ThemeTryBarHost() {
@@ -14,8 +15,10 @@ export function ThemeTryBarHost() {
     const { execute, ready } = useMountedActionExecution(scope);
     const owner = getThemeTryOnOwner();
     const preview = React.useSyncExternalStore(owner.subscribe, owner.readGlobalPresentation, owner.readGlobalPresentation);
+    const preference = useLocalSetting('themePreference', undefined, preview !== null);
     const [busy, setBusy] = React.useState<'install' | 'revert' | null>(null);
-    const entry = React.useMemo(() => preview?.document ? projectThemeLibraryEntry(preview.document) : null, [preview?.document]);
+    const miniature = React.useMemo(() => preview?.document
+        ? projectThemeMiniature(preview.document.profile, preview.mode) : null, [preview?.document, preview?.mode]);
     const settle = async (kind: 'install' | 'revert') => {
         if (!preview) return;
         setBusy(kind);
@@ -26,8 +29,9 @@ export function ThemeTryBarHost() {
             Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.unknown'));
         } finally { setBusy(null); }
     };
-    return <ThemeTryBar visible={Boolean(preview)} faceName={entry?.name ?? t('settingsAppearance.theme')}
-        miniature={entry?.miniature ?? null} here={t('themeDevices.here')} busy={busy}
+    return <ThemeTryBar visible={preview !== null} faceName={preview?.document?.profile.name ?? t('settingsAppearance.themeProfiles.defaultTheme')}
+        switchToMode={preview && preference !== 'adaptive' && preference !== preview.mode ? preview.mode : undefined}
+        miniature={miniature} here={t('themeDevices.here')} busy={busy}
         disabled={!ready} origin={preview?.origin.kind ?? 'editor'}
         onInstall={() => settle('install')} onRevert={() => settle('revert')} testID="theme.tryBar" />;
 }

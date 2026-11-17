@@ -109,6 +109,7 @@ export const themeSurfaces = {
     columnName: "Nazwa",
     columnSource: "Źródło",
     columnModes: "Tryby",
+    keepSwitchesMode: ({ face, mode }: { face: string; mode: string }) => `Użyj ${face} · przełącza na ${mode}`,
     anyMode: "Wszystkie",
     lightAndDark: "Jasny i ciemny",
     modeFilter: "Które tryby",

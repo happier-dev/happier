@@ -1,3 +1,4 @@
+import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
 import type * as React from 'react';
 import type {
   ThemeMiniatureData,
@@ -43,6 +44,8 @@ export type ThemeLibraryTile = Readonly<{
   /** Made by you · Store · <plugin name> · Built-in. */
   sourceLabel: string;
   preview: ThemeLibraryPreview;
+  dual?: boolean;
+  previews?: Readonly<Partial<Record<ThemeProfileMode, ThemeLibraryPreview>>>;
   menu: readonly ThemeLibraryMenuItem[];
   /** Share as plugin (the selected Machine's scaffold and pack), when this theme can be shared. */
   onShare?: () => void;
@@ -93,8 +96,11 @@ export type ThemeLibrarySlot = Readonly<{
 }>;
 
 export type ThemeLibraryViewProps = Readonly<{
+  appearanceMode?: ThemePreference;
+  onChangeAppearanceMode?: (mode: ThemePreference) => void;
+  sections?: readonly Readonly<{ mode: ThemeProfileMode; selectedKey: string; tiles: readonly ThemeLibraryTile[] }>[];
   slots: Readonly<Record<ThemeProfileMode, ThemeLibrarySlot>>;
-  /** The slot whose themes the grid shows. */
+  /** The device's saved appearance mode resolved against the system. */
   mode: ThemeProfileMode;
   /** The key of the theme the chosen mode uses: the ring. */
   selectedKey: string;

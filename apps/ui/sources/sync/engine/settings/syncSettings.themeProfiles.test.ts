@@ -7,6 +7,7 @@ import { createThemeProfileLibrary, type ThemeProfileArtifactRecord } from '@/th
 import { createThemeProfileArtifactAdapter } from '@/theme/profiles/themeProfileArtifactAdapter';
 import { parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { THEME_ARTIFACT_KIND } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createArtifactsDomain, type ArtifactsDomain } from '@/sync/store/domains/artifacts';
 import type { ArtifactDataKeyCacheEntry } from '@/sync/engine/artifacts/syncArtifacts';
@@ -132,6 +133,25 @@ describe('released theme input transfer', () => {
         expect(state.artifacts.writes()).toBe(writes);
         expect(state.posts).toHaveLength(1);
         state.artifacts.assertScopedIds();
+    });
+    it('writes both authored modes from a released document into the canonical Artifact header', async () => {
+        const released = { ...profile('paired'), overrides: {
+            light: { 'background.canvas': '#fafafa' }, dark: { 'background.canvas': '#171717' },
+        } };
+        const state = await setup([released], []);
+        await state.sync();
+        const rows = harness.artifacts(state.scope.serverId).list();
+        expect(rows).toHaveLength(1);
+        expect(decodePlainArtifactStoredContent(rows[0]!.header)).toMatchObject({ palettes: {
+            light: { overrides: { 'background.canvas': '#fafafa' } },
+            dark: { overrides: { 'background.canvas': '#171717' } },
+        } });
+        const entries = await state.artifacts.withLibrary(library => library.list());
+        expect(entries.find(entry => entry.id === rows[0]!.id)).toMatchObject({ modes: ['light', 'dark'], miniatures: {
+            light: { mode: 'light', canvas: '#fafafa' }, dark: { mode: 'dark', canvas: '#171717' },
+        } });
+        expect([...state.artifacts.records.values()][0]?.document.profile.overrides).toEqual(released.overrides);
+        expect(state.raw()).not.toHaveProperty('themeProfiles');
     });
     it('recovers a lost Artifact acknowledgement without duplicating a released definition', async () => {
         const state = await setup([profile('cloud')], []);

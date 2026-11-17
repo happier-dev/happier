@@ -4,6 +4,7 @@ import { ArtifactCreateIdV1Schema } from '@happier-dev/protocol/artifacts/artifa
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { getBuiltInThemeLibraryEntries, getBuiltInThemeProfileDocument } from './builtInThemeProfiles';
 import { projectThemeLibraryEntries, projectThemeLibraryEntry, projectThemeProfileDocumentPresentation } from './themeProfilePresentation';
+import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
 
 export type ThemeProfileArtifactRecord = Readonly<{ document: ThemeProfileDocument; revision: number; headerVersion: number }>;
 export type ThemeProfileArtifactSummary = Readonly<{ entry: ThemeLibraryEntry; revision: number; headerVersion: number }>;
@@ -17,11 +18,15 @@ export interface ThemeProfileArtifactAdapter {
     delete(id: string, expectedRevision?: number): Promise<void>;
 }
 /** One current operation on this client, retained by the captured Account's Sync owner. */
-export type ThemeProfileUndoState = { current: Readonly<{ handle: ThemeUndoHandle; context: ThemeUndoContext }> | null };
+type ThemeProfileSelectionUndo = ThemeUndoContext & Readonly<{
+    preferenceChange?: Readonly<{ previous: ThemePreference; applied: ThemePreference }>;
+}>;
+export type ThemeProfileUndoState = { current: Readonly<{ handle: ThemeUndoHandle; context: ThemeProfileSelectionUndo }> | null };
 export type ThemeProfileLibraryContext = Readonly<{
     artifacts: ThemeProfileArtifactAdapter;
     readSelection(): Readonly<Record<ThemeProfileMode, ThemeReference | null>>;
-    writeSelection(mode: ThemeProfileMode, reference: ThemeReference | null): void | Promise<void>;
+    readThemePreference?(): ThemePreference;
+    writeSelection(mode: ThemeProfileMode, reference: ThemeReference | null, preference?: ThemePreference): void | Promise<void>;
     createId(): string;
     now(): number;
     undoState?: ThemeProfileUndoState;
@@ -49,10 +54,19 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
         ? artifacts.list().find(row => row.entry.id === reference.id)?.entry ?? null
         : reference.kind === 'built-in' ? getBuiltInThemeLibraryEntries().find(entry => entry.source.kind === 'built-in' && entry.source.presetId === reference.presetId) ?? null
             : context.pluginProfiles?.list().find(entry => sameStrictJsonValue(entry.reference, reference)) ?? null;
-    const recordUndo = (undo: ThemeUndoContext): ThemeUndoHandle => {
+    const recordUndo = (undo: ThemeProfileSelectionUndo): ThemeUndoHandle => {
         const handle = context.createId();
         undoState.current = { handle, context: undo };
         return handle;
+    };
+    const select = async (mode: ThemeProfileMode, reference: ThemeReference | null) => {
+        const previousSelection = context.readSelection()[mode];
+        const previousPreference = context.readThemePreference?.();
+        const preferenceChange = previousPreference && previousPreference !== 'adaptive' && previousPreference !== mode
+            ? { previous: previousPreference, applied: mode } : undefined;
+        const changed = !sameStrictJsonValue(previousSelection, reference);
+        if (changed || preferenceChange) await context.writeSelection(mode, reference, preferenceChange?.applied);
+        return { changed, undo: { mode, previousSelection, appliedSelection: reference, ...(preferenceChange ? { preferenceChange } : {}) } };
     };
     const save = async (document: ThemeProfileDocument, operation: 'save' | 'keep' = 'save') => {
         assertYours(document.profile.source ?? { kind: 'yours' });
@@ -91,12 +105,10 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
         },
         save: async ({ document }) => (await save(document)).result,
         keep: async ({ document, mode }) => {
-            const previousSelection = context.readSelection()[mode];
             const saved = await save(document, 'keep');
             const reference: ThemeReference = { kind: 'artifact', id: saved.result.entry!.id };
-            const changed = !sameStrictJsonValue(previousSelection, reference);
-            if (changed) await context.writeSelection(mode, reference);
-            const undo = recordUndo({ mode, previousSelection, appliedSelection: reference, ...(saved.createdRecord ? { createdRecord: saved.createdRecord } : {}) });
+            const { changed, undo: selectionUndo } = await select(mode, reference);
+            const undo = recordUndo({ ...selectionUndo, ...(saved.createdRecord ? { createdRecord: saved.createdRecord } : {}) });
             return { ...saved.result, change: { ...saved.result.change, selectionChangedModes: changed ? [mode] : [] }, undo };
         },
         delete: async (id, options) => {
@@ -123,11 +135,9 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
                 if (record) entry = projectThemeLibraryEntry(record.document);
             }
             if (reference && !entry) throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_not_found', error: 'Theme not found' });
-            const previousSelection = context.readSelection()[mode];
-            const changed = !sameStrictJsonValue(previousSelection, reference);
-            if (changed) await context.writeSelection(mode, reference);
+            const { changed, undo } = await select(mode, reference);
             return { entry, change: { changedIds: [], removedIds: [], selectionChangedModes: changed ? [mode] : [] },
-                undo: recordUndo({ mode, previousSelection, appliedSelection: reference }) };
+                undo: recordUndo(undo) };
         },
         lastUndo: () => undoState.current?.handle ?? null,
         undo: async handle => {
@@ -139,10 +149,15 @@ export function createThemeProfileLibrary(context: ThemeProfileLibraryContext): 
                 await artifacts.delete(undo.createdRecord.id, undo.createdRecord.revision);
                 result = { entry: null, change: { changedIds: [], removedIds: [undo.createdRecord.id], selectionChangedModes: [] } };
             }
-            if (!sameStrictJsonValue(undo.previousSelection, undo.appliedSelection)
-                && sameStrictJsonValue(context.readSelection()[undo.mode], undo.appliedSelection)) {
-                await context.writeSelection(undo.mode, undo.previousSelection);
-                result = { ...result, entry: undo.previousSelection ? find(undo.previousSelection) : null, change: { ...result.change, selectionChangedModes: [undo.mode] } };
+            if (sameStrictJsonValue(context.readSelection()[undo.mode], undo.appliedSelection)) {
+                const selectionChanged = !sameStrictJsonValue(undo.previousSelection, undo.appliedSelection);
+                const preference = undo.preferenceChange && context.readThemePreference?.() === undo.preferenceChange.applied
+                    ? undo.preferenceChange.previous : undefined;
+                if (selectionChanged || preference !== undefined) {
+                    await context.writeSelection(undo.mode, undo.previousSelection, preference);
+                    result = { ...result, entry: undo.previousSelection ? find(undo.previousSelection) : null,
+                        change: { ...result.change, selectionChangedModes: selectionChanged ? [undo.mode] : [] } };
+                }
             }
             if (undoState.current === operation) undoState.current = null;
             return result;

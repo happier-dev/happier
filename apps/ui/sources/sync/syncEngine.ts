@@ -9824,7 +9824,8 @@ class Sync {
         return operation({ artifacts, undoState: this.themeProfileUndo.state,
             now: Date.now, createId: randomUUID,
             readSelection: () => readThemeProfileReferenceSelection(storage.getState().localSettings.themeProfileSelection),
-            writeSelection: async (mode, reference) => {
+            readThemePreference: () => storage.getState().localSettings.themePreference,
+            writeSelection: async (mode, reference, nextPreference) => {
                 const [{ runThemePreferenceChange }, { getThemeTryOnOwner }, { readReducedMotionPreference },
                     { readSystemTheme, resolveThemeRuntimeVisualTheme }] = await Promise.all([
                     import('@/components/settings/appearance/themePreferenceTransition'),
@@ -9834,14 +9835,15 @@ class Sync {
                 ]);
                 const preference = storage.getState().localSettings.themePreference;
                 const systemTheme = readSystemTheme();
-                await runThemePreferenceChange({ currentPreference: preference, nextPreference: preference,
+                await runThemePreferenceChange({ currentPreference: preference, nextPreference: nextPreference ?? preference,
                     platform: Platform.OS, reduceMotion: readReducedMotionPreference(), systemTheme,
                     forceAnimate: getThemeTryOnOwner().read() === null
                         && mode === resolveThemeRuntimeVisualTheme(preference, systemTheme),
                     mutation: () => {
                         throwIfAborted(params.signal);
                         const current = storage.getState().localSettings.themeProfileSelection ?? { light: null, dark: null };
-                        storage.getState().applyLocalSettings({ themeProfileSelection: { ...current, [mode]: reference } });
+                        storage.getState().applyLocalSettings({ themeProfileSelection: { ...current, [mode]: reference },
+                            ...(nextPreference !== undefined ? { themePreference: nextPreference } : {}) });
                     },
                 });
             },

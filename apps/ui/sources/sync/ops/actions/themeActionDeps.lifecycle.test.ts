@@ -16,6 +16,45 @@ vi.mock('react-native', async () => {
 
 const actionContext = { surface: 'ui' as const, authority: 'present_user' as const };
 describe('theme Actions through real library and try-on owners', () => {
+    it('lists a paired theme for either requested mode without duplicating the unfiltered library', async () => {
+        const f = setup();
+        const paired = mergeThemeProfileDocumentEdit(document('paired'), { assetAppearance: 'light', overrides: {
+            light: { 'background.canvas': '#fefefe' }, dark: { 'background.canvas': '#101010' },
+        } });
+        const saved = (await f.library.save({ document: paired })).entry!;
+        const execute = createActionExecutor({ themeAction: createThemeActionExecute({
+            withLibrary: operation => operation(f.library), readSelection: () => f.selection, clientId: () => '',
+        }) });
+        for (const mode of [undefined, 'light', 'dark'] as const) {
+            const listed = await execute.execute(THEME_ACTION_IDS.list, { mode }, actionContext);
+            expect(listed).toMatchObject({ ok: true });
+            if (!listed.ok || !listed.result || typeof listed.result !== 'object' || !('themes' in listed.result)
+                || !Array.isArray(listed.result.themes)) throw new Error('Expected theme list');
+            expect(listed.result.themes.filter(entry => entry.id === saved.id)).toHaveLength(1);
+        }
+    });
+
+    it('tries base and existing themes without saving copies, then keeps their mode slot', async () => {
+        const f = setup();
+        const saved = (await f.library.save({ document: document('existing') })).entry!;
+        const execute = createActionExecutor({ themeAction: createThemeActionExecute({
+            withLibrary: operation => operation(f.library), readSelection: () => f.selection, clientId: () => '',
+            runtime: { preview: f.owner, coverage: value => prepareThemeCss(value.profile.css ?? '').coverage,
+                detailedCoverage: value => prepareThemeCss(value.profile.css ?? '').detailedCoverage },
+        }) });
+        const before = f.writes();
+        for (const value of [await f.library.get(saved.reference), null]) {
+            const tried = await execute.execute(THEME_ACTION_IDS.tryOn, { document: value, mode: 'dark', origin: { kind: 'editor' } }, actionContext);
+            expect(tried).toMatchObject({ ok: true });
+            expect(f.writes()).toBe(before);
+            expect(f.owner.read()?.mode).toBe('dark');
+            const kept = await execute.execute(THEME_ACTION_IDS.keep, { previewRef: f.owner.read()!.previewRef }, actionContext);
+            expect(kept).toMatchObject({ ok: true });
+            expect(f.selection.dark).toEqual(value ? saved.reference : null);
+            expect(f.writes()).toBe(before);
+        }
+    });
+
     it('keeps a tried plugin theme as its admitted reference without copying it into Artifacts', async () => {
         const { createThemeProfileLibrary } = await import('@/theme/profiles/themeProfileLibrary');
         const { projectThemeLibraryEntry } = await import('@/theme/profiles/themeProfilePresentation');

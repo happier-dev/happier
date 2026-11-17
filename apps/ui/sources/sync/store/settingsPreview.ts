@@ -130,8 +130,10 @@ export function useLocalSettingPreview<K extends keyof LocalSettings>(name: K) {
     return preview;
 }
 
-export function useLocalSettingPreviewValue<K extends keyof LocalSettings>(name: K) {
-    return useSettingsPreviewStore(state => state.local[name]?.value);
+export function useLocalSettingPreviewValue<K extends keyof LocalSettings>(name: K, enabled = true) {
+    const read = React.useCallback(() => enabled ? useSettingsPreviewStore.getState().local[name]?.value : undefined, [name, enabled]);
+    const subscribe = React.useCallback((notify: () => void) => enabled ? useSettingsPreviewStore.subscribe(notify) : () => {}, [enabled]);
+    return React.useSyncExternalStore(subscribe, read, read);
 }
 
 export function useSettingPreviewValue<K extends keyof Settings>(name: K) {

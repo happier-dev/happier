@@ -1,9 +1,9 @@
-import { parseThemeProfileDocument, type ThemeLibraryEntry, type ThemeMiniatureData, type ThemeProfileDocument, type ThemeProfileSource, type ThemeProfileV1 } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { parseThemeProfileDocument, type ThemeLibraryEntry, type ThemeMiniatureData, type ThemeProfileDocument, type ThemeProfileMode, type ThemeProfileSource, type ThemeProfileV1 } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { THEME_MINIATURE_OVERRIDE_TOKENS, type ThemeProfileArtifactHeader } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
 import { resolveKnownFontFamily } from '@/constants/Typography';
 import { DEFAULT_THEME_RADIUS_SCALE_NAME } from '@/theme/themeStyleScales';
 import { resolveThemeProfile } from './resolveThemeProfile';
-import { resolveThemeProfileAssetAppearance } from './themeProfileAssetAppearance';
+import { resolveThemeProfileAssetAppearance, resolveThemeProfileSupportedModes } from './themeProfileAssetAppearance';
 import { getThemeProfileTokenDefinition } from './themeProfileTokenRegistry';
 import { readThemeProfilePathValue } from './themeProfilePathAccess';
 
@@ -29,8 +29,7 @@ export function projectPluginThemeProfileDocument(theme: ThemeProfileV1, source:
 }
 
 /** Retain only authored inputs needed by the read-time miniature. */
-export function projectThemeMiniaturePalette(profile: ThemeMiniatureInput): ThemeProfileArtifactHeader['palette'] {
-    const mode = resolveThemeProfileAssetAppearance(profile);
+export function projectThemeMiniaturePalette(profile: ThemeMiniatureInput, mode = resolveThemeProfileAssetAppearance(profile)): ThemeProfileArtifactHeader['palette'] {
     const authored = profile.overrides[mode];
     return { ...(profile.seeds ? { seeds: profile.seeds } : {}), radius: profile.style?.radius ?? DEFAULT_THEME_RADIUS_SCALE_NAME,
         overrides: Object.fromEntries(Object.values(THEME_MINIATURE_OVERRIDE_TOKENS).flatMap(token =>
@@ -38,8 +37,7 @@ export function projectThemeMiniaturePalette(profile: ThemeMiniatureInput): Them
 }
 
 /** Resolve the same compact presentation for Artifact headers, built-ins and plugin declarations. */
-export function projectThemeMiniature(profile: ThemeMiniatureInput): ThemeMiniatureData {
-    const mode = resolveThemeProfileAssetAppearance(profile);
+export function projectThemeMiniature(profile: ThemeMiniatureInput, mode = resolveThemeProfileAssetAppearance(profile)): ThemeMiniatureData {
     const { colors } = resolveThemeProfile({ mode, profile });
     const values = Object.fromEntries(Object.entries(THEME_MINIATURE_OVERRIDE_TOKENS).map(([role, token]) =>
         [role, readThemeProfilePathValue(colors, getThemeProfileTokenDefinition(token)!.path)!])) as Record<keyof typeof THEME_MINIATURE_OVERRIDE_TOKENS, string>;
@@ -49,13 +47,17 @@ export function projectThemeMiniature(profile: ThemeMiniatureInput): ThemeMiniat
 export function projectThemeLibraryEntry(document: ThemeProfileDocument, provenance?: ThemeProfileSource): ThemeLibraryEntry {
     const presented = projectThemeProfileDocumentPresentation(document);
     const source = provenance ?? presented.profile.source ?? { kind: 'yours' };
-    const miniature = projectThemeMiniature(presented.profile);
+    const mode = resolveThemeProfileAssetAppearance(presented.profile);
+    const modes = resolveThemeProfileSupportedModes(presented.profile);
+    const miniatures: Partial<Record<ThemeProfileMode, ThemeMiniatureData>> = {};
+    for (const supportedMode of modes) miniatures[supportedMode] = projectThemeMiniature(presented.profile, supportedMode);
+    const miniature = miniatures[mode]!;
     const reference = source.kind === 'built-in' ? { kind: 'built-in' as const, presetId: source.presetId }
         : source.kind === 'plugin' ? { kind: 'plugin' as const, pluginId: source.pluginId, contributionId: source.contributionId }
             : { kind: 'artifact' as const, id: document.profile.id };
     return { id: document.profile.id, reference, name: document.profile.name, mode: miniature.mode, source,
         editable: source.kind === 'yours', deletable: source.kind === 'yours' || source.kind === 'store',
-        compatibility: presented.compatibility, miniature };
+        compatibility: presented.compatibility, miniature, modes, miniatures };
 }
 
 

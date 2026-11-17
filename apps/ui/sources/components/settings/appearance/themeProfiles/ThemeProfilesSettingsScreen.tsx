@@ -13,6 +13,7 @@ import { t } from '@/text';
 import { resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
 import type { ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
 import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
+import { useApplyThemeSelection } from '../useApplyThemeSelection';
 import { buildThemePresetSourceOptions } from './themeProfilePresetOptions';
 import { ThemeLibraryView } from './ThemeLibraryView';
 import { useThemeActionExecution } from './useThemeActionExecution';
@@ -43,6 +44,10 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
     const presented = useLayoutPresentationActive();
     const router = useRouter();
     const themePreference = useLocalSetting('themePreference');
+    const applyAppearanceMode = useApplyThemeSelection();
+    const onChangeAppearanceMode = React.useCallback((mode: Parameters<typeof applyAppearanceMode>[0]) => {
+        void applyAppearanceMode(mode);
+    }, [applyAppearanceMode]);
     // The mode this device shows now, by the runtime's one resolver; the system scheme re-renders it when it changes.
     const showing: ThemeProfileMode = resolveThemeRuntimeVisualTheme(themePreference, useColorScheme());
     const selection = useThemeProfileReferenceSelection(presented);
@@ -82,6 +87,8 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
         selection,
         selectedDocuments,
         showing,
+        appearanceMode: themePreference,
+        onChangeAppearanceMode,
         native: Platform.OS !== 'web',
         failed: inventory.failed,
         retry: inventory.retry,

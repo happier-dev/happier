@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseThemeProfileDocument, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { createThemeProfileLibrary, createThemeProfileSourceAdapter, type ThemeProfileArtifactAdapter } from './themeProfileLibrary';
 import { projectPluginThemeLibraryEntries, projectThemeLibraryEntries, projectThemeLibraryEntry } from './themeProfilePresentation';
+import type { ThemePreference } from '@/components/ui/layout/statusBarStyle';
 
 const ids = { first: '11111111-1111-4111-8111-111111111111', second: '22222222-2222-4222-8222-222222222222', kept: '33333333-3333-4333-8333-333333333333' };
 function document(id: string, extra: Record<string, unknown> = {}) {
@@ -12,10 +13,12 @@ function document(id: string, extra: Record<string, unknown> = {}) {
 const provenance = (changed = false) => ({ sourceId: 'registry', format: 'git', sourceUrl: 'https://registry.example.test', itemId: 'package', ref: { kind: 'gitTree', repo: 'https://registry.example.test/themes.git', path: 'theme', commit: changed ? 'second' : 'first', treeSha: changed ? 'second-tree' : 'first-tree' }, importedAt: 0 });
 const ref = (id: string): ThemeReference => ({ kind: 'artifact', id });
 
-function setup(acknowledgeCreation = true) {
+function setup(acknowledgeCreation = true, initialPreference?: ThemePreference) {
     const records = new Map<string, { document: ReturnType<typeof document>; revision: number; headerVersion: number }>();
     let reads = 0, writes = 0, deletes = 0, generated = 0, headerVisits = 0;
     const selection = { light: null as ThemeReference | null, dark: null as ThemeReference | null };
+    const preference = { value: initialPreference };
+    const selectionPublications: { selection: typeof selection; preference: ThemePreference | undefined }[] = [];
     const artifacts: ThemeProfileArtifactAdapter = {
         load: async () => {},
         list: () => [...records.values()].map(row => { headerVisits++; return ({ entry: projectThemeLibraryEntry(row.document), revision: row.revision, headerVersion: row.headerVersion }); }),
@@ -38,12 +41,71 @@ function setup(acknowledgeCreation = true) {
             records.delete(id);
         },
     };
-    const context = { artifacts, readSelection: () => selection, writeSelection: (mode: 'light' | 'dark', reference: ThemeReference | null) => { selection[mode] = reference; },
+    const context = { artifacts, readSelection: () => selection,
+        ...(initialPreference ? { readThemePreference: () => preference.value! } : {}),
+        writeSelection: (mode: 'light' | 'dark', reference: ThemeReference | null, nextPreference?: ThemePreference) => {
+            selection[mode] = reference;
+            if (nextPreference !== undefined) preference.value = nextPreference;
+            selectionPublications.push({ selection: { ...selection }, preference: preference.value });
+        },
         createId: () => `aaaaaaaa-aaaa-4aaa-8aaa-${String(++generated).padStart(12, '0')}`, now: () => Date.parse('2026-11-16T12:00Z') };
-    return { library: createThemeProfileLibrary(context), source: createThemeProfileSourceAdapter(context), records, selection, counts: () => ({ reads, writes, deletes, headerVisits }) };
+    return { library: createThemeProfileLibrary(context), source: createThemeProfileSourceAdapter(context), records, selection, preference, selectionPublications, counts: () => ({ reads, writes, deletes, headerVisits }) };
 }
 
 describe('theme profile library', () => {
+    it.each(['select', 'keep'] as const)('switches an explicit mode atomically through %s and restores both with Undo', async operation => {
+        const state = setup(true, 'light');
+        const theme = document(ids.first);
+        const sibling = ref(ids.second);
+        state.selection.light = sibling;
+        await state.library.save({ document: theme });
+        const applied = operation === 'select'
+            ? await state.library.select({ mode: 'dark', reference: ref(ids.first) })
+            : await state.library.keep({ mode: 'dark', document: theme });
+        expect(state.selectionPublications).toEqual([
+            { selection: { light: sibling, dark: ref(ids.first) }, preference: 'dark' },
+        ]);
+        await state.library.undo(applied.undo!);
+        expect(state.selectionPublications).toEqual([
+            { selection: { light: sibling, dark: ref(ids.first) }, preference: 'dark' },
+            { selection: { light: sibling, dark: null }, preference: 'light' },
+        ]);
+    });
+
+    it('switches and undoes the explicit mode when its theme slot was already selected', async () => {
+        const state = setup(true, 'dark');
+        await state.library.save({ document: document(ids.first) });
+        state.selection.light = ref(ids.first);
+        const applied = await state.library.select({ mode: 'light', reference: ref(ids.first) });
+        expect(state.preference.value).toBe('light');
+        expect(state.selectionPublications).toHaveLength(1);
+        await state.library.undo(applied.undo!);
+        expect(state.preference.value).toBe('dark');
+        expect(state.selection.light).toEqual(ref(ids.first));
+        expect(state.selectionPublications).toHaveLength(2);
+    });
+
+    it('keeps Adaptive while filling each slot and leaves later deliberate mode choices intact on Undo', async () => {
+        const adaptive = setup(true, 'adaptive');
+        const theme = document(ids.first);
+        await adaptive.library.save({ document: theme });
+        await adaptive.library.select({ mode: 'light', reference: ref(ids.first) });
+        const kept = await adaptive.library.keep({ mode: 'dark', document: theme });
+        expect(adaptive.selection).toEqual({ light: ref(ids.first), dark: ref(ids.first) });
+        expect(adaptive.selectionPublications.map(row => row.preference)).toEqual(['adaptive', 'adaptive']);
+        await adaptive.library.undo(kept.undo!);
+        expect(adaptive.preference.value).toBe('adaptive');
+        expect(adaptive.selection).toEqual({ light: ref(ids.first), dark: null });
+        expect(adaptive.selectionPublications).toHaveLength(3);
+
+        const explicit = setup(true, 'light');
+        const applied = await explicit.library.keep({ mode: 'dark', document: theme });
+        explicit.preference.value = 'adaptive';
+        await explicit.library.undo(applied.undo!);
+        expect(explicit.preference.value).toBe('adaptive');
+        expect(explicit.selection.dark).toBeNull();
+    });
+
     it('retains plugin miniatures across own-header changes and unchanged declarations', () => {
         const first = { pluginId: 'acme.themes', contributionId: 'first', theme: document('first').profile };
         const second = { pluginId: 'acme.themes', contributionId: 'second', theme: document('second').profile };

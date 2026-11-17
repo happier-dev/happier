@@ -25,6 +25,42 @@ vi.mock('css-tree/lib/parser', async (importOriginal) => {
 });
 
 describe('theme proposal card controller', () => {
+    it('keeps and undoes a base Try without creating a library entry or offering Edit', async () => {
+        const state = createThemeActionHarness();
+        const saved = (await state.library.save({ document: themeActionDocument('Previous') })).entry!;
+        await state.library.select({ reference: saved.reference, mode: 'dark' });
+        const executor = createActionExecutor({ themeAction: createThemeActionExecute({
+            withLibrary: operation => operation(state.library), readSelection: () => state.selection, clientId: () => '',
+            runtime: { preview: state.owner, coverage: value => prepareThemeProfileCss(value.profile).coverage,
+                detailedCoverage: value => prepareThemeProfileCss(value.profile).detailedCoverage },
+        }) });
+        async function execute<Id extends ThemeActionId>(id: Id, input: ThemeActionInput<Id>): Promise<ThemeActionOutput<Id>> {
+            const result = await executor.execute(id, input, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+            requireActionSuccess(result);
+            return ThemeActionOutputSchemas[id].parse(result.result) as ThemeActionOutput<Id>;
+        }
+        const input = { document: null, mode: 'dark' as const, origin: { kind: 'agent' as const } };
+        const output = await execute(THEME_ACTION_IDS.tryOn, input);
+        const message = createToolCallMessageFixture({ id: 'base-try', tool: makeToolCall({ id: 'base-try', name: 'mcp__happier__action_execute',
+            state: 'completed', input: { actionId: THEME_ACTION_IDS.tryOn, input }, result: { ok: true, result: output } }) });
+        const presentation = readThemeActionCardPresentation({ tool: message.tool, messages: [message], messageId: message.id });
+        if (!presentation) throw new Error('Missing base Try card');
+        const hook = await renderHook(() => useThemeActionResultModel(presentation,
+            { preview: state.owner, entry: null, created: false, here: 'here', onEdit: vi.fn() }, execute));
+        expect(hook.getCurrent()).toMatchObject({ theme: { mode: 'dark', miniature: { mode: 'dark' }, created: false }, phase: { kind: 'trying' } });
+        expect(hook.getCurrent()?.onEdit).toBeUndefined();
+        expect(state.selection.dark).toEqual(saved.reference);
+        await act(async () => hook.getCurrent()!.onKeep());
+        await vi.waitFor(() => expect(hook.getCurrent()?.phase.kind).toBe('kept'));
+        expect(state.selection.dark).toBeNull();
+        expect(hook.getCurrent()?.onEdit).toBeUndefined();
+        await act(async () => hook.getCurrent()!.onUndo());
+        await vi.waitFor(() => expect(hook.getCurrent()?.phase.kind).toBe('undone'));
+        expect(state.selection.dark).toEqual(saved.reference);
+        expect(state.writes()).toBe(1);
+        await hook.unmount();
+    });
+
     it('tries A/B/A without writes, keeps only A, then Undo/Redo replay preserves siblings and raw presentation', async () => {
         const state = createThemeActionHarness();
         const sibling = await state.library.save({ document: themeActionDocument('Sibling') });

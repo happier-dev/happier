@@ -10,7 +10,8 @@ import { THEME_ARTIFACT_KIND } from '@happier-dev/protocol/account/settings/them
 import { ArtifactReadHeadersBatchInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { parseThemeProfileDocument, type ThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
 
-import { renderSettingsView } from '@/dev/testkit';
+import { renderHook, renderSettingsView } from '@/dev/testkit';
+import { countStoreNotifications, createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -21,7 +22,7 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
-import { projectThemeLibraryEntry, projectThemeMiniaturePalette } from '@/theme/profiles/themeProfilePresentation';
+import { projectThemeLibraryEntry, projectThemeMiniature, projectThemeMiniaturePalette } from '@/theme/profiles/themeProfilePresentation';
 import { getThemePresetSourceReferenceId } from './themeProfilePresetOptions';
 import { Modal } from '@/modal';
 import type { createThemePluginShareForm } from './themePluginShareForm';
@@ -30,6 +31,9 @@ import { ActionInputFormModal, type ActionInputFormModalProps } from '@/componen
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { useThemePluginShare } from './useThemePluginShare';
 import { useThemeActionExecution } from './useThemeActionExecution';
+import { useLocalSetting } from '@/sync/store/settingsReadHooks';
+import { useThemeLibraryEntries, useThemeProfileReferenceSelection } from '@/sync/store/useThemeProfiles';
+import { useApplyThemeSelection } from '../useApplyThemeSelection';
 
 const router = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn() }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
@@ -102,6 +106,99 @@ async function seedLibrary(account: SecretSettingsTestHarness, documents = [docu
 
 /** Approval policy remains the real Account-owned policy, with only Home HTTP/credential storage synthetic. */
 describe('theme profile library Action ingress', () => {
+    it('keeps the same try bar mounted through exit and paints the chosen preview mode', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
+        const { ThemeTryBarHost } = await import('@/theme/ThemeTryBarHost');
+        const { ThemeTryBar } = await import('./ThemeTryBar');
+        const { getThemeTryOnOwner } = await import('@/theme/profiles/themeTryOnRuntime');
+        try {
+            await sync.awaitBootstrapForegroundAcquisition();
+            storage.getState().applyLocalSettings({ themePreference: 'light' });
+            const parsed = parseThemeProfileDocument({ ...document(firstId, 'Two modes').raw,
+                overrides: { light: { 'background.canvas': '#F1E2D3' }, dark: { 'background.canvas': '#172033' } } });
+            if (!parsed.ok) throw new Error(parsed.error);
+            getThemeTryOnOwner().begin({ document: parsed.document, mode: 'dark', origin: { kind: 'agent' } });
+            const screen = await renderSettingsView(React.createElement(ThemeTryBarHost));
+            const bar = screen.findAllByType<typeof ThemeTryBar>(ThemeTryBar)[0]!;
+            expect(bar.props).toMatchObject({ visible: true, switchToMode: 'dark', faceName: 'Two modes',
+                miniature: projectThemeMiniature(parsed.document.profile, 'dark') });
+            await act(async () => { await bar.props.onRevert(); });
+            expect(getThemeTryOnOwner().read()).toBeNull();
+            const exiting = screen.findAllByType<typeof ThemeTryBar>(ThemeTryBar)[0];
+            expect(exiting).toBe(bar);
+            expect(exiting?.props.visible).toBe(false);
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+
+    it('publishes mode and slot once per Apply or Undo and isolates mode-only subscriber renders', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
+        let notifications: ReturnType<typeof countStoreNotifications<ReturnType<typeof storage.getState>>> | undefined;
+        try {
+            await seedLibrary(account);
+            const previousSelection = { light: { kind: 'artifact' as const, id: firstId }, dark: null };
+            storage.getState().applyLocalSettings({ themePreference: 'light', themeProfileSelection: previousSelection });
+            const modeCount = createRenderCommitCounter();
+            const selectionCount = createRenderCommitCounter();
+            const libraryCount = createRenderCommitCounter();
+            const mode = await renderHook(() => {
+                useRenderCommitCounter(modeCount);
+                return { preference: useLocalSetting('themePreference'), apply: useApplyThemeSelection() };
+            });
+            const selection = await renderHook(() => {
+                useRenderCommitCounter(selectionCount);
+                return useThemeProfileReferenceSelection();
+            });
+            const library = await renderHook(() => {
+                useRenderCommitCounter(libraryCount);
+                return useThemeLibraryEntries();
+            });
+            const entries = library.getCurrent();
+            notifications = countStoreNotifications(storage);
+            const reset = () => { notifications?.reset(); modeCount.reset(); selectionCount.reset(); libraryCount.reset(); };
+            const localPublications = () => notifications!.read().filter(keys => keys.includes('localSettings'));
+            reset();
+            const execute = createFrontDoorActionExecute();
+            let undoHandle = '';
+            await act(async () => {
+                const applied = await execute(THEME_ACTION_IDS.apply,
+                    { ref: { kind: 'built-in', presetId: 'nightDark' }, mode: 'dark' }, { surface: 'ui' });
+                requireActionSuccess(applied, THEME_ACTION_IDS.apply);
+                if (!applied.result || typeof applied.result !== 'object' || !('undoHandle' in applied.result)
+                    || typeof applied.result.undoHandle !== 'string') throw new Error('Apply did not return its Undo handle');
+                undoHandle = applied.result.undoHandle;
+            });
+            expect(localPublications()).toHaveLength(1);
+            expect(mode.getCurrent().preference).toBe('dark');
+            expect(selection.getCurrent()).toEqual({ ...previousSelection, dark: { kind: 'built-in', presetId: 'nightDark' } });
+            expect(modeCount.read()).toEqual({ renders: 1, commits: 1 });
+            expect(selectionCount.read()).toEqual({ renders: 1, commits: 1 });
+            expect(libraryCount.read()).toEqual({ renders: 0, commits: 0 });
+            expect(library.getCurrent()).toBe(entries);
+
+            reset();
+            await act(async () => {
+                requireActionSuccess(await execute(THEME_ACTION_IDS.undo, { undoHandle }, { surface: 'ui' }), THEME_ACTION_IDS.undo);
+            });
+            expect(localPublications()).toHaveLength(1);
+            expect(mode.getCurrent().preference).toBe('light');
+            expect(selection.getCurrent()).toEqual(previousSelection);
+            expect(modeCount.read()).toEqual({ renders: 1, commits: 1 });
+            expect(selectionCount.read()).toEqual({ renders: 1, commits: 1 });
+            expect(libraryCount.read()).toEqual({ renders: 0, commits: 0 });
+
+            const retainedSelection = selection.getCurrent();
+            reset();
+            await act(async () => { expect(await mode.getCurrent().apply('adaptive')).toBe(true); });
+            expect(localPublications()).toHaveLength(1);
+            expect(mode.getCurrent().preference).toBe('adaptive');
+            expect(modeCount.read()).toEqual({ renders: 1, commits: 1 });
+            expect(selectionCount.read()).toEqual({ renders: 0, commits: 0 });
+            expect(libraryCount.read()).toEqual({ renders: 0, commits: 0 });
+            expect(selection.getCurrent()).toBe(retainedSelection);
+            expect(library.getCurrent()).toBe(entries);
+        } finally { notifications?.stop(); standardCleanup(); await account.dispose(); }
+    });
+
     it('resolves Share Machine choices in the captured Home without treating its local form fields as Action fields', async () => {
         const machine = createPlainMachineRowFixture({ id: 'theme-author', accountId: 'account-a' });
         const account = await createSecretSettingsTestHarness({
@@ -205,9 +302,9 @@ describe('theme profile library Action ingress', () => {
         } finally { standardCleanup(); await account.dispose(); }
     });
 
-    it('browses private headers without bodies and applies a saved theme only when its Action is allowed', async () => {
+    it('browses private headers and tries a saved theme before Keep when its Action is allowed', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: { v: 1,
-            actions: { [THEME_ACTION_IDS.apply]: { disabledSurfaces: ['ui'] } },
+            actions: { [THEME_ACTION_IDS.tryOn]: { disabledSurfaces: ['ui'] } },
         } }) });
         try {
             await seedLibrary(account);
@@ -259,14 +356,22 @@ describe('theme profile library Action ingress', () => {
             await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalled());
             expect(storage.getState().localSettings.themeProfileSelection?.light).toBeNull();
             await act(async () => { account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: {
-                v: 1, approvalWaivedSurfaces: { [THEME_ACTION_IDS.apply]: ['ui'] },
+                v: 1, approvalWaivedSurfaces: { [THEME_ACTION_IDS.tryOn]: ['ui'] },
             } })); });
             vi.mocked(Modal.alert).mockClear();
             await screen.pressByTestIdAsync(`settings-theme-light:${key}`);
+            const { getThemeTryOnOwner } = await import('@/theme/profiles/themeTryOnRuntime');
+            await vi.waitFor(() => expect(getThemeTryOnOwner().read()?.document?.profile.id).toBe(firstId));
+            expect(storage.getState().localSettings.themeProfileSelection?.light).toBeNull();
+            requireActionSuccess(await createFrontDoorActionExecute()(THEME_ACTION_IDS.keep,
+                { previewRef: getThemeTryOnOwner().read()!.previewRef }, { surface: 'ui' }), THEME_ACTION_IDS.keep);
             await vi.waitFor(() => expect(storage.getState().localSettings.themeProfileSelection).toEqual({
                 light: { kind: 'artifact', id: firstId }, dark: { kind: 'built-in', presetId: 'nightDark' },
             }));
             await screen.pressByTestIdAsync('settings-theme-light:light');
+            await vi.waitFor(() => expect(getThemeTryOnOwner().read()?.document).toBeNull());
+            requireActionSuccess(await createFrontDoorActionExecute()(THEME_ACTION_IDS.keep,
+                { previewRef: getThemeTryOnOwner().read()!.previewRef }, { surface: 'ui' }), THEME_ACTION_IDS.keep);
             await vi.waitFor(() => expect(storage.getState().localSettings.themeProfileSelection).toEqual({
                 light: null, dark: { kind: 'built-in', presetId: 'nightDark' },
             }));

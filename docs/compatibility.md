@@ -2816,8 +2816,29 @@ apply. Unknown presentation fields and safe token identifiers survive unrelated
 edits and export; unsupported presentation has no visual effect. A deliberate
 edit overlays only the supported fields it changed. The header carries palette
 inputs and style summary; the miniature is derived from those inputs at read
-time. An explicit Reset removes known seeds, style or CSS while retaining unknown
+time. An optional per-mode `palettes` projection preserves both miniatures when
+the document authors overrides for both modes; the required `mode` and `palette`
+remain the single-mode presentation for older readers. Headers without `palettes`
+continue to project their one recorded mode without opening the body. Both base
+mode fields alone do not establish that a theme authors both modes.
+Old unshipped 0.3 headers are not backfilled; their known mode stays visible until
+saved again. The released 0.2 migration reads full documents and writes current
+headers through the same palette projection.
+Theme try-on accepts a null document for the existing mode's base selection;
+Keep returns a null entry for that base, with the usual applied mode and Undo.
+These are matching 0.3 development Action readers and writers. The preview's mode
+is transient; Keep and Apply preserve Adaptive, or atomically change an explicit
+mode with its slot selection. The existing device-local Undo restores that intent.
+An explicit Reset removes known seeds, style or CSS while retaining unknown
 presentation children; omitted sections in a partial edit remain unchanged.
+
+VS Code imports resolve local `include` chains through the portable Protocol
+resolver before creating an editable copy. Native imports retain the selected
+file URI and use Expo's File API to read relatives when the platform makes them
+available. Document-picker cache copies may lack those siblings. A browser's
+single selected File cannot expose unselected siblings, and pasted JSON has no
+local resource reader. Missing resources and include cycles are reported inline;
+an incomplete child is never silently imported.
 
 Device `themeProfileSelection` entries are tagged Artifact, built-in or plugin
 references. An unavailable reference renders the mode's base theme without

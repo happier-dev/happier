@@ -90,6 +90,8 @@ export type StoreThemeListingViewProps = Readonly<{
  * One host at a time: the open listing renders the controls itself, so the bar is absent then.
  */
 export type ThemeTryPresentationProps = Readonly<{
+  /** Keep switches an explicit appearance mode; Adaptive never switches. */
+  switchToMode?: ThemeProfileMode;
   origin?: 'store' | 'agent' | 'editor';
   disabled?: boolean;
   visible: boolean;

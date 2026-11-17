@@ -31,6 +31,7 @@ export const ThemeLibraryEntrySchema = lazyZodSchema(() => z.strictObject({
   id: identifier, reference: ThemeReferenceSchema, name: z.string(), mode, source: ThemeProfileSourceSchema,
   editable: z.boolean(), deletable: z.boolean(), compatibility: ThemePresentationCompatibilitySchema,
   miniature: ThemeMiniatureDataSchema,
+  modes: z.optional(z.array(mode)), miniatures: z.optional(z.partialRecord(mode, ThemeMiniatureDataSchema)),
 }));
 export const ThemeSelectionSchema = lazyZodSchema(() => z.strictObject({
   light: z.nullable(ThemeReferenceSchema), dark: z.nullable(ThemeReferenceSchema),
@@ -109,7 +110,7 @@ export const ThemeActionInputSchemas = {
   [THEME_ACTION_IDS.list]: z.strictObject({ mode: z.optional(mode), includeDevices: z.optional(z.boolean()) }),
   [THEME_ACTION_IDS.get]: z.strictObject({ ref: ThemeReferenceSchema,
     include: z.optional(z.array(z.enum(['document', 'guide', 'coverage', 'surfaceMap']))) }),
-  [THEME_ACTION_IDS.tryOn]: z.strictObject({ document: ThemeProfileDocumentSchema, mode,
+  [THEME_ACTION_IDS.tryOn]: z.strictObject({ document: z.nullable(ThemeProfileDocumentSchema), mode,
     origin: z.strictObject({ kind: z.enum(['agent', 'editor', 'store']), listing: z.optional(ThemeRegistryItemKeySchema) }),
     group: z.optional(z.string()) }),
   [THEME_ACTION_IDS.revert]: z.strictObject({ previewRef: identifier }),
@@ -136,7 +137,7 @@ export const ThemeActionOutputSchemas = {
   [THEME_ACTION_IDS.tryOn]: z.strictObject({ previewRef: identifier, coverage: ThemeCssCoverageSchema,
     compatibility: ThemePresentationCompatibilitySchema }),
   [THEME_ACTION_IDS.revert]: restoredResult,
-  [THEME_ACTION_IDS.keep]: z.strictObject({ entry: ThemeLibraryEntrySchema, applied, undoHandle: identifier }),
+  [THEME_ACTION_IDS.keep]: z.strictObject({ entry: z.nullable(ThemeLibraryEntrySchema), applied, undoHandle: identifier }),
   [THEME_ACTION_IDS.save]: z.strictObject({ entry: ThemeLibraryEntrySchema, undoHandle: z.optional(identifier) }),
   [THEME_ACTION_IDS.duplicate]: entryResult,
   [THEME_ACTION_IDS.apply]: z.strictObject({ applied, undoHandle: identifier }),

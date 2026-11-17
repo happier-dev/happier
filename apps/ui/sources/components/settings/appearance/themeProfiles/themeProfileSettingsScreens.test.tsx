@@ -28,6 +28,7 @@ import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactSt
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 
@@ -242,10 +243,6 @@ const chooseStartFrom = async (screen: Awaited<ReturnType<typeof renderSettingsV
     const reference = isBuiltInThemeProfilePresetId(id) ? { kind: 'built-in' as const, presetId: id } : { kind: 'artifact' as const, id };
     await screen.pressByTestIdAsync(`settings-theme-profile-start:${getThemePresetSourceReferenceId(reference)}`);
 };
-const chooseModeSlot = async (screen: Awaited<ReturnType<typeof renderSettingsView>>, mode: 'light' | 'dark') => {
-    await screen.pressByTestIdAsync(`settings-theme-slot:${mode}`);
-    await measureMountedCollections(screen, { width: 1200, height: 6000 });
-};
 const findTileMenuAction = (screen: Awaited<ReturnType<typeof renderSettingsView>>, tileId: string, id: string) => (
     screen.findAllByProps({ testID: `settings-theme-tile-menu-${tileId}` })
         .flatMap((node: any) => (node.props.actions ?? []) as Array<{ id: string; onSelect: () => unknown }>)
@@ -350,6 +347,8 @@ afterEach(async () => {
 
 describe('Theme profile settings screen', () => {
     it('opens the connected-device picker from either in-use slot without changing the selection', async () => {
+        // Adaptive shows a slot for each mode (MODE-ON-THEMES); an explicit mode shows its one slot.
+        storage.getState().applyLocalSettings({ themePreference: 'adaptive' });
         const screen = await renderProfilesScreen();
         const selection = storage.getState().localSettings.themeProfileSelection;
         expect(screen.findByTestId('settings-theme-slot-light-devices')).not.toBeNull();
@@ -391,8 +390,7 @@ describe('Theme profile settings screen', () => {
         const screen = await renderProfilesScreen();
 
         expect(screen.findByTestId('settings-theme-profiles-screen')).not.toBeNull();
-        // The grid opens on the mode this device shows; the other mode is one press away.
-        expect(tileIds(screen, 'settings-theme-dark')).toEqual([]);
+        // Both mode sections are available independently of the device's current appearance.
         expect(tileIds(screen, 'settings-theme-light')).toEqual([
             'light',
             'premiumLight',
@@ -400,7 +398,6 @@ describe('Theme profile settings screen', () => {
             'catppuccinLatte',
             'githubLight',
         ]);
-        await chooseModeSlot(screen, 'dark');
         // Your themes lead the grid, then the built-ins.
         expect(tileIds(screen, 'settings-theme-dark')).toEqual([
             getThemePresetSourceReferenceId({ kind: 'artifact', id: 'noir' }),
@@ -421,30 +418,47 @@ describe('Theme profile settings screen', () => {
             'graphiteDark',
         ]);
         expect(screen.findAllByProps({ testID: 'settings-theme-dark:dark' }).some(node => node.props.accessibilityState?.checked === true)).toBe(true);
-        // Choosing a slot changes only which mode the grid shows: no selection or appearance write.
+        // Reading both sections performs no selection or appearance write.
         expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: null });
         expect(storage.getState().localSettings.themePreference).toBe('light');
     });
 
-    it('assigns a built-in theme to the other mode without changing appearance or storing a custom profile', async () => {
+    it.each(['adaptive', 'light'] as const)('tries the other mode before Keep, with %s appearance', async (preference) => {
+        storage.getState().applyLocalSettings({ themePreference: preference });
         const screen = await renderProfilesScreen();
-        await chooseModeSlot(screen, 'dark');
-
         await screen.pressByTestIdAsync('settings-theme-dark:premiumDark');
-
+        await vi.waitFor(() => expect(getThemeTryOnOwner().read()?.mode).toBe('dark'));
+        expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: null });
+        expect(storage.getState().localSettings.themePreference).toBe(preference);
+        const execute = createFrontDoorActionExecute();
+        await act(async () => {
+            requireActionSuccess(await execute(THEME_ACTION_IDS.revert,
+                { previewRef: getThemeTryOnOwner().read()!.previewRef }, { surface: 'ui' }), THEME_ACTION_IDS.revert);
+        });
+        expect(getThemeTryOnOwner().read()).toBeNull();
+        expect(storage.getState().localSettings.themePreference).toBe(preference);
+        await screen.pressByTestIdAsync('settings-theme-dark:premiumDark');
+        await vi.waitFor(() => expect(getThemeTryOnOwner().read()?.mode).toBe('dark'));
+        await act(async () => {
+            requireActionSuccess(await execute(THEME_ACTION_IDS.keep,
+                { previewRef: getThemeTryOnOwner().read()!.previewRef }, { surface: 'ui' }), THEME_ACTION_IDS.keep);
+        });
         expect(getThemeProfiles().profiles).toEqual([]);
         expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: 'premiumDark' });
-        expect(storage.getState().localSettings.themePreference).toBe('light');
+        expect(storage.getState().localSettings.themePreference).toBe(preference === 'adaptive' ? 'adaptive' : 'dark');
     });
 
     it('returns a mode to its default theme from the default tile', async () => {
         setThemeProfiles({ activeProfileIds: { light: null, dark: 'premiumDark' }, profiles: [] });
         const screen = await renderProfilesScreen();
-        await chooseModeSlot(screen, 'dark');
-
         expect(screen.findAllByProps({ testID: 'settings-theme-dark:premiumDark' }).some(node => node.props.accessibilityState?.checked === true)).toBe(true);
         await screen.pressByTestIdAsync('settings-theme-dark:dark');
-
+        await vi.waitFor(() => expect(getThemeTryOnOwner().read()?.mode).toBe('dark'));
+        expect(getThemeProfiles().activeProfileIds.dark).toBe('premiumDark');
+        await act(async () => {
+            requireActionSuccess(await createFrontDoorActionExecute()(THEME_ACTION_IDS.keep,
+                { previewRef: getThemeTryOnOwner().read()!.previewRef }, { surface: 'ui' }), THEME_ACTION_IDS.keep);
+        });
         expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: null });
     });
 
@@ -818,15 +832,16 @@ describe('Theme profile editor', () => {
         expect(shared.routerDismissTo).toHaveBeenCalledWith('/settings/appearance/themes');
     });
 
-    it('saves the selected asset appearance and assigns that theme slot without changing appearance mode', async () => {
+    it('keeps the selected asset appearance and switches an explicit opposite appearance mode', async () => {
         const screen = await renderEditorScreen('new');
         await screen.pressByTestIdAsync('settings-theme-profile-asset-appearance:dark');
+        expect(storage.getState().localSettings.themePreference).toBe('light');
         await saveEditor(screen);
 
         const saved = getThemeProfiles().profiles[0] as (ThemeProfileV1 & { assetAppearance?: string }) | undefined;
         expect(saved?.assetAppearance).toBe('dark');
         expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: saved?.id });
-        expect(storage.getState().localSettings.themePreference).toBe('light');
+        expect(storage.getState().localSettings.themePreference).toBe('dark');
     });
 
     it('blocks saving when the profile name is invalid', async () => {
@@ -1048,7 +1063,7 @@ describe('Theme profile editor', () => {
         expect(shared.updateTheme).toHaveBeenCalled();
     });
 
-    it('previews a saved dark asset and assigns its slot without changing the device appearance preference', async () => {
+    it('previews a saved dark asset temporarily and switches the explicit mode when kept', async () => {
         storage.getState().applyLocalSettings({ themePreference: 'light' });
         setThemeProfiles({
             activeProfileIds: { light: null, dark: null },
@@ -1057,10 +1072,11 @@ describe('Theme profile editor', () => {
         const screen = await renderEditorScreen('noir');
 
         await vi.waitFor(() => expect(getThemeTryOnOwner().read()?.mode).toBe('dark'));
+        expect(storage.getState().localSettings.themePreference).toBe('light');
 
         await saveEditor(screen);
 
-        expect(storage.getState().localSettings.themePreference).toBe('light');
+        expect(storage.getState().localSettings.themePreference).toBe('dark');
         expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: 'noir' });
     });
 

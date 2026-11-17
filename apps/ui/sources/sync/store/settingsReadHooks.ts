@@ -111,18 +111,19 @@ export function useLocalSettings(): LocalSettings {
   return getStorage()(useShallow((state) => state.localSettings));
 }
 
-export function useLocalSetting<K extends keyof LocalSettings>(name: K): LocalSettings[K];
-export function useLocalSetting<K extends keyof LocalSettings, T>(name: K, select: (value: LocalSettings[K]) => T): T;
-export function useLocalSetting<K extends keyof LocalSettings, T>(name: K, select?: (value: LocalSettings[K]) => T): LocalSettings[K] | T {
-  const preview = useLocalSettingPreviewValue(name);
+export function useLocalSetting<K extends keyof LocalSettings>(name: K, select?: undefined, enabled?: boolean): LocalSettings[K];
+export function useLocalSetting<K extends keyof LocalSettings, T>(name: K, select: (value: LocalSettings[K]) => T, enabled?: boolean): T;
+export function useLocalSetting<K extends keyof LocalSettings, T>(name: K, select?: (value: LocalSettings[K]) => T, enabled = true): LocalSettings[K] | T {
+  const preview = useLocalSettingPreviewValue(name, enabled);
   // Identity-stable unless the name, held preview or caller's projection changes (see `settingRead`).
   const read = React.useCallback((state: StorageState) => {
     const value = preview === undefined ? state.localSettings[name] : preview;
     return select ? select(value) : value;
   }, [name, preview, select]);
-  return getStorage()(read, localSettingScope(name), shallow);
+  return getStorage()(read, enabled ? localSettingScope(name) : inactiveLocalSettingScope, shallow);
 }
 
+const inactiveLocalSettingScope = Object.freeze({ localSettings: Object.freeze([]) }) satisfies StorageSubscriptionScope;
 const localSettingScopes = new Map<keyof LocalSettings, StorageSubscriptionScope>();
 
 function localSettingScope(name: keyof LocalSettings): StorageSubscriptionScope {

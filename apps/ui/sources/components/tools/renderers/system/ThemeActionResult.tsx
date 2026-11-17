@@ -28,9 +28,9 @@ export function ThemeActionResult({ presentation, fallback }: Readonly<{ present
     const call = presentation.call;
     const mode = call.actionId === THEME_ACTION_IDS.tryOn ? call.input.mode : call.output.applied.mode;
     const reference = call.actionId === THEME_ACTION_IDS.apply ? call.input.ref
-        : presentation.replayTry ? projectThemeLibraryEntry(presentation.replayTry.input.document).reference : null;
+        : presentation.replayTry?.input.document ? projectThemeLibraryEntry(presentation.replayTry.input.document).reference : null;
     const entry = useThemeLibraryEntry(reference, presented);
-    const [created] = React.useState(() => call.actionId === THEME_ACTION_IDS.tryOn && entry === null);
+    const [created] = React.useState(() => call.actionId === THEME_ACTION_IDS.tryOn && call.input.document !== null && entry === null);
     const selected = useThemeProfileReferenceSelection(presented)[mode];
     const selectedDocument = useThemeProfileDocument(selected, presented).document;
     const selectedPreparation = usePreparedThemeCss(selectedDocument?.profile.css ?? '', presented);

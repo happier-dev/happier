@@ -109,6 +109,7 @@ export const themeSurfaces = {
     columnName: "名前",
     columnSource: "提供元",
     columnModes: "モード",
+    keepSwitchesMode: ({ face, mode }: { face: string; mode: string }) => `${face} を使用 · ${mode} に切り替え`,
     anyMode: "すべて",
     lightAndDark: "ライトとダーク",
     modeFilter: "対応モード",

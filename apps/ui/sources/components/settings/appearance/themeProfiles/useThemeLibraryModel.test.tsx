@@ -10,6 +10,7 @@ import { useThemeLibraryModel, type ThemeLibraryModelInput } from './useThemeLib
 import type { ThemeUiActionExecute } from './useThemeActionExecution';
 import { buildThemePresetSourceOptions } from './themeProfilePresetOptions';
 import { createThemePluginShareForm } from './themePluginShareForm';
+import { prepareThemeCss } from '@/theme/css/prepareThemeCss';
 import { createShareThemePlugin } from '@/theme/profiles/shareThemePlugin';
 
 import { mergeThemeProfileDocumentEdit, parseThemeProfileDocument } from '@happier-dev/protocol/account/settings/themeProfiles';
@@ -18,12 +19,39 @@ import { standardCleanup } from '@/dev/testkit';
 afterEach(standardCleanup);
 
 describe('theme library controller', () => {
-    it('browses headers without bodies and applies through policy without changing the other mode', async () => {
+    it('groups a paired document once and projects the selected slot in that slot mode', async () => {
+        const state = createThemeActionHarness();
+        const document = mergeThemeProfileDocumentEdit(themeActionDocument('Paired'), {
+            overrides: { light: { 'background.canvas': '#FAFAFA' }, dark: { 'background.canvas': '#121212' } },
+        });
+        const entry = (await state.library.save({ document })).entry!;
+        await state.library.select({ reference: entry.reference, mode: 'dark' });
+        const input: ThemeLibraryModelInput = {
+            options: buildThemePresetSourceOptions(await state.library.list()), selection: state.selection, showing: 'dark',
+            labels: { sourceYours: 'Yours', sourceStore: 'Store', sourcePlugin: 'Plugin', editTheme: 'Edit', exportFile: 'Export' },
+            retry() {}, onCreate() {}, onEdit() {}, onExport() {}, onImport() {},
+        };
+        const execute: ThemeUiActionExecute = async () => { throw new Error('No action expected while projecting headers'); };
+        const hook = await renderHook(value => useThemeLibraryModel(value, execute), { initialProps: input });
+        const key = input.options.find(option => option.entry?.id === entry.id)!.id;
+        const tiles = hook.getCurrent().sections!.flatMap(section => section.tiles).filter(tile => tile.key === key);
+        expect(tiles).toHaveLength(1);
+        expect(tiles[0]?.dual).toBe(true);
+        expect(tiles[0]?.previews).toMatchObject({
+            light: { kind: 'miniature', miniature: { mode: 'light' } },
+            dark: { kind: 'miniature', miniature: { mode: 'dark' } },
+        });
+        expect(hook.getCurrent().slots.dark.preview).toMatchObject({ kind: 'miniature', miniature: { mode: 'dark' } });
+    });
+
+    it('browses headers and tries themes in their own mode before Keep through policy', async () => {
         const state = createThemeActionHarness();
         const saved = (await state.library.save({ document: themeActionDocument('Header') })).entry!;
-        let settings = normalizeActionsSettingsV1({ v: 1, actions: { [THEME_ACTION_IDS.apply]: { disabledSurfaces: ['ui'] } } });
+        let settings = normalizeActionsSettingsV1({ v: 1, actions: { [THEME_ACTION_IDS.tryOn]: { disabledSurfaces: ['ui'] } } });
         const executor = createActionExecutor({ themeAction: createThemeActionExecute({
             withLibrary: operation => operation(state.library), readSelection: () => state.selection, clientId: () => '',
+            runtime: { preview: state.owner, coverage: value => prepareThemeCss(value.profile.css ?? '').coverage,
+                detailedCoverage: value => prepareThemeCss(value.profile.css ?? '').detailedCoverage },
         }), isActionEnabled: (id, context) => isActionEnabledByActionsSettings(id, settings, context) });
         async function execute<Id extends ThemeActionId>(id: Id, input: ThemeActionInput<Id>): Promise<ThemeActionOutput<Id>> {
             const result = await executor.execute(id, input, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
@@ -36,10 +64,14 @@ describe('theme library controller', () => {
             { id: 'dark', kind: 'base', title: 'Dark', subtitle: '', preferredMode: 'dark', profile: null, reference: null },
             { id: 'header', kind: 'custom', title: saved.name, subtitle: '', preferredMode: saved.mode,
                 profile: null, reference: saved.reference, miniature: saved.miniature, entry: saved },
-        ], selection: state.selection, showing: saved.mode, retry: () => {}, onCreate: () => {},
+        ], selection: state.selection, showing: saved.mode === 'light' ? 'dark' : 'light', retry: () => {}, onCreate: () => {},
             onEdit: () => {}, onExport: () => {}, onImport: () => {}, onFailure: failure };
         const hook = await renderHook(input => useThemeLibraryModel(input, execute), { initialProps: props });
         expect(hook.getCurrent().tiles.find(tile => tile.key === 'header')?.preview.kind).toBe('miniature');
+        const beforeSections = hook.getCurrent().sections;
+        expect(beforeSections?.flatMap(section => section.tiles).filter(tile => tile.key === 'header')).toHaveLength(1);
+        await hook.rerender({ ...props, appearanceMode: 'dark' });
+        expect(hook.getCurrent().sections).toBe(beforeSections);
         const otherMode = saved.mode === 'light' ? 'dark' : 'light';
         const otherBefore = state.selection[otherMode];
         await act(async () => hook.getCurrent().onChooseTheme('header'));
@@ -47,12 +79,16 @@ describe('theme library controller', () => {
         expect(state.selection[saved.mode]).toBeNull();
         settings = normalizeActionsSettingsV1({ v: 1 });
         await act(async () => hook.getCurrent().onChooseTheme('header'));
-        await vi.waitFor(() => expect(state.selection[saved.mode]).toEqual(saved.reference));
+        await vi.waitFor(() => expect(state.owner.read()?.selection).toEqual(saved.reference));
+        expect(state.selection[saved.mode]).toBeNull();
+        expect(state.owner.read()?.mode).toBe(saved.mode);
+        await execute(THEME_ACTION_IDS.keep, { previewRef: state.owner.read()!.previewRef });
         expect(state.selection[otherMode]).toBe(otherBefore);
-        await hook.rerender({ ...props, selection: state.selection });
+        await hook.rerender({ ...props, selection: state.selection, showing: saved.mode });
         expect(hook.getCurrent().selectedKey).toBe('header');
         await act(async () => hook.getCurrent().onChooseTheme(saved.mode));
-        await vi.waitFor(() => expect(state.selection[saved.mode]).toBeNull());
+        await vi.waitFor(() => expect(state.owner.read()?.selection).toBeNull());
+        await execute(THEME_ACTION_IDS.keep, { previewRef: state.owner.read()!.previewRef });
         expect(state.selection[otherMode]).toBe(otherBefore);
         settings = normalizeActionsSettingsV1({ v: 1, actions: { [THEME_ACTION_IDS.delete]: { disabledSurfaces: ['ui'] } } });
         await act(async () => { hook.getCurrent().tiles.find(tile => tile.key === 'header')!.onDelete!(); });

@@ -10,12 +10,14 @@ export const THEME_MINIATURE_OVERRIDE_TOKENS = {
     canvas: 'background.canvas', raised: 'surface.elevated', text: 'text.primary',
     mutedText: 'text.secondary', accent: 'control.button.primary.background', border: 'border.default',
 } as const;
+const ThemeProfileMiniaturePaletteSchema = lazyZodSchema(() => z.strictObject({ seeds: z.optional(ThemeProfileSeedsSchema),
+    overrides: z.partialRecord(z.enum(Object.values(THEME_MINIATURE_OVERRIDE_TOKENS)), ThemeProfileColorSchema), radius: ThemeRadiusScaleNameSchema }));
 /** Minimal authored inputs for the header-only miniature; CSS stays in the body. */
 export const ThemeProfileArtifactHeaderSchema = lazyZodSchema(() => z.object({
     v: z.literal(1), kind: z.literal(THEME_ARTIFACT_KIND), title: z.string(),
     mode: z.enum(['light', 'dark']), themeSource: ThemeProfileSourceSchema,
     compatibility: z.strictObject({ status: z.enum(['supported', 'partial']), requiresAppVersion: z.optional(z.string()), unsupportedPaths: z.array(z.string()) }),
-    palette: z.strictObject({ seeds: z.optional(ThemeProfileSeedsSchema),
-        overrides: z.partialRecord(z.enum(Object.values(THEME_MINIATURE_OVERRIDE_TOKENS)), ThemeProfileColorSchema), radius: ThemeRadiusScaleNameSchema }),
+    palette: ThemeProfileMiniaturePaletteSchema,
+    palettes: z.optional(z.partialRecord(z.enum(['light', 'dark']), ThemeProfileMiniaturePaletteSchema)),
 }));
 export type ThemeProfileArtifactHeader = z.infer<typeof ThemeProfileArtifactHeaderSchema>;

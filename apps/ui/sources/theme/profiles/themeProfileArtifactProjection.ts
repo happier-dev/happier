@@ -1,5 +1,5 @@
 import { ThemeProfileArtifactHeaderSchema } from '@happier-dev/protocol/account/settings/themeProfileArtifact';
-import { parseThemeProfileDocument, type ThemeLibraryEntry } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { parseThemeProfileDocument, type ThemeLibraryEntry, type ThemeMiniatureData, type ThemeProfileMode } from '@happier-dev/protocol/account/settings/themeProfiles';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ThemeProfileArtifactRecord, ThemeProfileArtifactSummary } from './themeProfileLibrary';
@@ -28,11 +28,18 @@ export function projectThemeProfileArtifactSummary(row: DecryptedArtifact, scope
         const parsed = ThemeProfileArtifactHeaderSchema.safeParse(header);
         if (!parsed.success) return null;
         const value = parsed.data;
+        const palettes = { ...value.palettes, [value.mode]: value.palette };
+        const modes = (['light', 'dark'] as const).filter(mode => palettes[mode] !== undefined);
+        const miniatures: Partial<Record<ThemeProfileMode, ThemeMiniatureData>> = {};
+        for (const mode of modes) {
+            const palette = palettes[mode]!;
+            miniatures[mode] = projectThemeMiniature({ assetAppearance: value.mode,
+                overrides: { light: {}, dark: {}, [mode]: palette.overrides },
+                seeds: palette.seeds, style: { radius: palette.radius } }, mode);
+        }
         entry = { id: row.id, reference: { kind: 'artifact', id: row.id }, name: value.title, mode: value.mode, source: value.themeSource,
             editable: value.themeSource.kind === 'yours', deletable: value.themeSource.kind === 'yours' || value.themeSource.kind === 'store',
-            compatibility: value.compatibility, miniature: projectThemeMiniature({
-                assetAppearance: value.mode, overrides: { light: {}, dark: {}, [value.mode]: value.palette.overrides },
-                seeds: value.palette.seeds, style: { radius: value.palette.radius } }) };
+            compatibility: value.compatibility, miniature: miniatures[value.mode]!, modes, miniatures };
         entries.set(header, entry);
     }
     return { entry, revision: row.bodyVersion ?? 0, headerVersion: row.headerVersion };

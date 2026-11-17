@@ -143,6 +143,8 @@ export type ThemeUndoContext = Readonly<{
 export type ThemeLibraryEntry = Readonly<{
     id: string; reference: ThemeReference; name: string; mode: ThemeProfileMode; source: ThemeProfileSource;
     editable: boolean; deletable: boolean; compatibility: ThemePresentationCompatibility; miniature: ThemeMiniatureData;
+    /** Additive presentation; older headers expose their single mode and miniature. */
+    modes?: readonly ThemeProfileMode[]; miniatures?: Readonly<Partial<Record<ThemeProfileMode, ThemeMiniatureData>>>;
 }>;
 export type ThemeLibraryChange = Readonly<{
     changedIds: readonly string[]; removedIds: readonly string[]; selectionChangedModes: readonly ThemeProfileMode[];

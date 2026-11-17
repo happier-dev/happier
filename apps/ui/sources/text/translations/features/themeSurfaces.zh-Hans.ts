@@ -109,6 +109,7 @@ export const themeSurfaces = {
     columnName: "名称",
     columnSource: "来源",
     columnModes: "模式",
+    keepSwitchesMode: ({ face, mode }: { face: string; mode: string }) => `使用 ${face} · 切换为${mode}`,
     anyMode: "全部",
     lightAndDark: "浅色和深色",
     modeFilter: "适用模式",

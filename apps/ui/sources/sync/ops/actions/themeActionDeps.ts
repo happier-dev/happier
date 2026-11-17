@@ -62,7 +62,8 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
             switch (request.actionId) {
                 case THEME_ACTION_IDS.list: {
                     const entries = await library.list();
-                    return { themes: request.input.mode ? entries.filter(entry => entry.mode === request.input.mode) : entries };
+                    const mode = request.input.mode;
+                    return { themes: mode ? entries.filter(entry => (entry.modes ?? [entry.mode]).includes(mode)) : entries };
                 }
                 case THEME_ACTION_IDS.get: {
                     const { ref, include = [] } = request.input;
@@ -97,13 +98,22 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                     } else {
                         previewOrigin = { kind: origin.kind };
                     }
+                    if (!input.document) {
+                        const preview = runtime.preview.begin({ document: null, selection: null, mode: input.mode, origin: previewOrigin });
+                        return { previewRef: preview.previewRef, coverage: { total: 0, native: 0, webOnly: 0, affectedSurfaces: [], hides: [] },
+                            compatibility: { status: 'supported', unsupportedPaths: [] } };
+                    }
                     await prepareThemeProfileCssAsync(input.document.profile);
                     const source = input.document.profile.source;
-                    const selection = source?.kind === 'plugin' ? { kind: 'plugin' as const,
-                        pluginId: source.pluginId, contributionId: source.contributionId } : undefined;
+                    const reference: ThemeReference = source?.kind === 'plugin' ? { kind: 'plugin',
+                        pluginId: source.pluginId, contributionId: source.contributionId }
+                        : source?.kind === 'built-in' ? { kind: 'built-in', presetId: source.presetId }
+                        : { kind: 'artifact', id: input.document.profile.id };
+                    const existing = origin.kind !== 'store' ? await library.get(reference) : null;
+                    const selection = existing && sameStrictJsonValue(existing.raw, input.document.raw) ? reference : undefined;
                     const preview = runtime.preview.begin({ ...input, origin: previewOrigin,
                         ...(selection ? { selection } : {}) });
-                    return { previewRef: preview.previewRef, coverage: runtime.coverage(request.input.document), compatibility: request.input.document.compatibility };
+                    return { previewRef: preview.previewRef, coverage: runtime.coverage(input.document), compatibility: input.document.compatibility };
                 }
                 case THEME_ACTION_IDS.revert:
                     if (!host.runtime) return clientActionUnavailable(request.actionId);
@@ -114,7 +124,7 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                     const preview = host.runtime.preview.read();
                     const result = await host.runtime.preview.keep(request.input.previewRef);
                     const clientId = host.clientId();
-                    return { entry: result.entry!, applied: { mode: preview!.mode, ...(clientId ? { clientId } : {}) }, undoHandle: result.undo! };
+                    return { entry: result.entry, applied: { mode: preview!.mode, ...(clientId ? { clientId } : {}) }, undoHandle: result.undo! };
                 }
                 case THEME_ACTION_IDS.apply: {
                     const result = await library.select({ reference: request.input.ref, mode: request.input.mode });
@@ -166,7 +176,8 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
 
 function themeGuide(surfaceMap: readonly ThemeSurfacePaintDescriptor[]): string {
     return [
-        'Try a theme on this device before saving. Ask how it looks. Keep saves only the current proposal; Revert restores the previous selection.',
+        'Try a theme on this device in the requested mode before keeping it. Ask how it looks. Revert restores the saved appearance and selection. A null document tries the mode\'s base theme.',
+        'Keep and Apply fill the requested mode slot. Adaptive stays Adaptive; an explicit Light or Dark appearance switches to the requested mode. One Undo restores the mode and selection together. Keeping an existing library theme reuses its reference.',
         'Prefer editable colour tokens to CSS. CSS supports the published surface hooks; coverage reports which rules also work on native devices.',
         JSON.stringify({ tokens: THEME_PROFILE_TOKEN_DEFINITIONS, surfaceMap }),
     ].join('\n');

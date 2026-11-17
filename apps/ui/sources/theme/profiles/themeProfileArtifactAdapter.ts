@@ -67,8 +67,9 @@ export function createThemeProfileArtifactAdapter(context: ThemeProfileArtifactC
         },
         async save(document: ThemeProfileDocument, expectedRevision?: number) {
             const entry = projectThemeLibraryEntry(document);
+            const palettes = Object.fromEntries(entry.modes!.map(mode => [mode, projectThemeMiniaturePalette(document.profile, mode)]));
             const header = { v: 1, kind: THEME_ARTIFACT_KIND, title: entry.name, mode: entry.mode, themeSource: entry.source,
-                compatibility: entry.compatibility, palette: projectThemeMiniaturePalette(document.profile) };
+                compatibility: entry.compatibility, palette: palettes[entry.mode], palettes };
             const body = JSON.stringify(document.raw);
             const id = document.profile.id;
             let created: boolean | undefined;
