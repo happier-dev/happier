@@ -92,6 +92,11 @@ const CATEGORIES = [
     blurb: 'Backup destinations in the 0.3 development source.',
   },
   {
+    prefix: 'happier.database',
+    title: 'Databases',
+    blurb: 'Database workbenches and capture tools in the 0.3 development source.',
+  },
+  {
     family: 'secretSources',
     title: 'Secret sources',
     blurb: 'External secret sources in the 0.3 development source.',
