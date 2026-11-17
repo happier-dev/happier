@@ -269,7 +269,7 @@ describe('native Agent current-session interactions', () => {
 
     it('authors Claude catalog consent from the admitted MCP identity and applies the selected native payload', async () => {
         const { createClaudeNativePermissionEngine } = await import('../../../../../../../packages/plugins/claude/src/agent/permissions/nativePermissionEngine');
-        const fixture = createFixture({ interactionDeadlineMs: undefined }, { mode: 'yolo', mcpToolContext: {
+        const fixture = createFixture({ interactionDeadlineMs: undefined }, { mode: 'default', mcpToolContext: {
             mcpServerIdentities: { 'docs.team': { serverId: 'catalog-docs', serverTitle: 'Docs' } },
             catalog: { status: 'ready', authority: 'active', revision: 1, diagnostics: [], catalog: { v: 1, bindings: [], servers: [{
                 id: 'catalog-docs', name: 'docs', transport: 'stdio', stdio: { command: 'docs-mcp', args: [] },
