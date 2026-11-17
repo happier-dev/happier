@@ -170,7 +170,9 @@ describe("artifactsRoutes (AccountChange integration)", () => {
         }
     });
 
-    it.each(['grant', 'mode', 'recipient-key', 'census'] as const)('readmits batch content after a captured %s changes', async change => {
+    // A batch read admits once inside its capture snapshot. Access, mode, key and census
+    // changes take effect at the next request (owner ruling 2026-10-29), not mid-request.
+    it.each(['grant', 'mode', 'recipient-key', 'census'] as const)('admits the next batch read against the current %s', async change => {
         const owner = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
         const viewer = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
         const late = await db.account.create({ data: { id: `0-${crypto.randomUUID()}`,
@@ -192,33 +194,23 @@ describe("artifactsRoutes (AccountChange integration)", () => {
             const request = () => app.inject({ method: 'POST', url: '/v1/artifacts/read',
                 headers: { 'x-test-user-id': viewer.id }, payload: { artifactIds: [id] } });
             expect((await request()).json().items[0].ok).toBe(true);
-            const reader = await withSqliteReadSnapshot(async tx => tx);
-            const original = reader.$executeRawUnsafe.bind(reader);
-            let changed = false;
-            // Change the real writer after the capture snapshot closes, before policy readmission starts.
-            Object.defineProperty(reader, '$executeRawUnsafe', { configurable: true, writable: true,
-                value: async (...args: Parameters<typeof original>) => {
-                    const result = await original(...args);
-                    if (args[0] === 'ROLLBACK;' && !changed) {
-                        changed = true;
-                        if (change === 'grant') await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: id, accountId: viewer.id } });
-                        if (change === 'mode') await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'plain' } });
-                        if (change === 'recipient-key') await db.account.update({ where: { id: viewer.id }, data: createSignedAccountContentBinding() });
-                        if (change === 'census') await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: late.id,
-                            accessLevel: 'view', createdByAccountId: owner.id } });
-                    }
-                    return result;
-                } });
-            try {
-                const response = await request();
-                expect(changed).toBe(true);
-                expect(response.statusCode, response.body).toBe(200);
-                expect(response.json().items).toEqual([{ artifactId: id, ok: false,
-                    error: change === 'grant' ? 'artifact_not_found' : 'artifact_content_unavailable',
-                    status: change === 'grant' ? 404 : 409, retryable: change === 'census' }]);
-            } finally {
-                Object.defineProperty(reader, '$executeRawUnsafe', { configurable: true, writable: true, value: original });
+            if (change === 'grant') await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: id, accountId: viewer.id } });
+            if (change === 'mode') await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'plain' } });
+            if (change === 'recipient-key') await db.account.update({ where: { id: viewer.id }, data: createSignedAccountContentBinding() });
+            if (change === 'census') await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: late.id,
+                accessLevel: 'view', createdByAccountId: owner.id } });
+            const response = await request();
+            expect(response.statusCode, response.body).toBe(200);
+            if (change === 'census') {
+                const [item] = response.json().items;
+                expect(item.ok).toBe(true);
+                expect(item.recipientCensus.recipients.map((recipient: { recipientAccountId: string }) => recipient.recipientAccountId))
+                    .toContain(late.id);
+                return;
             }
+            expect(response.json().items).toEqual([{ artifactId: id, ok: false,
+                error: change === 'grant' ? 'artifact_not_found' : 'artifact_content_unavailable',
+                status: change === 'grant' ? 404 : 409, retryable: false }]);
         });
     });
 
