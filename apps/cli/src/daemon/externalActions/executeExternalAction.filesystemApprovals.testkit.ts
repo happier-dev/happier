@@ -57,6 +57,19 @@ import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 import { logger } from '@/ui/logger';
 import { ApiClient } from '@/api/api';
 import { startDaemonSessionControlRuntime } from '@/daemon/startup/startDaemonSessionControlRuntime';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
+import { listQualifiedConnectedAccountsV4, listQualifiedConnectedAccountGroupsV4, readQualifiedConnectedAccountGroupV4,
+  resolveQualifiedConnectedAccountAtomicV4Negotiation } from '@/api/client/qualifiedConnectedAccountApi';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { createConnectedAccountDaemonConfigurationOwner } from '@/daemon/connectedServices/ConnectedAccountDaemonRuntime';
+import { createRequesterTeamCredentialDirectMaterialClient } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
+import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
+import { createActiveAccountSettingsConnectedAccountPurposeBindingStore } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { createConnectedAccountActionTeamResourceCatalogReader } from '@/daemon/connectedServices/purposeBindings/actionTeamResourceCatalog';
+import { createActiveAccountSettingsConnectedAccountSecrets, createQualifiedConnectedAccountDaemonPersistence } from '@/daemon/connectedServices/qualifiedConnectedAccountDaemonPersistence';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
@@ -1007,9 +1020,48 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     runtime: { serverId: 'srv_n2', serverHttpBaseUrl: params.serverHttpBaseUrl, machineId: ref.machineId,
       accountId: 'account', readCredentials: async () => { throw new Error('Admitted Open must use its requester projection'); },
       setupPreparation: { nativeIo: nativeIo.commandIo, platform: { os: 'linux', arch: 'x64' } } } });
-  const features = serviceAction || deploymentAction || actionId === 'workflow.trigger.run_now'
+  const features = serviceAction || deploymentAction || actionId === 'workflow.trigger.run_now' || actionId === 'machines.terminal.open'
     ? await api.getServerFeaturesSnapshot({ refresh: true }) : undefined;
   api.setServerFeaturesSnapshotProvider(() => features);
+  if (actionId === 'machines.terminal.open') {
+    await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force',
+      honorAccountSettingsModeEnv: false, expectedAccountEncryptionMode: 'plain' });
+  }
+  const connectedAccountPurposeBindingRuntime = actionId === 'machines.terminal.open' ? (() => {
+    const persistence = createQualifiedConnectedAccountDaemonPersistence({ credentials,
+      getAccountEncryptionMode: options => api.getAccountEncryptionMode(options),
+      secrets: createActiveAccountSettingsConnectedAccountSecrets({ expectedScopeKey: resolveAccountSettingsScopeKey(credentials) }),
+    });
+    const configurationOwner = createConnectedAccountDaemonConfigurationOwner({ reloadController: pluginReloadController,
+      persistence: persistence.configuration });
+    const established = createQualifiedConnectedAccountEstablishedRuntimeOwner({ reloadController: pluginReloadController,
+      credentials, getAccountEncryptionMode: (signal, options) => api.getAccountEncryptionMode({ ...options, signal }),
+      configuration: persistence.configuration, configurationOwner });
+    const directMaterial = createRequesterTeamCredentialDirectMaterialClient({ credentials,
+      serverHttpBaseUrl: params.serverHttpBaseUrl, readAccountEncryptionMode: signal => api.getAccountEncryptionMode({ signal }) });
+    return createDaemonConnectedAccountPurposeBindingRuntime({
+      credentialOwnerAccountId: readAccountIdFromToken(credentials.token) ?? undefined,
+      workerMachineId: target.machineId, coordinatorInventoryIsObserved: () => client.hasCurrentAccountChangesObserver(),
+      establishedRuntimeOwner: established, reloadController: pluginReloadController,
+      store: createActiveAccountSettingsConnectedAccountPurposeBindingStore({ credentials }),
+      openTeamDirect: directMaterial.open,
+      listTeamResources: createConnectedAccountActionTeamResourceCatalogReader({
+        privateLabelOpen: createCliPrivateLabelActionOpener(credentials.encryption),
+        homeDomainAction: (...args) => createAccountServerActionDeps({ token: credentials.token, credentials,
+          serverId: 'srv_n2', serverHttpBaseUrl: params.serverHttpBaseUrl }).homeDomainAction!(...args),
+      }),
+      resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(features),
+      resolveConnectedAccountEndpoints: request => established.readConfiguredEndpoints(request),
+      qualifiedApi: {
+        listAccountsForServices: (services, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, services, signal,
+          requestPurpose: 'connected-accounts:daemon-coordinator' }),
+        listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token: credentials.token, service, signal,
+          requestPurpose: 'connected-accounts:purpose-binding' }),
+        listGroups: (service, signal) => listQualifiedConnectedAccountGroupsV4({ token: credentials.token, service, signal }),
+        readGroup: (group, signal) => readQualifiedConnectedAccountGroupV4({ token: credentials.token, group, signal }),
+      },
+    });
+  })() : undefined;
   if (worker) {
     // Installed reconciliation is scoped to the local profile; Workspace refs retain the portable Home identity.
     await readProjectAccountRows({ credentials, serverId: 'srv_n2', publication: 'installed' });
@@ -1193,6 +1245,7 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     ...(pluginRuntime ? { pluginRuntimeController: pluginRuntime.controller } : {}),
     serverId: 'srv_n2', serverBaseUrl: params.serverHttpBaseUrl, externalActionAccountId: cliPolicy?.machineCustodianAccountId ?? 'account',
     api, connectedServicesMaterializationBaseDir: join(directory, 'connected-services'),
+    ...(connectedAccountPurposeBindingRuntime ? { sessionConnectedAccountProcessRuntime: connectedAccountPurposeBindingRuntime } : {}),
     ...(serviceAction ? { runtimeActionExecute, resolveServerFeaturesSnapshot: () => features } : {}),
     ...(actionId === 'projects.service.relocate' ? { resolveWorkspaceSyncHandoffAdapter: () => workerWorkspaceSync?.handoffAdapter ?? null } : {}),
     daemonSessionMutationCustody: { stageTranscriptEvent: async () => { throw new Error('Unexpected Session event'); },
@@ -1204,6 +1257,9 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     beforeShutdown: async () => {}, onHappySessionWebhook: async () => { throw new Error('Open must never start an Agent'); },
     requestShutdown() {}, processEnv: {} });
   const runtime = await startRuntime(client, target.machineId, resolveOrigin);
+  if (connectedAccountPurposeBindingRuntime) client.registerConnectedAccountPurposeBindingRuntime({
+    ...connectedAccountPurposeBindingRuntime, materializeSessionProcessEnvironment: runtime.materializeSessionProcessEnvironment,
+  });
   const remoteDeploymentRuntime = remoteDeploymentClient && deploymentRuntime
     ? await rpcInstallation.run(sourceInstallation, () => startRuntime(remoteDeploymentClient, deploymentRuntime.machineId,
       createCurrentMachineExecutionOriginContextResolver({ serverUrl: params.serverHttpBaseUrl,
