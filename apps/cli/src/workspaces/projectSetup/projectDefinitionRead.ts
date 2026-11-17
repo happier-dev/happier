@@ -81,7 +81,7 @@ export function selectProjectDefinitionRead(definition: ProjectManifestInspectio
     const projectedEffective: ProjectEffectiveDefinitionV1 = { ...effectiveDefinition,
         effectiveManifest: manifest ? statusOnly ? { version: 1 }
             : compact ? { ...manifest, services: undefined } : manifest : null,
-        origins: read.kind === 'editor' || read.kind === 'setup' || read.kind === 'scripts' ? effectiveDefinition.origins : [] };
+        origins: read.kind === 'editor' || read.kind === 'setup' || read.kind === 'scripts' || compact ? effectiveDefinition.origins : [] };
     return { read, definition: projectedDefinition, effectiveDefinition: projectedEffective, ...(statusOnly ? { definitionScope: 'statusOnly' as const } : {}),
         detection: projectedDetection, detectionSummary, entries, candidateEntries, commandManifest,
         includeTools: read.kind === 'create' || read.kind === 'tools',

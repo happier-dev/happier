@@ -361,7 +361,7 @@ import { authorizeMachineRpcRequest,
 import type { MachineTerminalAccountReadRuntime, MachineTerminalOwnSessionReadRuntime } from './machine/rpcHandlers.terminal';
 import { resolvePrivateWorkspaceSyncTargetExecution } from './machine/rpcHandlers.workspaceSync';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { inspectProjectSetupFromRuntime } from '@/workspaces/projectSetup/projectSetupReadiness';
+import { inspectProjectSetupFromRuntime, readProjectEffectiveDefinitionFromRuntime } from '@/workspaces/projectSetup/projectSetupReadiness';
 import type { ManagedActivityRpcOwner } from './machine/rpcHandlers.managedActivity';
 import type { MachineWorkSummaryRpcOwner } from './machine/rpcHandlers.machineWorkSummary';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
@@ -2583,7 +2583,11 @@ export class ApiMachineClient {
             getTerminalSessions: () => this.getFiniteTerminalSessions(),
             readActiveProjectCommands: () => this.projectionSchedulingClosed ? null
                 : this.rpcLifecycleRegistrations.at(-1)?.readActiveProjectCommands?.() ?? null,
-            ...(ingress ? { inspectSetup: async ({ workspace, context, reviewSetupConsent }) => {
+            ...(ingress ? { readEffectiveDefinition: async ({ workspace, context, repositorySnapshot, reviewSharedSetup }) => {
+                const runtime = await this.resolveProjectFiniteRuntime(ingress);
+                if (!runtime) throw Object.assign(new Error('project_setup_runtime_unavailable'), { code: 'project_setup_runtime_unavailable' });
+                return await readProjectEffectiveDefinitionFromRuntime({ runtime, ingress, workspace, context, repositorySnapshot, reviewSharedSetup });
+            }, inspectSetup: async ({ workspace, context, reviewSetupConsent }) => {
                 const startedAt = performance.now();
                 const runtime = await this.resolveProjectFiniteRuntime(ingress);
                 logger.debug('[ProjectSetup] inspection phase', { phase: 'runtime',

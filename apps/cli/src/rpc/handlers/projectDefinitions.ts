@@ -23,6 +23,8 @@ import { projectSetupInspectionFailure } from '@/workspaces/projectSetup/project
 import { isReviewedServiceMoveChild } from '@/api/externalActionExecutionAuthorization';
 import { logger } from '@/ui/logger';
 import { selectProjectDefinitionRead } from '@/workspaces/projectSetup/projectDefinitionRead';
+import type { ProjectEffectiveDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
+import type { ProjectManifestInspectionSnapshot, ProjectDefinitionInspectOutput } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 
 type NativeInspectionRuntimeLease = Readonly<{
   registry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'resolveProjectNativeAdapter'>
@@ -88,6 +90,10 @@ export function createProjectDefinitionAction(params: Readonly<{
   nativeIo?: ProjectNativeCommandIo;
   getTerminalSessions?: () => TerminalPtySessionManager | null;
   readActiveProjectCommands?: () => ReturnType<import('@/daemon/actionOperations/actionOperationStore').ActionOperationStore['readActiveProjectCommands']> | null;
+  readEffectiveDefinition?: (input: Readonly<{ workspace: ProjectDefinitionWorkspace; context: ActionExecutorContext;
+    repositorySnapshot: ProjectManifestInspectionSnapshot; reviewSharedSetup?: Readonly<{ sourceId: string }> }>) => Promise<Readonly<{
+      effectiveDefinition: ProjectEffectiveDefinitionV1; sharedSetupChange?: ProjectDefinitionInspectOutput['sharedSetupChange'];
+    }>>;
   /** Captured requester/private-review boundary; the host owns its native lifetime and uses inspectProjectSetupReadiness. */
   inspectSetup?: (input: Readonly<{ workspace: ProjectDefinitionWorkspace; root: string; context: ActionExecutorContext;
     reviewSetupConsent?: true }>) => Promise<ProjectSetupInspection>;
@@ -172,7 +178,20 @@ export function createProjectDefinitionAction(params: Readonly<{
     context.signal?.throwIfAborted();
     if (needsDiscovery && params.acquirePluginRuntime) await phase('native_adapters', () => inspectNativeAdapters(root, detection, params.acquirePluginRuntime!, context.signal));
     context.signal?.throwIfAborted();
-    const selection = selectProjectDefinitionRead(definition, detection, request.read);
+    let effectiveDefinition: ProjectEffectiveDefinitionV1 | undefined;
+    let sharedSetupChange: ProjectDefinitionInspectOutput['sharedSetupChange'];
+    const repositoryOnly = request.read?.kind === 'editor' && request.read.target === 'repository';
+    if (params.readEffectiveDefinition && !repositoryOnly && definition.document?.status !== 'invalid') {
+      try {
+        const observation = await params.readEffectiveDefinition({ workspace, context, repositorySnapshot: definition,
+          ...(request.reviewSharedSetup ? { reviewSharedSetup: request.reviewSharedSetup } : {}) });
+        effectiveDefinition = observation.effectiveDefinition;
+        sharedSetupChange = observation.sharedSetupChange;
+      }
+      catch (error) { return failure(error instanceof Error && 'code' in error && typeof error.code === 'string'
+        ? error.code : 'project_setup_review_unavailable'); }
+    }
+    const selection = selectProjectDefinitionRead(definition, detection, request.read, effectiveDefinition);
     const facts = selection.candidateEntries.length > 0 || selection.commandManifest || selection.includeTools || selection.includeExecutionInputs
       ? await phase('execution_facts', () => inspectProjectDefinitionExecutionFacts({ root,
       detection: { ...selection.detection, entries: request.read?.kind === 'detail' ? selection.entries : detection.entries },
@@ -191,7 +210,10 @@ export function createProjectDefinitionAction(params: Readonly<{
     }
     context.signal?.throwIfAborted();
     const { setupReadiness, setupReview, setupConsent } = setup;
-    const output = { definition: selection.definition, ...(selection.definitionScope ? { definitionScope: selection.definitionScope } : {}), detection: selection.detection,
+    const output = { definition: selection.definition,
+      ...(!repositoryOnly ? { effectiveDefinition: selection.effectiveDefinition } : {}),
+      ...(sharedSetupChange ? { sharedSetupChange } : {}),
+      ...(selection.definitionScope ? { definitionScope: selection.definitionScope } : {}), detection: selection.detection,
       ...(selection.read.kind === 'scripts' || selection.read.kind === 'guidance'
         || (selection.read.kind === 'overview' || selection.read.kind === 'rail') && definition.document?.status !== 'valid'
         ? { detectionSummary: selection.detectionSummary } : {}), ...facts,

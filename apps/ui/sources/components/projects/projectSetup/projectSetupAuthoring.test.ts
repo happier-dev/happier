@@ -274,6 +274,73 @@ describe('Project setup return inspection data', () => {
         }
     });
 
+    it.each([false, true])('uses effective setup and origins in inspection and return summaries (repository present: %s)', async repositoryPresent => {
+        const { useProjectSetupReturnInspection } = await import('./useProjectSetupReturnInspection');
+        const { useProjectDefinitionInspection } = await import('./useProjectDefinitionInspection');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { resolveProjectDefinitionV1 } = await import('@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1');
+        const workspace = { serverId, workspaceId: 'effective-checkout', machineId: 'machine-a', rootPath: '/repo' };
+        const repositoryManifest = { version: 1 as const, scripts: { build: { source: { kind: 'command' as const, command: 'old-build' } } } };
+        const effectiveDefinition = resolveProjectDefinitionV1({
+            repositoryManifest: repositoryPresent ? repositoryManifest : null,
+            acceptedSharedSetup: { sourceId: 'shared-setup', digest: 'a'.repeat(64), contentRevision: { headerVersion: 1, bodyVersion: 1 },
+                manifest: { version: 1, scripts: { build: { source: { kind: 'command', command: 'shared-build' } } },
+                    services: { app: { source: { kind: 'command', command: 'serve' } } } } },
+            setupOverrides: { version: 1, scripts: { lint: { source: { kind: 'command', command: 'personal-lint' } } } },
+        });
+        // beforeEach's real worker-preferences preflight inspected checkout-a; measure this mount's demand.
+        machineTransport.mockClear();
+        machineTransport.mockResolvedValue(ProjectDefinitionInspectOutputSchema.parse({
+            definition: repositoryPresent ? { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: {
+                status: 'valid', manifest: repositoryManifest, diagnostics: [] } } : { basis: { kind: 'absent' }, document: null },
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            effectiveDefinition, setupReadiness: { kind: 'current', reviewedEffectDigest: 'accepted-effect', completedAtMs: 123 },
+        }));
+        const hook = await renderHook(() => {
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            return { ...useProjectDefinitionInspection(workspace, binding, { kind: 'setup' }),
+                returned: useProjectSetupReturnInspection({ kind: 'project', accountId: 'account-a', workspace, page: 'scripts' }) };
+        });
+        try {
+            await expect.poll(() => hook.getCurrent().read).toHaveProperty('value');
+            await expect.poll(() => hook.getCurrent()).toMatchObject({
+                effectiveDefinition: { kind: 'available', value: effectiveDefinition },
+                returned: { summary: [t('projects.authoring.scriptsCount', { count: 2 }),
+                    t('projects.authoring.servicesCount', { count: 1 })].join(' · '),
+                    setupReadiness: { kind: 'current', reviewedEffectDigest: 'accepted-effect', completedAtMs: 123 } },
+            });
+            // Both mounted consumers share the one setup observation, including its origins.
+            expect(machineTransport.mock.calls.filter(([request]) => request.method === 'daemon.projects.inspect.v1')
+                .map(([request]) => request.payload)).toEqual([{ workspace, read: { kind: 'setup' } }]);
+        } finally { await hook.unmount(); }
+    });
+
+    it.each([false, true])('does not reconstruct effective setup from a repository document (owner projection present: %s)', async projectionPresent => {
+        const { useProjectSetupReturnInspection } = await import('./useProjectSetupReturnInspection');
+        const { useProjectDefinitionInspection } = await import('./useProjectDefinitionInspection');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const workspace = { serverId, workspaceId: 'missing-effective', machineId: 'machine-a', rootPath: '/repo' };
+        machineTransport.mockResolvedValue(ProjectDefinitionInspectOutputSchema.parse({
+            definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: { status: 'valid', diagnostics: [],
+                manifest: { version: 1, scripts: { stale: { source: { kind: 'command', command: 'stale' } } } } } },
+            ...(projectionPresent ? { effectiveDefinition: { effectiveManifest: null, origins: [] } } : {}),
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+        }));
+        const hook = await renderHook(() => {
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            return { ...useProjectDefinitionInspection(workspace, binding, { kind: 'setup' }),
+                returned: useProjectSetupReturnInspection({ kind: 'project', accountId: 'account-a', workspace, page: 'scripts' }) };
+        });
+        try {
+            await expect.poll(() => hook.getCurrent().read).toHaveProperty('value');
+            expect(hook.getCurrent()).toMatchObject({
+                effectiveDefinition: projectionPresent ? { kind: 'available', value: { effectiveManifest: null, origins: [] } }
+                    : { kind: 'unavailable', code: 'project_setup_review_unavailable' },
+                returned: { summary: null, setupReadiness: null },
+            });
+        } finally { await hook.unmount(); }
+    });
+
     it.each([
         undefined,
         { kind: 'unprepared', reviewedEffectDigest: 'current-effect' },
@@ -285,12 +352,14 @@ describe('Project setup return inspection data', () => {
         machineTransport.mockResolvedValue(ProjectDefinitionInspectOutputSchema.parse({
             definition: { basis: { kind: 'absent' }, document: null },
             detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
+            effectiveDefinition: { effectiveManifest: null, origins: [] },
             importCandidates: [], ...(setupReadiness ? { setupReadiness } : {}),
         }));
         const hook = await renderHook(() => useProjectSetupReturnInspection({ kind: 'project', accountId: 'account-a', workspace, page: 'scripts' }));
         try {
+            await expect.poll(() => machineTransport.mock.calls.length).toBeGreaterThan(0);
             await expect.poll(() => hook.getCurrent()).toMatchObject({
-                summary: t('projects.widgets.noProjectFile'), setupReadiness: setupReadiness ?? null,
+                summary: null, setupReadiness: setupReadiness ?? null,
             });
         } finally { await hook.unmount(); }
     });
@@ -528,6 +597,7 @@ describe('Project setup through ordinary authoring', () => {
         expect(navigation.push).not.toHaveBeenCalled();
     });
     it.each(['account-a', 'other-account'])('reads the mounted Session return summary only for its original Home Account (%s)', async (accountId) => {
+        const { resolveProjectDefinitionV1 } = await import('@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1');
         const workspace = { serverId, workspaceId: 'checkout-a', machineId: 'machine-a', rootPath: '/repo' };
         const source = { kind: 'native' as const, tool: 'package_script' as const, file: 'package.json', target: 'test' };
         const manifest = { version: 1 as const, scripts: { test: { source }, lint: { source: { ...source, target: 'lint' } } } };
@@ -535,6 +605,7 @@ describe('Project setup through ordinary authoring', () => {
             definition: { basis: { kind: 'present', hash: 'b'.repeat(64) },
                 document: { status: 'valid', bytes: JSON.stringify(manifest), original: manifest, manifest, diagnostics: [] } },
             detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            effectiveDefinition: resolveProjectDefinitionV1({ repositoryManifest: manifest }),
         });
         machineTransport.mockClear();
         machineTransport.mockImplementation(async ({ method, payload, accountId: requester, serverId: home }) => {

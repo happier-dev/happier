@@ -14,6 +14,8 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { createProjectManifestActionClient } from './projectManifestActionClient';
+import { readProjectEffectiveDefinition, type ProjectEffectiveDefinitionInspection } from './projectEffectiveDefinition';
+export { readProjectEffectiveDefinition, type ProjectEffectiveDefinitionInspection } from './projectEffectiveDefinition';
 
 export type ProjectDefinitionInspection = Awaited<ReturnType<ReturnType<typeof createProjectManifestActionClient>['inspect']>>;
 export type ProjectDefinitionInspectionRead =
@@ -186,6 +188,7 @@ function inspectionReader(workspace: WorkspaceAddressV1, binding: ServerCredenti
 export function useProjectDefinitionInspection(workspace: WorkspaceAddressV1 | null, binding: ServerCredentialAccountScopeBinding | null,
     selection: ProjectDefinitionInspectRead = { kind: 'scripts' }): Readonly<{
     read: ProjectDefinitionInspectionRead | null;
+    effectiveDefinition: ProjectEffectiveDefinitionInspection | null;
     retry: () => void;
 }> {
     const presented = useLayoutPresentationActive();
@@ -220,9 +223,12 @@ export function useProjectDefinitionInspection(workspace: WorkspaceAddressV1 | n
         return reader ? reader.store.getState(reader.workspace) : null;
     }, [binding, presented, lookupReader]);
     const read = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    const inspection = read && 'value' in read ? read.value : null;
+    const effective = inspection?.effectiveDefinition;
+    const effectiveDefinition = React.useMemo(() => readProjectEffectiveDefinition({ effectiveDefinition: effective }), [effective]);
     const retry = React.useCallback(() => {
         const reader = presented && binding?.isCurrent() ? lookupReader(false) : undefined;
         if (reader) reader.store.invalidate(reader.workspace);
     }, [binding, presented, lookupReader]);
-    return { read, retry };
+    return { read, retry, effectiveDefinition: inspection ? effectiveDefinition : null };
 }

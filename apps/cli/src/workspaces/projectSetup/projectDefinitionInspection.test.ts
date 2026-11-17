@@ -9,6 +9,18 @@ import { resolveNativePackageManager } from './nativePackageScripts';
 import { ProjectDefinitionDetectionV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { selectProjectDefinitionRead } from './projectDefinitionRead';
 
+it('projects shared-only commands without inventing a repository file', () => {
+    const definition = { basis: { kind: 'absent' as const }, document: null };
+    const effectiveDefinition = { effectiveManifest: { version: 1 as const,
+        scripts: { shared: { source: { kind: 'command' as const, command: 'echo shared' } } } }, origins: [] };
+    const selected = selectProjectDefinitionRead(definition, {
+        entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [],
+    }, { kind: 'scripts' }, effectiveDefinition);
+    expect(selected.definition).toEqual(definition);
+    expect(selected.commandManifest?.scripts?.shared.source).toEqual({ kind: 'command', command: 'echo shared' });
+    expect(selected.effectiveDefinition?.effectiveManifest).toEqual(effectiveDefinition.effectiveManifest);
+});
+
 const roots: string[] = [];
 async function fixture(files: Record<string, string>): Promise<string> {
     const root = await mkdtemp(join(tmpdir(), 'happier-native-inspection-'));

@@ -6,6 +6,7 @@ import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { ProjectDefinitionDetectionV1Schema, ProjectDefinitionImportCandidateV1Schema, ProjectExecutionInputV1Schema, ProjectNativeInvocationPreviewV1Schema, ProjectNativeRefV1Schema, ProjectToolInspectionV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
 import { ProjectManifestDiagnosticSchema, ProjectManifestFileBasisV1Schema, ProjectManifestUpdateResultSchema } from '../workspaces/projectSetup/projectManifestDocument.js';
 import { ProjectManifestV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
+import { ProjectSharedSetupChangeV1Schema } from '../projects/projectSetupChangeV1.js';
 import { ProjectEffectiveDefinitionV1Schema } from '../workspaces/projectSetup/projectDefinitionCompositionV1.js';
 import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -37,6 +38,8 @@ export const ProjectDefinitionInspectInputSchema = lazyZodSchema(() => z.strictO
   ifRevision: z.optional(z.string().check(z.minLength(1))),
   /** Passive consent check for compound operations before disruptive effects. */
   reviewSetupConsent: z.optional(z.literal(true)),
+  /** Explicit update-review demand; passive lists and launch keep the reviewed copy. */
+  reviewSharedSetup: z.optional(z.strictObject({ sourceId: z.string().check(z.minLength(1)) })),
 }));
 export const ProjectManifestUpdateInputSchema = lazyZodSchema(() => z.strictObject({
   workspace: ProjectDefinitionWorkspaceSchema, expectedBasis: ProjectManifestFileBasisV1Schema, bytes: z.string(),
@@ -69,6 +72,7 @@ export const ProjectDefinitionInspectOutputSchema = lazyZodSchema(() => z.strict
   /** Import/native/tool detail reads carry only file status, not a complete declaration projection. */
   definitionScope: z.optional(z.literal('statusOnly')),
   definition: ProjectManifestInspectionSnapshotSchema, detection: ProjectDefinitionDetectionV1Schema,
+  sharedSetupChange: z.optional(ProjectSharedSetupChangeV1Schema),
   effectiveDefinition: z.optional(ProjectEffectiveDefinitionV1Schema),
   detectionSummary: z.optional(z.strictObject({ total: z.number().check(z.int(), z.nonnegative()),
     scripts: z.number().check(z.int(), z.nonnegative()), services: z.number().check(z.int(), z.nonnegative()),

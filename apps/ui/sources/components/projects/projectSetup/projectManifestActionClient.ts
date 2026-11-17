@@ -18,6 +18,8 @@ import {
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema,
   type ProjectOrganizationUpdateInputV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
+import { ProjectSetupSetInputV1Schema, ProjectSetupSetOutputV1Schema,
+  type ProjectSetupSetInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import {
   ProjectManifestUpdateResultSchema,
   type ProjectManifestFileBasisV1,
@@ -36,7 +38,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { HappyError } from '@/utils/errors/errors';
 
 type ActionInvocation = (
-  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare' | 'projects.organization.update' | typeof PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
+  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare' | 'projects.organization.update' | 'projects.setup.set' | typeof PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
   input: unknown,
   context?: Parameters<ReturnType<typeof createFrontDoorActionExecute>>[2],
 ) => ReturnType<ReturnType<typeof createFrontDoorActionExecute>>;
@@ -83,6 +85,7 @@ export function createProjectManifestActionClient(
       | 'projects.manifest.update'
       | 'projects.script.run'
       | 'projects.organization.update'
+      | 'projects.setup.set'
       | 'projects.prepare'
       | typeof PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
     actionInput: unknown,
@@ -143,11 +146,23 @@ export function createProjectManifestActionClient(
     return outcome.value;
   }
 
+  function setSetup(request: Omit<ProjectSetupSetInputV1, 'workspace'>) {
+    return invoke('projects.setup.set', ProjectSetupSetInputV1Schema.parse({ ...request, workspace: input.workspace }), ProjectSetupSetOutputV1Schema);
+  }
+
   return {
     /** Called after the surface's designed Choose new ports confirmation. */
     reassignWorktreePorts(confirmation: Readonly<{ confirmed: true }>) {
       return invoke(PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID,
         ProjectWorktreePortsReassignInputSchema.parse({ workspace: input.workspace }), WorktreePortsResultV1Schema, confirmation);
+    },
+    /** Upstream is read only for the person's explicit update review. */
+    async reviewSharedSetup(sourceId: string) {
+      const result = await execute('projects.inspect', {
+        workspace: input.workspace, read: { kind: 'editor' }, reviewSharedSetup: { sourceId },
+      }, context);
+      if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode });
+      return ProjectDefinitionInspectOutputSchema.parse(result.result);
     },
     async inspect(read: ProjectDefinitionInspectRead = { kind: 'scripts' }) {
       const result = await execute(
@@ -193,6 +208,8 @@ export function createProjectManifestActionClient(
     updateEnvironmentBinding(request: ProjectOrganizationUpdateInputV1) {
       return invoke('projects.organization.update', ProjectOrganizationUpdateInputV1Schema.parse(request), ProjectOrganizationUpdateOutputV1Schema);
     },
+    /** Personal definitions and shared selections use the protected detail/CAS owner. */
+    setSetup,
     runScript(selection: ProjectScriptSelection, choice?: ProjectExecutionChoiceV1) {
       const actionInput = PROJECT_ACTION_INPUT_SCHEMAS_V1[
         'projects.script.run'
