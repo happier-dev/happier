@@ -60,4 +60,19 @@ describe('EmbedAppearanceSection colours', () => {
         expect(next?.config.style?.colors?.light ?? {}).toEqual({});
         expect(next?.config.style?.mode).toBe('system');
     });
+
+    it('shows each colour row its value in the edited mode', async () => {
+        const { EmbedAppearanceSection } = await import('./EmbedAppearanceSection');
+        const draft: EmbedDraft = { ...DEFAULT_EMBED_DRAFT, config: { ...DEFAULT_EMBED_DRAFT.config,
+            style: { v: 1, mode: 'dark', colors: { dark: { 'background.canvas': '#123456' } } } } };
+
+        const screen = await renderScreen(<EmbedAppearanceSection draft={draft} onChange={vi.fn()} />);
+        await screen.pressByTestIdAsync('settings-embed-colors-header');
+
+        const rows = screen.findAll((node) => typeof node.type !== 'string' && node.props.token?.id !== undefined && typeof node.props.onReset === 'function');
+        expect(rows.map((row) => row.props.token.id)).toContain('background.canvas');
+        const canvas = rows.find((row) => row.props.token.id === 'background.canvas');
+        expect(canvas?.props).toMatchObject({ value: '#123456', changed: true });
+        expect(rows.every((row) => typeof row.props.value === 'string' && row.props.value.length > 0)).toBe(true);
+    });
 });

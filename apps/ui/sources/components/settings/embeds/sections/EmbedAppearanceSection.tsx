@@ -5,7 +5,8 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import type { EmbedStyleV1 } from '@happier-dev/protocol/embed';
 
 import { EmbeddedChatPreview } from '@/components/settings/session/SessionSettingPreviews';
-import { ThemeColorTokenRow } from '@/components/settings/appearance/themeProfiles/ThemeColorTokenRow';
+import { ThemeColorTokenRow, describeContrastPairs } from '@/components/settings/appearance/themeProfiles/ThemeColorTokenRow';
+import { resolveThemeProfileEditorDraft } from '@/components/settings/appearance/themeProfiles/themeProfileEditorModel';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
@@ -82,6 +83,8 @@ const EmbedColorsDisclosure = React.memo(function EmbedColorsDisclosure(props: E
     const [editedMode, setEditedMode] = React.useState<ThemeProfileMode>(() => (style.mode === 'dark' ? 'dark' : 'light'));
     const mode: ThemeProfileMode = style.mode === 'light' || style.mode === 'dark' ? style.mode : editedMode;
     const profile = resolveEmbedThemeApplication(style).themeProfiles.profiles[0]!;
+    // One resolution per mode for every row, as the theme editor does.
+    const resolved = resolveThemeProfileEditorDraft(profile, mode).tokens;
     const customized = Object.keys(style.colors?.light ?? {}).length + Object.keys(style.colors?.dark ?? {}).length;
     const setColor = (tokenId: string, value: string | null) => {
         const current = { ...(style.colors?.[mode] ?? {}) };
@@ -122,7 +125,10 @@ const EmbedColorsDisclosure = React.memo(function EmbedColorsDisclosure(props: E
                     {THEME_PROFILE_TOKEN_DEFINITIONS.filter((token) => group.matches(token.id)).map((token) => (
                         <ThemeColorTokenRow
                             key={`${mode}:${token.id}`}
-                            profile={profile}
+                            value={resolved[token.id]!.value}
+                            changed={resolved[token.id]!.changed}
+                            contrastAgainst={describeContrastPairs(resolved[token.id]!.contrast.warnings)}
+                            contrastFix={resolved[token.id]!.contrast.fix}
                             mode={mode}
                             token={token}
                             invalid={invalid.has(token.id)}
