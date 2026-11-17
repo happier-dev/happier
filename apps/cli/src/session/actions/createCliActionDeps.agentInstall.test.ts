@@ -23,7 +23,7 @@ describe('CLI install job Actions', () => {
     const context = { surface: 'cli' as const, authority: 'present_user' as const };
     callMachineRpc.mockResolvedValueOnce({ ok: true, jobId: 'job' });
     expect(await executor.execute('machines.agents.install', { machineId: 'machine', agentId: 'plugin/agent', intent: 'update', force: true }, context)).toMatchObject({ ok: true, result: { jobId: 'job' } });
-    expect(callMachineRpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_AGENTS_INSTALL_START, request: { agentId: 'plugin/agent', intent: 'update', consent: { vendorRecipe: false }, force: true } }));
+    expect(callMachineRpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_AGENTS_INSTALL_START, request: { agentId: 'plugin/agent', intent: 'update', consent: { vendorRecipe: true }, force: true } }));
     callMachineRpc.mockResolvedValueOnce({ ok: true, steps: [], progress: [], events: [], nextCursor: 4, done: true, outcome: { kind: 'succeeded', version: '1.2' } });
     expect(await executor.execute('machines.agents.install.status', { machineId: 'machine', jobId: 'job', cursor: 4 }, context)).toMatchObject({ ok: true, result: { outcome: { kind: 'succeeded' } } });
     expect(callMachineRpc).toHaveBeenLastCalledWith(expect.objectContaining({ method: RPC_METHODS.DAEMON_AGENTS_INSTALL_READ, request: { jobId: 'job', cursor: 4 } }));

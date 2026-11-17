@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
@@ -61,7 +62,10 @@ async function fixture(approvalRequired = false, invalidReply = false) {
       key, revision: 1, content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) },
     })) } };
     if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(String(url), artifacts) };
-    if (path === `/v1/artifacts/${artifacts[0]!.id}`) return { status: 200, data: artifacts[0] };
+    if (/^\/v1\/artifacts\/[^/]+$/.test(path)) {
+      const artifact = artifacts.find(artifact => path === `/v1/artifacts/${artifact.id}`);
+      return artifact ? { status: 200, data: artifact } : { status: 404, data: { error: 'Artifact not found' } };
+    }
     if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: { actionsSettingsV1 } }, version: 7 } };
     if (path === '/v1/account/entity-rows/profiles/transfer') return { status: 200, data: { status: 'absent' } };
     if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
@@ -73,8 +77,11 @@ async function fixture(approvalRequired = false, invalidReply = false) {
   });
   vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
     expect(String(url)).toBe(`${base}/v1/artifacts`);
-    if (!body || typeof body !== 'object' || !('id' in body)) throw new Error('Expected approval Artifact');
-    return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
+    const input = ArtifactJsonCreateHttpInputV1Schema.parse(body);
+    artifacts.push({ id: input.id, header: input.header, body: input.body, dataEncryptionKey: input.dataEncryptionKey,
+      headerVersion: 1, bodyVersion: 1, seq: artifacts.length + 1, createdAt: 1, updatedAt: 1,
+      ownerAccountId: 'skills-account', access: 'owner', encryptionMode: 'plain' });
+    return { status: 200, data: { id: input.id, headerVersion: 1, bodyVersion: 1 } };
   });
   vi.stubGlobal('fetch', async () => new Response('', { status: 404 }));
   bindApiSessionSocketMock(io, createApiSessionSocketStub({ emitWithAck: (event, raw) => {
@@ -126,7 +133,8 @@ it('keeps default machine Action approval admission ahead of its RPC effect', as
   vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
     expect(await owner.run('machine-install')).toBe(true);
-    expect(output.json()).toMatchObject({ ok: true, data: { kind: 'approval_request_created', artifactId: expect.any(String) } });
+    const result = output.json();
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, data: { kind: 'approval_request_created', artifactId: expect.any(String) } });
     expect(owner.requests).toEqual([]);
   } finally { output.restore(); }
 });

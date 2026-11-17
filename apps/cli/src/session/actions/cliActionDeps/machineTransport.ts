@@ -171,7 +171,7 @@ export function createCliMachineActionTransport(
     effectActionId?: string;
   }>): Promise<unknown> => {
     if (!await isMachineActionServerScopeCurrent(input)) {
-      throw Object.assign(new Error('server_scope_mismatch'), { code: 'server_scope_mismatch' });
+      throw new RpcError('server_scope_mismatch', 'server_scope_mismatch');
     }
     const originalContext = input.context;
     if (params.credentials && originalContext && isLocalServiceStopActionIdV1(input.effectActionId)

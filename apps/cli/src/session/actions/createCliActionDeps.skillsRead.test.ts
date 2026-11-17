@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createCliActionDeps } from './createCliActionDeps';
 import { readReadOnlySkillContentV1 } from '@happier-dev/protocol/prompts/library/promptBundleSchemas';
@@ -46,7 +47,8 @@ describe('CLI skills.read real dependencies', () => {
     const content = readReadOnlySkillContentV1('happier:happier')!;
     const items = [{ skillId: 'happier:happier', name: 'happier', digest: content.digest }];
     const inventory = prepareHappierMcpToolInventory({ sessionId: 'active-session', inventory:
-      createHappierToolInventory({ surface: 'agent', isActionEnabled: () => true, actionsSettings: null }) });
+      createHappierToolInventory({ surface: 'agent', isActionEnabled: () => true,
+        actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'skills.read': { toolExposureModes: { agent: 'direct' } } } }) }) });
     const tool = inventory.registrations.find(entry => entry.tool.name === 'skills_read');
     if (!tool) throw new Error('skills_read was not advertised');
     const executor = createActionExecutor({ skillsRead: request => readSkillInLibrary({ request, sessionItems: items,
@@ -165,15 +167,16 @@ describe('CLI skills.read real dependencies', () => {
       getCurrentSessionMetadata: () => ({ machineId: 'skill-host', path: '/repo' }),
       getCurrentSessionSkillItems: () => currentItems }));
     try {
-    const inventory = createHappierToolInventory({ surface: 'agent', isActionEnabled: () => true, actionsSettings: null });
+    const actionsSettings = normalizeActionsSettingsV1({ v: 1, actions: { 'skills.read': { toolExposureModes: { agent: 'direct' } } } });
+    const inventory = createHappierToolInventory({ surface: 'agent', isActionEnabled: () => true, actionsSettings });
     const toolInventory = prepareHappierMcpToolInventory({ sessionId: 'active-session', inventory: {
       ...inventory, tools: inventory.tools.filter(tool => tool.name === 'skills_read'),
     } });
-    const bridge = createActionToolExecutorBridge({ executor, surface: 'agent', actionToolNameToId: toolInventory.actionToolNameToId });
+    const bridge = createActionToolExecutorBridge({ executor, surface: 'agent', actionsSettings, actionToolNameToId: toolInventory.actionToolNameToId });
     const mcpServer = new McpServer({ name: 'skill-read-contract', version: '1' });
     registerHappierMcpBuiltInTools({ registerTool: (name, meta, handler) => {
       mcpServer.registerTool(name, meta as { inputSchema: z.ZodMiniType }, async (args, extra) => CallToolResultSchema.parse(await handler(args, extra)));
-    } }, { sessionId: 'active-session', surface: 'agent', toolInventory,
+    } }, { sessionId: 'active-session', surface: 'agent', actionsSettings, toolInventory,
       deps: { ...bridge, resolveActionOptions: args => bridge.resolveActionOptions(args, 'active-session'),
         changeTitle: async () => ({ success: true }) } });
     const client = new Client({ name: 'skill-read-contract', version: '1' });

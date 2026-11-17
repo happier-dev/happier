@@ -9,6 +9,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability/actions';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -144,6 +145,30 @@ describe('Account Action Home identity admission', () => {
     expect(result).toMatchObject({ ok: false, errorCode: 'account_role_overrides_unavailable', details: { reason: 'scope-retired' } });
     expect(get).not.toHaveBeenCalled();
     expect(post).not.toHaveBeenCalled();
+  });
+
+  it('preserves typed Account retirement through the public Skill Action after its materialization read', async () => {
+    let current = true;
+    let retireAfterRead = false;
+    const captured = params(() => current);
+    const deps = createCliActionDeps({ ...captured, token: captured.credentials.token, sessionId: '', mode: 'plain', ctx: null,
+      savedSecretOperationContext: captured.operationContext });
+    const get = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Addressed plugin skill must not read unrelated HTTP content'));
+    const post = vi.spyOn(axios, 'post').mockImplementation(async url => {
+      expect(String(url)).toBe(`${base}${PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']}`);
+      if (retireAfterRead) current = false;
+      return { status: 200, data: { availabilityCursor: 1, inventoryComplete: true, releases: [], snapshots: [] } };
+    });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), skillActionExecute: deps.skillActionExecute });
+    const invoke = () => executor.execute('skills.export', { skillIds: ['plugin:external.skills/guide'] },
+      { ...context(), authority: 'present_user' as const });
+    // A current, complete empty source reaches the Skill owner's normal absent-item result.
+    expect(await invoke()).toMatchObject({ ok: false, errorCode: 'not_found' });
+    expect(post).toHaveBeenCalledTimes(1);
+    retireAfterRead = true;
+    expect(await invoke()).toMatchObject({ ok: false, errorCode: 'scope-retired' });
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(get).not.toHaveBeenCalled();
   });
 
   it('admits administrator inspection using the captured daemon Home identity without a local client profile', async () => {

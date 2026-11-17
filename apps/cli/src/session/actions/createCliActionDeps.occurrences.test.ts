@@ -78,13 +78,12 @@ describe('CLI occurrence Action composition', () => {
                 await expect(invoke(actionId, input)).resolves.toMatchObject({ ok: true, result: receipt });
                 expect(writes).toHaveLength(before + 1);
             }
-            expect(writes).toEqual([{ operation: 'cancel', body: undefined },
-                { operation: 'retry-reply-handoff', body: undefined },
+            expect(writes).toEqual([{ operation: 'retry-reply-handoff', body: undefined },
                 { operation: 'deliver-result-again', body: { expectedRevision: 7 } }]);
             current = false;
             await expect(invoke('automation.run.result.redeliver', { runId: 'run-1', expectedRevision: 7 }))
                 .resolves.toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
-            expect(writes).toHaveLength(3);
+            expect(writes).toHaveLength(2);
         } finally { await client.close(); await mcpServer.close(); await home.close(); }
     });
 

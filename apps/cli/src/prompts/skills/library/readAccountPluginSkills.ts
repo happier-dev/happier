@@ -17,6 +17,7 @@ import { listCurrentAccountMachines } from '@/api/machine/resolveCurrentAccountM
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type AccountPluginSkillRead = Readonly<{
   credentials: StoredCredentials;
@@ -37,7 +38,7 @@ export async function readAccountPluginSkills(input: AccountPluginSkillRead): Pr
     input.signal?.throwIfAborted();
     if (input.isCurrent && !await input.isCurrent()) throw Object.assign(new Error('scope-retired'), { code: 'scope-retired' });
   };
-  const unavailable = (): never => { throw Object.assign(new Error('Plugin skill content unavailable'), { code: 'skill_content_unavailable' }); };
+  const unavailable = (): never => { throw createActionExecuteFailureError({ ok: false, errorCode: 'skill_content_unavailable', error: 'Plugin skill content unavailable' }); };
   await assertCurrent();
   const serverHttpBaseUrl = input.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
   // An addressed read needs only its plugins' materializations, never the whole Account inventory.
