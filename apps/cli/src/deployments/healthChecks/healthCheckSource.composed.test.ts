@@ -126,6 +126,17 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
 }
 
 describe('saved health source registration and finite cycles', () => {
+    it('retains saved source identity while a threshold transition awaits admission', async () => {
+        const f = fixture();
+        f.safe(false);
+        await f.cycle();
+        f.tick('down');
+        await f.cycle();
+        expect(f.writes.at(-1)).toMatchObject({
+            source: { sourceInstanceId: definition.sourceInstanceId, subject: source.subject },
+            pending: [{ checkId: 'http' }],
+        });
+    });
     it('reads additive nested checkpoint diagnostics without accepting invalid known fields', async () => {
         const f = fixture();
         await f.cycle();

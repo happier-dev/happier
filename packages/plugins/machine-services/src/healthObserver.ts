@@ -135,7 +135,7 @@ export function createHealthCheckSourceAdapter(now: () => number = Date.now,
                 pending.push({ checkId: check.checkId, ordinal: nextOrdinal, result, receivedAt: time });
             }
             if (!replaying && pending.length) {
-                const checkpoint = fitHealthResultCheckpoint({ basis, checks: [...next.values()], pending, ...(retainedCurrent ? { current: retainedCurrent } : {}) });
+                const checkpoint = fitHealthResultCheckpoint({ basis, source: previous.source, checks: [...next.values()], pending, ...(retainedCurrent ? { current: retainedCurrent } : {}) });
                 const written = await storage.set(key, checkpoint,
                     { expectedVersion: version, signal: context.signal });
                 retainedCurrent = checkpoint.current;
