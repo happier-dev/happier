@@ -320,7 +320,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
         const support = renderSupportRows(input.sheets);
         if (rows.length === 0 && support.length === 0 && !input.extraRows) return null;
         return (
-            <ItemGroup testID={input.testID} title={input.title} description={input.description} action={props.compact ? undefined : input.action} surface="none">
+            <ItemGroup testID={input.testID} title={input.title} description={input.description} action={input.action} surface="none">
                 {renderRows(rows, false)}
                 {support}
                 {input.extraRows}
@@ -408,7 +408,7 @@ export const ConnectedServicesIndexView = React.memo(function ConnectedServicesI
         <ItemGroup
             title={poolsTitle}
             description={t('connectedServicesCollection.poolsDescription')}
-            action={props.compact ? undefined : newPool}
+            action={newPool}
             surface="none"
         >
             {pooled.map(({ sheet, pool }, index) => (

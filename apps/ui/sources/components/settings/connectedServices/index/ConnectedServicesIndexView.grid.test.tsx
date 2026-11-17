@@ -73,6 +73,7 @@ function render(projectionStatus?: 'loading', options?: Readonly<{
   facts?: typeof NO_FACTS | Readonly<Record<string, unknown>>;
   now?: number;
   compact?: boolean;
+  renderAddAccount?: (section: 'agents' | 'tools') => React.ReactNode;
 }>) {
   return renderScreen(
     <ConnectedServicesIndexView
@@ -102,6 +103,7 @@ function render(projectionStatus?: 'loading', options?: Readonly<{
       onSignInAgain={vi.fn()}
       onOpenAccount={vi.fn()}
       onOpenPool={vi.fn()}
+      {...(options?.renderAddAccount ? { renderAddAccount: options.renderAddAccount } : {})}
     />,
   );
 }
@@ -165,5 +167,14 @@ describe('ConnectedServicesIndexView grid', () => {
     const short = await render(undefined, { model: model(undefined, ids.slice(0, 3)), presentation: 'list', compact: true });
     expect(short.findByTestId('connected-services-index:search')).toBeNull();
     await short.unmount();
+  });
+  it('keeps a section\'s add action on the phone Overview, as Gateways and Secrets do', async () => {
+    const screen = await render(undefined, {
+      presentation: 'list',
+      compact: true,
+      renderAddAccount: (section) => <React.Fragment key={section}>{`add:${section}`}</React.Fragment>,
+    });
+    expect(screen.getTextContent()).toContain('add:agents');
+    await screen.unmount();
   });
 });
