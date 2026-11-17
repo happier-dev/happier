@@ -63,6 +63,14 @@ it('evaluates one authored graph per bundled plugin at the current inventory sca
     const evaluations = readFileSync(evaluationLog, 'utf8').trim().split('\n');
     expect(evaluations).toHaveLength(roots.length);
     expect(new Set(evaluations).size).toBe(roots.length);
+    // A revision tree has no package-artifact publication: the same evaluation
+    // emits each package's serialized manifest for the tree's Plugin UI compiler.
+    for (const root of roots) {
+      const relativeRoot = relative(repoRoot, root).replaceAll('\\', '/');
+      const emitted = ingestPluginManifestV2(JSON.parse(readFileSync(join(projectionRoot, relativeRoot, '.happier-plugin/plugin.json'), 'utf8')));
+      expect(emitted.ok && emitted.manifest.id).toBe(`happier.${relativeRoot.split('/').pop()}`);
+      expect(existsSync(join(root, '.happier-plugin/plugin.json'))).toBe(false);
+    }
     const scaled = await readCliSourceEntries({ repoDir: repoRoot, projectionRoot, manifest: {}, transform });
     const normalizedPath = projectPackedSessionRunnerModulePath({
       daemonEntrypoint: manifest.entrypoints!.daemon!, locatorModule: './agent/runtime/factory',

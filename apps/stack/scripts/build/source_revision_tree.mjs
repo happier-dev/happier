@@ -54,6 +54,8 @@ function shapesBase(path) {
   return path === 'pnpm-lock.yaml' || path === 'pnpm-workspace.yaml' || path === 'package.json' || path.endsWith('/package.json')
     // The base executes this preparer's result contract before commit overlays.
     || path === 'apps/cli/scripts/prepareSourcePluginUiArtifacts.mjs'
+    // The base places the serialized package manifests this generator emits.
+    || path === 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'
     || isRevisionGeneratorInput(path);
 }
 
@@ -196,8 +198,9 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
   const install = installIdentity ? { identity: installIdentity, dir: join(dirname(baseDir), INSTALLS, installIdentity) }
     : await prepareInstallSnapshot({ repoDir, treesRoot: dirname(baseDir), workspaceDirs, env, signal });
   await mountCapturedWorkspaceDependencies({ sourceDir: install.dir, captureDir: baseDir, workspaceDirs });
-  if (preparePluginUi) await prepareDaemonPluginUi({ treeDir: baseDir, env, signal });
+  // Plugin UI preparation reads the manifests this derivation places.
   await deriveDaemonPluginPublication({ treeDir: baseDir, env, signal });
+  if (preparePluginUi) await prepareDaemonPluginUi({ treeDir: baseDir, env, signal });
   // Clones share inodes with the base; a write-in-place would leak into every Stack.
   await setBundleReadOnly(baseDir, true);
   // The marker publishes the base; until it exists the next builder starts over.
@@ -371,7 +374,21 @@ async function deriveDaemonPluginPublication({ treeDir, env, signal }) {
   await mkdir(dirname(target), { recursive: true });
   await rm(target, { force: true });
   await writeFile(target, await readFile(join(output, 'apps/cli', BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH)));
+  // Serialized package manifests are ignored generated files: a revision archive
+  // has only the tracked ones. Plugin UI preparation reads every package's.
+  const manifests = join(output, 'packages/plugins');
+  for (const id of await readdir(manifests).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))) {
+    const bytes = await readFile(join(manifests, id, PLUGIN_MANIFEST));
+    const path = join(treeDir, 'packages/plugins', id, PLUGIN_MANIFEST);
+    if ((await readFile(path).catch(() => null))?.equals(bytes)) continue;
+    // Unlink first: a clone's file is its base's inode.
+    await rm(path, { force: true });
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, bytes);
+  }
 }
+
+const PLUGIN_MANIFEST = '.happier-plugin/plugin.json';
 
 function touchesPluginInputs(paths) {
   return paths.some(path => path.startsWith('packages/plugins/') || path.startsWith('apps/cli/src/plugins/')
@@ -548,10 +565,10 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
   const changedPaths = [...Object.keys(descriptor.commit?.paths ?? {}), ...Object.keys(descriptor.overlay)];
   // Shared imports and compiler inputs can change outside plugin directories.
   // The compiler's retained-input inventory owns which graphs need rebuilding.
-  if (preparePluginUi && changedPaths.length) await prepareDaemonPluginUi({ treeDir, env, signal });
   if (touchesPluginInputs(changedPaths)) {
     await deriveDaemonPluginPublication({ treeDir, env, signal });
   }
+  if (preparePluginUi && changedPaths.length) await prepareDaemonPluginUi({ treeDir, env, signal });
   const installIdentity = (await readJson(join(base.baseDir, BASE_MARKER))).installIdentity;
   const supportFingerprint = await stageTreeNativeSupport({ treeDir, treesRoot,
     dependencyRootDir: join(treesRoot, INSTALLS, installIdentity), env, signal });

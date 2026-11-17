@@ -257,7 +257,10 @@ changed files plus the Stack's `--overlay` files to the Stack's own hardlink
 clone; a package manifest or lockfile change builds a new base. Server and daemon
 run that clone from source and take no compiler admission. When the commit or
 overlay touches plugin inputs, only the bundled-plugin derivation reruns for that
-Stack. Each reload prepares a new tree beside the running one; `stack stop`
+Stack. That derivation also writes each plugin package's ignored
+`.happier-plugin/plugin.json` from the tree's own plugin sources (a Git archive
+carries only the committed ones), so Plugin UI preparation finds every
+manifest; a change to the generator itself builds a new base. Each reload prepares a new tree beside the running one; `stack stop`
 (including a restart's stop) releases every tree except the selected one, and a
 base no Stack tree references is deleted (the newest base per host is kept). QA Stacks never build their own
 web export: they adopt the producer's shared export or use live Expo.

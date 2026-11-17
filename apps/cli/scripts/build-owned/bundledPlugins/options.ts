@@ -84,7 +84,8 @@ export function printGeneratorUsage(): void {
     'assets, including runner factories derived from authored registration. It requires',
     '--mode check and cannot be combined with other preparation selectors.',
     '--daemon-output-root DIR derives those same projections into a private output root',
-    'with --daemon-projections --mode write; checkout outputs stay read-only.',
+    'with --daemon-projections --mode write, plus each package\'s serialized',
+    '.happier-plugin/plugin.json under packages/plugins/<id>; checkout outputs stay read-only.',
   ].join('\n'));
 }
 

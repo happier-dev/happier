@@ -597,3 +597,57 @@ test('HEAD moves and the checkout reinstalls: a running tree keeps its packages 
   assert.equal(await assertSourceRuntimeDependenciesCurrent({ entrypoint: daemon.entrypoint, env: {} }), null,
     'a launch on the running tree is admitted after HEAD moved and the checkout reinstalled');
 });
+
+// P03-TREE-GENERATED (P03-PLACEMENT-FINISH nl1 11-16 23:52Z): serialized package
+// manifests are ignored generated files, so a revision archive has none, and the
+// daemon's Plugin UI compiler refused 25 plugins with ENOENT. The revision's own
+// daemon generator (a revision-owned executable; this stand-in keeps its output
+// contract) emits them, and the tree places them before anything reads them.
+const FIXTURE_DAEMON_GENERATOR = `import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const out = process.argv[process.argv.indexOf('--daemon-output-root') + 1];
+const write = (path, text) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, text); };
+write(join(out, 'apps/cli/.project/tmp/bundled-plugin-publication/failures.json'), '[]');
+for (const id of readdirSync('packages/plugins')) {
+  const authored = JSON.parse(readFileSync(join('packages/plugins', id, 'src/manifest.json'), 'utf8'));
+  write(join(out, 'packages/plugins', id, '.happier-plugin/plugin.json'), JSON.stringify({ ...authored, serialized: true }) + '\\n');
+}
+`;
+
+test('a revision tree derives its ignored package manifests from the revision; a plugin change re-derives only its clone', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const gitIn = (...args) => promisify(execFile)('git', ['-C', repoDir, ...args]);
+  await writeFile(join(repoDir, '.gitignore'), 'node_modules\n/packages/plugins/*/.happier-plugin/plugin.json\n');
+  await mkdir(join(repoDir, 'apps/cli/scripts/build-owned'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'), FIXTURE_DAEMON_GENERATOR);
+  await mkdir(join(repoDir, 'apps/cli/src'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/cli/package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
+  await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'export {};');
+  const plugin = join(repoDir, 'packages/plugins/devcontainer');
+  await mkdir(join(plugin, 'src'), { recursive: true });
+  await mkdir(join(plugin, '.happier-plugin'), { recursive: true });
+  await writeFile(join(plugin, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-devcontainer', version: '0.0.0', type: 'module' }));
+  await writeFile(join(plugin, 'src/manifest.json'), JSON.stringify({ id: 'happier.devcontainer', version: '1' }));
+  // The checkout's own generated copy is stale; a base never takes it.
+  await writeFile(join(plugin, '.happier-plugin/plugin.json'), JSON.stringify({ id: 'happier.devcontainer', version: 'stale-checkout' }));
+  await gitIn('add', '-A');
+  await gitIn('commit', '--quiet', '-m', 'plugin with an ignored generated manifest');
+  const env = { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') };
+  const prepare = async overlay => {
+    const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay,
+      outputDir: fixture.path(`descriptors-${overlay.length}`) });
+    const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, env, stackBaseDir: fixture.path(`stacks/qa-${overlay.length}`),
+      descriptorPath: revision.descriptorPath, components: [{ component: 'daemon' }], logger: { error() {} } });
+    return dirname(dirname(daemon.cliDir));
+  };
+  const manifestIn = tree => join(tree, 'packages/plugins/devcontainer/.happier-plugin/plugin.json');
+  const tree = await prepare([]);
+  assert.deepEqual(JSON.parse(await readFile(manifestIn(tree), 'utf8')), { id: 'happier.devcontainer', version: '1', serialized: true },
+    'the tree carries the manifest derived from the revision\'s source, not a missing or checkout copy');
+  const baseManifest = await lstat(manifestIn(tree));
+  await writeFile(join(plugin, 'src/manifest.json'), JSON.stringify({ id: 'happier.devcontainer', version: '2' }));
+  const changed = await prepare(['packages/plugins/devcontainer/src/manifest.json']);
+  assert.equal(JSON.parse(await readFile(manifestIn(changed), 'utf8')).version, '2', 'a changed plugin source re-derives its manifest');
+  assert.equal(JSON.parse(await readFile(manifestIn(tree), 'utf8')).version, '1', 'the earlier tree keeps its own manifest');
+  assert.equal((await lstat(manifestIn(tree))).ino, baseManifest.ino, 'the clone never writes through its base inode');
+});

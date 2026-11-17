@@ -4576,7 +4576,17 @@ async function generateDaemonProjections(
   for (const asset of [...renderCliBundledPluginManifestAssets({ pluginPackages }), ...renderCliBundledActionCliHelpAssets({ pluginPackages })]) {
     emit(resolve(outputRoot, 'apps/cli', asset.relativePath), asset.out);
   }
-  if (options.daemonOutputRoot) writeBundledPluginPublicationFailures(outputRoot, failures);
+  if (options.daemonOutputRoot) {
+    // A private source tree has no package-artifact publication, yet its Plugin
+    // UI compiler reads each package's serialized manifest. Emit them from these
+    // same evaluated manifests; the tree's owner places them.
+    const { serializeCanonicalPluginManifest } = await loadPluginManifestSerializerModule();
+    for (const entry of pluginPackages) {
+      writeFileAtomic(resolve(outputRoot, 'packages/plugins', entry.pluginPackageId, BUNDLED_PLUGIN_MANIFEST_ARTIFACT_PATH),
+        serializeCanonicalPluginManifest(entry.manifest));
+    }
+    writeBundledPluginPublicationFailures(outputRoot, failures);
+  }
   return failures;
 }
 
