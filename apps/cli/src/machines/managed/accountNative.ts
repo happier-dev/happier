@@ -13,6 +13,7 @@ import { MachineProvisionerContributionV1Schema, readMachineProvisionerActionRol
 import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { readPluginActionFailureHandlerInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /** Finite Account controls and reads consume the same selected, reviewed role port. */
 export function createCliManagedAccountNativeInvocation(input: Readonly<{
@@ -39,6 +40,16 @@ export function createCliManagedAccountNativeInvocationForLaunch(input: Readonly
     /** Retained Prepare placement; missing legacy placement cannot select a Machine effect. */
     originalMachineId?: string;
 }>): ManagedNativeInvocation {
+    const destroyId = input.provisioner.preparation?.actions.destroy;
+    const destroy = input.selected.manifest.contributes.actions.find(action => action.id === destroyId);
+    const binding = input.context.externalActionExecutionAuthorization?.binding;
+    // Native Prepare is custodian-only. Client-authored preset content cannot
+    // transfer that custodian's prepared artifact to another Account.
+    if (destroy && destroy.execution?.target !== 'account' && binding
+        && binding.accountId !== binding.custodianAccountId) {
+        throw createActionExecuteFailureError({ ok: false,
+            errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
+    }
     return createAccountNativeInvocation({ ...input, useReviewedParent: true,
         originalPreparation: { machineId: input.originalMachineId } });
 }
@@ -68,7 +79,8 @@ function createAccountNativeInvocation(input: Readonly<{
             const machineId = input.context.runtimeActionMachineId ?? input.context.externalActionExecutionAuthorization?.binding.machineId;
             // Cross-host routing waits for Home's original-placement admission. Never substitute today's controller.
             if (!input.originalPreparation.machineId || input.originalPreparation.machineId !== machineId) {
-                throw new ManagedMachineControllerError('controller_unavailable');
+                throw createActionExecuteFailureError({ ok: false,
+                    errorCode: 'controller_unavailable', error: 'controller_unavailable' });
             }
         }
         const port = input.useReviewedParent && reviewedParent

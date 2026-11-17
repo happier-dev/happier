@@ -3552,6 +3552,13 @@ A Retry after interruption uses a new admission to inspect the retained native
 operation with its original launch. It adopts a current artifact or deletes the
 leftover before building the newly admitted target.
 
+Native image Prepare requires the target Machine's custodian. At Archive cleanup
+admission, the native preparation bridge requires the signed requester Account to
+match that custodian before invoking any native preparation role. Client-authored
+preset content cannot transfer another Account's artifact. A Can-use carrier
+therefore cannot destroy the custodian's image; the custodian must perform that
+cleanup. Account-target cloud preparation retains requester credential scope.
+
 The private prepared binding retains the original Prepare host for Machine-native
 image cleanup. Missing legacy placement or a different executing host returns
 `controller_unavailable` while retaining the image and preset for recovery.

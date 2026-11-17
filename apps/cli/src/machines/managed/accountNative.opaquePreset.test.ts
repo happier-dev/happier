@@ -7,6 +7,7 @@ import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/manag
 import { createPluginAccountBundledSelectionV1, resolvePluginAccountExecutionSelectionV1 } from '@happier-dev/protocol/plugins/availability';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { LIMA_PLUGIN } from '@happier-dev/plugins-machine-lima/manifest';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { fixture as managedFixture, roleInput } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { createCliManagedAccountNativeInvocation, createCliManagedAccountNativeInvocationForLaunch, resolveCliManagedAccountProvisioner } from './accountNative';
 
@@ -37,7 +38,11 @@ function opaqueAccountNativeFixture() {
 }
 
 describe('CLI Account opaque preset native roles', () => {
-    it.each([undefined, 'original-host'])('runs original-host Archive cleanup only with retained placement (%s)', async originalMachineId => {
+    it.each([
+        { originalMachineId: undefined, member: false },
+        { originalMachineId: 'original-host', member: false },
+        { originalMachineId: 'original-host', member: true },
+    ])('runs original-host Archive cleanup only with retained custodian placement ($originalMachineId/member=$member)', async ({ originalMachineId, member }) => {
         const manifest = PluginManifestV2Schema.parse(LIMA_PLUGIN.manifest);
         const selected = resolvePluginAccountExecutionSelectionV1({ pluginId: manifest.id, intentRead: null,
             bundled: createPluginAccountBundledSelectionV1({ packageName: '@happier-dev/plugins-machine-lima', manifest }) });
@@ -75,18 +80,29 @@ describe('CLI Account opaque preset native roles', () => {
             },
         });
         const result = await executor.execute('machines.presets.archive', archiveInput, {
-            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: 'owner',
+            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home', runtimeAccountId: member ? 'member' : 'owner',
             runtimeActionMachineId: 'original-host',
+            ...(member ? { externalActionTarget: { kind: 'machine' as const, machineId: 'original-host' } } : {}),
+            ...(member ? { externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+                v: 1, token: 'member-archive-admission', binding: { accountId: 'member', custodianAccountId: 'owner',
+                    authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+                    serverIdentityId: 'home', machineId: 'original-host', installationId: 'owner-installation',
+                    actionId: 'machines.presets.archive', requestId, requestEnvelopeDigest: 'a'.repeat(43),
+                    target: { kind: 'machine', machineId: 'original-host' }, admittedMachineRole: 'use',
+                    presetPreparationAdmission: archiveInput,
+                },
+            }) } : {}),
             actionRequestId: requestId,
-            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+                ...(member ? { approvalWaivedSurfaces: { 'machines.presets.archive': ['cli'] } } : {}) }),
             presentUserConfirmation: { actionId: 'machines.presets.archive',
                 inputDigest: computeActionInputApprovalDigestV1('machines.presets.archive', archiveInput), requestId,
-                accountId: 'owner', serverId: 'home' },
+                accountId: member ? 'member' : 'owner', serverId: 'home' },
         });
-        expect(result, JSON.stringify(result)).toMatchObject(originalMachineId
+        expect(result, JSON.stringify(result)).toMatchObject(member ? { ok: false, errorCode: 'credential_scope_denied' } : originalMachineId
             ? { ok: true, result: { kind: 'refused', code: 'managed_not_found' } }
             : { ok: false, errorCode: 'controller_unavailable' });
-        expect(observed).toHaveLength(originalMachineId ? 2 : 0);
+        expect(observed).toHaveLength(originalMachineId && !member ? 2 : 0);
     });
 
     it('routes opened power, resize, and diagnostics roles through the reviewed host child without exposing the opened machine', async () => {

@@ -1,4 +1,6 @@
 import fastify from 'fastify';
+import { enableExternalActionHttpBody } from '../../../server/sources/app/api/utils/externalActionHttpBody';
+import tweetnacl from 'tweetnacl';
 import * as undici from 'undici';
 import { resolve } from 'node:path';
 import { expect, it, onTestFinished, vi } from 'vitest';
@@ -21,6 +23,9 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { PLUGIN_MANIFEST } from '../../../../packages/plugins/machine-daytona/src/manifest';
 import { PLUGIN_MANIFEST as LIMA_MANIFEST } from '../../../../packages/plugins/machine-lima/src/manifest';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 
 // Home/vendor HTTP and temporary filesystem custody are the genuine boundaries.
 // The original Action, review, Account selection, provider and private CAS stay real.
@@ -30,21 +35,24 @@ it.each([
     { prepared: true, refuseFirstDelete: false, hostState: undefined },
     { prepared: false, refuseFirstDelete: false, hostState: undefined },
     { prepared: true, refuseFirstDelete: true, hostState: undefined },
-    ...(['ready-context', 'ready', 'wrong-host', 'revoked', 'replaced', 'offline', 'not_found', 'abort'] as const).map(hostState => ({
+    ...(['ready-context', 'ready', 'member-ready', 'wrong-host', 'revoked', 'replaced', 'offline', 'not_found', 'abort'] as const).map(hostState => ({
         prepared: true, refuseFirstDelete: false, hostState,
     })),
 ])('archives after native cleanup or confirmed permanent host loss and restores cold ($prepared/$refuseFirstDelete/$hostState)', async ({ prepared, refuseFirstDelete, hostState }) => {
     const machineNative = hostState !== undefined;
-    const onInstalledHost = hostState === 'ready-context' || hostState === 'ready' || hostState === 'wrong-host';
+    const member = hostState === 'member-ready';
+    const onInstalledHost = hostState === 'ready-context' || hostState === 'ready' || member || hostState === 'wrong-host';
     const permanentlyGone = hostState === 'revoked' || hostState === 'replaced';
     const controller = new AbortController();
     onTestFinished(() => controller.abort());
     await withTempDir('cli-preset-archive-composed-', async happyHomeDir => {
         const app = fastify();
+        enableExternalActionHttpBody(app);
         const accountId = 'archive-owner';
         const homeId = 'srv_cli_preset_archive';
         const serverHttpBaseUrl = 'http://cli-preset-archive.test';
         const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+        const installationKeys = tweetnacl.sign.keyPair();
         const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
         const policy = normalizeActionsSettingsV1({ v: 1, actions: {}, approvalWaivedSurfaces: {
             'machines.presets.archive': ['cli', 'ui'], 'machines.presets.restore': ['cli', 'ui'],
@@ -83,7 +91,7 @@ it.each([
             snapshotId: 'owned-image', name: 'happier-prepared-original-build', organizationId: 'organization', launch: { snapshot: 'owned-image' },
         } };
         let preset = ManagedMachinePresetV1Schema.parse({ id: 'archive-preset', homeId, revision: 1,
-            owner: { kind: 'account', accountId }, contentEncryptionMode: 'plain', recipients: [],
+            owner: { kind: 'account', accountId: member ? 'archive-member' : accountId }, contentEncryptionMode: 'plain', recipients: [],
             content: { t: 'plain', v: { ...content, ...(prepared ? { prepared: { operationId: 'original-build', status: 'ready', artifact,
                 cliBinaryPath: '/opt/happier/bin/happier', binding: createManagedMachinePresetPreparationBindingV1({
                     content, cliIdentity: 'original-cli', credentialConfigurations,
@@ -108,6 +116,8 @@ it.each([
         app.patch('/v4/connect/qualified/credential/health', async () => ({ success: true,
             credentialRevision: revision, configurationRevision: null }));
         app.post('/v1/machines/presets/get', async () => ({ kind: 'found', preset }));
+        app.get('/v1/machines/original-prepare-host', async () => ({ machine: { id: 'original-prepare-host',
+            managedMachineRef: null, active: true, revokedAt: null, replacedByMachineId: null } }));
         app.post('/v1/machines/read-batch', async request => {
             const body = request.body as { machineIds: string[] };
             expect(body.machineIds).toEqual(['original-prepare-host']);
@@ -171,6 +181,8 @@ it.each([
             const accountDeps = createAccountServerActionDeps({ token, credentials, serverId: 'route-home', serverIdentityId: homeId, serverHttpBaseUrl });
             const nativeRoles: string[] = [];
             const cli = onInstalledHost ? createCliActionExecutorFromCredentials({ credentials,
+                ...(member ? { externalActionMachineRequestPrivateKey: installationKeys.secretKey,
+                    externalActionMachineInstallationId: 'owner-installation' } : {}),
                 serverId: 'route-home', serverIdentityId: homeId, serverApiUrl: serverHttpBaseUrl,
                 machineId: hostState === 'wrong-host' ? 'another-controller' : 'original-prepare-host',
                 actionsSettingsProvider: { getActionsSettings: () => policy },
@@ -194,9 +206,34 @@ it.each([
                 ...(onInstalledHost ? { externalActionTarget: { kind: 'machine' as const, machineId: 'original-prepare-host' } } : {}),
                 // Positive control and forged caller identity: only host-captured identity may win.
                 ...(hostState === 'ready-context' || hostState === 'wrong-host' ? { runtimeActionMachineId: 'original-prepare-host' } : {}),
+                ...(member ? { runtimeAccountId: 'archive-member', serverId: 'route-home', serverIdentityId: homeId,
+                    externalActionExecutionAuthorization: await projectExternalActionRequesterHttpAuthorization({
+                        authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-member-archive', binding: {
+                            accountId: 'archive-member', custodianAccountId: accountId, accountEncryptionMode: 'plain',
+                            authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: homeId,
+                            machineId: 'original-prepare-host', installationId: 'owner-installation', admittedMachineRole: 'use',
+                            actionId: 'machines.presets.archive', requestId: 'original-archive',
+                            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'original-archive',
+                                target: { kind: 'machine', machineId: 'original-prepare-host' },
+                                input: { homeId, id: preset.id, expectedRevision: 1 } }),
+                            target: { kind: 'machine', machineId: 'original-prepare-host' },
+                            presetPreparationAdmission: { homeId, id: preset.id, expectedRevision: 1 },
+                        } }), target: { kind: 'machine', machineId: 'original-prepare-host' },
+                        serverId: 'route-home', serverIdentityId: homeId, serverHttpBaseUrl,
+                        installationId: 'owner-installation', privateKey: installationKeys.secretKey, rootAdmitted: true,
+                    }) ?? undefined,
+                } : {}),
             };
             let archived = await cli.execute('machines.presets.archive', { homeId, id: preset.id, expectedRevision: 1 },
                 { ...context, actionRequestId: 'original-archive' });
+            if (member) {
+                expect(nativePresent, JSON.stringify({ archived, nativeRoles })).toBe(true);
+                expect(archived, JSON.stringify({ archived, nativeRoles, homeRequests, preset })).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+                expect(nativeRoles).toEqual([]);
+                expect(nativePresenceAtArchive).toEqual([]);
+                expect(preset.archivedAt).toBeUndefined();
+                return;
+            }
             if (machineNative && !permanentlyGone && hostState !== 'ready' && hostState !== 'ready-context') {
                 expect(archived).toMatchObject({ ok: false });
                 expect(preset.archivedAt).toBeUndefined();

@@ -59,6 +59,50 @@ afterAll(async () => {
 });
 
 describe('signed Account Action transport purpose', () => {
+  it('admits a Can-use member Archive carrier but reserves native Prepare to the custodian', async () => {
+    const owner = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+    const member = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+    const keys = tweetnacl.sign.keyPair();
+    const machine = await db.machine.create({ data: {
+      id: crypto.randomUUID(), accountId: owner.id,
+      metadata: encodePlainMachineStoredContent({ host: 'owner', platform: 'linux', happyCliVersion: 'test',
+        homeDir: '/home/owner', happyHomeDir: '/home/owner/.happier' }), metadataVersion: 1,
+      dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'), daemonState: null, daemonStateVersion: 0,
+      installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey),
+    } });
+    await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id,
+      accountId: member.id, accessLevel: 'view', createdByAccountId: owner.id } });
+    const homeId = await getOrCreateServerIdentityId();
+    const preset = await db.managedMachinePreset.create({ data: { homeId, custodianAccountId: member.id,
+      name: '', launch: { contentEncryptionMode: 'plain', recipients: [], content: { t: 'plain', v: {
+        v: 1, name: 'Member-authored preset', launch: { provider: { pluginId: 'happier.machine.lima', localId: 'lima' },
+          schemaVersion: 1, choices: {} },
+      } } } } });
+    const token = await auth.createToken(member.id, undefined, { kind: 'account', authority: 'present_user' });
+    const app = Fastify().withTypeProvider<ZodTypeProvider>() as AppFastify;
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    enableAuthentication(app);
+    registerExternalActionRoutes(app, { dispatch: async () => ({ kind: 'placement_error', code: 'target_unavailable' }) });
+    try {
+      const bind = async (actionId: 'machines.presets.archive' | 'machines.presets.prepare') => await app.inject({
+        method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+        headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: machine.id,
+          envelope: { v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: machine.id },
+            input: { homeId, id: preset.id, expectedRevision: preset.revision,
+              ...(actionId === 'machines.presets.prepare' ? { machineId: machine.id } : {}) } } },
+      });
+      const archived = await bind('machines.presets.archive');
+      expect(archived.statusCode, archived.body).toBe(200);
+      expect(ExternalActionExecutionAuthorizationV1Schema.parse(archived.json()).binding).toMatchObject({
+        accountId: member.id, custodianAccountId: owner.id, admittedMachineRole: 'use',
+      });
+      const prepared = await bind('machines.presets.prepare');
+      expect(prepared.statusCode, prepared.body).toBe(409);
+      expect(prepared.json()).toMatchObject({ code: 'target_unavailable' });
+    } finally { await app.close(); }
+  });
+
   it.each(Object.entries(collectionIds))('confines Collection %s to its native sharing phases', async (operation, actionId) => {
     const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
     const keys = tweetnacl.sign.keyPair();
