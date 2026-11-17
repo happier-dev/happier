@@ -553016,7 +553016,7 @@
           "title": "Change this task’s status?"
         },
         "dangerLevel": "writesRemote",
-        "description": "Uses the task source’s declared native transition.",
+        "description": "Changes the selected item to the target state.",
         "execution": {
           "account": {
             "artifactId": "triage-account-runtime",
@@ -553028,6 +553028,20 @@
           "account-storage"
         ],
         "id": "work-items/transition-v1",
+        "inputHints": {
+          "fields": [
+            {
+              "path": "itemId",
+              "title": "Item",
+              "widget": "text"
+            },
+            {
+              "path": "transitionId",
+              "title": "Target state",
+              "widget": "text"
+            }
+          ]
+        },
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -587103,7 +587117,7 @@
       },
       {
         "dangerLevel": "safe",
-        "description": "Creates a task at the selected configured source using its declared create Action.",
+        "description": "Creates a task in the selected place with the supplied details.",
         "execution": {
           "account": {
             "artifactId": "triage-account-runtime",
@@ -587115,6 +587129,30 @@
           "account-storage"
         ],
         "id": "tasks/create-v1",
+        "inputHints": {
+          "fields": [
+            {
+              "path": "fields.title",
+              "title": "Title",
+              "widget": "text"
+            },
+            {
+              "path": "fields.body",
+              "title": "Description",
+              "widget": "textarea"
+            },
+            {
+              "path": "placeId",
+              "title": "Place",
+              "widget": "text"
+            },
+            {
+              "path": "initialStatusId",
+              "title": "Initial state",
+              "widget": "text"
+            }
+          ]
+        },
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -594123,6 +594161,20 @@
           "account-storage"
         ],
         "id": "tasks/set-origin-error-v1",
+        "inputHints": {
+          "fields": [
+            {
+              "path": "entryRef.entryId",
+              "title": "Item",
+              "widget": "text"
+            },
+            {
+              "path": "originError",
+              "title": "Origin error",
+              "widget": "json"
+            }
+          ]
+        },
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -594540,7 +594592,7 @@
       },
       {
         "dangerLevel": "safe",
-        "description": "Edits supported task fields through the selected source’s declared edit Action.",
+        "description": "Updates the selected task with the supplied changes.",
         "execution": {
           "account": {
             "artifactId": "triage-account-runtime",
@@ -594552,6 +594604,20 @@
           "account-storage"
         ],
         "id": "tasks/edit-v1",
+        "inputHints": {
+          "fields": [
+            {
+              "path": "entryRef.entryId",
+              "title": "Item",
+              "widget": "text"
+            },
+            {
+              "path": "fields",
+              "title": "Changes",
+              "widget": "json"
+            }
+          ]
+        },
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -597706,7 +597772,7 @@
       },
       {
         "dangerLevel": "safe",
-        "description": "Applies a provider-native task transition through the selected source’s declared Action.",
+        "description": "Changes the selected task to the target state.",
         "execution": {
           "account": {
             "artifactId": "triage-account-runtime",
@@ -597718,6 +597784,25 @@
           "account-storage"
         ],
         "id": "tasks/transition-v1",
+        "inputHints": {
+          "fields": [
+            {
+              "path": "entryRef.entryId",
+              "title": "Item",
+              "widget": "text"
+            },
+            {
+              "path": "transitionId",
+              "title": "Target state",
+              "widget": "text"
+            },
+            {
+              "path": "fieldValues",
+              "title": "Transition fields",
+              "widget": "json"
+            }
+          ]
+        },
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
@@ -600722,7 +600807,7 @@
           "presentUserUi": false
         },
         "dangerLevel": "writesLocal",
-        "description": "Records task work through the existing entry-to-session relation owner.",
+        "description": "Links the selected task to the session.",
         "execution": {
           "account": {
             "artifactId": "triage-account-runtime",
@@ -600734,6 +600819,20 @@
           "account-storage"
         ],
         "id": "tasks/link-v1",
+        "inputHints": {
+          "fields": [
+            {
+              "path": "entryRef.entryId",
+              "title": "Item",
+              "widget": "text"
+            },
+            {
+              "path": "sessionId",
+              "title": "Session",
+              "widget": "json"
+            }
+          ]
+        },
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,

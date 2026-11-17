@@ -110,7 +110,11 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         run: createTriageRunConfiguredActionHandler(),
       },
 [TRIAGE_WORK_ITEMS_TRANSITION_ACTION_LOCAL_ID_V1]: {
-        title: 'Change Work Item status', description: 'Uses the task source’s declared native transition.',
+        title: 'Change Work Item status', description: 'Changes the selected item to the target state.',
+        inputHints: { fields: [
+          { path: 'itemId', title: 'Item', widget: 'text' },
+          { path: 'transitionId', title: 'Target state', widget: 'text' },
+        ] },
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [], dangerLevel: 'writesRemote', hostAccess: ['account-storage'],
         confirmation: { title: 'Change this task’s status?', body: 'This applies the selected status transition in its source.', confirmLabel: 'Change status' },
         execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
@@ -131,7 +135,13 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
       },
 [TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1]: {
         title: 'Create a task',
-        description: 'Creates a task at the selected configured source using its declared create Action.',
+        description: 'Creates a task in the selected place with the supplied details.',
+        inputHints: { fields: [
+          { path: 'fields.title', title: 'Title', widget: 'text' },
+          { path: 'fields.body', title: 'Description', widget: 'textarea' },
+          { path: 'placeId', title: 'Place', widget: 'text' },
+          { path: 'initialStatusId', title: 'Initial state', widget: 'text' },
+        ] },
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
         // The selected source Action owns the effect and its approval default.
         inputSchema: TriageCreateTaskActionInputV1Schema,
@@ -143,6 +153,10 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
 [TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1]: {
         title: 'Link or unlink a task origin error',
         description: 'Records the selected origin error on an existing task without creating another task.',
+        inputHints: { fields: [
+          { path: 'entryRef.entryId', title: 'Item', widget: 'text' },
+          { path: 'originError', title: 'Origin error', widget: 'json' },
+        ] },
         surfaces: ['ui', 'voice', 'plugin', 'agent', 'mcp', 'cli'], placementBindings: [],
         inputSchema: TriageSetTaskOriginErrorInputV1Schema,
         resultSchema: TriageSetTaskOriginErrorResultV1Schema,
@@ -161,7 +175,11 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
       },
 [TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1]: {
         title: 'Edit a task',
-        description: 'Edits supported task fields through the selected source’s declared edit Action.',
+        description: 'Updates the selected task with the supplied changes.',
+        inputHints: { fields: [
+          { path: 'entryRef.entryId', title: 'Item', widget: 'text' },
+          { path: 'fields', title: 'Changes', widget: 'json' },
+        ] },
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
         inputSchema: TriageEditTaskActionInputV1Schema,
         resultSchema: TriageTaskWriteResultV1Schema,
@@ -171,7 +189,12 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
       },
 [TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1]: {
         title: 'Change a task’s status',
-        description: 'Applies a provider-native task transition through the selected source’s declared Action.',
+        description: 'Changes the selected task to the target state.',
+        inputHints: { fields: [
+          { path: 'entryRef.entryId', title: 'Item', widget: 'text' },
+          { path: 'transitionId', title: 'Target state', widget: 'text' },
+          { path: 'fieldValues', title: 'Transition fields', widget: 'json' },
+        ] },
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [],
         inputSchema: TriageTransitionTaskActionInputV1Schema,
         resultSchema: TriageTaskWriteResultV1Schema,
@@ -181,7 +204,11 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
       },
 [TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1]: {
         title: 'Link a task to a session',
-        description: 'Records task work through the existing entry-to-session relation owner.',
+        description: 'Links the selected task to the session.',
+        inputHints: { fields: [
+          { path: 'entryRef.entryId', title: 'Item', widget: 'text' },
+          { path: 'sessionId', title: 'Session', widget: 'json' },
+        ] },
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
         dangerLevel: 'writesLocal',
         confirmationWhen: { presentUserUi: false },

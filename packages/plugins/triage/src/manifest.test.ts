@@ -45,6 +45,22 @@ import { INTERNAL_TASK_SOURCE_RECORD_V1 } from './internalTasks/configuration.js
 const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
 
 describe('Triage plugin manifest', () => {
+  it('declares the affected item and requested change for task write reviews', () => {
+    const reviews = {
+      'work-items/transition-v1': { itemId: 'Item', transitionId: 'Target state' },
+      'tasks/transition-v1': { 'entryRef.entryId': 'Item', transitionId: 'Target state', fieldValues: 'Transition fields' },
+      'tasks/edit-v1': { 'entryRef.entryId': 'Item', fields: 'Changes' },
+      'tasks/create-v1': { 'fields.title': 'Title', 'fields.body': 'Description', placeId: 'Place', initialStatusId: 'Initial state' },
+      'tasks/link-v1': { 'entryRef.entryId': 'Item', sessionId: 'Session' },
+      'tasks/set-origin-error-v1': { 'entryRef.entryId': 'Item', originError: 'Origin error' },
+    };
+    for (const [id, fields] of Object.entries(reviews)) {
+      const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
+      expect(action, id).toBeDefined();
+      expect(Object.fromEntries((action?.inputHints?.fields ?? []).map(field => [field.path, field.title])), id)
+        .toMatchObject(fields);
+    }
+  });
   it('owns retained Zen links as aliases of its Tasks page', () => {
     const page = PLUGIN_MANIFEST.contributes.ui.views.find(view => view.id === 'tasks');
     if (page?.container !== 'appPage' || page.target.kind !== 'app') throw new Error('Missing Tasks app page');
