@@ -99,4 +99,26 @@ describe('LostAccessView', () => {
     await screen.pressByTestIdAsync('lost-access-use-key');
     expect(navigation.push).toHaveBeenCalledWith('/restore/manual');
   });
+
+  it('keeps a failed capability read distinct from no reset and recovers on retry', async () => {
+    const control = await renderOnHome({ enabled: true, providers: ['github'] });
+    expect(control.findByTestId('lost-access-provider-github')).not.toBeNull();
+    await control.unmount();
+    resetServerFeaturesClientForTests();
+    setRuntimeFetch(async () => { throw new TypeError('Home is temporarily offline'); });
+
+    const screen = await renderScreen(<LostAccessView returnTo="/restore" />);
+    await vi.waitFor(() => expect(screen.findByTestId('lost-access-unavailable')).not.toBeNull());
+    expect(screen.findAllByTestId('lost-access-body')).toHaveLength(0);
+    expect(screen.findAllByTestId('lost-access-provider-github')).toHaveLength(0);
+
+    const features = createRootLayoutFeaturesResponse({
+      features: { auth: { recovery: { providerReset: { enabled: true } } } },
+      capabilities: { auth: { recovery: { providerReset: { providers: ['github'] } } } },
+    });
+    setRuntimeFetch(async () => Response.json(features));
+    await screen.pressByTestIdAsync('lost-access-retry');
+    await vi.waitFor(() => expect(screen.findByTestId('lost-access-provider-github')).not.toBeNull());
+    expect(screen.findByTestId('lost-access-body')?.props.children).toBe('connect.lostAccessBody');
+  });
 });

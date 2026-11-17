@@ -4,6 +4,7 @@ import { Linking, Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -12,7 +13,8 @@ import { getRandomBytesAsync } from '@/platform/cryptoRandom';
 import { encodeBase64 } from '@/encryption/base64';
 import { encodeHex } from '@/encryption/hex';
 import sodium from '@/encryption/libsodium.lib';
-import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
+import { retryServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
@@ -80,25 +82,7 @@ export const LostAccessView = React.memo(function LostAccessView(props: LostAcce
     useUnistyles();
     const styles = stylesheet;
 
-    const [providers, setProviders] = React.useState<string[] | null>(null);
-
-    React.useEffect(() => {
-        let mounted = true;
-        fireAndForget((async () => {
-            try {
-                const features = await getReadyServerFeatures();
-                const resetGate = features?.features?.auth?.recovery?.providerReset ?? null;
-                const providersList = features?.capabilities?.auth?.recovery?.providerReset?.providers ?? [];
-                const enabled = resetGate?.enabled === true ? providersList : [];
-                if (mounted) setProviders(enabled);
-            } catch {
-                if (mounted) setProviders([]);
-            }
-        })(), { tag: 'LostAccessView.loadRecoveryProviders' });
-        return () => {
-            mounted = false;
-        };
-    }, []);
+    const featuresSnapshot = useServerFeaturesRuntimeSnapshot();
 
     const startReset = React.useCallback(async (providerIdRaw: string) => {
         // Bind reset OAuth to the Home selected when the user initiates it,
@@ -191,13 +175,34 @@ export const LostAccessView = React.memo(function LostAccessView(props: LostAcce
         }
     }, [props.returnTo]);
 
-    if (providers === null) {
+    if (featuresSnapshot.status === 'loading') {
         return (
             <View style={styles.loading}>
                 <ActivitySpinner size="small" />
             </View>
         );
     }
+
+    if (featuresSnapshot.status !== 'ready') {
+        return <SurfaceStateCard
+            testID="lost-access-unavailable"
+            kind="unavailable"
+            title={t('errors.operationFailed')}
+            action={{
+                testID: 'lost-access-retry',
+                label: t('common.retry'),
+                onPress: () => fireAndForget(retryServerFeaturesSnapshot({
+                    serverId: getActiveServerSnapshot().serverId,
+                }), { tag: 'LostAccessView.retryRecoveryProviders' }),
+            }}
+            accessibilitySemantics="status"
+        />;
+    }
+
+    const features = featuresSnapshot.features;
+    const providers = features.features.auth.recovery.providerReset.enabled === true
+        ? features.capabilities?.auth?.recovery?.providerReset?.providers ?? []
+        : [];
 
     return (
         <View testID="lost-access-view" style={styles.root}>
