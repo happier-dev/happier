@@ -116,6 +116,14 @@ describe('session prompt-plan producer', () => {
   });
 
   it('keeps inherited built-ins on demand and inlines only an explicit Session selection', async () => {
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'skill-demand-account' })).toString('base64url')}.signature`, encryption: null };
+    const settings = accountSettingsParse({ actionsSettingsV1: { v: 1, actions: {
+      'skills.read': { toolExposureModes: { agent: 'direct' } },
+    } } });
+    const snapshot = { source: 'network' as const, settings, rawSettings: {}, scopeKey: resolveAccountSettingsScopeKey(credentials),
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      promptLibraryCatalog: { status: 'ready' as const, rows: [], tombstones: [], diagnostics: [] } };
+    setActiveAccountSettingsSnapshot(snapshot);
     const contents = FIRST_PARTY_SKILLS_V1.map(skill => ({ skill, content: readReadOnlySkillContentV1(skill.skillId)! }));
     const items = contents.map(({ skill, content }) => ({ skillId: skill.skillId, name: skill.name,
       description: skill.description, digest: content.digest, disableModelInvocation: false, userInvocable: true }));
@@ -135,7 +143,7 @@ describe('session prompt-plan producer', () => {
         let plan = prepare([]);
         expect(plan.items.every(item => item.state === 'delivered')).toBe(true);
         const resolve = createSessionPromptPlanResolver({
-          opts: { credentials: { token: 'skill-demand-test', encryption: null } },
+          opts: { credentials, accountSettingsContext: { ...snapshot, whenRefreshed: null } },
           session: Object.assign(createApiSessionClientFixture(), { sessionId: 'skill-demand-session', getMetadataSnapshot: () => createTestMetadata() }),
           agentId: 'codex', machineId: 'test-machine', directory: '/tmp/project', memoryRecallGuidanceEnabled: false,
           readNativeSessionId: () => 'native', daemonBridge, readSessionSkills: () => ({ plan, indexItems: kind === 'index' ? items : [] }),
@@ -149,7 +157,7 @@ describe('session prompt-plan producer', () => {
           if (skill.skillId === 'happier:deploy') expect(deployPrompt).toContain(content.skillMd);
           else expect(deployPrompt).not.toContain(content.skillMd);
         }
-        const loader = resolveSessionNativeToolDescriptors({ accountSettings: {}, sessionId: 'skill-demand-session',
+        const loader = resolveSessionNativeToolDescriptors({ accountSettings: settings, sessionId: 'skill-demand-session',
           memoryRecallGuidanceEnabled: false }).find(tool => tool.name === 'skills_read');
         expect(loader).toBeDefined();
         // A natural request has no force-included skill. Native delivery must still
@@ -162,7 +170,8 @@ describe('session prompt-plan producer', () => {
   it('withdraws prepared compaction guidance when its delivered Action tool is disabled', async () => {
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'compaction-context-account' })).toString('base64url')}.signature`, encryption: null };
     const scopeKey = resolveAccountSettingsScopeKey(credentials);
-    const settings = accountSettingsParse({ codingPromptBehaviorV1: { sessionCompactionNudge: true } });
+    const settings = accountSettingsParse({ codingPromptBehaviorV1: { sessionCompactionNudge: true },
+      actionsSettingsV1: { v: 1, actions: { 'session.compact': { toolExposureModes: { agent: 'direct' } } } } });
     const snapshot = { source: 'network' as const, settings, rawSettings: {}, scopeKey,
       settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
       promptLibraryCatalog: { status: 'ready' as const, rows: [], tombstones: [], diagnostics: [] } };
@@ -188,7 +197,8 @@ describe('session prompt-plan producer', () => {
   it('re-evaluates no tool availability while the prepared plan inputs are unchanged, and still withdraws when they change', async () => {
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'plan-basis-cost-account' })).toString('base64url')}.signature`, encryption: null };
     const scopeKey = resolveAccountSettingsScopeKey(credentials);
-    const settings = accountSettingsParse({ codingPromptBehaviorV1: { sessionCompactionNudge: true } });
+    const settings = accountSettingsParse({ codingPromptBehaviorV1: { sessionCompactionNudge: true },
+      actionsSettingsV1: { v: 1, actions: { 'session.compact': { toolExposureModes: { agent: 'direct' } } } } });
     const snapshot = { source: 'network' as const, settings, rawSettings: {}, scopeKey,
       settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
       promptLibraryCatalog: { status: 'ready' as const, rows: [], tombstones: [], diagnostics: [] } };

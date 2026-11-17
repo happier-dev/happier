@@ -19,7 +19,7 @@ import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/pl
 import { SessionTurnPublicationRejectedError } from '@/api/session/client/transport/mutations/deliverSessionTurnMutation';
 import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import type { ProviderBoundModelRef } from '@happier-dev/protocol';
+import { AgentProviderRequirementsV1Schema, type ProviderBoundModelRef } from '@happier-dev/protocol';
 import { createModelIntentMetadataCasCandidate } from '@happier-dev/agents/session/state/metadataWriters';
 import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import { createSessionModelTransitionAuthorizer } from '@/providers/sessions/authorizeSessionModelTransitionTarget';
@@ -455,7 +455,17 @@ it.each(['admission', 'runtime_event', 'clear'] as const)('reopens the retained 
     const opens: string[] = [];
     const failures: unknown[] = [];
     const plan = await createNativeAgentRuntimeSessionPlanFixture({
-        backend: contributions.backend, agent: contributions.agent, lease: createLease(agentId),
+        backend: contributions.backend, agent: { ...contributions.agent,
+            richDefinition: { ...contributions.agent.richDefinition, definition: {
+                ...contributions.agent.richDefinition.definition,
+                providerRequirements: AgentProviderRequirementsV1Schema.parse({
+                    acceptsProtocols: ['openai-responses'], required: {},
+                    credentialSupport: { supportsNoAuth: true, apiKeyTransports: [] },
+                    authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [] },
+                    materialization: 'spawnEnv', applyPolicy: 'next_prompt', supportsFreeformModelIds: true,
+                }),
+            } },
+        }, lease: createLease(agentId),
         createSessionHostServiceOwners: () => createSessionHostServiceOwners(),
         // Daemon new-turn admission is an RPC boundary; the host path beneath it is real.
         authorizeNewTurn: async () => {
