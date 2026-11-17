@@ -160,6 +160,26 @@ describe('TeamJoinedCard', () => {
     vi.unstubAllGlobals();
   });
 
+  it('offers the Team itself as the quiet way on when setup leads, saving the name first', async () => {
+    const home: Home = { nameRequests: [], failName: false };
+    const onSetup = vi.fn();
+    const { screen, onOpenTeam, events } = await renderJoined({
+      outcome: 'joined', name: null, home,
+      setupContinuation: { label: 'Set up for Product Reliability', onContinue: onSetup },
+    });
+    expect(screen.findByTestId('joined-open-team')).toBeTruthy();
+    await act(async () => { screen.findByTestId('joined-name-field')!.props.onChangeText('Ada'); });
+    await screen.pressByTestIdAsync('joined-open-team');
+    await vi.waitFor(() => expect(onOpenTeam).toHaveBeenCalledTimes(1));
+    expect(events).toEqual(['save', 'open']);
+    expect(onSetup).not.toHaveBeenCalled();
+  }, 40_000);
+
+  it('has no second way on when there is nothing to set up', async () => {
+    const { screen } = await renderJoined({ outcome: 'already_member', name: 'Ada', home: { nameRequests: [], failName: false } });
+    expect(screen.findByTestId('joined-open-team')).toBeNull();
+  }, 40_000);
+
   it('asks an unnamed Account for its name, even with a username, and saves it before opening the Team', async () => {
     const home: Home = { nameRequests: [], failName: false };
     const { screen, onOpenTeam, events } = await renderJoined({

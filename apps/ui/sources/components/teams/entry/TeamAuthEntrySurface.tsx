@@ -7,7 +7,7 @@ import { ExactHomeDestinationNotice } from '@/components/account/auth/ExactHomeD
 import { useExactHomeDestination } from '@/components/account/auth/useExactHomeDestination';
 import { useRouter } from 'expo-router';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 import type {
@@ -42,7 +42,8 @@ import {
     presentTeamsDisabledOnHome,
 } from '@/components/teams/entry/teamAuthenticationFailure';
 import { resolveTeamJoinPresentation } from '@/components/teams/join/teamJoinOutcome';
-import { TeamInvitationPreviewDetails } from '@/components/teams/join/TeamInvitationPreviewDetails';
+import { TeamInvitationFactsLine, TeamInvitationPreviewDetails } from '@/components/teams/join/TeamInvitationPreviewDetails';
+import { Icon } from '@/components/ui/icons/Icon';
 import { TeamJoinedCard } from '@/components/teams/join/TeamJoinedCard';
 import { useTeamInvitationPreview, type TeamInvitationPreviewState } from '@/hooks/teams/useTeamInvitationPreview';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
@@ -264,6 +265,7 @@ function approvalRefusalTitle(code: string): string {
 
 export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(props: TeamAuthEntrySurfaceProps) {
     const router = useRouter();
+    const { theme } = useUnistyles();
     const destination = useExactHomeDestination({
         refreshAuth: React.useCallback(async () => {
             await getCurrentAuth()?.refreshFromActiveServer();
@@ -689,6 +691,217 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                 : invitation && accountScope
                     ? t('teams.entry.readyToJoinStatus')
                     : t('teams.entry.readyStatus');
+        // An invitation the Home says is still open reads as the offer itself: who invited them to
+        // which Team, one facts line, what the role means, then who they are and one way to join.
+        // Joined, terminal and failure states keep the Team's ordinary identity header.
+        const offeredInvitation = invitation
+            && !completedAdmission
+            && previewState.kind === 'ready'
+            && previewState.preview.state === 'active'
+            ? previewState.preview
+            : null;
+        const offerHeading = offeredInvitation
+            ? offeredInvitation.inviterLabel !== null
+                ? t('teams.join.invitedYouTo', { name: offeredInvitation.inviterLabel, team: teamName })
+                : t('teams.join.invitedToTeam', { team: teamName })
+            : undefined;
+        const offerIdentityLine = offeredInvitation
+            ? accountScope && accountLabel
+                ? [
+                    t('teams.entry.signedInTo', { account: accountLabel }),
+                    offeredInvitation.recipientEmailMask !== null
+                        ? t('teams.join.sentToInline', { email: offeredInvitation.recipientEmailMask })
+                        : null,
+                ].filter((part): part is string => part !== null).join(' · ')
+                : [
+                    offeredInvitation.recipientEmailMask !== null
+                        ? t('teams.join.sentTo', { email: offeredInvitation.recipientEmailMask })
+                        : null,
+                    entryStatus,
+                ].filter((part): part is string => part !== null).join(' ')
+            : null;
+        const entryActionList = (
+            <WelcomeActionList admission={admission}>
+                {projection.state === 'already_member' ? (
+                    <WelcomeActionCard
+                        testID="team-auth-entry-continue"
+                        primary
+                        // The one way on for a member is a centred button, not a choice card.
+                        presentation="button"
+                        title={invitation
+                            ? t('teams.join.openTeam', { team: teamName })
+                            : t('common.continue')}
+                        onPress={() => invitation
+                            ? props.onAdmissionComplete?.({ outcome: 'already_member', teamId: projection.team.teamId })
+                            : props.onContinue?.()}
+                    />
+                ) : invitation && accountScope ? (
+                    invitationIsJoinable ? (
+                        <>
+                            <WelcomeActionCard
+                                testID="team-auth-entry-join"
+                                primary
+                                title={invitedMailboxVerificationRequired
+                                    ? t('teams.join.joinWithCurrentAccount')
+                                    : t('teams.join.joinAction', { team: teamName })}
+                                subtitle={invitedMailboxVerificationRequired && invitedMailboxMask
+                                    ? t('teams.join.addInvitedAddressNotice', { email: invitedMailboxMask })
+                                    : undefined}
+                                onPress={() => acceptInvitation(projection)}
+                            />
+                            {switchAccountOffered && props.onRecoverIdentity ? (
+                                <WelcomeActionCard
+                                    testID="team-auth-entry-use-another-account"
+                                    primary={false}
+                                    presentation={offeredInvitation ? 'link' : undefined}
+                                    title={t('teams.join.useAnotherAccount')}
+                                    subtitle={offeredInvitation
+                                        ? t('teams.join.useAnotherAccountKeeps')
+                                        : t('teams.join.useAnotherAccountHint')}
+                                    onPress={props.onRecoverIdentity}
+                                />
+                            ) : null}
+                        </>
+                    ) : null
+                ) : invitation && !invitationIsJoinable ? null : <>
+                    {accountServiceHref && accountServiceDiscovery ? (
+                        <WelcomeActionCard
+                            testID="team-auth-entry-account-service"
+                            primary
+                            title={t('teams.entry.continueWith', {
+                                method: accountServiceDiscovery.accountServiceDisplayName
+                                    ?? accountServiceAddressLabel(accountServiceDiscovery.endpointUrl),
+                            })}
+                            subtitle={t('settingsAccount.accountServiceSignInService')}
+                            onPress={() => { router.push(accountServiceHref); }}
+                        />
+                    ) : accountServiceUnreachable ? (
+                        /*
+                         * The Home says sign-in happens at a service this device
+                         * cannot reach. Dropping the handoff silently would leave the
+                         * page claiming the Home's own methods are all there is, which
+                         * is not what the Home published. The account-entry surfaces
+                         * answer this exact state the same way — name it and offer the
+                         * same probe again — so this reuses their copy and the hook's
+                         * own `retry` rather than inventing a second recovery.
+                         */
+                        <WelcomeActionCard
+                            testID="team-auth-entry-account-service-unavailable"
+                            primary={false}
+                            iconName="cloud-slash"
+                            title={accountServiceEntry.status === 'unsupported'
+                                ? t('welcome.signInServiceUnsupportedTitle')
+                                : t('welcome.signInServiceUnavailableTitle')}
+                            subtitle={t('welcome.signInServiceUnavailableHomeBody')}
+                            onPress={accountServiceEntry.retry}
+                        />
+                    ) : null}
+                    {entryActions.map((action, index) => {
+                        if (action.kind === 'provider_unavailable') {
+                            /*
+                             * An accepted Team sign-in that cannot run right now is
+                             * named with the Home's safe reason (teams-lane-03/01
+                             * §10.2, TA-R17) instead of vanishing. Its one useful
+                             * action is to ask the Home again.
+                             */
+                            const reasonCopy = action.reason === 'provider_disabled'
+                                ? t('teams.entry.providerUnavailableDisabled')
+                                : action.reason === 'provider_setup_incomplete'
+                                    ? t('teams.entry.providerUnavailableSetupIncomplete')
+                                    : t('teams.entry.providerUnavailableUnavailable');
+                            return (
+                                <WelcomeActionCard
+                                    key={`${action.origin}:${action.methodId}:unavailable`}
+                                    testID={`team-auth-entry-unavailable:${action.methodId}`}
+                                    primary={false}
+                                    title={t('teams.entry.providerUnavailableTitle', { method: action.presentation.displayName })}
+                                    subtitle={reasonCopy}
+                                    iconName={asIconName(action.presentation.iconHint) ?? 'cloud-slash'}
+                                    onPress={retry}
+                                />
+                            );
+                        }
+                        if (action.kind !== 'authenticate') return null;
+                        /*
+                         * The card says which journey it starts with the same glyph
+                         * Welcome and the shared auth host use, because one owner
+                         * answers that per execution and this page already converts a
+                         * Team action into exactly that execution before running it.
+                         */
+                        const execution = projectTeamAuthAction(action)?.execution ?? null;
+                        /*
+                         * When the Home published a bounded icon hint for this provider
+                         * it is the more specific answer, so it wins over the per-execution
+                         * glyph. A hint this app ships no glyph for narrows away and the
+                         * shared entry icon still renders.
+                         */
+                        const presentation = execution
+                            ? describeHomeAuthenticationAction({
+                                execution,
+                                providerName: action.presentation.displayName,
+                            })
+                            : null;
+                        const iconName = asIconName(action.presentation.iconHint)
+                            ?? presentation?.iconName;
+                        /*
+                         * A Home publishes sign-in and sign-up as separate actions of
+                         * one native method. The shared presentation owner names each
+                         * journey ("New here?", "Use a key", "Create account"), so the
+                         * page never shows one method twice under one label. External
+                         * providers keep the Team wording: the same provider card
+                         * both signs in and creates the Account.
+                         */
+                        const native = execution !== null && execution.kind !== 'oauth';
+                        const sameMethodCount = entryActions.filter((other) => (
+                            other.kind === 'authenticate' && other.methodId === action.methodId
+                        )).length;
+                        return (
+                            <WelcomeActionCard
+                                key={`${action.origin}:${action.methodId}:${action.action}:${action.mode}`}
+                                testID={sameMethodCount > 1
+                                    ? `team-auth-entry-action:${action.methodId}:${action.action}`
+                                    : `team-auth-entry-action:${action.methodId}`}
+                                primary={index === firstRunnableAuthenticateIndex && accountServiceHref === null}
+                                title={native && presentation
+                                    ? presentation.title
+                                    : t('teams.entry.continueWith', { method: action.presentation.displayName })}
+                                subtitle={native ? presentation?.description : undefined}
+                                {...(iconName ? { iconName } : {})}
+                                accentColor={action.presentation.connectButtonColor}
+                                onPress={() => props.onSelectAction({
+                                    action,
+                                    teamId: projection.team.teamId,
+                                    teamName: projection.team.name,
+                                    teamLogo: projection.team.logo ?? null,
+                                    target: props.target,
+                                    ...(invitation ? {
+                                        invitationEmailVerificationRequired:
+                                            invitationProjection?.invitationEmailVerificationRequired === true,
+                                    } : {}),
+                                })}
+                            />
+                        );
+                    })}
+                    {switchAccountOffered && props.onRecoverIdentity ? (
+                        <WelcomeActionCard
+                            testID="team-auth-entry-use-another-account"
+                            primary={false}
+                            title={t('teams.join.useAnotherAccount')}
+                            subtitle={t('teams.join.useAnotherAccountHint')}
+                            onPress={props.onRecoverIdentity}
+                        />
+                    ) : null}
+                    {props.onUseCurrentAccount ? (
+                        <WelcomeActionCard
+                            testID="team-auth-entry-use-current-account"
+                            primary={false}
+                            title={t('teams.join.useCurrentAccount')}
+                            onPress={props.onUseCurrentAccount}
+                        />
+                    ) : null}
+                </>}
+            </WelcomeActionList>
+        );
         content = (
             <View testID="team-auth-entry-ready" style={styles.content}>
                 <TeamEntryIdentity
@@ -696,12 +909,22 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                     teamId={projection.team.teamId}
                     teamName={teamName}
                     logo={projection.team.logo ?? null}
+                    heading={completedAdmission
+                        ? resolveTeamJoinPresentation(completedAdmission.result, teamName).title
+                        : offerHeading}
+                    inviterLabel={offeredInvitation?.inviterLabel ?? null}
                 >
-                    <Text style={styles.subtitle}>
-                        {t('teams.entry.onHome', {
-                            home: homeDisplayName,
-                        })}
-                    </Text>
+                    {completedAdmission ? null : offeredInvitation ? (
+                        <View style={styles.offerFacts}>
+                            <TeamInvitationFactsLine preview={offeredInvitation} homeLabel={homeDisplayName} />
+                        </View>
+                    ) : (
+                        <Text style={styles.subtitle}>
+                            {t('teams.entry.onHome', {
+                                home: homeDisplayName,
+                            })}
+                        </Text>
+                    )}
                     {signInServiceName ? (
                         <Text
                             testID="team-auth-entry-sign-in-service-origin"
@@ -712,7 +935,7 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                                 : 'teams.entry.signInServiceOrigin', { service: signInServiceName })}
                         </Text>
                     ) : null}
-                    {accountLabel ? (
+                    {accountLabel && !offeredInvitation && !completedAdmission ? (
                         <Text
                             testID="team-auth-entry-account-label"
                             accessibilityRole="text"
@@ -805,196 +1028,44 @@ export const TeamAuthEntrySurface = React.memo(function TeamAuthEntrySurface(pro
                     />
                 ) : (
                     <>
-                        {entryStatus ? <Text
-                            testID="team-auth-entry-status"
-                            accessibilityRole="text"
-                            accessibilityLiveRegion="polite"
-                            aria-live="polite"
-                            role="status"
-                            style={styles.guidance}
-                        >
-                            {entryStatus}
-                        </Text> : null}
-                        {invitation ? (
-                            <TeamInvitationPreviewDetails state={previewState} onRetry={retry} />
-                        ) : null}
-                        <WelcomeActionList admission={admission}>
-                            {projection.state === 'already_member' ? (
-                                <WelcomeActionCard
-                                    testID="team-auth-entry-continue"
-                                    primary
-                                    // The one way on for a member is a centred button, not a choice card.
-                                    presentation="button"
-                                    title={invitation
-                                        ? t('teams.join.openTeam', { team: teamName })
-                                        : t('common.continue')}
-                                    onPress={() => invitation
-                                        ? props.onAdmissionComplete?.({ outcome: 'already_member', teamId: projection.team.teamId })
-                                        : props.onContinue?.()}
-                                />
-                            ) : invitation && accountScope ? (
-                                invitationIsJoinable ? (
-                                    <>
-                                        <WelcomeActionCard
-                                            testID="team-auth-entry-join"
-                                            primary
-                                            title={invitedMailboxVerificationRequired
-                                                ? t('teams.join.joinWithCurrentAccount')
-                                                : t('teams.join.joinAction', { team: teamName })}
-                                            subtitle={invitedMailboxVerificationRequired && invitedMailboxMask
-                                                ? t('teams.join.addInvitedAddressNotice', { email: invitedMailboxMask })
-                                                : undefined}
-                                            onPress={() => acceptInvitation(projection)}
-                                        />
-                                        {switchAccountOffered && props.onRecoverIdentity ? (
-                                            <WelcomeActionCard
-                                                testID="team-auth-entry-use-another-account"
-                                                primary={false}
-                                                title={t('teams.join.useAnotherAccount')}
-                                                subtitle={t('teams.join.useAnotherAccountHint')}
-                                                onPress={props.onRecoverIdentity}
-                                            />
-                                        ) : null}
-                                    </>
-                                ) : null
-                            ) : invitation && !invitationIsJoinable ? null : <>
-                                {accountServiceHref && accountServiceDiscovery ? (
-                                    <WelcomeActionCard
-                                        testID="team-auth-entry-account-service"
-                                        primary
-                                        title={t('teams.entry.continueWith', {
-                                            method: accountServiceDiscovery.accountServiceDisplayName
-                                                ?? accountServiceAddressLabel(accountServiceDiscovery.endpointUrl),
-                                        })}
-                                        subtitle={t('settingsAccount.accountServiceSignInService')}
-                                        onPress={() => { router.push(accountServiceHref); }}
-                                    />
-                                ) : accountServiceUnreachable ? (
-                                    /*
-                                     * The Home says sign-in happens at a service this device
-                                     * cannot reach. Dropping the handoff silently would leave the
-                                     * page claiming the Home's own methods are all there is, which
-                                     * is not what the Home published. The account-entry surfaces
-                                     * answer this exact state the same way — name it and offer the
-                                     * same probe again — so this reuses their copy and the hook's
-                                     * own `retry` rather than inventing a second recovery.
-                                     */
-                                    <WelcomeActionCard
-                                        testID="team-auth-entry-account-service-unavailable"
-                                        primary={false}
-                                        iconName="cloud-slash"
-                                        title={accountServiceEntry.status === 'unsupported'
-                                            ? t('welcome.signInServiceUnsupportedTitle')
-                                            : t('welcome.signInServiceUnavailableTitle')}
-                                        subtitle={t('welcome.signInServiceUnavailableHomeBody')}
-                                        onPress={accountServiceEntry.retry}
-                                    />
+                        {offeredInvitation ? (
+                            <>
+                                <TeamInvitationPreviewDetails state={previewState} onRetry={retry} />
+                                <View testID="team-auth-entry-offer-foot" style={styles.offerFoot}>
+                                    {offerIdentityLine ? (
+                                        <View style={styles.offerIdentity}>
+                                            <Icon name="person" size={15} color={theme.colors.text.secondary} />
+                                            <Text
+                                                testID={accountScope ? 'team-auth-entry-account-label' : 'team-auth-entry-status'}
+                                                accessibilityRole="text"
+                                                variant="label"
+                                                style={styles.offerIdentityText}
+                                            >
+                                                {offerIdentityLine}
+                                            </Text>
+                                        </View>
+                                    ) : null}
+                                    {entryActionList}
+                                </View>
+                            </>
+                        ) : (
+                            <>
+                                {entryStatus ? <Text
+                                    testID="team-auth-entry-status"
+                                    accessibilityRole="text"
+                                    accessibilityLiveRegion="polite"
+                                    aria-live="polite"
+                                    role="status"
+                                    style={styles.guidance}
+                                >
+                                    {entryStatus}
+                                </Text> : null}
+                                {invitation ? (
+                                    <TeamInvitationPreviewDetails state={previewState} onRetry={retry} />
                                 ) : null}
-                                {entryActions.map((action, index) => {
-                                    if (action.kind === 'provider_unavailable') {
-                                        /*
-                                         * An accepted Team sign-in that cannot run right now is
-                                         * named with the Home's safe reason (teams-lane-03/01
-                                         * §10.2, TA-R17) instead of vanishing. Its one useful
-                                         * action is to ask the Home again.
-                                         */
-                                        const reasonCopy = action.reason === 'provider_disabled'
-                                            ? t('teams.entry.providerUnavailableDisabled')
-                                            : action.reason === 'provider_setup_incomplete'
-                                                ? t('teams.entry.providerUnavailableSetupIncomplete')
-                                                : t('teams.entry.providerUnavailableUnavailable');
-                                        return (
-                                            <WelcomeActionCard
-                                                key={`${action.origin}:${action.methodId}:unavailable`}
-                                                testID={`team-auth-entry-unavailable:${action.methodId}`}
-                                                primary={false}
-                                                title={t('teams.entry.providerUnavailableTitle', { method: action.presentation.displayName })}
-                                                subtitle={reasonCopy}
-                                                iconName={asIconName(action.presentation.iconHint) ?? 'cloud-slash'}
-                                                onPress={retry}
-                                            />
-                                        );
-                                    }
-                                    if (action.kind !== 'authenticate') return null;
-                                    /*
-                                     * The card says which journey it starts with the same glyph
-                                     * Welcome and the shared auth host use, because one owner
-                                     * answers that per execution and this page already converts a
-                                     * Team action into exactly that execution before running it.
-                                     */
-                                    const execution = projectTeamAuthAction(action)?.execution ?? null;
-                                    /*
-                                     * When the Home published a bounded icon hint for this provider
-                                     * it is the more specific answer, so it wins over the per-execution
-                                     * glyph. A hint this app ships no glyph for narrows away and the
-                                     * shared entry icon still renders.
-                                     */
-                                    const presentation = execution
-                                        ? describeHomeAuthenticationAction({
-                                            execution,
-                                            providerName: action.presentation.displayName,
-                                        })
-                                        : null;
-                                    const iconName = asIconName(action.presentation.iconHint)
-                                        ?? presentation?.iconName;
-                                    /*
-                                     * A Home publishes sign-in and sign-up as separate actions of
-                                     * one native method. The shared presentation owner names each
-                                     * journey ("New here?", "Use a key", "Create account"), so the
-                                     * page never shows one method twice under one label. External
-                                     * providers keep the Team wording: the same provider card
-                                     * both signs in and creates the Account.
-                                     */
-                                    const native = execution !== null && execution.kind !== 'oauth';
-                                    const sameMethodCount = entryActions.filter((other) => (
-                                        other.kind === 'authenticate' && other.methodId === action.methodId
-                                    )).length;
-                                    return (
-                                        <WelcomeActionCard
-                                            key={`${action.origin}:${action.methodId}:${action.action}:${action.mode}`}
-                                            testID={sameMethodCount > 1
-                                                ? `team-auth-entry-action:${action.methodId}:${action.action}`
-                                                : `team-auth-entry-action:${action.methodId}`}
-                                            primary={index === firstRunnableAuthenticateIndex && accountServiceHref === null}
-                                            title={native && presentation
-                                                ? presentation.title
-                                                : t('teams.entry.continueWith', { method: action.presentation.displayName })}
-                                            subtitle={native ? presentation?.description : undefined}
-                                            {...(iconName ? { iconName } : {})}
-                                            accentColor={action.presentation.connectButtonColor}
-                                            onPress={() => props.onSelectAction({
-                                                action,
-                                                teamId: projection.team.teamId,
-                                                teamName: projection.team.name,
-                                                teamLogo: projection.team.logo ?? null,
-                                                target: props.target,
-                                                ...(invitation ? {
-                                                    invitationEmailVerificationRequired:
-                                                        invitationProjection?.invitationEmailVerificationRequired === true,
-                                                } : {}),
-                                            })}
-                                        />
-                                    );
-                                })}
-                                {switchAccountOffered && props.onRecoverIdentity ? (
-                                    <WelcomeActionCard
-                                        testID="team-auth-entry-use-another-account"
-                                        primary={false}
-                                        title={t('teams.join.useAnotherAccount')}
-                                        subtitle={t('teams.join.useAnotherAccountHint')}
-                                        onPress={props.onRecoverIdentity}
-                                    />
-                                ) : null}
-                                {props.onUseCurrentAccount ? (
-                                    <WelcomeActionCard
-                                        testID="team-auth-entry-use-current-account"
-                                        primary={false}
-                                        title={t('teams.join.useCurrentAccount')}
-                                        onPress={props.onUseCurrentAccount}
-                                    />
-                                ) : null}
-                            </>}
-                        </WelcomeActionList>
+                                {entryActionList}
+                            </>
+                        )}
                     </>
                 )}
             </View>
@@ -1113,6 +1184,25 @@ const styles = StyleSheet.create((theme) => ({
         ...Typography.default(),
         fontSize: 14,
         lineHeight: 20,
+        color: theme.colors.text.secondary,
+    },
+    offerFacts: {
+        marginTop: theme.space.s10,
+    },
+    offerFoot: {
+        marginTop: theme.space.s10,
+        paddingTop: theme.space.s20,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.colors.border.default,
+        gap: theme.space.s16,
+    },
+    offerIdentity: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s8,
+    },
+    offerIdentityText: {
+        flex: 1,
         color: theme.colors.text.secondary,
     },
 }));

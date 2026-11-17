@@ -1125,12 +1125,13 @@ describe('TeamAuthEntrySurface', () => {
         );
         await waitForTestId(screen, 'team-join-preview');
 
-        expect(screen.findByTestId('team-join-preview-guest')).toBeTruthy();
-        expect(screen.findByTestId('team-join-preview-storage')).toBeTruthy();
-        expect(screen.findByTestId('team-join-preview-recipient')).toBeTruthy();
+        expect(screen.getTextContent()).toContain(t('teams.join.guestNotice', {
+            team: activePreview().team.name,
+        }));
+        expect(screen.getTextContent()).toContain(t('teams.join.plainStorageNotice'));
+        expect(screen.getTextContent()).toContain('a\u2026e@example.test');
         expect(screen.findByTestId('team-auth-entry-join')).toBeTruthy();
-        // Hosting was not published, so nothing is asserted about it.
-        expect(screen.findByTestId('team-join-preview-hosting')).toBeNull();
+        expect(screen.getTextContent()).not.toContain(t('teams.join.personalHomeNotice'));
     });
 
     it('offers another Account on a Team page when the Home says the current one is wrong', async () => {
@@ -1186,7 +1187,7 @@ describe('TeamAuthEntrySurface', () => {
         // when this person tries to work. That is a consequence of joining, and
         // the Home publishes it as a runtime purpose rather than leaving the
         // joiner to guess it from the address.
-        expect(screen.findByTestId('team-join-preview-hosting')).toBeTruthy();
+        expect(screen.getTextContent()).toContain(t('teams.join.personalHomeNotice'));
     });
 
     it('keeps invitation terminal outcomes distinct and never admits through another Home scope', async () => {

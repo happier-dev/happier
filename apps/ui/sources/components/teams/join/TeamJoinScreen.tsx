@@ -26,6 +26,11 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { parseToken } from '@/utils/auth/parseToken';
 import { HomeCredentialUnreadableCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
 import { TeamJoinedCard } from './TeamJoinedCard';
+import { TeamJoinedSummaryForTeam } from './TeamJoinedSummary';
+import { resolveTeamJoinPresentation } from './teamJoinOutcome';
+import { TeamEntryIdentity } from '@/components/teams/entry/TeamEntryIdentity';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { openAddHome } from '@/components/homes/add/openAddHome';
 
@@ -302,6 +307,14 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
     if (completedAdmission) {
         return (
             <TeamJoinStateShell stepId="admission-complete" onBack={exit}>
+                <View style={styles.joined}>
+                <TeamEntryIdentity
+                    testIDPrefix="team-join-joined"
+                    teamId={completedAdmission.teamId}
+                    teamName={completedAdmission.teamName}
+                    logo={null}
+                    heading={resolveTeamJoinPresentation(completedAdmission, completedAdmission.teamName).title}
+                />
                 <TeamJoinedCard
                     testID="team-auth-entry-admission-complete"
                     result={completedAdmission}
@@ -315,7 +328,15 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
                         label: t('teams.join.setUpForTeam', { team: completedAdmission.teamName }),
                         onContinue: () => openTeamOnExactHome(target.serverId, completedAdmission.teamId, 'setup'),
                     }}
+                    summary={(
+                        <TeamJoinedSummaryForTeam
+                            testID="team-join-joined-summary"
+                            serverId={target.serverId}
+                            teamId={completedAdmission.teamId}
+                        />
+                    )}
                 />
+                </View>
             </TeamJoinStateShell>
         );
     }
@@ -420,3 +441,11 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
         />
     );
 });
+
+const styles = StyleSheet.create(() => ({
+    // The same column rhythm as the Team entry page this state continues.
+    joined: {
+        width: '100%',
+        gap: 22,
+    },
+}));

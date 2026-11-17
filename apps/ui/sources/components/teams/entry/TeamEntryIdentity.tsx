@@ -8,6 +8,8 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 export const TEAM_ENTRY_LOGO_SIZE = 52;
+/** The inviter's monogram sits on the Team mark's corner, a third of its size. */
+const TEAM_ENTRY_INVITER_SIZE = 24;
 
 export type TeamEntryLogo = Readonly<{ url?: string | null; thumbhash?: string | null }> | null;
 
@@ -22,11 +24,23 @@ export function TeamEntryIdentity(props: Readonly<{
     teamId: string;
     teamName: string;
     logo: TeamEntryLogo;
+    /**
+     * Replaces "Continue to <Team>" when the step says what happened instead
+     * (an invitation names who invited the person). It still names the Team once.
+     */
+    heading?: string;
+    /**
+     * The Home's display label for whoever invited this person. Only its monogram
+     * is drawn, on the mark's corner: the preview carries no photo, and the label
+     * is never resolved to an Account.
+     */
+    inviterLabel?: string | null;
     /** Context lines under the heading (Home, Account, sign-in service). */
     children?: React.ReactNode;
 }>) {
     const { testIDPrefix, teamName } = props;
-    const heading = t('teams.entry.heading', { team: teamName });
+    const heading = props.heading ?? t('teams.entry.heading', { team: teamName });
+    const inviterLabel = props.inviterLabel?.trim() || null;
     return (
         <>
             <View testID={`${testIDPrefix}-lockup`} style={styles.lockup}>
@@ -43,6 +57,11 @@ export function TeamEntryIdentity(props: Readonly<{
                         thumbhash={props.logo?.thumbhash ?? null}
                         monogram={teamName}
                     />
+                    {inviterLabel ? (
+                        <View testID={`${testIDPrefix}-inviter`} style={styles.inviter}>
+                            <Avatar id={inviterLabel} size={TEAM_ENTRY_INVITER_SIZE} monogram={inviterLabel} />
+                        </View>
+                    ) : null}
                 </View>
             </View>
             <View>
@@ -68,6 +87,15 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 14,
         minWidth: 0,
+    },
+    inviter: {
+        position: 'absolute',
+        right: -theme.space.s6,
+        bottom: -theme.space.s6,
+        borderRadius: TEAM_ENTRY_INVITER_SIZE,
+        borderWidth: 2,
+        // The ring is the page's own canvas, so the monogram reads as sitting on the mark.
+        borderColor: theme.colors.background.canvas,
     },
     heading: {
         ...Typography.variant('display'),

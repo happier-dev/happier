@@ -15,7 +15,7 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { t, preloadTranslationsForSettings, setPreferredLanguageFromSettings } from '@/text';
 
-import { TeamInvitationPreviewDetails } from './TeamInvitationPreviewDetails';
+import { TeamInvitationFactsLine, TeamInvitationPreviewDetails } from './TeamInvitationPreviewDetails';
 
 function activePreview(overrides: Partial<TeamInvitationPreviewV1> = {}): TeamInvitationPreviewV1 {
     return {
@@ -52,27 +52,35 @@ describe('TeamInvitationPreviewDetails', () => {
         await standardCleanup();
     });
 
-    it('names who invited you when the Home published a label for them', async () => {
+    it('states the role, Home and expiry on one facts line and what the role means beneath', async () => {
+        const preview = activePreview({ role: 'member' });
         const rendered = await renderScreen(
-            <TeamInvitationPreviewDetails
-                state={{ kind: 'ready', preview: activePreview({ inviterLabel: 'Ada Lovelace' }) }}
-            />,
+            <>
+                <TeamInvitationFactsLine preview={preview} homeLabel="Acme Home" />
+                <TeamInvitationPreviewDetails state={{ kind: 'ready', preview }} />
+            </>,
         );
-
-        const line = rendered.findByTestId('team-join-preview-inviter');
-        expect(line).not.toBeNull();
-        expect(rendered.getTextContent()).toContain('Ada Lovelace');
+        const facts = rendered.findByTestId('team-join-preview-facts');
+        expect(facts).not.toBeNull();
+        expect(rendered.getTextContent()).toContain('Acme Home');
+        expect(rendered.getTextContent()).toContain(t('teams.roleHelp.member'));
     });
 
-    it('says nothing about the inviter when the Home published no label', async () => {
-        const rendered = await renderScreen(
+    it('says the Home notices once, beneath the role meaning, only when the Home published them', async () => {
+        const plain = await renderScreen(
             <TeamInvitationPreviewDetails state={{ kind: 'ready', preview: activePreview() }} />,
         );
-
-        // An inviter whose Account no longer resolves leaves the consequences the
-        // Home did publish intact rather than showing an empty or placeholder line.
-        expect(rendered.findByTestId('team-join-preview-inviter')).toBeNull();
-        expect(rendered.findByTestId('team-join-preview-role')).not.toBeNull();
+        expect(plain.findByTestId('team-join-preview-notice')).toBeNull();
+        await act(async () => {
+            plain.tree.update(
+                <TeamInvitationPreviewDetails
+                    state={{ kind: 'ready', preview: activePreview({ home: { serverId: 'srv_acme', displayName: 'Acme Home', storageMode: 'plain', hosting: 'personal' } }) }}
+                />,
+            );
+        });
+        expect(plain.findByTestId('team-join-preview-notice')).not.toBeNull();
+        expect(plain.getTextContent()).toContain(t('teams.join.plainStorageNotice'));
+        expect(plain.getTextContent()).toContain(t('teams.join.personalHomeNotice'));
     });
 
     it('keeps published consequences visible with truthful refresh and retry status', async () => {
@@ -100,7 +108,7 @@ describe('TeamInvitationPreviewDetails', () => {
         await preloadTranslationsForSettings('de');
         setPreferredLanguageFromSettings('de');
         const rendered = await renderScreen(
-            <TeamInvitationPreviewDetails state={{ kind: 'ready', preview: activePreview() }} />,
+            <TeamInvitationFactsLine preview={activePreview()} homeLabel="Acme Home" />,
         );
         // The Invitations page's calendar-date style: day and short month, with the year outside the current one.
         const expected = new Intl.DateTimeFormat('de', { day: 'numeric', month: 'short', year: 'numeric' })

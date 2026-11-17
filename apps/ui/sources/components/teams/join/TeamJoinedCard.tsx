@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { TeamInvitationAcceptResultV1 } from '@happier-dev/protocol/teams';
 
 import { getCurrentAuth } from '@/auth/context/currentAuth';
@@ -6,7 +8,8 @@ import { AccountNameField } from '@/components/account/AccountNameField';
 import { useSyncedAccountName } from '@/components/account/useSyncedAccountName';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { setAccountName } from '@/sync/api/account/apiAccountName';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -15,10 +18,7 @@ import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { HappyError } from '@/utils/errors/errors';
 
-import {
-  resolveTeamJoinPresentation,
-  shouldOfferTeamJoinName,
-} from './teamJoinOutcome';
+import { shouldOfferTeamJoinName } from './teamJoinOutcome';
 
 type TeamAdmissionSuccess = Extract<
   TeamInvitationAcceptResultV1,
@@ -111,38 +111,63 @@ export function TeamJoinedCard(
     finishJoined(props.setupContinuation ? 'setup' : 'team');
   }, [finishJoined, props.setupContinuation]);
 
+  // The page heading already says "You've joined <Team>" (TeamEntryIdentity), so this body is
+  // what comes next: the name colleagues see, then one way on. No card: the joined state reads
+  // as the same page the invitation was, continued.
+  const admission = React.useMemo(() => ({
+    pendingActionId: opening
+      ? (continuationDestination.current === 'setup' || !props.setupContinuation ? OPEN_TEAM_ACTION_ID : OPEN_TEAM_LATER_ACTION_ID)
+      : null,
+    run: async (_actionId: string, action: () => Promise<void> | void) => { await action(); },
+  }), [opening, props.setupContinuation]);
   return (
-    <SurfaceStateCard
-      testID={props.testID}
-      kind="success"
-      title={resolveTeamJoinPresentation(props.result, props.teamName).title}
-      body={
-        asksName ? (
-          <>
-          <AccountNameField
-            testID={`${props.testID}-name-field`}
-            value={name}
-            onChangeText={(next) => {
-              setNameError(null);
-              setName(next);
-            }}
-            supportingText={t('teams.join.nameStepReason')}
-            error={nameError}
-            autoFocus={autoFocus}
-            editable={!opening}
-            returnKeyType="go"
-            onSubmitEditing={openTeam}
+    <View testID={props.testID} style={styles.body}>
+      {asksName ? (
+        <AccountNameField
+          testID={`${props.testID}-name-field`}
+          value={name}
+          onChangeText={(next) => {
+            setNameError(null);
+            setName(next);
+          }}
+          supportingText={t('teams.join.nameStepReason')}
+          error={nameError}
+          autoFocus={autoFocus}
+          editable={!opening}
+          returnKeyType="go"
+          onSubmitEditing={openTeam}
+        />
+      ) : null}
+      {props.summary}
+      <WelcomeActionList admission={admission}>
+        <WelcomeActionCard
+          testID={`${props.testID}-action`}
+          actionId={OPEN_TEAM_ACTION_ID}
+          primary
+          title={props.setupContinuation?.label ?? t('teams.join.openTeam', { team: props.teamName })}
+          onPress={openTeam}
+        />
+        {props.setupContinuation ? (
+          // Setup is offered, never required: the Team itself is one quiet press away, and Home keeps the offer.
+          <WelcomeActionCard
+            testID={`${props.testID}-open-team`}
+            actionId={OPEN_TEAM_LATER_ACTION_ID}
+            presentation="link"
+            title={t('teams.join.openTeamSetUpLater', { team: props.teamName })}
+            onPress={() => finishJoined('team')}
           />
-          {props.summary}
-          </>
-        ) : props.summary
-      }
-      action={{
-        label: props.setupContinuation?.label ?? t('teams.join.openTeam', { team: props.teamName }),
-        onPress: openTeam,
-        busy: opening,
-      }}
-      accessibilitySemantics="status"
-    />
+        ) : null}
+      </WelcomeActionList>
+
+    </View>
   );
 }
+
+const OPEN_TEAM_ACTION_ID = 'team-joined-open';
+const OPEN_TEAM_LATER_ACTION_ID = 'team-joined-open-later';
+
+const styles = StyleSheet.create((theme) => ({
+  body: {
+    gap: theme.space.s20,
+  },
+}));

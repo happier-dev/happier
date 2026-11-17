@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { TeamInvitationPreviewV1 } from '@happier-dev/protocol/teams';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
-import { teamRoleLabel } from '@/components/settings/teams/teamLabels';
+import { teamRoleDescription, teamRoleLabel } from '@/components/settings/teams/teamLabels';
+import { Icon } from '@/components/ui/icons/Icon';
 import { getPreferredLanguage, t } from '@/text';
 import { formatCalendarDate } from '@/utils/datetime/cachedIntlFormatters';
 
@@ -26,17 +27,6 @@ import type { TeamInvitationPreviewState } from '@/hooks/teams/useTeamInvitation
  * for them — the same one its invitation email sends — and never an identifier. The Guest sentence is the one consequence a role carries that
  * the role label alone does not say, so it is stated in full.
  */
-const PreviewLine = React.memo(function PreviewLine(props: Readonly<{
-    testID: string;
-    text: string;
-}>) {
-    return (
-        <Text testID={props.testID} style={styles.line}>
-            {props.text}
-        </Text>
-    );
-});
-
 /** A retained terminal invitation reads as its own state, never as a failure. */
 function terminalPresentation(state: Exclude<TeamInvitationPreviewV1['state'], 'active'>) {
     switch (state) {
@@ -55,6 +45,7 @@ export const TeamInvitationPreviewDetails = React.memo(function TeamInvitationPr
     onRetry?: () => void;
 }>) {
     const { state } = props;
+    const { theme } = useUnistyles();
 
     if (state.kind === 'idle') return null;
 
@@ -129,54 +120,32 @@ export const TeamInvitationPreviewDetails = React.memo(function TeamInvitationPr
         );
     }
 
+    // The inviter, the Home and the expiry are said above (the heading and its facts line), and the
+    // masked recipient sits in the identity line beside the action; this block keeps what the role
+    // means, what history comes with it, and the Home's own notices.
+    const notices = [
+        preview.home.hosting === 'personal' ? t('teams.join.personalHomeNotice') : null,
+        preview.home.storageMode === 'plain' ? t('teams.join.plainStorageNotice') : null,
+    ].filter((line): line is string => line !== null);
     return (
         <View testID="team-join-preview" style={styles.block}>
-            {preview.inviterLabel !== null ? (
-                <PreviewLine
-                    testID="team-join-preview-inviter"
-                    text={t('teams.join.invitedBy', { name: preview.inviterLabel })}
-                />
+            <Text testID="team-join-preview-role" variant="reading" style={styles.meaning}>
+                {preview.role === 'guest'
+                    ? t('teams.join.guestNotice', { team: preview.team.name })
+                    : teamRoleDescription(preview.role)}
+                {' '}
+                <Text testID="team-join-preview-history" variant="reading" style={styles.meaning}>
+                    {preview.historyAccess === 'all_existing'
+                        ? t('teams.join.historyAllExisting')
+                        : t('teams.join.historyFromJoining')}
+                </Text>
+            </Text>
+            {notices.length > 0 ? (
+                <View testID="team-join-preview-notice" style={styles.notice}>
+                    <Icon name="info" size={14} color={theme.colors.text.secondary} />
+                    <Text variant="body" style={styles.noticeText}>{notices.join(' ')}</Text>
+                </View>
             ) : null}
-            <PreviewLine
-                testID="team-join-preview-role"
-                text={t('teams.join.roleOffered', { role: teamRoleLabel(preview.role) })}
-            />
-            <PreviewLine
-                testID="team-join-preview-history"
-                text={preview.historyAccess === 'all_existing'
-                    ? t('teams.join.historyAllExisting')
-                    : t('teams.join.historyFromJoining')}
-            />
-            {preview.role === 'guest' ? (
-                <PreviewLine
-                    testID="team-join-preview-guest"
-                    text={t('teams.join.guestNotice', { team: preview.team.name })}
-                />
-            ) : null}
-            {preview.home.hosting === 'personal' ? (
-                <PreviewLine
-                    testID="team-join-preview-hosting"
-                    text={t('teams.join.personalHomeNotice')}
-                />
-            ) : null}
-            {preview.home.storageMode === 'plain' ? (
-                <PreviewLine
-                    testID="team-join-preview-storage"
-                    text={t('teams.join.plainStorageNotice')}
-                />
-            ) : null}
-            {preview.recipientEmailMask !== null ? (
-                <PreviewLine
-                    testID="team-join-preview-recipient"
-                    text={t('teams.join.sentTo', { email: preview.recipientEmailMask })}
-                />
-            ) : null}
-            <PreviewLine
-                testID="team-join-preview-expiry"
-                text={t('teams.join.expiresOn', {
-                    when: formatCalendarDate(preview.expiresAt, getPreferredLanguage()),
-                })}
-            />
             {state.refreshing ? (
                 <Text
                     testID="team-join-preview-refreshing"
@@ -208,13 +177,53 @@ export const TeamInvitationPreviewDetails = React.memo(function TeamInvitationPr
     );
 });
 
+/**
+ * One line of facts under the invitation heading: the role offered, the Home it is on, and when the
+ * invitation expires. Each fact comes from the bounded preview; the role leads because it is what
+ * joining gives.
+ */
+export const TeamInvitationFactsLine = React.memo(function TeamInvitationFactsLine(props: Readonly<{
+    preview: TeamInvitationPreviewV1;
+    homeLabel: string;
+}>) {
+    const { preview } = props;
+    return (
+        <Text testID="team-join-preview-facts" variant="label" style={styles.facts}>
+            <Text variant="label" emphasis="semiBold" style={styles.factsLead}>{teamRoleLabel(preview.role)}</Text>
+            {FACT_SEPARATOR}
+            {props.homeLabel}
+            {FACT_SEPARATOR}
+            <Text testID="team-join-preview-expiry" variant="label" style={styles.facts}>
+                {t('teams.join.expiresShort', {
+                    when: formatCalendarDate(preview.expiresAt, getPreferredLanguage()),
+                })}
+            </Text>
+        </Text>
+    );
+});
+
+const FACT_SEPARATOR = '  ·  ';
+
 const styles = StyleSheet.create((theme) => ({
     block: {
-        gap: theme.space.s6,
+        gap: theme.space.s12,
     },
-    line: {
-        fontSize: 14,
-        lineHeight: 20,
+    facts: {
+        color: theme.colors.text.secondary,
+    },
+    factsLead: {
+        color: theme.colors.text.primary,
+    },
+    meaning: {
+        color: theme.colors.text.primary,
+    },
+    notice: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s8,
+    },
+    noticeText: {
+        flex: 1,
         color: theme.colors.text.secondary,
     },
     pending: {
