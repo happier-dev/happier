@@ -225,11 +225,11 @@ export const telemetryHealthActions = {
             const evaluate = (measurement: KeyFlowMeasurements) => evaluateKeyFlow(measurement, undefined, context.invokedAtMs, admitted.collectorMachineId);
             // Usage keeps exact-money Symbols in process; its public schema projects
             // the wire response before the SDK's strict native-JSON boundary.
-            return projectNativeJsonValueForTransport(TelemetryMetricsReadResultV1Schema.parse({ result: evaluateKeyFlowWindow(selected, undefined,
+            return keyFlowReadResultSchema.parse(projectNativeJsonValueForTransport(TelemetryMetricsReadResultV1Schema.parse({ result: evaluateKeyFlowWindow(selected, undefined,
                 context.invokedAtMs, admitted.collectorMachineId),
                 routes: selected.routes.map(route => ({ method: route.method, route: route.route,
                     result: evaluate(route.measurements) })), trend: selected.trend,
-                ...(selected.usage ? { usage: selected.usage } : {}) }));
+                ...(selected.usage ? { usage: selected.usage } : {}) })));
         },
     },
 } satisfies Record<string, PluginActionDefinition>;
