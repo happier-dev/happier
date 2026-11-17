@@ -165,7 +165,11 @@ export function ArtifactsBrowser(props: Readonly<{
         [artifacts, filter, props.folders]);
     const counts = React.useMemo(() => countArtifactBrowserKinds(artifacts), [artifacts]);
     const total = React.useMemo(() => [...counts.values()].reduce((sum, count) => sum + count, 0), [counts]);
-    const savedToday = React.useMemo(() => countSavedToday(artifacts, Date.now()), [artifacts]);
+    // The count line counts what the chosen kinds list (a search narrows the rows, not the count); the library's own
+    // total still decides the first visit and the storage meter.
+    const listed = React.useMemo(() => projectArtifactBrowserRows(artifacts, { query: '', kind, sort: 'updated_desc' })
+        .map((row) => row.artifact), [artifacts, kind]);
+    const savedToday = React.useMemo(() => countSavedToday(listed, Date.now()), [listed]);
 
     const besidePage = useDetailsPaneAvailable();
     const [openId, setOpenId] = React.useState<string | null>(props.initialOpenId ?? null);
@@ -211,7 +215,7 @@ export function ArtifactsBrowser(props: Readonly<{
     const header = (
         <>
             <BrowserHeader
-                total={total}
+                total={listed.length}
                 partial={!loaded}
                 savedToday={savedToday}
                 usage={usage}
@@ -448,7 +452,8 @@ function BrowserHeader(props: Readonly<{
     const phone = useDeviceType() === 'phone';
     const overQuota = props.usage !== null && limit !== null && props.usage.usedBytes >= limit;
     // The library's reported counts go to the shared count line; the storage meter stays beside the title (or the switch).
-    const count = props.showPresent ? [
+    // Nothing listed in the chosen kinds: the page's line says what belongs here, so no count sits above it.
+    const count = props.showPresent && props.total > 0 ? [
         props.partial ? t('artifacts.browser.countSoFar', { count: props.total })
             : props.total === 1 ? t('artifacts.countSingular') : t('artifacts.countPlural', { count: props.total }),
         props.savedToday > 0 && !props.partial ? t('artifacts.browser.savedToday', { count: props.savedToday }) : null,

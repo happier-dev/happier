@@ -691,6 +691,9 @@ describe('Artifacts browser recovery', () => {
         expect(screen.findHostByTestId('artifacts:row:prompt')).toBeNull();
         expect(kindChip(screen).props.filter.selectedId).toBe('home');
         expect(kindChip(screen).props.filter.options.map((option: { id: string }) => option.id)).toEqual(['home', 'all', 'document', 'prompt', 'workflow']);
+        // The count line counts what the chosen kinds list, never rows hidden from it.
+        expect(screen.getTextContent()).toContain('artifacts.countSingular');
+        expect(screen.getTextContent()).not.toContain('artifacts.countPlural(count=3)');
         await chooseKind(screen, 'workflow');
         expect(screen.findHostByTestId('artifacts:row:workflow')).not.toBeNull();
         expect(screen.findHostByTestId('artifacts:row:doc')).toBeNull();
@@ -715,9 +718,12 @@ describe('Artifacts browser recovery', () => {
         expect(screen.findByTestId('artifacts:empty')).toBeNull();
         expect(screen.findByTestId('artifacts:homeEmpty')).not.toBeNull();
         expect(screen.getTextContent()).toContain('artifacts.browser.homeEmpty');
+        // Nothing listed here: no count line claiming one artifact above the line saying none are here.
+        expect(screen.getTextContent()).not.toContain('artifacts.countSingular');
         await screen.pressByTestIdAsync('artifacts:homeEmpty:showAll');
         expect(screen.findHostByTestId('artifacts:row:workflow')).not.toBeNull();
         expect(kindChip(screen).props.filter.selectedId).toBe('all');
+        expect(screen.getTextContent()).toContain('artifacts.countSingular');
     });
 
     it('names a code document by its language, as its own page does, rather than as a plain document', async () => {

@@ -42,7 +42,7 @@ function fixture(id: string, header: Record<string, unknown>, ageMs: number, bod
     const title = typeof header.title === 'string' ? header.title : null;
     return {
         id, title, header: { title, ...header }, body, headerVersion: 1, bodyVersion: 4, seq: 1,
-        createdAt: now - ageMs, updatedAt: now - ageMs, isDecrypted: true, access: 'owner',
+        createdAt: now - ageMs, updatedAt: now - ageMs, isDecrypted: true, access: 'owner', ownerAccountId: 'specimen-owner',
     };
 }
 
