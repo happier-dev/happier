@@ -3173,6 +3173,27 @@ export async function resolveExecutablePluginRuntimeRegistry(
     let reconcileAdoptedHealthChecks: (() => void) | undefined;
     const automationAssembly = await assembleAutomationRuntime({
         credentials: sessionCredentials,
+        async readNativePresence(definition, target, signal) {
+            const activation = resolveExactActivationTarget(definition.eventRef.pluginId);
+            const occurrenceId = readCurrentPluginOccurrenceId(definition.eventRef.pluginId);
+            const sourceCustody = readCurrentPluginSourceCustody(definition.eventRef.pluginId);
+            if (!activation || !occurrenceId || !sourceCustody) throw new PluginError({
+                code: 'target_unavailable', message: 'The native Event owner is unavailable.' });
+            const lifetime = createPluginInvocationLifetime(composePluginConsumerSignal(definition.eventRef.pluginId, signal));
+            const seed: PluginInvocationServicesSeed = {
+                plugin: { id: definition.eventRef.pluginId, version: activation.manifest.version },
+                contribution: { id: definition.eventRef.localId,
+                    qualifiedId: `${definition.eventRef.pluginId}/events/${definition.eventRef.localId}` },
+                occurrenceId, sourceCustody, correlationId: randomUUID(), surface: 'cli',
+                signal: lifetime.signal, redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
+                isOccurrenceCurrent: () => !lifetime.signal.aborted
+                    && isCurrentPluginOccurrence(definition.eventRef.pluginId, occurrenceId),
+            };
+            try {
+                const services = invocationServiceOwners.createServices(seed, resolveDeclaredInvocationServiceBinding(seed));
+                return await services.actions.execute('machines.presence.read', target, { signal: lifetime.signal });
+            } finally { await lifetime.complete(); }
+        },
         ...(sessionCredentials ? { readHealthSources: createCliHealthCheckSourceSnapshotReader({
             credentials: sessionCredentials, serverHttpBaseUrl: notificationServerHttpBaseUrl,
             signal: consumerAssembly.allRetirementSignal,
@@ -4038,9 +4059,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
     // adopted catalog once, irrespective of its number of observers.
     const automationCatalogSubscription = invocationServiceOwners.stableEventsBroker.subscribeHost({
         target: { eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } },
-        listener(event) {
+        async listener(event) {
             if (event.eventId !== '@happier/automation/event-sources-invalidated') return;
-            if (event.payload.definitionsChanged !== false) automationAssembly.invalidateSourceDefinitions(event.payload.pluginIds);
+            if (event.payload.definitionsChanged !== false) {
+                automationAssembly.invalidateSourceDefinitions(event.payload.pluginIds);
+                await automationAssembly.refreshSourceDefinitions(event.payload.pluginIds);
+                await automationAssembly.replayMachinePresence(event.payload.pluginIds);
+            }
+            if (event.payload.machinePresenceOccurrences) await automationAssembly.admitMachinePresenceOccurrences(event.payload.machinePresenceOccurrences);
         },
         isCurrent: () => consumerAssembly.isOccurrenceCurrent(),
     });

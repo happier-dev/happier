@@ -1,182 +1,96 @@
-import { randomUUID } from "node:crypto";
-import { decodeBase64 } from 'privacy-kit';
-import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
-import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import {
-    AutomationEventAdmitInputV1Schema,
-    AutomationSourceSelectorIdV1Schema,
-    AutomationTriggerIdSchema,
-    normalizePluginReleaseFactsV1,
-    createPackageAssetArchiveV1,
-    readDeclaredPackageAssetsV1,
-    sealAutomationTriggerDefinitionStoredEnvelopeV1,
-} from "@happier-dev/protocol";
-import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from "@happier-dev/protocol/automations/automationWorkflowRecipeV2";
-import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
-    type PluginCheckpointedEventSourceDefinitionV1 } from "@happier-dev/plugin-sdk/background-services";
-import type { AccountKvEntry } from "@happier-dev/plugin-sdk/storage";
-import type { JsonValue } from "@happier-dev/plugin-sdk";
-import { manifest } from "../../../../../packages/plugins/machine-services/src/manifest";
-import { createMachinePresenceEventSourceAdapter, machinePresenceEventActions } from "../../../../../packages/plugins/machine-services/src/machinePresenceEvents";
-import { readMachinePresenceForAccountInTx } from '@/app/presence/machinePresenceTransitions';
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, expect, it } from 'vitest';
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { serializeAutomationStoredWorkflowDefinitionRecipeV2 } from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { readMachinePresenceForAccountInTx, retainMachinePresenceTransitionInTx } from '@/app/presence/machinePresenceTransitions';
 import { recordMachineAlive } from '@/app/presence/presenceRecorder';
-import { createMachinePresenceDeadlineOwner, stopLocalMachinePresenceTimeout, resolvePresenceTimeoutConfig } from '@/app/presence/timeout';
-import { inReadSnapshot } from '@/storage/inTx';
-import { db } from "@/storage/db";
-import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
-import { admitAutomationEventV1 } from "./automationEventAdmissionService";
+import { stopLocalMachinePresenceTimeout } from '@/app/presence/timeout';
+import { markAccountChanged } from '@/app/changes/markAccountChanged';
+import { inTx } from '@/storage/inTx';
+import { db } from '@/storage/db';
+import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 
-const serverIdentityId = "srv_healthWorkflowComposed1";
+const serverId = 'srv_presenceWorkflowComposed1';
 let harness: LightSqliteHarness;
 beforeAll(async () => {
-    harness = await createLightSqliteHarness({ tempDirPrefix: "happier-presence-workflow-", initAuth: false,
-        env: { HAPPIER_SERVER_IDENTITY_ID: serverIdentityId } });
+    harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-presence-workflow-', initAuth: false,
+        env: { HAPPIER_SERVER_IDENTITY_ID: serverId, HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1' } });
 }, 120_000);
-afterAll(async () => { await harness?.close(); });
+afterAll(async () => { await stopLocalMachinePresenceTimeout(); await harness?.close(); });
 
-it("admits retained Machine presence through ordinary Workflow admission once across server and observer restart", async () => {
-    const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
-    const machineId = randomUUID();
-    const installationId = randomUUID();
-    const materialization = { pluginId: manifest.id, machineId, materializationId: randomUUID() };
-    const sourceCustody = { kind: "managed" as const, immutableGenerationId: randomUUID(), installSource: "archive" as const };
-    const sourceInstanceBase = "presence:composed:target";
-    const targetMachineId = randomUUID();
-    const source = { v: 1, serverId: serverIdentityId, machineId: targetMachineId, afterRevision: 0 };
-    const assets = createPackageAssetArchiveV1({ manifest, files: (readDeclaredPackageAssetsV1(manifest) ?? [])
-        .map(asset => ({ path: asset.path, bytes: new TextEncoder().encode("{}") })) });
-    if (!assets) throw new Error("plugin_asset_fixture_invalid");
-    const release = normalizePluginReleaseFactsV1({ ref: { pluginId: manifest.id, version: manifest.version },
-        archiveDigestSha256: `sha256:${"a".repeat(64)}`, normalizedManifest: manifest,
-        collectionContracts: [], uiSlots: [], packageAssetArchive: assets.descriptor });
-    await db.automationEventCatalogState.create({ data: { accountId: account.id, eventSourceDefinitionsRevision: 0n } });
-    await db.machine.create({ data: { id: machineId, accountId: account.id, metadata: "{}", installationId,
-        pluginMaterializationRevision: 1n } });
-    await db.machine.create({ data: { id: targetMachineId, accountId: account.id, metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), active: false } });
-    await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id,
-        desiredVersion: manifest.version, enabled: true, writableCollections: [] } });
-    await db.accountPluginRelease.create({ data: { accountId: account.id, pluginId: manifest.id, version: manifest.version,
-        archiveDigestSha256: release.archiveDigestSha256, normalizedManifest: release.normalizedManifest,
-        collectionContracts: [], uiSlots: [], packageAssetArchive: release.packageAssetArchive } });
-    await db.pluginMachineMaterialization.create({ data: { accountId: account.id, serverIdentityId, machineId,
-        materializationId: materialization.materializationId, pluginId: manifest.id, version: manifest.version,
-        sourceClass: "registryPackage", portableRelease: true, archiveDigestSha256: release.archiveDigestSha256,
-        uiArtifacts: [], enabled: true, trustState: "trusted", observedAt: new Date() } });
+// AM2: the server publishes structural candidates, while the key-holding client
+// owns private filtering and Run admission. The presence owner supplies audience.
+it('publishes any and exact Machine candidates to the decided audience without admitting Runs or replaying enrollment', async () => {
+    const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+    const shared = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+    const denied = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+    const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}' } });
     const recipe = serializeAutomationStoredWorkflowDefinitionRecipeV2({ v: 2, templateVersion: 1, triggerEvidence: null,
-        workflow: { t: "plain", v: { workspace: { directory: "/repo" }, executionTarget: { kind: "session" } } } });
-    if (recipe.kind !== "available") throw new Error("workflow_recipe_invalid");
-    const automation = await db.automation.create({ data: { accountId: account.id, name: "Investigate health",
-        enabled: true, templateCiphertext: recipe.serialized, templateVersion: 1, workflowDefinitionId: "builtin:keep-going" } });
-    await db.automationAssignment.create({ data: { automationId: automation.id, machineId, enabled: true } });
-    const definitions: PluginCheckpointedEventSourceDefinitionV1[] = [];
-    for (const localId of ["machine-offline", "machine-online"]) {
-        const sourceInstanceId = `${sourceInstanceBase}:${localId}`;
-        const triggerId = AutomationTriggerIdSchema.parse(randomUUID());
-        const sourceSelectorId = AutomationSourceSelectorIdV1Schema.parse(randomUUID());
-        const eventRef = { pluginId: manifest.id, localId };
-        await db.automationTrigger.create({ data: { id: triggerId, automationId: automation.id, kind: "pluginEvent",
-            enabled: true, revision: 1, eventPluginId: manifest.id, eventLocalId: localId,
-            sourceSelectorId, sourceContractVersion: 1, observationTransport: "checkpointedPull",
-            watcherMachineId: machineId, watcherMachineInstallationId: installationId,
-            watcherPluginId: manifest.id, watcherMaterializationId: materialization.materializationId,
-            definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: "plain",
-                binding: { v: 1, automationId: automation.id, triggerId, triggerRevision: 1, triggerKind: "pluginEvent", eventRef, sourceSelectorId },
-                definition: { v: 1, sourceInstanceId, sourceConfig: source, displayLabel: "Web health", filter: null, maximumObservationAgeMs: null } })) } });
-        definitions.push({ automationId: automation.id, triggerId, triggerRevision: 1, sourceSelectorId, eventRef,
-            sourceInstanceId, sourceContractVersion: 1, sourceConfig: source,
-            observationTransport: { kind: "checkpointedPull", watcherMaterializationRef: materialization },
-            filter: null, maximumObservationAgeMs: null });
-    }
-    let now = Date.now();
-    let loseAcknowledgement = true;
-    const rows = new Map<string, AccountKvEntry>();
-    const admissions: Awaited<ReturnType<typeof admitAutomationEventV1>>[] = [];
-    // Host transport and KV are plugin boundaries. Presence, access, Event
-    // admission, occurrence deduplication and Workflow persistence stay real.
-    const context = { plugin: { id: manifest.id, version: manifest.version }, materialization,
-        contribution: { id: "health-observer", qualifiedId: `${manifest.id}/backgroundServices/health-observer` },
-        surface: "background", invokedAtMs: now, signal: new AbortController().signal,
-        services: { events: { host: { subscribe: () => ({ dispose() {} }) } },
-            storage: { account: { kv: {
-                async get(key: string) { return rows.get(key) ?? null; },
-                async set(key: string, value: JsonValue, options: { expectedVersion: number | "absent" }) {
-                    const previous = rows.get(key);
-                    if ((previous?.version ?? "absent") !== options.expectedVersion) throw new Error("cas_conflict");
-                    const version = (previous?.version ?? 0) + 1;
-                    rows.set(key, { version, value });
-                    return { version };
-                },
-            } } },
-            actions: { async execute(id: string, input: unknown) {
-                if (id === "automation.event.sources.list") return { kind: "page", revision: "1", definitions, nextCursor: null };
-                if (id === "automation.event.source.status.report") return { kind: "reported" };
-                if (id === 'machines.presence.read') return inReadSnapshot(tx => readMachinePresenceForAccountInTx(tx,
-                    { actorAccountId: account.id, machineId: targetMachineId }));
-                if (id !== "automation.event.admit") throw new Error(`unexpected_action:${id}`);
-                const request = AutomationEventAdmitInputV1Schema.parse(input);
-                const current = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } });
-                const result = await admitAutomationEventV1({ accountId: account.id,
-                    caller: { ...materialization, machineInstallationId: installationId, sourceCustody },
-                    request: { v: 1, caller: { pluginId: manifest.id, occurrenceId: request.occurrenceId, sourceCustody, materialization },
-                        input: request, hostEvidence: { v: 1, t: "plain", accountCurrentness: {
-                            mode: "plain", version: current.seq, contentKeyFingerprint: null } } } });
-                admissions.push(result);
-                if (loseAcknowledgement) { loseAcknowledgement = false; throw new Error("network_reply_lost_after_commit"); }
-                return { results: result.results };
-            } },
-        },
-    } as unknown as BackgroundServiceContext;
-    // Each finite pass reconstructs the observer against the retained database.
-    const cycle = async () => {
-        for (const eventId of ['machine-offline', 'machine-online'] as const) {
-            const adapter = createMachinePresenceEventSourceAdapter(context.services.events.host, eventId, () => now);
-            await runCheckpointedPluginEventObserverV1({ context, source: adapter, mode: 'once', now: () => now });
-        }
+        workflow: { t: 'plain', v: { workspace: { directory: '/repo' }, executionTarget: { kind: 'session' } } } });
+    if (recipe.kind !== 'available') throw new Error('workflow_recipe_invalid');
+    const add = async (accountId: string, subjectMachineId?: string, eventLocalId = 'machine-offline') => {
+        const executor = await db.machine.create({ data: { id: randomUUID(), accountId, metadata: '{}' } });
+        const automation = await db.automation.create({ data: { accountId, name: 'Presence diagnosis', enabled: true,
+            templateCiphertext: recipe.serialized, templateVersion: 1, workflowDefinitionId: 'builtin:keep-going' } });
+        await db.automationAssignment.create({ data: { automationId: automation.id, machineId: executor.id, enabled: true } });
+        await db.automationTrigger.create({ data: { automationId: automation.id, id: randomUUID(), kind: 'pluginEvent',
+            enabled: true, revision: 1, eventPluginId: 'happier.machine.services', eventLocalId,
+            sourceSelectorId: randomUUID(), sourceContractVersion: 1, observationTransport: 'checkpointedPull',
+            watcherMachineId: executor.id, watcherMachineInstallationId: randomUUID(),
+            watcherPluginId: 'happier.machine.services', watcherMaterializationId: randomUUID(),
+            // Structural matching must not open the private stored definition.
+            definitionEnvelope: 'opaque-client-owned-definition',
+            ...(subjectMachineId ? { subjectKind: 'machine', subjectKey: automationSubjectKeyV1({ kind: 'machine', serverId,
+                machineId: subjectMachineId }) } : {}) } });
+        return automation.id;
     };
-    const beat = () => recordMachineAlive({ accountId: account.id, machineId: targetMachineId, timestamp: Date.now() }, async (_, row) => {
-        return { recipientAccountIds: [account.id], wasOffline: !row.active, lastActiveAt: row.lastActiveAt };
-    });
-    let deadline = createMachinePresenceDeadlineOwner();
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    try {
-        await beat();
-        await cycle();
-        expect(await db.automationRun.count({ where: { automationId: automation.id } })).toBe(0);
-        await deadline.start();
-        await vi.advanceTimersByTimeAsync(resolvePresenceTimeoutConfig().machineTimeoutMs);
-        await deadline.stop();
-        await stopLocalMachinePresenceTimeout();
-        now = Date.now();
-        await cycle();
-        const failed = await db.automationRun.findFirstOrThrow({ where: { automationId: automation.id } });
-        expect(failed).toMatchObject({ state: 'queued', originKind: 'automation', workflowCustodyState: 'pending',
-            causeKind: 'trigger', causeTriggerKind: 'pluginEvent', causeEventLocalId: 'machine-offline' });
-        expect(JSON.parse(failed.triggerEvidenceEnvelope!).v.payload).toEqual({ serverId: serverIdentityId,
-            machineId: targetMachineId, transition: 'offline', revision: 1, observedAt: now });
-        await deadline.stop();
-        deadline = createMachinePresenceDeadlineOwner();
-        await deadline.start();
-        await cycle();
-        expect(await db.automationRun.count({ where: { automationId: automation.id } })).toBe(1);
-        expect(admissions.at(-1)?.results[0]).toMatchObject({ kind: 'rejoined', runId: failed.id, checkpointSafe: true });
-        await beat();
-        await cycle();
-        expect(await db.automationRun.count({ where: { automationId: automation.id } })).toBe(2);
-        expect(await db.automationRun.count({ where: { automationId: automation.id, causeEventLocalId: 'machine-online' } })).toBe(1);
-        // A disconnected observer still sees both polarities after recovery.
-        await vi.advanceTimersByTimeAsync(resolvePresenceTimeoutConfig().machineTimeoutMs);
-        await stopLocalMachinePresenceTimeout();
-        await beat();
-        now = Date.now();
-        await cycle();
-        expect(await db.automationRun.count({ where: { automationId: automation.id } })).toBe(4);
-        await cycle();
-        expect(await db.automationRun.count({ where: { automationId: automation.id } })).toBe(4);
-        const enrollment = await machinePresenceEventActions['machine-offline/setup']!.run(
-            { v: 1, serverId: serverIdentityId, machineId: targetMachineId }, context);
-        expect(enrollment.sourceConfig).toMatchObject({ afterRevision: 4 });
-        definitions.splice(0, definitions.length, ...definitions.map(definition => ({ ...definition, sourceConfig: enrollment.sourceConfig })));
-        await cycle();
-        expect(await db.automationRun.count({ where: { automationId: automation.id } })).toBe(4);
-    } finally { await deadline.stop(); await stopLocalMachinePresenceTimeout(); vi.useRealTimers(); }
+    const any = await add(owner.id);
+    const exact = await add(owner.id, machine.id);
+    await add(owner.id, randomUUID());
+    const sharedExact = await add(shared.id, machine.id);
+    await add(denied.id, machine.id);
+    const transition = (active: boolean, occurredAt: number) => inTx(tx => retainMachinePresenceTransitionInTx(tx,
+        { machineId: machine.id, active, occurredAt, recipientAccountIds: [owner.id, shared.id] }));
+    const candidates = async (accountId: string, machineId = machine.id) => {
+        const row = await db.accountChange.findFirst({ where: { accountId, kind: 'machine', entityId: machineId } });
+        return row?.hint;
+    };
+    await transition(true, Date.now());
+    expect((await candidates(owner.id)) ?? {}).not.toHaveProperty('machinePresence');
+    expect((await candidates(shared.id)) ?? {}).not.toHaveProperty('machinePresence');
+    expect(await inTx(tx => readMachinePresenceForAccountInTx(tx, { actorAccountId: owner.id, machineId: machine.id })))
+        .toMatchObject({ kind: 'present', transitions: null, occurrences: [] });
+    expect(await db.automationRun.count()).toBe(0);
+    const occurredAt = Date.now();
+    await transition(false, occurredAt);
+    const selectors = async (...automationIds: string[]) => (await db.automationTrigger.findMany({
+        where: { automationId: { in: automationIds } }, select: { id: true, automationId: true, revision: true, sourceSelectorId: true }, orderBy: { id: 'asc' },
+    })).map(row => ({ automationId: row.automationId, triggerId: row.id, triggerRevision: row.revision, sourceSelectorId: row.sourceSelectorId }));
+    expect(await candidates(owner.id)).toMatchObject({ machinePresence: { v: 1, serverId, machineId: machine.id,
+        transition: 'offline', revision: 1, occurredAt, definitions: await selectors(any, exact) } });
+    expect(await candidates(shared.id)).toMatchObject({ machinePresence: { definitions: await selectors(sharedExact) } });
+    expect(await candidates(denied.id)).toBeUndefined();
+    expect(await db.automationRun.count()).toBe(0);
+    const replay = await inTx(tx => readMachinePresenceForAccountInTx(tx, { actorAccountId: owner.id, machineId: machine.id }));
+    expect(replay).toMatchObject({ kind: 'present', occurrences: [{ transition: 'offline', occurredAt,
+        definitions: await selectors(any, exact) }] });
+    expect(await inTx(tx => readMachinePresenceForAccountInTx(tx, { actorAccountId: denied.id, machineId: machine.id })))
+        .toEqual({ kind: 'refused', code: 'machine_unavailable' });
+    const online = await add(owner.id, machine.id, 'machine-online');
+    await recordMachineAlive({ accountId: owner.id, machineId: machine.id, timestamp: Date.now() }, async tx => ({
+        recipientAccountIds: [owner.id], wasOffline: true, lastActiveAt: new Date(0),
+        accountChanges: [await markAccountChanged(tx, { accountId: owner.id, kind: 'machine', entityId: machine.id })],
+    }));
+    // A semantic writer having published the Machine must not remove that
+    // recipient from the presence occurrence's authoritative audience.
+    expect(await candidates(owner.id)).toMatchObject({ machinePresence: { transition: 'online', revision: 2,
+        definitions: await selectors(online) } });
+    const uninterested = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+    const unobservedMachine = await db.machine.create({ data: { id: randomUUID(), accountId: uninterested.id, metadata: '{}' } });
+    await inTx(tx => retainMachinePresenceTransitionInTx(tx, { machineId: unobservedMachine.id,
+        active: false, occurredAt: Date.now(), recipientAccountIds: [uninterested.id] }));
+    // Ordinary presence publication remains available without automation demand.
+    expect(await db.accountChange.count({ where: { accountId: uninterested.id, kind: 'machine', entityId: unobservedMachine.id } })).toBe(1);
+    expect((await candidates(uninterested.id, unobservedMachine.id)) ?? {}).not.toHaveProperty('machinePresence');
+    expect(await db.automationRun.count()).toBe(0);
 });

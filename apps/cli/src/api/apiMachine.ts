@@ -1,4 +1,6 @@
 import { publishDaemonHostEvent } from '@/daemon/events/publishDaemonHostEvent';
+import { projectAccountEntitiesInvalidationForHost } from '@/daemon/events/accountEntityInvalidation';
+import { readMachinePresenceAutomationOccurrenceV1 } from '@happier-dev/protocol/machines/machinePresenceTransitionsV1';
 import { applyCliActionAutomationUpdateV1, reconnectCliActionAutomationsV1, refreshCliActionAutomationsFromChangesV1 } from './actionAutomations';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import { resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
@@ -6833,6 +6835,11 @@ export class ApiMachineClient {
                 }
 
                 const changes = result.response.changes;
+                const machinePresenceOccurrences = changes.flatMap(change => {
+                    if (change.kind !== 'machine') return [];
+                    const occurrence = readMachinePresenceAutomationOccurrenceV1(change.hint);
+                    return occurrence ? [occurrence] : [];
+                });
                 await refreshCliActionAutomationsFromChangesV1({ token: this.token,
                     serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl, changes });
                 const nextCursor = result.response.nextCursor;
@@ -7217,7 +7224,7 @@ export class ApiMachineClient {
                 if (reason !== 'live'
                     || hasAutomationSourceChange || hasConnectedServicesChange || hasConnectedAccountCatalogChange
                     || hasWebhookAdmissionChange
-                    || highestAccountSettingsVersion !== null) {
+                    || highestAccountSettingsVersion !== null || machinePresenceOccurrences.length > 0) {
                     // Credential/settings wakes can unpark observers without changing
                     // the admitted definition set. Only the feed owner classifies this.
                     // A plugin's availability/webhook change can change only that plugin's
@@ -7230,6 +7237,7 @@ export class ApiMachineClient {
                         ...(reason === 'live' && !hasAutomationSourceChange && !hasWebhookAdmissionChange
                             ? { definitionsChanged: false } : {}),
                         ...(onlyPluginScopedChange ? { pluginIds: webhookAdmissionPluginIds } : {}),
+                        ...(machinePresenceOccurrences.length ? { machinePresenceOccurrences } : {}),
                     });
                 }
                 if (reason !== 'live'
@@ -7252,6 +7260,10 @@ export class ApiMachineClient {
                 }
                 signal.throwIfAborted();
                 if (this.projectionSchedulingClosed || !this.isActiveTransportGeneration(transportGeneration)) return;
+                const entities = projectAccountEntitiesInvalidationForHost({ t: 'account-change',
+                    entityIds: [...new Set(changes.map(change => change.entityId))],
+                    rows: { v: 1, after, page: result.response } });
+                if (entities) publishDaemonHostEvent(entities, () => this.projectionSchedulingClosed);
                 this.accountEncryptionCurrentness?.consumeOwnedFeedPage({ after, changes, nextCursor });
                 after = nextCursor;
                 consumedPage = true;

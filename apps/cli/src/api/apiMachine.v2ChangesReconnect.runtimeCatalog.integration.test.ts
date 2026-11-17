@@ -928,11 +928,57 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         } finally { await client.shutdown(); }
     });
 
+    it('delivers retained Account KV addresses from consumed feed pages and reconnect replay', async () => {
+        const admitted = await createAdmittedPluginRuntimeFixture({
+            controller: pluginReloadController, runtimeOptions: { pluginIds: [] },
+        });
+        const machine: Machine = { id: 'kv-observer-machine', encryptionMode: 'plain', metadata: null,
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
+        const received: unknown[] = [];
+        const subscription = admitted.registry.stableEventsBroker?.subscribeHost({
+            target: { eventId: '@happier/account/entities-invalidated', scope: { kind: 'account' } },
+            isCurrent: () => true,
+            listener(event) {
+                if (event.eventId === '@happier/account/entities-invalidated') received.push(event.payload);
+            },
+        });
+        let changes: ChangeEntry[] = [{ cursor: 1, kind: 'pluginDomain',
+            entityId: 'pluginDomain/happier.machine.services/data-kv', changedAt: 1,
+            hint: { pluginDomain: 'dataKv', pluginId: 'happier.machine.services', keys: ['health:source'] } }];
+        mockAccountGet(async (url: string) => {
+            if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'kv-observer-account' } };
+            if (url.includes('/v2/changes')) return { status: 200, data: { changes, nextCursor: changes.at(-1)?.cursor ?? 2 } };
+            throw new Error(`Unexpected KV observer request: ${new URL(url).pathname}`);
+        });
+        const client = new ApiMachineClient('token', machine);
+        client.onConnectedServicesProjection(async () => {});
+        const sync = (reason: 'live' | 'reconnect') => (
+            client as unknown as { syncChangesOnConnect(options: { reason: 'live' | 'reconnect' }): Promise<void> }
+        ).syncChangesOnConnect({ reason });
+        try {
+            await sync('live');
+            await vi.waitFor(() => expect(received).toEqual([{ entityIds: ['pluginDomain/happier.machine.services/data-kv'], dataKvChanges: [
+                { pluginDomain: 'dataKv', pluginId: 'happier.machine.services', keys: ['health:source'] },
+            ] }]));
+            changes = [{ cursor: 2, kind: 'kv', entityId: 'self', changedAt: 2,
+                hint: { keys: ['machine-outcome:v1:changed'] } }];
+            await sync('reconnect');
+            await vi.waitFor(() => expect(received).toHaveLength(2));
+            expect(received[1]).toEqual({ entityIds: ['self'], accountKvChanges: [{ keys: ['machine-outcome:v1:changed'] }] });
+            changes = [];
+            await sync('live');
+            expect(received).toHaveLength(2);
+        } finally {
+            await subscription?.dispose();
+            await client.shutdown();
+            await admitted.dispose();
+        }
+    });
+
     it('invalidates Automation source observers from durable changes and completeness recovery', async () => {
         const machine: Machine = { id: 'source-observer-machine', encryptionMode: 'plain', metadata: null,
             metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
-        let changes: Array<{ cursor: number; kind: 'automation' | 'account' | 'pluginDomain'; entityId: string; changedAt: number;
-            hint: null | Readonly<{ pluginDomain: 'availability' | 'webhook'; pluginId: string }> }> = [];
+        let changes: ChangeEntry[] = [];
         let cursorGone = false;
         mockAccountGet(async (url: string) => {
             if (url.includes('/v1/account/profile')) return { status: 200, data: { id: 'source-observer-account' } };
@@ -974,7 +1020,26 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         changes = [...changes, { cursor: 1, kind: 'automation', entityId: 'automation-b', changedAt: 1, hint: null }];
         await sync('live');
         expect(notified).toHaveBeenLastCalledWith({});
+        const presence = { v: 1, serverId: 'home', machineId: 'observed-machine', transition: 'offline',
+            revision: 1, occurredAt: 1, definitions: [{ automationId: 'automation-b', triggerId: 'trigger-b',
+                triggerRevision: 1, sourceSelectorId: '00000000-0000-4000-8000-000000000001' }] };
+        changes = [...changes, { cursor: 1, kind: 'machine', entityId: presence.machineId,
+            changedAt: 1, hint: { machinePresence: presence } }];
         notified.mockClear();
+        await sync('live');
+        // Publication is fire-and-forget at the daemon boundary. Keeping the
+        // definition change and fact in one payload lets the existing consumer
+        // finish adoption before admitting this occurrence.
+        expect(notified).toHaveBeenCalledExactlyOnceWith({ machinePresenceOccurrences: [presence] });
+        notified.mockClear();
+        changes = [{ cursor: 1, kind: 'machine', entityId: presence.machineId,
+            changedAt: 1, hint: { machinePresence: presence } }];
+        await sync('live');
+        expect(notified).toHaveBeenCalledExactlyOnceWith({ definitionsChanged: false, machinePresenceOccurrences: [presence] });
+        notified.mockClear();
+        changes = [{ cursor: 1, kind: 'machine', entityId: 'unrelated-machine', changedAt: 1, hint: null }];
+        await sync('live');
+        expect(notified).not.toHaveBeenCalled();
         changes = [];
         await sync('reconnect');
         expect(notified).toHaveBeenCalledTimes(1);

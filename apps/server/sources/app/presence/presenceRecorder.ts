@@ -32,8 +32,7 @@ export async function recordMachineAliveInTx(
         || await persistMachinePresence(tx, params) !== 1) return null;
     if (current.wasOffline) await retainMachinePresenceTransitionInTx(tx, {
         machineId: params.machineId, active: true, occurredAt: params.timestamp,
-        recipientAccountIds: current.recipientAccountIds.filter(accountId =>
-            !current.accountChanges?.some(publication => publication.accountId === accountId)),
+        recipientAccountIds: current.recipientAccountIds,
     });
     afterTx(tx, () => {
         renewLocalMachinePresenceDeadline({ ...params, lastActiveAt: new Date(params.timestamp) });

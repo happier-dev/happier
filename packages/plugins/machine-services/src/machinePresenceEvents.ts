@@ -2,8 +2,6 @@ import { computeCanonicalDomainSeparatedDigest, type PluginInvocationContext } f
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { createPluginEventAutomationSetupResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
-import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext } from '@happier-dev/plugin-sdk/background-services';
-import { createRetainedFactEventSource } from './retainedFactSource.js';
 
 const id = defineProtocolString({ minLength: 1 });
 const number = defineProtocolNumber({ integer: true, minimum: 0 });
@@ -14,7 +12,6 @@ const descriptors = [
     { id: 'machine-offline', transition: 'offline', key: 'machineOffline', title: 'Machine went offline', description: 'The Machine is no longer connected.' },
     { id: 'machine-online', transition: 'online', key: 'machineOnline', title: 'Machine came back online', description: 'An offline Machine became active again.' },
 ] as const;
-type PresenceEventId = typeof descriptors[number]['id'];
 function payload(transition: 'offline' | 'online') {
     return defineProtocolObject({ serverId: id, machineId: id, transition: defineProtocolLiteral(transition),
         revision: number, observedAt: number }, { policy: 'closed' });
@@ -44,32 +41,10 @@ export const machinePresenceEventActions = Object.fromEntries(descriptors.map(ev
 export const machinePresenceEvents = Object.fromEntries(descriptors.map(event => [event.id, { declaration: {
     kind: 'event' as const, title: { key: `machineServices.events.${event.key}.title`, fallback: event.title },
     description: { key: `machineServices.events.${event.key}.description`, fallback: event.description },
-    payloadSchema: payload(event.transition).jsonSchema, automation: { v: 1 as const, eligible: true as const, source: {
+    payloadSchema: payload(event.transition).jsonSchema, automation: { v: 1 as const, eligible: true as const,
+        subjectKinds: ['machine' as const], source: {
         nativeActivity: { kind: 'machinePresence' as const, transition: event.transition },
         sourceContractVersion: 1, supportedObservationTransports: ['checkpointedPull' as const], sourceConfigSchema: source.jsonSchema,
         setupActionRef: { pluginId: 'happier.machine.services', localId: `${event.id}/setup` },
     } },
 } } ]));
-export function createMachinePresenceEventSourceAdapter(host: BackgroundServiceContext['services']['events']['host'],
-    eventId: PresenceEventId, now: () => number = Date.now) {
-    const event = descriptors.find(candidate => candidate.id === eventId)!;
-    return createRetainedFactEventSource({ host, eventId, schema: source, now, entityId: config => config.machineId,
-        async read(context, config) {
-            const retained = await read(context, config);
-            const fact = retained?.[event.transition];
-            if (!fact || fact.revision <= config.afterRevision) return null;
-            return { occurredAt: fact.occurredAt,
-                occurrenceId: computeCanonicalDomainSeparatedDigest('happier.machine.presence.occurrence.v1',
-                    [config.serverId, config.machineId, event.transition, String(fact.revision)]),
-                payload: payload(event.transition).parse({ serverId: config.serverId, machineId: config.machineId,
-                    transition: event.transition, revision: fact.revision, observedAt: fact.occurredAt }) };
-        },
-    });
-}
-export const machinePresenceEventBackgroundServices = descriptors.map(event => ({
-    declaration: { id: `${event.id}-observer`, title: event.title, placement: 'daemon' as const },
-    async runner(context: BackgroundServiceContext) {
-        await runCheckpointedPluginEventObserverV1({ context,
-            source: createMachinePresenceEventSourceAdapter(context.services.events.host, event.id) });
-    },
-}));

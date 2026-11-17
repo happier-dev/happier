@@ -7,6 +7,11 @@ import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/
 import type { AutomationEventSourcesListTransportV1, PluginMachineMaterializationRefV1 } from '@happier-dev/protocol';
 import type { WorkflowTriggerHealthSourceV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { SavedHealthCheckSourceRead } from '@/deployments/healthChecks/readSavedHealthCheckSource';
+import type { MachinePresenceAutomationOccurrenceV1 } from '@happier-dev/protocol/machines/machinePresenceTransitionsV1';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { createAutomationEventActionExecutor } from '../automations/automationEventActionExecutor';
+import { MachinePresenceReadResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import type { AutomationEventSourceDefinitionV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 
 type ConsumerLifecycle = Readonly<{
     isCurrent(): boolean;
@@ -25,6 +30,8 @@ export async function assembleAutomationRuntime(input: Readonly<{
     revalidateCallerOccurrence(candidate: Readonly<{ pluginId: string; occurrenceId: string }>): Promise<boolean>;
     onAdopted?(): void;
     readHealthSources?(): Promise<ReadonlyMap<string, WorkflowTriggerHealthSourceV1>>;
+    readNativePresence?(definition: AutomationEventSourceDefinitionV1,
+        target: Readonly<{ serverId: string; machineId: string }>, signal: AbortSignal): Promise<unknown>;
 }>) {
     // Native controllers also consume sources assigned to another observer.
     // The existing definitions invalidation retires this same assembly's view;
@@ -105,12 +112,14 @@ export async function assembleAutomationRuntime(input: Readonly<{
                     revalidateCallerOccurrence: input.revalidateCallerOccurrence,
                     onAdopted: input.onAdopted,
                 });
-                adoptedOwners.push(Object.freeze({ caller, occurrenceId, transport, owner }));
+                const adopted = Object.freeze({ caller, occurrenceId, transport, owner });
+                adoptedOwners.push(adopted);
                 await owner.refresh(lifecycle.retirementSignal);
+                await reportNativePresenceObservation(adopted);
             }
         }
+        await assembly.replayMachinePresence(pluginId === undefined ? undefined : [pluginId]);
     }
-    await refreshActivatedPlugin();
     // The resolver belongs to this assembly, not its initial active snapshot.
     // A dormant source can gain its existing owner before its service starts.
     const resolveAdoptedDefinitionSet = (
@@ -159,7 +168,111 @@ export async function assembleAutomationRuntime(input: Readonly<{
             sourceConfig: structuredClone(definition.sourceConfig),
         });
     };
-    return Object.freeze({
+    const nativeEventAdmission = input.credentials ? createAutomationEventActionExecutor({
+        credentials: input.credentials,
+        revalidateCallerMaterialization: input.revalidateCallerMaterialization,
+        revalidateCallerOccurrence: input.revalidateCallerOccurrence,
+        resolveAdoptedDefinitionSet,
+    }) : null;
+    async function reportNativePresenceObservation(entry: (typeof adoptedOwners)[number]): Promise<void> {
+        if (!nativeEventAdmission || entry.caller.pluginId !== 'happier.machine.services'
+            || entry.transport.kind !== 'checkpointedPull') return;
+        const lifecycle = input.resolveConsumerLifecycle(entry.caller.pluginId);
+        const sourceCustody = input.readPluginSourceCustody(entry.caller.pluginId);
+        const projection = entry.owner.readPublicProjection();
+        if (!sourceCustody || !lifecycle.isCurrent() || projection.kind !== 'available') return;
+        for (const definition of projection.definitions) {
+            if ((definition.eventRef.localId !== 'machine-offline' && definition.eventRef.localId !== 'machine-online')
+                || definition.observationTransport.kind !== 'checkpointedPull'
+                || !arePluginMachineMaterializationRefsEqual(definition.observationTransport.watcherMaterializationRef, entry.caller)) continue;
+            const result = await nativeEventAdmission({ actionId: 'automation.event.source.status.report',
+                caller: { kind: 'plugin', pluginId: entry.caller.pluginId, occurrenceId: entry.occurrenceId,
+                    sourceCustody, materialization: entry.caller }, signal: lifecycle.retirementSignal,
+                input: { kind: 'source', automationId: definition.automationId, triggerId: definition.triggerId,
+                    triggerRevision: definition.triggerRevision, eventRef: definition.eventRef,
+                    sourceSelectorId: definition.sourceSelectorId, state: 'observing', code: 'none',
+                    nextRetryAt: null, observedDelta: 0, admittedDelta: 0, skippedDelta: 0 },
+            });
+            if ('ok' in result && result.ok === false) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+        }
+    }
+    const assembly = Object.freeze({
+        /** Reconnect replays only known, demanded Machine keys. Any-Machine
+         * subscriptions consume future native pushes; no inventory census. */
+        async replayMachinePresence(pluginIds?: readonly string[]): Promise<void> {
+            if (!input.readNativePresence || (pluginIds && !pluginIds.includes('happier.machine.services'))) return;
+            const reads = new Map<string, { definition: AutomationEventSourceDefinitionV1;
+                target: { serverId: string; machineId: string }; definitions: AutomationEventSourceDefinitionV1[]; signal: AbortSignal }>();
+            for (const { caller, transport, owner } of adoptedOwners) {
+                if (caller.pluginId !== 'happier.machine.services' || transport.kind !== 'checkpointedPull') continue;
+                const projection = owner.readPublicProjection();
+                if (projection.kind !== 'available') continue;
+                for (const definition of projection.definitions) {
+                    if (definition.eventRef.localId !== 'machine-offline' && definition.eventRef.localId !== 'machine-online') continue;
+                    const config = definition.sourceConfig;
+                    const selected = definition.subject?.kind === 'machine' ? definition.subject
+                        : config && typeof config === 'object' && !Array.isArray(config)
+                            && typeof config.serverId === 'string' && typeof config.machineId === 'string'
+                            ? { serverId: config.serverId, machineId: config.machineId } : null;
+                    if (!selected) continue;
+                    const target = { serverId: selected.serverId, machineId: selected.machineId };
+                    const key = JSON.stringify([target.serverId, target.machineId]);
+                    const previous = reads.get(key);
+                    if (previous) previous.definitions.push(definition);
+                    else reads.set(key, { definition, target, definitions: [definition],
+                        signal: input.resolveConsumerLifecycle(caller.pluginId).retirementSignal });
+                }
+            }
+            for (const read of reads.values()) {
+                const result = MachinePresenceReadResultV1Schema.parse(await input.readNativePresence(read.definition, read.target, read.signal));
+                if (result.kind !== 'present') continue;
+                for (const fact of result.occurrences ?? []) {
+                    const eligible = new Set(read.definitions.filter(definition => {
+                        const config = definition.sourceConfig;
+                        return !(config && typeof config === 'object' && !Array.isArray(config)
+                            && typeof config.afterRevision === 'number' && fact.revision <= config.afterRevision);
+                    }).map(definition => definition.triggerId));
+                    const definitions = fact.definitions.filter(selector => eligible.has(selector.triggerId));
+                    if (definitions.length) await this.admitMachinePresenceOccurrences([{ ...fact, definitions }]);
+                }
+            }
+        },
+        /** Native presence owns candidate selection; the adopted private Event
+         * definition owns filtering and the normal Event Action owns admission. */
+        async admitMachinePresenceOccurrences(occurrences: readonly MachinePresenceAutomationOccurrenceV1[]) {
+            if (!nativeEventAdmission || occurrences.length === 0) return;
+            for (const { caller, occurrenceId, transport, owner } of adoptedOwners) {
+                if (caller.pluginId !== 'happier.machine.services' || transport.kind !== 'checkpointedPull') continue;
+                const lifecycle = input.resolveConsumerLifecycle(caller.pluginId);
+                const sourceCustody = input.readPluginSourceCustody(caller.pluginId);
+                if (!sourceCustody || !lifecycle.isCurrent()) continue;
+                for (const fact of occurrences) {
+                    const eventRef = { pluginId: caller.pluginId, localId: `machine-${fact.transition}` };
+                    let projection = owner.readPublicProjection({ definitions: fact.definitions });
+                    if (projection.kind === 'initializing') {
+                        await owner.refresh(lifecycle.retirementSignal);
+                        projection = owner.readPublicProjection({ definitions: fact.definitions });
+                    }
+                    if (projection.kind !== 'available') continue;
+                    const definitions = projection.definitions.filter(definition =>
+                        definition.eventRef.pluginId === eventRef.pluginId && definition.eventRef.localId === eventRef.localId);
+                    if (!definitions.length) continue;
+                    const result = await nativeEventAdmission({ actionId: 'automation.event.admit',
+                        caller: { kind: 'plugin', pluginId: caller.pluginId, occurrenceId, sourceCustody, materialization: caller },
+                        signal: lifecycle.retirementSignal,
+                        input: { eventRef, occurrenceId: computeCanonicalDomainSeparatedDigest('happier.machine.presence.occurrence.v1',
+                            [fact.serverId, fact.machineId, fact.transition, String(fact.revision)]),
+                            occurredAt: fact.occurredAt, observationReceivedAt: Date.now(),
+                            payload: { serverId: fact.serverId, machineId: fact.machineId, transition: fact.transition,
+                                revision: fact.revision, observedAt: fact.occurredAt },
+                            subjectContexts: [{ role: 'operand', subject: { kind: 'machine', serverId: fact.serverId, machineId: fact.machineId } }],
+                            definitions: definitions.map(definition => ({ automationId: definition.automationId,
+                                triggerId: definition.triggerId, triggerRevision: definition.triggerRevision, sourceSelectorId: definition.sourceSelectorId })) },
+                    });
+                    if ('ok' in result && result.ok === false) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+                }
+            }
+        },
         /** Absent `pluginIds` dirties every adopted catalog; present, only those plugins'. */
         invalidateSourceDefinitions(pluginIds?: readonly string[]) {
             healthSources = null;
@@ -167,9 +280,19 @@ export async function assembleAutomationRuntime(input: Readonly<{
                 if (pluginIds === undefined || pluginIds.includes(caller.pluginId)) owner.invalidate();
             }
         },
+        async refreshSourceDefinitions(pluginIds?: readonly string[]) {
+            for (const entry of adoptedOwners) {
+                if (pluginIds === undefined || pluginIds.includes(entry.caller.pluginId)) {
+                    await entry.owner.refresh(input.resolveConsumerLifecycle(entry.caller.pluginId).retirementSignal);
+                    await reportNativePresenceObservation(entry);
+                }
+            }
+        },
         readHealthAlertSource,
         refreshActivatedPlugin,
         resolveAdoptedDefinitionSet,
         resolveHistoryGapSource,
     });
+    await refreshActivatedPlugin();
+    return assembly;
 }

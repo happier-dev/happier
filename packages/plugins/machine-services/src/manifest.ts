@@ -20,7 +20,7 @@ import { savedHealthActions, HEALTH_STATUS_EVENT, HEALTH_CHECK_FAILED_EVENT, HEA
 import { deploymentEvents, deploymentEventActions, deploymentEventBackgroundServices } from './deploymentEvents.js';
 import { managedSetupEvents, managedSetupEventActions, managedSetupEventBackgroundServices } from './managedSetupEvents.js';
 import { mcpUpdateEvents, mcpUpdateEventActions, mcpUpdateEventBackgroundServices } from './mcpUpdateEvents.js';
-import { machinePresenceEvents, machinePresenceEventActions, machinePresenceEventBackgroundServices } from './machinePresenceEvents.js';
+import { machinePresenceEvents, machinePresenceEventActions } from './machinePresenceEvents.js';
 import { createHealthCheckSourceInstanceIdV1, HEALTH_SETUP_OPEN_ACTION_ID, MACHINE_SERVICES_PLUGIN_ID,
     MachineServiceHealthSetupOpenInputV1Schema } from './healthSetup.js';
 
@@ -136,9 +136,9 @@ export const plugin = definePlugin({
     // Machine roles (OWNER-RULINGS 2026-11-12): local service health and events belong to the Deployments role.
     machineRoles: { services: { title: 'Machine services', description: 'Saved health checks and service events on this Machine.', partOf: 'deployments',
         backgroundServices: ['health-observer', ...[...deploymentEventBackgroundServices, ...managedSetupEventBackgroundServices,
-            ...mcpUpdateEventBackgroundServices, ...machinePresenceEventBackgroundServices, ...machineOutcomeEventBackgroundServices].map(service => service.declaration.id)] } },
+            ...mcpUpdateEventBackgroundServices, ...machineOutcomeEventBackgroundServices].map(service => service.declaration.id)] } },
     backgroundServices: [{ declaration: { id: 'health-observer', title: 'Saved health checks', placement: 'daemon' }, runner: runHealthCheckObserver },
-        ...deploymentEventBackgroundServices, ...managedSetupEventBackgroundServices, ...mcpUpdateEventBackgroundServices, ...machinePresenceEventBackgroundServices, ...machineOutcomeEventBackgroundServices],
+        ...deploymentEventBackgroundServices, ...managedSetupEventBackgroundServices, ...mcpUpdateEventBackgroundServices, ...machineOutcomeEventBackgroundServices],
     hostAccess: { required: [{ id: 'health-status-storage', capability: 'storage.account',
         reason: 'Retain the last admitted health status and pending transition for enabled saved checks.', scope: { enabled: true },
     }, { id: 'systemd-process', capability: 'process',

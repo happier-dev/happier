@@ -1,4 +1,6 @@
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from './machineServiceObservationV1.js';
+import { PluginDomainDataKvChangeHintSchema } from '../../changes/pluginDomainDataKv.js';
+import { AccountKvChangeHintV1Schema } from '../../changes/accountKv.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
@@ -9,6 +11,7 @@ import { SessionIdSchema } from '../../sessions/idsV1.js';
 import { DiscussionIdSchema } from '../../discussions/content.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 import { PluginWebhookHeartbeatReceiptHintV1Schema } from '../webhooks/endpointV1.js';
+import { MachinePresenceAutomationOccurrenceV1Schema } from '../../machines/machinePresenceTransitionsV1.js';
 
 export const HAPPIER_RUNTIME_HOST_EVENT_PREFIX_V1 = '@happier/runtime/' as const;
 export const HAPPIER_AUTOMATION_RUN_STATE_CHANGED_HOST_EVENT_ID_V1 =
@@ -30,6 +33,8 @@ export type DeploymentReceiptInvalidatedHostEventV1 = z.infer<typeof DeploymentR
 export const HAPPIER_ACCOUNT_ENTITIES_INVALIDATED_HOST_EVENT_ID_V1 = '@happier/account/entities-invalidated' as const;
 export const AccountEntitiesInvalidatedHostEventV1Schema = lazyZodSchema(() => z.strictObject({
   entityIds: z.array(z.string().check(z.minLength(1))),
+  dataKvChanges: z.optional(z.array(PluginDomainDataKvChangeHintSchema)),
+  accountKvChanges: z.optional(z.array(AccountKvChangeHintV1Schema)),
 }));
 export type AccountEntitiesInvalidatedHostEventV1 = z.infer<typeof AccountEntitiesInvalidatedHostEventV1Schema>;
 
@@ -64,6 +69,8 @@ export const AutomationEventSourcesInvalidatedHostEventV1Schema = lazyZodSchema(
   reason: z.optional(z.literal('reconnect')),
   /** False for credential/settings wakes; absent means definitions may have changed. */
   definitionsChanged: z.optional(z.boolean()),
+  /** Native public facts selected structurally for this Account's triggers. */
+  machinePresenceOccurrences: z.optional(z.array(MachinePresenceAutomationOccurrenceV1Schema)),
   /**
    * Present when only these plugins' admitted definitions can have changed (a
    * plugin availability/webhook change). Observers of other plugins ignore it.

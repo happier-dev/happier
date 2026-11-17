@@ -2,7 +2,8 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { PluginContributionLocalIdSchema } from '../plugins/contributionIdentity.js';
-import { PluginAccountStorageLogicalKeyV1Schema } from '../plugins/data/accountKvV1.js';
+import { PluginDomainDataKvChangeHintSchema } from './pluginDomainDataKv.js';
+export { PluginDomainDataKvChangeHintSchema, type PluginDomainDataKvChangeHint } from './pluginDomainDataKv.js';
 import {
   PluginCollectionContractDigestV1Schema,
   PluginCollectionRowIdV1Schema,
@@ -19,22 +20,6 @@ const AccountChangeRevisionSchema = lazyZodSchema(() => z.number().check(z.int()
 function uniqueArray<T>(values: readonly T[]): boolean {
   return new Set(values).size === values.length;
 }
-
-const PluginDomainDataKvKeysChangeHintSchema = lazyZodSchema(() => z.strictObject({
-  pluginDomain: z.literal('dataKv'),
-  pluginId: asProtocolZod(PluginIdSchema),
-  keys: z.array(PluginAccountStorageLogicalKeyV1Schema).check(z.minLength(1), z.maxLength(200), z.refine(uniqueArray, 'Plugin Account KV invalidation keys must be unique.')),
-}));
-const PluginDomainDataKvFullChangeHintSchema = lazyZodSchema(() => z.strictObject({
-  pluginDomain: z.literal('dataKv'),
-  pluginId: asProtocolZod(PluginIdSchema),
-  full: z.literal(true),
-}));
-export const PluginDomainDataKvChangeHintSchema = lazyZodSchema(() => z.union([
-  PluginDomainDataKvKeysChangeHintSchema,
-  PluginDomainDataKvFullChangeHintSchema,
-]));
-export type PluginDomainDataKvChangeHint = z.infer<typeof PluginDomainDataKvChangeHintSchema>;
 
 /** One batch: at most 200 changed rows, eight indexes, and old/new keys. */
 const PluginCollectionIndexChangesSchema = lazyZodSchema(() => z.strictObject({

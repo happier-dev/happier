@@ -1,4 +1,6 @@
 import * as zMini from '../zodRuntimePolicy.js';
+import { AutomationEventAdmitDefinitionSelectorV1Schema } from './automationEventAdmissionSelectorV1.js';
+export { AutomationEventAdmitDefinitionSelectorV1Schema, type AutomationEventAdmitDefinitionSelectorV1 } from './automationEventAdmissionSelectorV1.js';
 import { AutomationSubjectV1Schema, AutomationSubjectContextV1Schema } from './automationSubjectV1.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -284,16 +286,6 @@ export function isAutomationEventSourcesListPageProgressingV1(
     || result.nextCursor === null
     || result.definitions.length > 0;
 }
-
-export const AutomationEventAdmitDefinitionSelectorV1Schema = lazyZodSchema(() => z.strictObject({
-  automationId: asProtocolZod(AutomationIdV1Schema),
-  triggerId: AutomationTriggerIdSchema,
-  triggerRevision: AutomationTriggerRevisionSchema,
-  sourceSelectorId: AutomationSourceSelectorIdV1Schema,
-}));
-export type AutomationEventAdmitDefinitionSelectorV1 = z.infer<
-  typeof AutomationEventAdmitDefinitionSelectorV1Schema
->;
 
 // Built inside the lazy schema factories: the event declaration schemas sit
 // behind an import cycle and are not initialized when this module loads.

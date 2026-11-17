@@ -1,5 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { UpdateBody } from '@happier-dev/protocol/updates';
+import { PluginDomainDataKvChangeHintSchema } from '@happier-dev/protocol/changes/pluginDomainDataKv';
+import { AccountKvChangeHintV1Schema } from '@happier-dev/protocol/changes/accountKv';
 import type { HostEventEnvelopeV1 } from '@happier-dev/protocol';
 import type { McpServerCatalogSnapshotV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
@@ -10,6 +12,17 @@ export function projectAccountEntitiesInvalidationForHost(body: Extract<UpdateBo
     mcpCatalogs?: Readonly<{ previous?: McpServerCatalogSnapshotV1; next?: McpServerCatalogSnapshotV1 }>):
     HostEventEnvelopeV1<'@happier/account/entities-invalidated'> | null {
     const entityIds = new Set(body.entityIds ?? []);
+    const dataKvChanges: NonNullable<HostEventEnvelopeV1<'@happier/account/entities-invalidated'>['payload']['dataKvChanges']> = [];
+    const accountKvChanges: NonNullable<HostEventEnvelopeV1<'@happier/account/entities-invalidated'>['payload']['accountKvChanges']> = [];
+    for (const row of body.rows?.page.changes ?? []) {
+        if (row.kind === 'pluginDomain') {
+            const hint = PluginDomainDataKvChangeHintSchema.safeParse(row.hint);
+            if (hint.success) dataKvChanges.push(hint.data);
+        } else if (row.kind === 'kv') {
+            const hint = AccountKvChangeHintV1Schema.safeParse(row.hint);
+            if (hint.success) accountKvChanges.push(hint.data);
+        }
+    }
     if (mcpCatalogs && entityIds.delete(MCP_SERVER_CATALOG_ACCOUNT_KEY_V1)) {
         // The catalog publication already owns both decrypted snapshots. Route
         // its changed upstream facts once, rather than rereading every watcher.
@@ -22,5 +35,9 @@ export function projectAccountEntitiesInvalidationForHost(body: Extract<UpdateBo
             if (!previous.has(id) || !next.has(id) || !isDeepStrictEqual(previous.get(id), next.get(id))) entityIds.add(id);
         }
     }
-    return entityIds.size ? { eventId: '@happier/account/entities-invalidated', scope: { kind: 'account' }, payload: { entityIds: [...entityIds] } } : null;
+    return entityIds.size || dataKvChanges.length || accountKvChanges.length
+        ? { eventId: '@happier/account/entities-invalidated', scope: { kind: 'account' }, payload: {
+            entityIds: [...entityIds], ...(dataKvChanges.length ? { dataKvChanges } : {}),
+            ...(accountKvChanges.length ? { accountKvChanges } : {}),
+        } } : null;
 }

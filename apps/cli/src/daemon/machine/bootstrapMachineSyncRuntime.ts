@@ -2063,8 +2063,6 @@ export async function bootstrapMachineSyncRuntime(
             publishDaemonHostEvent(event, params.isShuttingDown);
           }
         }).catch(error => logger.warn('[DAEMON RUN] Deployment receipt Event unavailable', error));
-        const entities = projectAccountEntitiesInvalidationForHost(body.data);
-        if (entities) publishDaemonHostEvent(entities, params.isShuttingDown);
       }
       if (body.success && body.data.t === 'pending-changed' && !params.isShuttingDown()) {
         void inactiveUsageLimitRecoveryScheduler.reconcilePendingResetStarts(body.data.sessionId ?? body.data.sid)

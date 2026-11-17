@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { manifest } from './manifest.js';
 
 describe('Machine presence producer availability', () => {
-    it('declares both presence triggers with setup and observers for the committed producer', () => {
+    it('declares setup seeds for both native presence transitions without daemon presence observers', () => {
         const eventIds = manifest.contributes?.events?.map(event => event.id) ?? [];
         const actionIds = manifest.contributes?.actions?.map(action => action.id) ?? [];
         const serviceIds = manifest.contributes?.backgroundServices?.map(service => service.id) ?? [];
@@ -10,7 +10,8 @@ describe('Machine presence producer availability', () => {
         for (const id of ['machine-offline', 'machine-online']) {
             expect(eventIds).toContain(id);
             expect(actionIds).toContain(`${id}/setup`);
-            expect(serviceIds).toContain(`${id}-observer`);
+            // AM2: server transition ownership replaces the old daemon presence observers.
+            expect(serviceIds).not.toContain(`${id}-observer`);
             expect(manifest.contributes?.events?.find(event => event.id === id)).toMatchObject({
                 kind: 'event', automation: { eligible: true, source: {
                     setupActionRef: { pluginId: manifest.id, localId: `${id}/setup` },
