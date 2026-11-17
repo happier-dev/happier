@@ -11,7 +11,6 @@ import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } 
 import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
 import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { HomeOwnerClaimCommandOutputV1Schema, HOME_OWNER_CLAIM_COMMAND_ARGUMENT_V1 } from '@happier-dev/protocol/home/governance/claim';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 import { readAccountIdFromToken } from '../../../../../apps/cli/src/cloud/decodeJwtPayload';
@@ -22,9 +21,8 @@ import { buildTestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
 import { startHttpRequestRecordingProxy, type HttpRequestRecordingProxy, type RecordedHttpProxyRequest } from '../httpRequestRecordingProxy';
 import { repoRootDir } from '../paths';
-import { startServerLight, renderServerLightSqliteDatabaseUrl, resolveServerLightDatabaseUrlEnv,
-  resolveServerStartLaunchSpec, type TestDbProvider } from '../process/serverLight';
-import { runLoggedCommand } from '../process/spawnProcess';
+import { startServerLight, type TestDbProvider } from '../process/serverLight';
+import { claimTestHomeOwner } from '../homeOwner';
 import { fetchSessionMetadataV2 } from '../sessionHandoffMetadata';
 import { startTestDaemon, type StartedDaemon } from './daemon';
 import { approveTerminalPairing } from '../../../../../apps/ui/sources/auth/terminal/approveTerminalPairing';
@@ -214,32 +212,9 @@ export async function startProjectDaemonFixture(params: Readonly<{
           },
         };
       },
-      async claimHomeOwner(account: Awaited<ReturnType<typeof createAccount>>) {
-        const dbProvider = params.dbProvider ?? 'postgres';
-        const env: NodeJS.ProcessEnv = { ...process.env, ...serverEnv,
-          HAPPIER_DB_PROVIDER: dbProvider, HAPPY_DB_PROVIDER: dbProvider,
-          HAPPIER_SERVER_LIGHT_DATA_DIR: server.dataDir, HAPPY_SERVER_LIGHT_DATA_DIR: server.dataDir,
-          HAPPIER_SERVER_LIGHT_DB_DIR: join(server.dataDir, 'pglite'),
-          HAPPY_SERVER_LIGHT_DB_DIR: join(server.dataDir, 'pglite'),
-          PUBLIC_URL: server.baseUrl, HAPPIER_CANONICAL_SERVER_URL: server.baseUrl,
-          ...resolveServerLightDatabaseUrlEnv({ dbProvider,
-            generatedSqliteUrl: renderServerLightSqliteDatabaseUrl({ dbPath: join(server.dataDir, 'happier-server-light.sqlite') }),
-            explicitDatabaseUrl: dbProvider === 'sqlite' ? serverEnv.DATABASE_URL
-              : serverEnv.DATABASE_URL ?? process.env.DATABASE_URL }),
-        };
-        const launch = resolveServerStartLaunchSpec({ provider: dbProvider, env });
-        const stdoutPath = join(server.dataDir, 'claim-owner.stdout.log');
-        await runLoggedCommand({ command: launch.command,
-          args: [...launch.args, `${HOME_OWNER_CLAIM_COMMAND_ARGUMENT_V1}=${readAccountIdFromToken(account.credentials.token)}`],
-          cwd: launch.cwd, env: { ...env, ...launch.env }, stdoutPath,
-          stderrPath: join(server.dataDir, 'claim-owner.stderr.log'), timeoutMs: null });
-        for (const line of (await readFile(stdoutPath, 'utf8')).split(/\r?\n/).reverse()) {
-          try {
-            const parsed = HomeOwnerClaimCommandOutputV1Schema.safeParse(JSON.parse(line));
-            if (parsed.success) return parsed.data;
-          } catch { /* The server command interleaves diagnostics with its structured result. */ }
-        }
-        throw new Error(`Home owner claim returned no structured result (${stdoutPath})`);
+      claimHomeOwner(account: Awaited<ReturnType<typeof createAccount>>) {
+        return claimTestHomeOwner({ server, accountId: readAccountIdFromToken(account.credentials.token),
+          dbProvider: params.dbProvider ?? 'postgres', env: serverEnv });
       },
       stop,
     };

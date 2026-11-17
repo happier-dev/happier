@@ -12,6 +12,7 @@ import {
 } from '../../../scripts/extended-db-docker.plan.mjs';
 import { parseArgs } from '../../../scripts/run-extended-db-docker.mjs';
 import { prepareDbContractDatabase } from '../../../scripts/dbContractDatabase.mjs';
+import { prepareDisposableTestDatabase } from '../../../scripts/disposableTestDatabase.mjs';
 
 // Docker's process/SQL transport is the external boundary; isolation decisions
 // and environment routing run through the real owner.
@@ -39,6 +40,22 @@ describe('DB contract worker databases', () => {
     vi.stubEnv('HAPPIER_DB_CONTRACT_CONTAINER_ID', undefined);
     prepareDbContractDatabase();
     expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it('leaves explicit unrelated database connections outside disposable isolation', () => {
+    configure('postgres');
+    expect(prepareDisposableTestDatabase({ databaseName: 'fixture_home', dbProvider: 'postgres',
+      sourceDatabaseUrl: 'postgresql://localhost/retained_personal_home' })).toBeUndefined();
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it('reopens a retained fixture database without replacing its data', () => {
+    const templateUrl = configure('postgres');
+    const isolated = prepareDisposableTestDatabase({ databaseName: 'fixture_home', dbProvider: 'postgres',
+      sourceDatabaseUrl: templateUrl, reuseExisting: true });
+    expect(new URL(isolated!).pathname).toBe('/fixture_home');
+    expect(execFileSync).not.toHaveBeenCalled();
+    expect(process.env.DATABASE_URL).toBe(templateUrl);
   });
 
   it('refreshes PostgreSQL between files, isolates workers, and preserves the migrated template', () => {
@@ -105,7 +122,14 @@ describe('extended db docker plan', () => {
           HAPPIER_DB_CONTRACT_CONTAINER_ID: containerId,
           HAPPIER_DB_CONTRACT_TEMPLATE_URL: databaseUrl,
         });
-        expect(plan.filter(step => !isContract(step)).every(step => !('HAPPIER_DB_CONTRACT_CONTAINER_ID' in step.env))).toBe(true);
+        const e2e = plan.find(step => step.kind === 'e2e');
+        if (e2e) expect(e2e.env).toMatchObject({
+          HAPPIER_DB_CONTRACT_CONTAINER_ID: containerId,
+          HAPPIER_DB_CONTRACT_TEMPLATE_URL: databaseUrl,
+          HAPPIER_DB_PROVIDER: db,
+        });
+        expect(plan.filter(step => !isContract(step) && step.kind !== 'e2e')
+          .every(step => !('HAPPIER_DB_CONTRACT_CONTAINER_ID' in step.env))).toBe(true);
       }
     }
     expect(serverDbContractConfig.test?.fileParallelism).not.toBe(false);

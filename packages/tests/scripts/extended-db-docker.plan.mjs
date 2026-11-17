@@ -161,7 +161,12 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
     ],
     env: {
       HAPPIER_E2E_DB_PROVIDER: db,
+      HAPPIER_DB_PROVIDER: db,
       DATABASE_URL: String(databaseUrl),
+      ...(containerId === undefined ? {} : {
+        HAPPIER_DB_CONTRACT_CONTAINER_ID: containerId,
+        HAPPIER_DB_CONTRACT_TEMPLATE_URL: databaseUrl,
+      }),
       ...(db === 'postgres'
         ? { HAPPIER_TEST_POSTGRES_DATABASE_URL: String(databaseUrl) }
         : { HAPPIER_TEST_MYSQL_DATABASE_URL: String(databaseUrl) }),

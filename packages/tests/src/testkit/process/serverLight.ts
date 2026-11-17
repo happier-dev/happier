@@ -1,7 +1,7 @@
 import { existsSync, linkSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { randomInt } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import { createServer } from 'node:net';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -21,6 +21,7 @@ import { resolveServerAppWorkspaceName } from './serverWorkspaceName';
 import { createServerLightTemplateCacheKey, prepareCachedDataDir, resolveServerLightTemplateCacheRoot as resolveTemplateCacheRoot } from './serverLightTemplateCache.mjs';
 import { resolveTsxImportHookSpecifier } from './tsxImportHook';
 import { withTestProcessLease } from './testProcessLease';
+import { prepareDisposableTestDatabase } from '../../../scripts/disposableTestDatabase.mjs';
 import {
   inspectOwnedProcess,
   registerProcessOwnershipLease,
@@ -283,6 +284,8 @@ export type StartedServer = {
   baseUrl: string;
   port: number;
   dataDir: string;
+  /** The connection selected by this fixture, including disposable database isolation. */
+  databaseUrl?: string;
   proc: SpawnedProcess;
   stop: () => Promise<void>;
 };
@@ -768,7 +771,7 @@ export async function startServerLight(params: {
     dbPath: join(dataDir, 'happier-server-light.sqlite'),
   });
   const explicitSqliteDatabaseUrl = params.extraEnv?.DATABASE_URL?.toString().trim();
-  const databaseUrlForExternalProvider = mergedEnv.DATABASE_URL?.toString().trim();
+  let databaseUrlForExternalProvider = mergedEnv.DATABASE_URL?.toString().trim();
   if ((dbProvider === 'postgres' || dbProvider === 'mysql') && !databaseUrlForExternalProvider) {
     throw new Error(`Missing DATABASE_URL for HAPPIER_E2E_DB_PROVIDER or HAPPY_E2E_DB_PROVIDER=${dbProvider}`);
   }
@@ -792,6 +795,15 @@ export async function startServerLight(params: {
     (params.dataDirMode === 'reuse-existing' || params.preserveExistingDataDir === true)
     && existsSync(dataDir)
     && readdirSync(dataDir).length > 0;
+  if ((dbProvider === 'postgres' || dbProvider === 'mysql') && databaseUrlForExternalProvider) {
+    // A data directory is the existing fixture identity across server restarts.
+    // PostgreSQL identifiers allow 63 bytes: the prefix leaves 47 hex bytes.
+    const databaseName = `happier_fixture_${createHash('sha256').update(dataDir).digest('hex').slice(0, 47)}`;
+    databaseUrlForExternalProvider = prepareDisposableTestDatabase({ databaseName, dbProvider,
+      sourceDatabaseUrl: databaseUrlForExternalProvider, reuseExisting: shouldReuseExistingDataDir, env: mergedEnv,
+    }) ?? databaseUrlForExternalProvider;
+    baseEnv.DATABASE_URL = databaseUrlForExternalProvider;
+  }
   if (!shouldReuseExistingDataDir) {
     await prepareServerLightDataDir({
       rootDir: repoRootDir(),
@@ -916,6 +928,7 @@ export async function startServerLight(params: {
         baseUrl,
         port,
         dataDir,
+        ...(env.DATABASE_URL ? { databaseUrl: env.DATABASE_URL } : {}),
         proc,
         stop: async () => {
           await proc.stop();
