@@ -89,6 +89,8 @@ function target(selector: CssNode, source: string): Target | null {
     const part = attributes.get('data-part') ?? 'root';
     const state = attributes.get('data-state');
     if (!surface || !isThemeSurfaceAddress(surface, part, state ?? 'default')) return null;
+    const parts: Readonly<Record<string, Readonly<{ kind: 'view' | 'text'; platform?: 'web' }>>> = THEME_SURFACE_REGISTRY[surface as keyof typeof THEME_SURFACE_REGISTRY].parts;
+    if (parts[part].platform === 'web') return null;
     // The canonical registry has validated the correlated surface/part/state relationship.
     const address = (state === undefined ? { surface, part } : { surface, part, state }) as SurfaceAddress;
     return { address, mode, specificity };

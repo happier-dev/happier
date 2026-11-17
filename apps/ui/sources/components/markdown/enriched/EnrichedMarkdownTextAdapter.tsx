@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { THEME_SURFACE_REGISTRY, themeSurfaceDataSet } from '@happier-dev/plugin-ui';
 import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { INLINE_REFERENCE_HREF_PREFIX_V1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { Platform, type StyleProp, type TextStyle } from 'react-native';
@@ -27,7 +27,7 @@ import {
 import { useEnrichedMarkdownRuntimeStatus } from './preloadEnrichedMarkdownRuntime';
 import { resolveEnrichedMarkdownFlavor } from './resolveEnrichedMarkdownFlavor';
 import { useEnrichedMarkdownStyle } from './useEnrichedMarkdownStyle';
-import type { MarkdownRenderingProfile } from '../rendering/MarkdownRenderingProfile';
+import { isAssistantMarkdownProfile, type MarkdownRenderingProfile } from '../rendering/MarkdownRenderingProfile';
 import {
     resolveStreamingTextRevealConfig,
     type StreamingTextRevealPreset,
@@ -37,6 +37,12 @@ import { MarkdownWorkspaceFileLinksContext } from '../rendering/MarkdownLinkPoli
 import { useMarkdownAppLinkOpener } from './useMarkdownAppLinkOpener';
 
 const ENRICHED_REVEAL_STYLE_ID = 'happier-streaming-enriched-markdown-reveal-style';
+// Registry-derived once, shared by every assistant render and streamed append.
+const ASSISTANT_ELEMENT_ATTRIBUTES = Object.fromEntries(
+    Object.keys(THEME_SURFACE_REGISTRY['assistant-text'].parts)
+        .filter(part => part !== 'root')
+        .map(part => [part, { 'data-surface': 'assistant-text', 'data-part': part, 'data-state': 'default' }]),
+);
 const ENRICHED_REVEAL_DURATION_VAR = '--happier-streaming-enriched-markdown-duration';
 const ENRICHED_REVEAL_EASING_VAR = '--happier-streaming-enriched-markdown-easing';
 const ENRICHED_REVEAL_TRANSLATE_Y_VAR = '--happier-streaming-enriched-markdown-y';
@@ -265,6 +271,7 @@ export const EnrichedMarkdownTextAdapter = React.memo((props: EnrichedMarkdownTe
         const userTextDataSet = props.profile === 'user' ? themeSurfaceDataSet('user-bubble', 'text', 'default') : null;
         if (Platform.OS === 'web') {
             const webProps: Record<string, unknown> = {
+                elementAttributes: isAssistantMarkdownProfile(props.profile) ? ASSISTANT_ELEMENT_ATTRIBUTES : undefined,
                 'data-testid': props.testID,
                 'data-happier-enriched-markdown-profile': props.profile,
                 ...(userTextDataSet ? { 'data-surface': userTextDataSet.surface, 'data-part': userTextDataSet.part, 'data-state': userTextDataSet.state } : {}),

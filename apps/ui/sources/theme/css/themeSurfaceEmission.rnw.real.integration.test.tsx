@@ -9,6 +9,13 @@ import { installAgentInputCommonModuleMocks } from '@/components/sessions/agentI
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('@/components/ui/forms/MultiTextInput', async () => import('@/components/ui/forms/MultiTextInput.web'));
+vi.mock('react-native-enriched-markdown', async () => {
+    const { enrichedMarkdownPackageFileUrl } = await import('@/dev/testkit/harness/enrichedMarkdownPackage');
+    const url = enrichedMarkdownPackageFileUrl('src/index.web.tsx');
+    const renderer = await import(/* @vite-ignore */ url);
+    await renderer.preloadMarkdownRuntime();
+    return renderer;
+});
 installAgentInputCommonModuleMocks({
     reactNative: async () => import('@/platform/shims/reactNativeWebShim'),
     modal: () => vi.importActual('@/modal'),
@@ -21,7 +28,7 @@ vi.doMock('react-native-reanimated', async () => {
     const hosts = { View: rn.View, ScrollView: rn.ScrollView, Text: rn.Text };
     return { ...mock, ...hosts, default: { ...mock.default, ...hosts } };
 });
-const { isThemeSurfaceAddress } = await import('@happier-dev/plugin-ui');
+const { isThemeSurfaceAddress, getThemeSurfaceReference } = await import('@happier-dev/plugin-ui');
 const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
 const { getSessionStatus } = await import('@/utils/sessions/sessionUtils');
 const { createSessionItemRowViewModel } = await import('@/components/sessions/shell/sessionItemRowViewModelTestFixture');
@@ -91,7 +98,7 @@ const promisedParts = {
     dialog: ['root', 'header', 'body', 'footer'],
     'tab-bar': ['root', 'tab', 'label', 'icon'],
     'model-picker': ['root', 'provider', 'row', 'effort'],
-    'project-picker': ['root', 'row', 'label', 'device'],
+    'project-picker': ['root', 'row', 'label'],
     switch: ['root', 'track', 'thumb'],
     tooltip: ['root', 'text'],
     'inline-code': ['root', 'text'],
@@ -156,7 +163,8 @@ describe('theme surface hooks on the rendered owning primitives', () => {
                 <DropdownMenu open onOpenChange={() => {}} onSelect={() => {}} separateCategories
                     items={[{ id: 'one', title: 'One', category: 'First' }, { id: 'two', title: 'Two', category: 'Second' }]}
                     trigger={({ toggle }) => <button onClick={toggle}>Menu</button>} />
-                <MarkdownView profile="assistant" markdown={'# Heading\n\nParagraph [link](https://example.com)\n\n> Quote\n\n- List'} />
+                <MarkdownView profile="assistant" markdown={'# Heading\n\nParagraph [link](https://example.com)\n\n> Quote\n\n- List\n\n1. Ordered'} />
+                <div data-fixture="thinking"><MarkdownView profile="thinking" markdown="Thought" /></div>
                 <div data-fixture="editable"><AgentInput {...composerProps} /></div>
                 <div data-fixture="disabled"><AgentInput {...composerProps} disabled /></div>
                 <div data-fixture="read-only"><AgentInput {...composerProps} onChangeText={undefined} /></div>
@@ -173,17 +181,11 @@ describe('theme surface hooks on the rendered owning primitives', () => {
         const addresses = emittedAddresses(document.body);
         expect(addresses).toContain('sidebar/root/default');
         const emitted = new Set(addresses);
-        // These approved parts have no exposed ordinary renderer/data owner yet.
-        // The complete-vocabulary assertion below deliberately keeps that gap visible.
-        const inaccessibleParts = new Set([
-            'assistant-text/paragraph', 'assistant-text/heading', 'assistant-text/link',
-            'assistant-text/quote', 'assistant-text/list', 'project-picker/device',
-        ]);
         const emittedParts = new Set(addresses.map(address => address.split('/').slice(0, 2).join('/')));
         for (const [surface, parts] of Object.entries(promisedParts)) {
             for (const part of parts) {
                 const address = `${surface}/${part}`;
-                if (!inaccessibleParts.has(address)) expect(emittedParts.has(address), address).toBe(true);
+                expect(emittedParts.has(address), address).toBe(true);
             }
         }
         for (const address of emitted) {
@@ -212,5 +214,11 @@ describe('theme surface hooks on the rendered owning primitives', () => {
         const promised = Object.entries(promisedParts).flatMap(([surface, parts]) => parts.map(part => `${surface}/${part}`));
         const actual = [...new Set(emittedAddresses(document.body).map(address => address.split('/').slice(0, 2).join('/')))];
         expect(actual.sort()).toEqual(promised.sort());
+        expect(getThemeSurfaceReference().flatMap(surface => surface.parts.map(part => `${surface.id}/${part}`)).sort()).toEqual(promised.sort());
+        for (const [part, tag] of Object.entries({ paragraph: 'P', heading: 'H1', link: 'A', quote: 'BLOCKQUOTE', list: 'UL' })) {
+            expect(document.querySelector(`[data-surface="assistant-text"][data-part="${part}"]`)?.tagName).toBe(tag);
+        }
+        expect([...document.querySelectorAll('[data-surface="assistant-text"][data-part="list"]')].map(node => node.tagName)).toEqual(['UL', 'OL']);
+        expect(container!.querySelector('[data-fixture="thinking"] p')?.getAttribute('data-part')).toBe('paragraph');
     });
 });

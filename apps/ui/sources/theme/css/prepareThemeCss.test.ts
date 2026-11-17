@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import parse from 'css-tree/lib/parser';
+import { isThemeSurfaceAddress } from '@happier-dev/plugin-sdk/ui';
 
 import { prepareThemeCss, prepareThemeProfileCss, getThemeCssWebOnlyRules } from './prepareThemeCss';
 
@@ -11,6 +12,16 @@ vi.mock('css-tree/lib/parser', async (importOriginal) => {
 afterEach(() => vi.clearAllMocks());
 
 describe('theme CSS native projection and coverage', () => {
+    it('keeps assistant Markdown children web-only while retaining native root styling', () => {
+        const children = ['paragraph', 'heading', 'link', 'quote', 'list'];
+        expect(children.every(part => isThemeSurfaceAddress('assistant-text', part))).toBe(true);
+        const prepared = prepareThemeCss([
+            '[data-surface="assistant-text"]{opacity:.5}',
+            ...children.map(part => `[data-surface="assistant-text"][data-part="${part}"]{color:red;padding:8px}`),
+        ].join('\n'));
+        expect(prepared.light['assistant-text']).toEqual({ root: { base: { opacity: .5 }, states: {} } });
+        expect(prepared.coverage).toMatchObject({ total: 6, native: 1, webOnly: 5 });
+    });
     it('navigates Which rules using authored ranges from the retained preparation', () => {
         const source = '[data-surface=composer]{padding:8px}\n[data-surface=composer]::before{content:"x"}\n[data-surface=composer]{backdrop-filter:blur(2px)}';
         const prepared = prepareThemeProfileCss({ css: source });

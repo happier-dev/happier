@@ -10,15 +10,16 @@ export type ThemeSurfacePaintRole = Readonly<{
   source: ThemeSurfacePaintSource;
 }>;
 
-type Part = Readonly<{ kind: 'view' | 'text' }>;
+type Part = Readonly<{ kind: 'view' | 'text'; platform?: 'web' }>;
 const view = { kind: 'view' } as const;
 const text = { kind: 'text' } as const;
+const webText = { kind: 'text', platform: 'web' } as const;
 
 export const THEME_SURFACE_REGISTRY = {
   sidebar: { parts: { root: view, header: view, row: view, footer: view }, states: ['default'] },
   'session-row': { parts: { root: view, title: text, meta: text, status: text }, states: ['default', 'selected'] },
   'user-bubble': { parts: { root: view, text }, states: ['default'] },
-  'assistant-text': { parts: { root: view }, states: ['default'] },
+  'assistant-text': { parts: { root: view, paragraph: webText, heading: webText, link: webText, quote: webText, list: webText }, states: ['default'] },
   'code-block': { parts: { root: view, header: view, body: view }, states: ['default'] },
   'tool-row': { parts: { root: view, icon: view, title: text, detail: text }, states: ['default'] },
   composer: { parts: { root: view, input: view, toolbar: view, send: view }, states: ['default', 'disabled'] },
