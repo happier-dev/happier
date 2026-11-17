@@ -207,7 +207,7 @@ describe('parseSessionCreateSpawnOptions', () => {
       '--auth', 'cs:openai-codex:profile:work',
     ]);
 
-    expect(parsed.connectedServicesAuthIntent).toEqual({
+    expect(parsed.spawnRequest.connectedServicesAuthIntent).toEqual({
       kind: 'connected',
       serviceId: 'openai-codex',
       selection: 'profile',

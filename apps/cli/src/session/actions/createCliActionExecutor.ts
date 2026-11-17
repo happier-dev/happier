@@ -122,6 +122,7 @@ export type CliReviewServices = Readonly<{
 
 type CliActionExecutor = ReturnType<typeof createCliActionExecutorHarness>['executor']
   & Pick<ReturnType<typeof createCliActionExecutorHarness>, 'observeRecordedApprovalExecution'>
+  & Pick<ActionExecutorDeps, 'prepareSessionSpawnNewInput'>
   & Readonly<{ resolveReviewServices?(context?: ActionExecutorContext): Promise<CliReviewServices> }>;
 
 export function createCliActionExecutor(params: CliActionExecutorParams): CliActionExecutor {
@@ -584,6 +585,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
   };
   return { ...harness, executor: {
     observeRecordedApprovalExecution: harness.observeRecordedApprovalExecution,
+    prepareSessionSpawnNewInput: harness.deps.prepareSessionSpawnNewInput,
     resolveReviewServices: async context => {
       const resolvedContext = await resolveContext(context);
       if (!resolvedContext) return {};

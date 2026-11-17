@@ -3,7 +3,7 @@ import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContri
 import { getProfileDefaultBackendTarget } from '@happier-dev/protocol/profiles/profileCompatibility';
 import { assertProfileCompatibleWithBackendTarget, resolveAccountProfileForSessionStart } from '@/settings/profiles/resolveProfileForAgent';
 import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
-import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewActionInputV2Schema, type SessionSpawnNewActionAuthoringInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
 import { BackendTargetKeyV2InputSchema, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -60,7 +60,7 @@ export type SessionCreateSpawnRequestNormalizerDeps = Readonly<{
 }>;
 
 export type NormalizedSessionCreateSpawnRequest = Readonly<{
-  input: SessionSpawnNewInputV2;
+  input: SessionSpawnNewActionAuthoringInputV2;
   agentId: string;
 }>;
 
@@ -270,7 +270,7 @@ async function resolveExecutionTarget(
 
 /**
  * The sole CLI argv-to-Action adapter for ordinary Session creation. It keeps
- * legacy spellings at the CLI boundary and emits the strict canonical V2
+ * legacy spellings at the CLI boundary and emits the strict authored V2
  * payload consumed by `session.spawn_new`. The public API transport projects
  * its host-owned execution target at the Action-surface owner.
  */
@@ -352,13 +352,14 @@ export async function normalizeSessionCreateSpawnRequest(
     ...(agentModeId ? { agentModeId } : {}),
     ...(configuration ? { configuration } : {}),
     ...(request.connectedServices ? { connectedServices: request.connectedServices } : {}),
+    ...(request.connectedServicesAuthIntent ? { connectedServicesAuthIntent: request.connectedServicesAuthIntent } : {}),
     ...(capabilitySelection ? { capabilitySelection } : {}),
     ...(request.transcriptStorage ? { transcriptStorage: request.transcriptStorage } : {}),
     ...(request.terminal ? { terminal: request.terminal } : {}),
     ...(profileId ? { profileId: selectedProfile?.id ?? profileId } : {}),
     ...(request.environmentVariables ? { environmentVariables: request.environmentVariables } : {}),
   };
-  const parsed = SessionSpawnNewInputV2Schema.safeParse(candidate);
+  const parsed = SessionSpawnNewActionInputV2Schema.safeParse(candidate);
   if (!parsed.success) {
     invalidSessionCreateArgument('the requested Session creation fields are invalid.');
   }

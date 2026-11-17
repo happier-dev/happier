@@ -161,7 +161,7 @@ import { getServerProfile } from '@/server/serverProfiles';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import type { dispatchRequesterSessionSpawnNewRpc } from '@/session/transport/rpc/machineRpc';
-import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewActionInputV2Schema, type SessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
@@ -1817,6 +1817,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       const settingsAction = isSettingsDeclarationActionIdV1(actionId);
       const settingsInput = settingsAction ? SettingsDeclarationActionInputSchemasV1[actionId].safeParse(input) : null;
       let admittedInput = settingsInput?.success ? settingsInput.data : input;
+      let preparedSessionInput: SessionSpawnNewActionInputV2 | undefined;
       const spec = getActionSpec(ActionIdSchema.parse(actionId));
       if (originalCliCaller && spec.cli?.wholeInputSchema) {
         // Raw Session Actions and prepared/signed-root dispatch use the same
@@ -1825,6 +1826,34 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         if (!cliInput.success) return { context,
           invocation: createOneShotPatInvocation(async () => actionFailure('invalid_parameters')) };
         admittedInput = cliInput.data;
+      }
+      if (originalCliCaller && actionId === 'session.spawn_new' && !context.sessionCreationDefaults
+        && hasStoredSessionCredentialProvenance(credentials)) {
+        const authored = SessionSpawnNewActionInputV2Schema.safeParse(admittedInput);
+        if (authored.success && authored.data.connectedServicesAuthIntent) {
+          // The saved profile belongs to the requester. A signed Machine root
+          // bypasses the local executor, so use its existing preparation owner
+          // before binding the exact Machine and sealing the effective input.
+          const signal = combineInvocationSignals(invocationSignal, context.signal);
+          try {
+            if (!params.actionsSettingsProvider) {
+              await ensureCliActionPolicySettings(credentials, resolveActionServerApiUrl());
+            }
+            const executor = await resolveExecutor(credentials, undefined, context);
+            const prepare = executor.prepareSessionSpawnNewInput;
+            if (prepare) {
+              const prepared = await prepare(authored.data, signal ? { ...context, signal } : context);
+              preparedSessionInput = prepared.input;
+              admittedInput = preparedSessionInput;
+              context = { ...context, sessionCreationDefaults: prepared.defaults };
+            }
+          } catch (error) {
+            const failure = { ok: false as const,
+              ...normalizeActionExecutorThrownError(error, 'session.creation.preparation', signal?.aborted ? 'cancelled' : 'action_failed'),
+              effectAttempted: false };
+            return { context, invocation: createOneShotPatInvocation(async () => failure) };
+          }
+        }
       }
       // A local profile is routing state of this CLI. Seal its declared Home
       // selector as the portable identity before another Machine stores/replays it.
@@ -2204,7 +2233,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
             context: signal ? { ...context, signal } : context });
         }) };
       }
-      return { context: originalContext, invocation: null };
+      return { context: originalContext, invocation: null, preparedSessionInput };
     };
     return bindExecutorToActionServer({
       resolveReviewServices: async rawContext => {
@@ -2291,7 +2320,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
               () => ensureCliActionPolicySettings(credentials, resolveActionServerApiUrl())));
         }
         const executor = await resolveExecutor(credentials, undefined, routing);
-        return await executor.prepare(actionId, input, context);
+        return await executor.prepare(actionId, prepared.preparedSessionInput ?? input, context);
       },
       execute: async (...args) => withApprovalActionTrace(args[0], () => timeApprovalPhase<ActionExecuteResult>('approval.execute', async () => {
         const listAccessFailure = resolveActionSessionListAccessFailure(args[0], args[2]);
@@ -2328,7 +2357,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         }
         const routing = await trace('cli.approval_context', () => resolveInvocationRoutingContext(rawContext, credentials, actionId));
         const context = routing.context;
-        const { context: originalContext, invocation } = await trace('cli.original_invocation', () => prepareOriginalCliActionInvocation(actionId, input, context, credentials));
+        const { context: originalContext, invocation, preparedSessionInput } = await trace('cli.original_invocation', () => prepareOriginalCliActionInvocation(actionId, input, context, credentials));
         if (invocation) return await invocation.run();
         const signal = combineInvocationSignals(invocationSignal, context?.signal);
         let sessionMemoryEnabled: boolean | undefined;
@@ -2363,7 +2392,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         }
         const executor = await measureActionStartPhaseV1(originalContext, 'credentialed_factory',
           () => resolveExecutor(credentials, sessionMemoryEnabled, routing));
-        return await executor.execute(actionId, input, {
+        return await executor.execute(actionId, preparedSessionInput ?? input, {
           ...originalContext,
           ...(params.machineId && !originalContext?.executionRunTargetMachineId
             ? { executionRunTargetMachineId: params.machineId } : {}),

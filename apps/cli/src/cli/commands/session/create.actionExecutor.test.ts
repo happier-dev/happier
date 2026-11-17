@@ -629,19 +629,9 @@ describe('happier session create (action executor)', () => {
     }
   });
 
-  it('resolves concise auth through the canonical spawn inventory', async () => {
+  it('passes concise auth to Session creation as a single Action', async () => {
     execute.mockClear();
-    execute
-      .mockResolvedValueOnce({
-        ok: true,
-        result: {
-          supportedServiceIds: ['happier.agent.codex/openai-codex'],
-          profileOptionsByServiceId: { 'happier.agent.codex/openai-codex': [] },
-          groupOptionsByServiceId: { 'happier.agent.codex/openai-codex': [{ groupId: 'team' }] },
-          items: [],
-        },
-      })
-      .mockResolvedValueOnce(sessionSpawnSuccess('sess-auth'));
+    execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-auth'));
 
     const output = captureConsoleJsonOutput();
     try {
@@ -655,23 +645,10 @@ describe('happier session create (action executor)', () => {
         },
       );
 
-      expect(execute).toHaveBeenNthCalledWith(
-        1,
-        'sessions.spawn.connected_services.list',
-        { agentId: 'codex', includeUnavailable: false, includeDefaults: false },
-        { surface: 'cli', defaultSessionId: null },
-      );
-      expect(execute).toHaveBeenNthCalledWith(
-        2,
+      expect(execute).toHaveBeenCalledExactlyOnceWith(
         'session.spawn_new',
         expect.objectContaining({
-          connectedServices: {
-            v: 2,
-            bindingsByServiceId: {
-              'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'team' },
-              'happier.agent.codex/openai': { source: 'native' },
-            },
-          },
+          connectedServicesAuthIntent: { kind: 'connected', serviceId: null, selection: null, id: 'team' },
         }),
         { surface: 'cli', defaultSessionId: null, actionRequestId: expect.any(String) },
       );

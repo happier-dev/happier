@@ -146,7 +146,7 @@ describe('normalizeSessionCreateSpawnRequest', () => {
       configuration: { options: { reasoning_effort: { value: 'low', updatedAtMs: 100 } } },
     });
     expect(normalized.input).not.toHaveProperty('initialInput');
-    expect(parsed.connectedServicesAuthIntent).toEqual({ kind: 'default' });
+    expect(parsed.spawnRequest.connectedServicesAuthIntent).toEqual({ kind: 'default' });
   });
   it('resolves repeated capability names to catalog IDs and rejects missing names with not_found', async () => {
     const deps = {

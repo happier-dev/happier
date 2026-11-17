@@ -38,7 +38,7 @@ import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@h
 import { computeExternalActionRequestEnvelopeDigestV1, decodeExternalActionHttpBodyV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
   verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
-import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionIdSchema, DeploymentPrepareInputV1Schema, ExternalActionRequestEnvelopeSchema, type ActionExecuteResult, type ActionId } from '@happier-dev/protocol';
 import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1, projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -144,6 +144,45 @@ it.each([
         if (scenario.structured.length) expect(output.text()).toContain('requester_credential_disclosure_declined');
       }
       expect(terminal.prompts).toHaveLength(scenario.interactive && !scenario.structured.length ? 1 : 0);
+    } finally { output.restore(); }
+  });
+});
+it('resolves a Can-use member’s saved launch profile before routing Session creation to the owner', async () => {
+  const profileId = 'member-codex-profile';
+  const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+  const requesterProfileReads: boolean[] = [];
+  const actionPaths: string[] = [];
+  const target = await home('plain', [], {
+    originalOwnAction: 'session.spawn_new',
+    onRequestPath: path => {
+      if (path?.startsWith(EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1)) actionPaths.push(path);
+    },
+    launchProfile: { service, profileId, onRead: authorization => requesterProfileReads.push(authorization === `Bearer ${token()}`) },
+    ownExecution: { ok: true, result: { type: 'success', sessionId: 'member-session', disposition: 'created',
+      executionTarget: { serverId: homeIdentityId, machineId: 'alice-machine' },
+      organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } },
+  });
+  terminal.interactive = true;
+  terminal.answer = 'y';
+  await withConfiguredDaemonTestHome({ prefix: 'session-create-member-profile-',
+    env: { HAPPIER_SERVER_URL: target.url, HAPPIER_WEBAPP_URL: target.url } }, async () => {
+    const output = captureConsoleText();
+    try {
+      await cmdSessionCreate(['create', '--machine-id', 'alice-machine', '--path', '/tmp', '--agent', 'codex',
+        '--auth', `cs:profile:${profileId}`, '--spawn-attempt-id', 'request-1'], {
+        readCredentialsFn: async () => ({ token: token(), encryption: null, credentialProvenance: 'stored_session' }),
+      });
+      expect(output.text()).toContain('member-session');
+      expect(requesterProfileReads).toContain(true);
+      expect(actionPaths).toEqual([
+        bindExternalActionExecutionAuthorizationHttpPathV1('session.spawn_new'),
+        `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}session.spawn_new`,
+      ]);
+      const { envelope, executionAuthorization } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+      expect(envelope).toMatchObject({ v: 1, input: { connectedServices: { v: 2, bindingsByServiceId: {
+        [`${service.pluginId}/${service.localId}`]: { source: 'connected', selection: 'profile', profileId },
+      } } } });
+      expect(executionAuthorization?.binding).toMatchObject({ accountId: 'bob', custodianAccountId: 'alice' });
     } finally { output.restore(); }
   });
 });
@@ -606,6 +645,8 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   scopedManagedController?: boolean;
   scopedControllerMismatch?: 'parent' | 'installation' | 'resource' | 'account-owned';
   onRequestAuthorization?: (authorization: string | undefined) => void;
+  launchProfile?: Readonly<{ service: { pluginId: string; localId: string }; profileId: string;
+    onRead(authorization: string | undefined): void }>;
   onRequestPath?: (path: string | undefined) => void;
   artifacts?: ReturnType<typeof fastify>;
 } = {}) {
@@ -640,7 +681,18 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     }
     if (request.url === '/v2/account/settings') return respond({ content: null, version: 0 });
     if (request.url === '/v2/account/settings/history') return respond(AccountSettingsV2HistoryListResponseSchema.parse({ snapshots: [] }));
-    if (request.url === '/v1/account/profile') return respond(AccountProfileSchema.parse({ id: 'bob' }));
+    if (request.url === '/v1/account/profile') {
+      const profile = options.launchProfile;
+      profile?.onRead(request.headers.authorization);
+      return respond(AccountProfileSchema.parse({ id: 'bob', ...(profile ? { connectedAccountsV4: [{
+        ref: { service: profile.service, accountId: profile.profileId }, kind: 'oauth', status: 'connected',
+        authenticationModeId: 'oauth', configurationReady: false, configurationRevision: null,
+        revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [],
+      }] } : {}) }));
+    }
+    if (options.launchProfile && request.url?.endsWith('/connected-metadata/presentation')) {
+      return respond({ status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, entries: [] } } });
+    }
     if (request.url === '/v1/account/encryption/currentness') return respond(createAccountEncryptionCurrentnessFixture({ mode, settingsVersion: 0 }));
     if (request.url === '/v1/account/encryption') {
       await options.beforeEncryptionRead?.();

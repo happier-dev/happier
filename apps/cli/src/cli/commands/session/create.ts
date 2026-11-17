@@ -1,17 +1,20 @@
 import chalk from 'chalk';
-import { HappierActionError } from '@happier-dev/sdk';
 import { randomUUID } from 'node:crypto';
 import {
   readSessionSpawnNewActionResultV1,
   SessionSpawnNewActionResultV1Schema,
 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol';
+import type { SessionSpawnNewActionAuthoringInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
+import { resolveConnectedServicesLaunchAuthWithInventory } from '@happier-dev/protocol/connect/resolveConnectedServicesLaunchAuthV1';
+
+import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
 import { printJsonEnvelope, writeJsonStdout } from '@/cli/output/jsonEnvelope';
 import type { StoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { normalizeActionExecuteResult, normalizeCliActionThrownError, projectCliActionFailure, throwCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from '@/cli/commands/session/shared/tryHandleApprovalRequestCreated';
 import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { parseSessionCreateSpawnOptions } from './create/parseSessionCreateSpawnOptions';
@@ -21,8 +24,6 @@ import {
   printSessionWaitSuccess,
   readSessionWaitTimeoutSecondsFlag,
 } from './shared/sessionWaitAction';
-import { resolveConnectedServicesLaunchAuthWithInventory } from '@/cli/connectedServicesLaunchAuth';
-import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { cmd, fail } from '@happier-dev/cli-common/output';
 import { logger } from '@/ui/logger';
 import { confirmCliRequesterCredentialDisclosure } from '@/cli/actions/executeCommand';
@@ -36,38 +37,25 @@ function hasSpawnNonce(details: unknown): boolean {
     && (details as { spawnNonce: string }).spawnNonce.trim());
 }
 
-async function resolveSessionCreateConnectedServices(params: Readonly<{
-  executor: ReturnType<typeof createCliActionExecutorFromCredentials>;
-  parsedOptions: ReturnType<typeof parseSessionCreateSpawnOptions>;
-  input: SessionSpawnNewInputV2;
-  agentId: string;
-}>): Promise<SessionSpawnNewInputV2> {
-  const intent = params.parsedOptions.connectedServicesAuthIntent;
-  if (!intent || intent.kind === 'default') return params.input;
-
-  const supportedServiceIds = resolveCatalogAgentConnectedAccountServiceIds(params.agentId);
-  if (supportedServiceIds.length === 0) {
-    throw new Error('connected_service_auth_unsupported');
-  }
+/** API tokens keep the released public Action preflight without borrowing stored Account custody. */
+async function resolveApiTokenLaunchAuth(
+  executor: ReturnType<typeof createCliActionExecutorFromCredentials>,
+  input: SessionSpawnNewActionAuthoringInputV2,
+  agentId: string,
+): Promise<SessionSpawnNewActionAuthoringInputV2> {
+  const { connectedServicesAuthIntent: intent, ...spawnInput } = input;
+  if (!intent || intent.kind === 'default') return spawnInput;
   const connectedServices = await resolveConnectedServicesLaunchAuthWithInventory({
     intent,
-    supportedServiceIds,
+    supportedServiceIds: resolveCatalogAgentConnectedAccountServiceIds(agentId),
     listInventory: async () => {
-      const inventoryResult = normalizeActionExecuteResult(await params.executor.execute(
-        'sessions.spawn.connected_services.list',
-        { agentId: params.agentId, includeUnavailable: false, includeDefaults: false },
-        { surface: 'cli', defaultSessionId: null },
-      ));
-      if (!inventoryResult.ok) {
-        throw new HappierActionError(inventoryResult.errorCode,
-          inventoryResult.errorMessage ?? inventoryResult.errorCode, inventoryResult.details);
-      }
-      return inventoryResult.data ?? null;
+      const result = await executor.execute('sessions.spawn.connected_services.list',
+        { agentId, includeUnavailable: false, includeDefaults: false }, { surface: 'cli', defaultSessionId: null });
+      if (!result.ok) throwCliActionFailure(result);
+      return result.result ?? null;
     },
   });
-  return connectedServices
-    ? { ...params.input, connectedServices }
-    : params.input;
+  return connectedServices ? { ...spawnInput, connectedServices } : spawnInput;
 }
 
 export async function cmdSessionCreate(
@@ -95,7 +83,7 @@ export async function cmdSessionCreate(
   const effectiveSpawnAttemptId = spawnAttemptId ?? randomUUID();
   const startupStartedAt = performance.now();
   let startupPhaseStartedAt = startupStartedAt;
-  const recordStartupPhase = (phase: 'entered' | 'credentials' | 'normalization' | 'connected_services' | 'spawn_dispatch'): void => {
+  const recordStartupPhase = (phase: 'entered' | 'credentials' | 'normalization' | 'spawn_dispatch'): void => {
     const now = performance.now();
     try {
       logger.infoFile('[session-create] Startup phase', { phase, spawnAttemptId: effectiveSpawnAttemptId,
@@ -156,16 +144,12 @@ export async function cmdSessionCreate(
   try {
     const normalizedSpawn = await normalizeSessionCreateSpawnRequest(spawnRequest);
     recordStartupPhase('normalization');
-    const resolvedActionInput = await resolveSessionCreateConnectedServices({
-      executor,
-      parsedOptions,
-      input: normalizedSpawn.input,
-      agentId: normalizedSpawn.agentId,
-    });
-    recordStartupPhase('connected_services');
+    const input = credentials.credentialProvenance === 'api_token'
+      ? await resolveApiTokenLaunchAuth(executor, normalizedSpawn.input, normalizedSpawn.agentId ?? DEFAULT_AGENT_ID)
+      : normalizedSpawn.input;
     actionRes = await executor.execute(
       'session.spawn_new',
-      resolvedActionInput,
+      input,
       {
         surface: 'cli',
         defaultSessionId: null,

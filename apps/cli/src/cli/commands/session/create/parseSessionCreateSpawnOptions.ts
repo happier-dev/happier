@@ -43,6 +43,7 @@ export type SessionCreateSpawnRequest = Readonly<{
   terminal?: Readonly<Record<string, unknown>>;
   machineId?: string;
   serverId?: string;
+  connectedServicesAuthIntent?: ConnectedServicesLaunchAuthIntent;
 }>;
 
 export type ParsedSessionCreateSpawnOptions = Readonly<{
@@ -51,7 +52,6 @@ export type ParsedSessionCreateSpawnOptions = Readonly<{
   backendTargetKey: string | null;
   spawnAttemptId: string | null;
   resumeSpawnAttempt: boolean;
-  connectedServicesAuthIntent?: ConnectedServicesLaunchAuthIntent;
   spawnRequest: SessionCreateSpawnRequest;
 }>;
 
@@ -316,7 +316,6 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
     backendTargetKey,
     spawnAttemptId,
     resumeSpawnAttempt,
-    ...(connectedServicesAuthIntent ? { connectedServicesAuthIntent } : {}),
     spawnRequest: {
       directory: path,
       backendTargetKey,
@@ -337,6 +336,7 @@ export function parseSessionCreateSpawnOptions(argv: readonly string[]): ParsedS
       ...(terminal ? { terminal } : {}),
       ...(machineId ? { machineId } : {}),
       ...(serverId ? { serverId } : {}),
+      ...(connectedServicesAuthIntent ? { connectedServicesAuthIntent } : {}),
     },
   };
 }
