@@ -372,13 +372,7 @@ describe("startServerLight planning helpers", () => {
 
     expect(launch.command).toBe(process.execPath);
     expect(normalizeForPathAssertions(launch.cwd)).toContain(`/apps/server`);
-    expect(launch.args).toEqual(
-      expect.arrayContaining([
-        "--import",
-        expect.stringContaining("tsx/dist/esm/index.mjs"),
-        expect.stringContaining(expectedEntrypoint),
-      ]),
-    );
+    expect(launch.args.at(-1)).toEqual(expect.stringContaining(expectedEntrypoint));
     expect(launch.env).toMatchObject({
       TSX_TSCONFIG_PATH: expect.stringContaining("tsconfig.exec.json"),
     });
@@ -397,5 +391,17 @@ describe("startServerLight planning helpers", () => {
       'import { PUBLIC_PROFILE_TYPOGRAPHY } from "./sources/app/account/profile/render/publicProfileEnvironment.ts"; console.log(typeof PUBLIC_PROFILE_TYPOGRAPHY.body.fontSize);',
     ], { cwd: launch.cwd, env: { ...process.env, ...launch.env }, encoding: "utf8" });
     expect(output.trim()).toBe("number");
+  });
+
+  it("loads current workspace exports in server source mode", () => {
+    const launch = resolveServerStartLaunchSpec({
+      provider: "sqlite",
+      env: { HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: "1" },
+    });
+    const output = execFileSync(launch.command, [
+      ...launch.args.slice(0, -1), "--input-type=module", "--eval",
+      'import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from "@happier-dev/protocol/actions/actionIds"; console.log(JSON.stringify({ source: import.meta.resolve("@happier-dev/protocol/actions/actionIds").endsWith("/src/actions/actionIds.ts"), actionId: SESSION_SPAWN_NEW_ACTION_ID_V1 }));',
+    ], { cwd: launch.cwd, env: { ...process.env, NODE_OPTIONS: undefined, ...launch.env }, encoding: "utf8" });
+    expect(JSON.parse(output)).toEqual({ source: true, actionId: 'session.spawn_new' });
   });
 });

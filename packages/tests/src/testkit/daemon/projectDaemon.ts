@@ -26,7 +26,8 @@ import { claimTestHomeOwner } from '../homeOwner';
 import { fetchSessionMetadataV2 } from '../sessionHandoffMetadata';
 import { startTestDaemon, type StartedDaemon } from './daemon';
 import { resolveMachineIdForServerFromSettings } from '../../../../../apps/cli/src/daemon/resolveMachineIdForServerFromSettings';
-import { withCliWorkspaceSourceRuntime, type CliTestLaunchSpec } from '../process/cliLaunchSpec';
+import { type CliTestLaunchSpec } from '../process/cliLaunchSpec';
+import { withWorkspaceSourceRuntime } from '../process/tsxImportHook';
 import type { TestAccountCliAuthCredentials } from '../cliAuth';
 import { startCliAuthLoginForTerminalConnect } from '../uiE2e/cliTerminalConnect';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
@@ -47,7 +48,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
   observeActionRequests?: boolean;
   beforeHttpRequest?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
 }>) {
-  const sourceOptions = withCliWorkspaceSourceRuntime(process.env).NODE_OPTIONS;
+  const sourceOptions = withWorkspaceSourceRuntime(process.env).NODE_OPTIONS;
   const serverSourceOptions = [sourceOptions, ...(params.serverPreloadModules ?? []).flatMap(module => ['--import', module])].join(' ');
   const port = await reserveAvailablePort();
   let ingress: HttpRequestRecordingProxy | undefined;

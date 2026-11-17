@@ -19,7 +19,8 @@ import { connectExternalMcp, parseToolJson } from '../../src/testkit/externalMcp
 import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
-import { resolveCliTestLaunchSpec, shouldUseCliSourceEntrypoint, withCliWorkspaceSourceRuntime, type CliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
+import { resolveCliTestLaunchSpec, shouldUseCliSourceEntrypoint, type CliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
+import { withWorkspaceSourceRuntime } from '../../src/testkit/process/tsxImportHook';
 import { fetchArtifactViaApi, listArtifactsViaApi } from '../../src/testkit/artifactApi';
 import { sleep, waitFor } from '../../src/testkit/timing';
 
@@ -87,7 +88,7 @@ async function createScenario(): Promise<{
   });
 
   const cliLaunch = await resolveCliTestLaunchSpec(
-    { testDir, env: shouldUseCliSourceEntrypoint(process.env) ? withCliWorkspaceSourceRuntime(process.env) : process.env },
+    { testDir, env: shouldUseCliSourceEntrypoint(process.env) ? withWorkspaceSourceRuntime(process.env) : process.env },
     { snapshotDir: resolve(testDir, 'cli-runtime'), lockPath: resolve(testDir, 'cli-dist-build.lock') },
   );
 

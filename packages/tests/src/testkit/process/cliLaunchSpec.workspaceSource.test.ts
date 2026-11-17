@@ -7,13 +7,14 @@ import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
 
 import { repoRootDir } from '../paths';
-import { resolveCliTestLaunchSpec, withCliWorkspaceSourceRuntime } from './cliLaunchSpec';
+import { resolveCliTestLaunchSpec } from './cliLaunchSpec';
+import { withWorkspaceSourceRuntime } from './tsxImportHook';
 
 it('runs the workspace source CLI through its installed source loader without a dist snapshot prerequisite', async () => {
   const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-workspace-source-'));
   const rootDir = repoRootDir();
   const snapshotDir = join(testDir, 'unused-snapshot');
-  const env = withCliWorkspaceSourceRuntime({
+  const env = withWorkspaceSourceRuntime({
     ...process.env,
     HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1',

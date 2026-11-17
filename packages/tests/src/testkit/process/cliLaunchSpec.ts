@@ -43,18 +43,6 @@ export type CliTestLaunchSpec = Readonly<{
   cleanup?: () => void | Promise<void>;
 }>;
 
-export function withCliWorkspaceSourceRuntime(
-  env: NodeJS.ProcessEnv,
-  rootDir = repoRootDir(),
-): NodeJS.ProcessEnv & { NODE_OPTIONS: string } {
-  return {
-    ...env,
-    NODE_OPTIONS: [env.NODE_OPTIONS, '--import',
-      pathToFileURL(resolve(rootDir, 'packages/cli-common/registerSourceRuntime.mjs')).href]
-      .filter(Boolean).join(' '),
-  };
-}
-
 export async function resolveCliTestLaunchSpecOrOverride(
   explicit: CliTestLaunchSpec | undefined,
   resolveDefault: () => Promise<CliTestLaunchSpec>,

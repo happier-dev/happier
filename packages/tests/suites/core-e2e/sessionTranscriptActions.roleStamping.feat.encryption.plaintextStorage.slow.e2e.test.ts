@@ -8,7 +8,8 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { connectExternalMcp, parseToolJson } from '../../src/testkit/externalMcp';
 import { fetchJson } from '../../src/testkit/http';
-import { resolveCliTestLaunchSpec, shouldUseCliSourceEntrypoint, withCliWorkspaceSourceRuntime } from '../../src/testkit/process/cliLaunchSpec';
+import { resolveCliTestLaunchSpec, shouldUseCliSourceEntrypoint } from '../../src/testkit/process/cliLaunchSpec';
+import { withWorkspaceSourceRuntime } from '../../src/testkit/process/tsxImportHook';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createRunDirs } from '../../src/testkit/runDir';
 
@@ -223,7 +224,7 @@ describe('core e2e: session transcript/events action role stamping', () => {
       mode: 'tokenOnly',
     });
     const cliLaunch = await resolveCliTestLaunchSpec(
-      { testDir, env: shouldUseCliSourceEntrypoint(process.env) ? withCliWorkspaceSourceRuntime(process.env) : process.env },
+      { testDir, env: shouldUseCliSourceEntrypoint(process.env) ? withWorkspaceSourceRuntime(process.env) : process.env },
       { snapshotDir: resolve(testDir, 'cli-runtime'), lockPath: resolve(testDir, 'cli-dist-build.lock') },
     );
 
