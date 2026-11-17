@@ -521,12 +521,36 @@ describe('external-session live lifecycle fixture', () => {
     })).toBeNull();
   });
 
+  it('accepts an active source already adopted by development registration', async () => {
+    const registration = { kind: 'status', status: {
+      roots: [{ kind: 'explicit', rootPath: '/tmp/external-session-live-plugin', trusted: true, persisted: true }],
+      plugins: [{ sourceRootPath: '/tmp/external-session-live-plugin',
+        pluginId: 'acme.external-session-live', phase: 'active' }],
+    } };
+    const postJson = async (request: Readonly<{ path: string }>) => {
+      if (request.path === '/plugins/development/control') return { status: 200, data: registration };
+      throw new Error(`An already active source was submitted again: ${request.path}`);
+    };
+    await expect(applyTrustedLocalPluginFixture({
+      daemonPort: 32123,
+      pluginRoot: '/tmp/external-session-live-plugin',
+      pluginId: 'acme.external-session-live',
+      interactionId: 'install-live-plugin',
+      postJson,
+    })).resolves.toEqual(registration);
+  });
+
   it('installs with explicit local-user review and reloads through daemon plugin change routes', async () => {
+    let requestedChanges = 0;
     const postJson = vi.fn(async (request: Readonly<{
       path: string;
       body: Readonly<Record<string, unknown>>;
     }>) => {
-      if (request.path === '/plugins/change/request' && postJson.mock.calls.length === 1) {
+      if (request.path === '/plugins/development/control') {
+        return { status: 200, data: { kind: 'failed', code: 'plugin_dev_reviewRequired',
+          message: 'Source requires local-user review', status: { roots: [], plugins: [] } } };
+      }
+      if (request.path === '/plugins/change/request' && ++requestedChanges === 1) {
         return {
           status: 200,
           data: {
@@ -570,11 +594,15 @@ describe('external-session live lifecycle fixture', () => {
       body: request.body,
     }))).toEqual([
       {
+        path: '/plugins/development/control',
+        body: { kind: 'registerExplicit', rootPath: '/tmp/external-session-live-plugin' },
+      },
+      {
         path: '/plugins/change/request',
         body: {
-          kind: 'installPath',
-          locator: '/tmp/external-session-live-plugin',
-          development: true,
+          kind: 'development',
+          pluginId: 'acme.external-session-live',
+          sourceRootPath: '/tmp/external-session-live-plugin',
         },
       },
       {
@@ -600,7 +628,10 @@ describe('external-session live lifecycle fixture', () => {
   it('preserves daemon decision diagnostics when reviewed installation fails', async () => {
     const postJson = vi.fn(async (request: Readonly<{
       path: string;
-    }>) => request.path === '/plugins/change/request'
+    }>) => request.path === '/plugins/development/control'
+      ? { status: 200, data: { kind: 'failed', code: 'plugin_dev_reviewRequired',
+          message: 'Source requires local-user review', status: { roots: [], plugins: [] } } }
+      : request.path === '/plugins/change/request'
       ? {
           status: 200,
           data: {

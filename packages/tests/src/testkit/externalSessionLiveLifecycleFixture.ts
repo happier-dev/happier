@@ -18,6 +18,7 @@ import {
   type ExternalAgentObservationSnapshotV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { PluginDevelopmentControlResultV1Schema } from '@happier-dev/protocol/capabilities';
 
 type ExternalSessionLiveFixtureTurnStatus = 'waiting' | 'working';
 
@@ -556,15 +557,40 @@ export async function applyTrustedLocalPluginFixture(params: Readonly<{
   postJson?: DaemonPluginPostJson;
 }>): Promise<Readonly<Record<string, unknown>>> {
   const postJson = params.postJson ?? daemonControlPostJson;
+  // Match `plugins dev`: registration can adopt the source itself. Only a
+  // review-required result rejoins the retained candidate's install decision.
+  const registered = await postJson({
+    port: params.daemonPort,
+    path: '/plugins/development/control',
+    controlToken: params.controlToken,
+    timeoutMs: 300_000,
+    body: { kind: 'registerExplicit', rootPath: params.pluginRoot },
+  });
+  const registration = PluginDevelopmentControlResultV1Schema.safeParse(registered.data);
+  if (registered.status !== 200 || !registration.success) {
+    throw new Error(`Local plugin development registration failed (status=${registered.status}, invalidResult=${!registration.success})`);
+  }
+  const result = registration.data;
+  if (result.kind === 'status') {
+    const source = result.status.plugins.find(plugin => plugin.pluginId === params.pluginId
+      && plugin.sourceRootPath === params.pluginRoot);
+    if (source?.phase !== 'active') {
+      throw new Error(`Local plugin development registration did not activate the source (phase=${source?.phase ?? 'missing'}, code=${source?.diagnostic?.code ?? 'unknown'})`);
+    }
+    return result;
+  }
+  if (result.kind !== 'failed' || result.code !== 'plugin_dev_reviewRequired') {
+    throw new Error(`Local plugin development registration failed (kind=${result.kind}, code=${result.kind === 'failed' ? result.code : 'trustRequired'})`);
+  }
   const requested = await postJson({
     port: params.daemonPort,
     path: '/plugins/change/request',
     controlToken: params.controlToken,
     timeoutMs: 300_000,
     body: {
-      kind: 'installPath',
-      locator: params.pluginRoot,
-      development: true,
+      kind: 'development',
+      pluginId: params.pluginId,
+      sourceRootPath: params.pluginRoot,
     },
   });
   const requestData = asRecord(requested.data);
