@@ -292,6 +292,10 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       ...(id === deploymentActionIds.DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && previewForInput
         ? { uiConfirmationForInput: (input: unknown): boolean => !previewForInput(input) } : {}) },
     ...(irreversible ? { irreversible: true as const } : {}),
+    ...(id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+      ? { automationPrimarySubject: null }
+      : backup || backupConfigure || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
+        ? { automationPrimarySubject: { kind: 'backup' as const, field: 'environmentId' } } : {}),
     ...(id === deploymentActionIds.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 ? { approvalNarrowing: deploymentBindingSelectionNarrowing } : {}),
     ...(id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 && id !== deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 && !accountPage
       ? { approvalScope: id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1

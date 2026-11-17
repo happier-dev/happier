@@ -3,6 +3,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ApprovalInputCustodySchema } from '../../approvals/approvalInputCustody.js';
 import { PluginLocalizedStringV2Schema } from '../../plugins/contributions/publicTypes.js';
 import { ActionSessionTargetDeclarationV1Schema } from '../sessionTargetV1.js';
+import { ActionAutomationPrimarySubjectV1Schema } from '../actionDefinitionV1.js';
 import { ActionPromptingSchema } from '../metadata.js';
 import { z } from '../../zodRuntimePolicy.js';
 import type { ApprovalNarrowing } from '../../approvals/approvalNarrowing.js';
@@ -182,6 +183,8 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
   irreversible: z.optional(z.literal(true)),
   permissionChanging: z.optional(ActionPermissionChangingSchema),
   permissionChangingForInput: z.optional(z.custom<(input: unknown) => boolean>((value) => typeof value === 'function')),
+  /** Native operand metadata; null explicitly omits a creating Action's primary subject. */
+  automationPrimarySubject: z.optional(z.nullable(ActionAutomationPrimarySubjectV1Schema)),
   /**
    * The host admits this operand's scope before confirmation. Environment scopes may
    * inherit a current preview-template preference without changing child authority.

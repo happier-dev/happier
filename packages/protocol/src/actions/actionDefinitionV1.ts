@@ -94,12 +94,20 @@ export const ActionExecutionDescriptorV1Schema = lazyZodSchema(() => z.looseObje
   }));
 export type ActionExecutionDescriptorV1 = z.infer<typeof ActionExecutionDescriptorV1Schema>;
 
+export const ActionAutomationPrimarySubjectV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: AutomationSubjectKindV1Schema,
+    field: z.string().check(z.trim(), z.minLength(1)),
+  }));
+export type ActionAutomationPrimarySubjectV1 = z.infer<typeof ActionAutomationPrimarySubjectV1Schema>;
+
 const ActionAutomationChoicesV1Schema = lazyZodSchema(() => z.strictObject({
     before: z.boolean(),
     after: z.boolean(),
     workflowStep: z.boolean(),
     /** Potential admitted kinds, including Session and profile context; never a permission claim. */
     subjectKinds: z.optional(z.array(AutomationSubjectKindV1Schema)),
+    /** The native declaration's primary operand; ambient matching contexts stay in subjectKinds. */
+    primarySubject: z.optional(ActionAutomationPrimarySubjectV1Schema),
   }));
 
 export const ActionDefinitionSummaryV1Schema = lazyZodSchema(() => z.looseObject({

@@ -24,6 +24,7 @@ import {
   type ActionDiscoveryDefinitionV1,
   type ActionDefinitionSummaryV1,
   type ActionDefinitionV1,
+  type ActionAutomationPrimarySubjectV1,
 } from './actionDefinitionV1.js';
 import { ActionJsonSchemaProjectionError, zodSchemaToJsonSchemaObject, type JsonSchemaObject } from './actionInputJsonSchema.js';
 import { freezeActionCompletionContractV1, ActionCompletionContractV1Schema } from './actionCompletion.js';
@@ -208,6 +209,7 @@ function projectActionAutomationChoices(definition: Pick<ActionDefinitionSummary
     after: before,
     workflowStep: isWorkflowStepActionSpecV1(definition),
     ...(definition.automation?.subjectKinds ? { subjectKinds: definition.automation.subjectKinds } : {}),
+    ...(definition.automation?.primarySubject ? { primarySubject: definition.automation.primarySubject } : {}),
   };
 }
 
@@ -225,11 +227,20 @@ function projectNativeActionSubjectKinds(spec: ActionSpec): AutomationSubjectKin
   return [...kinds];
 }
 
+function projectNativeActionPrimarySubject(spec: ActionSpec): ActionAutomationPrimarySubjectV1 | undefined {
+  if (spec.automationPrimarySubject !== undefined) return spec.automationPrimarySubject ?? undefined;
+  if (spec.sessionTarget) return { kind: 'session', field: spec.sessionTarget.field };
+  if (spec.approvalScope === 'machine') return { kind: 'machine', field: 'machineId' };
+  if (spec.approvalScope === 'environment') return { kind: 'environment', field: 'environmentId' };
+  return undefined;
+}
+
 function serializeActionSpecMetadata(
   spec: ActionSpec,
   params?: ActionCatalogSurfaceParams,
 ): SerializedActionSpec {
   const projection = resolveActionCatalogSurfaceProjection(spec, params?.surface);
+  const primarySubject = projectNativeActionPrimarySubject(spec);
   return {
     id: spec.id,
     title: spec.title,
@@ -254,7 +265,8 @@ function serializeActionSpecMetadata(
     ...(typeof spec.approvalScope === 'string' ? { approvalScope: spec.approvalScope } : {}),
     ...(spec.execution ? { execution: spec.execution } : {}),
     ...(spec.sideEffectClass ? { sideEffectClass: spec.sideEffectClass } : {}),
-    automation: { ...projectActionAutomationChoices(spec), subjectKinds: projectNativeActionSubjectKinds(spec) },
+    automation: { ...projectActionAutomationChoices(spec), subjectKinds: projectNativeActionSubjectKinds(spec),
+      ...(primarySubject ? { primarySubject } : {}) },
     ...(spec.operation ? { operation: spec.operation } : {}),
   };
 }

@@ -20,8 +20,56 @@ import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '../deployments/deploymentActionI
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js';
 import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler.js';
+import { createActionExecutor } from './actionExecutor.js';
+import { ActionDiscoveryDefinitionSummaryV1Schema } from './actionDefinitionV1.js';
 
 describe('actionCatalog action-definition adapter', () => {
+  it('validates the primary subject pair at the strict discovery boundary', () => {
+    const summary = serializeActionSpec(getActionSpec('session.stop'), { includeOutputSchema: false });
+    const read = (primarySubject: unknown) => ActionDiscoveryDefinitionSummaryV1Schema.safeParse({
+      ...summary, automation: { ...summary.automation, primarySubject },
+    });
+    expect(read({ kind: 'session', field: 'sessionId' }).success).toBe(true);
+    expect(read({ kind: 'unknown', field: 'sessionId' }).success).toBe(false);
+    expect(read({ kind: 'session', field: '' }).success).toBe(false);
+    expect(read({ kind: 'session', field: 'sessionId', fallback: 'machineId' }).success).toBe(false);
+  });
+
+  it.each([
+    ['session.stop', 'session', 'sessionId'],
+    ['projects.visibility.set', 'project', 'target'],
+    ['projects.setup.set', 'project', 'projectRef'],
+    ['projects.deploymentDefaults.set', 'app', 'projectSourceId'],
+    ['deployments.deploy', 'environment', 'environmentId'],
+    ['deployments.backups.run', 'backup', 'environmentId'],
+    ['deployments.backups.restore', 'backup', 'environmentId'],
+    ['machines.reboot', 'machine', 'machineId'],
+    ['machines.services.control', 'machine', 'machineId'],
+    ['machines.services.exec', 'machine', 'machineId'],
+  ])('reads the declared primary operand for %s through Action search and get', async (id, kind, field) => {
+    const executor = createActionExecutor({});
+    const context = { surface: 'ui' as const };
+    const primarySubject = { kind, field };
+    expect(await executor.execute('action.spec.search', { query: id, purpose: 'automation', limit: null }, context))
+      .toMatchObject({ ok: true, result: { actionSpecs: expect.arrayContaining([
+        expect.objectContaining({ id, automation: expect.objectContaining({ primarySubject }) }),
+      ]) } });
+    expect(await executor.execute('action.spec.get', { id, includeOutputSchema: false }, context))
+      .toMatchObject({ ok: true, result: { actionSpec: { id, automation: { primarySubject } } } });
+  });
+
+  it.each(['settings.set', 'deployments.environments.create', 'deployments.templates.instantiate'])(
+    'keeps ambient context from becoming a primary operand for %s', async id => {
+      const executor = createActionExecutor({});
+      const context = { surface: 'ui' as const };
+      const result = await executor.execute('action.spec.get', { id, includeOutputSchema: false }, context);
+      expect(result).toMatchObject({ ok: true, result: { actionSpec: { id, automation: {
+        subjectKinds: expect.arrayContaining(['approvalProfile']),
+      } } } });
+      expect(result).not.toHaveProperty('result.actionSpec.automation.primarySubject');
+    },
+  );
+
   it('enumerates native subject choices through ordinary search and strict discovery without executable operands', () => {
     for (const [id, subjectKinds] of [
       ['projects.visibility.set', ['project', 'approvalProfile']],

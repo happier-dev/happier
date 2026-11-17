@@ -374,6 +374,11 @@ export type DiscoveryActionResultById = {
                 before: boolean;
                 after: boolean;
                 workflowStep: boolean;
+                subjectKinds?: ('app' | 'approvalProfile' | 'backup' | 'database' | 'environment' | 'healthCheck' | 'machine' | 'plugin' | 'project' | 'session')[] | undefined;
+                primarySubject?: undefined | {
+                    kind: 'app' | 'approvalProfile' | 'backup' | 'database' | 'environment' | 'healthCheck' | 'machine' | 'plugin' | 'project' | 'session';
+                    field: string;
+                };
             };
             operation?: undefined | {
                 version: 1;
@@ -557,6 +562,11 @@ export type DiscoveryActionResultById = {
                 before: boolean;
                 after: boolean;
                 workflowStep: boolean;
+                subjectKinds?: ('app' | 'approvalProfile' | 'backup' | 'database' | 'environment' | 'healthCheck' | 'machine' | 'plugin' | 'project' | 'session')[] | undefined;
+                primarySubject?: undefined | {
+                    kind: 'app' | 'approvalProfile' | 'backup' | 'database' | 'environment' | 'healthCheck' | 'machine' | 'plugin' | 'project' | 'session';
+                    field: string;
+                };
             };
             operation?: undefined | {
                 version: 1;

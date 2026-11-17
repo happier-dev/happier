@@ -2075,7 +2075,9 @@ repository operation and carry no accepted-operation handle. These contracts are
 development source; composed automation validation is still required.
 
 Development Action discovery summaries expose `automation.before`,
-`automation.after`, `automation.workflowStep` and native `automation.subjectKinds`.
+`automation.after`, `automation.workflowStep`, native `automation.subjectKinds`
+and an optional `automation.primarySubject` containing its declared `kind` and
+operand `field`.
 The existing `action.spec.search` and `action.spec.get` Actions return these
 fields. The catalog derives these
 choices from the existing effect, completion and Workflow-step declarations;
@@ -2085,6 +2087,11 @@ immediate after settlement. Read-only Actions cannot be hooked. Subject kinds
 describe potential applicability, including Session-derived Project and Machine
 context and the bound approval profile; they do not promise a subject is present
 on every invocation or grant permission to manage it.
+The trigger block's “This resource / Any kind” selector consumes the declared
+primary subject directly. It does not choose from ambient subjects such as the
+bound approval profile. Matching retains the full `subjectKinds` list. Actions
+without an unconditional existing resource operand, including global and creation
+Actions, omit the primary subject.
 
 In 0.3 development source, `action_interception_rejected` is presented as
 a refusal. `readActionFailurePresentationV1` owns that classification and reads
