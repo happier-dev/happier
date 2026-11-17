@@ -738,6 +738,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 reviewReapply: "Rever reaplicação",
                 stoppedAt: ({ step }: { step: string }) => `Parado em ${step}`,
                 retryFrom: ({ step }: { step: string }) => `Tentar de novo a partir de ${step}`,
+                stepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Passo ${current} de ${total} em ${machine}`,
+                stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Parado no passo ${current} de ${total} em ${machine}`,
                 readOnly: "Pode usar esta máquina. A configuração é alterada pelo proprietário e por quem a gere.",
                 reviewTitle: "Rever alterações",
                 reviewRemove: "Rever remoção",

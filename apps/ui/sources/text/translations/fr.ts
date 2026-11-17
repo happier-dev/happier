@@ -2072,6 +2072,8 @@ export const fr: TranslationStructure = {
                 send: 'Envoyer',
                 sentTitle: 'Mot de passe envoyé',
                 sentHint: 'Cet affichage se met à jour dès que la machine reprend.',
+                needsAccessOnce: ({ machine }: { machine: string }) => `${machine} a besoin d’un accès administrateur une fois`,
+                stepRunsAsAdmin: ({ step }: { step: string }) => `${step} s’exécute en tant qu’administrateur.`,
                 refused: 'La machine a refusé cette réponse. Réessayez ou arrêtez l’opération.',
                 expired: 'Cette question est fermée. Si la machine a encore besoin du mot de passe, elle le redemandera ici.',
                 failed: 'Le mot de passe n’a pas pu être envoyé. Vérifiez que la machine est en ligne, puis réessayez.',

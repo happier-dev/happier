@@ -2049,6 +2049,8 @@ export const zhHans: TranslationStructure = {
                 send: '发送',
                 sentTitle: '已发送密码',
                 sentHint: '机器继续后这里会立即更新。',
+                needsAccessOnce: ({ machine }: { machine: string }) => `${machine} 需要一次管理员权限`,
+                stepRunsAsAdmin: ({ step }: { step: string }) => `${step} 以管理员身份运行。`,
                 refused: '机器拒绝了这个回答。请重试，或停止此操作。',
                 expired: '这个问题已关闭。如果机器仍需要密码，会在这里再次询问。',
                 failed: '无法发送密码。请确认机器在线，然后重试。',

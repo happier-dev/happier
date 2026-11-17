@@ -2071,6 +2071,8 @@ export const ca: TranslationStructure = {
                 send: 'Envia',
                 sentTitle: 'Contrasenya enviada',
                 sentHint: 'Això s’actualitza tan bon punt la màquina continuï.',
+                needsAccessOnce: ({ machine }: { machine: string }) => `${machine} necessita accés d’administrador una vegada`,
+                stepRunsAsAdmin: ({ step }: { step: string }) => `${step} s’executa com a administrador.`,
                 refused: 'La màquina ha rebutjat aquesta resposta. Torna-ho a provar o atura l’operació.',
                 expired: 'Aquesta pregunta s’ha tancat. Si la màquina encara necessita la contrasenya, la tornarà a demanar aquí.',
                 failed: 'No s’ha pogut enviar la contrasenya. Comprova que la màquina estigui en línia i torna-ho a provar.',

@@ -139,6 +139,8 @@ export const actionOperationInboxTranslations = {
             send: 'Send',
             sentTitle: 'Password sent',
             sentHint: 'This updates as soon as the machine continues.',
+            needsAccessOnce: ({ machine }: { machine: string }) => `${machine} needs administrator access once`,
+            stepRunsAsAdmin: ({ step }: { step: string }) => `${step} runs as administrator.`,
             refused: 'The machine refused this answer. Try again, or stop the operation.',
             expired: 'This question has closed. If the machine still needs the password, it asks again here.',
             failed: 'The password couldn\'t be sent. Check that the machine is online, then try again.',

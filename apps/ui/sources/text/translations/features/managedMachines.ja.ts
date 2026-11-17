@@ -738,6 +738,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 reviewReapply: "再適用を確認",
                 stoppedAt: ({ step }: { step: string }) => `${step} で停止しました`,
                 retryFrom: ({ step }: { step: string }) => `${step} から再試行`,
+                stepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `${machine} でステップ ${current}/${total}`,
+                stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `${machine} のステップ ${current}/${total} で停止`,
                 readOnly: "このマシンを使用できます。セットアップの変更は所有者と管理者が行います。",
                 reviewTitle: "変更を確認",
                 reviewRemove: "削除を確認",

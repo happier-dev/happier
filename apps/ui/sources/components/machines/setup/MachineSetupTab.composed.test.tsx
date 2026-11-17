@@ -780,9 +780,18 @@ describe('Machine → Setup tab (P-M1)', () => {
         params={{ id: 'setup' }} setParams={() => {}} />
     </AccountNoticeInvestigationBoundary>);
     onTestFinished(() => screen.unmount());
+    const { t } = await import('@/text');
+    // Where the run is, under its row: the step that runs, then the step it stopped at (lab L7).
+    await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-position')?.props.children)
+      .toBe(t('machinePresets.setup.tab.stepOf', { current: 1, total: 2, machine: 'devbox' })));
     await act(async () => { finishNative!(); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().progressOperation?.snapshot.state).toBe(outcome));
     if (outcome === 'failed') {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-position')?.props.children)
+        .toBe(t('machinePresets.setup.tab.stoppedAtStepOf', { current: 1, total: 2, machine: 'devbox' })));
+      // The failed step opens its output; why it stopped is said once, at the head.
+      expect(screen.findByTestId('machine-setup-steps-row-0:script:0-subtitle')?.props.children)
+        .toBe(`› ${t('projects.scripts.output.title')}`);
       await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-stopped')).not.toBeNull());
       expect(screen.findByTestId('machine-setup-stopped.action')).toBeNull();
       expect(screen.findByTestId('machine-setup-apply')).toBeNull();

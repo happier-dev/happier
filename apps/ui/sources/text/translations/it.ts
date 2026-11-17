@@ -2050,6 +2050,8 @@ export const it: TranslationStructure = {
                 send: 'Invia',
                 sentTitle: 'Password inviata',
                 sentHint: 'Si aggiorna non appena la macchina prosegue.',
+                needsAccessOnce: ({ machine }: { machine: string }) => `${machine} ha bisogno dell’accesso da amministratore una volta`,
+                stepRunsAsAdmin: ({ step }: { step: string }) => `${step} viene eseguito come amministratore.`,
                 refused: 'La macchina ha rifiutato questa risposta. Riprova oppure interrompi l’operazione.',
                 expired: 'Questa domanda è chiusa. Se la macchina ha ancora bisogno della password, la chiederà di nuovo qui.',
                 failed: 'Impossibile inviare la password. Verifica che la macchina sia online, poi riprova.',

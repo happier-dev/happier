@@ -207,17 +207,17 @@ export function NewAppAutoStep(
         </ItemGroup>
       ) : null}
       {view.kind === 'working' && checklist ? (
+        // The checklist is the card under its title; no sheet around it (one card, as the Setup tab's run).
         <ItemGroup
+          surface="none"
           title={t('newApp.auto.workingTitle')}
           testID="newApp.auto.steps"
         >
-          <View style={styles.steps}>
-            <PlanChecklistCard
-              phase="execute"
-              {...checklist}
-              testID="newApp.auto.progress"
-            />
-          </View>
+          <PlanChecklistCard
+            phase="execute"
+            {...checklist}
+            testID="newApp.auto.progress"
+          />
         </ItemGroup>
       ) : null}
       {view.kind === 'working' && typeof view.stop === 'object' ? (
@@ -348,10 +348,6 @@ function CardFacts(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  steps: {
-    paddingHorizontal: theme.space.s16,
-    paddingVertical: theme.space.s12,
-  },
   runsOn: { paddingTop: theme.space.s8 },
   facts: {
     gap: theme.space.s6,

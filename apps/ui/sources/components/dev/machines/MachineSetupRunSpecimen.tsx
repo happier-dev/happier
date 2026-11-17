@@ -147,6 +147,7 @@ export function MachineSetupRunSpecimen(
           operation={operation}
           progressOperation={operation}
           steps={steps}
+          machineName="devbox"
           onRetry={() => undefined}
         />
       ) : (

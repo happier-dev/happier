@@ -743,6 +743,8 @@ export const managedMachinesEn = {
                 reviewReapply: "Review re-apply",
                 stoppedAt: ({ step }: { step: string }) => `Stopped at ${step}`,
                 retryFrom: ({ step }: { step: string }) => `Retry from ${step}`,
+                stepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Step ${current} of ${total} on ${machine}`,
+                stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Stopped at step ${current} of ${total} on ${machine}`,
                 readOnly: "You can use this machine. Its owner and people who manage it change its setup.",
                 offline: ({ machine }: { machine: string }) => `${machine} is offline. Its setup can be checked once it’s back.`,
                 reviewTitle: "Review changes",

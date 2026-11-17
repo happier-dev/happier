@@ -738,6 +738,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 reviewReapply: "Проверить повторное применение",
                 stoppedAt: ({ step }: { step: string }) => `Остановлено на шаге «${step}»`,
                 retryFrom: ({ step }: { step: string }) => `Повторить с шага «${step}»`,
+                stepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Шаг ${current} из ${total} на ${machine}`,
+                stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `Остановлено на шаге ${current} из ${total} на ${machine}`,
                 readOnly: "Вы можете использовать эту машину. Настройку меняют её владелец и те, кто ею управляет.",
                 reviewTitle: "Проверьте изменения",
                 reviewRemove: "Проверьте удаление",

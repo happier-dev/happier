@@ -2272,6 +2272,8 @@ export const pt: TranslationStructure = {
                 send: 'Enviar',
                 sentTitle: 'Senha enviada',
                 sentHint: 'Isto é atualizado assim que a máquina continuar.',
+                needsAccessOnce: ({ machine }: { machine: string }) => `${machine} precisa de acesso de administrador uma vez`,
+                stepRunsAsAdmin: ({ step }: { step: string }) => `${step} é executado como administrador.`,
                 refused: 'A máquina recusou esta resposta. Tente novamente ou pare a operação.',
                 expired: 'Esta pergunta foi encerrada. Se a máquina ainda precisar da senha, ela perguntará novamente aqui.',
                 failed: 'Não foi possível enviar a senha. Verifique se a máquina está online e tente novamente.',

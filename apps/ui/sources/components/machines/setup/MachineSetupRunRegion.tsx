@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 
@@ -11,6 +11,9 @@ import { openActionOperationDetail } from '@/components/inbox/actionOperations/o
 import type { MachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { MeterBar } from '@/components/ui/lists/MeterBar';
+import { resolveItemTextColumnInset } from '@/components/ui/lists/itemDensityMetrics';
+import { Text } from '@/components/ui/text/Text';
 import { useOptionalAccountNoticeInvestigation } from '@/hooks/inbox/AccountNoticeInvestigationProvider';
 import { useInvestigateFailure } from '@/hooks/inbox/useInvestigateFailure';
 import {
@@ -85,9 +88,11 @@ export function MachineSetupRunRegion(
     /** The operation whose machineSetup attachment carries the reviewed steps (the run itself or its child). */
     progressOperation: ActionOperationProjection;
     steps: MachineSetupStepChecklist;
+    machineName: string;
     onRetry: (() => void) | null;
   }>,
 ) {
+  const { theme } = useUnistyles();
   const { progressOperation, steps } = props;
   const domainRef = progressOperation.snapshot.domainRef;
   const operations = React.useMemo(
@@ -106,20 +111,24 @@ export function MachineSetupRunRegion(
   const runSettled = props.operation
     ? isActionOperationTerminal(props.operation.snapshot.state)
     : true;
+  const position = readRunPosition(steps);
+  const positionText = position
+    ? t(stopped ? 'machinePresets.setup.tab.stoppedAtStepOf' : 'machinePresets.setup.tab.stepOf', {
+        current: position.current, total: position.total, machine: props.machineName,
+      })
+    : null;
+  // The step that asks: the one waiting on the person, else the one running when the question came.
+  const asking = sudoPrompt
+    ? steps.items.find((item) => item.needsAttention)
+      ?? steps.items.find((item) => steps.executionById[item.id]?.status === 'running') ?? null
+    : null;
   return (
     <ItemGroup
       surface="none"
       testID="machine-setup-operation"
       title={t('machinePresets.setup.tab.applying')}
     >
-      {sudoPrompt ? (
-        <View style={styles.head}>
-          <ActionOperationSudoQuestion
-            key={sudoPrompt.id}
-            operation={progressOperation}
-          />
-        </View>
-      ) : stoppedTitle ? (
+      {!sudoPrompt && stoppedTitle ? (
         <View style={styles.head}>
           <MachineSetupStoppedNotice
             serverId={props.serverId}
@@ -139,27 +148,74 @@ export function MachineSetupRunRegion(
         attachment={domainRef}
         stepOutput
         header={
-          operations.length > 0 ? (
-            <ActionOperationRows
-              operations={operations}
-              showDivider
-              onOpenOperation={(operation) =>
-                openActionOperationDetail({
-                  serverId: operation.serverId,
-                  operationId: operation.snapshot.operationId,
-                })
-              }
-            />
-          ) : undefined
+          <>
+            {/* The password question opens the run card: asked once, above the row it is for. */}
+            {sudoPrompt ? (
+              <ActionOperationSudoQuestion
+                key={sudoPrompt.id}
+                operation={progressOperation}
+                presentation="rows"
+                machineName={props.machineName}
+                stepTitle={asking && typeof asking.title === 'string' ? asking.title : null}
+              />
+            ) : null}
+            {operations.length > 0 ? (
+              <ActionOperationRows
+                operations={operations}
+                showDivider={!positionText}
+                onOpenOperation={(operation) =>
+                  openActionOperationDetail({
+                    serverId: operation.serverId,
+                    operationId: operation.snapshot.operationId,
+                  })
+                }
+              />
+            ) : null}
+            {position && positionText ? (
+              <>
+                <Text testID="machine-setup-position" variant="meta" style={styles.position}>{positionText}</Text>
+                <MeterBar
+                  testID="machine-setup-progress"
+                  tone="neutral"
+                  fillFraction={position.done / position.total}
+                  height={2}
+                  fillColor={theme.colors.text.primary}
+                  trackColor={theme.colors.border.default}
+                  progressAccessibilityLabel={positionText}
+                />
+              </>
+            ) : null}
+          </>
         }
       />
     </ItemGroup>
   );
 }
 
+/**
+ * Where the run is among its reviewed steps (lab L7: "Step 2 of 3", "Stopped at step 2 of 3"): the step that waits,
+ * runs or failed, and how many are done. Nothing to say once every step is done or none has started.
+ */
+function readRunPosition(steps: MachineSetupStepChecklist): Readonly<{ current: number; total: number; done: number }> | null {
+  const total = steps.items.length;
+  if (total === 0) return null;
+  const index = steps.items.findIndex((item) => item.needsAttention
+    || steps.executionById[item.id]?.status === 'running' || steps.executionById[item.id]?.status === 'error');
+  if (index < 0) return null;
+  const done = steps.items.filter((item) => steps.executionById[item.id]?.status === 'done').length;
+  return { current: index + 1, total, done };
+}
+
 const styles = StyleSheet.create((theme) => ({
   // The head that needs the person stands apart from the steps it is about.
   head: {
     marginBottom: theme.space.s12,
+  },
+  // Under the run's row, on its titles' left edge (the operation row is compact).
+  position: {
+    color: theme.colors.text.secondary,
+    paddingLeft: resolveItemTextColumnInset('compact'),
+    paddingRight: theme.space.s16,
+    paddingBottom: theme.space.s10,
   },
 }));

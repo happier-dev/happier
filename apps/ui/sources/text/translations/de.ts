@@ -1858,6 +1858,8 @@ export const de: TranslationStructure = {
                 send: 'Senden',
                 sentTitle: 'Passwort gesendet',
                 sentHint: 'Die Anzeige aktualisiert sich, sobald der Rechner weitermacht.',
+                needsAccessOnce: ({ machine }: { machine: string }) => `${machine} braucht einmal Administratorzugriff`,
+                stepRunsAsAdmin: ({ step }: { step: string }) => `${step} läuft als Administrator.`,
                 refused: 'Der Rechner hat diese Antwort abgelehnt. Versuche es erneut oder stoppe den Vorgang.',
                 expired: 'Diese Frage ist geschlossen. Braucht der Rechner das Passwort noch, fragt er hier erneut.',
                 failed: 'Das Passwort konnte nicht gesendet werden. Prüfe, ob der Rechner online ist, und versuche es erneut.',

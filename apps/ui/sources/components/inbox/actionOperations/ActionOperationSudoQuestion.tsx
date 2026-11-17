@@ -35,7 +35,18 @@ function describeSudoFailure(code: string | null): string | null {
  */
 export const ActionOperationSudoQuestion = React.memo(
   function ActionOperationSudoQuestion(
-    props: Readonly<{ operation: QualifiedActionOperation }>,
+    props: Readonly<{
+      operation: QualifiedActionOperation;
+      /**
+       * `rows`: the question as the head of a run card the host already draws (the Setup tab's run region, lab
+       * L7-ask): what needs the person, then the password row in the attention tint with its field and Send inline.
+       * `group` (default): its own titled group, where nothing else frames it (the operation detail).
+       */
+      presentation?: 'group' | 'rows';
+      /** The Machine and the step that asks, when the host knows them: the head says who needs access and why. */
+      machineName?: string | null;
+      stepTitle?: string | null;
+    }>,
   ) {
     const { theme } = useUnistyles();
     const question = useActionOperationTaskQuestion(props.operation);
@@ -52,6 +63,71 @@ export const ActionOperationSudoQuestion = React.memo(
         if (ok) setSent(true);
       });
     };
+    if (props.presentation === 'rows') {
+      const field = (
+        <FieldTextInput
+          testID="action-operation-sudo-password"
+          value={draft}
+          onChangeText={setDraft}
+          accessibilityLabel={t('inbox.actionOperations.sudo.passwordFor', { username })}
+          error={error}
+          secureTextEntry
+          autoFocus
+          autoCapitalize="none"
+          textContentType={Platform.OS === 'ios' ? 'password' : undefined}
+          returnKeyType="send"
+          onSubmitEditing={send}
+          editable={!question.pending}
+        />
+      );
+      return (
+        <View testID="action-operation-sudo">
+          <Item
+            mode="info"
+            showChevron={false}
+            title={props.machineName
+              ? t('inbox.actionOperations.sudo.needsAccessOnce', { machine: props.machineName })
+              : t('inbox.actionOperations.sudo.title')}
+            {...(props.stepTitle ? { subtitle: t('inbox.actionOperations.sudo.stepRunsAsAdmin', { step: props.stepTitle }) } : {})}
+            showDivider
+          />
+          {sent ? (
+            <Item
+              testID="action-operation-sudo-sent"
+              mode="info"
+              icon={<Icon name="check-circle" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+              title={t('inbox.actionOperations.sudo.sentTitle')}
+              subtitle={t('inbox.actionOperations.sudo.sentHint')}
+              subtitleLines={0}
+            />
+          ) : (
+            <View style={styles.attention}>
+              <Item
+                mode="info"
+                showChevron={false}
+                accessoryLayout="stacked"
+                icon={<Icon name="radio-button" size={ICON_SIZE.md} color={theme.colors.state.attention.foreground} />}
+                title={t('inbox.actionOperations.sudo.passwordFor', { username })}
+                subtitle={t('inbox.actionOperations.sudo.description')}
+                subtitleLines={0}
+                rightElement={
+                  <View style={styles.inlineAnswer}>
+                    <View style={styles.inlineField}>{field}</View>
+                    <RoundButton
+                      title={t('inbox.actionOperations.sudo.send')}
+                      testID="action-operation-sudo-send"
+                      loading={question.pending}
+                      disabled={question.pending || draft.length === 0}
+                      onPress={send}
+                    />
+                  </View>
+                }
+              />
+            </View>
+          )}
+        </View>
+      );
+    }
     return (
       <ItemGroup
         testID="action-operation-sudo"
@@ -121,6 +197,10 @@ export const ActionOperationSudoQuestion = React.memo(
   },
 );
 
-const styles = StyleSheet.create(() => ({
+const styles = StyleSheet.create((theme) => ({
   actions: { flexDirection: 'row', justifyContent: 'flex-end' },
+  // The row the run waits on wears the attention tint, as its step row does below it.
+  attention: { backgroundColor: theme.colors.state.attention.background },
+  inlineAnswer: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s8, maxWidth: 420 },
+  inlineField: { flex: 1, minWidth: 0 },
 }));

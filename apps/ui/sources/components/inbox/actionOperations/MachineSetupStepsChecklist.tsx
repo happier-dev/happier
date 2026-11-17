@@ -26,6 +26,7 @@ export function MachineSetupStepsChecklist(props: Readonly<{
   const projection = useAppShellPluginUiDeclarationProjection();
   const localize = usePluginLocalizedTextResolver({ projection });
   const { operation, stepOutput } = props;
+  const [expandedIds, setExpandedIds] = React.useState<readonly string[]>([]);
   const steps = React.useMemo(() => {
     const question = readActionOperationSudoPrompt(operation.snapshot);
     const projected = projectMachineSetupStepChecklist(props.attachment, (label) => localize('', label), question);
@@ -34,16 +35,19 @@ export function MachineSetupStepsChecklist(props: Readonly<{
       const output = item.output;
       if (!output) return item;
       const title = typeof item.title === 'string' ? item.title : t('projects.scripts.output.title');
+      const open = expandedIds.includes(item.id);
+      const failed = projected.executionById[item.id]?.status === 'error';
       return {
         ...item,
+        // A failed step's line is its output opener (lab L7-failed "› Output"): why it stopped is said once, at the head.
+        ...(failed ? { subtitle: `${open ? '⌄' : '›'} ${t('projects.scripts.output.title')}` } : {}),
         renderDetails: () => (
           <ProjectCommandOutputPane operation={operation} terminalId={output.terminalId} title={title} height={240} ownerStatesExit />
         ),
       };
     });
     return { ...projected, items };
-  }, [props.attachment, localize, operation, stepOutput]);
-  const [expandedIds, setExpandedIds] = React.useState<readonly string[]>([]);
+  }, [props.attachment, localize, operation, stepOutput, expandedIds]);
   const toggle = React.useCallback((id: string) => {
     setExpandedIds((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]));
   }, []);

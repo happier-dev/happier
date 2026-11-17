@@ -2235,6 +2235,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 send: '傳送',
                 sentTitle: '已傳送密碼',
                 sentHint: '機器繼續後這裡會立即更新。',
+                needsAccessOnce: ({ machine }: { machine: string }) => `${machine} 需要一次系統管理員權限`,
+                stepRunsAsAdmin: ({ step }: { step: string }) => `${step} 以系統管理員身分執行。`,
                 refused: '機器拒絕了這個回答。請再試一次，或停止此操作。',
                 expired: '這個問題已關閉。如果機器仍需要密碼，會在這裡再次詢問。',
                 failed: '無法傳送密碼。請確認機器在線上，然後再試一次。',

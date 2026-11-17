@@ -5,7 +5,6 @@ import { Linking, View } from 'react-native';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import type { SetupStepState } from '@/components/ui/setupBlocks/SetupSteps';
 import { PlanChecklistCard } from './planChecklist/PlanChecklistCard';
 import { projectReportedSteps } from './planChecklist/projectReportedSteps';
@@ -264,17 +263,81 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
         ? undefined
         : (props.title ?? t('settings.machineSetupCurrentMachineTitle'));
 
+    const hasChecklist = presentedChecklistSteps.items.length > 0;
+    const failed = props.snapshot.status === 'failed';
+    const statusRow = (
+        <Item
+            testID={`system-task-progress-status-${props.snapshot.status}`}
+            title={translateStatus(props.snapshot)}
+            {...(hasChecklist ? { subtitle: renderValue(latestMessage), subtitleTestID: 'system-task-message' } : {})}
+            showChevron={false}
+            mode="info"
+        />
+    );
+    const acquisitionRow = acquisition && (variant === 'checklistOnly' || acquisition.downloadProgress) ? (
+        <Item
+            testID="system-task-acquisition-progress"
+            title={variant === 'checklistOnly' ? acquisition.status : acquisition.downloadProgress!}
+            subtitle={variant === 'checklistOnly' ? acquisition.downloadProgress : undefined}
+            showChevron={false}
+            mode="info"
+        />
+    ) : null;
+    const actionRows = (
+        <>
+            {canOpenLogs ? <DesktopSystemTaskLogsControl /> : null}
+            {promptAction ? (
+                <Item
+                    testID="system-task-progress-prompt-action"
+                    title={promptAction.title}
+                    onPress={handlePromptAction}
+                    showChevron={false}
+                />
+            ) : null}
+            {canCancel ? (
+                <Item
+                    testID="system-task-progress-cancel"
+                    title={t('common.cancel')}
+                    onPress={props.onCancel}
+                    destructive
+                />
+            ) : null}
+        </>
+    );
+    const hasActionRows = canOpenLogs || Boolean(promptAction) || canCancel;
+
+    // With observed steps the checklist is the card and its rows say the state ("Needs you", the running row);
+    // only a failure keeps a line, for why. Without steps the summary rows are all there is to say.
+    if (hasChecklist) {
+        const header = (variant === 'detailed' && failed) || acquisitionRow ? (
+            <>
+                {variant === 'detailed' && failed ? statusRow : null}
+                {acquisitionRow}
+            </>
+        ) : undefined;
+        return (
+            <View testID="system-task-progress-card">
+                <ItemGroup surface="none" {...(groupTitle ? { title: groupTitle } : {})}>
+                    <View testID="system-task-progress-checklist">
+                        <PlanChecklistCard
+                            testID="system-task-progress-checklist-step"
+                            phase="execute"
+                            {...presentedChecklistSteps}
+                            header={header}
+                            footer={hasActionRows ? actionRows : undefined}
+                        />
+                    </View>
+                </ItemGroup>
+            </View>
+        );
+    }
+
     return (
         <View testID="system-task-progress-card">
             <ItemGroup {...(groupTitle ? { title: groupTitle } : {})}>
                 {variant === 'detailed' ? (
                     <>
-                        <Item
-                            testID={`system-task-progress-status-${props.snapshot.status}`}
-                            title={translateStatus(props.snapshot)}
-                            showChevron={false}
-                            mode="info"
-                        />
+                        {statusRow}
                         <Item
                             title={t('settings.systemTaskCurrentStepLabel')}
                             subtitle={renderValue(stepLabel)}
@@ -291,37 +354,8 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
                         />
                     </>
                 ) : null}
-                {acquisition && (variant === 'checklistOnly' || acquisition.downloadProgress) ? (
-                    <Item
-                        testID="system-task-acquisition-progress"
-                        title={variant === 'checklistOnly' ? acquisition.status : acquisition.downloadProgress!}
-                        subtitle={variant === 'checklistOnly' ? acquisition.downloadProgress : undefined}
-                        showChevron={false}
-                        mode="info"
-                    />
-                ) : null}
-                {presentedChecklistSteps.items.length > 0 ? (
-                    <SectionContentRow testID="system-task-progress-checklist">
-                        <PlanChecklistCard testID="system-task-progress-checklist-step" phase="execute" {...presentedChecklistSteps} />
-                    </SectionContentRow>
-                ) : null}
-                {canOpenLogs ? <DesktopSystemTaskLogsControl /> : null}
-                {promptAction ? (
-                    <Item
-                        testID="system-task-progress-prompt-action"
-                        title={promptAction.title}
-                        onPress={handlePromptAction}
-                        showChevron={false}
-                    />
-                ) : null}
-                {canCancel ? (
-                    <Item
-                        testID="system-task-progress-cancel"
-                        title={t('common.cancel')}
-                        onPress={props.onCancel}
-                        destructive
-                    />
-                ) : null}
+                {acquisitionRow}
+                {actionRows}
             </ItemGroup>
         </View>
     );

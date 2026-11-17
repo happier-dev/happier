@@ -2064,6 +2064,8 @@ export const pl: TranslationStructure = {
                 send: 'Wyślij',
                 sentTitle: 'Hasło wysłane',
                 sentHint: 'Widok zaktualizuje się, gdy tylko maszyna będzie kontynuować.',
+                needsAccessOnce: ({ machine }: { machine: string }) => `${machine} jednorazowo potrzebuje dostępu administratora`,
+                stepRunsAsAdmin: ({ step }: { step: string }) => `${step} działa jako administrator.`,
                 refused: 'Maszyna odrzuciła tę odpowiedź. Spróbuj ponownie albo zatrzymaj operację.',
                 expired: 'To pytanie zostało zamknięte. Jeśli maszyna nadal potrzebuje hasła, zapyta o nie tutaj ponownie.',
                 failed: 'Nie udało się wysłać hasła. Sprawdź, czy maszyna jest online, i spróbuj ponownie.',

@@ -291,7 +291,8 @@ describe('LocalRelayRuntimeControlSection', () => {
         });
 
         expect(screen.findByTestId('system-task-progress-card')).toBeTruthy();
-        expect(screen.findByTestId('system-task-step-label')?.props.children).toBe('settings.localRelayRuntime.progressStepInstall');
+        // The running step is the checklist's row; the card has no separate current-step line.
+        expect(screen.findByTestId('system-task-progress-checklist-step-row-relay.install')).toBeTruthy();
         await screen.pressByTestIdAsync('system-task-progress-cancel');
         expect(cancelMock).toHaveBeenCalledWith('task_2:relay.runtime.installOrUpdate.v1');
 

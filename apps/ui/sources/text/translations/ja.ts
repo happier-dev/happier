@@ -2218,6 +2218,8 @@ export const ja: TranslationStructure = {
                 send: '送信',
                 sentTitle: 'パスワードを送信しました',
                 sentHint: 'マシンが続行するとすぐに更新されます。',
+                needsAccessOnce: ({ machine }: { machine: string }) => `${machine} で一度だけ管理者権限が必要です`,
+                stepRunsAsAdmin: ({ step }: { step: string }) => `${step} は管理者として実行されます。`,
                 refused: 'マシンがこの回答を拒否しました。もう一度試すか、操作を停止してください。',
                 expired: 'この質問は終了しました。マシンがまだパスワードを必要とする場合は、ここで再度確認します。',
                 failed: 'パスワードを送信できませんでした。マシンがオンラインか確認してから、もう一度お試しください。',

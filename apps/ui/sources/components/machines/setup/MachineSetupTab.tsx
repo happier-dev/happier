@@ -538,6 +538,7 @@ function MachineSetupAttention(
           operation={setup.operation}
           progressOperation={progressOperation}
           steps={steps}
+          machineName={props.machineName}
           onRetry={props.editable && setup.operation ? () => { void setup.prepare({ kind: 'reapply' }); } : null}
         />
       );

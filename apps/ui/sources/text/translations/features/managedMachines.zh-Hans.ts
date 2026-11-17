@@ -738,6 +738,8 @@ export const managedMachines: ManagedMachinesTranslations = {
                 reviewReapply: "查看重新应用",
                 stoppedAt: ({ step }: { step: string }) => `已在 ${step} 停止`,
                 retryFrom: ({ step }: { step: string }) => `从 ${step} 重试`,
+                stepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `${machine} 上第 ${current}/${total} 步`,
+                stoppedAtStepOf: ({ current, total, machine }: { current: number; total: number; machine: string }) => `在 ${machine} 上第 ${current}/${total} 步停止`,
                 readOnly: "你可以使用此机器。其设置由所有者和管理者更改。",
                 reviewTitle: "查看更改",
                 reviewRemove: "查看移除",

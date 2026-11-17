@@ -211,6 +211,32 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         expect(checklistRow).not.toBeNull();
     });
 
+    it('lets the checklist say the state: no status, current-step or latest-update rows above observed steps', async () => {
+        isDesktopHostMock.mockReturnValue(false);
+        const events: readonly SystemTaskEvent[] = [
+            { protocolVersion: 1, taskId: 'task_1', tsMs: 100, type: 'started', stepId: 'prepare', message: 'Preparing task' },
+            { protocolVersion: 1, taskId: 'task_1', tsMs: 200, type: 'progress', stepId: 'install.runtime', message: 'Installing runtime' },
+        ];
+        const screen = await renderScreen(React.createElement(SystemTaskProgressCard, { snapshot: createSnapshot({ events }) }));
+        expect(screen.findByTestId('system-task-progress-status-running')).toBeNull();
+        const summaryTitles = ['settings.systemTaskCurrentStepLabel', 'settings.systemTaskLatestUpdateLabel'];
+        expect(screen.tree.findAll((node) => summaryTitles.includes(node.props?.title as string))).toHaveLength(0);
+        expect(screen.findByTestId('system-task-progress-checklist-step-row-install.runtime')).not.toBeNull();
+        await screen.unmount();
+    });
+
+    it('still names why a run with observed steps failed', async () => {
+        isDesktopHostMock.mockReturnValue(false);
+        const events: readonly SystemTaskEvent[] = [
+            { protocolVersion: 1, taskId: 'task_1', tsMs: 100, type: 'started', stepId: 'install.runtime', message: 'Installing runtime' },
+        ];
+        const screen = await renderScreen(React.createElement(SystemTaskProgressCard, {
+            snapshot: createSnapshot({ events, status: 'failed', latestMessage: 'Disk is full' }),
+        }));
+        expect(screen.findByTestId('system-task-progress-status-failed')?.props.subtitle).toBe('Disk is full');
+        await screen.unmount();
+    });
+
     it('falls back to the raw step id when no translation key is registered', async () => {
         isDesktopHostMock.mockReturnValue(false);
 
