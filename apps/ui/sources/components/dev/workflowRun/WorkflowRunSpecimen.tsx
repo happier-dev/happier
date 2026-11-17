@@ -19,10 +19,12 @@ import {
 /**
  * Dev-only specimen of Run detail (workflows lab run-R1), rendered through the real Run owners with
  * schema-parsed Run, invocation and progress records. It reaches states a QA stack cannot produce on
- * demand: a step that failed with a typed code, and a succeeded Run whose step retains an older reason.
- * `?scene=failed|succeeded`. No RPC is issued.
+ * demand: a step that failed with a typed code, a succeeded Run whose step retains an older reason, and
+ * an Action that failed before dispatch because its target Machine was offline (the coordinator's
+ * `machine_unavailable` cause and message, WF-PREDISPATCH-1110), with Run again offered.
+ * `?scene=failed|succeeded|offline`. No RPC is issued.
  */
-export type WorkflowRunSpecimenScene = 'failed' | 'succeeded';
+export type WorkflowRunSpecimenScene = 'failed' | 'succeeded' | 'offline';
 
 const definition = createWorkflowDefinitionFixture({
   blocks: [
@@ -80,7 +82,55 @@ function progress(
   });
 }
 
+const offlineDefinition = createWorkflowDefinitionFixture({
+  blocks: [
+    {
+      kind: 'action',
+      id: 'close-preview',
+      name: 'Close preview',
+      actionId: 'deployments.teardown',
+      input: {},
+    },
+  ],
+});
+
+function offlineSceneData() {
+  return {
+    run: createWorkflowRunSummaryFixture({
+      id: 'run-specimen-offline',
+      state: 'failed',
+      workflowCustodyState: 'settled',
+      availability: { pause: false, cancel: false },
+    }),
+    invocations: [
+      createWorkflowInvocationIndexFixture({
+        id: 'inv-close',
+        sequence: '0',
+        memberOrdinal: '0',
+        lifecycle: 'failed',
+      }),
+    ],
+    byId: new Map<string, WorkflowProgressEnvelopeV1>([
+      [
+        'inv-close',
+        WorkflowProgressEnvelopeV1Schema.parse({
+          kind: 'happier.workflow-progress.v1',
+          invocationPath: { blockId: 'close-preview', scope: [] },
+          blockKind: 'action',
+          attempt: '0',
+          logicalInvocationRecordId: 'inv-close',
+          reason: {
+            code: 'machine_unavailable',
+            message: "The target Machine was offline; Retry when it's back.",
+          },
+        }),
+      ],
+    ]),
+  };
+}
+
 function sceneData(scene: WorkflowRunSpecimenScene) {
+  if (scene === 'offline') return offlineSceneData();
   const failed = scene === 'failed';
   const invocations = [
     createWorkflowInvocationIndexFixture({
@@ -159,21 +209,26 @@ export function WorkflowRunSpecimen(
   props: Readonly<{ scene: WorkflowRunSpecimenScene }>,
 ) {
   const data = React.useMemo(() => sceneData(props.scene), [props.scene]);
-  const [selected, setSelected] = React.useState<string | null>('inv-tests');
+  const offline = props.scene === 'offline';
+  const [selected, setSelected] = React.useState<string | null>(
+    offline ? 'inv-close' : 'inv-tests',
+  );
   const [view, setView] = React.useState<WorkflowRunDetailView>('activity');
   return (
     <View testID="workflow-run-specimen" style={styles.root}>
       <WorkflowRunContent
         active={false}
         run={data.run}
-        title="Prepare the 0.3 release"
+        title={offline ? 'Close preview pr-482' : 'Prepare the 0.3 release'}
         machineName="MacBook Pro"
-        machineReachable
-        definition={definition}
+        machineReachable={!offline}
+        definition={offline ? offlineDefinition : definition}
         invocations={data.invocations}
         invocationsLoaded
         invocationHistoryComplete
-        firstFailedInvocationId={props.scene === 'failed' ? 'inv-tests' : null}
+        firstFailedInvocationId={
+          offline ? 'inv-close' : props.scene === 'failed' ? 'inv-tests' : null
+        }
         firstFailedInvocationResolution="resolved"
         selectedInvocationId={selected}
         selectedInvocationProgress={
@@ -184,6 +239,7 @@ export function WorkflowRunSpecimen(
         onDeselectInvocation={() => setSelected(null)}
         view={view}
         onChangeView={setView}
+        {...(offline ? { onRunAgain: () => {} } : {})}
       />
     </View>
   );
