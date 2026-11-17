@@ -1446,7 +1446,8 @@ describe('canonical Session creation admission', () => {
     socketBoundary.create.mockImplementation(() => { throw new Error('predecessor_rpc_dispatched'); });
     // This is a remote, unmanaged Machine. Keep the real inventory reader and
     // supply its Account HTTP boundary before testing predecessor capabilities.
-    vi.spyOn(axios, 'request').mockImplementation(async request => {
+    vi.mocked(axios.request).mockImplementation(async request => {
+      if (String(request.url).endsWith('/v1/home/governance/get')) return { status: 200, data: { homeDefaults: null } };
       expect(request.url).toBe('https://home-a.example.test/v1/machines/managed/actions/list');
       return { status: 200, data: { machines: [] } };
     });
@@ -1468,8 +1469,9 @@ describe('canonical Session creation admission', () => {
       surface: 'cli', authority: 'present_user', serverId,
       presentUserConfirmation: { actionId: 'session.spawn_new' }, actionRequestId: 'predecessor-bot-instructions',
     });
-    expect(predecessorResult, JSON.stringify(predecessorResult)).toMatchObject({ ok: true,
-      result: { type: 'error', code: 'incompatible_target', retryable: false } });
+    expect(predecessorResult, JSON.stringify(predecessorResult)).toMatchObject({ ok: false,
+      errorCode: 'incompatible_target', details: { type: 'error', code: 'incompatible_target', retryable: false,
+        incompatibleTarget: { reason: 'session_spawn_protocol_unavailable' } } });
     expect(axios.post).not.toHaveBeenCalled();
     expect(spawn).not.toHaveBeenCalled();
     expect(socketBoundary.create).not.toHaveBeenCalled();
