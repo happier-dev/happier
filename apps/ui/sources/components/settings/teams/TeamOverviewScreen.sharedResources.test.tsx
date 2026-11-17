@@ -1,0 +1,181 @@
+import * as React from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import type { TeamSharedResourceSummaryRowV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
+
+import {
+  collectRenderedTestIds,
+  renderScreen,
+  standardCleanup,
+  teamCapabilitiesFixture,
+  teamSummaryFixture,
+} from '@/dev/testkit';
+import {
+  createHomeGovernanceHarness,
+  installHomeGovernanceBoundaries,
+} from '@/dev/testkit/harness/homeGovernanceHarness';
+
+import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
+
+(
+  globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+const routerPush = vi.hoisted(() => vi.fn());
+installSettingsViewCommonModuleMocks({
+  storage: 'real',
+  router: async () => ({
+    useRouter: () => ({ push: routerPush, back: vi.fn(), replace: vi.fn() }),
+    useNavigation: () => ({ setOptions: vi.fn() }),
+    useLocalSearchParams: () => ({}),
+  }),
+});
+
+const harness = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(harness);
+const { resetTeamsSnapshotsForTests } =
+  await import('@/sync/store/teams/teamsSnapshots');
+const { resetTeamsDirectoryEngineForTests } =
+  await import('@/sync/engine/teams/teamsDirectoryEngine');
+const { resetTeamActionClientForTests } =
+  await import('@/sync/ops/teams/teamActionClient');
+const { TeamOverviewScreen } = await import('./TeamOverviewScreen');
+
+const SUMMARY = bindHomeDomainActionHttpRequestV1(
+  TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1,
+  { v: 1, teamId: 'team-1' },
+);
+
+async function addHome(
+  kinds: readonly TeamSharedResourceSummaryRowV1[],
+): Promise<string> {
+  const serverId = await harness.addHome({
+    name: 'Home A',
+    serverUrl: 'https://shared-resources.example',
+    accountId: 'account-ada',
+    teamsEnabled: true,
+  });
+  await harness.selectHomes([serverId]);
+  harness.answer(serverId, '/v1/teams/get', {
+    body: teamSummaryFixture({
+      capabilities: teamCapabilitiesFixture({ manageMembers: true }),
+    }),
+  });
+  harness.answer(serverId, SUMMARY.path, { body: { teamId: 'team-1', kinds } });
+  return serverId;
+}
+
+const ids = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+  collectRenderedTestIds(screen.tree.toJSON());
+
+beforeEach(async () => {
+  resetTeamsSnapshotsForTests();
+  resetTeamsDirectoryEngineForTests();
+  resetTeamActionClientForTests();
+  await harness.reset();
+  await harness.selectHomes([]);
+  routerPush.mockReset();
+});
+afterEach(() => {
+  standardCleanup();
+});
+
+describe('Team overview: Shared with this Team', () => {
+  it('lists each shared kind once with its count, opens each kind list, and reads no resource pages', async () => {
+    const serverId = await addHome([
+      { kind: 'credentials', status: 'available', count: 4 },
+      { kind: 'machines', status: 'available', count: 2 },
+      { kind: 'sessions', status: 'available', count: 23 },
+      { kind: 'savedSecrets', status: 'available', count: 0 },
+    ]);
+    const screen = await renderScreen(
+      <TeamOverviewScreen serverId={serverId} teamId="team-1" />,
+    );
+    await vi.waitFor(() =>
+      expect(ids(screen)).toContain('team-overview-shared:sessions'),
+    );
+
+    const listed = ids(screen).filter((id) =>
+      id.startsWith('team-overview-shared:'),
+    );
+    // Lab order (people first, credentials last); a kind nobody shared is not listed.
+    expect(listed).toEqual([
+      'team-overview-shared:sessions',
+      'team-overview-shared:machines',
+      'team-overview-shared:credentials',
+    ]);
+    // The retired inventories are gone: nothing is listed twice.
+    expect(
+      ids(screen).filter(
+        (id) =>
+          id.startsWith('team-overview-session') ||
+          id.startsWith('team-overview-workflow') ||
+          id === 'team-overview-credentials',
+      ),
+    ).toEqual([]);
+
+    screen.pressByTestId('team-overview-shared:sessions');
+    expect(routerPush).toHaveBeenLastCalledWith(
+      `/teams/team-1/sessions?serverId=${encodeURIComponent(serverId)}`,
+    );
+    screen.pressByTestId('team-overview-shared:credentials');
+    expect(routerPush).toHaveBeenLastCalledWith(
+      `/settings/teams/${serverId}/team-1/credentials`,
+    );
+    // Every other kind opens its own Team-filtered list.
+    screen.pressByTestId('team-overview-shared:machines');
+    expect(routerPush).toHaveBeenLastCalledWith(`/settings/teams/${serverId}/team-1/shared?kind=machines`);
+
+    expect(harness.requestsFor(SUMMARY.path)).toHaveLength(1);
+    expect(
+      harness.requests.filter(
+        (row) =>
+          row.path.includes('/projects/sources') ||
+          row.path.includes('/artifacts') ||
+          row.path.includes('/machines') ||
+          row.path.includes('/credential-resources'),
+      ),
+    ).toEqual([]);
+  });
+
+  it('says a kind could not be counted rather than showing zero, and Retry asks again', async () => {
+    const serverId = await addHome([
+      {
+        kind: 'machines',
+        status: 'unavailable',
+        count: null,
+        reason: 'team_authentication_required',
+      },
+      { kind: 'projectSources', status: 'available', count: 3 },
+    ]);
+    const screen = await renderScreen(
+      <TeamOverviewScreen serverId={serverId} teamId="team-1" />,
+    );
+    await vi.waitFor(() =>
+      expect(ids(screen)).toContain('team-overview-shared-retry:machines'),
+    );
+    expect(ids(screen)).not.toContain('team-overview-shared-empty');
+
+    screen.pressByTestId('team-overview-shared-retry:machines');
+    await vi.waitFor(() =>
+      expect(harness.requestsFor(SUMMARY.path)).toHaveLength(2),
+    );
+  });
+
+  it('invites sharing when nothing has been shared with the Team', async () => {
+    const serverId = await addHome([
+      { kind: 'sessions', status: 'available', count: 0 },
+      { kind: 'credentials', status: 'available', count: 0 },
+    ]);
+    const screen = await renderScreen(
+      <TeamOverviewScreen serverId={serverId} teamId="team-1" />,
+    );
+    await vi.waitFor(() =>
+      expect(ids(screen)).toContain('team-overview-shared-empty'),
+    );
+    expect(
+      ids(screen).filter((id) => id.startsWith('team-overview-shared:')),
+    ).toEqual([]);
+  });
+});

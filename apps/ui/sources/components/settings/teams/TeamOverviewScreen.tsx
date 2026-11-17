@@ -23,9 +23,7 @@ import { askTeamManagersText } from './collection/teamsCreateGuidanceText';
 import { directorySourcePresentationState } from './identity/directoryAdministrationPresentation';
 import { useDirectoryAdministration } from './identity/useDirectoryAdministration';
 import { TeamSection } from './TeamSection';
-import { useTeamCredentialsProjection } from './credentials/useTeamCredentialsProjection';
-import { TeamSharedSessionsSection } from './TeamSharedSessionsSection';
-import { TeamSharedWorkflowsSection } from './TeamSharedWorkflowsSection';
+import { TeamSharedResourcesSection } from './TeamSharedResourcesSection';
 import type { TeamSectionContext } from './teamSectionContext';
 import { isTeamViewerSuspended, teamViewerStandingLabel } from './teamLabels';
 import { TeamOwnerRequiredNotice } from './members/TeamOwnerRequiredNotice';
@@ -33,7 +31,6 @@ import { TeamLeaveAction } from './members/TeamLeaveAction';
 import { TeamSuspendedNotice } from './members/TeamSuspendedNotice';
 import {
   teamAuthenticationPath,
-  teamCredentialsPath,
   teamDirectorySourcePath,
   teamGroupsPath,
   teamInvitationsPath,
@@ -45,7 +42,6 @@ import { resolveTeamSetupSteps, type TeamSetupStep } from './teamOverviewSetup';
 import {
   resolveTeamOverviewAttention,
   teamOverviewAuthenticationSummary,
-  teamOverviewCredentialsSummary,
   teamOverviewGroupsSummary,
   teamOverviewInvitationsSummary,
   teamOverviewMembersSummary,
@@ -70,43 +66,6 @@ function openInvite(context: TeamSectionContext): void {
     teamId: context.address.teamId,
   });
 }
-
-/**
- * The shared-credentials entry, offered only once this exact Home has said both
- * that it has the feature and that this viewer may administer resources or
- * offer one of their own there. The row says how many are shared.
- *
- * The capability is not in the Team projection — it deliberately carries no
- * resource authority — so it comes from the resource projection itself. That
- * read is the same one the destination uses, so opening it costs nothing extra,
- * and a viewer the Home has denied never sees an entry it would refuse.
- */
-const CredentialsDestination = React.memo(function CredentialsDestination(
-  props: Readonly<{
-    context: TeamSectionContext;
-  }>,
-) {
-  const router = useRouter();
-  const { context } = props;
-  const { featureEnabled, projection, totalCount } = useTeamCredentialsProjection(context);
-
-  if (
-    !featureEnabled ||
-    (projection.viewer?.manageCredentials !== true &&
-      projection.viewer?.offerOwnCredential !== true)
-  )
-    return null;
-
-  return (
-    <Item
-      testID="team-overview-credentials"
-      icon={<Icon name="key" />}
-      title={t('teams.credentials.title')}
-      subtitle={teamOverviewCredentialsSummary(totalCount)}
-      onPress={() => router.push(teamCredentialsPath(context.address))}
-    />
-  );
-});
 
 /**
  * The Team's own identity heads its page, the same lockup the directory row and the join screen
@@ -407,10 +366,7 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
       {setupSteps ? (
         <TeamSetupSection context={context} steps={setupSteps} />
       ) : (
-        <>
-          <TeamSharedSessionsSection context={context} />
-          <TeamSharedWorkflowsSection context={context} />
-        </>
+        <TeamSharedResourcesSection context={context} />
       )}
 
       <ItemGroup
@@ -485,9 +441,6 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
             onPress={() => router.push(teamAuthenticationPath(address))}
           />
         ) : null}
-        {setupSteps === null ? (
-          <CredentialsDestination context={context} />
-        ) : null}
         {shown('settings') ? (
           <Item
             testID="team-overview-settings"
@@ -507,10 +460,10 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
 function TeamOverviewLoading() {
   return (
     <>
-      <ItemGroup title={t('teams.overview.sharedSessions')}>
+      <ItemGroup title={t('teams.overview.shared.title')}>
         <ItemLoadStateRows
           state={{ kind: 'loading' }}
-          rows={1}
+          rows={8}
           accessibilityLabel={t('teams.loading')}
         />
       </ItemGroup>

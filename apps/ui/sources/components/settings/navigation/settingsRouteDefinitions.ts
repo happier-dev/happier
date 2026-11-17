@@ -241,6 +241,8 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: '[serverId]/[teamId]/groups/[groupId]', navigator: 'teams', titleKey: 'teams.tabs.groups' },
     { name: '[serverId]/[teamId]/invitations/index', navigator: 'teams', titleKey: 'teams.tabs.invitations' },
     { name: '[serverId]/[teamId]/settings', navigator: 'teams', titleKey: 'teams.tabs.settings' },
+    { name: '[serverId]/[teamId]/new-members', navigator: 'teams', titleKey: 'teams.newMembers.title' },
+    { name: '[serverId]/[teamId]/shared', navigator: 'teams', titleKey: 'teams.overview.shared.title' },
     { name: '[serverId]/[teamId]/authentication', navigator: 'teams', titleKey: 'teams.tabs.authentication' },
     { name: '[serverId]/[teamId]/authentication/new', navigator: 'teams', titleKey: 'identityAdministration.add' },
     { name: '[serverId]/[teamId]/authentication/github-apps/[registrationId]/index', navigator: 'teams', titleKey: 'identityAdministration.githubApps' },

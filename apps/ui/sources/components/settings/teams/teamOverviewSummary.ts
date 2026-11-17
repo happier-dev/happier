@@ -72,16 +72,6 @@ export function teamOverviewAuthenticationSummary(
   ].join(' · ');
 }
 
-/** `count`: how many credentials are shared, or `null` while that cannot be said truthfully. */
-export function teamOverviewCredentialsSummary(
-  count: number | null,
-): string {
-  if (count === null) return t('teams.pages.credentials');
-  return count === 0
-    ? t('teams.overview.summary.credentialsNone')
-    : t('teams.overview.summary.credentialsShared', { count });
-}
-
 export function teamOverviewSettingsSummary(team: TeamSummaryV1): string {
   const sessions =
     team.policy.sessionCreationPolicy === 'private_default'

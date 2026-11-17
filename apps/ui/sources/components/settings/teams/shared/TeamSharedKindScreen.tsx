@@ -1,0 +1,394 @@
+import * as React from 'react';
+
+import type { ResourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
+import type { ArtifactTeamResourceKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
+import { useTeamSharedArtifacts } from '@/components/artifacts/useTeamSharedArtifacts';
+import { buildDiscussionRouteHref } from '@/components/discussions/discussionRoutes';
+import { useTeamSharedDiscussions } from '@/components/discussions/useTeamSharedDiscussions';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
+import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
+import { useProjectSources } from '@/components/projects/sources/useProjectSources';
+import {
+  machinePoolCollectionHref,
+  machinePresetCollectionHref,
+} from '@/components/settings/machines/collection/machineCollectionModel';
+import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
+import { Icon } from '@/components/ui/icons/Icon';
+import type { IconName } from '@/components/ui/icons/iconRegistry.generated';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useTeamSharedMachinePools } from '@/hooks/teams/useTeamSharedMachinePools';
+import { useTeamSharedMachines } from '@/hooks/teams/useTeamSharedMachines';
+import { useTeamSharedSavedSecrets } from '@/hooks/teams/useTeamSharedSavedSecrets';
+import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { t } from '@/text';
+
+import { TeamSection } from '../TeamSection';
+import type { TeamSectionContext } from '../teamSectionContext';
+import { teamReadFailureLabel } from '../teamMutationPresentation';
+import {
+  TEAM_SHARED_KIND_PRESENTATION,
+  type TeamSharedListKind,
+} from './teamSharedKindPresentation';
+
+/** One page of a kind's own list (the owners page; this page only asks for the next one). */
+const PAGE_SIZE = 50;
+
+type KindRow = Readonly<{
+  key: string;
+  title: string;
+  subtitle?: string;
+  href: string | null;
+}>;
+type KindListState = Readonly<{
+  rows: readonly KindRow[];
+  loading: boolean;
+  failure: string | null;
+  hasMore: boolean;
+  loadMore?: () => unknown;
+  reload?: () => unknown;
+}>;
+
+/** Shared through a Group is the one scope worth saying; a direct share is what this page already says. */
+function scopeLine(
+  scope: ResourceTeamShareScopeV1 | undefined,
+): string | undefined {
+  return scope === 'group'
+    ? t('teams.overview.shared.throughGroup')
+    : undefined;
+}
+
+/**
+ * One kind of thing shared with a Team (plan F §5, lab L12-machines/credentials/documents): the kind's own
+ * list Action with the Team filter, one row per record, each opening at its owner, where sharing is managed.
+ */
+export const TeamSharedKindScreen = React.memo(function TeamSharedKindScreen(
+  props: Readonly<{
+    serverId: string;
+    teamId: string;
+    kind: TeamSharedListKind;
+  }>,
+) {
+  const presentation = TEAM_SHARED_KIND_PRESENTATION[props.kind];
+  return (
+    <TeamSection
+      serverId={props.serverId}
+      teamId={props.teamId}
+      title={t(presentation.title)}
+      description={t('teams.overview.shared.kindDescription')}
+    >
+      {(context) => (
+        <TeamSharedKindList
+          context={context}
+          kind={props.kind}
+          icon={presentation.icon}
+        />
+      )}
+    </TeamSection>
+  );
+});
+
+function TeamSharedKindList(
+  props: Readonly<{
+    context: TeamSectionContext;
+    kind: TeamSharedListKind;
+    icon: IconName;
+  }>,
+) {
+  const { context, kind } = props;
+  switch (kind) {
+    case 'machines':
+      return <MachinesList context={context} icon={props.icon} />;
+    case 'machinePools':
+      return <MachinePoolsList context={context} icon={props.icon} />;
+    case 'machinePresets':
+      return <MachinePresetsList context={context} icon={props.icon} />;
+    case 'projectSources':
+      return <ProjectSourcesList context={context} icon={props.icon} />;
+    case 'discussions':
+      return <DiscussionsList context={context} icon={props.icon} />;
+    case 'savedSecrets':
+      return <SavedSecretsList context={context} icon={props.icon} />;
+    default:
+      return <ArtifactsList context={context} icon={props.icon} kind={kind} />;
+  }
+}
+
+type ListProps = Readonly<{ context: TeamSectionContext; icon: IconName }>;
+
+function MachinesList({ context, icon }: ListProps) {
+  const list = useTeamSharedMachines({
+    scope: context.scope,
+    address: context.address,
+    enabled: true,
+  });
+  const rows = React.useMemo(
+    () =>
+      list.rows.map((row): KindRow => ({
+        key: row.machineId,
+        title: row.label,
+        subtitle: scopeLine(row.sharedWithTeamScope),
+        href: machinePageHref({
+          door: 'settings',
+          target: { machineId: row.machineId, serverId: row.serverId },
+        }),
+      })),
+    [list.rows],
+  );
+  return <KindList icon={icon} state={pagedState(list, rows)} />;
+}
+
+function MachinePoolsList({ context, icon }: ListProps) {
+  const list = useTeamSharedMachinePools({
+    scope: context.scope,
+    address: context.address,
+    enabled: true,
+  });
+  const serverId = context.address.serverId;
+  const rows = React.useMemo(
+    () =>
+      list.rows.map((row): KindRow => ({
+        key: row.pool.id,
+        title: row.pool.name,
+        subtitle: scopeLine(row.sharedWithTeamScope),
+        href: machinePoolCollectionHref({ poolId: row.pool.id, serverId }),
+      })),
+    [list.rows, serverId],
+  );
+  return <KindList icon={icon} state={pagedState(list, rows)} />;
+}
+
+function MachinePresetsList({ context, icon }: ListProps) {
+  const serverId = context.address.serverId;
+  const serverIds = React.useMemo(() => [serverId], [serverId]);
+  const filter = React.useMemo(
+    () => ({ sharedWithTeamId: context.address.teamId }),
+    [context.address.teamId],
+  );
+  const presets = useMachinePresets(serverIds, undefined, filter);
+  const presetState = presets.statesByServerId[serverId];
+  const value = presets.presetsByServerId[serverId];
+  const rows = React.useMemo(
+    () =>
+      (value ?? []).map((preset): KindRow => ({
+        key: preset.id,
+        title: preset.name,
+        href: machinePresetCollectionHref({ serverId, presetId: preset.id }),
+      })),
+    [serverId, value],
+  );
+  return (
+    <KindList
+      icon={icon}
+      state={{
+        rows,
+        loading: value === undefined && !presetState?.error,
+        hasMore: false,
+        failure: presetState?.error ? t('machinePresets.loadFailed') : null,
+        reload: presets.refresh,
+      }}
+    />
+  );
+}
+
+function ProjectSourcesList({ context, icon }: ListProps) {
+  const { state, controller } = useProjectSources(context.scope, {
+    sharedWithTeamId: context.address.teamId,
+    repositoryFacts: false,
+  });
+  const rows = React.useMemo(
+    () =>
+      state.rows.map((source): KindRow => ({
+        key: source.id,
+        title: source.name,
+        subtitle: scopeLine(source.sharedWithTeamScope),
+        href: projectSourceRoute(source.id),
+      })),
+    [state.rows],
+  );
+  return (
+    <KindList
+      icon={icon}
+      state={{
+        rows,
+        loading: state.status === 'initial' || state.status === 'loading',
+        failure:
+          state.status === 'refused' || state.status === 'offline'
+            ? t('teams.overview.shared.failed')
+            : null,
+        hasMore: state.coverage.nextCursor !== null,
+        loadMore: () => state.coverage.nextCursor ? controller.load(state.query, state.coverage.nextCursor) : undefined,
+        reload: () => controller.load(),
+      }}
+    />
+  );
+}
+
+function DiscussionsList({ context, icon }: ListProps) {
+  const list = useTeamSharedDiscussions({
+    scope: context.scope,
+    address: context.address,
+    enabled: true,
+  });
+  const serverId = context.address.serverId;
+  const rows = React.useMemo(
+    () =>
+      list.rows.map((row): KindRow => ({
+        key: row.id,
+        title: row.title ?? t('teams.overview.shared.untitled'),
+        subtitle: scopeLine(row.sharedWithTeamScope),
+        href: buildDiscussionRouteHref({
+          target: {
+            kind: 'discussion',
+            address: { serverId },
+            discussionId: row.id,
+          },
+        }),
+      })),
+    [list.rows, serverId],
+  );
+  return <KindList icon={icon} state={pagedState(list, rows)} />;
+}
+
+function SavedSecretsList({ context, icon }: ListProps) {
+  const list = useTeamSharedSavedSecrets({
+    scope: context.scope,
+    address: context.address,
+    enabled: true,
+    pageSize: PAGE_SIZE,
+  });
+  const rows = React.useMemo(
+    () =>
+      list.rows.map((row, index): KindRow => ({
+        key: 'ref' in row ? row.ref : `corrupt:${index}`,
+        title:
+          ('name' in row ? row.name : null) ??
+          t('teams.overview.shared.untitled'),
+        subtitle:
+          'sharedWithTeamScope' in row
+            ? scopeLine(row.sharedWithTeamScope)
+            : undefined,
+        href: null,
+      })),
+    [list.rows],
+  );
+  return <KindList icon={icon} state={pagedState(list, rows)} />;
+}
+
+function ArtifactsList({
+  context,
+  icon,
+  kind,
+}: ListProps & Readonly<{ kind: ArtifactTeamResourceKindV1 }>) {
+  const list = useTeamSharedArtifacts({
+    scope: context.scope,
+    address: context.address,
+    teamResourceKind: kind,
+    enabled: true,
+    pageSize: PAGE_SIZE,
+  });
+  const serverId = context.address.serverId;
+  const rows = React.useMemo(
+    () =>
+      list.rows.map((row): KindRow => {
+        const title =
+          typeof row.header.title === 'string' && row.header.title.trim()
+            ? row.header.title
+            : t('teams.overview.shared.untitled');
+        return {
+          key: row.artifactId,
+          title,
+          subtitle: scopeLine(row.sharedWithTeamScope),
+          href:
+            kind === 'workflows'
+              ? createWorkflowDefinitionRoute(row.artifactId, serverId)
+              : artifactViewRoute(row.artifactId),
+        };
+      }),
+    [kind, list.rows, serverId],
+  );
+  return <KindList icon={icon} state={pagedState(list, rows)} />;
+}
+
+function pagedState(
+  list: Readonly<{
+    status: string;
+    error: Parameters<typeof teamReadFailureLabel>[0] | null;
+    hasMore: boolean;
+    loadMore: () => Promise<void>;
+    reload: () => Promise<void>;
+  }>,
+  rows: readonly KindRow[],
+): KindListState {
+  return {
+    rows,
+    loading: list.status === 'loading' && rows.length === 0,
+    failure: list.error ? teamReadFailureLabel(list.error) : null,
+    hasMore: list.hasMore,
+    loadMore: list.loadMore,
+    reload: list.reload,
+  };
+}
+
+const LOADING_ROWS = 4;
+
+/** The rows of one kind, each opening the record at its owner; loading, empty and failed states said once. */
+function KindList(props: Readonly<{ icon: IconName; state: KindListState }>) {
+  const router = useRouter();
+  const { state } = props;
+  return (
+    <ItemGroup testID="team-shared-kind-list">
+      {state.loading ? (
+        <ItemLoadStateRows
+          testID="team-shared-kind-loading"
+          state={{ kind: 'loading' }}
+          rows={LOADING_ROWS}
+        />
+      ) : null}
+      {state.failure && state.rows.length === 0 ? (
+        <ItemLoadStateRows
+          testID="team-shared-kind-failed"
+          state={{
+            kind: 'failed',
+            reason: state.failure,
+            onRetry: state.reload,
+          }}
+        />
+      ) : null}
+      {!state.loading && !state.failure && state.rows.length === 0 ? (
+        <SurfaceStateCard
+          testID="team-shared-kind-empty"
+          kind="empty"
+          size="line"
+          title={t('teams.overview.shared.kindEmpty')}
+        />
+      ) : null}
+      {state.rows.map((row) => (
+        <Item
+          key={row.key}
+          testID={`team-shared-kind-row:${row.key}`}
+          icon={<Icon name={props.icon} />}
+          title={row.title}
+          subtitle={row.subtitle}
+          mode={row.href ? 'interactive' : 'info'}
+          showChevron={row.href !== null}
+          onPress={row.href ? () => router.push(row.href as never) : undefined}
+        />
+      ))}
+      {state.hasMore && state.loadMore ? (
+        <Item
+          testID="team-shared-kind-more"
+          title={t('teams.overview.shared.loadMore')}
+          onPress={() => {
+            void state.loadMore?.();
+          }}
+        />
+      ) : null}
+    </ItemGroup>
+  );
+}

@@ -89,6 +89,11 @@ export function teamSessionsPath(address: TeamAddress): `/teams/${string}/sessio
     return `/teams/${encodeURIComponent(address.teamId)}/sessions?serverId=${encodeURIComponent(address.serverId)}`;
 }
 
+/** One kind shared with the Team, listed through that kind's own list Action with the Team filter. */
+export function teamSharedKindPath(address: TeamAddress, kind: string): `/settings/teams/${string}/${string}/shared?kind=${string}` {
+    return `${teamDetailPath(address)}/shared?kind=${encodeURIComponent(kind)}`;
+}
+
 export function teamMembersPath(address: TeamAddress): `/settings/teams/${string}/${string}/members` {
     return `${teamDetailPath(address)}/members`;
 }
