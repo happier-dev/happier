@@ -111,9 +111,10 @@ export async function withDependencyReadLock({ lockPath, installDir, env, signal
     observer.close();
     if (reader) reader.active = false;
     try { unlinkSync(recordPath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    // A reader that outlived its generation may have been its last holder:
-    // remove what no reader needs any more (the writer prunes at its switch).
-    if (reader && generation && readCurrentDependencyGeneration(installDir) !== generation) {
+    // This reader, or a Stack that has exited since, may have been the last
+    // holder of a replaced generation: remove what nothing needs any more (the
+    // writer prunes at its switch). Nothing retired: one directory read.
+    if (reader && generation) {
       await pruneDependencyGenerations(installDir, { readersDir: directory });
     }
   }

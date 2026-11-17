@@ -15,6 +15,7 @@ import { captureSourceWebBuildInputs, readSourceRuntimeProcessCommands, resolveS
 import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
+import { CURRENT_GENERATION_LINK, resolveDependencyGenerationContainer } from '../utils/proc/dependency_generations.mjs';
 import { SOURCE_RELOAD_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
@@ -246,7 +247,9 @@ async function prepareInstallSnapshot({ repoDir, treesRoot, workspaceDirs, env, 
       try {
         for (const workspaceDir of ['', ...workspaceDirs]) {
           const installed = await realpath(join(repoDir, workspaceDir, 'node_modules')).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
-          if (installed) await cloneTree(installed, join(staging, workspaceDir, 'node_modules'), { base: installed, clone: installed, skip: ['@happier-dev', '.pnpm-task-run-state-v1'] });
+          // A generation-managed root links each installed entry into its generation: copy what they name.
+          if (installed) await cloneTree(installed, join(staging, workspaceDir, 'node_modules'), { base: installed, clone: installed,
+            skip: ['@happier-dev', '.pnpm-task-run-state-v1', CURRENT_GENERATION_LINK], follow: resolveDependencyGenerationContainer(repoDir) });
         }
         await publication.assertCurrent();
         await writeFile(join(staging, BASE_MARKER), JSON.stringify({ installIdentity: identity, builtAt: new Date().toISOString() }));
@@ -512,14 +515,19 @@ export async function releaseStackSourceRevisionTree({ treesRoot, treeDir, signa
   return await sweepSourceRevisionBases({ treesRoot, signal });
 }
 
-/** Hardlink files, recreate links; directories are the clone's own. */
+/** Hardlink files, recreate links; directories are the clone's own. A link into
+ * `roots.follow` is cloned as what it names. */
 async function cloneTree(from, to, roots = { base: from, clone: to }) {
   await mkdir(to, { recursive: true });
   for (const entry of await readdir(from, { withFileTypes: true })) {
     if (roots.skip?.includes(entry.name) && from === roots.base) continue;
     const source = join(from, entry.name);
     const target = join(to, entry.name);
-    if (entry.isSymbolicLink()) {
+    const named = entry.isSymbolicLink() && roots.follow ? resolve(from, await readlink(source)) : null;
+    if (named?.startsWith(roots.follow + sep)) {
+      if ((await lstat(named)).isDirectory()) await cloneTree(named, target, roots);
+      else await link(named, target);
+    } else if (entry.isSymbolicLink()) {
       let link = await readlink(source);
       // A workspace link into the base points at the clone's own copy instead.
       if (isAbsolute(link) && link.startsWith(roots.base + sep)) link = join(roots.clone, relative(roots.base, link));

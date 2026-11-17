@@ -799,3 +799,28 @@ test('a commit that regenerates the schema-checked enums builds a new base inste
   assert.notEqual(second.revision, first.revision);
   assert.equal(second.base, second.revision, 'the regenerated revision is its own base');
 });
+
+// P03-ATOMIC-SWITCH-2: a generation-managed checkout's root node_modules is a real
+// directory whose installation entries are relative links into its generation.
+// A base snapshots the installed packages, never those links (they would dangle).
+test('a base of a generation-managed checkout carries its installed root packages', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const { moveInPlaceInstallationIntoGeneration } = await import('../utils/proc/dependency_generations.mjs');
+  await mkdir(join(repoDir, 'node_modules/fixture-dep'), { recursive: true });
+  await writeFile(join(repoDir, 'node_modules/fixture-dep/package.json'), JSON.stringify({ name: 'fixture-dep', main: 'index.js' }));
+  await writeFile(join(repoDir, 'node_modules/fixture-dep/index.js'), 'module.exports = "generation";');
+  await mkdir(join(repoDir, 'apps/cli/src'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/cli/package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module' }));
+  await writeFile(join(repoDir, 'apps/cli/src/index.ts'), 'export {};');
+  await promisify(execFile)('git', ['-C', repoDir, 'add', 'apps/cli']);
+  await promisify(execFile)('git', ['-C', repoDir, 'commit', '--quiet', '-m', 'cli']);
+  // The generation layout reads the pnpm workspace's project paths.
+  await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\n  - packages/*\n');
+  await moveInPlaceInstallationIntoGeneration(repoDir);
+  assert.equal((await lstat(join(repoDir, 'node_modules/fixture-dep'))).isSymbolicLink(), true);
+  const revision = await resolveSourceTreeRevision({ repoDir, treesRoot: fixture.path('trees'), rev: 'HEAD', overlay: [], outputDir: fixture.path('descriptors') });
+  const { daemon } = await prepareSourceTreeRuntimeComponents({ repoDir, env: { ...process.env, HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: join(repoDir, 'manual-payload') }, stackBaseDir: fixture.path('stacks/qa'),
+    descriptorPath: revision.descriptorPath, components: [{ component: 'daemon' }], logger: { error() {} } });
+  const treeDir = dirname(dirname(daemon.cliDir));
+  assert.equal(await readFile(join(treeDir, 'node_modules/fixture-dep/index.js'), 'utf8'), 'module.exports = "generation";');
+});

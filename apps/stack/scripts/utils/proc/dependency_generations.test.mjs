@@ -1,5 +1,7 @@
 // @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -129,4 +131,29 @@ test('a failed generation install leaves the live tree and its admission untouch
   const readiness = await dependencies.inspectDependencyRefresh({ installDir, env });
   assert.equal(readiness.failedInstallIdentity, readiness.installIdentity);
   assert.equal(existsSync(join(installDir, 'node_modules')), true);
+});
+
+test('a Stack running on the checkout keeps the replaced generation until it exits', async t => {
+  const { fixture, env: baseEnv, installDir } = await setup(t);
+  const first = (await moveInPlaceInstallationIntoGeneration(installDir)).name;
+  const container = join(installDir, '.happier', 'deps', 'node_modules');
+  // A running Stack on this checkout (a server or daemon that loads lazily) holds no
+  // dependency custody; its process is the boundary, so a real idle child stands in.
+  const stackProcess = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  t.after(() => stackProcess.kill());
+  const stacks = fixture.path('stacks');
+  await mkdir(join(stacks, 'dev'), { recursive: true });
+  await writeFile(join(stacks, 'dev', 'env'), `HAPPIER_STACK_REPO_DIR=${installDir}\n`);
+  await writeFile(join(stacks, 'dev', 'stack.runtime.json'), JSON.stringify({ ownerPid: stackProcess.pid }));
+  const env = { ...baseEnv, HAPPIER_STACK_STORAGE_DIR: stacks, HAPPIER_STACK_ENV_FILE: '', HAPPIER_STACK_STACK: '' };
+  await writeFile(join(installDir, 'pnpm-lock.yaml'), '# v2\n');
+  await dependencies.withDependencyRefresh({ installDir, env, generationInstall: true },
+    async ({ installCwd = installDir, publishInstallation }) => { await fakeInstall(installCwd, 'v2'); await publishInstallation?.(); });
+  const second = readCurrentDependencyGeneration(installDir);
+  assert.deepEqual((await readdir(container)).sort(), [first, second].sort(), 'the running Stack still holds the first generation');
+  stackProcess.kill();
+  await once(stackProcess, 'exit');
+  // The next reader to finish releases what nothing holds any more.
+  await dependencies.withDependencyConsumption({ installDir, env }, async () => { readInstalled(installDir); });
+  assert.deepEqual(await readdir(container), [second]);
 });

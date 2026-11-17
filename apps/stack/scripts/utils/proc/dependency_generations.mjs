@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync, readdirSync, readlinkSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, readlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { lstat, mkdir, readdir, readlink, rename, rm, symlink } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
@@ -9,16 +9,31 @@ import { collectWorkspacePackageJsonPaths } from './workspace_package_manifests.
 // Atomic dependency installs (owner ruling 2026-11-17). Each installation is a
 // generation: a shadow workspace under `<root>/.happier/deps/node_modules/<generation>/`
 // whose project directories link the real sources, with its own installed
-// `node_modules` trees. Every `<project>/node_modules` path of the checkout is a
-// relative symlink into the current generation, replaced by renaming a temporary
-// symlink over it (atomic per path). Node loads modules by real path, so a module
-// loaded from generation N resolves its dependencies inside N even while paths
-// flip. The container lives under `.happier/` (ignored by Git and by every
-// Mutagen session, so a mirror-only generation is never a sync deletion) and
-// is named `node_modules`, so source globs skip it by their existing rules.
+// `node_modules` trees. Every nested `<project>/node_modules` path of the checkout
+// is a relative symlink into the current generation. The root `node_modules`
+// stays a real directory (pnpm 12 refuses `pnpm run`/`exec` when it is a link:
+// its task-run state lives there); each of its installation entries (`.bin`,
+// `.modules.yaml`, every hoisted package or scope) is a symlink into the
+// generation instead. Every path flips by renaming a temporary symlink over it
+// (atomic per path), so each always names one complete generation. Node loads
+// modules by real path, so a module loaded from generation N resolves its
+// dependencies inside N even while paths flip. The container lives under
+// `.happier/` (ignored by Git and by every Mutagen session, so a mirror-only
+// generation is never a sync deletion) and is named `node_modules`, so source
+// globs skip it by their existing rules.
 const CONTAINER = join('.happier', 'deps', 'node_modules');
 const GENERATION_NAME = /^g[0-9a-z]{9}-[0-9a-f]{8}$/u;
 const SKIPPED_ROOT_ENTRIES = new Set(['node_modules', '.happier', '.git']);
+// The root `node_modules` entry naming the current generation; flipped last.
+export const CURRENT_GENERATION_LINK = '.happier-dependency-generation';
+// Root `node_modules` entries that belong to the checkout, not to an
+// installation: pnpm's task-run state (it refuses a linked one), tool caches and
+// Happier's readiness markers. They stay real and survive a switch, as they did
+// an in-place install; a generation's own copy is never linked over them.
+const CHECKOUT_STATE_ENTRY = /^\.(?:pnpm-task-run-state|cache$|vite|vitest|happier-|ignored$)/u;
+// What pnpm itself writes at the root: adoption moves only these into the first
+// generation, so other dot entries (leftovers of other writers) stay checkout state.
+const PNPM_ROOT_ENTRIES = new Set(['.bin', '.modules.yaml', '.pnpm', '.pnpm-workspace-state-v1.json']);
 
 export function resolveDependencyGenerationContainer(installDir) {
   return join(resolve(installDir), CONTAINER);
@@ -32,11 +47,11 @@ function isInside(root, path) {
 /** The generation the checkout's root `node_modules` currently names, or null
  * for an in-place (not generation-managed) installation. */
 export function readCurrentDependencyGeneration(installDir) {
+  const modulesDir = join(resolve(installDir), 'node_modules');
   let target;
-  try { target = readlinkSync(join(resolve(installDir), 'node_modules')); }
+  try { target = readlinkSync(join(modulesDir, CURRENT_GENERATION_LINK)); }
   catch (error) { if (['ENOENT', 'EINVAL', 'ENOTDIR', 'UNKNOWN'].includes(error.code)) return null; throw error; }
-  const absolute = resolve(resolve(installDir), target);
-  const rel = relative(resolveDependencyGenerationContainer(installDir), absolute).split(sep);
+  const rel = relative(resolveDependencyGenerationContainer(installDir), resolve(modulesDir, target)).split(sep);
   return rel.length === 2 && GENERATION_NAME.test(rel[0]) && rel[1] === 'node_modules' ? rel[0] : null;
 }
 
@@ -108,24 +123,53 @@ export async function retargetGenerationWorkspaceLinks(installDir, { genRoot, pr
   }
 }
 
-/** Point every project's `node_modules` (root last) at the generation. */
-export async function flipDependencyGeneration(installDir, { genRoot, projects }) {
-  const root = resolve(installDir);
-  for (const project of [...projects, '']) {
-    const generationModules = join(genRoot, project, 'node_modules');
-    await mkdir(generationModules, { recursive: true });
-    const linkPath = join(root, project, 'node_modules');
-    const existing = await lstat(linkPath).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
-    if (existing && !existing.isSymbolicLink()) {
-      throw Object.assign(new Error(`${linkPath} is an in-place installation; adopt dependency generations first`),
-        { code: 'HAPPIER_DEPENDENCY_GENERATION_NOT_ADOPTED' });
-    }
-    await replaceWithSymlink(linkPath, relative(join(root, project), generationModules));
+const lstatOrNull = path => lstat(path).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
+
+/** Link `path` to `target`. A real entry an in-place writer left there (a plain
+ * `pnpm install`) is replaced by the installation's own: it moves aside into
+ * the container's trash, which the next prune removes. */
+async function linkInstalledEntry(installDir, path, target) {
+  const existing = await lstatOrNull(path);
+  if (existing && !existing.isSymbolicLink()) {
+    await rename(path, join(resolveDependencyGenerationContainer(installDir), `.trash-checkout-${randomUUID().slice(0, 8)}`));
   }
+  await replaceWithSymlink(path, target);
 }
 
-/** One-time migration under full writer exclusion: move each in-place
- * `node_modules` into a first generation, then link it (rename, same device). */
+/** Switch the checkout to the generation: every project's `node_modules`, then
+ * every installation entry of the real root `node_modules` (stale ones that name
+ * an older generation are removed), then the current-generation link. */
+export async function flipDependencyGeneration(installDir, { genRoot, projects }) {
+  const root = resolve(installDir);
+  for (const project of projects) {
+    const generationModules = join(genRoot, project, 'node_modules');
+    await mkdir(generationModules, { recursive: true });
+    await linkInstalledEntry(root, join(root, project, 'node_modules'), relative(join(root, project), generationModules));
+  }
+  const rootModules = join(root, 'node_modules');
+  const generationModules = join(genRoot, 'node_modules');
+  await mkdir(rootModules, { recursive: true });
+  await mkdir(generationModules, { recursive: true });
+  const installed = (await readdir(generationModules)).filter(name => !CHECKOUT_STATE_ENTRY.test(name)).sort();
+  for (const name of installed) {
+    await linkInstalledEntry(root, join(rootModules, name), relative(rootModules, join(generationModules, name)));
+  }
+  const container = resolveDependencyGenerationContainer(root);
+  const keep = new Set([...installed, CURRENT_GENERATION_LINK]);
+  for (const name of await readdir(rootModules)) {
+    if (keep.has(name)) continue;
+    const path = join(rootModules, name);
+    if (!(await lstat(path)).isSymbolicLink() || !isInside(container, resolve(rootModules, await readlink(path)))) continue;
+    await rm(path, { force: true });
+  }
+  // It names the generation's installed tree, not its shadow root: a crawler
+  // that follows it must not find a second copy of the workspace sources.
+  await replaceWithSymlink(join(rootModules, CURRENT_GENERATION_LINK), relative(rootModules, generationModules));
+}
+
+/** One-time migration under full writer exclusion: move each project's in-place
+ * `node_modules`, and each pnpm entry of the root one, into a first generation
+ * (rename, same device), each linked back at once; then switch to it. */
 export async function moveInPlaceInstallationIntoGeneration(installDir) {
   const root = resolve(installDir);
   if (process.platform === 'win32') {
@@ -133,22 +177,47 @@ export async function moveInPlaceInstallationIntoGeneration(installDir) {
       { code: 'HAPPIER_DEPENDENCY_GENERATION_UNSUPPORTED' });
   }
   const generation = await createDependencyGeneration(root);
-  for (const project of [...generation.projects, '']) {
+  const moveAndLink = async (path, target) => {
+    await rename(path, target);
+    await symlink(relative(dirname(path), target), path);
+  };
+  for (const project of generation.projects) {
     const modules = join(root, project, 'node_modules');
-    const info = await lstat(modules).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
-    if (info?.isDirectory()) await rename(modules, join(generation.genRoot, project, 'node_modules'));
+    if ((await lstatOrNull(modules))?.isDirectory()) await moveAndLink(modules, join(generation.genRoot, project, 'node_modules'));
+  }
+  const rootModules = join(root, 'node_modules');
+  if ((await lstatOrNull(rootModules))?.isDirectory()) {
+    await mkdir(join(generation.genRoot, 'node_modules'), { recursive: true });
+    for (const name of await readdir(rootModules)) {
+      if (name.startsWith('.') && !PNPM_ROOT_ENTRIES.has(name)) continue;
+      await moveAndLink(join(rootModules, name), join(generation.genRoot, 'node_modules', name));
+    }
   }
   await retargetGenerationWorkspaceLinks(root, generation);
   await flipDependencyGeneration(root, generation);
   return generation;
 }
 
+// A running Stack on the checkout loads modules lazily and holds no custody: a
+// retention record keeps the generation it runs on until its process exits.
+// Unlike reader records, writers never drain them.
+const RETENTION_RECORD = /^retain-\d+-/u;
+
+/** Retain `generation` for each live process (a Stack running on it). */
+export function retainDependencyGeneration(readersDir, generation, pids) {
+  mkdirSync(readersDir, { recursive: true });
+  for (const pid of pids) {
+    writeFileSync(join(readersDir, `retain-${pid}-${randomUUID()}.json`), JSON.stringify({ pid, generation }), { flag: 'wx' });
+  }
+}
+
 function readReaderRecords(readersDir) {
   const records = [];
-  for (const name of readdirSync(readersDir, { withFileTypes: false }).filter(entry => /^reader-\d+-/.test(entry))) {
+  for (const name of readdirSync(readersDir, { withFileTypes: false }).filter(entry => /^reader-\d+-/.test(entry) || RETENTION_RECORD.test(entry))) {
     try {
       const record = JSON.parse(readFileSync(join(readersDir, name), 'utf8'));
       if (observePidLiveness(record.pid).status !== 'dead') records.push(record);
+      else if (RETENTION_RECORD.test(name)) unlinkSync(join(readersDir, name));
     } catch (error) { if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error; }
   }
   return records;
@@ -162,13 +231,15 @@ export async function pruneDependencyGenerations(installDir, { readersDir }) {
   const container = resolveDependencyGenerationContainer(installDir);
   const current = readCurrentDependencyGeneration(installDir);
   if (current === null) return [];
+  const entries = await readdir(container).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
+  if (entries.every(entry => entry === current)) return [];
   let records;
   try { records = readReaderRecords(readersDir); }
   catch (error) { if (error.code === 'ENOENT') records = []; else throw error; }
   if (records.some(record => typeof record.generation !== 'string')) return [];
   const oldestRead = records.map(record => record.generation).sort()[0] ?? current;
   const removed = [];
-  for (const entry of await readdir(container).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))) {
+  for (const entry of entries) {
     const stale = entry.startsWith('.trash-');
     if (!stale && (!GENERATION_NAME.test(entry) || entry === current || entry >= oldestRead)) continue;
     // Rename first: a removal interrupted midway leaves only trash, never a

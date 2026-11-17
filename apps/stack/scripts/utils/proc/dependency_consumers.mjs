@@ -7,7 +7,7 @@ import { resolveDependencyInstallRoot } from './dependency_refresh.mjs';
 import { isPidAlive } from './pids.mjs';
 import { resolveRemoteStackStorageDir } from '../dev_targets/stack_paths.mjs';
 import { readEnvValueFromFile } from '../env/read.mjs';
-import { hasLiveStackRuntimeProcesses } from '../stack/runtime_processes.mjs';
+import { getStackRuntimeProcessEntries } from '../stack/runtime_processes.mjs';
 
 async function directories(path) {
   try {
@@ -19,8 +19,10 @@ async function directories(path) {
   }
 }
 
-// This inventory supplies restart advice only. Installers neither wait for
-// starting stacks nor acquire process lifecycle authority over their readers.
+// This inventory supplies restart advice, and the live processes of those
+// Stacks (a generation switch retains the replaced generation for them).
+// Installers neither wait for starting stacks nor acquire process lifecycle
+// authority over their readers.
 export async function prepareDependencyConsumersForRefresh({ installDir, env = process.env }) {
   const baseDirs = new Set(await directories(getStacksStorageRoot(env)));
   // Both remote bootstrap dispatchers provide cache=<targetHome>/cache even
@@ -36,6 +38,7 @@ export async function prepareDependencyConsumersForRefresh({ installDir, env = p
   const explicitEnvFile = resolveExplicitStackEnvFilePath(env);
   if (explicitEnvFile) baseDirs.add(dirname(explicitEnvFile));
   const stacksNeedingRestart = new Set();
+  const processes = new Set();
   const targetRoot = resolve(installDir);
   for (const baseDir of baseDirs) {
     const envPath = explicitEnvFile && resolve(dirname(explicitEnvFile)) === resolve(baseDir)
@@ -43,9 +46,10 @@ export async function prepareDependencyConsumersForRefresh({ installDir, env = p
     const repoDir = await readEnvValueFromFile(envPath, 'HAPPIER_STACK_REPO_DIR');
     if (repoDir && resolve(resolveDependencyInstallRoot(getRepoDir(baseDir, { ...env, HAPPIER_STACK_REPO_DIR: repoDir }))) === targetRoot) {
       const state = await readJsonIfExists(join(baseDir, 'stack.runtime.json'));
-      if (isPidAlive(Number(state?.ownerPid)) || (state && hasLiveStackRuntimeProcesses(state))) {
-        stacksNeedingRestart.add(basename(baseDir));
-      }
+      const live = [Number(state?.ownerPid), ...(state ? getStackRuntimeProcessEntries(state).map(({ pid }) => pid) : [])]
+        .filter(pid => isPidAlive(pid));
+      if (live.length) stacksNeedingRestart.add(basename(baseDir));
+      for (const pid of live) processes.add(pid);
     }
     for (const kind of ['expo-dev', 'mobile']) {
       for (const stateDir of await directories(join(baseDir, kind))) {
@@ -55,8 +59,9 @@ export async function prepareDependencyConsumersForRefresh({ installDir, env = p
         const pid = Number(state.pid);
         if (!Number.isInteger(pid) || pid <= 1 || !isPidAlive(pid)) continue;
         stacksNeedingRestart.add(basename(baseDir));
+        processes.add(pid);
       }
     }
   }
-  return { stacksNeedingRestart: [...stacksNeedingRestart].sort() };
+  return { stacksNeedingRestart: [...stacksNeedingRestart].sort(), processes: [...processes].sort((a, b) => a - b) };
 }

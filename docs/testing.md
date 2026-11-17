@@ -507,21 +507,37 @@ preparation. The refresh owner never deletes or renames `node_modules`.
 A checkout can switch to dependency generations (owner ruling 2026-11-17,
 "Atomic dependency installs"; development tooling only). `adoptDependencyGenerations`
 in `apps/stack/scripts/utils/proc/dependency_refresh.mjs` runs once per host as an
-ordinary writer on a current tree. It moves every `node_modules` into
+ordinary writer on a current tree. It moves every project's `node_modules` into
 `.happier/deps/node_modules/<generation>/` (ignored by Git and every Mutagen session) and leaves a relative symlink at each path.
+The root `node_modules` stays a real directory: pnpm 12 keeps its task-run state
+there and refuses `pnpm run`/`pnpm exec` when it is a link. Only its pnpm entries
+(`.bin`, `.modules.yaml`, `.pnpm`, the workspace state, every package or scope)
+move, each leaving a symlink. Caches, pnpm's task-run state and Happier's markers
+stay real there and survive every switch, as they did in-place installs. The
+`.happier-dependency-generation` link names the current generation.
 From then on, a refresh installs into a new generation: a shadow workspace whose
 project directories link the real sources. Readers keep entering and are never
 drained while it installs. When the install succeeds, the owner points workspace
 links at the real projects and closes reader entry. It then marks the mutation
-and switches every `node_modules` link (one rename per path, root last). Output
+and switches each project link, then each root entry, then the current-generation
+link (one rename per path, so every path always names a complete generation).
+Root entries of older generations that the new one lacks are removed. A real
+entry a hand-run `pnpm install` wrote over a link moves aside into the
+container's trash and is replaced. Output
 preparation runs on the new generation as before. A failed install never
 switches, so the live tree and its marker stay as they were. The failure is
 recorded with `liveTreeIntact`, so consumers don't retry the same inputs. The
 replaced generation stays while any reader registered before the switch is
-alive. Reader records carry the generation they entered on. The writer prunes
-after it releases, and the last reader of a retired generation prunes on exit.
-pnpm refuses a plain `pnpm install` into a linked `node_modules`, so forced
-repairs (UI patch restore, pkgroll) install into a generation too.
+alive, and while any Stack process running on this checkout at the switch is
+alive (a server or daemon loads modules lazily without custody; Node caches the
+real paths it resolved, so it would fail once its generation is gone). Reader
+records carry the generation they entered on; the switch writes a retention
+record per live Stack process, which writers never drain. The writer prunes
+after it releases, and every reader of a generation-managed tree prunes on exit
+(one directory read when nothing is retired).
+A plain `pnpm install` would rewrite the live tree in place (and write through
+root links into the current generation), so forced repairs (UI patch restore,
+pkgroll) install into a generation too.
 `pnpm install --lockfile-only` still works. Windows directory junctions can't
 be replaced atomically, so adoption refuses on Windows.
 

@@ -17,7 +17,7 @@ import { inspectUiPostinstallOutputs } from './ui_postinstall.mjs';
 import { inspectPatchHashDrift, relockPatchHashes, validateRegisteredPatches } from './patch_hash_relock.mjs';
 import { createWorkspaceBuildWaitNotifier } from './workspaceBuildWaitNotifier.mjs';
 import { admitDependencyReaders, closeDependencyReaderAdmission, DEPENDENCY_LOCK_STALE_AFTER_MS, dependencyWriterEnv, hasDependencyReadLock, inheritedDependencyWriter, waitForDependencyReaders, withDependencyReadLock } from './dependency_consumption.mjs';
-import { createDependencyGeneration, flipDependencyGeneration, isDependencyGenerationManaged, moveInPlaceInstallationIntoGeneration, pruneDependencyGenerations, retargetGenerationWorkspaceLinks } from './dependency_generations.mjs';
+import { createDependencyGeneration, flipDependencyGeneration, isDependencyGenerationManaged, moveInPlaceInstallationIntoGeneration, pruneDependencyGenerations, readCurrentDependencyGeneration, retainDependencyGeneration, retargetGenerationWorkspaceLinks } from './dependency_generations.mjs';
 
 const REFRESH_STATE_VERSION = 7;
 const REFRESH_MARKER = '.happier-stack-dependencies-ready';
@@ -614,10 +614,18 @@ export async function withDependencyRefresh({
         // in-place mutation, while readers already in keep their generation.
         // A nested repair inside an active writer has no admission to close.
         context.closeReaderAdmission?.();
+        // Stacks running on this checkout keep the generation they run on.
+        const replaced = readCurrentDependencyGeneration(installDir);
+        if (replaced) {
+          retainDependencyGeneration(`${context.lockPath}.readers`, replaced,
+            (await prepareDependencyConsumersForRefresh({ installDir, env })).processes);
+        }
         await markDependencyMutation({ installDir, env });
-        await flipDependencyGeneration(installDir, generation);
+        // Published before the first path flips: a switch interrupted midway
+        // leaves live paths naming this generation, so it must never be removed.
         published = true;
         pruneAfterRelease = true;
+        await flipDependencyGeneration(installDir, generation);
       };
       try {
         await refresh({ env: installEnv, installCwd: generation.genRoot, publishInstallation });
@@ -736,8 +744,9 @@ export async function adoptDependencyInstallation({ installDir, componentDir = i
 /** One-time switch of an in-place installation to dependency generations
  * (owner ruling 2026-11-17, "Atomic dependency installs"). It runs as an
  * ordinary writer, draining readers, and only on a current, complete tree:
- * every node_modules directory moves (rename) into the first generation and its
- * path becomes a link. Later refreshes of a generation-managed tree install
+ * every project node_modules directory, and each pnpm entry of the real root
+ * node_modules, moves (rename) into the first generation and its path becomes a
+ * link. Later refreshes of a generation-managed tree install
  * beside it and switch atomically. Explicit, so each host switches when its
  * operator announces it. */
 export async function adoptDependencyGenerations({ installDir, env = process.env, signal }) {
