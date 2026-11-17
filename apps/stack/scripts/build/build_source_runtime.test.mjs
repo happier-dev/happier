@@ -2514,6 +2514,35 @@ test('source reload refusal publishes the failing module and preserves incumbent
   assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
 });
 
+test('source reload refuses a broken activation launcher before publishing PREPARED or changing selection', async t => {
+  const graph = await reloadFixtureGraph(t, 'export {};');
+  graph.old.entrypoint = graph.daemon.entrypoint;
+  await writeFile(graph.selectedPath, JSON.stringify(graph.old));
+  const repoDir = await createReloadDaemonRepo(graph.fixture, 'export const ready = true;');
+  const launcher = join(repoDir, 'apps/stack/scripts/stack.mjs');
+  const grammar = join(repoDir, 'apps/stack/scripts/machinePresenceTransitionsV1.mjs');
+  await writeFile(grammar, 'export const existing = true;');
+  // Captured #171c boundary: the activation launcher imports a missing live
+  // Protocol export even though the prepared product graph is healthy.
+  await writeFile(launcher, 'import { MachinePresenceTransitionKindV1Schema } from "./machinePresenceTransitionsV1.mjs";');
+  let prepared = false;
+  const options = { stackName: 'qa', stackBaseDir: graph.stackBaseDir, repoDir,
+    args: ['--no-server', '--no-ui', '--no-daemon'], onHost: true,
+    env: { ...process.env, HAPPIER_STACK_DAEMON: '1', HAPPIER_SERVER_URL: 'http://fixture.invalid' },
+    onPrepared: () => { prepared = true; } };
+  await assert.rejects(prepareSourceRuntimeReload(options), error => {
+    assert.equal(error.entryGraph, 'stack-launcher');
+    assert.match(error.message, /MachinePresenceTransitionKindV1Schema/);
+    return true;
+  });
+  assert.equal(prepared, false);
+  assert.deepEqual(JSON.parse(await readFile(graph.selectedPath, 'utf8')), graph.old);
+  assert.deepEqual(JSON.parse(await readFile(graph.runtimePath, 'utf8')), graph.runtime);
+  await writeFile(grammar, 'export const MachinePresenceTransitionKindV1Schema = {};');
+  await prepareSourceRuntimeReload(options);
+  assert.equal(prepared, true, 'repairing the producer admits an explicit retry');
+});
+
 test('an execution host never selects a revision from a repository left in its mirror', async t => {
   const graph = await reloadFixtureGraph(t, 'export {};');
   graph.old.entrypoint = graph.daemon.entrypoint;

@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { PassThrough } from 'node:stream';
 import { format } from 'node:util';
+import { probeRuntimeImport } from '../../utils/proc/runtimeImportProbe.mjs';
+import { sourceBuildNodeArgs } from '../../utils/proc/runSourceBuildCommand.mjs';
 
 import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter, readLatestBuiltSourceRevision } from '../../build/build_source_runtime.mjs';
 import { canResolveSourceRevisions, parseSourceOverlayPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from '../../build/source_revision.mjs';
@@ -105,6 +107,18 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
     // waiting for an edit. This record carries logs and terminal outcomes.
     await writeJsonAtomic(statusPath, { logPath });
     await log('[reload] preparing replacement while incumbent runtime remains loaded');
+    // Activation starts this live launcher after incumbent retirement. Exercise
+    // its real load now, while refusal can still preserve the incumbent.
+    const launcher = join(repoDir, 'apps/stack/scripts/stack.mjs');
+    const launcherLoad = await probeRuntimeImport({ entrypoint: launcher, args: ['--help'],
+      nodeArgs: sourceBuildNodeArgs({ repoDir, scriptPath: launcher }).slice(0, -1),
+      cwd: repoDir, env, signal: pending.signal });
+    if (launcherLoad.status === 'failed') {
+      throw Object.assign(new Error(`[reload] activation launcher failed to load: ${launcherLoad.loadError.message}`), {
+        entryGraph: 'stack-launcher', firstFailingModule: launcherLoad.firstFailingModule,
+        loadError: launcherLoad.loadError,
+      });
+    }
     // Owner 2026-11-14 (P03-INFRA-REDESIGN): QA Stacks run a shared revision base
     // tree plus their commit diff and declared overlay from source, with no bundle.
     // Default for QA Stacks since 2026-11-16; the producer's own Stack and checkout

@@ -67,6 +67,8 @@ export async function installSourcePreparationInputs(repoDir, component) {
   // fixture roots must not replace the source failure each test exercises.
   await mkdir(join(repoDir, 'scripts/workspaces'), { recursive: true });
   await mkdir(join(repoDir, 'apps/stack/scripts/build'), { recursive: true });
+  const launcher = join(repoDir, 'apps/stack/scripts/stack.mjs');
+  if (!existsSync(launcher)) await writeFile(launcher, 'export {};');
   if (!existsSync(join(repoDir, 'package.json'))) await writeFile(join(repoDir, 'package.json'),
     JSON.stringify({ private: true, workspaces: ['apps/*'] }));
   if (!existsSync(join(repoDir, 'pnpm-lock.yaml'))) await writeFile(join(repoDir, 'pnpm-lock.yaml'), '');
