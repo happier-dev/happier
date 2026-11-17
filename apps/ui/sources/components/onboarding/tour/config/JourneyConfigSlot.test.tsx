@@ -67,7 +67,7 @@ describe('JourneyConfigSlot', () => {
         expect(onPrimary).toHaveBeenCalledTimes(1);
     });
 
-    it('shares the phone action rail between Skip and the primary, as every phone sheet footer does', async () => {
+    it('leads the phone action rail with a quiet Skip beside a primary that takes the rest (lab pphone-P1)', async () => {
         const onSkip = vi.fn();
         const screen = await renderScreen(<JourneyConfigSlot
             primarySizing="fill"
@@ -76,14 +76,18 @@ describe('JourneyConfigSlot', () => {
         />);
         const skip = screen.findHostByTestId('phone-config-skip')!;
         const primary = screen.findHostByTestId('phone-config-primary')!;
-        // One row holds both, each taking an equal share; Skip comes first, the primary last (nearest the thumb).
         const row = (node: ReactTestInstance) => { let parent = node.parent;
             while (parent && (String(parent.type) !== 'View' || flattenStyle(parent.props.style)?.flexDirection !== 'row')) parent = parent.parent;
             return parent; };
         expect(screen.findByTestId('phone-config-skip-row')).toBeNull();
-        expect(row(skip)).toBe(row(primary));
-        const shares = row(primary)!.children.map(child => flattenStyle((child as ReactTestInstance).props.style)?.flex);
-        expect(shares).toEqual([1, 1]);
+        // One row: Skip first as quiet text at its own width, the primary last (nearest the thumb) across the rest.
+        const rail = screen.findHostByTestId('phone-config-actions')!;
+        expect(rail.findAll(node => node === skip)).toHaveLength(1);
+        expect(rail.findAll(node => node === primary)).toHaveLength(1);
+        expect(row(skip)).not.toBeNull();
+        expect(flattenStyle(skip.props.style)?.flex).toBeUndefined();
+        expect(actionChromeStyle(skip)).toMatchObject({ backgroundColor: 'transparent', borderColor: 'transparent' });
+        expect(actionChromeStyle(primary).width).toBe('100%');
         await screen.pressByTestIdAsync('phone-config-skip');
         expect(onSkip).toHaveBeenCalledTimes(1);
     });

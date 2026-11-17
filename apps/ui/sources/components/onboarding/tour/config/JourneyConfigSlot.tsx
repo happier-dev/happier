@@ -136,6 +136,15 @@ const stylesheet = StyleSheet.create((theme) => ({
     primaryActionLabel: {
         color: theme.colors.button.primary.tint,
     },
+    phoneRail: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        width: '100%',
+    },
+    phoneRailActions: {
+        flex: 1,
+        minWidth: 0,
+    },
     skipRow: {
         alignItems: 'center',
         alignSelf: 'flex-end',
@@ -324,21 +333,23 @@ export function JourneyConfigSlot(props: JourneyConfigSlotProps): React.ReactEle
                 <ConfigFooterHint footerHint={controller.footerHint} testID={`${testID}-footer`} />
             ) : null}
             {hasActions && props.primarySizing === 'fill' ? (
-                // A phone sheet's footer follows the one phone rule: two actions share the width, three stack
-                // at full width with the primary last, nearest the thumb.
-                <View testID={`${testID}-actions`}>
-                    <HappierModalCardFooterActions phoneSheet gap={theme.space.s10}>
-                        {[
-                            showSkip && controller.onSkip ? <ConfigActionButton key="skip" testID={`${testID}-skip`}
-                                label={controller.skipLabel ?? t('common.skip')} disabled={controller.skipDisabled}
-                                onPress={controller.onSkip} fill /> : null,
-                            showBack && controller.onBack ? <ConfigActionButton key="back" testID={`${testID}-back`}
-                                label={controller.backLabel ?? t('common.back')} onPress={controller.onBack} fill /> : null,
-                            showPrimary && controller.onPrimary ? <ConfigActionButton key="primary" testID={`${testID}-primary`}
-                                label={renderMaybeText(controller.primaryLabel)} disabled={controller.primaryDisabled}
-                                primary fill onPress={controller.onPrimary} /> : null,
-                        ].filter(Boolean)}
-                    </HappierModalCardFooterActions>
+                // The phone rail (lab pphone-P1): Skip leads as a quiet text action at its own width, and the button
+                // actions take the rest through the shared phone footer, the primary last, nearest the thumb.
+                <View testID={`${testID}-actions`} style={[styles.phoneRail, { gap: theme.space.s16 }]}>
+                    {showSkip && controller.onSkip ? <ConfigActionButton testID={`${testID}-skip`}
+                        label={controller.skipLabel ?? t('common.skip')} disabled={controller.skipDisabled}
+                        onPress={controller.onSkip} quiet /> : null}
+                    <View style={styles.phoneRailActions}>
+                        <HappierModalCardFooterActions phoneSheet gap={theme.space.s10}>
+                            {[
+                                showBack && controller.onBack ? <ConfigActionButton key="back" testID={`${testID}-back`}
+                                    label={controller.backLabel ?? t('common.back')} onPress={controller.onBack} fill /> : null,
+                                showPrimary && controller.onPrimary ? <ConfigActionButton key="primary" testID={`${testID}-primary`}
+                                    label={renderMaybeText(controller.primaryLabel)} disabled={controller.primaryDisabled}
+                                    primary fill onPress={controller.onPrimary} /> : null,
+                            ].filter(Boolean)}
+                        </HappierModalCardFooterActions>
+                    </View>
                 </View>
             ) : hasActions ? (
                 <>
