@@ -266,9 +266,9 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         return body && typeof body === 'object' && 'managedId' in body && typeof body.managedId === 'string'
             ? body.managedId : undefined;
     }
-    function requestFailure(path: string, category: ManagedControllerRequestFailureDetailsV1['category'], status?: number, code?: string, managedId?: string) {
+    function requestFailure(path: string, category: ManagedControllerRequestFailureDetailsV1['category'], status?: number, failureCode?: string, managedId?: string) {
         const base = { kind: 'managedControllerRequest' as const, path, category, ...(status === undefined ? {} : { status }) };
-        const withCode = ManagedControllerRequestFailureDetailsV1Schema.safeParse({ ...base, code });
+        const withCode = ManagedControllerRequestFailureDetailsV1Schema.safeParse({ ...base, code: failureCode });
         const details = withCode.success ? withCode.data : ManagedControllerRequestFailureDetailsV1Schema.parse(base);
         const operationId = options.context?.operationAcceptance?.operationId;
         logger.warn('[MANAGED MACHINE] Controller request failed', {
