@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { parseSessionCreateSpawnOptions } from './parseSessionCreateSpawnOptions';
 import { tmpdir } from 'node:os';
 import { withConfiguredDaemonTestHome, writeDaemonSettingsFixture } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
@@ -107,9 +108,10 @@ describe('normalizeSessionCreateSpawnRequest', () => {
         const normalized = await normalizeSessionCreateSpawnRequest(parsed.spawnRequest,
           createDeps({ activeServerId, readSettings }));
         expect(normalized.input.executionTarget).toEqual({ serverId: serverIdentityId, machineId });
-        const prepared = await preflight({ input: normalized.input });
+        const exactInput = admitSessionSpawnNewActionInputV2(normalized.input);
+        const prepared = await preflight({ input: exactInput });
         expect(prepared, JSON.stringify(prepared)).toMatchObject({ type: 'not_required' });
-        await expect(preflight({ input: { ...normalized.input,
+        await expect(preflight({ input: { ...exactInput,
           executionTarget: { serverId: activeServerId, machineId } } })).resolves.toEqual({ type: 'error',
           result: { type: 'error', code: 'target_unavailable', retryable: false } });
       }

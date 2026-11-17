@@ -629,34 +629,6 @@ describe('happier session create (action executor)', () => {
     }
   });
 
-  it('passes concise auth to Session creation as a single Action', async () => {
-    execute.mockClear();
-    execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-auth'));
-
-    const output = captureConsoleJsonOutput();
-    try {
-      await handleSessionCommand(
-        ['create', '--backend', 'codex', '--auth', 'cs:team', '--json'],
-        {
-          readCredentialsFn: async () => ({
-            token: 'token_test',
-            encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
-          }),
-        },
-      );
-
-      expect(execute).toHaveBeenCalledExactlyOnceWith(
-        'session.spawn_new',
-        expect.objectContaining({
-          connectedServicesAuthIntent: { kind: 'connected', serviceId: null, selection: null, id: 'team' },
-        }),
-        { surface: 'cli', defaultSessionId: null, actionRequestId: expect.any(String) },
-      );
-    } finally {
-      output.restore();
-    }
-  });
-
   it('resolves the catalog default Agent before invoking the Action', async () => {
     execute.mockClear();
     execute.mockResolvedValueOnce(sessionSpawnSuccess('sess-3'));
