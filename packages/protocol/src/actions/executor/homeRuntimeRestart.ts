@@ -2,6 +2,7 @@ import type { HomeRuntimeRestartInputV1, HomeRuntimeRestartOutputV1 } from '../.
 import { SystemTaskResultSchema } from '../../system/tasks/spec.js';
 import type { ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
+import { withActionFailureCauseDiagnostic } from './actionFailureDiagnostic.js';
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -57,9 +58,13 @@ export async function executeHomeRuntimeRestart(
       return complete({ status: 'outcome_unknown', taskId });
     }
     return complete({ status: 'completed', taskId, result: terminal.data });
-  } catch {
-    if (startIssued) return complete({ status: 'outcome_unknown', ...(taskId ? { taskId } : {}) });
-    if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
-    return complete({ status: 'unavailable', reason: 'system_tasks_unavailable' });
+  } catch (error) {
+    if (startIssued) return withActionFailureCauseDiagnostic(
+      complete({ status: 'outcome_unknown', ...(taskId ? { taskId } : {}) }), error,
+      taskId ? 'home.runtime.restart.wait' : 'home.runtime.restart.start');
+    if (context.signal?.aborted) return withActionFailureCauseDiagnostic(
+      { ok: false, errorCode: 'cancelled', error: 'cancelled' }, error, 'home.runtime.restart.detect');
+    return withActionFailureCauseDiagnostic(complete({ status: 'unavailable', reason: 'system_tasks_unavailable' }),
+      error, 'home.runtime.restart.detect');
   }
 }

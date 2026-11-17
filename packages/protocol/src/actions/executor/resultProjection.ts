@@ -30,7 +30,7 @@ import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadR
 import { ExecutionRunCancelTurnResponseSchema } from '../../execution/runs/cancelTurn.js';
 import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 
-import { readActionOutputDiagnostic, invalidActionOutputFailure, carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
+import { readActionOutputDiagnostic, invalidActionOutputFailure, carryActionFailureDiagnostic, withActionFailureCauseDiagnostic } from './actionFailureDiagnostic.js';
 import type { ActionOutputDiagnostic } from './actionFailureDiagnostic.js';
 export { readActionOutputDiagnostic, invalidActionOutputFailure, withActionFailureDiagnostic, carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
 export type { ActionOutputDiagnostic, ActionFailureDiagnosticInput } from './actionFailureDiagnostic.js';
@@ -124,8 +124,10 @@ export function normalizeActionExecutorThrownError(error: unknown, phase?: strin
   }
   const failure = carried ?? classifyActionExecutorThrownError(error);
   // Native Action adapters spread these fields into a failure; terminal projection removes the sidecar.
-  return carryActionFailureDiagnostic({ ...failure, error: redactBugReportSensitiveText(failure.error),
-    failureCause: readCarriedActionFailureCause(error) ?? carried?.failureCause ?? projectActionFailureCauseV1(error, phase) }, error, { enumerable: true });
+  const normalized = withActionFailureCauseDiagnostic({ ...failure, error: redactBugReportSensitiveText(failure.error),
+    failureCause: readCarriedActionFailureCause(error) ?? carried?.failureCause ?? projectActionFailureCauseV1(error, phase) },
+    error, phase ?? 'dispatch');
+  return carryActionFailureDiagnostic(normalized, normalized, { enumerable: true });
 }
 
 function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode: string; error: string; details?: unknown; effectAttempted?: boolean }> {

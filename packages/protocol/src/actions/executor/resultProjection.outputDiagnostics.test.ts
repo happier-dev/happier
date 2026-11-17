@@ -1,8 +1,20 @@
 import { expect, it } from 'vitest';
-import { completeActionResult, settleActionOutput } from './resultProjection.js';
+import { completeActionResult, normalizeActionExecutorThrownError, settleActionOutput } from './resultProjection.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { withActionFailureCauseDiagnostic } from './actionFailureDiagnostic.js';
 import { classifyExecutionRunStartFailure } from './executionRuns.js';
+
+it('creates private thrown-error diagnostics that survive native adapter spreading', () => {
+  const diagnostics: unknown[] = [];
+  const normalized = normalizeActionExecutorThrownError(Object.assign(new TypeError('PRIVATE_PROVIDER_RESPONSE'), { code: 'ECONNRESET' }),
+    'execution.run.start');
+  const failure = { ok: false as const, ...normalized };
+  const result = settleActionOutput('execution.run.start', failure, undefined, undefined, diagnostic => diagnostics.push(diagnostic));
+  expect(result).toEqual({ ok: false, errorCode: normalized.errorCode, error: normalized.error, failureCause: normalized.failureCause });
+  expect(diagnostics).toMatchObject([{ source: 'execution.run.start',
+    failureCause: { phase: 'execution.run.start', errorClass: 'TypeError', errorCode: 'ECONNRESET' } }]);
+  expect(JSON.stringify(diagnostics)).not.toContain('PRIVATE_');
+});
 
 it('projects a carried cause through returned failure normalization without private exception data', () => {
   const error = Object.assign(new TypeError('PRIVATE_PROVIDER_BODY'), {
