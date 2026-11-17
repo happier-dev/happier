@@ -799,7 +799,9 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
     return pageWidth === null || resolved.columns > 1 ? resolved
       : { ...resolved, cardWidth: pageWidth, fitContent: false, paged: true };
   }, [pageWidth, resolveGeometry]);
-  const geometry = useMemo(() => resolvePageableGeometry(gridSlots), [gridSlots, resolvePageableGeometry]);
+  const { description, facts, body, headerRight, preview, place } = gridSlots;
+  const geometry = useMemo(() => resolvePageableGeometry({ description, facts, body, headerRight, preview, place }),
+    [description, facts, body, headerRight, preview, place, resolvePageableGeometry]);
   const paged = geometry.paged === true;
   // A paged row holds its whole group; the keyboard walks it with ← and →.
   const rowColumns = paged ? Math.max(1, longestGroup) : geometry.columns;
@@ -849,11 +851,17 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
     physicalRequest.abandon();
     authorFocus(key);
   }, [authorFocus, physicalRequest]);
-  const onKey = useCallback((key: string, from: string, event: unknown): boolean => model.actions.navigate({
-    key, from, event, presentation: 'grid', columns: rowColumns, gridRows: gridRowKeys,
+  const navigationInput = {
+    navigate: model.actions.navigate, presentation: 'grid' as const, columns: rowColumns, gridRows: gridRowKeys,
     store: props.selection?.multiple?.store, eligibleKeys: props.eligibleKeys,
     ...(single === undefined ? {} : { onValueChange: chooseOrOpen }),
-  }), [chooseOrOpen, rowColumns, gridRowKeys, model.actions, props.eligibleKeys, props.selection?.multiple?.store, single === undefined]);
+  };
+  const navigation = useRef(navigationInput);
+  navigation.current = navigationInput;
+  const onKey = useCallback((key: string, from: string, event: unknown): boolean => {
+    const { navigate, ...input } = navigation.current;
+    return navigate({ ...input, key, from, event });
+  }, []);
   const focusRequest = props.focusRequest ?? model.focusRequest;
   // A grid that scrolls with its page draws only the lines near the page's window (a library of hundreds of cards
   // mounts what is on screen, not every card). A paging shelf is one line: it has nothing to window.

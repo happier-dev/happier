@@ -81,6 +81,7 @@ import { useCreatePetSession } from '@/components/pets/useCreatePetSession';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { storage, usePeripheralFeedDemand } from '@/sync/domains/state/storage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 export type StoreDirectoryKind = Exclude<StoreKind, 'plugin' | 'software'>;
 /** The catalog row's mark box draws a bare logo at this size inside it (S10 catalogRow). */
@@ -419,6 +420,9 @@ export function useStoreThemeRows(list: Readonly<{ items: readonly StoreThemeIte
   const scope = useAccountSettingsScope();
   const presented = useLayoutPresentationActive();
   const lifecycle = getThemeRegistryLifecycle();
+  const latestOpen = React.useRef(open);
+  latestOpen.current = open;
+  const held = React.useRef<Readonly<{ rows: readonly ThemeDirectoryRow[]; groups: readonly DirectoryGroup[] }> | null>(null);
   const candidates = React.useMemo(() => list.items.filter((item): item is RegistryCatalogItemSummary => item.kind !== 'pluginTheme'), [list.items]);
   const subscribe = React.useCallback((notify: () => void) => {
     const stop = presented ? candidates.flatMap(item => item.version
@@ -434,17 +438,24 @@ export function useStoreThemeRows(list: Readonly<{ items: readonly StoreThemeIte
   [candidates, lifecycle, scope, exclusions]);
   const registry = useRegistryRows({ items: registryItems, curation: list.curation }, openRegistry, sourceTitle);
   return React.useMemo(() => {
+    const before = held.current;
+    const previousRows = new Map(before?.rows.map(row => [row.key, row]));
     const plugins = list.items.flatMap((item): ThemeDirectoryRow[] => {
       if (item.kind !== 'pluginTheme') return [];
       const summary = storeThemeSummary(item);
       return [{ key: summary.key, title: summary.title, description: item.pluginName, mark: null,
         group: `plugin:${item.pluginId}`, card: projectStoreThemeCard(item, item.pluginName),
-        open: () => open({ type: 'pluginTheme', reference: { kind: 'plugin', pluginId: item.pluginId, contributionId: item.contributionId } }) }];
+        open: previousRows.get(summary.key)?.open ?? (() => latestOpen.current({ type: 'pluginTheme', reference: {
+          kind: 'plugin', pluginId: item.pluginId, contributionId: item.contributionId } })) }];
     });
     const cards = new Map(registryItems.map(item => { const card = projectStoreThemeCard(item, sourceTitle(item.sourceId)); return [card.key, card] as const; }));
     const rows = registry.rows.flatMap((row): ThemeDirectoryRow[] => { const card = cards.get(row.key); return card ? [{ ...row, card }] : []; });
     const groups = new Map(plugins.map(row => [row.group, { key: row.group, title: row.card.byline }]));
-    return { rows: [...plugins, ...rows], groups: [...groups.values(), ...registry.groups] };
+    const retainedRows = retainKeyedRows(before?.rows, [...plugins, ...rows], row => row.key);
+    const retainedGroups = retainKeyedRows(before?.groups, [...groups.values(), ...registry.groups], group => group.key);
+    if (before?.rows === retainedRows && before.groups === retainedGroups) return before;
+    held.current = { rows: retainedRows, groups: retainedGroups };
+    return held.current;
   }, [list.items, registryItems, registry.rows, registry.groups, sourceTitle, open]);
 }
 
