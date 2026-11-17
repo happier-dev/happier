@@ -61,7 +61,7 @@ import { ConfirmSwitchRelayStep, type RelaySwitchDecision } from '../steps/Confi
 import { parseOnboardingScanPayload } from '../state/scanPayload';
 import { promptLegacyPairingUpdateRequired } from '@/auth/pairing/legacyPairingUpdateRequired';
 import { promptAccountConnectApprovalRequired } from '@/components/account/restore/accountConnectApprovalGuidance';
-import { resolveReverseQrTargetProfileId } from '@/components/onboarding/restore/RestoreIndexEmbedded';
+import { resolveReverseQrTargetProfileId } from '@/components/onboarding/restore/loginWays';
 import { useEndpointReadinessMap } from '../hooks/useEndpointReadinessMap';
 import {
     setOnboardingWizardAwaitingAuthResumeIntent,

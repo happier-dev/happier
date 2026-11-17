@@ -24,6 +24,12 @@ vi.mock('@/utils/platform/qrScannerSupport', () => ({
     canUseCurrentDeviceQrScanner: () => true,
 }));
 
+// The recovery key is its own owner (a credential journey with custody boundaries beneath);
+// this spec is about which view the step shows, so it renders as a marker.
+vi.mock('@/components/account/restore/SecretKeyLoginForm', () => ({
+    SecretKeyLoginForm: () => React.createElement('secret-key-form'),
+}));
+
 let lastScanProps: any = null;
 vi.mock('@/components/account/restore/RestoreScanComputerQrView', () => ({
     RestoreScanComputerQrView: (props: any) => {
@@ -120,12 +126,10 @@ describe('RestoreIndexEmbedded', () => {
                 lastScanProps.onOpenPairingLinkEntry();
             });
 
+            // A pasted link proceeds on its own.
             const input = tree.root.findByProps({ testID: 'restore-pairing-link-input' });
             await act(async () => {
                 input.props.onChangeText('happier:///pair?v=2&payload=opaque');
-            });
-            await act(async () => {
-                await tree.root.findByProps({ testID: 'restore-pairing-link-submit' }).props.action();
             });
 
             // The scanner is the one owner that classifies and enrolls scanned

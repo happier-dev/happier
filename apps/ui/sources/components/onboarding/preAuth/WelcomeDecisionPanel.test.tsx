@@ -7,6 +7,7 @@ vi.hoisted(() => vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JS
     accountService: { url: 'https://api.happier.dev' },
 })));
 import { act } from 'react-test-renderer';
+import { Dimensions } from 'react-native';
 
 import { renderScreen } from '@/dev/testkit';
 import type { AccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
@@ -16,6 +17,23 @@ import { lastSignInMethodState, onboardingAuthHistoryState } from '@/sync/domain
 import { t } from '@/text';
 
 import { WelcomeDecisionPanel } from './WelcomeDecisionPanel';
+
+// The device camera is a platform boundary: each case says whether this device has one.
+const camera = vi.hoisted(() => ({ available: false }));
+vi.mock('@/utils/platform/qrScannerSupport', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/utils/platform/qrScannerSupport')>()),
+    canUseCurrentDeviceQrScanner: () => camera.available,
+}));
+
+/** Runs a case on a computer-sized or phone-sized window (the window is a platform boundary). */
+async function onDevice(device: 'computer' | 'phone', hasCamera: boolean, run: () => Promise<void>) {
+    const window = device === 'phone'
+        ? { width: 390, height: 844, scale: 1, fontScale: 1 }
+        : { width: 1440, height: 900, scale: 1, fontScale: 1 };
+    const get = vi.spyOn(Dimensions, 'get').mockReturnValue(window);
+    camera.available = hasCamera;
+    try { await run(); } finally { get.mockRestore(); camera.available = false; }
+}
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -857,20 +875,44 @@ describe('WelcomeDecisionPanel', () => {
             .filter((title, index, all) => all.indexOf(title) === index);
 
         it('first time: the intro line, First time here and its Login peer, with no email needed for a generated key', async () => {
-            await withHistory({ returning: false }, async () => {
+            await onDevice('computer', false, () => withHistory({ returning: false }, async () => {
                 const { callbacks, screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
                 const screen = await screenPromise;
                 const text = screen.getTextContent();
                 expect(text).toContain(t('welcome.welcomeQuestionBodyWithKey'));
                 expect(titles(screen).slice(0, 2)).toEqual([t('welcome.welcomePrimaryButton'), t('welcome.welcomeSecondaryButton')]);
                 expect(screen.findByTestId('welcome-primary-start-subtitle')?.props.children).toBe(t('welcome.welcomePrimarySubtitle'));
-                expect(screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children).toBe(t('welcome.welcomeSecondarySubtitle'));
+                // A computer's Login leads with the recovery key, so its door promises that first.
+                expect(screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children).toBe(t('welcome.loginSubtitleKeyFirst'));
                 // Login is the door for the key; "Already use Happier?" is its title now, not a label over rows.
                 expect(titles(screen)).not.toContain(t('welcome.continueWithKey'));
                 expect(text).not.toContain(t('homesJourneys.alreadyUseTitle'));
                 await screen.pressByTestIdAsync('welcome-scan-existing-home');
                 expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
                 await screen.unmount();
+            }));
+        });
+
+        it('the Login door promises only what Login offers on this device', async () => {
+            const doorSubtitle = async () => {
+                const { screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
+                const screen = await screenPromise;
+                const subtitle = screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children;
+                await screen.unmount();
+                return subtitle;
+            };
+            await withHistory({ returning: false }, async () => {
+                // A phone leads with the link: with a camera the QR code comes first, without one the paste does.
+                await onDevice('phone', true, async () => {
+                    expect(await doorSubtitle()).toBe(t('welcome.welcomeSecondarySubtitle'));
+                });
+                await onDevice('phone', false, async () => {
+                    expect(await doorSubtitle()).toBe(t('welcome.loginSubtitleLinkFirst'));
+                });
+                // A computer never promises a QR code it leads away from, camera or not.
+                await onDevice('computer', true, async () => {
+                    expect(await doorSubtitle()).toBe(t('welcome.loginSubtitleKeyFirst'));
+                });
             });
         });
 
@@ -939,15 +981,15 @@ describe('WelcomeDecisionPanel', () => {
         });
 
         it('returning with nothing recorded: Login is the QR or key door', async () => {
-            await withHistory({ returning: true }, async () => {
+            await onDevice('computer', false, () => withHistory({ returning: true }, async () => {
                 const { callbacks, screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
                 const screen = await screenPromise;
                 expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children).toBe(t('welcome.welcomeReturningLoginButton'));
-                expect(screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children).toBe(t('welcome.welcomeSecondarySubtitle'));
+                expect(screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children).toBe(t('welcome.loginSubtitleKeyFirst'));
                 await screen.pressByTestIdAsync('welcome-scan-existing-home');
                 expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
                 await screen.unmount();
-            });
+            }));
         });
 
         it('offers self-hosting on the build\'s own Home and the Home switch on a chosen one', async () => {

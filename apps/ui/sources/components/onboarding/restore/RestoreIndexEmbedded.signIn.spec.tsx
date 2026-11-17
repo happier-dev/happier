@@ -8,6 +8,12 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 
+const viewport = vi.hoisted(() => ({
+  current: { width: 1400, height: 900, scale: 1, fontScale: 1 },
+}));
+const DESKTOP = { width: 1400, height: 900, scale: 1, fontScale: 1 };
+const PHONE = { width: 390, height: 844, scale: 1, fontScale: 1 };
+
 vi.mock('react-native', async () => {
   const { createReactNativeWebMock } =
     await import('@/dev/testkit/mocks/reactNative');
@@ -16,7 +22,8 @@ vi.mock('react-native', async () => {
       OS: 'web',
       select: (spec: Record<string, unknown>) => spec.web ?? spec.default,
     },
-    useWindowDimensions: () => ({ width: 1400, height: 900 }),
+    // The window is a platform boundary; each case sets the device it is on.
+    useWindowDimensions: () => viewport.current,
   });
 });
 
@@ -72,32 +79,47 @@ function pressable(tree: renderer.ReactTestRenderer, testID: string) {
 }
 
 describe('RestoreIndexEmbedded — Login keeps its promise', () => {
-  it('offers a pairing link and the secret key on one screen when this computer has no camera', async () => {
+  /** Which way comes first on the screen, in reading order. */
+  function firstWay(tree: renderer.ReactTestRenderer) {
+    const first = tree.root.findAll(
+      (node) =>
+        node.type === ('secret-key-form' as never) ||
+        node.props.testID === 'restore-pairing-link-input',
+    )[0];
+    return first?.type === ('secret-key-form' as never) ? 'recovery-key' : 'pairing-link';
+  }
+
+  it('leads with the open recovery key on a computer, then the pairing link', async () => {
     camera.available = false;
+    viewport.current = DESKTOP;
     const tree = await renderLogin();
     try {
+      // Always open: no disclosure to press before the key field shows.
+      expect(tree.root.findAllByType('secret-key-form' as never)).toHaveLength(1);
+      expect(pressable(tree, 'restore-sign-in-secret-key')).toBeUndefined();
+      expect(firstWay(tree)).toBe('recovery-key');
       expect(
         tree.root.findAllByProps({ testID: 'restore-pairing-link-input' })
           .length,
       ).toBeGreaterThan(0);
-      expect(tree.root.findAllByType('scan' as never)).toHaveLength(0);
       expect(
         tree.root.findAllByProps({ testID: 'restore-sign-in-use-camera' }),
       ).toHaveLength(0);
-      // The secret key is offered here and opens in place, on the same screen.
-      const secretKey = pressable(tree, 'restore-sign-in-secret-key');
-      expect(secretKey).toBeTruthy();
-      await act(async () => {
-        secretKey!.props.onPress();
-      });
-      expect(tree.root.findAllByType('secret-key-form' as never)).toHaveLength(
-        1,
-      );
-      expect(
-        tree.root.findAllByProps({ testID: 'restore-pairing-link-input' })
-          .length,
-      ).toBeGreaterThan(0);
     } finally {
+      act(() => tree.unmount());
+    }
+  });
+
+  it('leads with the pairing link and the camera on a phone, then the open recovery key', async () => {
+    camera.available = true;
+    viewport.current = PHONE;
+    const tree = await renderLogin();
+    try {
+      expect(firstWay(tree)).toBe('pairing-link');
+      expect(pressable(tree, 'restore-sign-in-use-camera')).toBeTruthy();
+      expect(tree.root.findAllByType('secret-key-form' as never)).toHaveLength(1);
+    } finally {
+      viewport.current = DESKTOP;
       act(() => tree.unmount());
     }
   });
@@ -106,7 +128,6 @@ describe('RestoreIndexEmbedded — Login keeps its promise', () => {
     camera.available = true;
     const tree = await renderLogin();
     try {
-      expect(pressable(tree, 'restore-sign-in-secret-key')).toBeTruthy();
       const useCamera = pressable(tree, 'restore-sign-in-use-camera');
       expect(useCamera).toBeTruthy();
       await act(async () => {

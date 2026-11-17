@@ -98,7 +98,7 @@ describe('PairingLinkEntryForm', () => {
             defaults = renderer.create(<PairingLinkEntryForm onBack={vi.fn()} onSubmit={vi.fn(async () => true)} />);
         });
         const defaultField = defaults.root.findByProps({ testID: 'restore-pairing-link-input' });
-        expect(defaultField.props.placeholder).toBe('common.urlPlaceholder');
+        expect(defaultField.props.placeholder).toBe('connect.pairingLinkPlaceholder');
         // The field is focused on entry and named by its own label for assistive tech.
         expect(defaultField.props.autoFocus).toBe(true);
         expect(defaultField.props.accessibilityLabel).toBe('connect.pairingLinkFieldLabel');
@@ -142,5 +142,32 @@ describe('PairingLinkEntryForm', () => {
 
         expect(submit).not.toHaveBeenCalled();
         expect(tree.root.findByProps({ testID: 'restore-pairing-link-error' })).toBeTruthy();
+    });
+
+    it('lets a pasted link proceed on its own beside other ways in, leaving the primary action to its host', async () => {
+        const submit = vi.fn(async () => true);
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<PairingLinkEntryForm embedded onSubmit={submit} />);
+        });
+        const input = () => tree.root.findByProps({ testID: 'restore-pairing-link-input' });
+
+        // Typing a link a character at a time waits for the person.
+        await act(async () => {
+            input().props.onChangeText('h');
+        });
+        expect(submit).not.toHaveBeenCalled();
+        const typedAction = tree.root.findByProps({ testID: 'restore-pairing-link-submit' });
+        expect(typedAction.props.display).toBe('secondary');
+        await act(async () => {
+            input().props.onChangeText('');
+        });
+
+        // A whole link arriving at once (a paste) goes to the owner without another press.
+        await act(async () => {
+            input().props.onChangeText(' happier:///pair?v=2&payload=opaque ');
+        });
+        expect(submit).toHaveBeenCalledTimes(1);
+        expect(submit).toHaveBeenCalledWith('happier:///pair?v=2&payload=opaque');
     });
 });

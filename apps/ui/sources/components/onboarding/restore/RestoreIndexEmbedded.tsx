@@ -12,26 +12,9 @@ import {
     type RestoreScanComputerQrViewProps,
 } from '@/components/account/restore/RestoreScanComputerQrView';
 import type { HomeQrEntryIntent } from '@/auth/pairing/homeQrEntryIntent';
-import { buildHomeConnectionDescriptorForProfile, listServerProfiles } from '@/sync/domains/server/serverProfiles';
 
+import { resolveReverseQrTargetProfileId } from './loginWays';
 import { RestoreSignInWays } from './RestoreSignInWays';
-
-/**
- * The requester-displayed direction needs one unambiguous saved Home to display a
- * QR for. Resolve it from the saved profiles this device already knows, and only
- * when exactly one of them can produce an established connection descriptor;
- * ambiguity stays on the scanner rather than guessing an enrollment target.
- */
-export function resolveReverseQrTargetProfileId(): string | null {
-    let resolved: string | null = null;
-    for (const profile of listServerProfiles()) {
-        const descriptor = buildHomeConnectionDescriptorForProfile(profile);
-        if (!descriptor || profile.serverIdentityId !== descriptor.homeServerIdentityId) continue;
-        if (resolved) return null;
-        resolved = profile.id;
-    }
-    return resolved;
-}
 
 export type RestoreIndexEmbeddedProps = Readonly<{
     entryIntent: HomeQrEntryIntent;

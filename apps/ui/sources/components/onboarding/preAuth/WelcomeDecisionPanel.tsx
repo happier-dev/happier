@@ -18,6 +18,7 @@ import { formatAccountServiceHost } from '@/sync/domains/accountDirectory/accoun
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
 import { PhoneWelcomeDoorway } from '@/components/homes/journeys/phone/PhoneWelcomeDoorway';
+import { loginOffersQr, useLoginLeadsWithLink } from '@/components/onboarding/restore/loginWays';
 import { OrganizationPolicyFieldNotice, OrganizationPolicyInvalidNextStep, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { useReturningGreeting } from './useReturningGreeting';
 import { WELCOME_ACTION_TEXT_INSET, WelcomeActionCard } from './WelcomeActionCard';
@@ -74,6 +75,8 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     const options = props.authEntryOptions;
     const showBlocked = options.serverAvailability === 'unavailable' || options.serverAvailability === 'incompatible';
     const handleLogin = props.onOpenRestore;
+    // The Login door promises the ways Login leads with on this device (the same decision orders that screen).
+    const loginLeadsWithLink = useLoginLeadsWithLink();
     // Returning users (those who have authenticated on this device before) get
     // a warmer copy variant — a randomly-rotating warm greeting + an inverted
     // button hierarchy (Login becomes primary because that's the most likely
@@ -202,6 +205,12 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             if (action.kind === 'scan_or_paste_home') {
                 const canScanQr = props.canScanQr === true;
                 const loginDoor = action.labelRole === 'login';
+                // A QR code is promised only where Login leads with the link and a QR can take part here.
+                const loginQr = loginDoor && loginLeadsWithLink && loginOffersQr();
+                const loginDoorPromise = !loginLeadsWithLink
+                    ? 'welcome.loginSubtitleKeyFirst' as const
+                    : loginQr ? 'welcome.welcomeSecondarySubtitle' as const : 'welcome.loginSubtitleLinkFirst' as const;
+                const loginDoorIcon = !loginLeadsWithLink ? 'key' as const : loginQr ? 'qr-code' as const : 'link' as const;
                 return <WelcomeActionCard
                     key={row.id}
                     actionId={row.id}
@@ -211,8 +220,10 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     title={loginDoor
                         ? t(isReturningUser ? 'welcome.welcomeReturningLoginButton' : 'welcome.welcomeSecondaryButton')
                         : t(canScanQr ? 'connect.scanExistingHomeQrTitle' : 'connect.usePairingLinkTitle')}
-                    subtitle={t(loginDoor || canScanQr ? 'welcome.welcomeSecondarySubtitle' : 'connect.pairingLinkRequired')}
-                    iconName={loginDoor || canScanQr ? 'qr-code' : 'link'}
+                    subtitle={loginDoor
+                        ? t(loginDoorPromise)
+                        : t(canScanQr ? 'welcome.welcomeSecondarySubtitle' : 'connect.pairingLinkRequired')}
+                    iconName={loginDoor ? loginDoorIcon : canScanQr ? 'qr-code' : 'link'}
                     onPress={handleLogin}
                 />;
             }

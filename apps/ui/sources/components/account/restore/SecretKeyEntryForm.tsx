@@ -26,6 +26,8 @@ export type SecretKeyEntryFormProps = Readonly<{
     onBack?: () => void;
     /** A quieter alternative to entering the key (e.g. scanning instead), rendered with Back's weight. */
     secondaryAction?: Readonly<{ label: string; onPress: () => void }>;
+    /** Focus the key field on arrival (default). A host offering several ways focuses only the first. */
+    autoFocus?: boolean;
 }>;
 
 const LABEL_ID = 'restore-manual-secret-label';
@@ -134,7 +136,7 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
                     invalid={error !== null}
                     secureTextEntry={!revealed}
                     multiline={false}
-                    autoFocus
+                    autoFocus={props.autoFocus !== false}
                     autoCapitalize="none"
                     autoComplete="off"
                     returnKeyType="go"

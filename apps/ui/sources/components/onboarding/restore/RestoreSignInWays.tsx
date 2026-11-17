@@ -4,18 +4,22 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { PairingLinkEntryForm } from '@/components/account/restore/PairingLinkEntryForm';
 import { SecretKeyLoginForm } from '@/components/account/restore/SecretKeyLoginForm';
-import { StepFieldGroup, StepFieldHelp, StepFieldLabel, StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
+import { useLoginLeadsWithLink } from './loginWays';
+
 /**
  * Login's one screen (Welcome "Login — I already use Happier": scan a QR code, or enter your secret
- * key). Every way in sits here, each saying what it is: a pairing link from a device that is already
- * signed in (or that device's QR code, through this device's camera or shown here for it to scan), and
- * the recovery key, which opens in place. Each way is its existing owner: the shared link form hands a
- * link to the scanner that classifies and enrolls it, and the secret key is `SecretKeyLoginForm`.
+ * key). Every way in is open here, each saying what it is: the recovery key (its field and Sign in,
+ * the screen's one primary action) and a pairing link from a device that is already signed in (pasted,
+ * through this device's camera, or that device scanning a QR shown here). The order follows the
+ * device (`useLoginLeadsWithLink`, which the Welcome door's promise reads too). Each way is
+ * its existing owner: the shared link form hands a link to the scanner that classifies and enrolls it,
+ * and the recovery key is `SecretKeyLoginForm`.
  */
 export function RestoreSignInWays(props: Readonly<{
     onSubmitLink: (link: string) => Promise<boolean>;
@@ -27,57 +31,40 @@ export function RestoreSignInWays(props: Readonly<{
     offerSecretKey: boolean;
 }>) {
     const { theme } = useUnistyles();
-    const [secretKeyOpen, setSecretKeyOpen] = React.useState(false);
+    const linkFirst = useLoginLeadsWithLink() || !props.offerSecretKey;
+    const pairingLink = (
+        <View key="link" style={styles.way}>
+            <PairingLinkEntryForm
+                embedded
+                description={t('connect.signInPairingLinkHelp')}
+                onSubmit={props.onSubmitLink}
+                autoFocus={linkFirst}
+                emptyAction={props.onOpenScanner ? (
+                    <RoundButton
+                        testID="restore-sign-in-use-camera"
+                        size="normal"
+                        display="secondary"
+                        title={t('homesJourneys.useCamera')}
+                        leading={<Icon name="camera" size={14} color={theme.colors.text.secondary} />}
+                        onPress={props.onOpenScanner}
+                    />
+                ) : undefined}
+            />
+            {props.onShowQr ? (
+                <View style={styles.quietAction}>
+                    <TextLinkButton testID="restore-sign-in-show-qr" label={t('connect.signInShowQr')} onPress={props.onShowQr} />
+                </View>
+            ) : null}
+        </View>
+    );
+    const recoveryKey = props.offerSecretKey
+        ? <SecretKeyLoginForm key="key" embedded autoFocus={!linkFirst} />
+        : null;
+    const or = recoveryKey ? <StepOrDivider key="or" label={t('common.or')} /> : null;
+    // Keyed, so a window crossing the phone size reorders the ways without clearing what was typed.
     return (
         <View style={styles.root} testID="restore-sign-in-ways">
-            <View style={styles.way}>
-                <PairingLinkEntryForm
-                    embedded
-                    description={t('connect.signInPairingLinkHelp')}
-                    onSubmit={props.onSubmitLink}
-                    autoFocus={!secretKeyOpen}
-                    emptyAction={props.onOpenScanner ? (
-                        <RoundButton
-                            testID="restore-sign-in-use-camera"
-                            size="normal"
-                            display="secondary"
-                            title={t('homesJourneys.useCamera')}
-                            leading={<Icon name="camera" size={14} color={theme.colors.text.secondary} />}
-                            onPress={props.onOpenScanner}
-                        />
-                    ) : undefined}
-                />
-                {props.onShowQr ? (
-                    <View style={styles.quietAction}>
-                        <TextLinkButton testID="restore-sign-in-show-qr" label={t('connect.signInShowQr')} onPress={props.onShowQr} />
-                    </View>
-                ) : null}
-            </View>
-            {props.offerSecretKey ? (
-                <>
-                    <StepOrDivider label={t('common.or')} />
-                    {secretKeyOpen ? (
-                        <SecretKeyLoginForm embedded />
-                    ) : (
-                        <StepFieldGroup>
-                            <StepFieldLabel>{t('connect.secretKeyInputLabel')}</StepFieldLabel>
-                            <View style={styles.row}>
-                                <View style={styles.rowCopy}>
-                                    <StepFieldHelp>{t('connect.signInSecretKeyHelp')}</StepFieldHelp>
-                                </View>
-                                <RoundButton
-                                    testID="restore-sign-in-secret-key"
-                                    size="normal"
-                                    display="secondary"
-                                    title={t('connect.signInSecretKeyAction')}
-                                    leading={<Icon name="key" size={14} color={theme.colors.text.secondary} />}
-                                    onPress={() => setSecretKeyOpen(true)}
-                                />
-                            </View>
-                        </StepFieldGroup>
-                    )}
-                </>
-            ) : null}
+            {linkFirst ? [pairingLink, or, recoveryKey] : [recoveryKey, or, pairingLink]}
         </View>
     );
 }
@@ -93,14 +80,5 @@ const styles = StyleSheet.create((theme) => ({
     },
     quietAction: {
         alignItems: 'flex-start',
-    },
-    row: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s12,
-    },
-    rowCopy: {
-        flex: 1,
-        minWidth: 0,
     },
 }));

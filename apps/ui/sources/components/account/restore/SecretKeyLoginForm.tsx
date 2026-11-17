@@ -33,6 +33,8 @@ export type SecretKeyLoginFormProps = Readonly<{
     returnTo?: string;
     onSuccess?: () => void;
     submitTitle?: string;
+    /** Focus the key field on arrival (default); off when it is not the first way on the screen. */
+    autoFocus?: boolean;
 } & (
     | { target: SecretKeyLoginTarget; onAuthenticated: (credentials: AuthCredentials) => void | Promise<void> }
     | { target?: undefined; onAuthenticated?: undefined }
@@ -166,6 +168,7 @@ const SecretKeyLoginFormBody = React.memo(function SecretKeyLoginFormBody(props:
                 description={t('connect.restoreWithSecretKeyDescription')}
                 submitTitle={props.submitTitle ?? t('connect.signInWithKeySubmit')}
                 onSubmit={handleLogin}
+                autoFocus={props.autoFocus}
             />
         </View>
     );

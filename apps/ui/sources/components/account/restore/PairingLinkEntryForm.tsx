@@ -19,7 +19,9 @@ export type PairingLinkEntryFormProps = Readonly<{
     /**
      * Inside a host that already titles the step (the welcome pane, a setup card), the form is its
      * field and actions on the host's column: no heading of its own, the field and its action on one
-     * row, the explanation under the field, and the way back as a quiet text action.
+     * row, the explanation under the field, and the way back as a quiet text action. It sits beside
+     * other ways in, so the primary action is the host's: a pasted link proceeds on its own and a typed
+     * one goes with Return or the row's secondary Continue.
      */
     embedded?: boolean;
     /**
@@ -85,9 +87,9 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
     const [error, setError] = React.useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
 
-    const submit = React.useCallback(async () => {
+    const submitLink = React.useCallback(async (value: string) => {
         if (submittingRef.current) return;
-        const trimmed = link.trim();
+        const trimmed = value.trim();
         if (!trimmed) {
             // An empty field is not a rejected link; saying "invalid" for it hides
             // what the user is actually being asked for.
@@ -110,7 +112,8 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
             submittingRef.current = false;
             setIsSubmitting(false);
         }
-    }, [link, props.onSubmit]);
+    }, [props.onSubmit]);
+    const submit = React.useCallback(() => submitLink(link), [link, submitLink]);
 
     const description = props.description ?? t('connect.pairingLinkSecurityWarning');
     const embedded = props.embedded === true;
@@ -118,6 +121,7 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
         <RoundButton
             testID="restore-pairing-link-submit"
             size={embedded ? 'normal' : undefined}
+            display={embedded ? 'secondary' : undefined}
             title={props.submitLabel ?? t('common.continue')}
             action={submit}
             loading={isSubmitting}
@@ -130,11 +134,13 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
             accessibilityLabel={t('connect.pairingLinkFieldLabel')}
             accessibilityLabelledBy={LABEL_ID}
             accessibilityHint={description}
-            placeholder={props.placeholder ?? t('common.urlPlaceholder')}
+            placeholder={props.placeholder ?? t('connect.pairingLinkPlaceholder')}
             value={link}
             onChangeText={(next) => {
                 setLink(next);
                 if (error) setError(null);
+                // A whole link arriving into an empty field at once is a paste (or autofill), not typing.
+                if (embedded && link.length === 0 && next.trim().length > 1) void submitLink(next);
             }}
             onSubmitEditing={() => {
                 void submit();
