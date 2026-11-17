@@ -62,7 +62,10 @@ describe('producer-backed database Action declarations', () => {
             await expect(testkit.invokeAction(databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1),
                 { task: { ...task, sql: 'private SQL is not setup evidence' } })).rejects.toMatchObject({ code: 'plugin_action_input_schema_invalid' });
             const declarations = plugin.manifest.contributes.actions ?? [];
-            expect(declarations.every(action => !action.surfaces.includes('agent') && !action.surfaces.includes('mcp'))).toBe(true);
+            expect(declarations.filter(action => [DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
+                DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1, DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1]
+                .some(id => action.id === databaseActionLocalIdV1(id)))
+                .every(action => !action.surfaces.includes('agent') && !action.surfaces.includes('mcp'))).toBe(true);
         } finally {
             await testkit.dispose();
         }
@@ -149,7 +152,7 @@ describe('producer-backed database Action declarations', () => {
         expect(databaseActionMetadata[DATABASE_TARGETS_FORGET_ACTION_ID_V1].agentDefault).toBe('ask');
     });
 
-    it('classifies admitted Run and Explain inputs through their declaration without agent exposure', () => {
+    it('exposes admitted read operations while retaining canonical write classification', () => {
         const actions = declarations();
         const run = actions.find(action => action.id === databaseActionLocalIdV1(DATABASE_STATEMENT_RUN_ACTION_ID_V1))!;
         const explain = actions.find(action => action.id === databaseActionLocalIdV1(DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1))!;
@@ -163,8 +166,9 @@ describe('producer-backed database Action declarations', () => {
         expect(databaseActionOperationClass(DATABASE_STATEMENT_RUN_ACTION_ID_V1, { mode: 'write' })).toBe('write');
         expect(databaseActionOperationClass(DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1, { mode: 'analyze', accessMode: 'read' })).toBe('read');
         expect(rows.placementBindings).toEqual([]);
-        expect(rows.surfaces).toEqual(['ui', 'cli', 'plugin']);
-        expect(actions.some(action => action.surfaces.includes('agent') || action.surfaces.includes('mcp'))).toBe(false);
+        expect(rows.surfaces).toEqual(['ui', 'cli', 'plugin', 'agent', 'mcp']);
+        expect(run.surfaces).toEqual(rows.surfaces);
+        expect(explain.surfaces).toEqual(rows.surfaces);
         expect(databaseActionMetadata[DATABASE_ACCESS_SET_ACTION_ID_V1].agentDefault).toBe('authority');
         expect(databaseActionMetadata[DATABASE_STATEMENT_RUN_ACTION_ID_V1].agentDefault).toEqual({ read: 'allow', write: 'ask' });
     });

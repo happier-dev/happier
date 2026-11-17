@@ -36,11 +36,12 @@ export type DatabaseActionProducers = Readonly<{
 export function createDatabaseActions(producers: DatabaseActionProducers): Record<string, PluginActionDefinition> {
     const actions: Record<string, PluginActionDefinition> = {};
     const common = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: ['ui', 'cli', 'plugin'] } as const;
+    const readSurfaces = ['ui', 'cli', 'plugin', 'agent', 'mcp'] as const;
     const listTargets = producers.listTargets;
     if (listTargets) {
         const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[database.DATABASE_TARGETS_LIST_ACTION_ID_V1];
         actions[database.databaseActionLocalIdV1(database.DATABASE_TARGETS_LIST_ACTION_ID_V1)] = {
-            ...common, ...metadata,
+            ...common, ...metadata, surfaces: readSurfaces,
             inputSchema: database.DatabaseTargetsListInputV1ProtocolSchema,
             resultSchema: database.DatabaseTargetsListResultV1ProtocolSchema,
             // definePlugin supplies the value admitted by this exact input schema.
@@ -82,6 +83,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         const { agentDefault: _agentDefault, ...metadata } = databaseActionMetadata[actionId];
         actions[database.databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata, inputSchema,
+            ...(metadata.readOnly !== false ? { surfaces: readSurfaces } : {}),
             resultSchema: database.DatabaseOperationResultV1ProtocolSchema,
             // All entries come from the P1 operation union; the SDK has already parsed the input.
             run: async (input: JsonValue, context: PluginInvocationContext) => {
