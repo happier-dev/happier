@@ -1,5 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { isDelegatedActionRequesterV1 } from '@happier-dev/protocol/actions/delegatedRequesterV1';
+import { isDelegatedActionRequesterV1 } from '@happier-dev/plugin-sdk';
 import type { DatabaseAccessDecisionV1, DatabaseAccessSummaryV1, DatabaseAgentLevelV1, DatabaseOperationClassV1,
     DatabaseRequesterKindV1 } from '@happier-dev/database-protocol';
 

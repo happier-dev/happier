@@ -8,6 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { validateExtensionImportBoundaries } from './extensionImportBoundaries.ts';
 import { collectFileInventory } from './collectFileInventory.ts';
 
+test('database workbench imports the shared databases package through the public plugin boundary', () => {
+  const result = validateExtensionImportBoundaries({
+    changedFiles: ['packages/plugins/database-workbench/src/manifest.ts', 'packages/plugins/database-workbench/src/worktreeTargets.ts'],
+  });
+  assert.deepEqual(result.errors, []);
+});
+
 test('Codex production sources consume only the public plugin boundary', () => {
   const rootDir = fileURLToPath(new URL('../../../../', import.meta.url));
   const inventory = collectFileInventory({
