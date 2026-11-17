@@ -5602,6 +5602,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           let optionsConsumer: ReturnType<typeof InputOptionsConsumerV1Schema.parse> | undefined;
           const fieldPath = normalizeId(data.fieldPath);
           const directOptionsSourceId = normalizeId(data.optionsSourceId);
+          const directInputTypeSource = parseInputTypeOptionsSourceId(directOptionsSourceId);
           let optionsSourceId = directOptionsSourceId;
           let admittedInputTypeSource = false;
           // The picked values an admission needs answered; every path below narrows to them.
@@ -5633,12 +5634,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           };
 
           const discoveryGrant = ctx.externalActionCredential?.grant;
-          if (discoveryGrant && discoveryGrant.actions !== null && directOptionsSourceId && !parseInputTypeOptionsSourceId(directOptionsSourceId)) {
+          if (discoveryGrant && discoveryGrant.actions !== null && directOptionsSourceId
+            && (!directInputTypeSource || 'hostType' in directInputTypeSource)) {
             const visibleOwner = listActionSpecs().some((candidate) => (
               (!actionIdRaw || candidate.id === actionIdRaw)
               && isActionEnabled(candidate, ctx)
               && !credentialScopeFailure(candidate.id, ctx, undefined, true)
-              && candidate.inputHints?.fields.some((field) => field.optionsSourceId === directOptionsSourceId)
+              && candidate.inputHints?.fields.some((field) => readInputFieldOptionsSourceId(field) === directOptionsSourceId)
             ));
             if (!visibleOwner) {
               return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details: { reason: 'action_not_granted' } };
@@ -5755,7 +5757,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             }
           }
 
-          if (parseInputTypeOptionsSourceId(optionsSourceId) && !admittedInputTypeSource) {
+          const inputTypeSource = optionsSourceId === directOptionsSourceId ? directInputTypeSource : parseInputTypeOptionsSourceId(optionsSourceId);
+          if (inputTypeSource && 'pluginId' in inputTypeSource && !admittedInputTypeSource) {
             return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
           }
 

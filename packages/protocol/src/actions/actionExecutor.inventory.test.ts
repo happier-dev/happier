@@ -40,6 +40,7 @@ import { SessionDirectoryIntentV1Schema } from '../sessions/creation/sessionDire
 import { ExecutionRunLaunchOriginSchema } from '../execution/runs/startRequest.js';
 import { getUsageQueryKey, normalizeUsageQuery } from '../inputs/usageQuery.js';
 import { readUsagePeriodOptions } from '../inputs/usageQuery.js';
+import { inputTypeOptionsSourceId } from '../inputs/inputTypes.js';
 import { createWorkflowDefinitionActions } from './executor/workflowDefinitions.js';
 import { WorkflowActionInputSchemasV1 } from '../workflows/actionsV1.js';
 import { resolveBuiltinWorkflowDefinitionV1 } from '../workflows/builtins/catalog.js';
@@ -394,6 +395,30 @@ describe('createActionExecutor (inventory/discovery)', () => {
     expect(await executor.execute('action.options.resolve', { ...request, consumer: { ...request.consumer,
       surface: { ...surface, accountId: 'other' } } }, { serverId: 'home' })).toMatchObject({ ok: false, errorCode: 'account_target_mismatch' });
     expect(await executor.execute('action.options.resolve', request, { serverId: 'other-home' })).toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });
+  });
+  it('resolves standalone host Machine choices without admitting plugin Resources or ungranted credential discovery', async () => {
+    const reads: unknown[] = [];
+    const executor = createActionExecutor({ ...createDeps(), machinesList: async input => {
+      reads.push(input);
+      return { items: [{ serverId: 'home', machineId: 'chosen', label: 'Build box', presence: 'online' }] };
+    } });
+    const request = { optionsSourceId: inputTypeOptionsSourceId({ hostType: 'machine' }) };
+    const native = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home' };
+    expect(await executor.execute('action.options.resolve', {
+      optionsSourceId: inputTypeOptionsSourceId({ pluginId: 'com.acme.inputs', localId: 'repository' }),
+    }, native)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    const restricted = { ...native, surface: 'api' as const, authority: 'account_automation' as const,
+      externalActionCredential: { accountId: 'account', principalId: 'principal', credentialId: 'credential', grant: {
+        v: 1 as const, actions: { families: [], ids: ['paths.list_recent'] }, targets: null,
+        approve: false, origins: [], models: null, permissionModes: null, create: null,
+      } } };
+    expect(await executor.execute('action.options.resolve', request, restricted))
+      .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+    expect(reads).toEqual([]);
+    expect(await executor.execute('action.options.resolve', request, native)).toMatchObject({ ok: true, result: {
+      options: [{ value: { serverId: 'home', machineId: 'chosen' }, label: 'Build box' }],
+    } });
+    expect(reads).toEqual([{ serverId: 'home', purpose: 'input' }]);
   });
   it('discovers every Home machine including offline choices, available ones first, through the typed widget input', async () => {
     const surface = { serverId: 'home', accountId: 'viewer', owner: { kind: 'home' as const } };

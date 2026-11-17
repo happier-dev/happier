@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import type { ThemeReference } from '@/theme/profiles/themeProfileTypes';
 import { presentActionInputForm } from '@/components/plugins/actions/presentActionInputForm';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -29,7 +28,7 @@ export function useThemePluginShare(execute: ThemeUiActionExecute) {
             onShared: result => Modal.alert(labels.share, [result.project, result.archive, result.digest].join('\n')),
         });
         form.current = next;
-        presentActionInputForm({ form: next, actionId: THEME_ACTION_IDS.sharePlugin,
+        presentActionInputForm({ form: next,
             pickerContext: { serverId: binding.scope.serverId, accountLifetime: binding } });
     }, [binding, execute]);
 }

@@ -22,6 +22,11 @@ import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraf
 import { projectThemeLibraryEntry, projectThemeMiniaturePalette } from '@/theme/profiles/themeProfilePresentation';
 import { getThemePresetSourceReferenceId } from './themeProfilePresetOptions';
 import { Modal } from '@/modal';
+import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { ActionInputFormModal, type ActionInputFormModalProps } from '@/components/plugins/actions/ActionInputFormModal';
+import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
+import { useThemePluginShare } from './useThemePluginShare';
+import { useThemeActionExecution } from './useThemeActionExecution';
 
 const router = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn() }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
@@ -95,6 +100,55 @@ async function seedLibrary(account: SecretSettingsTestHarness) {
 
 /** Approval policy remains the real Account-owned policy, with only Home HTTP/credential storage synthetic. */
 describe('theme profile library Action ingress', () => {
+    it('resolves Share Machine choices in the captured Home without treating its local form fields as Action fields', async () => {
+        const machine = createPlainMachineRowFixture({ id: 'theme-author', accountId: 'account-a' });
+        const account = await createSecretSettingsTestHarness({
+            settings: settingsParse({}),
+            handleRequest: async path => path === '/v1/machines' || path === '/v1/machines?includeRevoked=true'
+                ? Response.json([machine]) : null,
+        });
+        let share: ReturnType<typeof useThemePluginShare> | undefined;
+        function ShareLauncher() {
+            share = useThemePluginShare(useThemeActionExecution());
+            return null;
+        }
+        try {
+            await sync.awaitBootstrapForegroundAcquisition();
+            await sync.refreshMachines({ serverId: account.scope.serverId });
+            await renderSettingsView(React.createElement(ShareLauncher));
+            vi.mocked(Modal.show).mockClear();
+            await act(async () => { share?.([{ kind: 'artifact', id: firstId }]); });
+            const presentation = vi.mocked(Modal.show).mock.calls.at(-1)?.[0];
+            expect(presentation).toBeDefined();
+            const props = presentation!.props as Omit<ActionInputFormModalProps, 'onClose' | 'setChrome'>;
+            const machineField = props.form.getFields().find(field => field.path === 'machine')!;
+            // The existing Action field proves this Home's Machine inventory works before testing the local form.
+            const control = await createFrontDoorActionExecute()('action.options.resolve', {
+                actionId: 'browser.extensions.install', fieldPath: 'machineId', draftInput: {},
+            }, { surface: 'ui', serverId: account.scope.serverId, runtimeAccountId: account.scope.accountId });
+            requireActionSuccess(control, 'action.options.resolve');
+            expect(control.result).toMatchObject({ options: [
+                { value: machine.id },
+            ] });
+            const screen = await renderSettingsView(React.createElement(ActionInputFormModal, {
+                ...props, onClose: vi.fn(), setChrome: vi.fn(),
+            }));
+            const readMachineOptions = () => screen.findAllByType<typeof ActionInputFields>(ActionInputFields)[0]!.props.resolveFieldOptions;
+            await vi.waitFor(() => {
+                const state = readMachineOptions().state?.(machineField);
+                expect(state, JSON.stringify(state)).toMatchObject({ status: 'ready' });
+            });
+            expect(readMachineOptions()(machineField)).toMatchObject([
+                { value: { serverId: account.scope.serverId, machineId: machine.id } },
+            ]);
+            expect(props.form.getInput()).toEqual({});
+            await act(async () => screen.findAllByType<typeof ActionInputFields>(ActionInputFields)[0]!.props.onPatch({
+                machine: { serverId: account.scope.serverId, machineId: machine.id },
+            }));
+            expect(props.form.getInput()).toEqual({ machine: { serverId: account.scope.serverId, machineId: machine.id } });
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+
     it('refuses explicit absent Account scope without borrowing the active library', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
         try {
