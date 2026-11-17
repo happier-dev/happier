@@ -23,15 +23,15 @@ export const DATABASE_STATS_ENABLE_ACTION_ID_V1 = 'happier.database/actions/stat
 export const DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1 = 'happier.database/actions/insights/findings/list' as const;
 export const DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1 = 'happier.database/actions/insights/findings/read' as const;
 export const DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1 = 'happier.database/actions/insights/brief/build' as const;
-export const DATABASE_CAPTURE_STATUS_ACTION_ID_V1 = 'happier.database/actions/capture/status' as const;
-export const DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 = 'happier.database/actions/capture/queries/list' as const;
-export const DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1 = 'happier.database/actions/capture/query/get' as const;
-export const DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1 = 'happier.database/actions/capture/traces/list' as const;
-export const DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1 = 'happier.database/actions/capture/trace/get' as const;
-export const DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1 = 'happier.database/actions/capture/logs/list' as const;
-export const DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1 = 'happier.database/actions/capture/endpoints/list' as const;
-export const DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 = 'happier.database/actions/capture/clear' as const;
-export const DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1 = 'happier.database/actions/capture/configure' as const;
+export const DATABASE_CAPTURE_STATUS_ACTION_ID_V1 = 'happier.database-capture/actions/capture/status' as const;
+export const DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 = 'happier.database-capture/actions/capture/queries/list' as const;
+export const DATABASE_CAPTURE_QUERY_GET_ACTION_ID_V1 = 'happier.database-capture/actions/capture/query/get' as const;
+export const DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1 = 'happier.database-capture/actions/capture/traces/list' as const;
+export const DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1 = 'happier.database-capture/actions/capture/trace/get' as const;
+export const DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1 = 'happier.database-capture/actions/capture/logs/list' as const;
+export const DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1 = 'happier.database-capture/actions/capture/endpoints/list' as const;
+export const DATABASE_CAPTURE_CLEAR_ACTION_ID_V1 = 'happier.database-capture/actions/capture/clear' as const;
+export const DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1 = 'happier.database-capture/actions/capture/configure' as const;
 
 export const DATABASE_ACTION_IDS_V1 = [
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
@@ -71,7 +71,7 @@ export const DATABASE_ACTION_IDS_V1 = [
 export type DatabaseActionIdV1 = typeof DATABASE_ACTION_IDS_V1[number];
 
 /** The manifest-local identity comes from the qualified canonical identity. */
-export function databaseActionLocalIdV1<T extends DatabaseActionIdV1>(id: T): T extends `happier.database/actions/${infer LocalId}` ? LocalId : never {
+export function databaseActionLocalIdV1<T extends DatabaseActionIdV1>(id: T): T extends `${string}/actions/${infer LocalId}` ? LocalId : never {
     // Every admitted value is a member of the qualified literal union above.
-    return id.slice(`${DATABASE_PLUGIN_ID_V1}/actions/`.length) as T extends `happier.database/actions/${infer LocalId}` ? LocalId : never;
+    return id.slice(id.indexOf('/actions/') + '/actions/'.length) as T extends `${string}/actions/${infer LocalId}` ? LocalId : never;
 }
