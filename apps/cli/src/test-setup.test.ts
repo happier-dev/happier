@@ -10,9 +10,25 @@ import { resolveWorkspacePackageBuildLockPath } from '../../../scripts/workspace
 import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 import { readHappyCliRuntimeInputFreshness } from '../../stack/scripts/utils/proc/cli_runtime_inputs.mjs';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { PROCESS_CUSTODY_TARGET_ARCHES, resolveProcessCustodyTargetExecutableRelativePath } from '@happier-dev/cli-common/componentArtifacts';
 
 async function importSetupModule() {
     return await import('./test-setup');
+}
+
+// Cargo is the Session holder's compiler boundary: it emits the executable the
+// real holder builder then stages into the package's native directory.
+async function compileHolderFixture(args: string[], options?: { env?: NodeJS.ProcessEnv }): Promise<void> {
+    const triple = args[args.indexOf('--target') + 1]!;
+    const profile = args.includes('--release') ? 'release' : 'debug';
+    const output = join(options!.env!.CARGO_TARGET_DIR!, triple, profile, `happier-session-holder${triple.includes('-windows-') ? '.exe' : ''}`);
+    await mkdir(dirname(output), { recursive: true });
+    await writeFile(output, 'compiled session holder');
+}
+
+/** Go compiler runs only; the holder's Cargo build has its own fingerprint and runs every preparation. */
+function goBuilds(runCommand: { mock: { calls: unknown[][] } }): number {
+    return runCommand.mock.calls.filter(call => call[0] === 'go').length;
 }
 
 describe('CLI test global setup', () => {
@@ -37,7 +53,8 @@ describe('CLI test global setup', () => {
             `happier-process-custody${process.platform === 'win32' ? '.exe' : ''}`);
         // The Go process is the system boundary; setup, staging and publication
         // coordination remain real and publish the requested executable.
-        const runCommand = vi.fn(async (_command: string, args: string[]) => {
+        const runCommand = vi.fn(async (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+            if (command === 'cargo') return await compileHolderFixture(args, options);
             const output = args[args.indexOf('-o') + 1];
             if (!output) throw new Error('Native custody compilation requires an output path');
             await writeFile(output, 'compiled native custody');
@@ -175,7 +192,7 @@ describe('CLI test global setup', () => {
         await expect(stat(join(projectRoot, 'dist'))).rejects.toMatchObject({ code: 'ENOENT' });
         // A missing publisher in this source fixture must never be imported.
         await expect(stat(join(projectRoot, 'scripts', 'buildSharedDeps.mjs'))).rejects.toMatchObject({ code: 'ENOENT' });
-        expect(runCommand).toHaveBeenCalledTimes(process.platform === 'win32' ? 2 : 1);
+        expect(goBuilds(runCommand)).toBe(1 + PROCESS_CUSTODY_TARGET_ARCHES.length);
     });
 
     it.skipIf(process.platform === 'win32')('reuses prepared native custody on a later source setup', async () => {
@@ -191,7 +208,10 @@ describe('CLI test global setup', () => {
         await setup(options);
 
         await expect(readFile(executablePath, 'utf8')).resolves.toBe('compiled native custody');
-        expect(runCommand).toHaveBeenCalledTimes(1);
+        expect(goBuilds(runCommand)).toBe(1 + PROCESS_CUSTODY_TARGET_ARCHES.length);
+        // The same preparation staged the required Session holder beside the iroh addon.
+        await expect(readFile(join(projectRoot, '..', '..', 'packages', 'iroh-native', 'native',
+            `happier-session-holder.${process.platform}-${process.arch}`), 'utf8')).resolves.toBe('compiled session holder');
     });
 
     it('refreshes prepared native custody from current source at the preparation owner', async () => {
@@ -199,7 +219,8 @@ describe('CLI test global setup', () => {
         const nativeSource = join(projectRoot, 'native', 'processcustody', 'main.go');
         await mkdir(dirname(nativeSource), { recursive: true });
         await writeFile(nativeSource, 'native source one');
-        const runCommand = async (_command: string, args: string[]) => {
+        const runCommand = async (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
+            if (command === 'cargo') return await compileHolderFixture(args, options);
             await writeFile(args[args.indexOf('-o') + 1]!, await readFile(nativeSource));
         };
         const { prepareNativeCustody } = await importSetupModule();
@@ -209,6 +230,78 @@ describe('CLI test global setup', () => {
         await prepareNativeCustody(projectRoot, runCommand);
 
         await expect(readFile(executablePath, 'utf8')).resolves.toBe('native source two');
+    });
+
+    it.skipIf(process.platform === 'win32')('refuses native custody built from older sources in POSIX source collection', async () => {
+        const { projectRoot, runCommand } = await createSetupFixture();
+        const holderSource = join(projectRoot, '..', '..', 'packages', 'iroh-native', 'rust', 'happier-session-holder', 'src', 'main.rs');
+        const holderPath = join(projectRoot, '..', '..', 'packages', 'iroh-native', 'native',
+            `happier-session-holder.${process.platform}-${process.arch}`);
+        await mkdir(dirname(holderSource), { recursive: true });
+        await writeFile(holderSource, 'fn main() {}\n');
+        const { setup, prepareNativeCustody } = await importSetupModule();
+        const options = { buildMode: 'none' as const, dependencies: { resolveProjectRoot: () => projectRoot, runCommand } };
+        await prepareNativeCustody(projectRoot, runCommand);
+        await setup(options);
+
+        await writeFile(holderSource, 'fn main() { serve_ops_socket(); }\n');
+        await expect(setup(options)).rejects.toThrow(holderPath);
+
+        await prepareNativeCustody(projectRoot, runCommand);
+        await setup(options);
+        await writeFile(join(projectRoot, 'native', 'processcustody', 'main.go'), 'package main\n\nfunc init() {}\n');
+        await expect(setup(options)).rejects.toThrow('happier-process-custody');
+    });
+
+    it.skipIf(process.platform === 'win32')('prepares current target custody helpers required by placed Sessions', async () => {
+        const { projectRoot, runCommand } = await createSetupFixture();
+        const { setup, prepareNativeCustody } = await importSetupModule();
+        const options = { buildMode: 'none' as const, dependencies: { resolveProjectRoot: () => projectRoot, runCommand } };
+        await prepareNativeCustody(projectRoot, runCommand);
+        for (const arch of PROCESS_CUSTODY_TARGET_ARCHES) {
+            await expect(readFile(join(projectRoot, resolveProcessCustodyTargetExecutableRelativePath(arch)), 'utf8'))
+                .resolves.toBe('compiled native custody');
+        }
+        const compiled = goBuilds(runCommand);
+        await prepareNativeCustody(projectRoot, runCommand);
+        expect(goBuilds(runCommand)).toBe(compiled);
+        const damaged = join(projectRoot, resolveProcessCustodyTargetExecutableRelativePath(PROCESS_CUSTODY_TARGET_ARCHES[0]));
+        await writeFile(damaged, 'damaged target helper');
+        await expect(setup(options)).rejects.toThrow(damaged);
+        await prepareNativeCustody(projectRoot, runCommand);
+        await expect(readFile(damaged, 'utf8')).resolves.toBe('compiled native custody');
+        await setup(options);
+    });
+
+    it.skipIf(process.platform === 'win32')('keeps the Session target holders (every target architecture) current with the holder sources', async () => {
+        const { projectRoot, runCommand } = await createSetupFixture();
+        const iroh = join(projectRoot, '..', '..', 'packages', 'iroh-native');
+        const holderSource = join(iroh, 'rust', 'happier-session-holder', 'src', 'main.rs');
+        await mkdir(dirname(holderSource), { recursive: true });
+        await writeFile(holderSource, 'fn main() {}\n');
+        const targetBuilds = () => runCommand.mock.calls.filter(call => call[0] === 'cargo' && String(call[1]).includes('-unknown-linux-musl')).length;
+        const { setup, prepareNativeCustody } = await importSetupModule();
+        const options = { buildMode: 'none' as const, dependencies: { resolveProjectRoot: () => projectRoot, runCommand } };
+
+        await prepareNativeCustody(projectRoot, runCommand);
+        expect(targetBuilds()).toBe(2);
+        for (const arch of ['x64', 'arm64']) {
+            await expect(readFile(join(iroh, 'native', 'targets', `happier-session-holder.linux-${arch}-musl`), 'utf8')).resolves.toBe('compiled session holder');
+        }
+        // Current: nothing is rebuilt.
+        await prepareNativeCustody(projectRoot, runCommand);
+        expect(targetBuilds()).toBe(2);
+        await setup(options);
+
+        // A target holder built from older holder sources is stale: collection refuses it, preparation rebuilds it.
+        await writeFile(join(iroh, 'native', 'targets', 'happier-session-holder.linux-arm64-musl'), 'old holder');
+        await expect(setup(options)).rejects.toThrow('happier-session-holder.linux-arm64-musl');
+        await prepareNativeCustody(projectRoot, runCommand);
+        expect(targetBuilds()).toBe(3);
+        await writeFile(holderSource, 'fn main() { serve_session_mcp(); }\n');
+        await prepareNativeCustody(projectRoot, runCommand);
+        expect(targetBuilds()).toBe(5);
+        await setup(options);
     });
 
     it.skipIf(process.platform === 'win32')('requires public native preparation before POSIX source collection', async () => {
@@ -231,7 +324,7 @@ describe('CLI test global setup', () => {
         } });
 
         await expect(readFile(executablePath, 'utf8')).resolves.toBe('compiled native custody');
-        expect(runCommand).toHaveBeenCalledTimes(1);
+        expect(goBuilds(runCommand)).toBe(1 + PROCESS_CUSTODY_TARGET_ARCHES.length);
     });
 
     it('stages native fixtures from the prepared selected-checkout artifact without another compiler', async () => {
@@ -292,7 +385,7 @@ describe('CLI test global setup', () => {
             await expect(readFile(executablePath, 'utf8')).resolves.toBe('compiled native custody');
         }, { lockPath: join(resolve(projectRoot, '..', '..'), '.project/tmp/cli-dist-build.lock') });
 
-        expect(runCommand).toHaveBeenCalledTimes(1);
+        expect(goBuilds(runCommand)).toBe(1 + PROCESS_CUSTODY_TARGET_ARCHES.length);
     });
 
     it('fails full setup when native custody cannot be prepared', async () => {

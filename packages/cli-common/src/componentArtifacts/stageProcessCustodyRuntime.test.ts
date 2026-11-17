@@ -7,7 +7,7 @@ import { isAbsolute, join, relative, sep } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { stageProcessCustodyRuntime } from './stageProcessCustodyRuntime.js';
+import { resolveProcessCustodyTargetExecutableRelativePath, stageProcessCustodyRuntime, stageProcessCustodyTargetRuntimes } from './stageProcessCustodyRuntime.js';
 import { withCliDistBuildLock } from './withCliDistBuildLock.js';
 import { withWorkspaceBundleLock } from '../../workspaceBundleLock.mjs';
 import { prepareProcessCustodyRuntime } from './prepareProcessCustodyRuntime.js';
@@ -140,6 +140,24 @@ describe('stageProcessCustodyRuntime', () => {
       expect.any(Object),
     );
     await expect(readFile(staged.executablePath, 'utf8')).resolves.toBe('workspace-build');
+  });
+
+  it('stages static Linux helpers for both Session-target architectures, whatever the host', async () => {
+    const root = await makeRoot();
+    const payloadDir = join(root, 'payload');
+    const builds: Array<Readonly<{ goos?: string; goarch?: string; cgo?: string; output: string }>> = [];
+    const runCommand = vi.fn(async (_command: string, args: string[], options?: { cwd?: string; env?: NodeJS.ProcessEnv }) => {
+      const output = args[args.indexOf('-o') + 1]!;
+      builds.push({ goos: options?.env?.GOOS, goarch: options?.env?.GOARCH, cgo: options?.env?.CGO_ENABLED, output });
+      await writeFile(output, `${options?.env?.GOARCH}`, 'utf8');
+    });
+    const staged = await stageProcessCustodyTargetRuntimes({ repoRoot: root, payloadDir, runCommand });
+    expect(builds).toEqual([
+      { goos: 'linux', goarch: 'amd64', cgo: '0', output: join(payloadDir, resolveProcessCustodyTargetExecutableRelativePath('x64')) },
+      { goos: 'linux', goarch: 'arm64', cgo: '0', output: join(payloadDir, resolveProcessCustodyTargetExecutableRelativePath('arm64')) },
+    ]);
+    expect(Object.keys(staged)).toEqual(['x64', 'arm64']);
+    await expect(readFile(staged.arm64, 'utf8')).resolves.toBe('arm64');
   });
 
   it('copies an exact prebuilt without invoking a second producer', async () => {

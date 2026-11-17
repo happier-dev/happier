@@ -155,6 +155,8 @@ function prepareSessionTargetToolchain({ packageDir, env }) {
 
 export async function buildSessionTargetHolders({
   packageDir = defaultPackageDir,
+  /** The target architectures to build (default: every one). */
+  arches = Object.keys(SESSION_TARGET_HOLDER_RUST_TARGETS),
   env = process.env,
   cargoTargetDir = resolve(env.CARGO_TARGET_DIR || join(packageDir, "rust", "target")),
   artifactDir = join(packageDir, "native"),
@@ -167,7 +169,9 @@ export async function buildSessionTargetHolders({
   if (!offline) await prepareTargetToolchain({ packageDir, env });
   const pathName = Object.keys(env).find(name => name.toUpperCase() === 'PATH') || 'PATH';
   const artifacts = [];
-  for (const [arch, target] of Object.entries(SESSION_TARGET_HOLDER_RUST_TARGETS)) {
+  for (const arch of arches) {
+    const target = SESSION_TARGET_HOLDER_RUST_TARGETS[arch];
+    if (!target) throw new Error(`No Session target holder for ${arch}`);
     const cargoArgs = ["build", "--locked", "--manifest-path", join(packageDir, "rust", "happier-session-holder", "Cargo.toml"),
       "--bin", "happier-session-holder", "--target", target];
     if (profile === "release") cargoArgs.push("--release");
@@ -201,8 +205,19 @@ export function readSessionHolderInputIdentity({
   musl = false,
 } = {}) {
   const target = resolveRustTarget(platform, arch, { musl });
-  const hash = createHash("sha256").update(JSON.stringify({ target, profile,
-    rustFlags: [env.RUSTFLAGS, resolveSessionHolderRustFlags(target)].filter(Boolean).join(" ") }));
+  return readHolderInputIdentity({ packageDir, target, profile,
+    rustFlags: [env.RUSTFLAGS, resolveSessionHolderRustFlags(target)].filter(Boolean).join(" ") });
+}
+
+/** The same identity for a Session target holder (`buildSessionTargetHolders`: its musl target and flags). */
+export function readSessionTargetHolderInputIdentity({ packageDir = defaultPackageDir, arch, profile = "release" }) {
+  const target = SESSION_TARGET_HOLDER_RUST_TARGETS[arch];
+  if (!target) throw new Error(`No Session target holder for ${arch}`);
+  return readHolderInputIdentity({ packageDir, target, profile, rustFlags: SESSION_TARGET_HOLDER_RUST_FLAGS });
+}
+
+function readHolderInputIdentity({ packageDir, target, profile, rustFlags }) {
+  const hash = createHash("sha256").update(JSON.stringify({ target, profile, rustFlags }));
   const add = relativePath => {
     let bytes = null;
     try { bytes = readFileSync(join(packageDir, relativePath)); }
