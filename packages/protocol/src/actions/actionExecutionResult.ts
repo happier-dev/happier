@@ -10,6 +10,7 @@ import { isPluginError } from '../plugins/errors.js';
 import { ApprovalProfileResolutionV1Schema } from './approvalProfiles.js';
 import { ActionOperationIdentifierV1Schema } from './operations/identifierV1.js';
 import { ActionIdSchema } from './actionIds.js';
+import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 export { readActionErrorCodeV1 } from './actionErrorClassV1.js';
 export { readActionFailurePresentationV1, projectActionFailureForAgentV1, type ActionFailurePresentationV1 } from './actionFailurePresentation.js';
 
@@ -21,6 +22,29 @@ export const ApprovalRequestConflictFailureDetailsV1Schema = lazyZodSchema(() =>
 export type ApprovalRequestConflictFieldV1 = z.infer<typeof ApprovalRequestConflictFailureDetailsV1Schema>['mismatches'][number];
 
 export { ActionRefusalDiagnosticV1Schema, type ActionRefusalReasonV1, createActionRefusalDetailsV1, actionTargetUnavailable } from './actionRefusalDiagnostic.js';
+
+/** Check outcomes annotate the original Action result; they never replace its outcome. */
+export const ActionAutomationNoticeV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ code: z.literal('action_automations_not_checked'), reason: z.string().check(z.minLength(1)) }),
+  z.strictObject({ code: z.literal('action_automation_skipped'), reason: z.string().check(z.minLength(1)),
+    automationId: z.string().check(z.minLength(1)), triggerId: z.string().check(z.minLength(1)),
+    workflowId: z.string().check(z.minLength(1)) }),
+]));
+export type ActionAutomationNoticeV1 = Readonly<z.infer<typeof ActionAutomationNoticeV1Schema>>;
+const ActionAutomationNoticesV1Schema = lazyZodSchema(() => z.array(ActionAutomationNoticeV1Schema));
+
+export function withActionAutomationNoticesV1(result: ActionExecuteResult,
+  notices: readonly ActionAutomationNoticeV1[] | void): ActionExecuteResult {
+  if (!notices?.length) return result;
+  const seen = new Set(result.automationNotices?.map(createCanonicalJsonSigningInput));
+  const added = notices.filter(notice => {
+    const key = createCanonicalJsonSigningInput(notice);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return added.length ? { ...result, automationNotices: [...(result.automationNotices ?? []), ...added] } : result;
+}
 
 /** Keep authored recovery facts; the output owner supplies its domain fallback. */
 export function projectActionFailureRecoveryV1<T extends Record<string, unknown>>(
@@ -167,6 +191,7 @@ export const ActionExecuteFailureSchema = lazyZodSchema(() => z.strictObject({
   details: z.optional(z.unknown()),
   failureCause: z.optional(ActionFailureCauseV1Schema),
   goalControlFailure: z.optional(SessionGoalControlFailureV1Schema),
+  automationNotices: z.optional(ActionAutomationNoticesV1Schema),
 }));
 
 export type ActionExecuteFailure = Readonly<z.infer<typeof ActionExecuteFailureSchema>>;
@@ -276,6 +301,7 @@ export function projectActionFailureCauseV1(
 export type ActionExecuteResult = Readonly<{
   /** Host-only settlement annotation; public failure envelopes remain unchanged. Never Action input. */
   operationCredentialUses?: readonly ActionOperationCredentialUseV1[];
+  automationNotices?: readonly ActionAutomationNoticeV1[];
 }> & (
   | Readonly<{ ok: true; result: unknown }>
   | ActionExecuteFailure);
@@ -286,6 +312,7 @@ export const ActionExecuteResultSchema = lazyZodSchema(() => z.union([
     ok: z.literal(true),
     result: z.unknown(),
     operationCredentialUses: z.optional(z.array(ActionOperationCredentialUseV1Schema)),
+    automationNotices: z.optional(ActionAutomationNoticesV1Schema),
   }),
   z.strictObject({
     ...ActionExecuteFailureSchema.shape,
@@ -432,6 +459,7 @@ export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure 
   const result = value as Readonly<Record<string, unknown>>;
   if (result.ok !== false) return null;
   const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(result.goalControlFailure);
+  const automationNotices = ActionAutomationNoticesV1Schema.safeParse(result.automationNotices);
   const projected = ActionExecuteFailureSchema.safeParse({
     ok: false,
     errorCode: result.errorCode,
@@ -441,6 +469,7 @@ export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure 
     ...(result.details === undefined ? {} : { details: result.details }),
     ...(result.failureCause === undefined ? {} : { failureCause: readActionFailureCauseV1(result.failureCause) }),
     ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}),
+    ...(automationNotices.success ? { automationNotices: automationNotices.data } : {}),
   });
   return projected.success ? projected.data : null;
 }
