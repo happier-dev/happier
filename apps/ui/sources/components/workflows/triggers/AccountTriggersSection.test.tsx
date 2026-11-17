@@ -622,6 +622,22 @@ describe('Account Workflow Library and settings', () => {
     });
 
     it('saves a contextual scheduled service command through the Account trigger owner without starting an Agent', async () => {
+        const { installSessionActionRpcBoundary } = await import('@/dev/testkit/harness/sessionActionRpcBoundary');
+        const { buildDeferredDaemonProjectionSections, DaemonContributionRegistryProjectionDescribeResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+        const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+        const projection = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projectionDigest: 'a'.repeat(64), projection: { v: 2, generation: 1,
+                installedPackagesById: {}, actionsById: {}, agentsById: {}, familiesById: {} },
+        }));
+        // Discovery crosses the daemon wire; native Action input hints stay real.
+        installSessionActionRpcBoundary(request => {
+            if (!request.method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)) {
+                throw new Error(`Unexpected scheduled-command fixture RPC: ${request.method}`);
+            }
+            const read = (request.params as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>).sectionRead;
+            return read ? projection.read(read.digest, read.offset, read.includeDigests) : projection.manifest;
+        });
+        home.answer(serverId, '/v1/auth/ping', { body: { ok: true } });
         const { buildTriggerTarget } = await import('./sessionTriggerForm');
         const target = buildTriggerTarget({ kind: 'doAction', actionId: 'machines.services.exec', input: {
             serverId, machineId: project.machineId,
@@ -632,7 +648,7 @@ describe('Account Workflow Library and settings', () => {
         const screen = await renderAccountScreen(<NewAccountTriggerPopover anchorRef={React.createRef()}
             initialProject={project} initialActionTargets={[target]} onRequestClose={() => undefined} />);
         const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
-        expect(screen.findAllByType(ActionInputFields)).toHaveLength(1);
+        await waitForHomeGovernance(() => expect(screen.findAllByType(ActionInputFields)).toHaveLength(1));
         expect(screen.findByType(ActionInputFields).props.input).toMatchObject({
             machineId: project.machineId, mode: 'exec', argv: ['task', 'daily'],
         });
