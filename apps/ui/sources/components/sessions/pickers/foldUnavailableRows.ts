@@ -6,7 +6,8 @@
  *
  * With `reason`, rows that share one reason ("Broker offline") get their own trailing group headed by that reason,
  * said once; `present` is told the reason is shared so the row can leave it out. A reason only one row has stays
- * on that row, in the counted "Unavailable (n)" group.
+ * on that row, in the counted "Unavailable (n)" group. A reason that is the group's own title says nothing more: those
+ * rows join the counted group and `present` is told their reason is already said.
  */
 export function foldUnavailableRows<
   O,
@@ -23,11 +24,13 @@ export function foldUnavailableRows<
     present?: (option: O, section: S, sharedReason: boolean) => O;
   }>,
 ): S[] {
-  const removed: Array<Readonly<{ option: O; section: S; reason: string | null }>> = [];
+  const removed: Array<Readonly<{ option: O; section: S; reason: string | null; restatesTitle: boolean }>> = [];
   const usable = input.sections.flatMap((section): S[] => {
     const kept = section.options.filter((option) => {
       if (!input.isUnavailable(option)) return true;
-      removed.push({ option, section, reason: input.reason?.(option)?.trim() || null });
+      // A "reason" that is only the group's own word ("Unavailable") adds nothing: the heading says it.
+      const reason = input.reason?.(option)?.trim() || null;
+      removed.push({ option, section, reason: reason === input.title ? null : reason, restatesTitle: reason === input.title });
       return false;
     });
     if (kept.length === section.options.length) return [section];
@@ -40,7 +43,7 @@ export function foldUnavailableRows<
   const rest: O[] = [];
   for (const row of removed) {
     const isShared = row.reason !== null && (counts.get(row.reason) ?? 0) > 1;
-    const presented = input.present ? input.present(row.option, row.section, isShared) : row.option;
+    const presented = input.present ? input.present(row.option, row.section, isShared || row.restatesTitle) : row.option;
     if (isShared) {
       const rows = shared.get(row.reason!) ?? [];
       rows.push(presented);

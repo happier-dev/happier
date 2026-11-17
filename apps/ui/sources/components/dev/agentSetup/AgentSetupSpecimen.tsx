@@ -8,11 +8,14 @@ import { AgentSignInTerminalView } from '@/components/machines/agents/AgentSignI
 import { MachineAgentCard, MachineAgentCardGrid } from '@/components/machines/agents/MachineAgentCard';
 import { MachineAgentMark } from '@/components/machines/agents/MachineAgentMark';
 import { MachineAgentRow } from '@/components/machines/agents/MachineAgentRow';
+import { CapabilityMachineTruth, type CapabilityMachineTruthRow } from '@/components/capabilities/detail/CapabilityMachineTruth';
+import { AgentMachineWho } from '@/components/settings/agents/detail/AgentMachinesSection';
+import type { AgentMachineRow } from '@/components/settings/agents/detail/agentMachinesModel';
 import { MachineAgentsSectionView } from '@/components/machines/agents/MachineAgentsSectionView';
 import { FirstAgentSetupBlock } from '@/components/machines/agents/FirstAgentSetupBlock';
 import { MachineAgentSetupPaneView } from '@/components/machines/agents/MachineAgentSetupPane';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { PageHeaderMarkIcon, PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
@@ -33,7 +36,7 @@ import {
 /**
  * Dev-only specimen of the agent-setup surfaces (lab `agent-setup`) drawn through the real components at
  * fixture props, for side by side pairs a dev Home cannot show (installs and sign-ins are never run on
- * real machines for a screenshot). `?frame=M1|M2|T1|T1b|T1f|T1p|S1|H1|H1p|E2|ST`. Never linked from product surfaces.
+ * real machines for a screenshot). `?frame=M1|M2|MO|T1|T1b|T1f|T1p|S1|H1|H1p|E2|ST|CO`. Never linked from product surfaces.
  */
 export function AgentSetupSpecimen(props: Readonly<{ frame: string | null }>) {
     const frame = props.frame ?? 'M1';
@@ -54,7 +57,7 @@ const mark = (agent: MachineAgent, size = 20) => (
     <MachineAgentMark agentId={agent.agentId} machineId={null} serverId={null} size={size} />
 );
 
-function MachinePage(props: Readonly<{ children: React.ReactNode }>) {
+function MachinePage(props: Readonly<{ children: React.ReactNode; offline?: boolean }>) {
     const { theme } = useUnistyles();
     return (
         <ItemList>
@@ -62,7 +65,7 @@ function MachinePage(props: Readonly<{ children: React.ReactNode }>) {
                 testID="agent-setup-specimen.header"
                 alwaysShowTitle
                 title="devbox"
-                description="Linux · x86_64 · online"
+                description={props.offline ? 'Linux · x86_64 · last seen 12 minutes ago' : 'Linux · x86_64 · online'}
                 leading={(
                     <PageHeaderMarkIcon name="desktop" />
                 )}
@@ -207,6 +210,17 @@ function SpecimenFrame(props: Readonly<{ frame: string }>) {
                     </ItemGroup>
                 </ItemList>
             );
+        case 'MO': {
+            // The machine went offline: the section says so once; each row keeps only what it last reported.
+            const lastKnown = DEVBOX_AGENTS.map((agent) => ({ ...agent, stale: true, staleReason: 'offline' as const }));
+            return (
+                <MachinePage offline>
+                    <Section agents={lastKnown} status="offline" />
+                </MachinePage>
+            );
+        }
+        case 'CO':
+            return <AgentMachinesOfflineFrame />;
         case 'ST':
             return <StatesBoard />;
         case 'H1':
@@ -250,6 +264,38 @@ function SpecimenFrame(props: Readonly<{ frame: string }>) {
                 </MachinePage>
             );
     }
+}
+
+/**
+ * An Agent's "On your machines" with two reachable machines and three offline ones (what
+ * `AgentMachinesSection` hands the shared owner): offline is said once, by the owner's "N offline machines" row.
+ */
+function AgentMachinesOfflineFrame() {
+    const [open, setOpen] = React.useState<string | null>(null);
+    const row = (machineId: string, name: string, os: string, version: string | null, status: AgentMachineRow['status'], online: boolean): CapabilityMachineTruthRow => {
+        const model: AgentMachineRow = {
+            machine: { machineId, serverId: 'dev', name, sentenceName: name, namePending: false, os, online, lastSeenAt: null },
+            agent: null, status, version, actions: [], installedOutsideHappier: false, expandable: false,
+        };
+        return { machineId, machineName: name, os, deviceIcon: 'desktop', offline: !online,
+            who: <AgentMachineWho row={model} testID={`agent-setup-specimen.co:${machineId}:who`} /> };
+    };
+    const rows = [
+        row('mbp', 'MacBook Pro', 'macOS', '2.1.4', { kind: 'ready', tone: 'quiet', via: 'connected', label: 'Claude Max · Work', updateTo: null }, true),
+        row('devbox', 'devbox', 'Linux', '2.1.4', { kind: 'needsSignIn', tone: 'warn' }, true),
+        row('nl2', 'nl2', 'Linux', '2.0.9', { kind: 'offline', tone: 'quiet', lastKnown: 'signedIn' }, false),
+        row('win', 'Windows desktop', 'Windows', null, { kind: 'offline', tone: 'quiet', lastKnown: 'notInstalled' }, false),
+        row('ci', 'ci-runner-03', 'Linux', '2.1.0', { kind: 'offline', tone: 'quiet', lastKnown: 'unknown' }, false),
+    ];
+    return (
+        <ItemList>
+            <PageHeader testID="agent-setup-specimen.co.header" alwaysShowTitle title="Claude Code"
+                description="Anthropic’s coding agent in your terminal." leading={<PageHeaderMarkSlot>{mark(FIXTURE_AGENTS.claude, 24)}</PageHeaderMarkSlot>} />
+            <CapabilityMachineTruth testID="agent-setup-specimen.co" presentation="list" summary=""
+                description="Where Claude Code is installed, and how it signs in on each machine."
+                rows={rows} expandedMachineId={open} onExpandedMachineChange={setOpen} />
+        </ItemList>
+    );
 }
 
 function StatesBoard() {

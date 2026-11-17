@@ -30,6 +30,26 @@ describe('foldUnavailableRows', () => {
     expect(folded[1]!.options).toEqual([{ id: 'a', reason: 'Broker offline', shared: true }, { id: 'b', reason: 'Broker offline', shared: true }]);
     expect(folded[2]!.options).toEqual([{ id: 'c', reason: 'Source removed', shared: false }]);
   });
+  // A row whose only reason is the group's own word ("Unavailable") has nothing to add: the heading says it once,
+  // and such rows never form a second group under the same title.
+  it('keeps a reason that restates the group title off its rows and out of a second same-titled group', () => {
+    type ReasonRow = Readonly<{ id: string; reason?: string; shared?: boolean }>;
+    const folded = foldUnavailableRows<ReasonRow, Readonly<{ id: string; title?: string; options: readonly ReasonRow[] }>>({
+      sections: [{ id: 'team', options: [
+        { id: 'a', reason: 'Unavailable' }, { id: 'ok' }, { id: 'b', reason: 'Unavailable' }, { id: 'c', reason: 'Source removed' },
+      ] }],
+      isUnavailable: row => row.reason !== undefined,
+      reason: row => row.reason,
+      group: (options, title) => ({ id: `unavailable:${title}`, title, options }),
+      title: 'Unavailable',
+      present: (row, _section, shared) => ({ ...row, shared }),
+    });
+    expect(folded.map(section => section.title ?? section.id)).toEqual(['team', 'Unavailable (3)']);
+    expect(folded[1]!.options).toEqual([
+      { id: 'a', reason: 'Unavailable', shared: true }, { id: 'b', reason: 'Unavailable', shared: true },
+      { id: 'c', reason: 'Source removed', shared: false },
+    ]);
+  });
   it('preserves a selected unavailable search match across sections after a cold inventory arrives', () => {
     const selected = { id: 'selected', label: 'Shared model', disabled: true } satisfies SelectionListOption;
     const fold = (sections: readonly SelectionListStaticSection[]) => foldUnavailableRows<SelectionListOption, SelectionListStaticSection>({

@@ -229,7 +229,7 @@ export function AgentMachinesSection(
 }
 
 /** Version, then the one status line; an install made outside Happier says so instead of offering Remove. */
-function AgentMachineWho(
+export function AgentMachineWho(
   props: Readonly<{ row: AgentMachineRow; testID: string }>,
 ) {
   const { row } = props;

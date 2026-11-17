@@ -184,14 +184,16 @@ function OfflineMachines(props: Readonly<{
     onExpandedMachineChange?: (machineId: string | null) => void;
 }>): React.ReactElement | null {
     const holdsOpenMachine = props.rows.some((row) => row.machineId === props.expandedMachineId);
-    const [open, setOpen] = React.useState(props.alone || holdsOpenMachine);
+    // Until the person opens or closes it, the group follows the current rows: a first read with no reachable machine
+    // opens it, and it must not stay open once reachable ones arrive (213 offline rows held a live page open).
+    const [chosen, setChosen] = React.useState<boolean | null>(null);
     if (props.rows.length === 0) return null;
-    const shown = open || holdsOpenMachine;
+    const shown = holdsOpenMachine || (chosen ?? props.alone);
     return (
         <ExpandableItem
             testID={`${props.testID}:offline:disclosure`}
             expanded={shown}
-            onExpandedChange={setOpen}
+            onExpandedChange={setChosen}
             showDivider={false}
             header={({ headerProps }) => (
                 <Item

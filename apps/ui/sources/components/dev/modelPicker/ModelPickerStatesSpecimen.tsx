@@ -5,6 +5,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SessionModelPicker, type SessionModelPickerProps } from '@/components/sessions/modelPicker/SessionModelPicker';
 import { SessionModelSourceUsage } from '@/components/sessions/modelPicker/SessionModelSourceUsage';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 
 const noop = () => {};
 const MODELS = [
@@ -37,7 +40,71 @@ const SOURCE_USAGE = {
     },
 };
 
-/** The model pane's states: `?frame=normal|loading|refreshing|empty|pending|usage`. */
+/** A Provider source's last-known models (its refresh may have failed since; the rows stay). */
+const providerSource = (connectionId: string, providerName: string, connectionName: string, models: ReadonlyArray<[string, string]>) => ({
+    connectionId: ProviderConnectionIdSchema.parse(connectionId), providerName, connectionName,
+    connectionRole: 'named' as const, connectionDisplayNameMode: 'custom' as const, connectionRevision: 1,
+    authorization: { authorized: true as const }, manualModelPolicy: 'allowed' as const, supportsFreeformModelIds: true,
+    suppressedConnectedServiceIds: [], modelLoadAction: 'descriptor_absent' as const, modelLoadPreflightPolicy: null,
+    rows: models.map(([modelId, name]) => ({
+        ref: { agentTargetKey: BASE.agentTargetKey, providerConnectionId: ProviderConnectionIdSchema.parse(connectionId), modelId },
+        descriptor: { id: modelId, name }, sources: { manual: false, static: true, probe: false },
+        confidence: 'verified_static' as const,
+        compatibility: { result: { status: 'verified' as const, selectedProtocol: 'openai-responses' as const,
+            evidence: { sourceUrls: ['https://openrouter.ai/docs'], verifiedAt: '2026-10-12' } },
+            compatibilityFingerprint: `compatibility:v1:${connectionId}`, confirmed: true },
+        endpointHealth: 'available' as const, catalog: { stale: false }, loadState: 'unknown' as const, visibility: 'visible' as const,
+    })),
+});
+const PROVIDER_SOURCES = [
+    providerSource('openrouter', 'OpenRouter', 'Work', [['anthropic/claude-sonnet-5', 'Sonnet 5'], ['deepseek/deepseek-v4-pro', 'DeepSeek V4 Pro']]),
+    providerSource('lm-studio', 'LM Studio', 'Studio', [['qwen3-coder-30b', 'Qwen3 Coder 30B']]),
+    providerSource('azure-foundry', 'Azure AI Foundry', 'Contoso', [['gpt-5.5', 'GPT-5.5']]),
+] as unknown as SessionModelPickerProps['providerGroups'];
+/** Each source's refresh failed with its own typed cause; the shared error presenter titles each one. */
+const failure = (connectionId: string, code: Parameters<typeof createProviderErrorV1>[0]) => ({
+    connectionId: ProviderConnectionIdSchema.parse(connectionId), error: createProviderErrorV1(code, { connectionId }),
+});
+const SOURCE_FAILURES = [
+    failure('openrouter', 'provider_probe_response_invalid'),
+    failure('lm-studio', 'provider_materialization_failed'),
+    failure('azure-foundry', 'provider_agent_runtime_unsupported'),
+];
+
+const CODEX = BASE.agentTargetKey;
+const teamModel = (resourceId: string, modelId: string, name: string) => ({
+    selection: { kind: 'team_credential_provider_model', teamId: 'acme', resourceId, expectedResourceRevision: 1,
+        deliveryMode: 'brokered', agentTargetKey: CODEX, modelId },
+    descriptor: { id: modelId, name }, sourceRevision: 'source-1', availability: 'available',
+    application: { agentTargetKey: CODEX, implementationIdentity: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' },
+        endpointTemplateId: 'responses', protocol: 'openai-responses' },
+});
+const teamResource = (id: string, readiness: { kind: string }, models: ReturnType<typeof teamModel>[], named = true) =>
+    TeamCredentialResourceCatalogEntryV1Schema.parse({
+        id, teamId: 'acme', resourceRevision: 1, readiness, recoveryAction: readiness.kind === 'available' ? null : 'source_owner_action',
+        displayName: named ? { content: { t: 'plain', v: id }, recipientEnvelope: null, legacyPlaintext: true } : null,
+        mayBroker: true, mayReceiveDirect: false, directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed',
+        providerModels: models,
+        sourcePresentation: { kind: 'connected_service', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' } },
+    });
+/** A Team's shared credentials as a member sees them: one healthy, one behind an offline broker, one unreadable. */
+const TEAM_RESOURCES = [
+    teamResource('team-codex', { kind: 'available' }, [
+        teamModel('team-codex', 'gpt-5.5-codex', 'GPT-5.5 Codex'), teamModel('team-codex', 'gpt-5.5-mini', 'GPT-5.5 mini')]),
+    teamResource('design-chatgpt', { kind: 'broker_unavailable' }, [
+        teamModel('design-chatgpt', 'gpt-5.5', 'GPT-5.5'), teamModel('design-chatgpt', 'gpt-5.5-codex', 'GPT-5.5 Codex'),
+        teamModel('design-chatgpt', 'o5-pro', 'o5 pro')]),
+    teamResource('old-pool', { kind: 'resource_corrupt' }, [], false),
+];
+const TEAM_PROPS = {
+    declarationContext: { kind: 'account' as const },
+    teamCredentialResources: TEAM_RESOURCES,
+    teamCredentialDisplayNames: { 'team-codex': 'Team Codex', 'design-chatgpt': 'Design ChatGPT', 'old-pool': null },
+    teamNameById: { acme: 'Acme' },
+    homeNameByTeamId: { acme: 'Acme Cloud' },
+};
+
+/** The model pane's states: `?frame=normal|loading|refreshing|empty|pending|usage|failures|team`. */
 function frameProps(frame: string): SessionModelPickerProps {
     const none = { ...BASE, nativeModels: [], allowAutomatic: false, canEnterCustomNativeValue: false };
     switch (frame) {
@@ -49,6 +116,11 @@ function frameProps(frame: string): SessionModelPickerProps {
             probe: { phase: 'loading' },
             projectionApproval: { artifactId: 'dev-approval', href: buildApprovalHref('dev-approval', 'dev-home') },
         };
+        case 'failures': return { ...BASE, nativeModels: MODELS, providerGroups: PROVIDER_SOURCES,
+            providerProjectionAuthoritative: true, projectionFailures: SOURCE_FAILURES, retryProjection: noop,
+            selected: { agentTargetKey: BASE.agentTargetKey, providerConnectionId: ProviderConnectionIdSchema.parse('openrouter'), modelId: 'anthropic/claude-sonnet-5' },
+            probe: { phase: 'idle', onRefresh: noop } };
+        case 'team': return { ...BASE, ...TEAM_PROPS, nativeModels: MODELS, probe: { phase: 'idle', onRefresh: noop } };
         default: return { ...BASE, nativeModels: MODELS, probe: { phase: 'idle', onRefresh: noop } };
     }
 }
@@ -71,5 +143,5 @@ export function ModelPickerStatesSpecimen(props: Readonly<{ frame: string | null
 
 const styles = StyleSheet.create((theme) => ({
     page: { flex: 1, backgroundColor: theme.colors.surface.base, alignItems: 'center', padding: theme.space.s16 },
-    pane: { width: '100%', maxWidth: 640, height: 360 },
+    pane: { width: '100%', maxWidth: 640, height: 560 },
 }));

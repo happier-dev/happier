@@ -83,7 +83,7 @@ describe('Team catalog private labels in the model picker', () => {
             await waitForHomeGovernance(() => {
                 expect(screen.getTextContent()).toContain(`${t('common.unavailable')} (2)`);
             });
-            await screen.pressByTestIdAsync(`selection-list-section-disclosure:unavailable:${t('common.unavailable')}`);
+            await screen.pressByTestIdAsync('selection-list-section-disclosure:unavailable');
         }
         await waitForHomeGovernance(() => {
             const rendered = screen.getTextContent();

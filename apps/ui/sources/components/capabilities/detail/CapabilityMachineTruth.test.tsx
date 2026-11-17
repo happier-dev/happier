@@ -117,6 +117,22 @@ describe('CapabilityMachineTruth', () => {
         expect(opened.findAllByTestId('mt:machine:win').length).toBeGreaterThan(0);
     });
 
+    // A page's machines arrive offline until their presence settles: the group must not stay open from that first read.
+    it('closes the offline machines once reachable ones arrive after a first read with none', async () => {
+        let setRows: (rows: typeof ROWS) => void = () => {};
+        function Page() {
+            const [rows, update] = React.useState<typeof ROWS>(ROWS.map((row) => ({ ...row, offline: true })));
+            setRows = update;
+            return <CapabilityMachineTruth testID="mt" presentation="list" rows={rows} summary="" />;
+        }
+        const screen = await renderScreen(<Page />);
+        expect(screen.findAllByTestId('mt:machine:mbp').length).toBeGreaterThan(0);
+        await React.act(async () => { setRows(ROWS); });
+        expect(screen.findAllByTestId('mt:machine:mbp').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('mt:offline').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('mt:machine:win')).toHaveLength(0);
+    });
+
     it('keeps the open machine in view when it would fold behind "more machines"', async () => {
         const rows = [
             ...ROWS,
