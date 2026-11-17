@@ -659,6 +659,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         return params.session.sessionId;
       },
       enqueueSessionTurnMutation,
+      getMetadataSnapshot: () => params.session.getMetadataSnapshot(),
       readQuestionWaitTurnId: () => params.session.readQuestionWaitTurnId?.() ?? null,
     },
     agentId: params.policyAgentId,

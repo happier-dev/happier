@@ -7,6 +7,8 @@ import { db, initDbPostgres } from "@/storage/db";
 import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 import { createAutomation, updateAutomation, listAutomationDefinitionsPage } from "./automationCrudService";
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
+import { projectAutomationSessionLifecycleStructuralTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import { encodeAutomationSessionLifecycleConfiguration } from './automationSessionLifecycleConfigurationCodec';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { AutomationDefinitionListResponseSchema } from "@happier-dev/protocol/automations/automationApiV3";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
@@ -190,6 +192,48 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
             await traced.$disconnect();
             await db.automation.deleteMany({ where: { id: { in: automationIds } } });
             await db.artifact.deleteMany({ where: { id: { in: workflows } } });
+        }
+    });
+
+    it('includes only this Account lifecycle habits as Session context alongside an exact selection', async () => {
+        const subject = { kind: 'session' as const, serverId: randomUUID(), sessionId: randomUUID() };
+        const ids = [randomUUID(), randomUUID(), randomUUID()];
+        const triggerIds = [randomUUID(), randomUUID(), randomUUID()];
+        const definition = { kind: 'sessionLifecycle' as const, events: ['parentTurnCompleted'] as ['parentTurnCompleted'],
+            policy: { kind: 'everyMatch' as const } };
+        for (const [index, id] of ids.entries()) {
+            const input = index === 1 ? { ...definition, subject } : definition;
+            await db.automation.create({ data: { id, accountId: index === 2 ? otherAccountId : accountId,
+                name: 'Account habit', templateCiphertext: '{}', triggers: { create: {
+                    id: triggerIds[index]!, kind: 'sessionLifecycle', revision: 1,
+                    ...encodeAutomationSessionLifecycleConfiguration(projectAutomationSessionLifecycleStructuralTrigger(input)),
+                    definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+                        binding: { v: 1, automationId: id, triggerId: triggerIds[index]!, triggerRevision: 1, triggerKind: 'sessionLifecycle' },
+                        definition: input })),
+                } } } });
+        }
+        const traced = await createDbMaintenanceClient('postgres', process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL!,
+            { log: [{ emit: 'event', level: 'query' }] });
+        const queries: Array<{ sql: string; bindings: unknown[] }> = [];
+        onDbClientQuery(traced, event => { queries.push({ sql: event.query, bindings: JSON.parse(event.params) as unknown[] }); });
+        const originalTransaction = db.$transaction;
+        db.$transaction = traced.$transaction.bind(traced);
+        try {
+            const page = await listAutomationDefinitionsPage({ accountId, subject });
+            expect(page.attached?.map(row => ({ triggerId: row.triggerId, relation: row.relation })))
+                .toEqual(expect.arrayContaining([
+                    { triggerId: triggerIds[0], relation: 'context' },
+                    { triggerId: triggerIds[1], relation: 'direct' },
+                ]));
+            expect(page.attached).toHaveLength(2);
+            for (const query of queries.filter(query => query.sql.includes('"AutomationTrigger"') && query.sql.trimStart().startsWith('SELECT'))) {
+                const plan = await traced.$queryRawUnsafe<unknown[]>(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query.sql}`, ...query.bindings);
+                console.info('account-habit-selection-plan', JSON.stringify({ sql: query.sql, bindings: query.bindings, plan }));
+            }
+        } finally {
+            db.$transaction = originalTransaction;
+            await traced.$disconnect();
+            await db.automation.deleteMany({ where: { id: { in: ids } } });
         }
     });
 

@@ -9,6 +9,7 @@ import type { TriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/t
 import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
 import type { AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
 
 import { readSessionLifecycleKind } from './formatTriggerSummary';
 import { buildSimpleScheduleCron, parseSimpleSchedule, resolveOnceSchedule, type OnceScheduleDraft, type SimpleSchedule } from './triggerSchedule';
@@ -38,6 +39,7 @@ export type SessionLifecycleWhen = {
     [Kind in keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1]: Readonly<{
         kind: Kind;
         subject?: AutomationSessionLifecycleSubjectV1;
+        filter?: AutomationEventFilterV1;
         /** Keep a saved subset until the person chooses a different Event group. */
         events?: readonly AutomationSessionLifecycleEvent[];
         nextTimeOnly?: true;
@@ -211,6 +213,7 @@ export function buildTriggerDefinition(params: Readonly<{
         kind: 'sessionLifecycle',
         enabled,
         ...(when.subject === undefined ? {} : { subject: when.subject }),
+        ...(when.filter === undefined ? {} : { filter: when.filter }),
         events: [...(when.events ?? LIFECYCLE_EVENTS[when.kind])],
         policy: when.kind === 'turnEnds' && when.sourceTurnId !== undefined
             ? { kind: 'currentTurn', sourceTurnId: when.sourceTurnId }
@@ -235,6 +238,7 @@ export function buildInitialTriggerDefinition(params: Readonly<{
     if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined) return null;
     return SessionInitialTriggerDefinitionV1Schema.parse({
         kind: 'sessionLifecycle', enabled, events: [...(when.events ?? LIFECYCLE_EVENTS[when.kind])],
+        ...(when.filter === undefined ? {} : { filter: when.filter }),
         policy: when.policy ?? (when.nextTimeOnly ? { kind: 'firstMatch' } : { kind: 'everyMatch' }),
     });
 }
@@ -429,7 +433,10 @@ export function readTriggerWhen(
     }
     if (trigger.kind === 'sessionLifecycle') {
         const kind = readSessionLifecycleKind(trigger.events);
-        const source = 'subject' in trigger && trigger.subject !== undefined ? { subject: trigger.subject } : {};
+        const source = {
+            ...('subject' in trigger && trigger.subject !== undefined ? { subject: trigger.subject } : {}),
+            ...(trigger.filter === undefined ? {} : { filter: trigger.filter }),
+        };
         const retained = matchesSessionLifecycleEvents(trigger.events, kind) ? source : { ...source, events: trigger.events };
         // A trigger bound to one turn stays bound when edited.
         return kind === 'turnEnds' && trigger.policy.kind === 'currentTurn'

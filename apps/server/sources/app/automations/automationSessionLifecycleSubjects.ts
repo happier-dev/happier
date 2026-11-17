@@ -73,6 +73,7 @@ const SESSION_LIFECYCLE_CANDIDATE_SELECT = {
     enabled: true,
     revision: true,
     sessionLifecycleEventsJson: true,
+    sessionLifecycleFilterJson: true,
     sessionLifecyclePolicyKind: true,
     sessionLifecycleMatchCount: true,
     remainingOccurrences: true,

@@ -71,6 +71,7 @@ function readSavedTriggerDefinition(saved: WorkflowTriggerSetV1['triggers'][numb
         }
         case 'schedule': return { kind: saved.kind, schedule: saved.schedule, enabled: saved.enabled };
         case 'sessionLifecycle': return { kind: saved.kind, ...(saved.subject === undefined ? {} : { subject: saved.subject }), events: saved.events,
+            ...(saved.filter === undefined ? {} : { filter: saved.filter }),
             policy: saved.policy, enabled: saved.enabled };
         case 'runLifecycle': return { kind: saved.kind, source: saved.source, condition: saved.condition, enabled: saved.enabled };
         case 'prComment':

@@ -28,6 +28,7 @@ import { extractCanonicalDiffFiles, readTurnChangeToolMetadata } from '@happier-
 import { readTurnChangesFromDiffTool } from '../../../../../ui/sources/components/sessions/files/turnChanges/readTurnChangesFromDiffTool';
 import { createDeferred } from '@/testkit/async/deferred';
 import { captureScmComparison, deleteCapturedScmComparison, prepareCapturedScmComparisonInvestigation, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { runWithScmAccountScope } from '@/scm/accountScope';
 
 /**
  * Only the SCM/process boundary is controlled: the real Git checkpoint adapter still runs, but the
@@ -143,17 +144,22 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         }
     });
 
-    it.each(['none', 'shell'] as const)('reports peer-only edits only when the turn ran tools (%s)', async tools => {
-        const repoRoot = await createGitRepo();
+    it.each([
+        { tools: 'none', checkpoint: 'git' }, { tools: 'shell', checkpoint: 'git' },
+        { tools: 'none', checkpoint: 'not_repo' }, { tools: 'shell', checkpoint: 'not_repo' },
+    ] as const)('reports peer-only edits only when the turn ran tools ($tools/$checkpoint)', async ({ tools, checkpoint }) => {
+        const repoRoot = checkpoint === 'git' ? await createGitRepo() : await mkdtemp(join(tmpdir(), 'happier-opaque-tools-'));
         const { session, messages } = createMessageCapturingSession(`peer-edits-${tools}`);
         const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: repoRoot, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
         const bridge = createKeyedStreamedTranscriptBridge({ provider: 'codex', createSessionForStream: () => session });
         const project = createRuntimeTranscriptProjector();
         const tracker = new NormalizedToolTurnChangeTracker({ provider: 'codex' });
+        const lifecycleFacts: Array<{ turnId: string; changedFiles: boolean | null }> = [];
         let sequence = 0;
         const projectEvent = (event: Record<string, unknown>) => project({
             session, provider: 'codex', runtimeMessageDeltaBridge: bridge, normalizedToolTurnChangeTracker: tracker,
             toolNormalizationSource: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, publishTurnChangeSet: lifecycle.publishTurnChangeSet,
+            onTurnChangeFacts: facts => lifecycleFacts.push(facts),
             event: AgentSessionRuntimeEventSchema.parse({ sessionId: session.sessionId, turnId: 'turn', emittedAtMs: ++sequence, sequence, ...event }),
         });
         try {
@@ -168,8 +174,9 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             await projectEvent({ kind: 'turn-complete', agentTurnId: 'native-turn' });
             await lifecycle.onTurnFinal?.({ messageId: 'message', turnId: 'turn', status: 'completed', sequence });
             const cards = messages.filter(message => message.type === 'tool-call' && message.name === 'Diff');
-            expect(cards).toHaveLength(tools === 'none' ? 0 : 1);
-            if (tools === 'shell') {
+            expect(cards).toHaveLength(tools === 'shell' && checkpoint === 'git' ? 1 : 0);
+            expect(lifecycleFacts).toEqual([{ turnId: 'turn', changedFiles: tools === 'none' ? false : checkpoint === 'git' ? true : null }]);
+            if (tools === 'shell' && checkpoint === 'git') {
                 const card = cards[0];
                 if (!card || card.type !== 'tool-call') throw new Error('Missing shell checkpoint recap');
                 expect(extractCanonicalDiffFiles(card.input, readTurnChangeToolMetadata(card.input)!))
@@ -278,7 +285,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             bridge.clear(); await lifecycle.onSessionEnd?.(); await rm(repoRoot, { recursive: true, force: true });
         }
     });
-    it('recovers one interrupted turn card after reconnect without admitting later uncaptured bytes', async () => {
+    it('recovers one interrupted turn card after reconnect without admitting later uncaptured bytes', async () => runWithScmAccountScope('interrupted-history-account', async () => {
         const repoRoot = await createGitRepo();
         const { session, messages } = createMessageCapturingSession('interrupted-history');
         const scopeId = `${session.sessionId}:${repoRoot}`;
@@ -344,7 +351,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
             await Promise.all(captures.map(captured => deleteCapturedScmComparison({ cwd: repoRoot, sessionId: session.sessionId, comparisonId: captured.comparison.id })));
             bridge.clear(); await lifecycle.onSessionEnd?.(); await rm(repoRoot, { recursive: true, force: true });
         }
-    });
+    }));
 
     it('does not invent a session initial baseline when a resumed session has no retained local evidence', async () => {
         const repoRoot = await createGitRepo();

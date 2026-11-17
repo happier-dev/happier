@@ -7,6 +7,7 @@ import {
 import { SessionTurnMutationV1Schema, type SessionTurnMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 
 import { createSessionTurnLifecycle } from './lifecycle';
+import { projectAutomationSessionLifecycleLaunchProfileId } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { logger } from '@/ui/logger';
 
@@ -23,6 +24,28 @@ function canonicalRuntimeEvent(input: Readonly<Record<string, unknown>>): AgentS
 }
 
 describe('createSessionTurnLifecycle', () => {
+    it.each([
+        { kind: 'turn-complete', action: 'complete' },
+        { kind: 'turn-failed', action: 'fail', diagnostic: { code: 'provider_error', severity: 'error' } },
+        { kind: 'turn-cancelled', action: 'cancel', cause: 'user' },
+    ])('stamps the selected launch profile on begin and $kind without exposing its id', async ({ action, ...terminal }) => {
+        const mutations: SessionTurnMutationV1[] = [];
+        const lifecycle = createSessionTurnLifecycle({ session: {
+            sessionId: 'profile-session', getMetadataSnapshot: () => ({ profileId: 'selected-profile' }),
+            enqueueSessionTurnMutation: mutation => { mutations.push(SessionTurnMutationV1Schema.parse(mutation)); },
+        } });
+        try {
+            lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ kind: 'turn-start', sessionId: 'profile-session', turnId: 'profile-turn', emittedAtMs: 1 }));
+            lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ ...terminal, sessionId: 'profile-session', turnId: 'profile-turn', emittedAtMs: 2 }));
+            await lifecycle.drainAcceptedLifecycle();
+            expect(mutations.filter(mutation => mutation.action === 'begin' || mutation.action === action)).toEqual([
+                expect.objectContaining({ action: 'begin', automationLifecycleFacts: { launchProfileId: projectAutomationSessionLifecycleLaunchProfileId('selected-profile') } }),
+                expect.objectContaining({ action, automationLifecycleFacts: { launchProfileId: projectAutomationSessionLifecycleLaunchProfileId('selected-profile') } }),
+            ]);
+            expect(JSON.stringify(mutations)).not.toContain('selected-profile');
+        } finally { lifecycle.dispose(); }
+    });
+
     it('leaves a quiet native turn active without scheduling silence diagnostics', async () => {
         vi.useFakeTimers();
         const mutations: SessionTurnMutationV1[] = [];

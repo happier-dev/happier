@@ -3379,6 +3379,8 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                     sourceSessionId: params.turnMutation.sessionId,
                     sourceTurnId: targetTurnId,
                     occurredAt: params.turnMutation.observedAt,
+                    ...('automationLifecycleFacts' in params.turnMutation
+                        ? { facts: params.turnMutation.automationLifecycleFacts } : {}),
                 },
             });
             scheduleSessionLifecycleAdmissionDiagnostics({

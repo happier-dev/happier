@@ -3,6 +3,7 @@ import { AutomationSessionLifecycleStructuralTriggerSchema, type AutomationSessi
 
 type SessionLifecycleConfigurationRow = Readonly<{
     sessionLifecycleEventsJson: string | null;
+    sessionLifecycleFilterJson: string | null;
     sessionLifecyclePolicyKind: 'currentTurn' | 'firstMatch' | 'nextMatches' | 'everyMatch' | null;
     sessionLifecycleMatchCount: number | null;
     remainingOccurrences: number | null;
@@ -32,6 +33,7 @@ export function decodeAutomationSessionLifecycleConfiguration(
         ...(policy.kind !== 'currentTurn' || row.sourceSessionId === null ? {} : { sourceSessionId: row.sourceSessionId }),
         events: canonicalizeAutomationSessionLifecycleEvents(events),
         policy,
+        ...(row.sessionLifecycleFilterJson === null ? {} : { filter: JSON.parse(row.sessionLifecycleFilterJson) }),
     });
     if (definition.policy.kind === 'currentTurn'
         && (definition.subjectKind !== 'session' || !definition.subjectKey || !definition.sourceSessionId)) {
@@ -52,6 +54,7 @@ export function encodeAutomationSessionLifecycleConfiguration(
     const definition = AutomationSessionLifecycleStructuralTriggerSchema.parse(definitionInput);
     return {
         sessionLifecycleEventsJson: JSON.stringify(canonicalizeAutomationSessionLifecycleEvents(definition.events)),
+        sessionLifecycleFilterJson: definition.filter === undefined ? null : JSON.stringify(definition.filter),
         sessionLifecyclePolicyKind: definition.policy.kind,
         sessionLifecycleMatchCount: definition.policy.kind === 'nextMatches' ? definition.policy.count : null,
         remainingOccurrences: initialAutomationSessionLifecycleRemainingOccurrences(definition.policy),

@@ -141,6 +141,7 @@ function txFixture(params: Readonly<{
                     eventPluginId: null,
                     eventLocalId: null,
                     sourceSelectorId: null,
+                    sessionLifecycleFilterJson: null,
                     sessionLifecycleEventsJson: null,
                     sessionLifecyclePolicyKind: null,
                     sessionLifecycleMatchCount: null,

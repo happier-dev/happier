@@ -66,7 +66,7 @@ import { resolveWorkflowRunStartInputsV1 } from '../../workflows/workflowStartPr
 import type { ActionExecutorDeps, WorkflowActionExecuteArgs } from './types.js';
 import { admitActionAgentStartV1, isActionCallerOwnSessionV1, resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-import { canonicalizeAutomationSessionLifecycleEvents, projectAutomationSessionLifecycleStructuralConfiguration } from '../../automations/automationSessionLifecycle.js';
+import { canonicalizeAutomationSessionLifecycleStructuralConfiguration, projectAutomationSessionLifecycleStructuralConfiguration } from '../../automations/automationSessionLifecycle.js';
 import type { AutomationRunLifecycleSource } from '../../automations/automationRunLifecycle.js';
 import { ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema } from '../../machines/managed/actionsV1.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
@@ -1261,6 +1261,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         && onlyBlock?.kind === 'action' && onlyBlock.actionId === 'notifications.notify_me') {
         const source = input.trigger;
         const intended = createCanonicalJsonSigningInput(context);
+        const intendedLifecycle = createCanonicalJsonSigningInput(projectAutomationSessionLifecycleStructuralConfiguration(source));
         for (const summary of await scopedRows(deps.automations, scope.sessionId)) {
           if (!summary.enabled || summary.workflowDefinitionId != null) continue;
           const candidate = await read(summary.id, scope.sessionId);
@@ -1269,10 +1270,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           if (createCanonicalJsonSigningInput(current.context) !== intended) continue;
           const registered = candidate.triggers.find((item) => item.kind === 'sessionLifecycle' && item.enabled
             && item.remainingOccurrences !== 0 && item.status.state === 'waiting'
-            && item.subjectKey === projectAutomationSessionLifecycleStructuralConfiguration(source).subjectKey
-            && createCanonicalJsonSigningInput(item.policy) === createCanonicalJsonSigningInput(source.policy)
-            && createCanonicalJsonSigningInput(canonicalizeAutomationSessionLifecycleEvents(item.events))
-              === createCanonicalJsonSigningInput(canonicalizeAutomationSessionLifecycleEvents(source.events)));
+            && createCanonicalJsonSigningInput(canonicalizeAutomationSessionLifecycleStructuralConfiguration(item)) === intendedLifecycle);
           if (registered) {
             // Session placement is authorized by resolveSession, not by a stale
             // assignment retained with the notification. Move the same intent

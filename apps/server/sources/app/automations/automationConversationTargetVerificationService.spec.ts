@@ -100,6 +100,7 @@ const scheduleAutomation: AutomationListItem = {
         watcherPluginId: null,
         watcherMaterializationId: null,
         definitionEnvelope: null,
+        sessionLifecycleFilterJson: null,
         sessionLifecycleEventsJson: null,
         sessionLifecyclePolicyKind: null,
         sessionLifecycleMatchCount: null,

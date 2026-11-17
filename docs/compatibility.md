@@ -125,6 +125,25 @@ Protocol, CLI and UI readers reload together; older strict readers reject the
 new union arm. No migration, store or compatibility adapter is introduced.
 
 
+## Session lifecycle habit filters (unreleased 0.3)
+
+Lifecycle triggers optionally retain the composable Event `filter` in their
+private definition. Their matching header projects launch-profile selectors to
+domain-separated digests; raw profile identifiers remain private. Native turn
+mutations publish the matching profile stamp and terminal changed-files fact
+once. The existing checkpoint publisher derives file changes from its combined
+provider and SCM evidence, without another diff per habit. Unavailable file
+evidence is unknown and never matches `changedFiles = false`. Events without a
+published fact cannot satisfy a filter requiring that fact.
+
+An omitted lifecycle subject is one Account habit. Session attachment queries
+include its inherited row while retaining the Account owner for editing.
+Existing subject selections and Session-retained habits keep their meaning.
+The nullable filter column preserves existing unfiltered rows. These strict
+Protocol, Home, CLI and UI development readers must reload together; older
+readers reject the optional fields when present.
+
+
 ## Action Workflow triggers (unreleased 0.3, implementation in progress)
 
 The existing trigger union adds `action`: a canonical Action set, `before` or

@@ -282,6 +282,7 @@ export type AutomationTriggerItem = Readonly<AutomationActionTriggerColumns & {
      */
     definitionEnvelope?: string | null;
     sessionLifecycleEventsJson: string | null;
+    sessionLifecycleFilterJson: string | null;
     sessionLifecyclePolicyKind: 'currentTurn' | 'firstMatch' | 'nextMatches' | 'everyMatch' | null;
     sessionLifecycleMatchCount: number | null;
     remainingOccurrences: number | null;

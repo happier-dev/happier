@@ -15,6 +15,7 @@ import { createPresentUserSessionAccessAuthentication } from '@/app/session/acce
 import { admitSessionLifecycleAutomationRunsTx } from './automationSessionLifecycleAdmission';
 import { encodeAutomationSessionLifecycleConfiguration } from './automationSessionLifecycleConfigurationCodec';
 import { updateAutomationTrigger } from './automationCrudService';
+import { listAutomationAttachedTriggers } from './automationAttachedTriggerQuery';
 
 const serverId = 'srv_00000000000000000000000000000000';
 const authentication = createPresentUserSessionAccessAuthentication();
@@ -68,6 +69,95 @@ describe('Session lifecycle scoped admission', () => {
         if (!prepared.ok) throw new Error(prepared.rejection.reason);
         return inTx(tx => createOrRejoinLayout1SessionByTagInTx(tx, prepared.prepared, authentication));
     }
+
+    it('includes Account habits once as inherited context without exposing another Account habits', async () => {
+        const current = await owner();
+        const stranger = await owner();
+        const sourceId = randomUUID();
+        const subject = { kind: 'session' as const, serverId, sessionId: sourceId };
+        const broad: AutomationSessionLifecycleTrigger = {
+            kind: 'sessionLifecycle', events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' },
+        };
+        const inherited = await habit(current, broad);
+        const direct = await habit(current, { ...broad, subject });
+        await habit(stranger, broad);
+        const page = await listAutomationAttachedTriggers({ accountId: current.accountId, subject,
+            contextSubjects: [subject] });
+        expect(page.attached.map(row => ({ triggerId: row.triggerId, relation: row.relation })))
+            .toEqual(expect.arrayContaining([
+                { triggerId: inherited.trigger.id, relation: 'context' },
+                { triggerId: direct.trigger.id, relation: 'direct' },
+            ]));
+        expect(page.attached).toHaveLength(2);
+    });
+
+    it('filters Account habits before admission and bounded consumption using one published turn fact', async () => {
+        const current = await owner();
+        const definition: AutomationSessionLifecycleTrigger = {
+            kind: 'sessionLifecycle', events: ['parentTurnCompleted'], policy: { kind: 'firstMatch' },
+            filter: { v: 1, all: [
+                { field: '/launchProfileId', op: 'eq', value: 'profile-selected' },
+                { field: '/changedFiles', op: 'eq', value: true },
+            ] },
+        };
+        const selected = await habit(current, definition);
+        const other = await habit(current, { ...definition, filter: { v: 1, all: [
+            { field: '/launchProfileId', op: 'eq', value: 'profile-other' },
+            { field: '/changedFiles', op: 'eq', value: true },
+        ] } });
+        const structural = projectAutomationSessionLifecycleStructuralTrigger(definition);
+        const profileClause = structural.filter?.all.find(clause => clause.field === '/launchProfileId');
+        if (profileClause?.op !== 'eq' || typeof profileClause.value !== 'string') throw new Error('Missing structural profile filter');
+        expect(selected.trigger.sessionLifecycleFilterJson).not.toContain('profile-selected');
+
+        const session = await db.session.create({ data: { accountId: current.accountId,
+            tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const observations = [
+            undefined,
+            { launchProfileId: profileClause.value, changedFiles: null },
+            { launchProfileId: profileClause.value, changedFiles: false },
+            { launchProfileId: profileClause.value, changedFiles: true },
+        ];
+        for (const [index, facts] of observations.entries()) {
+            const turnId = randomUUID();
+            await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation: {
+                v: 1, action: 'begin', sessionId: session.id, turnId, mutationId: randomUUID(), observedAt: Date.now(),
+                initiator: 'user',
+            } });
+            await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation: {
+                v: 1, action: 'complete', sessionId: session.id, turnId, mutationId: randomUUID(), observedAt: Date.now(),
+                ...(facts === undefined ? {} : { automationLifecycleFacts: facts }),
+            } });
+            expect(await db.automationRun.count({ where: { accountId: current.accountId } })).toBe(index === 3 ? 1 : 0);
+            expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: selected.trigger.id } })).remainingOccurrences)
+                .toBe(index === 3 ? 0 : 1);
+        }
+        expect(await db.automationRun.findMany({ where: { accountId: current.accountId }, select: { triggerId: true } }))
+            .toEqual([{ triggerId: selected.trigger.id }]);
+        expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: other.trigger.id } })).remainingOccurrences).toBe(1);
+    });
+
+    it.each([undefined, null, false])('retires a currentTurn habit when its terminal changed-files fact is %s', async (changedFiles) => {
+        const current = await owner();
+        const session = await db.session.create({ data: { accountId: current.accountId,
+            tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const turnId = randomUUID();
+        await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation: {
+            v: 1, action: 'begin', sessionId: session.id, turnId, mutationId: randomUUID(), observedAt: Date.now(),
+            initiator: 'user',
+        } });
+        const selected = await habit(current, {
+            kind: 'sessionLifecycle', subject: { kind: 'session', serverId, sessionId: session.id },
+            events: ['parentTurnCompleted'], policy: { kind: 'currentTurn', sourceTurnId: turnId },
+            filter: { v: 1, all: [{ field: '/changedFiles', op: 'eq', value: true }] },
+        });
+        await applySessionTurnMutation({ actorUserId: current.accountId, authentication, mutation: {
+            v: 1, action: 'complete', sessionId: session.id, turnId, mutationId: randomUUID(), observedAt: Date.now(),
+            ...(changedFiles === undefined ? {} : { automationLifecycleFacts: { changedFiles } }),
+        } });
+        expect(await db.automationRun.count({ where: { triggerId: selected.trigger.id } })).toBe(0);
+        expect((await db.automationTrigger.findUniqueOrThrow({ where: { id: selected.trigger.id } })).remainingOccurrences).toBe(0);
+    });
 
     it('admits an ordinary NEW Session once and lets unrelated unavailable habits leave birth intact', async () => {
         const current = await owner();

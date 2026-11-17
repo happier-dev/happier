@@ -38,20 +38,34 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
     const { page, actorReferences } = await inTx(async tx => {
         // First stage is structural identity only. No body or audience census is loaded.
         // The aggregate necessarily visits matching references, never unrelated definitions.
-        const readSubjectCandidates = (cursor: string | null) => tx.automationTrigger.findMany({
-            where: {
+        const readSubjectCandidates = async (cursor: string | null) => {
+            const common = {
                 deletedAt: null, consentForAutomationId: null,
                 ...(cursor === null ? {} : { id: { gt: cursor } }),
-                OR: [
-                    ...[...subjects].map(([subjectKey, subject]) => ({ subjectKind: subject.kind, subjectKey })),
-                ],
-                automation: { deletedAt: null },
-            },
-            select: { id: true, subjectKind: true, subjectKey: true, reachesOthers: true,
-                automation: { select: { id: true, accountId: true, workflowDefinitionId: true, scopeSessionId: true } } },
-            orderBy: { id: 'asc' },
-            take: AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS,
-        });
+            };
+            const selection = {
+                select: { id: true, subjectKind: true, subjectKey: true, reachesOthers: true,
+                    automation: { select: { id: true, accountId: true, workflowDefinitionId: true, scopeSessionId: true } } },
+                orderBy: { id: 'asc' as const },
+                take: AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS,
+            } as const;
+            // Keep Account matching separate to preserve the indexed subject branches.
+            const [subjectsPage, accountPage] = await Promise.all([
+                tx.automationTrigger.findMany({
+                    where: { ...common, OR: [...subjects].map(([subjectKey, subject]) => ({ subjectKind: subject.kind, subjectKey })),
+                        automation: { deletedAt: null } },
+                    ...selection,
+                }),
+                'subject' in params && params.subject.kind === 'session'
+                    ? tx.automationTrigger.findMany({
+                        where: { ...common, kind: 'sessionLifecycle', subjectKind: null, subjectKey: null,
+                            definitionEnvelope: { not: null }, automation: { accountId: params.accountId, deletedAt: null } },
+                        ...selection,
+                    }) : [],
+            ]);
+            return [...subjectsPage, ...accountPage].sort((left, right) => left.id.localeCompare(right.id))
+                .slice(0, AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS);
+        };
         const readCandidates = async (cursor: string | null): Promise<Awaited<ReturnType<typeof readSubjectCandidates>>> => {
             if (!('actionId' in params)) return readSubjectCandidates(cursor);
             const dialect = resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'postgres'));

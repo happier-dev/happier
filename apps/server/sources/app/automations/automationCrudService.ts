@@ -4287,6 +4287,7 @@ const AUTOMATION_TRIGGER_PRIVATE_FIELDS_CLEARED = {
     watcherMaterializationId: null,
     definitionEnvelope: null,
     sessionLifecycleEventsJson: null,
+    sessionLifecycleFilterJson: null,
     sessionLifecyclePolicyKind: null,
     sessionLifecycleMatchCount: null,
     remainingOccurrences: null,

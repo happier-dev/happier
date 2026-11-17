@@ -2,6 +2,7 @@ import type { SessionBrokerApplicationFailureEvidence } from '@/providers/broker
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { SessionTurnProgressV1 } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
+import { projectAutomationSessionLifecycleLaunchProfileId } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import { isForegroundTurnRuntimeTranscriptEvent } from '../events/runtimeTranscriptScope';
 import type { AgentSessionRuntimeEvent, SessionRuntimeIssueV1, SessionTurnFactsV1 } from '@happier-dev/protocol';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
@@ -12,6 +13,7 @@ import type { RuntimeRollbackBoundaryObservation } from '@/agent/runtime/turns/r
 
 export type SessionTurnLifecycleMutationPort = Readonly<{
     sessionId: string;
+    getMetadataSnapshot?: () => Readonly<{ profileId?: string | null }> | null;
     readQuestionWaitTurnId?: () => string | null;
     enqueueSessionTurnMutation?: (
         mutation: RuntimeSessionTurnMutationV1,
@@ -89,6 +91,11 @@ function buildMutationBase(params: Readonly<{
 }
 
 export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): SessionTurnLifecycle {
+    const readAutomationLifecycleFacts = () => {
+        const metadata = params.session.getMetadataSnapshot?.();
+        return metadata ? { launchProfileId: typeof metadata.profileId === 'string'
+            ? projectAutomationSessionLifecycleLaunchProfileId(metadata.profileId) : null } : undefined;
+    };
     let activeTurnId: string | null = null;
     // Unknown until first observation: remove any fact retained from a prior runner.
     let turnProgress: SessionTurnProgressV1 | null | undefined;
@@ -148,6 +155,10 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
         }>,
         failedEvent?: Extract<AgentSessionRuntimeEvent, { kind: 'turn-failed' }>,
     ): void {
+        if (mutation.action === 'begin' || mutation.action === 'complete' || mutation.action === 'fail' || mutation.action === 'cancel') {
+            const facts = readAutomationLifecycleFacts();
+            if (facts) mutation = { ...mutation, automationLifecycleFacts: facts };
+        }
         const enqueue = params.session.enqueueSessionTurnMutation;
         if (!enqueue) return;
         const enqueueResolvedMutation = async () => {

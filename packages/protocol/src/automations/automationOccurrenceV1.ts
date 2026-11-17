@@ -52,6 +52,7 @@ import {
 import {
   AutomationSessionLifecycleEventSchema,
   AutomationSessionLifecycleRequestKindSchema,
+  AutomationSessionLifecycleFactsSchema,
 } from './automationSessionLifecycle.js';
 import { AutomationRunLifecycleOccurrenceEvidenceV1Schema } from './automationRunLifecycle.js';
 import { AutomationActionOccurrenceEvidenceV1Schema } from './automationActionOccurrenceV1.js';
@@ -166,6 +167,7 @@ const SESSION_LIFECYCLE_OCCURRENCE_SHAPE = {
   kind: z.literal('sessionLifecycle'),
   sourceSessionId: boundedNfcString(256, 'Source Session identifiers'),
   occurredAt: AutomationOccurredAtV1Schema,
+  facts: z.optional(lazyZodSchema(() => AutomationSessionLifecycleFactsSchema)),
 } as const;
 export const AutomationSessionLifecycleOccurrenceEvidenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('event', [
   z.strictObject({

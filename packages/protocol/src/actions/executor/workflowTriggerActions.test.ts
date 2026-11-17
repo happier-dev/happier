@@ -119,9 +119,8 @@ function fixture(savedDefinition = definition) {
     revision: 0, createdAt: 1, updatedAt: 1, nextRunAt: 2, triggerDefinitionEnvelope: null });
   const lifecycleDetail = (automationId: string, triggerId: string, value: AutomationSessionLifecycleTriggerInput,
     revision = 0, previous?: Extract<AutomationTriggerDetail, { kind: 'sessionLifecycle' }>) => {
-    const privateDefinition = 'triggerDefinitionEnvelope' in value ? null : AutomationSessionLifecycleTriggerSchema.parse({
-      kind: value.kind, ...(value.subject === undefined ? {} : { subject: value.subject }), events: value.events, policy: value.policy,
-    });
+    const { enabled: _enabled, ...definition } = value;
+    const privateDefinition = 'triggerDefinitionEnvelope' in definition ? null : AutomationSessionLifecycleTriggerSchema.parse(definition);
     return AutomationTriggerDetailSchema.parse({
       ...(privateDefinition ? projectAutomationSessionLifecycleStructuralTrigger(privateDefinition) : value),
       id: triggerId, revision, enabled: value.enabled, createdAt: previous?.createdAt ?? 1, updatedAt: 1,
@@ -2584,6 +2583,24 @@ describe('workflow trigger Automation composition', () => {
     const rearmed = await actions.add(request);
     expect(rearmed.triggerId).not.toBe(first.triggerId);
     expect([...rows.values()].flatMap((row) => row.triggers)).toHaveLength(1);
+  });
+
+  it('keeps distinct lifecycle filters as explicit notification rules', async () => {
+    const { deps, rows } = fixture();
+    const actions = createWorkflowTriggerActions({ ...deps,
+      resolveSession: async () => ({ project, nativeGoalOwner: false }) });
+    const notice = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'notify',
+      actionId: 'notifications.notify_me', input: { message: { kind: 'literal', value: 'Turn finished' } } }] });
+    const request = { lifetimeSession: { sessionId: 'session-one' }, target: { kind: 'inline' as const, definition: notice },
+      trigger: { kind: 'sessionLifecycle' as const, subject: { kind: 'session' as const, serverId: 'portable-home', sessionId: 'session-one' },
+        enabled: true, events: ['parentTurnCompleted' as const], policy: { kind: 'firstMatch' as const },
+        filter: { v: 1 as const, all: [{ field: '/changedFiles', op: 'eq' as const, value: true }] } } };
+    const first = await actions.add(request);
+    expect((await actions.add(request)).triggerId).toBe(first.triggerId);
+    const other = await actions.add({ ...request, trigger: { ...request.trigger,
+      filter: { v: 1, all: [{ field: '/changedFiles', op: 'eq', value: false }] } } });
+    expect(other.triggerId).not.toBe(first.triggerId);
+    expect([...rows.values()].flatMap(row => row.triggers)).toHaveLength(2);
   });
 
   it('keeps a needs-me one-shot distinct from exact-turn completion and from repeating notifications', async () => {

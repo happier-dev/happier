@@ -3039,6 +3039,7 @@ model AutomationTrigger {
     watcherMaterializationId     String?
     definitionEnvelope           String?
     sessionLifecycleEventsJson  String?
+    sessionLifecycleFilterJson  String?
     sessionLifecyclePolicyKind  AutomationSessionLifecyclePolicyKind?
     sessionLifecycleMatchCount  Int?
     remainingOccurrences        Int?

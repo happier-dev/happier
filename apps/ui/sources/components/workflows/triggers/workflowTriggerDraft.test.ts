@@ -44,6 +44,20 @@ function recordingWriter(options: Readonly<{ failOn?: 'add' | 'update' | 'remove
 }
 
 describe('workflow trigger draft', () => {
+    it('retains a lifecycle habit filter through the full-editor history snapshot', () => {
+        const filter = { v: 1, all: [{ op: 'eq', field: '/changedFiles', value: true }] } as const;
+        const set = WorkflowTriggerSetV1Schema.parse({ ...triggerSet(7, []), triggers: [{
+            id: 'changes-only', revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
+            kind: 'sessionLifecycle', events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' }, filter,
+            triggerDefinitionEnvelope: 'stored-private-definition',
+            remainingOccurrences: null, status: { state: 'waiting', runId: null },
+        }] });
+        const snapshot = WorkflowDraftTriggerSnapshotV1Schema.parse(captureWorkflowTriggerSnapshot(set,
+            EMPTY_WORKFLOW_TRIGGER_DRAFT, (clientId, triggerId) => ({ clientId, triggerId })));
+        expect(snapshot.rows[0]?.trigger).toMatchObject({ kind: 'sessionLifecycle', filter });
+        expect(restoreWorkflowTriggerSnapshot(set, snapshot)).toEqual(EMPTY_WORKFLOW_TRIGGER_DRAFT);
+    });
+
     const nightlyId = AutomationTriggerIdSchema.parse('nightly');
     const weeklyId = AutomationTriggerIdSchema.parse('weekly');
     it('retains role and Team choices through the agent snapshot and writes them once on Save', async () => {

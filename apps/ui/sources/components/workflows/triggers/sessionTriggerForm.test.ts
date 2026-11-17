@@ -4,6 +4,7 @@ import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/
 import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { AutomationTriggerDefinitionBindingV1Schema, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 import { AutomationActionTriggerSchema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { readPluginEventAutomationFilterDraft } from '@/components/automations/editor/pluginEventAutomationFilterBuilder';
 
 import {
     buildTriggerDefinition,
@@ -50,6 +51,23 @@ describe('session trigger form', () => {
         expect(buildTriggerDefinition({ when,
             enabled: false, sessionId: null })).toEqual({ kind: 'sessionLifecycle', enabled: false,
             events: ['userActionRequired'], policy: { kind: 'nextMatches', count: 3 } });
+    });
+
+    it('keeps the shared lifecycle filter when an existing habit is edited', () => {
+        const authored = readPluginEventAutomationFilterDraft([
+            { id: 'profile', field: '/launchProfileId', op: 'in', valueText: '["review-profile","work-profile"]' },
+            { id: 'changes', field: '/changedFiles', op: 'eq', valueText: 'true' },
+        ]);
+        if (!authored.valid || !authored.filter) throw new Error('Expected the shared Event filter');
+        const trigger = { kind: 'sessionLifecycle' as const, enabled: true,
+            events: ['parentTurnCompleted' as const], policy: { kind: 'everyMatch' as const }, filter: authored.filter };
+        const when = readTriggerWhen(trigger);
+        expect(when).toMatchObject({ kind: 'turnEnds', filter: authored.filter });
+        if (!when) throw new Error('Expected the saved lifecycle habit');
+        expect(buildTriggerDefinition({ when, enabled: false, sessionId: null }))
+            .toEqual({ ...trigger, enabled: false });
+        expect(buildInitialTriggerDefinition({ when, enabled: true }))
+            .toEqual(trigger);
     });
 
     it('preserves saved event membership when an unrelated field changes', () => {

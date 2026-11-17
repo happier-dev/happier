@@ -19,6 +19,7 @@ function lifecycleTrigger(
         enabled,
         revision: consumption.revision ?? 1,
         deletedAt: null,
+        sessionLifecycleFilterJson: null,
         sessionLifecycleEventsJson: JSON.stringify(
             consumption.events ?? ["parentTurnCompleted"],
         ),

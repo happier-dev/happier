@@ -470,6 +470,7 @@ export type RuntimeTurnChangeSetPublication = Readonly<{
   eventKind: string;
   /** Host-private evidence: opaque tools count even when they report no file paths. */
   hasToolActivity?: boolean;
+  onTurnChangeFacts?: (facts: Readonly<{ turnId: string; changedFiles: boolean | null }>) => void;
   admission?: CommittedTranscriptAdmission;
 }>;
 
@@ -484,10 +485,19 @@ export async function publishRuntimeTurnChangeSet(params: RuntimeTurnChangeSetPu
       turnChangeSet: params.turnChangeSet,
       eventKind: params.eventKind,
       ...(params.hasToolActivity === undefined ? {} : { hasToolActivity: params.hasToolActivity }),
+      ...(params.onTurnChangeFacts === undefined ? {} : { onTurnChangeFacts: params.onTurnChangeFacts }),
       ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
     return;
   }
+  // The checkpoint owner forwards its final merged evidence here. An opaque
+  // tool with unavailable SCM is unknown, never evidence of a clean turn.
+  params.onTurnChangeFacts?.({
+    turnId: params.turnChangeSet.turnId,
+    changedFiles: params.turnChangeSet.files.length > 0 ? true
+      : params.turnChangeSet.repositoryCheckpoint?.contentConfidence === 'exact' || params.hasToolActivity === false
+        ? false : null,
+  });
   const messages: Array<Readonly<{ body: ACPMessageData; localId: string }>> = [];
   emitCanonicalTurnDiffTool({
     turnChangeSet: params.turnChangeSet,
@@ -695,6 +705,7 @@ export function projectRuntimeTranscriptEvent(params: Readonly<{
   normalizedToolTurnChangeTracker?: NormalizedToolTurnChangeTracker;
   /** Foreground checkpoint finalization joins native evidence before publishing the single card. */
   publishTurnChangeSet?: (publication: RuntimeTurnChangeSetPublication) => Promise<void>;
+  onTurnChangeFacts?: RuntimeTurnChangeSetPublication['onTurnChangeFacts'];
   toolNormalizationSource?: ToolNormalizationSourceV3;
   /** Host-owned yield witness captured before asynchronous transcript projection. */
   questionWaitTurnId?: string | null;
@@ -979,6 +990,7 @@ async function projectRuntimeTranscriptEventContent(
     if (normalizedTurnChangeSet && params.provider && params.toolNormalizationSource) {
       await publishRuntimeTurnChangeSet({
         publishTurnChangeSet: params.publishTurnChangeSet,
+        onTurnChangeFacts: params.onTurnChangeFacts,
         session: params.session,
         provider: params.provider,
         source: params.toolNormalizationSource,
@@ -1040,6 +1052,7 @@ async function projectRuntimeTranscriptEventContent(
     if (normalizedTurnChangeSet && params.provider && params.toolNormalizationSource) {
       await publishRuntimeTurnChangeSet({
         publishTurnChangeSet: params.publishTurnChangeSet,
+        onTurnChangeFacts: params.onTurnChangeFacts,
         session: params.session,
         provider: params.provider,
         source: params.toolNormalizationSource,
@@ -1081,6 +1094,7 @@ async function projectRuntimeTranscriptEventContent(
     if (normalizedTurnChangeSet && params.provider && params.toolNormalizationSource) {
       await publishRuntimeTurnChangeSet({
         publishTurnChangeSet: params.publishTurnChangeSet,
+        onTurnChangeFacts: params.onTurnChangeFacts,
         session: params.session,
         provider: params.provider,
         source: params.toolNormalizationSource,

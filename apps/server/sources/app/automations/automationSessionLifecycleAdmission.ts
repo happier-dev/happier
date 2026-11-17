@@ -3,7 +3,7 @@ import { backgroundDeliveryAuthentication } from '@/app/session/access/sessionAc
 import { readAutomationSessionLifecycleCandidatesInTx, type AutomationSessionLifecycleSourceFacts, type SessionLifecycleCandidateRow } from './automationSessionLifecycleSubjects';
 import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/run-cause';
 import { AutomationSessionLifecycleOccurrenceEvidenceV1Schema, deriveAutomationOccurrenceKeyV1, type AutomationSessionLifecycleOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
-import { snapshotAutomationSessionLifecyclePolicy } from '@happier-dev/protocol/automations/automationSessionLifecycle';
+import { matchesAutomationSessionLifecycleFilter, snapshotAutomationSessionLifecyclePolicy } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import { type SessionTurnFactsV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
@@ -201,6 +201,7 @@ async function admitSessionLifecycleCandidatesTx(params: Readonly<{
         const row = scoped ? { ...listedRow, ...scoped } : listedRow;
         const stored = decodeAutomationSessionLifecycleConfiguration(row);
         const definition = stored.definition;
+        const matchesFilter = matchesAutomationSessionLifecycleFilter(definition.filter, occurrence.facts);
         const isCurrentTurn = definition.policy.kind === "currentTurn";
         if (
             definition.policy.kind === "currentTurn"
@@ -209,7 +210,7 @@ async function admitSessionLifecycleCandidatesTx(params: Readonly<{
 
         const selected = definition.events.includes(occurrence.event);
         const enabled = row.enabled && row.automation.enabled;
-        if (isCurrentTurn && isTerminalLifecycleEvent(occurrence.event) && (!selected || !enabled)) {
+        if (isCurrentTurn && isTerminalLifecycleEvent(occurrence.event) && (!selected || !enabled || !matchesFilter)) {
             const consumed = await params.tx.automationTrigger.updateMany({
                 where: { id: row.id, remainingOccurrences: { gt: 0 } },
                 data: { remainingOccurrences: 0 },
@@ -220,7 +221,7 @@ async function admitSessionLifecycleCandidatesTx(params: Readonly<{
             }
             continue;
         }
-        if (!selected || !enabled) continue;
+        if (!selected || !enabled || !matchesFilter) continue;
         const cause = buildLifecycleCause({
             triggerId: row.id,
             triggerRevision: row.revision,
