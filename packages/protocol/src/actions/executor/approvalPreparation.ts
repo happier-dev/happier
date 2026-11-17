@@ -250,6 +250,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   deploymentReview?: JsonValue;
   hostReviewedChildren?: HostReviewedChildrenPlanV1;
   hostReviewedContent?: JsonValue;
+  handoffTargetReplacementApproval?: NonNullable<ActionExecutorContext['handoffTargetReplacementApproval']>;
   executeCanonicalAction?: Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentTemplateInstantiation']>>[0]['executeCanonicalAction'];
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
   const spec = getActionSpec(params.actionId);
@@ -531,6 +532,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   const preview = {
     ...customizedRecord,
     actionId: params.actionId,
+    ...(params.handoffTargetReplacementApproval ? { handoffTargetReplacementApproval: params.handoffTargetReplacementApproval } : {}),
     ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}),
     ...(params.context.sessionTargetsV1 ? { sessionTargets: params.context.sessionTargetsV1.targets } : {}),
     // This private preview is distinct from shared observations. A declared
