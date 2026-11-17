@@ -55,6 +55,15 @@ reads expose duration-ranked observed child spans and log-to-trace/span links;
 an unobserved parent or span remains unresolved. These projections reuse the
 collector's existing detail storage and read Actions.
 
+App LLM cost operands can be projected with `projectDatabaseCaptureUsageV1` for
+the existing Usage cost, daily and breakdown renderers. Pass the catalog read
+through `usage.prices.get`, the invoking viewer's `usageModelPriceOverridesV1`,
+and the same hour/day granularity requested from the collector. The result's
+`app_calls` subject must be selected exclusively from Agent usage by the host;
+the projection never reads or writes Agent history. Pricing, currency facts, unknown prices and
+catalog revision come from the shared Usage owner. Collector coverage remains
+alongside the accounting response, so lost observations are not zero spend.
+
 ## Evolving the ABI
 
 Follow the [protocol-evolution doctrine](../../docs/compatibility.md#sdk-protocol-evolution).

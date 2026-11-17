@@ -10,3 +10,5 @@ export * from './databaseAccess.js';
 export * from './databaseDemand.js';
 export * from './databaseActionMetadata.js';
 export * from './databaseSelectedExport.js';
+export * from './databaseCaptureCosts.js';
+export * from './databaseAppUsage.js';
