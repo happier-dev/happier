@@ -23,6 +23,7 @@ function selectionId(selection: PullRequest): string {
 export function SessionTriggerPullRequestPicker(props: Readonly<{
     testID: string;
     sessionId: string;
+    serverId?: string | null;
     selection: PullRequest | null;
     onSelect: (selection: PullRequest) => void;
 }>) {
@@ -36,7 +37,7 @@ export function SessionTriggerPullRequestPicker(props: Readonly<{
         if (!open) return;
         let current = true;
         setRead((previous) => ({ ...previous, status: 'loading' }));
-        void sessionScmPullRequestList(props.sessionId, { state: 'open' })
+        void sessionScmPullRequestList(props.sessionId, { state: 'open' }, props.serverId)
             .then((raw) => {
                 const result = ScmPullRequestListResponseSchema.parse(raw);
                 if (!result.success) throw new Error(result.error);
@@ -44,7 +45,7 @@ export function SessionTriggerPullRequestPicker(props: Readonly<{
             })
             .catch(() => { if (current) setRead((previous) => ({ ...previous, status: 'failed' })); });
         return () => { current = false; };
-    }, [attempt, open, props.sessionId]);
+    }, [attempt, open, props.sessionId, props.serverId]);
 
     const selections = read.pullRequests.flatMap((pullRequest) => {
         const selection = readSelection(pullRequest);

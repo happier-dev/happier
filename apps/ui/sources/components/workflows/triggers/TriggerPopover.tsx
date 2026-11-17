@@ -685,6 +685,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                 <SessionTriggerPullRequestPicker
                                     testID={`${props.testID}-pull-request`}
                                     sessionId={props.sessionId}
+                                    serverId={props.accountLifetime === undefined ? props.serverId : props.accountLifetime?.scope.serverId ?? null}
                                     selection={when.pullRequest}
                                     onSelect={(pullRequest) => setWhen({ kind: when.kind, pullRequest })}
                                 />
