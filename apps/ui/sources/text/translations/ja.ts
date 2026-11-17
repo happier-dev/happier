@@ -18915,7 +18915,6 @@ settingsSession: {
           searchPlaceholder: "アプリと環境を検索",
           lastDays: "過去30日",
           checkFailingTitle: "このチェックは失敗しています",
-          checkDegradedTitle: "このチェックは低下しています",
           lastResult: "最新の結果",
           response: "応答",
           uptimeWord: "稼働率",

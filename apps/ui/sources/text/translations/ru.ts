@@ -18954,7 +18954,6 @@ settingsSession: {
           searchPlaceholder: "Поиск приложений и окружений",
           lastDays: "Последние 30 дней",
           checkFailingTitle: "Эта проверка не проходит",
-          checkDegradedTitle: "Эта проверка частично не проходит",
           lastResult: "Последний результат",
           response: "Ответ",
           uptimeWord: "доступность",

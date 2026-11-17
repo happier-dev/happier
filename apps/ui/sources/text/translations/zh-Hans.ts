@@ -18620,7 +18620,6 @@ settingsSession: {
           searchPlaceholder: "搜索应用和环境",
           lastDays: "最近 30 天",
           checkFailingTitle: "此检查失败",
-          checkDegradedTitle: "此检查降级",
           lastResult: "最近结果",
           response: "响应",
           uptimeWord: "可用率",

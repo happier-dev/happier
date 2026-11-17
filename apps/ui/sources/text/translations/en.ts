@@ -22400,7 +22400,6 @@ const enProjects = {
         searchPlaceholder: "Search apps and environments",
         lastDays: "Last 30 days",
         checkFailingTitle: "This check is failing",
-        checkDegradedTitle: "This check is degraded",
         lastResult: "Last result",
         response: "Response",
         uptimeWord: "uptime",

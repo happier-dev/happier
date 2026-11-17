@@ -19114,7 +19114,6 @@ settingsSession: {
               searchPlaceholder: "Apps und Umgebungen suchen",
               lastDays: "Letzte 30 Tage",
               checkFailingTitle: "Dieser Check schlägt fehl",
-              checkDegradedTitle: "Dieser Check ist beeinträchtigt",
               lastResult: "Letztes Ergebnis",
               response: "Antwort",
               uptimeWord: "Verfügbarkeit",

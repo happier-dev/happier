@@ -271,7 +271,8 @@ export function ServiceCheckList(
       ),
       title: (row) => factsOf(row).title,
       // A host or path: one line, ending in an ellipsis, never broken mid-word (the full title is the row's label).
-      titleIdentifier: true,
+      // A name (a named Key flow, a saved name) wraps as a name.
+      titleIdentifier: (row) => factsOf(row).titleIdentifier,
       // Its target arrives with its definition: until then the title's place holds the loading bar, never the saved
       // automation's name it would then flip from.
       titlePending: (row) => settling || row.definitionFacts.kind === 'loading',
@@ -431,6 +432,7 @@ function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts; scope: Ma
   );
 }
 
+/** The 30-day uptime stays ink: the State column and the bars say a failure; the figure is history, not an alarm. */
 function CheckUptime(props: Readonly<{ facts: ServiceCheckListFacts }>) {
   const { theme } = useUnistyles();
   const text = serviceCheckUptimeText(props.facts.uptimePercent);
@@ -440,10 +442,7 @@ function CheckUptime(props: Readonly<{ facts: ServiceCheckListFacts }>) {
       style={{
         ...Typography.variant('label'),
         fontVariant: ['tabular-nums'],
-        color:
-          props.facts.status === 'down'
-            ? theme.colors.state.danger.textForeground
-            : theme.colors.text.primary,
+        color: theme.colors.text.primary,
       }}
       numberOfLines={1}
     >
@@ -562,9 +561,12 @@ const CheckByline = React.memo(function CheckByline(
       ? t(`${k}.checkEvery`, { period: facts.every, machine: observer })
       : t(`${k}.checkEveryAnywhere`, { period: facts.every })
     : null;
-  const failing = row.native.enabled && facts.status === 'down';
+  // A failing row says why: its cause (a Key flow's measurement) and since when. A degraded row without a cause says
+  // how much slower it answers than usual.
+  const failing = row.native.enabled && (facts.status === 'down' || (facts.status === 'degraded' && facts.causeText !== null));
   const slow =
     row.native.enabled &&
+    !failing &&
     facts.status === 'degraded' &&
     facts.latencyMs !== null &&
     facts.usualMs !== null;

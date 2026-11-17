@@ -10,9 +10,7 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { useActiveServerAccountScope, useAutomations, useSetting } from '@/sync/domains/state/storage';
-import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { useDeploymentAccountController } from '@/components/projects/deployments/useDeploymentProject';
-import { useDeploymentEnvironmentRecord } from '@/components/projects/deployments/useDeploymentReads';
+import { useEnvironmentName } from '@/components/projects/deployments/useEnvironmentName';
 import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { t } from '@/text';
 import { useMachineAgentModels } from '@/components/sessions/actions/useMachineAgentModels';
@@ -189,19 +187,7 @@ export function useApiTokenGrantNames(): ApiTokenGrantNames {
     }, [actionGroups, automations, modelGroups]);
 }
 
-/**
- * The name of an Environment a grant targets, read through the Account's shared deployment owner
- * while the editor shows it. `name` is null until read and when it is gone or hidden; `settled`
- * tells the two apart.
- */
+/** The name of an Environment a grant targets, on the active server (the deployment owner's one name read). */
 export function useApiTokenGrantEnvironmentName(environmentId: string | null): Readonly<{ name: string | null; settled: boolean }> {
-    const scope = useActiveServerAccountScope();
-    const { binding } = useServerCredentialAccountScopeBinding(environmentId ? scope?.serverId : null);
-    const active = environmentId !== null;
-    const demand = React.useMemo(() => ({ mounted: active, visible: active, focused: active }), [active]);
-    const controller = useDeploymentAccountController(binding, active, demand);
-    const read = useDeploymentEnvironmentRecord(controller, environmentId, demand);
-    const name = read.snapshot.value?.content.name ?? null;
-    const settled = read.snapshot.status === 'ready' || read.snapshot.status === 'unavailable';
-    return React.useMemo(() => ({ name, settled }), [name, settled]);
+    return useEnvironmentName(useActiveServerAccountScope()?.serverId ?? null, environmentId);
 }

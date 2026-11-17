@@ -10,7 +10,7 @@ const en = {
   needsYou: 'Needs you',
   checks: 'Checks',
   glanceDown: ({ count }: Count) => `${count} down`,
-  glanceDegraded: ({ count }: Count) => `${count} degraded`,
+  glanceFailing: ({ count }: Count) => `${count} failing`,
   glancePassing: ({ count }: Count) => `${count} passing`,
   glanceNotChecked: ({ count }: Count) => `${count} not checked`,
   checksAtLeast: ({ count }: Count) => count === 1 ? '1+ check' : `${count}+ checks`,
@@ -68,6 +68,9 @@ const en = {
   keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
     `${measure} ${value} over ${window}, limit ${limit}`,
   keyFlowLatestLimit: ({ limit }: { limit: string }) => `latest · limit ${limit}`,
+  statusFailing: 'Failing',
+  checkDownTitle: 'This check is down',
+  keyFlowChecksService: ({ service }: { service: string }) => `checks ${service}`,
 };
 type MonitoringCopy = typeof en;
 
@@ -79,7 +82,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: 'Et necessita',
     checks: 'Comprovacions',
     glanceDown: ({ count }: Count) => `${count} caigudes`,
-    glanceDegraded: ({ count }: Count) => `${count} degradades`,
+    glanceFailing: ({ count }: Count) => `${count} fallen`,
     glancePassing: ({ count }: Count) => `${count} correctes`,
     glanceNotChecked: ({ count }: Count) => `${count} sense comprovar`,
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ comprovació' : `${count}+ comprovacions`,
@@ -138,6 +141,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${measure} ${value} en ${window}, límit ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `últim · límit ${limit}`,
+    statusFailing: 'Falla',
+    checkDownTitle: 'Aquesta comprovació està caiguda',
+    keyFlowChecksService: ({ service }: { service: string }) => `comprova ${service}`,
   },
   de: {
     title: 'Überwachung',
@@ -145,7 +151,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: 'Braucht dich',
     checks: 'Prüfungen',
     glanceDown: ({ count }: Count) => `${count} ausgefallen`,
-    glanceDegraded: ({ count }: Count) => `${count} beeinträchtigt`,
+    glanceFailing: ({ count }: Count) => `${count} fehlerhaft`,
     glancePassing: ({ count }: Count) => `${count} in Ordnung`,
     glanceNotChecked: ({ count }: Count) => `${count} nicht geprüft`,
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ Prüfung' : `${count}+ Prüfungen`,
@@ -204,6 +210,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${measure} ${value} über ${window}, Grenze ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `zuletzt · Grenze ${limit}`,
+    statusFailing: 'Fehlerhaft',
+    checkDownTitle: 'Dieser Check ist ausgefallen',
+    keyFlowChecksService: ({ service }: { service: string }) => `prüft ${service}`,
   },
   es: {
     title: 'Monitorización',
@@ -211,7 +220,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: 'Te necesita',
     checks: 'Comprobaciones',
     glanceDown: ({ count }: Count) => `${count} caídas`,
-    glanceDegraded: ({ count }: Count) => `${count} degradadas`,
+    glanceFailing: ({ count }: Count) => `${count} fallando`,
     glancePassing: ({ count }: Count) => `${count} correctas`,
     glanceNotChecked: ({ count }: Count) => `${count} sin comprobar`,
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ comprobación' : `${count}+ comprobaciones`,
@@ -270,6 +279,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${measure} ${value} en ${window}, límite ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `último · límite ${limit}`,
+    statusFailing: 'Fallando',
+    checkDownTitle: 'Esta comprobación está caída',
+    keyFlowChecksService: ({ service }: { service: string }) => `comprueba ${service}`,
   },
   fr: {
     title: 'Surveillance',
@@ -277,7 +289,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: 'Vous attend',
     checks: 'Vérifications',
     glanceDown: ({ count }: Count) => `${count} en panne`,
-    glanceDegraded: ({ count }: Count) => `${count} dégradées`,
+    glanceFailing: ({ count }: Count) => `${count} en échec`,
     glancePassing: ({ count }: Count) => `${count} réussies`,
     glanceNotChecked: ({ count }: Count) => `${count} non vérifiées`,
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ vérification' : `${count}+ vérifications`,
@@ -338,6 +350,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${measure} ${value} sur ${window}, limite ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `dernier · limite ${limit}`,
+    statusFailing: 'En échec',
+    checkDownTitle: 'Cette vérification est hors service',
+    keyFlowChecksService: ({ service }: { service: string }) => `vérifie ${service}`,
   },
   it: {
     title: 'Monitoraggio',
@@ -345,7 +360,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: 'Ti serve',
     checks: 'Controlli',
     glanceDown: ({ count }: Count) => `${count} non attivi`,
-    glanceDegraded: ({ count }: Count) => `${count} degradati`,
+    glanceFailing: ({ count }: Count) => `${count} in errore`,
     glancePassing: ({ count }: Count) => `${count} superati`,
     glanceNotChecked: ({ count }: Count) => `${count} non controllati`,
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ controllo' : `${count}+ controlli`,
@@ -404,6 +419,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${measure} ${value} in ${window}, limite ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `ultimo · limite ${limit}`,
+    statusFailing: 'In errore',
+    checkDownTitle: 'Questo controllo è inattivo',
+    keyFlowChecksService: ({ service }: { service: string }) => `controlla ${service}`,
   },
   ja: {
     title: 'モニタリング',
@@ -411,7 +429,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: '対応が必要',
     checks: 'チェック',
     glanceDown: ({ count }: Count) => `${count} 件ダウン`,
-    glanceDegraded: ({ count }: Count) => `${count} 件低下`,
+    glanceFailing: ({ count }: Count) => `${count} 件失敗`,
     glancePassing: ({ count }: Count) => `${count} 件正常`,
     glanceNotChecked: ({ count }: Count) => `${count} 件未確認`,
     checksAtLeast: ({ count }: Count) => `${count}+ 件のチェック`,
@@ -468,6 +486,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${window} の ${measure} ${value}、上限 ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `最新 · 上限 ${limit}`,
+    statusFailing: '失敗中',
+    checkDownTitle: 'このチェックはダウンしています',
+    keyFlowChecksService: ({ service }: { service: string }) => `${service} を確認`,
   },
   pl: {
     title: 'Monitorowanie',
@@ -475,7 +496,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: 'Wymaga uwagi',
     checks: 'Sprawdzenia',
     glanceDown: ({ count }: Count) => `Niedostępne: ${count}`,
-    glanceDegraded: ({ count }: Count) => `Spowolnione: ${count}`,
+    glanceFailing: ({ count }: Count) => `Z błędem: ${count}`,
     glancePassing: ({ count }: Count) => `Działające: ${count}`,
     glanceNotChecked: ({ count }: Count) => `Niesprawdzane: ${count}`,
     checksAtLeast: ({ count }: Count) => `Kontrole: ${count}+`,
@@ -532,6 +553,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${measure} ${value} w ciągu ${window}, limit ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `najnowsze · limit ${limit}`,
+    statusFailing: 'Z błędem',
+    checkDownTitle: 'To sprawdzenie nie odpowiada',
+    keyFlowChecksService: ({ service }: { service: string }) => `sprawdza ${service}`,
   },
   pt: {
     title: 'Monitorização',
@@ -539,7 +563,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: 'Precisa de si',
     checks: 'Verificações',
     glanceDown: ({ count }: Count) => `${count} em baixo`,
-    glanceDegraded: ({ count }: Count) => `${count} degradadas`,
+    glanceFailing: ({ count }: Count) => `${count} falhando`,
     glancePassing: ({ count }: Count) => `${count} a passar`,
     glanceNotChecked: ({ count }: Count) => `${count} sem verificação`,
     checksAtLeast: ({ count }: Count) => count === 1 ? '1+ verificação' : `${count}+ verificações`,
@@ -598,6 +622,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${measure} ${value} em ${window}, limite ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `mais recente · limite ${limit}`,
+    statusFailing: 'Falhando',
+    checkDownTitle: 'Esta verificação está fora do ar',
+    keyFlowChecksService: ({ service }: { service: string }) => `verifica ${service}`,
   },
   ru: {
     title: 'Мониторинг',
@@ -605,7 +632,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: 'Нужно ваше внимание',
     checks: 'Проверки',
     glanceDown: ({ count }: Count) => `Недоступно: ${count}`,
-    glanceDegraded: ({ count }: Count) => `С перебоями: ${count}`,
+    glanceFailing: ({ count }: Count) => `С ошибкой: ${count}`,
     glancePassing: ({ count }: Count) => `В норме: ${count}`,
     glanceNotChecked: ({ count }: Count) => `Не проверяются: ${count}`,
     checksAtLeast: ({ count }: Count) => `Проверок: ${count}+`,
@@ -663,6 +690,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${measure} ${value} за ${window}, предел ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `последнее · предел ${limit}`,
+    statusFailing: 'С ошибкой',
+    checkDownTitle: 'Эта проверка недоступна',
+    keyFlowChecksService: ({ service }: { service: string }) => `проверяет ${service}`,
   },
   'zh-Hans': {
     title: '监控',
@@ -670,7 +700,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: '需要你处理',
     checks: '检查',
     glanceDown: ({ count }: Count) => `${count} 个宕机`,
-    glanceDegraded: ({ count }: Count) => `${count} 个降级`,
+    glanceFailing: ({ count }: Count) => `${count} 个失败`,
     glancePassing: ({ count }: Count) => `${count} 个正常`,
     glanceNotChecked: ({ count }: Count) => `${count} 个未检查`,
     checksAtLeast: ({ count }: Count) => `${count}+ 项检查`,
@@ -727,6 +757,9 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${window} 内 ${measure} ${value}，上限 ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `最新 · 上限 ${limit}`,
+    statusFailing: '失败',
+    checkDownTitle: '此检查已宕机',
+    keyFlowChecksService: ({ service }: { service: string }) => `检查 ${service}`,
   },
   'zh-Hant': {
     title: '監控',
@@ -734,7 +767,7 @@ export const deploymentMonitoringTranslations = {
     needsYou: '需要你處理',
     checks: '檢查',
     glanceDown: ({ count }: Count) => `${count} 個中斷`,
-    glanceDegraded: ({ count }: Count) => `${count} 個降級`,
+    glanceFailing: ({ count }: Count) => `${count} 個失敗`,
     glancePassing: ({ count }: Count) => `${count} 個正常`,
     glanceNotChecked: ({ count }: Count) => `${count} 個未檢查`,
     checksAtLeast: ({ count }: Count) => `${count}+ 項檢查`,
@@ -791,5 +824,8 @@ export const deploymentMonitoringTranslations = {
     keyFlowMeasured: ({ measure, value, window, limit }: { measure: string; value: string; window: string; limit: string }) =>
       `${window} 內 ${measure} ${value}，上限 ${limit}`,
     keyFlowLatestLimit: ({ limit }: { limit: string }) => `最新 · 上限 ${limit}`,
+    statusFailing: '失敗',
+    checkDownTitle: '此檢查已停機',
+    keyFlowChecksService: ({ service }: { service: string }) => `檢查 ${service}`,
   },
 } satisfies Record<SupportedLanguage, MonitoringCopy>;

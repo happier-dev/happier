@@ -13,7 +13,13 @@ import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 
-import { formatServiceCheckKeyFlowValue, formatServiceCheckLatency, type ServiceCheckCollectorTrend } from './serviceCheckPresentation';
+import {
+  formatServiceCheckKeyFlowValue,
+  formatServiceCheckLatency,
+  formatServiceCheckShare,
+  serviceCheckWindowEnds,
+  type ServiceCheckCollectorTrend,
+} from './serviceCheckPresentation';
 import { serviceCheckCollectorLatency, useServiceCheckCollectorTrend } from './useServiceCheckCollectorTrend';
 
 const m = 'projects.deployments.monitoring' as const;
@@ -22,8 +28,6 @@ const CHART_MIN_WIDTH_PX = 280;
 
 const formatClock = (ms: number) =>
   formatWithCachedDateTimeFormatter(ms, getPreferredLanguage(), { hour: 'numeric', minute: '2-digit' });
-const formatPercent = (fraction: number) =>
-  new Intl.NumberFormat(getPreferredLanguage(), { style: 'percent', maximumFractionDigits: 1 }).format(fraction);
 const formatCount = (count: number) => new Intl.NumberFormat(getPreferredLanguage()).format(count);
 
 type Interval = TelemetryMetricsReadResultV1['trend'][number];
@@ -87,7 +91,11 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
       points: read.read.trend.map((interval) => point(interval, serviceCheckCollectorLatency(config, interval))) };
     const errors: HappierSeries = { id: 'errors', label: t(`${m}.keyFlowErrors`), color,
       points: read.read.trend.map((interval) => point(interval, interval.errorRate ?? null)) };
-    return { latency, errors };
+    // The axis names the window's two ends with their day: its first interval's start and its last interval's end.
+    const first = read.read.trend[0];
+    const last = read.read.trend[read.read.trend.length - 1];
+    const axisTicks = first && last ? serviceCheckWindowEnds(first.since, last.until, Date.now()) : undefined;
+    return { latency, errors, axisTicks };
   }, [color, config, read]);
   const limitLabel = t(`${m}.keyFlowLimit`);
   // Both trend heads carry one detail line, so the two plots start level beside each other.
@@ -108,15 +116,15 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
               <ChartHead title={charts.latency.label} latest={latestOf(charts.latency, routeFlow ? formatServiceCheckLatency : String)}
                 detail={errorsMeasured ? span : `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)} · ${span}`} />
               <StackedSeriesChart theme={pluginTheme} label={charts.latency.label} series={[charts.latency]} variant="line" size="full"
-                showLegend={false} showReadout={false} {...(routeFlow ? { valueFormatter: formatServiceCheckLatency } : {})} unknownLabel={t(`${m}.keyFlowNoRequests`)}
+                showLegend={false} showReadout={false} {...(routeFlow ? { valueFormatter: formatServiceCheckLatency } : {})} {...(charts.axisTicks ? { axisTicks: charts.axisTicks } : {})} unknownLabel={t(`${m}.keyFlowNoRequests`)}
                 {...(!errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.failing ? 'error' : 'warning' } } : {})} />
             </View>
             {routeFlow ? (
               <View style={styles.chart} testID="services.check.keyFlow.errors">
-                <ChartHead title={charts.errors.label} latest={latestOf(charts.errors, formatPercent)}
+                <ChartHead title={charts.errors.label} latest={latestOf(charts.errors, formatServiceCheckShare)}
                   detail={errorsMeasured ? `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)} · ${span}` : span} />
                 <StackedSeriesChart theme={pluginTheme} label={charts.errors.label} series={[charts.errors]} variant="line" size="full"
-                  showLegend={false} showReadout={false} valueFormatter={formatPercent} unknownLabel={t(`${m}.keyFlowNoRequests`)}
+                  showLegend={false} showReadout={false} valueFormatter={formatServiceCheckShare} {...(charts.axisTicks ? { axisTicks: charts.axisTicks } : {})} unknownLabel={t(`${m}.keyFlowNoRequests`)}
                   {...(errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.failing ? 'error' : 'warning' } } : {})} />
               </View>
             ) : null}
@@ -136,7 +144,7 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
                 title={<Text style={styles.route} numberOfLines={1}>{`${route.method} ${route.route}`}</Text>}
                 subtitle={requests === undefined || requests === 0 ? t(`${m}.keyFlowNoRequests`) : [
                   t(`${m}.keyFlowRequests`, { count: requests, formatted: formatCount(requests) }),
-                  measured?.errorRate === undefined ? null : t(`${m}.keyFlowErrorShare`, { percent: formatPercent(measured.errorRate) }),
+                  measured?.errorRate === undefined ? null : t(`${m}.keyFlowErrorShare`, { percent: formatServiceCheckShare(measured.errorRate) }),
                 ].filter(Boolean).join(' · ')}
                 detail={measured?.p95Ms === undefined ? '—' : formatServiceCheckLatency(measured.p95Ms)}
                 mode="info"

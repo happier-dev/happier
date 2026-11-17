@@ -56,6 +56,8 @@ export type MainScreenHeaderProps = Readonly<{
   description?: string;
   details?: React.ReactNode;
   meta?: PageHeaderProps['meta'];
+  /** The page's identity mark (`PageHeaderMarkIcon`) before the title; the purpose and facts start on the content edge. */
+  leading?: React.ReactNode;
   /** Title-row controls after the magnifier, before the "+" (a "⋯"). */
   actions?: React.ReactNode;
   search?: MainScreenSearch | null;
@@ -124,6 +126,7 @@ export const MainScreenHeader = React.memo(function MainScreenHeader(
             : { description: props.description })}
           {...(props.details == null ? {} : { details: props.details })}
           {...(props.meta === undefined ? {} : { meta: props.meta })}
+          {...(props.leading == null ? {} : { leading: props.leading, markSpan: 'title' as const })}
           actionsPlacement="page"
           // The controls hang from the title's line; the description takes the page's whole width beneath (F2).
           actionsLayout="hang"

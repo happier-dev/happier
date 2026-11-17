@@ -18875,7 +18875,6 @@ settingsSession: {
           searchPlaceholder: "Rechercher des apps et des environnements",
           lastDays: "30 derniers jours",
           checkFailingTitle: "Cette vérification échoue",
-          checkDegradedTitle: "Cette vérification est dégradée",
           lastResult: "Dernier résultat",
           response: "Réponse",
           uptimeWord: "disponibilité",

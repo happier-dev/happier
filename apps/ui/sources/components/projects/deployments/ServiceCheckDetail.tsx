@@ -42,6 +42,7 @@ import {
   serviceCheckCauseText,
   serviceCheckKeyFlowCauseText,
   formatServiceCheckKeyFlowValue,
+  formatServiceCheckShare,
   serviceCheckInvestigationSubject,
   serviceCheckSavedAutomationSubject,
   serviceCheckHistoryStrip,
@@ -60,6 +61,7 @@ import {
 } from './serviceCheckPresentation';
 import { ServiceCheckBars, type ServiceCheckBarCell } from './ServiceCheckBars';
 import { ServiceCheckKeyFlowSection } from './ServiceCheckKeyFlowSection';
+import { useEnvironmentName } from './useEnvironmentName';
 
 const k = 'projects.deployments.services' as const;
 const m = 'projects.deployments.monitoring' as const;
@@ -124,18 +126,29 @@ function useCheckSeed(row: ManagedConfiguredCheckRow) {
 
 /**
  * What a Check is, under its name (lab A3): its kind, how often and from which Machine, the list row's own facts.
- * The target is the name and its state stands in the banner and under the bars, so neither repeats here.
+ * The target is the name and its state stands in the banner and under the bars, so neither repeats here. A named Key
+ * flow also says its routes, the service it checks and the Environment it runs in (lab p7Flows detail).
  */
 export function useServiceCheckMeta(row: ManagedConfiguredCheckRow): string | null {
   const facts = serviceCheckListFacts(row);
   const observer = useServerScopedMachineLabel(row.scope.serverId, facts.observerMachineId);
+  const head = serviceCheckShownDefinition(row.definitionFacts, null);
+  const definition = head.kind === 'available' ? head.definition : null;
+  const keyFlow = definition?.keyFlow ?? null;
+  const environment = useEnvironmentName(row.scope.serverId, keyFlow?.environmentId ?? null).name;
   if (row.definitionFacts.kind === 'loading') return null;
   const every = facts.every
     ? observer
       ? t(`${k}.checkEvery`, { period: facts.every, machine: observer })
       : t(`${k}.checkEveryAnywhere`, { period: facts.every })
     : null;
-  return [facts.kind, every].filter(Boolean).join(' · ') || t('automations.form.trigger.sourceUnavailable');
+  const flow = keyFlow ? [
+    definition?.targetLabel !== facts.title ? definition?.targetLabel ?? null : null,
+    every,
+    t(`${m}.keyFlowChecksService`, { service: keyFlow.serviceName }),
+    environment,
+  ] : [every];
+  return [facts.kind, ...flow].filter(Boolean).join(' · ') || t('automations.form.trigger.sourceUnavailable');
 }
 
 /**
@@ -311,11 +324,8 @@ export function ServiceCheckDetail(
         <AttentionBanner
           testID="services.check.failing"
           tone={serviceCheckStatusTone(facts.status) ?? 'warning'}
-          title={t(
-            facts.status === 'down'
-              ? `${k}.checkFailingTitle`
-              : `${k}.checkDegradedTitle`,
-          )}
+          // Down is a target that cannot answer; a check that answers and breaks its rule is failing (D33).
+          title={t(facts.status === 'down' ? `${m}.checkDownTitle` : `${k}.checkFailingTitle`)}
           {...(causeText ? { description: causeText } : {})}
         />
       ) : null}
@@ -414,7 +424,7 @@ export function ServiceCheckDetail(
                 result.cause?.httpStatus === undefined ? null : String(result.cause.httpStatus),
                 // A measured check (a Key flow) says its error share beside its time (lab p7Flows detail).
                 result.measurements?.errorRate === undefined ? null
-                  : t(`${m}.keyFlowErrorShare`, { percent: `${Math.round(result.measurements.errorRate * 1000) / 10}%` }),
+                  : t(`${m}.keyFlowErrorShare`, { percent: formatServiceCheckShare(result.measurements.errorRate) }),
                 observer ? t(`${k}.resultFrom`, { machine: observer }) : null,
               ]
                 .filter(Boolean)
@@ -543,8 +553,7 @@ function keyFlowFacts(config: NonNullable<ServiceCheckSettings['keyFlow']>, resu
   }];
   if (config.measure.kind === 'route' && !errorsMeasured) {
     facts.push({ key: 'errors', label: t(`${m}.keyFlowErrors`),
-      value: measured?.errorRate === undefined ? '—'
-        : new Intl.NumberFormat(getPreferredLanguage(), { style: 'percent', maximumFractionDigits: 1 }).format(measured.errorRate),
+      value: measured?.errorRate === undefined ? '—' : formatServiceCheckShare(measured.errorRate),
       detail: measured?.errorRate === undefined ? t(`${m}.keyFlowNoRequests`) : t(`${m}.latest`) });
   }
   return facts;
@@ -554,8 +563,7 @@ function keyFlowFacts(config: NonNullable<ServiceCheckSettings['keyFlow']>, resu
 function keyFlowRuleText(config: NonNullable<ServiceCheckSettings['keyFlow']>): string {
   const measure = config.measure;
   const errors = measure.kind === 'route' && measure.statistic === 'errorRate';
-  const value = errors ? `${Math.round(config.threshold.value * 1000) / 10}%`
-    : measure.kind === 'route' ? formatLatency(config.threshold.value) : String(config.threshold.value);
+  const value = formatServiceCheckKeyFlowValue(config, config.threshold.value);
   return t(`${m}.keyFlowRule`, {
     measure: measure.kind === 'route' ? (errors ? t(`${m}.keyFlowErrors`) : measure.statistic)
       : measure.kind === 'runtime' ? measure.metricName : t(`${m}.keyFlowSpend`),

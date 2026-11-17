@@ -18826,7 +18826,6 @@ settingsSession: {
           searchPlaceholder: "Szukaj aplikacji i środowisk",
           lastDays: "Ostatnie 30 dni",
           checkFailingTitle: "To sprawdzenie kończy się błędem",
-          checkDegradedTitle: "To sprawdzenie działa częściowo",
           lastResult: "Ostatni wynik",
           response: "Odpowiedź",
           uptimeWord: "dostępność",

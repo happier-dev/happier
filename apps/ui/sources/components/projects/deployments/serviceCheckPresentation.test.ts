@@ -440,6 +440,33 @@ describe('a Key flow check names its routes and reads its trend from the collect
       config: keyFlow, periodMs: 60_000, consecutiveFailuresBeforeAlerting: 3 }],
   };
 
+  it('names a named flow by its name, an unnamed one by its routes', async () => {
+    const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
+    const listed = (config: object) => serviceCheckListFacts({
+      native: { name: 'Event observation' },
+      definitionFacts: { kind: 'available', observerMachineId: 'collector-b', checks: [{ checkId: 'Checkout', name: 'Key flow',
+        targetLabel: 'POST /checkout, GET /api/cart', periodMs: 60_000, domainId: null, keyFlow: config }] },
+      lastResults: { kind: 'neverObserved' },
+    } as never);
+    expect(listed({ ...keyFlow, name: 'Checkout' }).title).toBe('Checkout');
+    expect(listed(keyFlow).title).toBe('POST /checkout, GET /api/cart');
+  });
+
+  it('states a latency to the precision a p95 is read at, the same way on every check', async () => {
+    const { formatServiceCheckLatency } = await import('./serviceCheckPresentation');
+    expect(formatServiceCheckLatency(1420)).toMatch(/^1\.42\b/);
+    expect(formatServiceCheckLatency(388.4)).toMatch(/^388\b/);
+  });
+
+  it('names a trend window’s two ends with their day, so a 24-hour window never reads as one day backwards', async () => {
+    const { serviceCheckWindowEnds } = await import('./serviceCheckPresentation');
+    const until = Date.UTC(2026, 10, 17, 12, 0);
+    const [start, end] = serviceCheckWindowEnds(until - DAY, until, until);
+    expect(start).not.toBe(end);
+    expect(start).toMatch(/Mon/);
+    expect(end).not.toMatch(/Mon|Tue/);
+  });
+
   it('names the flow by its routes and keeps its saved selection', () => {
     const [definition] = readServiceCheckDefinitions({ sourceConfig: source, displayLabel: 'Checkout' })!;
     expect(definition).toMatchObject({ checkId: 'Checkout', targetLabel: 'POST /checkout, GET /api/cart', keyFlow });

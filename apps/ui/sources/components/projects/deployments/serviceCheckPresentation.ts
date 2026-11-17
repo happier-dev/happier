@@ -23,6 +23,7 @@ import type { ConfiguredHealthResultsState } from '@/components/store/inventory/
 import type { ConfiguredCheckDefinitionFacts } from '@/components/store/inventory/useConfiguredCheckDefinitions';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 import { getPreferredLanguage, t } from '@/text';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 
 type Checks = Extract<
@@ -286,7 +287,8 @@ export function serviceCheckStatusWord(status: ServiceCheckStatus): string {
     case 'down':
       return t('projects.deployments.healthDown');
     case 'degraded':
-      return t('projects.deployments.healthDegraded');
+      // A check that answers but breaks its rule (a Key flow over its limit) is failing; Down is a target that cannot answer.
+      return t('projects.deployments.monitoring.statusFailing');
     case 'notChecked':
       return t('projects.deployments.healthNotChecked');
     case 'loading':
@@ -468,10 +470,21 @@ export function serviceCheckCauseText(cause: RetainedCheck['result']['cause'] | 
 /** A measured value in the words of its flow: latency as time, an error share as a percentage, anything else as is. */
 export function formatServiceCheckKeyFlowValue(config: TelemetryKeyFlowConfigV1, value: number): string {
   const measure = config.measure;
-  if (measure.kind === 'route' && measure.statistic === 'errorRate') {
-    return new Intl.NumberFormat(getPreferredLanguage(), { style: 'percent', maximumFractionDigits: 1 }).format(value);
-  }
+  if (measure.kind === 'route' && measure.statistic === 'errorRate') return formatServiceCheckShare(value);
   return measure.kind === 'route' ? formatServiceCheckLatency(value) : String(value);
+}
+
+/** An error share ("2.4%"), one decimal, as every Check surface states it: facts, trend heads, routes and results. */
+export function formatServiceCheckShare(fraction: number): string {
+  return new Intl.NumberFormat(getPreferredLanguage(), { style: 'percent', maximumFractionDigits: 1 }).format(fraction);
+}
+
+/**
+ * A trend window's two ends ("Mon 19:00" … "18:57"), each with its day when it is not today, through the app's one
+ * moment formatter, so a 24-hour window never reads as one day running backwards.
+ */
+export function serviceCheckWindowEnds(since: number, until: number, nowMs: number): readonly [string, string] {
+  return [formatMoment(since, nowMs), formatMoment(until, nowMs)];
 }
 
 /**
@@ -515,8 +528,11 @@ export function formatServiceCheckUnit(value: number, name: 'millisecond' | 'sec
   return new Intl.NumberFormat(getPreferredLanguage(), { style: 'unit', unit: name, unitDisplay: 'short', maximumFractionDigits: 1 })
     .format(value);
 }
+/** A response or request time: whole milliseconds under a second, else seconds to three figures ("1.42 sec", the p95 precision). */
 export function formatServiceCheckLatency(ms: number): string {
-  return ms < 1000 ? formatServiceCheckUnit(Math.round(ms), 'millisecond') : formatServiceCheckUnit(ms / 1000, 'second');
+  if (ms < 1000) return formatServiceCheckUnit(Math.round(ms), 'millisecond');
+  return new Intl.NumberFormat(getPreferredLanguage(), { style: 'unit', unit: 'second', unitDisplay: 'short', maximumSignificantDigits: 3 })
+    .format(ms / 1000);
 }
 export function formatServiceCheckPeriod(ms: number): string {
   return ms % 3_600_000 === 0 ? formatServiceCheckUnit(ms / 3_600_000, 'hour')
@@ -540,6 +556,8 @@ export type ServiceCheckCollectorTrend = Readonly<{
 
 export type ServiceCheckListFacts = Readonly<{
   title: string;
+  /** The title is what the check reaches (a host, a path, routes), drawn as an identifier; a name is drawn as a name. */
+  titleIdentifier: boolean;
   kind: string | null;
   every: string | null;
   lastResult: string | null;
@@ -586,7 +604,9 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
   const collectorTrend = keyFlow && observerMachineId !== null && newest !== undefined
     ? { collectorMachineId: observerMachineId, config: keyFlow, until: newest } : null;
   return {
-    title: definition?.targetLabel ?? row.native.name,
+    // A named Key flow is its name ("Checkout"); every other check is named by what it checks, else its saved name.
+    title: keyFlow?.name ?? definition?.targetLabel ?? row.native.name,
+    titleIdentifier: !keyFlow?.name && definition?.targetLabel != null,
     kind: definition?.name ?? null,
     every: definition ? formatServiceCheckPeriod(definition.periodMs) : null,
     lastResult: word ? [word, shown?.result.latencyMs === undefined ? null : formatServiceCheckLatency(shown.result.latencyMs)]

@@ -19003,7 +19003,6 @@ settingsSession: {
           searchPlaceholder: "Cerca app e ambienti",
           lastDays: "Ultimi 30 giorni",
           checkFailingTitle: "Questo controllo non riesce",
-          checkDegradedTitle: "Questo controllo è degradato",
           lastResult: "Ultimo risultato",
           response: "Risposta",
           uptimeWord: "disponibilità",

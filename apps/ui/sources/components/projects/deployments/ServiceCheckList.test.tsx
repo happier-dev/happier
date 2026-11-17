@@ -136,3 +136,28 @@ it('reserves titles and sections while results and definitions arrive', async ()
   expect(text).not.toContain('n8n.acme.dev availability');
   expect(text).not.toContain('Needs you');
 });
+
+// DBW-UI-INSIGHTS-4 review §3 #1/#2 (D33): a Key flow row is named by its flow; a breached limit reads Failing and says
+// its measurement on line 2, never as an unreachable target's Down or a slow answer.
+it('names a failing Key flow by its flow and says its measurement, as Failing rather than Down', async () => {
+  const keyFlow = { name: 'Checkout', environmentId: 'env-prod', serviceName: 'billing-api', windowMs: 600_000,
+    measure: { kind: 'route', routes: [{ method: 'POST', route: '/checkout' }], statistic: 'p95' }, threshold: { operator: 'above', value: 800 } };
+  const measured = (minutesAgo: number, value: number) => ({ ...result(value > 800 ? 'degraded' : 'up', minutesAgo, value),
+    measurements: { measure: 'p95', unit: 'ms', basis: 'metric_points', producers: [], completeness: 'complete', reasons: [], value,
+      window: { since: NOW - (minutesAgo + 10) * 60_000, until: NOW - minutesAgo * 60_000 } } });
+  const flow = { ...(row('flow', 'POST /checkout', { kind: 'available', checks: [{ checkId: 'flow', result: measured(1, 1420),
+    recentResults: [measured(3, 240), measured(2, 1380), measured(1, 1420)], recentResultsCoverage: 'complete',
+    failingSince: NOW - 2 * 60_000, failureStreak: 2, history: { lastObservedAt: NOW, uptimePercent: 99.4, days: [] } }] }) as object),
+  definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: 'flow', name: 'Key flow', targetLabel: 'POST /checkout',
+    periodMs: 60_000, domainId: null, keyFlow }] } } as never;
+  const screen = await renderScreen(
+    <ServiceCheckList testID="monitoring.checks" rows={[flow]} scope={{ serverId: 'server-1', accountId: 'account-1' } as never}
+      selection={SELECTION} accessibilityLabel="Checks" />,
+  );
+  const text = screen.getTextContent();
+  expect(text).toContain('Checkout');
+  expect(text).toContain('Failing');
+  expect(text).not.toContain('Down');
+  expect(text).toMatch(/p95 1\.42/);
+  expect(text).not.toContain('usually');
+});

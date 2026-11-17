@@ -211,7 +211,7 @@ function MonitoringBand(
     summary.degraded > 0
       ? {
           key: 'degraded',
-          text: t(`${m}.glanceDegraded`, { count: summary.degraded }),
+          text: t(`${m}.glanceFailing`, { count: summary.degraded }),
           color: theme.colors.state.warning.textForeground,
         }
       : null,

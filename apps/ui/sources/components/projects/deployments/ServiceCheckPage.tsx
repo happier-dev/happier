@@ -5,6 +5,7 @@ import { MachineManagedInventorySection } from '@/components/machines/page/Machi
 import { MainScreenHeader } from '@/components/navigation/shell/MainScreenHeader';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -116,6 +117,8 @@ function CheckPageHeader(props: Readonly<{ row: ManagedConfiguredCheckRow }>) {
       testID="services.check.page.header"
       title={title}
       alwaysShowTitle
+      // The check's own mark, as its row in Monitoring draws it.
+      leading={<PageHeaderMarkIcon name="pulse" />}
       {...(meta ? { description: meta } : {})}
     />
   );
