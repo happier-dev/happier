@@ -26,11 +26,11 @@ import { buildCodexCloudAuthFile } from '../../auth/services/openai/cloud/authFi
 import { createNativeAgentSessionInteractionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
-import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { SessionInputCausalPermissionAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputAuthorityV1Schema, SESSION_INPUT_AUTHORITY_META_KEY, buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { UserMessage } from '@/api/types';
+import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/createHandler';
 import { createRunnerDaemonPluginServicesPreparationError } from '@/daemon/agentRuntime/runnerDaemonPluginServicesHost';
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
@@ -1020,10 +1020,90 @@ describe('native Codex attachment preparation', () => {
     },
   );
 
+  it('defers a read-only ceiling instead of steering into a running yolo turn', async () => {
+    let activeNativeTurn: { threadId: unknown; turnId: string } | undefined;
+    let nativeTurns = 0;
+    await withFixture(async ({ openConfiguredSession, requests, directory, emitNotification }) => {
+      let emitUserMessage: (message: UserMessage) => void = () => { throw new Error('Queue binding missing'); };
+      // Only Home delivery/persistence and the native JSON-RPC peer are substituted.
+      const session = createMutableApiSessionClientFixture({ sessionId: 'actual-happier-session', overrides: {
+        onUserMessage(handler) { emitUserMessage = handler; },
+        async reconcileSessionInputForProviderDispatch() { return 'admitted'; },
+      } });
+      const native = await openConfiguredSession();
+      const host = createNativeAgentSessionInteractionOperations({ session: native, sessionId: session.sessionId, cwd: directory,
+        context: { agent: { id: 'codex' } } as AgentSessionRuntimeContext,
+        capabilities: { open: ['create'], delivery: ['newTurn', 'steer'], cancel: true, configuration: true },
+        initialConfiguration: { mode: { value: null, updatedAtMs: 0 }, model: { value: 'fixture-model', updatedAtMs: 0 },
+          permissionIntent: { value: 'yolo', updatedAtMs: 0 }, nativeSandbox: 'off', options: {} },
+      });
+      const permissionHandler = createProviderEnforcedPermissionHandler({ session, logPrefix: '[Steer ceiling]' });
+      permissionHandler.setPermissionMode('yolo');
+      const state = createPermissionModeQueueState({ session, agentTargetKey: 'codex', initialPermissionMode: 'yolo',
+        inFlightSteer: {
+          readActivePermissionMode: () => permissionHandler.getPermissionMode(),
+          // The native peer is running its first turn and exposes turn/steer.
+          isTurnInFlight: () => activeNativeTurn !== undefined,
+          supportsInFlightSteer: () => true,
+          steerText: (text, meta) => host.steerInFlightTurn(text, meta),
+          readStructuredInputDispatchServices: () => ({
+            reconcileSessionInputForProviderDispatch: input => session.reconcileSessionInputForProviderDispatch(input),
+          }),
+          registerProviderAcceptedEffect() {},
+        },
+      });
+      host.beginTurnLifecycle();
+      await host.sendTurnPrompt('YOLO_CONTROL', { localId: 'first' });
+      expect(requests.find(request => request.method === 'turn/start')?.params).toMatchObject({ approvalPolicy: 'never' });
+      emitUserMessage({ role: 'user', content: { type: 'text', text: 'WRITABLE_STEER_CONTROL' }, localId: 'control', meta: {} });
+      await vi.waitFor(() => expect(requests.filter(request => request.method === 'turn/steer')).toHaveLength(1));
+      const admitted = buildTrustedHostSessionInputAdmissionV1('ui');
+      const authority = SessionInputAuthorityV1Schema.parse({ ...admitted.request,
+        permission: { admittedPermissionCeiling: 'read-only' } });
+      emitUserMessage({ role: 'user', content: { type: 'text', text: 'READ_ONLY_STEER' }, localId: 'lower',
+        meta: { [SESSION_INPUT_AUTHORITY_META_KEY]: authority } });
+      await vi.waitFor(() => expect(state.messageQueue.size() + requests.filter(request => request.method === 'turn/steer').length).toBe(2));
+      expect(requests.filter(request => request.method === 'turn/steer')).toHaveLength(1);
+      if (!activeNativeTurn) throw new Error('Missing native turn');
+      emitNotification('turn/completed', { threadId: activeNativeTurn.threadId,
+        turn: { id: activeNativeTurn.turnId, status: 'completed' } });
+      await host.waitForTurnCompletion();
+      let completed = false;
+      await runPermissionModePromptLoop({ providerName: 'Codex', agentMessageType: 'codex', explicitPermissionMode: undefined,
+        session, messageQueue: state.messageQueue, runtime: host, permissionHandler, messageBuffer: new MessageBuffer(),
+        createOverrideSynchronizer: () => ({ syncFromMetadata() {}, async flushPendingAfterStart() {} }),
+        shouldExit: () => completed, getAbortSignal: () => new AbortController().signal,
+        keepAlive() {}, setThinking() {}, sendReady() { completed = true; },
+        currentPermissionModeUpdatedAt: 0, setCurrentPermissionMode: state.setCurrentPermissionMode,
+        setCurrentPermissionModeUpdatedAt: state.setCurrentPermissionModeUpdatedAt,
+        formatPromptErrorMessage: String, registerProviderAcceptedEffect: () => undefined });
+      expect(requests.filter(request => request.method === 'turn/start').map(request => request.params)).toMatchObject([
+        { approvalPolicy: 'never' }, { approvalPolicy: 'untrusted', sandboxPolicy: { type: 'dangerFullAccess' } },
+      ]);
+      expect(state.getCurrentPermissionMode()).toBe('yolo');
+    }, { permissionMode: 'yolo', configuration: { nativeSandbox: 'off' },
+      beforeTurnSteerResponse: ({ socket, params }) => {
+        socket.send(JSON.stringify({ method: 'item/completed', params: {
+          threadId: params.threadId, turnId: params.expectedTurnId,
+          item: { id: `accepted-${params.clientUserMessageId}`, type: 'userMessage', clientId: params.clientUserMessageId, content: params.input },
+        } }));
+      },
+      onTurnStart: ({ socket, params, turnId }) => {
+        nativeTurns += 1;
+        if (nativeTurns === 1) activeNativeTurn = { threadId: params.threadId, turnId };
+        else socket.send(JSON.stringify({ method: 'turn/completed', params: {
+          threadId: params.threadId, turn: { id: turnId, status: 'completed' },
+        } }));
+      },
+    });
+  });
+
   it.each([undefined, 'off'] as const)('dispatches causal read-only ceilings without reopening Codex with native sandbox %s', async (nativeSandbox) => {
     await withFixture(async ({ openConfiguredSession, requests, directory }) => {
       const native = await openConfiguredSession();
+      let emitUserMessage: (message: UserMessage) => void = () => { throw new Error('Queue binding missing'); };
       const session = createMutableApiSessionClientFixture({ sessionId: 'actual-happier-session', overrides: {
+        onUserMessage(handler) { emitUserMessage = handler; },
         async reconcileSessionInputForProviderDispatch() { return 'admitted'; },
       } });
       const host = createNativeAgentSessionInteractionOperations({
@@ -1037,18 +1117,18 @@ describe('native Codex attachment preparation', () => {
         },
       });
       // Only native JSON-RPC and host persistence are fixtures; the loop and adapter stay real.
-      const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(JSON.stringify, {
-        batcher: combinePermissionModeQueuedPrompts,
-      });
+      const state = createPermissionModeQueueState({ session, agentTargetKey: 'codex', initialPermissionMode: 'default' });
+      const queue = state.messageQueue;
       for (const [index, entry] of ([
         { permissionMode: 'default' }, { permissionMode: 'default', ceiling: 'read-only' },
         { permissionMode: 'yolo' }, { permissionMode: 'yolo', ceiling: 'read-only' },
       ] as const).entries()) {
-        const causalPermissionAuthority = 'ceiling' in entry ? SessionInputCausalPermissionAuthorityV1Schema.parse({
-          kind: 'admittedSessionInputV1', admittedPermissionCeiling: entry.ceiling,
+        const authority = 'ceiling' in entry ? SessionInputAuthorityV1Schema.parse({
+          ...buildTrustedHostSessionInputAdmissionV1('ui').request,
+          permission: { admittedPermissionCeiling: entry.ceiling },
         }) : undefined;
-        queue.push({ text: 'Reply OK.', localId: `policy-${index}`, ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}) },
-          { permissionMode: entry.permissionMode, ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}) });
+        emitUserMessage({ role: 'user', content: { type: 'text', text: 'Reply OK.' }, localId: `policy-${index}`,
+          meta: { permissionMode: entry.permissionMode, ...(authority ? { [SESSION_INPUT_AUTHORITY_META_KEY]: authority } : {}) } });
       }
       let completed = 0;
       await runPermissionModePromptLoop({

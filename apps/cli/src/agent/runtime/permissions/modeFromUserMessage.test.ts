@@ -10,6 +10,7 @@ describe('resolvePermissionModeForQueueingUserMessage', () => {
     });
 
     expect(result).toEqual({
+      ok: true,
       currentPermissionMode: 'safe-yolo',
       queuePermissionMode: 'safe-yolo',
       didChange: false,
@@ -23,6 +24,7 @@ describe('resolvePermissionModeForQueueingUserMessage', () => {
     });
 
     expect(result).toEqual({
+      ok: true,
       currentPermissionMode: 'default',
       queuePermissionMode: 'safe-yolo',
       didChange: true,
@@ -36,6 +38,7 @@ describe('resolvePermissionModeForQueueingUserMessage', () => {
     });
 
     expect(result).toEqual({
+      ok: true,
       currentPermissionMode: undefined,
       queuePermissionMode: 'default',
       didChange: false,
@@ -49,6 +52,7 @@ describe('resolvePermissionModeForQueueingUserMessage', () => {
     });
 
     expect(result).toEqual({
+      ok: true,
       currentPermissionMode: 'safe-yolo',
       queuePermissionMode: 'safe-yolo',
       didChange: false,

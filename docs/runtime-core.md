@@ -1134,6 +1134,16 @@ replay-seed custody without automatically resending it. The host's correlated
 acceptance outcome retires the seed; native transcript resume proof remains
 separate.
 
+Primary Session input admission projects its immutable causal permission ceiling
+into the effective queue mode once, through `modeFromUserMessage.ts`. Ordinary
+messages and host-only Workflow steps use that owner. New turns, queued inputs,
+resume and replacement consume the admitted mode. In-flight steering requires
+that mode to be effective already, or an applied native configuration change;
+a scheduled change is insufficient and leaves the input queued for a new turn.
+The Session's owner-selected baseline is unchanged. ACP and App Server use their
+existing configuration and approval-policy owners to enforce the admitted mode,
+or refuse before provider effect when enforcement is unavailable.
+
 The new conversation operation also enforces each input's resolved public
 `permissionIntent` before native input effects. The host derives it through the
 same Run authority owner from the Run mode, original causal ceiling and current

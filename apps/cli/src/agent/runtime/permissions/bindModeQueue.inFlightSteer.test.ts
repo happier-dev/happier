@@ -1701,7 +1701,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
 
   it('does not steer /compact (it must be handled by the main loop)', async () => {
     const { session, emitUserMessage } = createSessionHarness();
-    const { queue, spyPush, spyIsolate } = createQueue();
+    const { queue, spyIsolate } = createQueue();
 
     const steerText = vi.fn(async () => {});
 
@@ -1723,17 +1723,12 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
 
     expect(steerText).not.toHaveBeenCalled();
     expect(spyIsolate).not.toHaveBeenCalled();
-    expect(spyPush).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: '/compact',
-        localId: null,
-        inputContextBlock: LEGACY_UNKNOWN_INPUT_CONTEXT,
-      }),
-      expect.objectContaining({
-        permissionMode: 'default',
-        inputContextBlock: LEGACY_UNKNOWN_INPUT_CONTEXT,
-      }),
-    );
+    expect(queue.size()).toBe(1);
+    expect(await queue.waitForMessagesAndGetAsString()).toMatchObject({
+      message: { text: '/compact', localId: null, inputContextBlock: LEGACY_UNKNOWN_INPUT_CONTEXT },
+      mode: { permissionMode: 'default', inputContextBlock: LEGACY_UNKNOWN_INPUT_CONTEXT },
+      isolate: true,
+    });
   });
 
   it('keeps native slash first, preserves provenance, and leaves replay seed for ordinary input', async () => {
@@ -1926,11 +1921,11 @@ describe('registerPermissionModeMessageQueueBinding (in-flight config delta, lan
     expect(spyPush).not.toHaveBeenCalled();
   });
 
-  it('falls back to the queue when the in-flight config apply fails (mode applies at drain)', async () => {
+  it.each(['failed', 'scheduled_in_turn'] as const)('queues when in-flight configuration is %s rather than effective', async (status) => {
     const { session, emitUserMessage } = createSessionHarness();
     const { queue, spyPush } = createQueue();
     const { controller, steerText } = steerWithConfigCapability({
-      applyConfigDeltaInFlight: vi.fn(async () => ({ status: 'failed' as const, reason: 'unsafe_window' })),
+      applyConfigDeltaInFlight: vi.fn(async () => status === 'failed' ? { status, reason: 'unsafe_window' } : { status }),
     });
 
     registerPermissionModeMessageQueueBinding({

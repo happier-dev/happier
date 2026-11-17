@@ -3,13 +3,13 @@ import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
-import { SessionInputCausalPermissionAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SessionInputAuthorityV1Schema, SESSION_INPUT_AUTHORITY_META_KEY, buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
 import { createPublicAcpSession, type PublicAcpComposerDependencies } from '@/agent/acp/runtime/publicSession/createPublicAcpSession';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/createHandler';
-import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
+import type { UserMessage } from '@/api/types';
+import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
 import { createNativeAgentSessionInteractionOperations } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
 import { createExternalContributionFixtures } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
 import { createNativeAgentHostSessionRuntimePlan } from '@/plugins/runtime/runtimeCore/plugin/session';
@@ -65,7 +65,9 @@ it.each([
       models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
     };
     // The Home transport reports the persisted input admitted; dispatch preparation stays real.
+    let emitUserMessage: (message: UserMessage) => void = () => { throw new Error('Queue binding missing'); };
     const session = createMutableApiSessionClientFixture({ sessionId: 'causal-session', overrides: {
+      onUserMessage(handler) { emitUserMessage = handler; },
       async reconcileSessionInputForProviderDispatch() { return 'admitted'; },
     } });
     session.__setMetadata(createTestMetadata({ permissionMode: initialMode, permissionModeUpdatedAt: 0 }));
@@ -97,24 +99,19 @@ it.each([
       messageBuffer: {}, mcpServers: {}, permissionHandler, getPermissionMode: () => permissionHandler.getPermissionMode(),
       setThinking() {}, memoryRecallGuidanceEnabled: false,
     } as never);
-    const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(JSON.stringify,
-      { batcher: combinePermissionModeQueuedPrompts });
-    const writableAuthority = SessionInputCausalPermissionAuthorityV1Schema.parse({
-      kind: 'admittedSessionInputV1', admittedPermissionCeiling: initialMode,
-    });
-    const enqueueLower = () => {
-      const causalPermissionAuthority = SessionInputCausalPermissionAuthorityV1Schema.parse({
-        kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only',
-      });
-      queue.pushIsolate({ text: 'LATER_READ_ONLY_CEILING', localId: 'lower', causalPermissionAuthority }, {
-        permissionMode: initialMode, causalPermissionAuthority,
-      });
+    const state = createPermissionModeQueueState({ session, agentTargetKey: 'codex', initialPermissionMode: initialMode });
+    const queue = state.messageQueue;
+    const enqueue = (text: string, localId: string, ceiling?: 'read-only' | typeof initialMode) => {
+      const authority = ceiling ? SessionInputAuthorityV1Schema.parse({
+        ...buildTrustedHostSessionInputAdmissionV1('ui').request,
+        permission: { admittedPermissionCeiling: ceiling },
+      }) : undefined;
+      emitUserMessage({ role: 'user', content: { type: 'text', text }, localId,
+        meta: { permissionMode: initialMode, ...(authority ? { [SESSION_INPUT_AUTHORITY_META_KEY]: authority } : {}) } });
     };
+    const enqueueLower = () => enqueue('LATER_READ_ONLY_CEILING', 'lower', 'read-only');
     if (cold) enqueueLower();
-    else queue.pushIsolate({ text: 'FIRST_WRITABLE_TURN', localId: 'first',
-      ...(configurationSupported ? { causalPermissionAuthority: writableAuthority } : {}) }, {
-      permissionMode: initialMode, ...(configurationSupported ? { causalPermissionAuthority: writableAuthority } : {}),
-    });
+    else enqueue('FIRST_WRITABLE_TURN', 'first', configurationSupported ? initialMode : undefined);
     let ready = 0;
     try {
       await runPermissionModePromptLoop({

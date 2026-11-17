@@ -1,3 +1,5 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { resolvePermissionModeForQueueingUserMessage } from '@/agent/runtime/permissions/modeFromUserMessage';
 import { SessionModelSelectionSchema, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveSessionMcpNativeLaunchMaterial } from '@/mcp/runtime/sessionMcpNativeLaunchMaterial';
 import { randomUUID } from 'node:crypto';
@@ -2482,7 +2484,7 @@ async function runHostedSessionRuntime(
         return { status: 'unsupported', reason: 'runtime_without_in_flight_config_capability' };
       }
       const outcome = await apply(delta);
-      if (outcome.status === 'applied' || outcome.status === 'scheduled_in_turn') {
+      if (outcome.status === 'applied') {
         const mode = parseAgentPermissionIntentV1Alias(delta.permissionMode);
         if (mode) permissionHandler.setPermissionMode(mode);
       }
@@ -2601,6 +2603,11 @@ async function runHostedSessionRuntime(
           suppressUserEcho: true, providerPromptAlreadyResolved: true,
         };
         if (source.kind === 'workflow_step') {
+          const admittedMode = resolvePermissionModeForQueueingUserMessage({
+            currentPermissionMode: mode.permissionMode, messagePermissionModeRaw: undefined,
+            causalPermissionAuthority: source.causalPermissionAuthority,
+          });
+          if (!admittedMode.ok) throw new PluginError({ code: admittedMode.reason, message: admittedMode.reason, retryable: false });
           await workflowStepWithdrawal.offerWorkflowStepInput({ localInputId: localId });
           return {
             message: { text: source.text, localId, causalPermissionAuthority: source.causalPermissionAuthority, hostContextOnly: {
@@ -2608,7 +2615,8 @@ async function runHostedSessionRuntime(
               isWorkflowStepDeliverable: async (input) => await readWorkflowInputPort()?.isWorkflowStepDeliverable(input) ?? false,
               commitHostEvent: () => commitContextOnlyHostEvent(localId, { type: 'message', message: WORKFLOW_STEP_INPUT_EVENT_MESSAGE }),
             } },
-            mode, isolate: true, hash: localId,
+            mode: { ...mode, permissionMode: admittedMode.queuePermissionMode, causalPermissionAuthority: source.causalPermissionAuthority },
+            isolate: true, hash: localId,
           };
         }
         return {

@@ -15110,14 +15110,14 @@ describe('runHostSessionRuntime', () => {
     }
   });
 
-  it('dispatches consecutive workflow steps as separate complete turns and never steers a busy provider', async () => {
+  it.each(['default', 'yolo'] as const)('admits consecutive read-only workflow steps under a %s baseline without steering a busy provider', async (baseline) => {
     const harness = createHarness();
     harness.session.hasPendingProviderInput = vi.fn(() => false);
     const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>((mode) => mode.permissionMode, { batcher: combinePermissionModeQueuedPrompts });
     harness.deps.createPermissionModeQueueStateFn = () => ({
       messageQueue: queue,
       rebindSession: () => undefined,
-      getCurrentPermissionMode: () => 'default',
+      getCurrentPermissionMode: () => baseline,
       setCurrentPermissionMode: () => undefined,
       getCurrentPermissionModeUpdatedAt: () => 0,
       setCurrentPermissionModeUpdatedAt: () => undefined,
@@ -15132,7 +15132,7 @@ describe('runHostSessionRuntime', () => {
         return step ? {
           kind: 'workflow_step', ...step,
           workflowInvocation: { runId: 'isolated-run', invocationRecordId: step.localInputId },
-          causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+          causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' },
           workDepth: 2,
           acknowledgeAccepted: () => undefined,
         } : null;
@@ -15145,11 +15145,13 @@ describe('runHostSessionRuntime', () => {
     const finishFirstTurn = createDeferred<void>();
     let shouldExit = false;
     let completedTurns = 0;
-    const sendTurnPrompt = vi.fn(async (_prompt: string) => undefined);
+    const dispatchedModes: PermissionMode[] = [];
+    let readAppliedMode: () => PermissionMode = () => baseline;
+    const sendTurnPrompt = vi.fn(async (_prompt: string) => { dispatchedModes.push(readAppliedMode()); });
     const runtime = {
       ...harness.runtime,
       readSessionIdentity: vi.fn(() => ({ sessionId: null })),
-      updateSessionRuntimeConfig: vi.fn(unsupportedRuntimeConfigUpdate),
+      updateSessionRuntimeConfig: vi.fn(async () => ({ status: 'applied' as const })),
       beginTurnLifecycle: vi.fn(),
       supportsInFlightSteer: () => true,
       canSteerPrompt: () => true,
@@ -15165,6 +15167,7 @@ describe('runHostSessionRuntime', () => {
     harness.session.enqueueAgentMessageCommitted = vi.fn(async () => ({ persisted: true, delivered: false }));
     setSessionRuntimeFactory(harness.config, () => ({ operations: runtime, nativeRuntime: runtime }));
     harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      readAppliedMode = () => params.permissionHandler.getPermissionMode();
       await runPermissionModePromptLoop({
         ...params, shouldExit: () => shouldExit,
         sendReady: () => { completedTurns += 1; shouldExit = completedTurns === 2; },
@@ -15180,6 +15183,7 @@ describe('runHostSessionRuntime', () => {
     expect(sendTurnPrompt.mock.calls.map(([prompt]) => prompt)).toEqual(['FIRST_REQUIRED_STEP', 'SECOND_REQUIRED_STEP']);
     expect(runtime.beginTurnLifecycle).toHaveBeenCalledTimes(2);
     expect(runtime.steerInFlightTurn).not.toHaveBeenCalled();
+    expect(dispatchedModes).toEqual(['read-only', 'read-only']);
     expect(harness.session.confirmUserMessageLocallyConsumed).not.toHaveBeenCalled();
     expect(harness.session.observeProviderInputSettlement).not.toHaveBeenCalled();
   });
@@ -15228,7 +15232,7 @@ describe('runHostSessionRuntime', () => {
     const runtime = harness.runtime;
     // This Agent boundary starts fresh and completes each dispatched turn immediately.
     runtime.readSessionIdentity = vi.fn(() => ({ sessionId: null }));
-    runtime.updateSessionRuntimeConfig = vi.fn(unsupportedRuntimeConfigUpdate);
+    runtime.updateSessionRuntimeConfig = vi.fn(async () => ({ status: 'applied' as const }));
     runtime.beginTurnLifecycle = vi.fn();
     runtime.waitForTurnCompletion = vi.fn(async () => undefined);
     const prompts: string[] = [];

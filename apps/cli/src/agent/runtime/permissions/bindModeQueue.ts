@@ -56,8 +56,7 @@ export type SteerConfigDelta = Readonly<{
 /**
  * Outcome of an in-flight config-delta application (lane Q):
  * - `applied`: the backend verified the config is effective for the running turn.
- * - `scheduled_in_turn`: the backend owns the delta and will apply it at the next safe point
- *   DURING the current turn (still before/independent of the steered text's effect window).
+ * - `scheduled_in_turn`: the delta is not effective yet; input stays queued until a new turn.
  * - `unsupported` / `failed`: the backend cannot own the delta mid-turn — the message must take
  *   the legacy queue path (config applies when the queue drains at turn end).
  */
@@ -266,11 +265,17 @@ export function registerPermissionModeMessageQueueBinding(opts: {
       return true;
     }
 
+    const causalPermissionAuthority = readSessionInputCausalPermissionAuthorityV1(message.meta, 'stored');
     const resolvedMode = resolvePermissionModeForQueueingUserMessage({
       currentPermissionMode: opts.getCurrentPermissionMode(),
       messagePermissionModeRaw: message.meta?.permissionMode,
+      ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}),
     });
 
+    if (!resolvedMode.ok) {
+      rejectCallerInput(resolvedMode.reason);
+      return true;
+    }
     opts.setCurrentPermissionMode(resolvedMode.currentPermissionMode);
 
     const text = message.content.text;
@@ -278,7 +283,6 @@ export function registerPermissionModeMessageQueueBinding(opts: {
     // It must not rerun ingress local-path trust; alias-only legacy metadata is
     // the sole path that still reaches the compatibility reader below.
     const admittedStructuredInput = readAdmittedHappierStructuredInputV1FromMeta(message.meta);
-    const causalPermissionAuthority = readSessionInputCausalPermissionAuthorityV1(message.meta, 'stored');
     const actionRequestAttributionV1 = message.actionRequestAttributionV1
       ? materializeActionRequestAttributionV1(message.actionRequestAttributionV1) : undefined;
     const inputProvenance = readSessionMessageProvenance(message.meta, 'stored') ?? undefined;
@@ -662,7 +666,7 @@ export function registerPermissionModeMessageQueueBinding(opts: {
               configOutcome = { status: 'failed', reason: 'config_apply_threw' };
             }
             if (stopForLostBinding()) return;
-            if (configOutcome.status !== 'applied' && configOutcome.status !== 'scheduled_in_turn') {
+            if (configOutcome.status !== 'applied') {
               // The backend cannot own the config mid-turn: legacy queue path (the mode applies
               // when the queue drains). The steer was never accepted, so this is not a bounce.
               queueUnavailableSteer();
