@@ -5,7 +5,7 @@ import { chmod, link, lstat, mkdir, readdir, readFile, readlink, realpath, renam
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
-import { BuildInputDriftError, captureBuildInputFiles, mountCapturedWorkspaceDependencies, readBuildInputDependencies, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
+import { captureBuildInputFiles, mountCapturedWorkspaceDependencies, readBuildInputDependencies, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readSourceComponentBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readCliPrivateSourceEntries, readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
@@ -17,7 +17,7 @@ import { run, runCapture } from '../utils/proc/proc.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../packages/cli-common/bundledPluginPublicationPolicy.mjs';
-import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKeptUntrackedPath, readDeclaredShippedPaths, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
+import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKeptUntrackedPath, readDeclaredShippedPaths, readSourceRevisionDescriptor, readSourceRevisionOverlayBytes, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 /**
  * QA source Stacks run a revision tree from source (owner 2026-11-14: one shared
@@ -28,7 +28,7 @@ import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKept
  *   dependencies mounted so workspace imports resolve inside the tree. It is
  *   built once under a lock, published by rename and kept read-only.
  * - Each Stack runs a hardlink clone of it with only its declared overlay files
- *   replaced by their verified checkout bytes. The daemon guest payload uses
+ *   replaced by the selected bytes carried in their revision description. The daemon guest payload uses
  *   the same captured-input and payload owners as a bundle reload.
  *   Daemon Plugin UI graphs use the canonical source compiler once per base or
  *   changed input.
@@ -553,20 +553,16 @@ export async function prepareStackSourceRevisionTree({ repoDir, treesRoot, treeD
       else await writeTreeEntry(join(staging, path), entry[0], descriptor.blobs[`commit:${path}`]);
       overlaid += 1;
     }
-    const drift = [];
-    for (const [path, expected] of Object.entries(descriptor.overlay)) {
+    for (const path of Object.keys(descriptor.overlay)) {
       const target = join(staging, path);
       // Unlink first: the clone's file is the base's inode.
       await rm(target, { force: true, recursive: true });
-      if (expected === null) { overlaid += 1; continue; }
-      const bytes = await readFile(join(repoDir, path)).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
-      if (!bytes || createHash('sha256').update(bytes).digest('hex') !== expected) { drift.push(path); continue; }
-      await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, bytes);
+      const bytes = await readSourceRevisionOverlayBytes({ descriptor, path, sourceDir: repoDir });
+      if (bytes !== null) {
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, bytes);
+      }
       overlaid += 1;
-    }
-    if (drift.length) {
-      throw new BuildInputDriftError(`[source-tree] overlay of ${descriptor.key} moved after it was described at ${drift.length} path(s) (first: ${drift[0]}); reload again to describe the current bytes`);
     }
     // A previous clone's directories are its own; never chmod its files (they are the base's inodes).
     await rm(treeDir, { recursive: true, force: true });

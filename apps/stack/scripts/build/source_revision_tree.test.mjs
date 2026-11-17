@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { generateServerClients, installServerGeneratorFixture, readGeneratedClientFields, writeServerSchemas, FIXTURE_MACHINE_SCHEMA } from '../testkit/core/server_generator_fixture.mjs';
-import { resolveSourceRevision } from './source_revision.mjs';
+import { resolveSourceRevision, resolveSourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
 import { prepareSourceTreeRuntimeComponents, prepareStackSourceRevisionTree, releaseStackSourceRevisionTree, releaseStackSourceTrees,
   resolveSourceTreeRevision, selectsSourceTreeReload, setSourceRevisionTreeWritable, sourceRevisionTreesRoot, writeSourceRevisionArchive } from './source_revision_tree.mjs';
@@ -257,13 +257,31 @@ test('stacks on one revision share one base tree; each runs only its own declare
   assert.equal(cloneInfo.ino, baseInfo.ino);
 });
 
-test('a declared overlay that moved after its description refuses instead of running other bytes', async t => {
+test('a declared overlay keeps its selected bytes when the checkout moves after description', async t => {
   const { fixture, repoDir } = await createRevisionFixture(t);
-  const revision = await resolveSourceRevision({ repoDir, overlay: ['apps/server/sources/main.light.ts'],
+  const added = 'apps/server/sources/selected-new.ts';
+  await writeFile(join(repoDir, added), 'export const selected = true;');
+  const revision = await resolveSourceRevision({ repoDir, overlay: ['apps/server/sources/main.light.ts', added],
     outputDir: fixture.path('descriptors'), components: ['server', 'daemon'], fullTree: true });
   await writeFile(join(repoDir, 'apps/server/sources/main.light.ts'), 'export const marker = "edited-after";');
-  await assert.rejects(prepareStackSourceRevisionTree({ repoDir, treesRoot: fixture.path('trees'),
-    treeDir: fixture.path('stack/tree'), descriptorPath: revision.descriptorPath }), { code: 'BUILD_INPUTS_CHANGED' });
+  await rm(join(repoDir, added));
+  const tree = await prepareStackSourceRevisionTree({ repoDir, treesRoot: fixture.path('trees'),
+    treeDir: fixture.path('stack/tree'), descriptorPath: revision.descriptorPath });
+  assert.equal(await readFile(join(tree.treeDir, 'apps/server/sources/main.light.ts'), 'utf8'),
+    'export const marker = \"my-overlay\";');
+  assert.equal(await readFile(join(repoDir, 'apps/server/sources/main.light.ts'), 'utf8'),
+    'export const marker = "edited-after";');
+  assert.equal(await readFile(join(tree.treeDir, added), 'utf8'), 'export const selected = true;');
+  assert.equal(await lstat(join(repoDir, added)).catch(error => error.code), 'ENOENT');
+});
+
+test('an overlay changed during description refuses before its bytes are shipped', async t => {
+  const { fixture, repoDir } = await createRevisionFixture(t);
+  const path = 'apps/server/sources/main.light.ts';
+  const identity = await resolveSourceRevisionIdentity({ repoDir, overlay: [path] });
+  await writeFile(join(repoDir, path), 'export const marker = "changed-during-description";');
+  await assert.rejects(writeSourceRevisionDescriptor({ repoDir, identity, fullTree: true,
+    outputDir: fixture.path('descriptors') }), { code: 'BUILD_INPUTS_CHANGED' });
 });
 
 // HEAD moves every few minutes on the shared checkout. A reload at a newer commit

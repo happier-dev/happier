@@ -258,13 +258,17 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
   await writeFile(join(repoDir, 'packages/other-lane-pkg/src/index.ts'), 'export const other = true;');
   await writeFile(join(repoDir, 'apps/cli/package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module',
     dependencies: { '@happier-dev/protocol': 'workspace:*', '@happier-dev/other-lane-pkg': 'workspace:*' } }));
-  const revision = await resolveSourceRevision({ repoDir, overlay: [overlayPath], outputDir: fixture.path('revisions') });
+  const addedOverlay = 'packages/protocol/src/selected-new.ts';
+  const addedOverlayText = 'export const selected = true;';
+  await writeFile(join(repoDir, addedOverlay), addedOverlayText);
+  const revision = await resolveSourceRevision({ repoDir, overlay: [overlayPath, addedOverlay], outputDir: fixture.path('revisions') });
+  await rm(join(repoDir, addedOverlay));
   // These paths were clean when described, then changed before either host captured.
   await writeFile(join(repoDir, 'packages/protocol/src/late-edit.ts'), 'export const late = "other-lane";');
   await rm(join(repoDir, 'packages/protocol/src/late-delete.ts'));
   await writeFile(join(repoDir, 'apps/cli/assets/bundled-plugin-manifests/example.json'), '{"version":"other-lane"}');
   const shared = await captureSourceRuntimeSharedInputs({ repoDir, outputDir: fixture.path('shared'), revision });
-  const expected = { ...committed, [overlayPath]: overlayText, 'packages/protocol/src/other-lane.ts': null,
+  const expected = { ...committed, [overlayPath]: overlayText, [addedOverlay]: addedOverlayText, 'packages/protocol/src/other-lane.ts': null,
     'packages/protocol/src/generated/out.ts': null };
   for (const component of ['server', 'daemon']) {
     const captured = await captureSourceWebBuildInputs({ repoDir, component, outputDir: fixture.path(component), sharedSourceInputs: shared });
@@ -286,10 +290,11 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
     committed['packages/protocol/src/late-edit.ts']);
   assert.equal(await stat(join(direct.repoDir, 'packages/other-lane-pkg/package.json')).catch(() => null), null,
     'a workspace the revision does not contain is not part of its capture');
-  // Declared overlays remain exact inputs, rather than silently falling back to Git.
+  // A delayed second capture keeps the selected overlay bytes, independent of the moving checkout.
   await writeFile(join(repoDir, overlayPath), 'export const version = "changed-overlay";');
-  await assert.rejects(captureSourceRuntimeSharedInputs({ repoDir,
-    outputDir: fixture.path('overlay-drift'), revision }), { code: 'BUILD_INPUTS_CHANGED' });
+  const later = await captureSourceRuntimeSharedInputs({ repoDir,
+    outputDir: fixture.path('overlay-drift'), revision });
+  assert.equal(await readFile(join(later.repoDir, overlayPath), 'utf8'), overlayText);
 });
 
 // 2026-11-15: a bundle labelled with a clean revision ran clients generated from

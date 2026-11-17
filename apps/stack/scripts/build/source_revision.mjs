@@ -29,7 +29,8 @@ import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
  *   inputs stay only while they were generated from the revision's own sources,
  *   otherwise their generator regenerates them in the capture
  *   (deriveRevisionGeneratedInputs);
- * - overlay paths keep the checkout's bytes, which must equal their declared digest.
+ * - declared overlay bytes travel through the same binary blobs, so a later
+ *   checkout edit cannot change or refuse the selected overlay.
  *
  * A descriptor is gzip(JSON header, "\n", raw blob bytes in header order). A
  * server+daemon+expo revision ships ~450 MiB of blobs, past V8's ~512 MiB string
@@ -202,6 +203,16 @@ export async function writeSourceRevisionDescriptor({ repoDir, identity, outputD
     ...Object.values(commitPaths ?? {}).filter(Boolean).map(([, id]) => id)])]);
   const blobs = [...[...revisionFiles].map(path => [path, blobBytes.get(tree[path][1])]),
     ...Object.entries(commitPaths ?? {}).filter(([, entry]) => entry).map(([path, [, id]]) => [`commit:${path}`, blobBytes.get(id)])];
+  // Capture once at description, before host queues or base preparation. Overlay
+  // paths were excluded from revisionFiles, so their blobs use the same path key.
+  for (const [path, expected] of Object.entries(identity.overlay)) {
+    if (expected === null) continue;
+    const bytes = await readCheckoutBytes(join(repoDir, path));
+    if (!bytes || sha256(bytes) !== expected) {
+      throw new BuildInputDriftError(`[source-revision] overlay ${path} moved while it was described; reload to select its current bytes`);
+    }
+    blobs.push([path, bytes]);
+  }
   const untracked = nulList(await git(repoDir, ['ls-files', '-z', '-o', '--exclude-standard']))
     .filter(path => !Object.hasOwn(identity.overlay, path));
   const descriptor = { version: SOURCE_REVISION_DESCRIPTOR_VERSION, revision: identity.revision,
@@ -240,6 +251,18 @@ export async function readSourceRevisionDescriptor(descriptorPath) {
   return { ...descriptor, blobs };
 }
 
+/** Selected overlay bytes; older in-flight descriptions still verify their mirror. */
+export async function readSourceRevisionOverlayBytes({ descriptor, path, sourceDir }) {
+  const expected = descriptor.overlay[path];
+  if (expected === null) return null;
+  if (Object.hasOwn(descriptor.blobs, path)) return descriptor.blobs[path];
+  const bytes = await readCheckoutBytes(join(sourceDir, path));
+  if (!bytes || sha256(bytes) !== expected) {
+    throw new BuildInputDriftError(`[source-revision] overlay ${path} moved after it was described; reload to select its current bytes`);
+  }
+  return bytes;
+}
+
 /** The identity a capture records and a selection compares. */
 export function sourceRevisionIdentity(descriptor) {
   return { revision: descriptor.revision, overlayDigest: descriptor.overlayDigest ?? null, key: descriptor.key };
@@ -270,9 +293,12 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
     const target = join(captureDir, path);
     const bytes = await readCheckoutBytes(target);
     if (Object.hasOwn(descriptor.overlay, path)) {
-      const expected = descriptor.overlay[path];
-      if ((bytes ? sha256(bytes) : null) !== expected) drift.push(path);
-      else if (bytes) result.add(path);
+      const selected = await readSourceRevisionOverlayBytes({ descriptor, path, sourceDir: captureDir });
+      if (selected === null) await rm(target, { force: true, recursive: true });
+      else {
+        await writeRevisionEntry(target, descriptor.tree[path]?.[0] ?? '100644', selected);
+        result.add(path);
+      }
       continue;
     }
     const entry = descriptor.tree[path];
@@ -294,7 +320,7 @@ export async function applySourceRevision({ captureDir, sourceDir, files, ownerD
     if (result.has(path)) continue;
     const owner = owners.find(dir => path.startsWith(dir));
     if (!owner || isWorkspaceBuildInputIgnoredPath(posix.relative(owner, path))) continue;
-    await writeRevisionEntry(join(captureDir, path), descriptor.tree[path][0], blob);
+    await writeRevisionEntry(join(captureDir, path), descriptor.tree[path]?.[0] ?? '100644', blob);
     result.add(path);
   }
   if (drift.length) {
