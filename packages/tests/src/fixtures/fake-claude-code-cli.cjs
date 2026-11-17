@@ -1330,6 +1330,26 @@ async function runSdkStreamUntilEof() {
       await waitForRuntimeContinuityReleaseFile();
     }
 
+    // Execute from the actual vendor process: Agent-visible contexts intentionally
+    // carry no bearer, and the real Session MCP owner admits this Agent tree.
+    const sessionActionMarker = 'SESSION_MCP_ACTION_JSON:';
+    const sessionActionIndex = promptText.indexOf(sessionActionMarker);
+    if (sessionActionIndex >= 0) {
+      const request = JSON.parse(promptText.slice(sessionActionIndex + sessionActionMarker.length).trim());
+      const { tsImport } = require('tsx/esm/api');
+      const { executeSessionMcpAction } = await tsImport(
+        path.resolve(__dirname, '../../../../apps/cli/src/cli/commands/toolsSessionMcp.ts'),
+        { parentURL: require('node:url').pathToFileURL(__filename).href,
+          tsconfig: path.resolve(__dirname, '../../../../apps/cli/tsconfig.json') },
+      );
+      const result = await executeSessionMcpAction(request.actionId, request.input);
+      safeAppendJsonl(logPath, { type: 'session_mcp_action_result', invocationId,
+        requestId: request.requestId, result, pid: process.pid, ts: Date.now() });
+      emitSdk(createAssistantMessage([{ type: 'text', text: `FAKE_CLAUDE_OK_${turn}` }]));
+      emitSdk(createResultSuccess());
+      continue;
+    }
+
     // Long streaming run (P03-LONG-TRANSCRIPT): a prompt "lsl <rounds> <deltas> <deltaMs>" streams N rounds of
     // real stream_event text deltas, each followed by the assembled assistant message and a Bash tool call +
     // result. Selected by the prompt because a scenario env var does not reach a daemon-spawned Session.

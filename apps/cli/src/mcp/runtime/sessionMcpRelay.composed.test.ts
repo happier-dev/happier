@@ -27,6 +27,7 @@ import { SESSION_MCP_BEARER_ENV, SESSION_MCP_CONTEXT_FILE_ENV } from './sessionM
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { TRANSCRIPT_SECRET_REDACTED } from '@/api/session/client/transport/transcriptSecretRedaction';
 import { buildOutboundSessionMessagePayload } from '@/api/session/client/transport/outboundSessionMessagePayload';
+import { createIsolatedFakeClaudeControlShim, readFakeClaudeLogEvents } from '../../../../../packages/tests/src/testkit/fakeClaude';
 
 const daemonCatalogBoundary = vi.hoisted(() => ({
     read: vi.fn(async () => ({ kind: 'available' as const, plugins: [], tools: [] })),
@@ -116,6 +117,43 @@ async function placeHostHolder(directory: string) {
 }
 
 describe('Session MCP through the native holder relay', () => {
+    it.runIf(process.platform !== 'win32')('lets the fake vendor execute a Session Action from its real Agent tree', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'mcp-fake-vendor-'));
+        try {
+            await runAddedHostedSession({ environment: { ...process.env }, workingDirectory: directory, end: () => {} }, async () => {
+                const bridge = await startSessionMcp('session-mcp-fake-vendor', {}, accountSettingsParse({
+                    actionsSettingsV1: { v: 1, actions: { 'session.title.set': { enabled: false } } },
+                }));
+                const vendor = await createIsolatedFakeClaudeControlShim({ testDir: directory,
+                    invocationId: 'session-mcp-fake-vendor', captureEnvironmentKeys: [], logFullStdin: true });
+                const contextFile = bridge.happierMcpServer.contextFilePath;
+                if (!contextFile) throw new Error('missing Session MCP Agent context');
+                const child = spawnSessionHolderChild({ executablePath: requireSessionHolderExecutablePath(),
+                    socketPath: createSessionHolderSocketPath(), command: process.execPath,
+                    args: [vendor.executablePath, '--output-format', 'stream-json', '--input-format', 'stream-json'],
+                    env: { ...process.env, [SESSION_MCP_CONTEXT_FILE_ENV]: contextFile } });
+                let stderr = '';
+                child.stdout.resume();
+                child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+                const closed = once(child, 'close');
+                try {
+                    child.stdin.end(`${JSON.stringify({ type: 'message', message: { role: 'user', content: [{ type: 'text',
+                        text: `SESSION_MCP_ACTION_JSON:${JSON.stringify({ requestId: 'fake-vendor-request',
+                            actionId: 'session.title.set', input: { title: 'Disabled title' } })}` }] } })}\n`);
+                    const [code] = await closed;
+                    expect(code, stderr).toBe(0);
+                    const event = (await readFakeClaudeLogEvents(vendor.logPath))
+                        .find(row => row.type === 'session_mcp_action_result' && row.requestId === 'fake-vendor-request');
+                    expect(event?.result).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+                } finally {
+                    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+                    await closed;
+                    await bridge.happierMcpServer.stop();
+                }
+            });
+        } finally { await rm(directory, { recursive: true, force: true }); }
+    }, 120_000);
+
     // These fixtures compare their own admitted Account catalogs. An invoking
     // agent's explicit CLI override must not replace both fixture policies.
     beforeEach(() => { vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', ''); });
