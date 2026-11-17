@@ -572,9 +572,10 @@ export async function applyTrustedLocalPluginFixture(params: Readonly<{
   }
   const result = registration.data;
   if (result.kind === 'status') {
-    const source = result.status.plugins.find(plugin => plugin.pluginId === params.pluginId
-      && plugin.sourceRootPath === params.pluginRoot);
-    if (source?.phase !== 'active') {
+    // A source can fail before its manifest yields a plugin id. Keep that
+    // owner's diagnostic instead of treating its status as a missing entry.
+    const source = result.status.plugins.find(plugin => plugin.sourceRootPath === params.pluginRoot);
+    if (source?.phase !== 'active' || source.pluginId !== params.pluginId) {
       throw new Error(`Local plugin development registration did not activate the source (phase=${source?.phase ?? 'missing'}, code=${source?.diagnostic?.code ?? 'unknown'})`);
     }
     return result;

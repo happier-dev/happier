@@ -540,6 +540,21 @@ describe('external-session live lifecycle fixture', () => {
     })).resolves.toEqual(registration);
   });
 
+  it('preserves a source preparation refusal before its plugin identity is known', async () => {
+    const postJson = async () => ({ status: 200, data: { kind: 'status', status: {
+      roots: [],
+      plugins: [{ sourceRootPath: '/tmp/external-session-live-plugin', phase: 'unavailable',
+        diagnostic: { code: 'plugin_dev_invalid_manifest', message: 'Source manifest was refused' } }],
+    } } });
+    await expect(applyTrustedLocalPluginFixture({
+      daemonPort: 32123,
+      pluginRoot: '/tmp/external-session-live-plugin',
+      pluginId: 'acme.external-session-live',
+      interactionId: 'install-live-plugin',
+      postJson,
+    })).rejects.toThrow('plugin_dev_invalid_manifest');
+  });
+
   it('installs with explicit local-user review and reloads through daemon plugin change routes', async () => {
     let requestedChanges = 0;
     const postJson = vi.fn(async (request: Readonly<{
