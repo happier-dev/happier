@@ -140,6 +140,16 @@ describe("machinePoolService (SQLite integration)", () => {
             { machineId: "m-revoked", eligible: false, reason: "revoked" },
             { machineId: "m-replaced", eligible: false, reason: "replaced" },
         ]);
+        await expect(createMachinePool({ accountId: ownerId, io: io(), input: {
+            poolId: crypto.randomUUID(), name: "Mixed admission",
+            members: machineIds.map(machineId => ({ machineId, enabled: true, priorityTier: 0 })),
+        } })).resolves.toEqual({
+            ok: false,
+            error: {
+                code: "member_machine_not_eligible",
+                machineIds: ["m-foreign", "m-missing", "m-temporary", "m-revoked", "m-replaced"],
+            },
+        });
         for (const member of result) {
             const created = await createMachinePool({ accountId: ownerId, io: io(), input: {
                 poolId: crypto.randomUUID(), name: "Admission", members: [{ machineId: member.machineId, enabled: true, priorityTier: 0 }],
@@ -157,24 +167,6 @@ describe("machinePoolService (SQLite integration)", () => {
         await expect(resolveMachinePool({ accountId: ownerId, io: io(["m-fast"]), input: {
             poolId, requestKey: "worker", purpose: "finite", workspace: { serverId: "home", refId: "checkout" },
         } })).resolves.toMatchObject({ ok: false, error: { code: "invalid_request" } });
-    });
-
-    it("rejects ephemeral members and never selects an ephemeral Machine from a stored Pool", async () => {
-        await seed();
-        await db.machine.update({ where: { id: "m-fast" }, data: { kind: "ephemeral_session_runner" } });
-        const input: TestMachinePoolCreateInput = {
-            poolId, name: "Persistent only", members: [{ machineId: "m-fast", priorityTier: 0, enabled: true }],
-        };
-        await expect(createMachinePool({ accountId: ownerId, input, io: io(["m-fast"]) })).resolves.toMatchObject({
-            ok: false, error: { code: "member_machine_not_eligible", machineIds: ["m-fast"] },
-        });
-        expect(await db.machinePool.count()).toBe(0);
-        await db.machinePool.create({ data: {
-            id: poolId, accountId: ownerId, name: storedPlainPoolLabel('Persistent only'),
-            members: { create: input.members },
-        } });
-        await expect(resolveMachinePool({ accountId: ownerId, input: { poolId, requestKey: "request" }, io: io(["m-fast"]) }))
-            .resolves.toMatchObject({ ok: true, value: { kind: "unavailable", reason: "no_available_machine" } });
     });
 
     it("atomically creates, replays, conflicts, mutates by revision, and marks actual changes", async () => {

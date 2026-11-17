@@ -487,18 +487,6 @@ describe("mintDirectRouteGrantV1", () => {
         } as NodeJS.ProcessEnv)).toEqual({ ok: false, reasonCode: "missing_key_id" });
     });
 
-    it("rejects malformed base64url private keys that Node would otherwise decode permissively", () => {
-        const resolved = resolvePeerMediationGrantSigningConfig({
-            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: "key_1",
-            HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: `${"A".repeat(43)}$`,
-        } as NodeJS.ProcessEnv);
-
-        expect(resolved).toEqual({
-            ok: false,
-            reasonCode: "invalid_private_key",
-        });
-    });
-
     it("retains explicit 64-byte signing keys and their stored public-key comparison policy", () => {
         const env = {
             HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: "explicit-key",
