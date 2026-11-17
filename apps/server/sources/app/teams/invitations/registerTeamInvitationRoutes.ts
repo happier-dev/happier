@@ -131,8 +131,7 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
      * carrier returns `null`, which the UI presents as unavailable rather than a link
      * that only works on devices which already know this Home.
      */
-    async function renderJoinUrl(token: string): Promise<string | null> {
-        const target = await deps.resolveJoinLinkTarget();
+    function renderJoinUrl(token: string, target: Awaited<ReturnType<TeamInvitationRouteDeps["resolveJoinLinkTarget"]>>): string | null {
         if (target.applicationOrigin === null || !target.homeTarget?.trim()) return null;
         return buildTeamJoinUrl({
             applicationOrigin: target.applicationOrigin,
@@ -146,38 +145,32 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
      * the address the link is rendered at. Neither is invented, and `null` means
      * this Home can render no link at all, so there is nothing to mail.
      */
-    async function resolveInvitationHomeName(): Promise<string | null> {
-        const [target, home] = await Promise.all([
-            deps.resolveJoinLinkTarget(),
-            deps.resolveJoinScreenHomeIdentity(),
-        ]);
+    async function resolveInvitationHomeName(target: Awaited<ReturnType<TeamInvitationRouteDeps["resolveJoinLinkTarget"]>>): Promise<string | null> {
         if (target.applicationOrigin === null || !target.homeTarget?.trim()) return null;
+        const home = await deps.resolveJoinScreenHomeIdentity();
         return home.displayName ?? new URL(target.applicationOrigin).host;
     }
 
-    /** Whether this Home can both send mail and render the link mail must carry. */
-    async function canDeliverInvitationEmail(): Promise<boolean> {
-        if (!await deps.email.isDeliveryReady()) return false;
-        return (await resolveInvitationHomeName()) !== null;
+    /** The name is also the admitted fact that this Home can send a portable invitation. */
+    async function resolveDeliverableInvitationHomeName(target: Awaited<ReturnType<TeamInvitationRouteDeps["resolveJoinLinkTarget"]>>): Promise<string | null> {
+        if (!await deps.email.isDeliveryReady()) return null;
+        return resolveInvitationHomeName(target);
     }
 
     async function deliverAndProject(input: Readonly<{
         invitation: TeamInvitationRowV1;
-        token: string;
+        joinUrl: string | null;
         teamName: string;
         recipient: NormalizedVerifiedEmail;
         homeName: string;
         inviterAccountId: string;
     }>): Promise<TeamInvitationRowV1> {
-        const joinUrl = await renderJoinUrl(input.token);
-        // The precondition proved an origin exists; a race that removed it leaves the
-        // invitation real and its delivery simply unattempted rather than fabricated.
-        if (joinUrl === null) return input.invitation;
+        if (input.joinUrl === null) return input.invitation;
         const lastEmailDelivery = await deliverTeamInvitationEmail(deps.email, {
             invitationId: input.invitation.id,
             inviterAccountId: input.inviterAccountId,
             recipient: input.recipient,
-            joinUrl,
+            joinUrl: input.joinUrl,
             homeName: input.homeName,
             teamName: input.teamName,
             role: input.invitation.role,
@@ -202,7 +195,9 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
         // its normalized value and the mail owner's current bounded readiness fact.
         const recipient = rawRecipient === null ? null : normalizeVerifiedEmail(rawRecipient);
         if (rawRecipient !== null && recipient === null) return sendTeamError(reply, "invalid_team_input");
-        const emailDeliveryAvailable = recipient === null || await canDeliverInvitationEmail();
+        const joinLinkTarget = await deps.resolveJoinLinkTarget();
+        const homeName = recipient === null ? null : await resolveDeliverableInvitationHomeName(joinLinkTarget);
+        const emailDeliveryAvailable = recipient === null || homeName !== null;
 
         const result = await inTx(async (tx) => createTeamInvitationForActorInTx(tx, {
             teamId: request.body.teamId,
@@ -228,14 +223,13 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
         // An email-bound bearer goes only to the mail boundary. The manager never
         // receives it, so a redacted or lost result recovers by explicit reissue.
         if (recipient) {
-            const homeName = await resolveInvitationHomeName();
             if (homeName === null) {
                 return reply.send({ invitation: result.value.invitation, joinUrl: null });
             }
             return reply.send({
                 invitation: await deliverAndProject({
                     invitation: result.value.invitation,
-                    token,
+                    joinUrl: renderJoinUrl(token, joinLinkTarget),
                     teamName: result.value.teamName,
                     recipient,
                     homeName,
@@ -246,7 +240,7 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
         }
         return reply.send({
             invitation: result.value.invitation,
-            joinUrl: await renderJoinUrl(token),
+            joinUrl: renderJoinUrl(token, joinLinkTarget),
         });
     });
 
@@ -273,7 +267,7 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
         // authority. A manager surface can then withhold the Email offer instead of
         // presenting one this Home would refuse — and, when this Home can render no
         // join link at all, say that instead of offering a link to reissue.
-        const homeName = await resolveInvitationHomeName();
+        const homeName = await resolveInvitationHomeName(await deps.resolveJoinLinkTarget());
         return reply.send({
             ...result.value,
             emailDelivery: await deps.email.isDeliveryReady() && homeName !== null ? "available" : "unavailable",
@@ -328,7 +322,9 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
         // state. Resolve it before opening the membership/invitation transaction;
         // the service receives only the bounded fact it needs for its atomic
         // revoke-and-replace decision.
-        const emailDeliveryAvailable = await canDeliverInvitationEmail();
+        const joinLinkTarget = await deps.resolveJoinLinkTarget();
+        const homeName = await resolveDeliverableInvitationHomeName(joinLinkTarget);
+        const emailDeliveryAvailable = homeName !== null;
 
         const result = await inTx(async (tx) => reissueTeamInvitationForActorInTx(tx, {
             teamId: request.body.teamId,
@@ -355,7 +351,6 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
         if (recipientEmailNormalized !== null) {
             const recipient = replacementRecipient
                 ?? normalizeVerifiedEmail(recipientEmailNormalized);
-            const homeName = await resolveInvitationHomeName();
             if (recipient === null || homeName === null) {
                 return reply.send({
                     previous: result.value.previous,
@@ -367,7 +362,7 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
                 previous: result.value.previous,
                 replacement: await deliverAndProject({
                     invitation: result.value.replacement,
-                    token,
+                    joinUrl: renderJoinUrl(token, joinLinkTarget),
                     teamName: result.value.teamName,
                     recipient,
                     homeName,
@@ -379,7 +374,7 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
         return reply.send({
             previous: result.value.previous,
             replacement: result.value.replacement,
-            joinUrl: await renderJoinUrl(token),
+            joinUrl: renderJoinUrl(token, joinLinkTarget),
         });
     });
 

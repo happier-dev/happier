@@ -154,6 +154,75 @@ describe("Team invitation routes (SQLite integration)", () => {
         } finally { await app.close(); }
     });
 
+    it("returns committed create and reissue results when the mail boundary rejects", async () => {
+        const f = await teamWithOwner();
+        const app = createApp();
+        await app.ready();
+        try {
+            // Per-send Home configuration reads may fail before SMTP begins.
+            vi.spyOn(delivery, "deliver").mockRejectedValue(new Error("Home configuration unavailable"));
+            const created = await post(app, "/v1/teams/invitations/create", createBody(f.team.id, "invitee@example.test"), f.actor.id);
+            const original = await db.teamInvitation.findFirstOrThrow({ where: { teamId: f.team.id } });
+            expect(original.revokedAt).toBeNull();
+            expect(created.statusCode, created.body).toBe(200);
+            expect(created.json().invitation.lastEmailDelivery).toBeNull();
+            expect(created.json().joinUrl).toBeNull();
+
+            const reissued = await post(app, "/v1/teams/invitations/reissue", {
+                v: 1, teamId: f.team.id, invitationId: original.id,
+                recipientEmail: "invitee@example.test", requestKey: randomUUID(),
+            }, f.actor.id);
+            expect(reissued.statusCode, reissued.body).toBe(200);
+            expect(reissued.json().replacement.lastEmailDelivery).toBeNull();
+            expect(reissued.json().joinUrl).toBeNull();
+            expect((await db.teamInvitation.findUniqueOrThrow({ where: { id: original.id } })).revokedAt).not.toBeNull();
+            expect((await db.teamInvitation.findUniqueOrThrow({ where: { id: reissued.json().replacement.id } })).revokedAt).toBeNull();
+        } finally { await app.close(); }
+    });
+
+    it("returns the committed replacement when reissue mail rejects", async () => {
+        const f = await teamWithOwner();
+        const app = createApp();
+        await app.ready();
+        try {
+            const created = await post(app, "/v1/teams/invitations/create", createBody(f.team.id, "invitee@example.test"), f.actor.id);
+            expect(created.statusCode, created.body).toBe(200);
+            const originalId = created.json().invitation.id;
+            vi.spyOn(delivery, "deliver").mockRejectedValue(new Error("Home configuration unavailable"));
+            const reissued = await post(app, "/v1/teams/invitations/reissue", {
+                v: 1, teamId: f.team.id, invitationId: originalId,
+                recipientEmail: null, requestKey: randomUUID(),
+            }, f.actor.id);
+            expect((await db.teamInvitation.findUniqueOrThrow({ where: { id: originalId } })).revokedAt).not.toBeNull();
+            const replacement = await db.teamInvitation.findFirstOrThrow({ where: { teamId: f.team.id, revokedAt: null } });
+            expect(replacement.id).not.toBe(originalId);
+            expect(reissued.statusCode, reissued.body).toBe(200);
+            expect(reissued.json().replacement).toMatchObject({ id: replacement.id, lastEmailDelivery: null });
+        } finally { await app.close(); }
+    });
+
+    it("keeps a submitted invitation visible when its delivery result cannot be recorded", async () => {
+        const f = await teamWithOwner();
+        const app = createApp();
+        await app.ready();
+        await db.$executeRawUnsafe(`CREATE TRIGGER reject_invitation_delivery_result
+            BEFORE UPDATE OF "lastEmailDeliveryStatus" ON "TeamInvitation"
+            BEGIN SELECT RAISE(ABORT, 'delivery result storage unavailable'); END`);
+        try {
+            const response = await post(app, "/v1/teams/invitations/create", createBody(f.team.id, "invitee@example.test"), f.actor.id);
+            expect(delivered).toHaveLength(1);
+            expect(await db.teamInvitation.findFirst({ where: { teamId: f.team.id } }))
+                .toMatchObject({ revokedAt: null, lastEmailDeliveryStatus: null });
+            expect(response.statusCode, response.body).toBe(200);
+            expect(response.json().invitation.lastEmailDelivery).toBeNull();
+            expect(await db.teamInvitation.findUnique({ where: { id: response.json().invitation.id } }))
+                .toMatchObject({ revokedAt: null, lastEmailDeliveryStatus: null });
+        } finally {
+            await db.$executeRawUnsafe('DROP TRIGGER reject_invitation_delivery_result');
+            await app.close();
+        }
+    });
+
     it("speaks the shared Team error vocabulary for every refusal", async () => {
         const f = await teamWithOwner();
         const stranger = await db.account.create({

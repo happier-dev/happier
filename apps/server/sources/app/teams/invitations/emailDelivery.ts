@@ -4,6 +4,7 @@ import type { AuthEmailDelivery } from "@/app/auth/email/authEmailDelivery";
 import type { SessionHistoryAccess } from "@/storage/enums.generated";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { log } from "@/utils/logging/log";
 import { resolveAccountDisplayLabelV1 } from "@/app/account/profile/accountDisplayProfile";
 import { recordTeamInvitationEmailDeliveryResultInTx } from "./invitationLifecycle";
 
@@ -51,35 +52,42 @@ export type DeliverTeamInvitationEmailInput = Readonly<{
 export async function deliverTeamInvitationEmail(
     deps: TeamInvitationEmailDeps,
     input: DeliverTeamInvitationEmailInput,
-): Promise<TeamInvitationEmailDeliveryV1> {
-    // The mail is delivered only to the invited mailbox, so naming the manager
-    // who invited them discloses nothing to a stranger and is the message's
-    // strongest phishing-resistance signal. The join preview states the same
-    // label from the same owner, so the two never name the person differently.
-    const inviter = await db.account.findUnique({
-        where: { id: input.inviterAccountId },
-        select: { name: true, username: true },
-    });
+): Promise<TeamInvitationEmailDeliveryV1 | null> {
+    try {
+        // The mail is delivered only to the invited mailbox, so naming the manager
+        // who invited them discloses nothing to a stranger and is the message's
+        // strongest phishing-resistance signal. The join preview states the same
+        // label from the same owner, so the two never name the person differently.
+        const inviter = await db.account.findUnique({
+            where: { id: input.inviterAccountId },
+            select: { name: true, username: true },
+        });
 
-    const result = await deps.delivery.deliver({
-        kind: "invitation",
-        to: input.recipient,
-        joinUrl: input.joinUrl,
-        homeName: input.homeName,
-        teamName: input.teamName,
-        inviterLabel: inviter ? resolveAccountDisplayLabelV1(inviter) : null,
-        requestedRole: input.role,
-        sharesSessionHistory: input.historyAccess === "all_existing",
-        emailBound: true,
-        expiresAt: input.expiresAt,
-    });
+        const result = await deps.delivery.deliver({
+            kind: "invitation",
+            to: input.recipient,
+            joinUrl: input.joinUrl,
+            homeName: input.homeName,
+            teamName: input.teamName,
+            inviterLabel: inviter ? resolveAccountDisplayLabelV1(inviter) : null,
+            requestedRole: input.role,
+            sharesSessionHistory: input.historyAccess === "all_existing",
+            emailBound: true,
+            expiresAt: input.expiresAt,
+        });
 
-    const attemptedAt = new Date();
-    const status = result.status === "sent" ? "sent" : "failed";
-    await inTx((tx) => recordTeamInvitationEmailDeliveryResultInTx(tx, {
-        invitationId: input.invitationId,
-        status,
-        attemptedAt,
-    }));
-    return { status, attemptedAt: attemptedAt.getTime() };
+        const attemptedAt = new Date();
+        const status = result.status === "sent" ? "sent" : "failed";
+        await inTx((tx) => recordTeamInvitationEmailDeliveryResultInTx(tx, {
+            invitationId: input.invitationId,
+            status,
+            attemptedAt,
+        }));
+        return { status, attemptedAt: attemptedAt.getTime() };
+    } catch {
+        // The invitation already committed. Submission may have happened, so no
+        // recorded result honestly means unknown; explicit reissue is recovery.
+        log({ module: "teams", level: "warn" }, "Invitation committed without a recorded email delivery result");
+        return null;
+    }
 }
