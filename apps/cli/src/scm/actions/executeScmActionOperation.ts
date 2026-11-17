@@ -42,6 +42,9 @@ import { executeScmCommitPlanAction } from '../commitPlans/executeScmCommitPlanA
 import { readRepositoryCheckpointBranchEvidence, readRepositoryCheckpointPullRequestEvidence } from '../checkpoints/sessionEvidence';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { configuration } from '@/configuration';
+import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
+import { readScmAccountScope, runWithScmAccountScope } from '@/scm/accountScope';
+import { isExecutionRunInRequesterAccountScope } from '@/agent/runtime/bridges/executionRun/requesterScope';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { resolveScmHostingRepositoryAddress } from '@/scm/hostingProviders/resolveAddress';
 import { readScmHostingRepository } from '@/scm/hostingProviders/readRepository';
@@ -178,7 +181,9 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                 const records = await readRetainedExecutionRunRecords().catch(() => null);
                 // Permission-filter costs too: unrelated workspace usage is not this caller's data.
                 const allowedRecords = [];
+                const requesterAccountId = readScmAccountScope();
                 for (const record of records ?? []) {
+                    if (!isExecutionRunInRequesterAccountScope(record, requesterAccountId)) continue;
                     if (!isScmDiffSummarySevenDayCostRecord(record.state, untilMs)) continue;
                     const cwd = record.state.launch?.cwd;
                     const sessionId = record.state.sessionId;
@@ -1205,6 +1210,13 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
 export async function executeScmActionOperation(
     params: ExecuteScmActionOperationParams,
 ): Promise<unknown> {
+    const accountId = readActionPrincipalAccountId(params.actionContext) ?? readScmAccountScope();
+    return accountId ? runWithScmAccountScope(accountId, () => executeScmActionOperationInAccountScope(params),
+        params.actionContext?.externalActionExecutionAuthorization)
+        : executeScmActionOperationInAccountScope(params);
+}
+
+async function executeScmActionOperationInAccountScope(params: ExecuteScmActionOperationParams): Promise<unknown> {
     const spec = getActionSpec(params.actionId);
     const parsed = params.rpcCompatibility && params.actionId === 'scm.repository.clone'
         ? parseScmRepositoryCloneRpcRequest(params.input)

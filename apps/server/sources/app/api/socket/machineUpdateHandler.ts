@@ -48,7 +48,7 @@ import {
 import { readVerifiedMachineSocketInstallationIdFromSocketData } from "./machineSocketInstallationProof";
 import { TEAM_CREDENTIAL_EXTERNAL_PROVIDER_OPERATION_RETIRE_EVENT_V1, TeamCredentialExternalProviderOperationRetireV1Schema } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { retireExternalBrokerOperationInTx } from "@/app/teams/credentials/externalBrokerOperation";
-import { verifyExternalActionMachineRpcExecution } from "@/app/auth/externalActionExecutionAuthorization";
+import { verifyExternalActionMachineRpcExecution, verifyExternalActionMachinePublicationRequester } from "@/app/auth/externalActionExecutionAuthorization";
 import { serializeMachineKeyBasis } from "@/app/machines/machineSerialization";
 import { readMachineDevcontainerChildInTx } from '@/app/machines/managed/managedRows';
 import { USAGE_SOURCES_INVALIDATION_EVENT_V1, UsageSourcesInvalidationV1Schema } from '@happier-dev/protocol/usage/usageSources';
@@ -728,8 +728,11 @@ export function machineUpdateHandler(
             const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
             if (!parsed.success || !machineId || !socket.connected) return;
             if (!isAdmittedCustodianInstallationPublisher(parsed.data.installationId)) return;
-            // Private saved-result identity stays with the custodian Account. Reads retain their existing authorization.
-            eventRouter.emitEphemeral({ userId, payload: { type: SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, machineId,
+            const recipientAccountId = parsed.data.executionAuthorizationToken
+                ? await verifyExternalActionMachinePublicationRequester({ authorizationToken: parsed.data.executionAuthorizationToken,
+                    custodianAccountId: userId, machineId, installationId: parsed.data.installationId }) : userId;
+            if (!recipientAccountId) return;
+            eventRouter.emitEphemeral({ userId: recipientAccountId, payload: { type: SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, machineId,
                 resultId: parsed.data.resultId, revision: parsed.data.revision }, recipientFilter: { type: 'user-scoped-only' } });
         } catch {
             log({ module: 'websocket', level: 'error', event: SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, errorCode: 'internal_error' },
@@ -744,9 +747,11 @@ export function machineUpdateHandler(
             const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
             if (!parsed.success || !machineId || !socket.connected) return;
             if (!isAdmittedCustodianInstallationPublisher(parsed.data.installationId)) return;
-            // This is a private source invalidation, not Session roster state or
-            // a publication to every person who can access this Machine.
-            eventRouter.emitEphemeral({ userId, payload: { type: 'execution-run-updated', machineId,
+            const recipientAccountId = parsed.data.executionAuthorizationToken
+                ? await verifyExternalActionMachinePublicationRequester({ authorizationToken: parsed.data.executionAuthorizationToken,
+                    custodianAccountId: userId, machineId, installationId: parsed.data.installationId }) : userId;
+            if (!recipientAccountId) return;
+            eventRouter.emitEphemeral({ userId: recipientAccountId, payload: { type: 'execution-run-updated', machineId,
                 runId: parsed.data.runId }, recipientFilter: { type: 'user-scoped-only' } });
         } catch {
             log({ module: 'websocket', level: 'error', event: 'execution-run-updated', errorCode: 'internal_error' },

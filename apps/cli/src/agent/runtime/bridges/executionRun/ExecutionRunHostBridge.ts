@@ -7,6 +7,9 @@ import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/
 import { FollowPolicyV1Schema, resolveWorkerUpdateFollowDeliveryV1, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import type { ExecutionRunOutputObservation } from '@happier-dev/protocol/reviews/reviewNarration';
 import { readExecutionRunOfferedModel } from './structuredOutputAdmission';
+import { isExecutionRunInRequesterAccountScope, resolveExecutionRunRequesterAccountId } from './requesterScope';
+import { runWithScmAccountScope } from '@/scm/accountScope';
+import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
 
 import {
   type ExecutionRunHostRuntime,
@@ -1644,11 +1647,30 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   }>): ExecutionRunHostRuntime {
     const run = opts.runId ? this.runs.get(opts.runId) ?? null : null;
     const resumeOptions = resolveExecutionRunResumeBackendOptions({ run });
+    const captured = opts.projectLaunchContext;
+    const prepareNativeOperation = captured?.prepareNativeOperation;
+    const projectLaunchContext = captured && prepareNativeOperation && run ? {
+      ...captured,
+      prepareNativeOperation: async (...input: Parameters<typeof prepareNativeOperation>) => {
+        const native = await prepareNativeOperation(...input);
+        const current = this.runs.get(run.runId);
+        if (current) {
+          const accountId = resolveExecutionRunRequesterAccountId(current, this.runtimeAccountId);
+          const executionAuthorization = captured.ingress?.callerInputAuthorization;
+          const scmComparisonOperations = native?.memberIdentity
+            ? runWithScmAccountScope(accountId, () => createMemberScmComparisonOperations({ native,
+              signal: native.signal }), executionAuthorization)
+            : undefined;
+          this.runs.set(run.runId, { ...current, scmComparisonOperations, executionAuthorization });
+        }
+        return native;
+      },
+    } : captured;
     return this.createExecutionRunRuntime({
       ...(opts.functionTools ? { functionTools: opts.functionTools } : {}),
       resolveAccountSettingsSnapshot: opts.resolveAccountSettingsSnapshot,
       ...(run ? { callId: run.callId, sidechainId: run.sidechainId } : {}),
-      ...(opts.projectLaunchContext ? { projectLaunchContext: opts.projectLaunchContext } : {}),
+      ...(projectLaunchContext ? { projectLaunchContext } : {}),
       ...(opts.runId ? { runId: opts.runId } : {}),
       ...(opts.controllerOccurrenceId ? { controllerOccurrenceId: opts.controllerOccurrenceId } : {}),
       backendId: opts.backendId,
@@ -1762,11 +1784,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   }
 
   private isRunInRequestScope(run: ExecutionRunState, scopeSessionId: string | null, requester: ExecutionRunState['requesterWorkAttributionV1']): boolean {
-    // 0.2 Run starts were same-Account RPCs; absent attribution belongs to the
-    // installed Account. Explicit starting ownership always takes precedence.
-    const ownerAccountId = run.requesterWorkAttributionV1?.accountId ?? this.runtimeAccountId;
     return run.sessionId === scopeSessionId && (run.sessionId !== null
-      || Boolean(requester && ownerAccountId === requester.accountId));
+      || isExecutionRunInRequesterAccountScope(run, requester?.accountId, this.runtimeAccountId));
   }
 
   /** Preserve Session scope-mismatch reporting without revealing detached Run existence. */

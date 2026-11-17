@@ -98,7 +98,7 @@ import { projectScmStatusSnapshot } from './scmStatusSnapshotProjection';
 import { ScmHistoryEntriesRequestSchema, type ScmHistoryEntriesRequest, type ScmHistoryEntriesResponse } from '@happier-dev/protocol/scm/entriesHistoryV1';
 import type { ScmStatusSnapshotTransportResponse } from '@happier-dev/protocol/scm';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { AsyncLocalStorage } from 'node:async_hooks';
+import { scmRpcOperationContextStorage } from '@/scm/rpc/operationContext';
 
 import type { RpcHandler, RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
@@ -128,13 +128,9 @@ import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { registerScmWorkspaceWatchHandler } from './scmWorkspaceWatch';
 import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import { bindWorkspaceSourceRegistrar, currentWorkspaceSource, runWithWorkspaceSource, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
-
-const scmRpcOperationContextStorage = new AsyncLocalStorage<Readonly<{
-    context: RpcHandlerContext;
-    workingDirectory: string;
-    accessPolicy: FilesystemAccessPolicy;
-    workAdmissions?: ReadonlyMap<string, ScmWorkEvidenceAdmission['admissions'][number] | null>;
-}>>();
+import { runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
+import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
+import { runWithScmAccountScope } from '@/scm/accountScope';
 
 export function registerScmHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
@@ -172,7 +168,7 @@ export function registerScmHandlers(
     // Workspace effect child: the daemon never opens a member-controlled path
     // (SEC-FORKC-1115F F1: a symlinked or FIFO Git state file).
     const runAsMember = async (context: RpcHandlerContext, identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>,
-        method: string, projectRoot: string | undefined, input: unknown): Promise<unknown> => {
+        method: string, projectRoot: string | undefined, input: unknown, comparisons?: () => unknown, requesterAccountId?: string): Promise<unknown> => {
         if (!deps?.nativeOperationRuntime) return refused('agent_isolation_unavailable');
         const material = Object.freeze({ materializationKey: context.transportRequestId ?? context.localActionContext?.actionRequestId
             ?? context.callerInputAuthorization?.binding.requestId ?? randomUUID(), environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
@@ -184,6 +180,8 @@ export function registerScmHandlers(
         } catch (error) { return refused(readErrorCode(error)); }
         try {
             if (!native.memberIdentity) return refused('agent_isolation_unavailable');
+            if (comparisons) return await runWithScmAccountScope(requesterAccountId,
+                () => runWithScmComparisonOperations(createMemberScmComparisonOperations({ native, signal: context.signal }), comparisons), context.callerInputAuthorization);
             const { readScmAsMember } = await import('@/scm/rpc/memberScmRead');
             const memberRoot = native.memberIdentity.workspaceRoot;
             const removeMemberWorktree: import('@/scm/rpc/memberScmRead').MemberScmRemovalService | undefined = deps.resolveProjectRuntime
@@ -236,14 +234,14 @@ export function registerScmHandlers(
                 const target = readRequestCwd(input, projectRoot);
                 const readOwner = deps.nativeOperationRuntime?.readMemberFolderOwner;
                 const hosting = isScmHostingCredentialRpcMethod(method);
-                const member = readOwner && target !== undefined && (hosting || isScmLocalRepositoryRpcMethod(method))
+                const member = readOwner && target !== undefined && (hosting || comparisons || isScmLocalRepositoryRpcMethod(method))
                     ? await readOwner(target).catch(() => 'unavailable' as const) : null;
                 if (member === 'unavailable') return refused('agent_isolation_unavailable');
                 if (member && hosting) return refused('credential_scope_denied');
                 // A member's placed Session already selected its target source: Git runs there, never
                 // on this Machine as the member (SEC1116H §4b).
                 if (member) return selected.kind === 'local'
-                    ? await runAsMember(context, member, method, projectRoot, input) : await run();
+                    ? await runAsMember(context, member, method, projectRoot, input, comparisons ? run : undefined, identity.requester.accountId) : await run();
                 return await runWithRequesterScmCommandRunner(createHostScmCommandRunner({ isCurrent: () => !context.signal.aborted }), run);
             }
             if (!comparisons && !isScmLocalRepositoryReadRpcMethod(method)) return await run();
@@ -257,7 +255,7 @@ export function registerScmHandlers(
                 if (owner && owner.requester.serverId === identity.requester.serverId
                     && owner.requester.accountId === identity.requester.accountId) return await run();
             }
-            return await runAsMember(context, identity, method, projectRoot, input);
+            return await runAsMember(context, identity, method, projectRoot, input, comparisons ? run : undefined, identity.requester.accountId);
         } finally { await requester.dispose(); }
     };
     const selectSource = (request: unknown, context: RpcHandlerContext | undefined): WorkspaceSource => {

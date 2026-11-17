@@ -1,3 +1,4 @@
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -12,6 +13,7 @@ import { advanceDiffSummaryAnalysis, planDiffSummaryAnalysis } from './advanceDi
 import { buildDiffSummaryPrompt } from './buildDiffSummaryPrompt';
 
 it('completes all 215 files in same-run parts sized by the selected native model, with fewer parts for a larger window', async () => {
+    return runWithScmAccountScope('account', async () => {
   await withTempDir('happier-scm-model-context-', async cwd => {
     execFileSync('git', ['init', '-q'], { cwd });
     for (let file = 0; file < 215; file++) writeFileSync(join(cwd, `fixture-${file}.js`),
@@ -64,4 +66,5 @@ it('completes all 215 files in same-run parts sized by the selected native model
     expect(partCounts[1]).toBeGreaterThan(1);
     await deleteCapturedScmComparison({ cwd, sessionId: 'sess-1', comparisonId: captured.comparison.id });
   });
-});
+  });
+  });

@@ -1,3 +1,4 @@
+import { runWithScmAccountScope, resolveScmAccountStorageKey } from '@/scm/accountScope';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -30,6 +31,7 @@ function input(cwd: string, source: ExecutionRunScmDiffSummaryInputV1['source'])
 describe('loadScmDiffSummaryContext complete comparison evidence', () => {
   afterEach(async () => { vi.restoreAllMocks(); for (const cwd of repositories.splice(0)) await rm(cwd, { recursive: true, force: true }); });
   it('does not widen the native Machine filesystem grant through an intent cwd while preserving the osUser grant', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo();
     const alien = await repo();
     try {
@@ -40,15 +42,19 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
       vi.stubEnv(MACHINE_RPC_WORKING_DIRECTORY_ENV, '');
       expect((await loadScmDiffSummaryContext({ workingDirectory: cwd, input: input(alien, { kind: 'workingTree' }) })).comparison.repository.rootPath).toBe(alien);
     } finally { vi.unstubAllEnvs(); }
+    });
   });
   it('makes every pending file available beyond the former local 40-file ceiling', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo();
     for (let index = 0; index < 45; index++) await writeFile(join(cwd, `untracked-${index}.txt`), `${index}\n`);
     const captured = await loadScmDiffSummaryContext({ workingDirectory: cwd, input: input(cwd, { kind: 'workingTree' }) });
     expect(captured.files).toHaveLength(45);
     expect(captured.files.find((file) => file.path === 'untracked-44.txt')?.unifiedDiff).toContain('+44');
+    });
   });
   it('keeps one code basis across repeated capture and distinguishes changed staged layers', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo();
     await writeFile(join(cwd, 'tracked.txt'), 'staged change\n'); git(cwd, ['add', '.']);
     await writeFile(join(cwd, 'tracked.txt'), 'initial\n');
@@ -58,13 +64,15 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     expect(first.comparison.inventory.files).toHaveLength(1);
     expect(first.comparison.inventory.files[0]?.occurrences.map((occurrence) => occurrence.layer)).toEqual(['staged', 'unstaged']);
     expect(git(cwd, ['for-each-ref', '--format=%(refname)', 'refs/happier/checkpoints/'])).toBe('');
-    expect(git(cwd, ['for-each-ref', '--format=%(refname)', `refs/happier/comparisons/repository/${first.comparison.id}/`]).split('\n')).toHaveLength(3);
+    expect(git(cwd, ['for-each-ref', '--format=%(refname)', `refs/happier/comparisons/${resolveScmAccountStorageKey()}/repository/${first.comparison.id}/`]).split('\n')).toHaveLength(3);
     git(cwd, ['add', '.']);
     const changed = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
     expect(changed.comparison.id).not.toBe(first.comparison.id);
     expect(changed.files).toEqual([]);
+    });
   });
   it('retains trusted agent fragments without claiming checkpoint endpoints or inventing blob content', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo(); const sessionId = 'agent-fragments';
     const scopeId = `${sessionId}:${cwd}`;
     const retain = async (unifiedDiff: string) => retainRepositoryCheckpointTurnEvidence({ cwd, scopeId, turnChangeSet: {
@@ -82,8 +90,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     await retain('@@ -2 +2 @@\n-old fragment\n+different observed fragment\n');
     const changed = await captureScmComparison({ cwd, source });
     expect(changed.comparison.id).not.toBe(first.comparison.id);
+    });
   });
   it('retains readable staged evidence when the unstaged layer cannot be read', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo(); await writeFile(join(cwd, 'tracked.txt'), 'staged evidence\n'); git(cwd, ['add', '.']);
     const indexOid = git(cwd, ['write-tree']); await writeFile(join(cwd, 'tracked.txt'), 'unreadable later layer\n');
     const command = scmRuntime.runScmCommand;
@@ -105,8 +115,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     const recovered = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
     expect(recovered.comparison.id).toBe(captured.comparison.id);
     expect(recovered.comparison.inventory.files[0]?.occurrences.find((occurrence) => occurrence.layer === 'unstaged')?.id).not.toBe(unavailableId);
+    });
   });
   it('admits concurrent captures of the same code basis without conflicting endpoint pins', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo(); await writeFile(join(cwd, 'tracked.txt'), 'concurrent capture basis\n');
     const command = scmRuntime.runScmCommand;
     const waiting = new Map<string, { release: () => void; ready: Promise<void> }>();
@@ -130,8 +142,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     expect(captured[0]?.comparison.id).toBe(captured[1]?.comparison.id);
     expect(captured.every((comparison) => comparison.comparison.inventory.state === 'complete')).toBe(true);
     expect(git(cwd, ['for-each-ref', '--format=%(refname)', 'refs/happier/checkpoints/'])).toBe('');
+    });
   });
   it('disposes its temporary checkpoint when canonical endpoint retention fails', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo(); await writeFile(join(cwd, 'tracked.txt'), 'must not orphan capture\n');
     const command = scmRuntime.runScmCommand;
     // The Git write boundary rejects endpoint retention; snapshot creation and cleanup stay real.
@@ -140,8 +154,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
       ? { success: false, stdout: '', stderr: 'Endpoint retention denied', exitCode: 1 } : command(request));
     await expect(captureScmComparison({ cwd, source: { kind: 'workingTree' } })).rejects.toThrow('Endpoint retention denied');
     expect(git(cwd, ['for-each-ref', '--format=%(refname)', 'refs/happier/checkpoints/'])).toBe('');
+    });
   });
   it('loads captured bytes after the live worktree moves and rejects another repository', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo();
     await writeFile(join(cwd, 'tracked.txt'), 'captured\n');
     const captured = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
@@ -151,8 +167,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     expect(loaded.files[0]?.unifiedDiff).not.toContain('+later worktree');
     const other = await repo();
     await expect(readCapturedScmComparison({ cwd: other, comparisonId: captured.comparison.id })).rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+    });
   });
   it('retains the same code identity separately for two authenticated session scopes', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo(); await writeFile(join(cwd, 'tracked.txt'), 'shared basis\n');
     const first = await captureScmComparison({ cwd, source: { kind: 'workingTree' }, sessionId: 'session-a' });
     const second = await captureScmComparison({ cwd, source: { kind: 'workingTree' }, sessionId: 'session-b' });
@@ -160,8 +178,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     expect((await readCapturedScmComparison({ cwd, comparisonId: first.comparison.id, sessionId: 'session-a' })).files[0]?.unifiedDiff).toContain('+shared basis');
     expect((await readCapturedScmComparison({ cwd, comparisonId: second.comparison.id, sessionId: 'session-b' })).files[0]?.unifiedDiff).toContain('+shared basis');
     await expect(readCapturedScmComparison({ cwd, comparisonId: first.comparison.id, sessionId: 'session-c' })).rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+    });
   });
   it('does not give a detached Run a private capture merely because its intent names the Session', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo(); await writeFile(join(cwd, 'tracked.txt'), 'private captured source\n');
     const sessionId = 'private-session';
     const captured = await captureScmComparison({ cwd, source: { kind: 'workingTree' }, sessionId });
@@ -172,8 +192,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
       .rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
     const admitted = await loadScmDiffSummaryContext({ workingDirectory: cwd, sessionId, input: request });
     expect(admitted.files[0]?.unifiedDiff).toContain('+private captured source');
+    });
   });
   it('deletes only the selected saved comparison and its owned pins, preserving other sessions and the initial baseline', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo(); const sessionId = 'deletion-session-a';
     const session = createMutableApiSessionClientFixture({ sessionId });
     const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true });
@@ -188,8 +210,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     expect(git(cwd, ['for-each-ref', '--format=%(refname)', `refs/happier/comparisons/${encodeRepositoryCheckpointScope(sessionId)}/${first.comparison.id}/`])).toBe('');
     expect(git(cwd, ['show', `${buildRepositoryCheckpointInitialRef(`${sessionId}:${cwd}`)}:tracked.txt`])).toBe('initial');
     await lifecycle.onSessionEnd?.();
+    });
   });
   it('captures branch merge-base and a root commit with explicit immutable endpoints', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo(); const root = git(cwd, ['rev-parse', 'HEAD']);
     await writeFile(join(cwd, 'tracked.txt'), 'branch change\n'); git(cwd, ['add', '.']); git(cwd, ['commit', '-m', 'branch']);
     const head = git(cwd, ['rev-parse', 'HEAD']);
@@ -199,11 +223,13 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     const rootCommit = await captureScmComparison({ cwd, source: { kind: 'commit', commit: root } });
     expect(rootCommit.files[0]?.unifiedDiff).toContain('+initial');
     expect(rootCommit.comparison.inventory.state).toBe('complete');
+    });
   });
   it.each([
     { original: 'original.txt', copy: 'copied.txt' },
     { original: 'original [1].txt', copy: 'copied [1] café.txt' },
   ])('isolates copied lineage from its modified source: $copy', async ({ original, copy }) => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo();
     const originalText = Array.from({ length: 20 }, (_, index) => `original line ${index}\n`).join('');
     await writeFile(join(cwd, original), originalText);
@@ -226,8 +252,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
       before: { startLine: 0, lineCount: 0 }, after: { startLine: 0, lineCount: 0 } });
     expect(captured.files.find((file) => file.path === original)?.unifiedDiff).toContain('+changed source only');
     expect(captured.files.find((file) => file.path === 'original 1.txt')?.unifiedDiff).toContain('+literal sibling after');
+    });
   });
   it('captures copied lineage when its source is also renamed', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo();
     git(cwd, ['mv', 'tracked.txt', 'renamed.txt']);
     await writeFile(join(cwd, 'copied.txt'), 'initial\n');
@@ -240,8 +268,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
       expect(file.evidence.unifiedDiff?.match(/^diff --git /gm)).toHaveLength(1);
       expect(file.evidence.unifiedDiff).toContain(`b/${file.path}`);
     }
+    });
   });
   it('retains renamed lineage and literal multi-file evidence through public capture', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo();
     const original = 'before [1].txt'; const renamed = 'after [1] café.txt';
     const content = Array.from({ length: 20 }, (_, index) => `rename line ${index}\n`).join('');
@@ -263,8 +293,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     expect(file?.occurrences[0]).toMatchObject({ path: renamed, previousPath: original,
       before: { startLine: 13, lineCount: 7 }, after: { startLine: 13, lineCount: 7 } });
     expect(captured.files.find((entry) => entry.path === 'before 1.txt')?.unifiedDiff).toContain('+other after\t \r\n');
+    });
   });
   it('captures every delivered pull-request page while preserving missing patch and unknown binary evidence', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-hosted-comparison-')); repositories.push(cwd);
     const baseOid = '1'.repeat(40); const headOid = '2'.repeat(40);
     const configured = createTriageSourceV1Fixture().configuredInstance;
@@ -348,8 +380,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
       if (gap === 'changedEndpoint' || gap === 'failedPage') expect(retained.files).toHaveLength(1);
       if (gap === 'truncatedPatch') expect(retained.comparison.inventory.files[0]?.occurrences[0]?.evidence?.state).toBe('unavailable');
     }
+    });
   });
   it('resolves trusted turn receipts and ignores caller fabricated file evidence', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo();
     const session = createMutableApiSessionClientFixture({ overrides: { sessionId: 'trusted-turn' } });
     const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } } });
@@ -372,8 +406,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     expect(mismatched.comparison.inventory.state).toBe('unavailable');
     await expect(captureScmComparison({ cwd, sessionId: session.sessionId, source: { kind: 'session', sessionId: 'other' } })).rejects.toMatchObject({ code: 'CHECKPOINT_NOT_FOUND' });
     await lifecycle.onSessionEnd?.();
+    });
   });
   it('compares an immutable commit to its parent rather than current pending files', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo();
     await writeFile(join(cwd, 'tracked.txt'), 'committed change\n'); git(cwd, ['add', '.']); git(cwd, ['commit', '-m', 'change']);
     const commit = git(cwd, ['rev-parse', 'HEAD']);
@@ -381,8 +417,10 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     const captured = await loadScmDiffSummaryContext({ workingDirectory: cwd, input: input(cwd, { kind: 'commit', commit }) });
     expect(captured.files.map((file) => file.path)).toEqual(['tracked.txt']);
     expect(captured.files[0]?.unifiedDiff).toContain('+committed change');
+    });
   });
   it('uses the initial dirty snapshot for session net across edit, commit, resume and reversion', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await repo();
     const session = createMutableApiSessionClientFixture({ overrides: { sessionId: 'session-net' } });
     const makeLifecycle = () => createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true });
@@ -399,5 +437,6 @@ describe('loadScmDiffSummaryContext complete comparison evidence', () => {
     const captured = await loadScmDiffSummaryContext({ workingDirectory: cwd, sessionId: session.sessionId, input: input(cwd, { kind: 'session', sessionId: session.sessionId }) });
     expect(captured.files).toEqual([]);
     await lifecycle.onSessionEnd?.();
+    });
   });
 });

@@ -19,6 +19,9 @@ import { readLlmTaskPermissionModeV1, resolveLlmTaskRunnerV1 } from '@happier-de
 import type { StoredCredentials } from '@/persistence';
 import { loadScmPullRequestDraftEvidence } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/loadScmDiffSummaryContext';
 import { logger } from '@/ui/logger';
+import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
+import { readScmAccountScope, runWithScmAccountScope } from '@/scm/accountScope';
 
 type ExecuteCanonicalAction = (
     actionId: 'execution.run.start' | 'scm.pullRequest.openCompose',
@@ -27,6 +30,7 @@ type ExecuteCanonicalAction = (
 
 /** Capture once at the host, then admit the canonical retained analysis run. */
 export async function executeScmDiffSummaryAction(params: Readonly<{
+    actionContext?: ActionExecutorContext;
     request: ScmDiffSummaryGenerateInput;
     sessionId?: string;
     machineId?: string;
@@ -38,6 +42,15 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
     signal?: AbortSignal;
     credentials?: StoredCredentials;
 }>): Promise<ScmDiffSummaryGenerateOutput> {
+    const accountId = readActionPrincipalAccountId(params.actionContext) ?? readScmAccountScope();
+    if (!accountId) return { success: false, errorCode: 'DIFF_UNAVAILABLE', error: 'SCM requester Account is unavailable' };
+    return runWithScmAccountScope(accountId, () => executeScmDiffSummaryActionInAccountScope(params),
+        params.actionContext?.externalActionExecutionAuthorization);
+}
+
+async function executeScmDiffSummaryActionInAccountScope(
+    params: Parameters<typeof executeScmDiffSummaryAction>[0],
+): Promise<ScmDiffSummaryGenerateOutput> {
     const settings = getActiveAccountSettingsSnapshot()?.settings ?? accountSettingsParse({});
     const resolvedSettings = resolveScmDiffSummarySettings({ storedSettings: settings, catalogProfiles: [] });
     if (!resolvedSettings.enabled) {

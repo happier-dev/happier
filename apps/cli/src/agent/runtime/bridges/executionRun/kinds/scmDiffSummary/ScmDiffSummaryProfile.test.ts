@@ -1,3 +1,4 @@
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
@@ -69,6 +70,7 @@ async function prepareAnalysis(params: ExecutionRunProfilePrepareStartParams): P
 
 describe('initial generation context', () => {
   it('parses one model response once through saved publication and its completed envelope', async () => {
+    return runWithScmAccountScope('account', async () => {
     const admitted = await admitInitial(start(input(['walkthrough'])));
     const rawText = JSON.stringify({ walkthrough: { title: 'Parsed once', intro: '', stops: [], otherChangeRefs: ['c1'] } });
     // Call through the JSON boundary: the profile, parser and saved owner all remain real.
@@ -80,9 +82,11 @@ describe('initial generation context', () => {
         outputs: { walkthrough: { state: 'complete', value: { title: 'Parsed once', otherChangeRefs: ['change-1'] } } } });
       expect(parser.mock.calls.filter(([text]) => text === rawText)).toHaveLength(1);
     } finally { parser.mockRestore(); }
+    });
   });
 
   it('reads a retained preparation body once and still refuses publication after an intervening edit', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-scm-prepare-read-', async cwd => {
     execFileSync('git', ['init', '-q'], { cwd });
     writeFileSync(join(cwd, 'a.ts'), 'const changed = true;\n');
@@ -118,9 +122,11 @@ describe('initial generation context', () => {
       title: 'Stale', intro: 'Intro', stops: [{ id: 's1', title: 'Stop', explanationMarkdown: 'After', changeRefs: ['c1'] }], otherChangeRefs: [],
     } } })).toMatchObject({ success: false, errorCode: 'revision_conflict', latestRevision: 1 });
     });
+    });
   });
 
   it('withholds incomplete structured output from the first streamed character while retaining prose discussion', () => {
+    return runWithScmAccountScope('account', () => {
     const project = (fullText: string) => ScmDiffSummaryProfile.computeSidechainStreamText!({ fullText });
     for (const text of ['{', '{\n  "', '{\n  "walkthrough"', '`', '``', '```j', '```json\n', '```json\n{', '{"walkthrough":{"title":"Saved"}}']) {
       expect(project(text)).toBe('');
@@ -130,8 +136,10 @@ describe('initial generation context', () => {
     expect(project('I updated the explanation: {"walkthrough":')).toBe('I updated the explanation:');
     expect(project('```typescript\nconst retained = true;\n```')).toBe('```typescript\nconst retained = true;\n```');
     expect(project('I updated the explanation.\n{"walkthrough":')).toBe('I updated the explanation.');
+    });
   });
   it('keeps seeded stop discussion prose-only and preserves the edited story even when the model returns JSON', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-scm-seeded-discussion-', async cwd => {
       execFileSync('git', ['init', '-q'], { cwd });
       writeFileSync(join(cwd, 'a.ts'), 'const allowed = true;\n');
@@ -205,12 +213,15 @@ describe('initial generation context', () => {
       expect(prompt).toContain('Saved explanation');
       expect(prompt).toContain('Why is this allowed?');
     });
+    });
   });
   it('does not turn fresh pending generation into discussion of an empty saved result', async () => {
+    return runWithScmAccountScope('account', async () => {
     const admitted = await admitInitial(start(input(['walkthrough', 'commitPlan'])));
     expect(ScmDiffSummaryProfile.buildInitialInputContext?.({
       start: admitted.start, structuredMeta: admitted.previousStructuredMeta,
     })).toBe('');
+    });
   });
 });
 
@@ -290,6 +301,7 @@ const fence = '`'.repeat(3);
 describe('ScmDiffSummaryProfile', () => {
 
   it.each([false, true])('persists the generator Connected Services and reuses them when refinement replaces a lost Run (resolved at start=%s)', async connectedRouteAtStartOnly => {
+    return runWithScmAccountScope('account', async () => {
     await exerciseSavedContinuation('replacement', ({ savedConnectedServices, replacementConnectedServices }) => {
       const expected = { v: 2, bindingsByServiceId: { 'happier.agent.claude/claude-subscription': {
         source: 'connected', selection: 'profile', profileId: 'saved-subscription',
@@ -297,9 +309,11 @@ describe('ScmDiffSummaryProfile', () => {
       expect(savedConnectedServices).toEqual(expected);
       expect(replacementConnectedServices).toEqual(expected);
     }, connectedRouteAtStartOnly);
+    });
   });
 
   it.each(['refine', 'addOutputs', 'replacement'] as const)('keeps saved evidence separate from user instructions through the real %s continuation', async operation => {
+    return runWithScmAccountScope('account', async () => {
     await exerciseSavedContinuation(operation, ({ prompt, admittedInstructions }) => {
       const [evidence, user] = prompt.split('User instructions:\n');
       expect(evidence).toContain('UNTRUSTED_PRIOR_OUTPUT_DIRECTIVE');
@@ -308,17 +322,21 @@ describe('ScmDiffSummaryProfile', () => {
       if (operation !== 'addOutputs') expect(user?.trim()).toBe('Explain the causal reason');
       if (operation === 'replacement') expect(admittedInstructions).toBe('Explain the causal reason');
     });
+    });
   });
 
   it.each(['refine', 'addOutputs', 'replacement', 'explicitChoice'] as const)('retains admitted French over the German Account preference for %s', async operation => {
+    return runWithScmAccountScope('account', async () => {
     await exerciseSavedContinuation(operation, ({ prompt, savedLanguage, replacementLanguage }) => {
       expect(savedLanguage).toBe('fr');
       expect(prompt).toContain(`Prose language: ${operation === 'explicitChoice' ? 'it' : 'fr'}`);
       if (operation === 'replacement' || operation === 'explicitChoice') expect(replacementLanguage).toBe(operation === 'explicitChoice' ? 'it' : 'fr');
     });
+    });
   });
 
   it('uses the shared Account prose preference for direct Run preparation without overriding explicit language', async () => {
+    return runWithScmAccountScope('account', async () => {
     const previous = getActiveAccountSettingsSnapshot();
     setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({
       'scm.diffSummary.outputLanguage': 'fr', preferredLanguage: 'nl',
@@ -342,9 +360,11 @@ describe('ScmDiffSummaryProfile', () => {
     } finally {
       if (previous) setActiveAccountSettingsSnapshot(previous); else clearActiveAccountSettingsSnapshot();
     }
+    });
   });
 
   it('prepares surrounding files from both captured endpoints, independently of later live changes', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-scm-investigation-', async cwd => {
       execFileSync('git', ['init', '-q'], { cwd });
       execFileSync('git', ['config', 'user.name', 'Test'], { cwd });
@@ -389,9 +409,11 @@ describe('ScmDiffSummaryProfile', () => {
         expect(existsSync(after)).toBe(false);
       } finally { await deleteCapturedScmComparison(scope); }
     });
+    });
   });
 
   it('rejects a private retained result from a detached preparation even when its comparison has a workspace copy', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-scm-private-preparation-', async directory => {
     execFileSync('git', ['init', '-q'], { cwd: directory });
     const captured = await captureScmComparison({ cwd: directory, source: { kind: 'workingTree' } });
@@ -409,9 +431,11 @@ describe('ScmDiffSummaryProfile', () => {
     await expect(scmDiffSummaryResultStore.read({ cwd: directory, resultId: saved.resultId }))
       .resolves.toMatchObject({ success: true, result: { revision: 0 } });
     });
+    });
   });
 
   it.each(['missing hosted objects', 'escaping symlink'])('refuses surrounding-file investigation for %s without using live files', async reason => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-scm-unavailable-investigation-', async cwd => {
       execFileSync('git', ['init', '-q'], { cwd });
       execFileSync('git', ['config', 'user.name', 'Test'], { cwd });
@@ -443,9 +467,11 @@ describe('ScmDiffSummaryProfile', () => {
         expect(readFileSync(join(cwd, 'context.txt'), 'utf8')).toBe('Live context must not substitute for endpoints\n');
       } finally { await deleteCapturedScmComparison({ cwd, comparisonId: captured.comparison.id }); }
     });
+    });
   });
 
   it('counts Unicode scalars and retains usable parts when integration exceeds the reported input capacity', () => {
+    return runWithScmAccountScope('account', () => {
     const metadata = input().metadata;
     const prompt = '😀'.repeat(4000);
     expect(planDiffSummaryAnalysis({ comparison, metadata, outputs: ['summary'], prompt,
@@ -468,16 +494,20 @@ describe('ScmDiffSummaryProfile', () => {
     expect(modelWindowResult?.toolResultOutput).toMatchObject({ outputs: { summary: {
       state: 'partial', reasonCode: 'agent_context_window_exceeded',
     } } });
+    });
   });
 
   it('does not demand native budget without prepared generation work', async () => {
+    return runWithScmAccountScope('account', async () => {
     let budgetDemands = 0;
     expect(await ScmDiffSummaryProfile.finalizeStartParams?.({ cwd: '/repo', request: start(input()),
       resolveMaxInputUnicodeCharacters: async () => { budgetDemands++; return 1; } })).toBeUndefined();
     expect(budgetDemands).toBe(0);
+    });
   });
 
   it('partitions 215 files by the runtime Unicode input capacity and integrates on the same run', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-scm-runtime-capacity-', async cwd => {
       execFileSync('git', ['init', '-q'], { cwd });
       for (let file = 0; file < 215; file++) writeFileSync(join(cwd, `fixture-${file}.js`),
@@ -522,12 +552,14 @@ describe('ScmDiffSummaryProfile', () => {
         outputs: { walkthrough: { state: 'complete' } }, analysis: { remainingChangeRefs: [] } });
       await deleteCapturedScmComparison({ cwd, sessionId: 'sess-1', comparisonId: captured.comparison.id });
     });
+    });
   });
 
   it.each([
     { prior: false, code: 'provider_input_too_large', message: 'The provider rejected input that exceeds its character limit.' },
     { prior: true, code: 'provider_request_rejected', message: 'The provider rejected the start request.' },
   ])('keeps inventory and prior prose on a typed input refusal ($code, prior output: $prior)', async ({ prior, code, message }) => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-scm-refused-', async cwd => {
       const scoped = { ...comparison, repository: { rootPath: cwd }, inventory: { ...comparison.inventory,
         files: [...comparison.inventory.files, { ...comparison.inventory.files[0]!, path: 'b.ts',
@@ -545,9 +577,11 @@ describe('ScmDiffSummaryProfile', () => {
         ...(prior ? { value: { title: 'Published' } } : {}),
       } } });
     });
+    });
   });
 
   it.each([false, true])('plans a known-capacity single hunk before admission with exact fragments and same-run part progress (single line: %s)', async (singleLine) => {
+    return runWithScmAccountScope('account', async () => {
     // This fixture must fit the canonical instructions and exact fragment headers
     // (now about 3.6 KB), while still forcing this hunk to arrive in parts.
     const contextWindowTokens = singleLine ? 6000 : 4500;
@@ -603,9 +637,11 @@ describe('ScmDiffSummaryProfile', () => {
         inputIds: [next.localId], finishedAtMs: 3, rawText: JSON.stringify({ summaryMarkdown: 'Part' }) });
       next = advanced?.nextInput;
     }
+    });
   });
 
   it('retains the original request through unknown-capacity native rejection and final integration', () => {
+    return runWithScmAccountScope('account', () => {
     const instruction = 'Keep the requested behavioral explanation, not only a file list.';
     const rejected = advanceDiffSummaryAnalysis({ start: start({ ...input(), instructions: instruction, outputLanguage: 'fr',
       reviewNarration: { phase: 'writing', provenance: {
@@ -632,9 +668,11 @@ describe('ScmDiffSummaryProfile', () => {
     expect(next?.instructions).toContain(instruction);
     expect(next?.instructions).toContain('Prose language: fr');
     expect(next?.instructions).toContain('Keep the existing contract');
+    });
   });
 
   it('publishes no revision for part admission and retains completion progress and the publication basis', async () => {
+    return runWithScmAccountScope('account', async () => {
     const active = { ...input(), scmAnalysis: { phase: 'evidence', current: ['change-1'],
       pending: [{ refs: ['change-1'] }], parts: [], supplied: [], analysed: [], failures: [], failedRefs: [] } };
     const selectedStart = (intentInput: unknown) => ({ ...start(intentInput), modelId: 'selected-parts-model' });
@@ -653,9 +691,11 @@ describe('ScmDiffSummaryProfile', () => {
       inputIds: [first!.nextInput!.localId], finishedAtMs: 3, rawText: JSON.stringify({ summaryMarkdown: 'Second part' }) });
     expect(second?.toolResultOutput).toMatchObject({ analysis: { parts: { completed: 2, total: 2, phase: 'merge' } },
       producer: { modelId: 'selected-parts-model' } });
+    });
   });
 
   it('presents aliases in retained multipart integration and resolves the final aliases to host references', () => {
+    return runWithScmAccountScope('account', () => {
     const twoParts = { ...comparison, inventory: { ...comparison.inventory, files: [comparison.inventory.files[0]!,
       { ...comparison.inventory.files[0]!, path: 'b.ts', occurrences: [{ ...comparison.inventory.files[0]!.occurrences[0]!,
         id: 'change-2', alias: 'c2', path: 'b.ts' }] }] } };
@@ -675,9 +715,11 @@ describe('ScmDiffSummaryProfile', () => {
       inputIds: [second!.nextInput!.localId], finishedAtMs: 4,
       rawText: JSON.stringify({ walkthrough: { title: 'Read', intro: '', stops: [], otherChangeRefs: ['c1', 'c2'] } }) });
     expect(final?.toolResultOutput).toMatchObject({ outputs: { walkthrough: { state: 'complete', value: { otherChangeRefs: ['change-1', 'change-2'] } } } });
+    });
   });
 
   it('presents aliases in saved discussion context while keeping the saved envelope canonical', () => {
+    return runWithScmAccountScope('account', () => {
     const payload = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: comparison.id, comparison,
       metadata: input().metadata, requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'complete', value: {
         title: 'Read', intro: '', stops: [], otherChangeRefs: ['change-1'],
@@ -689,9 +731,11 @@ describe('ScmDiffSummaryProfile', () => {
     expect(payload.outputs?.walkthrough?.value?.otherChangeRefs).toEqual(['change-1']);
     expect(parseDiffSummaryModelOutput(JSON.stringify({ walkthrough: { title: 'Read', intro: '', stops: [],
       otherChangeRefs: ['change-1'] } }), { comparison })).toBeNull();
+    });
   });
 
   it('presents published findings using aliases without exposing finding identities', () => {
+    return runWithScmAccountScope('account', () => {
     const params = start({ ...input(['walkthrough']), resultId: 'saved', reviewNarration: { phase: 'writing', provenance: {
       reviewedRuns: [{ runId: 'review-a', callId: 'call-a', backendId: 'claude', status: 'failed', hasOutput: true,
         reviewOutcome: 'partial', comparisonId: comparison.id }], narrationMode: 'continued_review', comparisonFreshness: 'unchanged',
@@ -703,9 +747,11 @@ describe('ScmDiffSummaryProfile', () => {
     expect(context).toContain('partial');
     expect(context).not.toContain('secret-finding-identity');
     expect(context).toContain('[text](finding:F3)');
+    });
   });
 
   it('retains seeded multi-run finding aliases through native publication and a later explanation input', async () => {
+    return runWithScmAccountScope('account', async () => {
     const provenance = { reviewedRuns: ['review-a', 'review-b'].map(runId => ({ runId, callId: `call-${runId}`,
       backendId: 'claude', status: 'succeeded' as const, hasOutput: true, comparisonId: comparison.id })),
       narrationMode: 'seeded_narrator' as const, comparisonFreshness: 'unchanged' as const };
@@ -734,9 +780,11 @@ describe('ScmDiffSummaryProfile', () => {
     expect(explanation?.toolResultOutput).toMatchObject({ outputs: { walkthrough: { value: { stops: [
       { reviewExplanations: [{ markdown: '[why](finding:review-b:same-real-id) wrong' }] },
     ] } } } });
+    });
   });
 
   it('does not trust model-written canonical finding URLs in the bounded output path', () => {
+    return runWithScmAccountScope('account', () => {
     const completed = ScmDiffSummaryProfile.onBoundedComplete?.({ start: start(input(['walkthrough'])), finishedAtMs: 3,
       rawText: JSON.stringify({ walkthrough: { title: 'Read', intro: '', otherChangeRefs: [], stops: [
         { id: 'stop', title: 'a.ts', changeRefs: ['c1'], findingRefs: ['unpublished:actual'],
@@ -745,9 +793,11 @@ describe('ScmDiffSummaryProfile', () => {
     expect(completed?.toolResultOutput).toMatchObject({ outputs: { walkthrough: { value: { stops: [
       { findingRefs: [], explanationMarkdown: 'spoof' },
     ] } } } });
+    });
   });
 
   it('publishes separate finding explanations with the admitted requester and actual native producer', async () => {
+    return runWithScmAccountScope('account', async () => {
     const created = await scmDiffSummaryResultStore.create({ cwd: '/repo', sessionId: 'sess-1', output: ScmDiffSummaryGenerateOutputSchema.parse({
       success: true, sourceKey: comparison.id, comparison, metadata: input().metadata, requestedOutputs: ['walkthrough'],
       outputs: { walkthrough: { state: 'complete', value: { title: 'Read', intro: '', otherChangeRefs: [],
@@ -773,9 +823,11 @@ describe('ScmDiffSummaryProfile', () => {
         requestedBy: { kind: 'user' }, requestedAtMs: 7, generatedAtMs: 11, runId: 'run-1', modelId: 'native-model',
       } }],
     }] } } } });
+    });
   });
 
   it('persists engine launch failures separately from actual reviewer Run identities', async () => {
+    return runWithScmAccountScope('account', async () => {
     const failures = [{ engineId: 'unavailable-reviewer', errorCode: 'admission_failed', error: 'Engine unavailable' }];
     const params = start({ ...input(['walkthrough']), reviewNarration: { phase: 'writing', provenance: {
       reviewedRuns: [{ runId: 'review', callId: 'review-call', backendId: 'claude', status: 'succeeded', hasOutput: true,
@@ -788,9 +840,11 @@ describe('ScmDiffSummaryProfile', () => {
     const output = ScmDiffSummaryGenerateOutputSchema.parse(completion?.toolResultOutput);
     expect(await scmDiffSummaryResultStore.read({ cwd: '/repo', sessionId: 'sess-1', resultId: output.resultId! }))
       .toMatchObject({ success: true, result: { output: { producer: { launchFailures: failures } } } });
+    });
   });
 
   it('keeps retained partial prose writing until the final multipart merge settles', async () => {
+    return runWithScmAccountScope('account', async () => {
     const active = { ...input(['walkthrough']), scmAnalysis: { phase: 'evidence', current: ['change-1'], pending: [],
       parts: [], supplied: [], analysed: [], failures: [], failedRefs: [] } };
     const first = await ScmDiffSummaryProfile.onTurnComplete?.({ ...await admitInitial(start(active)), turnId: 'part', finishedAtMs: 2,
@@ -802,9 +856,11 @@ describe('ScmDiffSummaryProfile', () => {
       inputIds: [first!.nextInput!.localId], previousStructuredMeta: first!.structuredMeta, finishedAtMs: 3, rawText: 'not JSON' });
     expect(final?.nextInput).toBeUndefined();
     expect(final?.toolResultOutput).toMatchObject({ outputs: { walkthrough: { state: 'partial' } } });
+    });
   });
 
   it('does not let a replaced generator capture new writes or terminalize the replacement result', async () => {
+    return runWithScmAccountScope('account', async () => {
     const created = await scmDiffSummaryResultStore.create({ cwd: '/repo', sessionId: 'sess-1', output: ScmDiffSummaryGenerateOutputSchema.parse({
       success: true, sourceKey: comparison.id, comparison, metadata: input().metadata, runId: 'replacement-run',
       requestedOutputs: ['summary'], outputs: { summary: { state: 'pending' } },
@@ -815,9 +871,11 @@ describe('ScmDiffSummaryProfile', () => {
     expect(await ScmDiffSummaryProfile.onTerminal?.({ start: previous, status: 'cancelled', finishedAtMs: 2 })).toBeNull();
     expect(await scmDiffSummaryResultStore.read({ cwd: '/repo', sessionId: 'sess-1', resultId: created.resultId }))
       .toMatchObject({ success: true, result: { revision: 0, output: { runId: 'replacement-run', outputs: { summary: { state: 'pending' } } } } });
+    });
   });
 
   it('does not publish unmatched completion or resurrect a replaced generator even without input IDs', async () => {
+    return runWithScmAccountScope('account', async () => {
     const initial = await ScmDiffSummaryProfile.onStarted?.({ start: start(input(['walkthrough'])), rawText: '', finishedAtMs: 2 });
     const saved = ScmDiffSummaryGenerateOutputSchema.parse(initial?.toolResultOutput);
     const scope = { cwd: '/repo', sessionId: 'sess-1', resultId: saved.resultId! };
@@ -836,9 +894,11 @@ describe('ScmDiffSummaryProfile', () => {
     expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true, result: {
       revision: manual.result.revision, output: { runId: 'replacement', outputs: { walkthrough: { value: { title: 'Manual title' } } } },
     } });
+    });
   });
 
   it('uses only admitted initial or follow-up revision bases on completion', async () => {
+    return runWithScmAccountScope('account', async () => {
     const requested = { ...input(['walkthrough']), requestedModelId: 'narrator-model', resolvedSelector: { catalogId: 'profile:narrator-model' } };
     const initial = await ScmDiffSummaryProfile.onStarted?.({ start: start(requested, 'narrator-model'), rawText: '', finishedAtMs: 2 });
     const saved = ScmDiffSummaryGenerateOutputSchema.parse(initial?.toolResultOutput);
@@ -862,9 +922,11 @@ describe('ScmDiffSummaryProfile', () => {
     expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true, result: { output: {
       outputs: { walkthrough: { value: { title: 'New manual edit' } } },
     } } });
+    });
   });
 
   it('keeps the admitted initial revision rather than rebasing model kickoff over an intervening manual edit', async () => {
+    return runWithScmAccountScope('account', async () => {
     const created = await scmDiffSummaryResultStore.create({ cwd: '/repo', sessionId: 'sess-1', output: ScmDiffSummaryGenerateOutputSchema.parse({
       success: true, sourceKey: comparison.id, comparison, metadata: input().metadata,
       requestedOutputs: ['summary'], outputs: { summary: { state: 'pending' } },
@@ -878,22 +940,28 @@ describe('ScmDiffSummaryProfile', () => {
     await ScmDiffSummaryProfile.onTerminal?.({ start: start({ ...input(), ...scope, resultBaseRevision: 0 }), status: 'failed', finishedAtMs: 3 });
     expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true,
       result: { revision: 1, canUndo: true, output: { summaryMarkdown: 'My newer manual explanation.', outputs: { summary: { state: 'complete' } } } } });
+    });
   });
 
   it('parses requested structured output variants using the captured reference contract', () => {
+    return runWithScmAccountScope('account', () => {
     expect(parseDiffSummaryModelOutput(JSON.stringify({ walkthrough: { title: 'a', intro: '', stops: [], otherChangeRefs: ['c1'] },
       commitPlan: { groups: [], leftOutChangeRefs: ['c1'] } }), { comparison, requestedOutputs: ['walkthrough', 'commitPlan'], requireCompleteCoverage: true }))
       .toMatchObject({ walkthrough: { otherChangeRefs: ['change-1'] }, commitPlan: { leftOutChangeRefs: ['change-1'] } });
+    });
   });
 
   it('does not claim evidence was supplied when terminal cancellation has no prior generation artifact', async () => {
+    return runWithScmAccountScope('account', async () => {
     const settled = await ScmDiffSummaryProfile.onTerminal?.({ start: start(input()), status: 'cancelled', finishedAtMs: 2 });
     expect(settled?.toolResultOutput).toMatchObject({ outputs: { summary: { state: 'cancelled' } }, analysis: {
       suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: ['change-1'],
     } });
+    });
   });
 
   it('persists a typed cancellation reason through the saved result reader', async () => {
+    return runWithScmAccountScope('account', async () => {
     const admitted = await admitInitial(start(input(['walkthrough', 'summary'])));
     const pending = ScmDiffSummaryGenerateOutputSchema.parse(admitted.previousStructuredMeta?.payload);
     const published = await scmDiffSummaryResultStore.publishProgress({ cwd: '/repo', sessionId: 'sess-1',
@@ -914,9 +982,11 @@ describe('ScmDiffSummaryProfile', () => {
       walkthrough: { state: 'cancelled', reasonCode: 'generation_cancelled', value: { title: 'Usable reading' } },
       summary: { state: 'complete', value: { summaryMarkdown: 'Published summary' } },
     } } } });
+    });
   });
 
   it('seeds saved follow-up context from the current capture while retaining the original generation provenance', async () => {
+    return runWithScmAccountScope('account', async () => {
     const savedOutput = { success: true, sourceKey: comparison.id, comparison, metadata: input().metadata,
       runId: 'original-run', producer: { kind: 'generation', runId: 'original-run' },
       cost: { inputTokens: 17 }, summaryMarkdown: 'Saved explanation.',
@@ -930,9 +1000,11 @@ describe('ScmDiffSummaryProfile', () => {
       cost: { inputTokens: 17 }, comparison, metadata: input().metadata });
     expect(ScmDiffSummaryProfile.buildInitialInputContext?.({ start: current, structuredMeta: restored?.structuredMeta })).toContain('Saved explanation.');
     expect(ScmDiffSummaryProfile.buildInitialInputContext?.({ start: current, structuredMeta: restored?.structuredMeta })).toContain('+new');
+    });
   });
 
   it('supplies every captured file and the full textual evidence to model admission', () => {
+    return runWithScmAccountScope('account', () => {
     const marker = 'LAST-LINE-BEYOND-THE-FORMER-SLICE';
     const files = Array.from({ length: 101 }, (_, index) => ({ path: `src/file-${index}.ts`,
       changeKind: 'modified', unifiedDiff: `${'a'.repeat(16_001)}\n${marker}-${index}` }));
@@ -940,9 +1012,11 @@ describe('ScmDiffSummaryProfile', () => {
     expect(prompt.includes('src/file-100.ts')).toBe(true);
     expect(prompt.includes(`${marker}-100`)).toBe(true);
     expect(prompt.includes(`${marker}-0`)).toBe(true);
+    });
   });
 
   it('keeps the language and evidence boundary on a seeded generator', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-scm-language-', async cwd => {
       execFileSync('git', ['init', '-q'], { cwd });
       const captured = await captureScmComparison({ cwd, sessionId: 'sess-1', source: { kind: 'workingTree' } });
@@ -965,21 +1039,27 @@ describe('ScmDiffSummaryProfile', () => {
       expect(prepared?.instructions).toContain('Saved prose');
       expect(prepared?.instructions).toContain('User instructions:\nKeep the saved structure');
     });
+    });
   });
 
   it('uses the strict protocol output contract without arbitrary prose length limits', () => {
+    return runWithScmAccountScope('account', () => {
     expect(parseDiffSummaryModelOutput(JSON.stringify({ summaryMarkdown: 'a'.repeat(80_001) }))?.summaryMarkdown?.length).toBe(80_001);
     expect(parseDiffSummaryModelOutput(JSON.stringify({ summaryMarkdown: 'Valid.', injectedCommand: 'git commit' }))).toBeNull();
+    });
   });
 
   it('reads the strict output a model wraps in leading prose and a code fence, still refusing unknown keys', () => {
+    return runWithScmAccountScope('account', () => {
     const wrap = (value: unknown) => ['I will group these changes by intent.', '', fence + 'json', JSON.stringify(value, null, 2), fence].join('\n');
     const commitPlan = { groups: [{ id: 'g1', message: 'Add sorting', rationale: 'Newest first.', changeRefs: ['c1'] }], leftOutChangeRefs: [] };
     expect(parseDiffSummaryModelOutput(wrap({ commitPlan }))?.commitPlan?.groups[0]?.message).toBe('Add sorting');
     expect(parseDiffSummaryModelOutput(wrap({ summaryMarkdown: 'Valid.', injectedCommand: 'git commit' }))).toBeNull();
+    });
   });
 
   it('publishes walkthrough-only output with captured identities and separate analysis coverage', async () => {
+    return runWithScmAccountScope('account', async () => {
     const admitted = await admitInitial(start(input(['walkthrough'])));
     const baseRevision = ScmDiffSummaryGenerateOutputSchema.parse(admitted.previousStructuredMeta?.payload).revision;
     // Observational spies retain the real normalizer/schema and saved publication path.
@@ -1014,9 +1094,11 @@ describe('ScmDiffSummaryProfile', () => {
       walkthrough: { ...output.outputs?.walkthrough, value: { ...output.outputs?.walkthrough?.value,
         stops: [{ ...output.outputs?.walkthrough?.value?.stops[0], changeRefs: ['c1'] }] } },
     } }).success).toBe(false);
+    });
   });
 
   it('publishes a readable saved result identity and revision on retained structured completion', async () => {
+    return runWithScmAccountScope('account', async () => {
     const completed = await ScmDiffSummaryProfile.onTurnComplete?.({ ...await admitInitial(start(input(['walkthrough']))),
       turnId: 'saved-turn', finishedAtMs: 2, rawText: JSON.stringify({ walkthrough: {
         title: 'Saved beyond the generator', intro: '', stops: [], otherChangeRefs: ['c1'],
@@ -1044,9 +1126,11 @@ describe('ScmDiffSummaryProfile', () => {
       previousStructuredMeta: updated?.structuredMeta, inputIds: ['unchanged'], turnId: 'unchanged-turn', finishedAtMs: 4,
       rawText: JSON.stringify({ walkthrough: { title: 'Updated explanation', intro: 'Refined explanation', stops: [], otherChangeRefs: ['c1'] } }) });
     expect(unchanged?.toolResultMeta?.scmResultUpdate).toBeUndefined();
+    });
   });
 
   it.each(['wrapped', 'bare'] as const)('publishes a selected-stop refinement without requiring the model to repeat unrelated reading fields (%s)', async (shape) => {
+    return runWithScmAccountScope('account', async () => {
     const completed = await ScmDiffSummaryProfile.onTurnComplete?.({ ...await admitInitial(start(input(['walkthrough']))),
       turnId: 'initial', finishedAtMs: 2, rawText: JSON.stringify({ walkthrough: {
         title: 'Saved reading', intro: 'Saved introduction', otherChangeRefs: [], stops: [
@@ -1076,9 +1160,11 @@ describe('ScmDiffSummaryProfile', () => {
     } } } });
     const undone = await scmDiffSummaryResultStore.undo({ ...scope, expectedRevision: saved.revision! + 1 });
     expect(undone).toMatchObject({ success: true, result: { output: { outputs: saved.outputs } } });
+    });
   });
 
   it('keeps selected-stop shorthand scoped to its base and validates explicit reading fields', () => {
+    return runWithScmAccountScope('account', () => {
     const base = { title: 'Saved reading', intro: 'Saved introduction' };
     const walkthrough = { title: 'New reading', intro: 'New introduction', stops: [], otherChangeRefs: [] };
     expect(parseDiffSummaryModelOutput(JSON.stringify(walkthrough), undefined, base)?.walkthrough).toEqual(walkthrough);
@@ -1089,9 +1175,11 @@ describe('ScmDiffSummaryProfile', () => {
       { ...walkthrough, injectedCommand: 'git commit' },
       { ...walkthrough, walkthrough: null },
     ]) expect(parseDiffSummaryModelOutput(JSON.stringify(malformed), undefined, base)).toBeNull();
+    });
   });
 
   it('settles an unparseable selected-stop reply with a visible invalid-output notice and keeps discussion prose unchanged', async () => {
+    return runWithScmAccountScope('account', async () => {
     const completed = await ScmDiffSummaryProfile.onTurnComplete?.({ ...await admitInitial(start(input(['walkthrough']))),
       turnId: 'initial', finishedAtMs: 2, rawText: JSON.stringify({ walkthrough: {
         title: 'Saved reading', intro: 'Saved introduction', otherChangeRefs: [], stops: [
@@ -1118,9 +1206,11 @@ describe('ScmDiffSummaryProfile', () => {
       previousStructuredMeta: completed?.structuredMeta, inputIds: ['discussion'], turnId: 'discussed', finishedAtMs: 4, rawText });
     expect(discussed).toBeNull();
     expect(await scmDiffSummaryResultStore.read(scope)).toMatchObject({ success: true, result: { revision: saved.revision, output: saved } });
+    });
   });
 
   it('preserves prior output when later structured turns complete another requested output and ignores invalid discussion', async () => {
+    return runWithScmAccountScope('account', async () => {
     const requested = { ...input(['summary']), requestedModelId: 'summary-model', resolvedSelector: { catalogId: 'profile:summary-model' } };
     const params = { ...await admitInitial(start(requested, 'summary-model')), turnId: 'turn-1', finishedAtMs: 2 };
     const first = await ScmDiffSummaryProfile.onTurnComplete?.({ ...params, rawText: '{"summaryMarkdown":"Useful summary"}' });
@@ -1151,9 +1241,11 @@ describe('ScmDiffSummaryProfile', () => {
       rawText: JSON.stringify({ commitPlan: { groups: [], leftOutChangeRefs: ['invented'] } }) });
     expect(invalid?.toolResultOutput).toEqual(second?.toolResultOutput);
     expect(invalid?.toolResultMeta).toMatchObject({ scmResultUpdate: { status: 'invalid_output' } });
+    });
   });
 
   it('does not claim unavailable occurrences in partially readable evidence were analysed', async () => {
+    return runWithScmAccountScope('account', async () => {
     const partial = { ...comparison, inventory: { ...comparison.inventory, state: 'incomplete' as const,
       reasons: ['One layer unavailable'], files: comparison.inventory.files.map((file) => ({ ...file,
         evidence: { state: 'unavailable' as const, reason: 'One layer unavailable', unifiedDiff: '@@ -1 +1 @@\n-old\n+new\n' },
@@ -1170,9 +1262,11 @@ describe('ScmDiffSummaryProfile', () => {
     expect(malformed?.toolResultOutput).toMatchObject({ analysis: {
       suppliedChangeRefs: ['change-1'], analysedChangeRefs: [], remainingChangeRefs: ['change-1', 'change-2'],
     } });
+    });
   });
 
   it('prepares fresh captured evidence and seeds only a saved result without accepting caller publication scope', async () => {
+    return runWithScmAccountScope('account', async () => {
     // Git/disk are genuine boundaries; capture/admission/profile run real logic.
     const cwd = mkdtempSync(join(tmpdir(), 'happier-summary-profile-'));
     execFileSync('git', ['init'], { cwd, stdio: 'ignore' });
@@ -1217,5 +1311,6 @@ describe('ScmDiffSummaryProfile', () => {
     expect((seeded?.intentInput as Record<string, unknown>).scmAnalysis).toBeUndefined();
     expect(seeded?.instructions).toContain('"otherChangeRefs":["c1"]');
     for (const ref of refs) expect(seeded?.instructions).not.toContain(ref);
+    });
   });
 });

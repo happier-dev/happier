@@ -2895,7 +2895,10 @@ resolves `cwd` against the selected Project root and confines it to the intersec
 of that Project and the member folder, so a path outside either is `INVALID_PATH`.
 Member placement uses the operation's effective `cwd` (or clone destination parent),
 even when the Project root is an ancestor of the member folder. The child has no
-daemon credentials, so captured diff evidence is unavailable to it. Every other `scm.*` method (forge, hosting, saved results, Agent
+daemon credentials. Captured comparisons and commit-plan repository effects use
+the same member worker through a host-bound comparison port; the host retains
+the requester's saved-result authority and supplies only the selected comparison
+or result operation. Every other `scm.*` method (forge, hosting, saved results, Agent
 runs, writes) is refused at ingress with `machine_manage_required` for a
 requester without Manage; Agent and Session sources keep
 `agent_isolation_unavailable`. The daemon-level isolation port carries no
@@ -5236,7 +5239,8 @@ This is the current development contract, not a released availability claim. Aut
 
 ### Execution result ownership (0.3 development)
 
-SCM explanations have one saved machine result, separate from the disposable
+SCM explanations have one saved result under the starting Account on the Machine,
+separate from the disposable
 analysis cache and personal Account-KV reviewed marks. Capture/generate Actions
 resolve authenticated source evidence before admitting a retained analysis Run;
 read/edit/refine/Undo and accepted commit progress use that result's revision
@@ -5246,6 +5250,13 @@ stacked and accepted-plan publication; CLI checkpoints share only temporary-inde
 mechanics. [SCM comparisons and walkthroughs](scm-diff-summary.md) owns the detailed
 source, coverage, persistence, Git-version and truthful recovery contracts and
 names the unfinished UI/live integration.
+
+On a Machine with separate users, the native-operation owner selects the folder
+member's OS identity for repository evidence, commit-plan effects and the analysis
+Agent. Manage permits another member's folder without transferring that member's
+Account data. The requester retains Run attribution and result visibility;
+comparison shelves and Git retention namespaces use the same Account scope.
+The existing Action and Session admission ceilings still apply.
 
 `workflow.run.wait` parks in the shared Account Run Action owner. The CLI uses
 the existing user-scoped Account socket; the UI uses its captured Home Account

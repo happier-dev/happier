@@ -8,6 +8,7 @@ export const ExecutionRunMachineActivityV1Schema = lazyZodSchema(() => z.strictO
   machineId: id,
   installationId: id,
   runId: id,
+  executionAuthorizationToken: z.optional(z.string().check(z.minLength(1))),
 }));
 export type ExecutionRunMachineActivityV1 = z.infer<typeof ExecutionRunMachineActivityV1Schema>;
 

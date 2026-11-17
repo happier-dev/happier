@@ -187,10 +187,14 @@ export type ExecutionRunRuntimeSettings = Readonly<{
 }>;
 
 export type ExecutionRunState = Readonly<{
+  /** Live original admission; public state excludes it and private retention stores only its token. */
+  executionAuthorization?: import('@happier-dev/protocol/actions/externalActionApi').ExternalActionExecutionAuthorizationV1;
   /** The accepted occurrence's invocation, never reconstructed from authored input or persisted. */
   actionInvocation?: ExecutionRunManagerStartParams['actionInvocation'];
   /** Current controller's live setup facts; never persisted or exposed as public Run state. */
   projectSetup?: import('./executionRunProjectSetup').ExecutionRunProjectSetup;
+  /** Existing repository execution port held only by this live Run occurrence. */
+  scmComparisonOperations?: import('@/scm/comparisons/comparisonOperations').ScmComparisonOperations;
   /** Retained with this accepted occurrence, independently of public Run state. */
   requesterWorkAttributionV1?: import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1;
   /** Resolved host runtime engine, rather than a requested launch preference. */

@@ -3,10 +3,23 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { configuration } from '@/configuration';
 import { ScmComparisonCaptureInputSchema } from '@happier-dev/protocol/scm/diffSummary';
-import { readStoredScmComparison, writeStoredScmComparison } from './comparisonStorage';
-import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
-import { captureScmComparison, deleteCapturedScmComparison, readCapturedScmComparison,
-  readCapturedScmComparisonFile, readCapturedScmComparisonIndex, readCapturedScmComparisonPage } from './captureScmComparison';
+import { readStoredScmComparison, writeStoredScmComparison, resolveStoredScmComparisonPath } from './comparisonStorage';
+import { createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
+import { captureScmComparison as captureComparison, deleteCapturedScmComparison as deleteComparison, readCapturedScmComparison as readComparison,
+  readCapturedScmComparisonFile as readComparisonFile, readCapturedScmComparisonIndex as readComparisonIndex,
+  readCapturedScmComparisonPage as readComparisonPage } from './captureScmComparison';
+import { runWithScmAccountScope } from '../accountScope';
+
+const testAccountId = 'comparison-storage-account';
+function withAccount<Args extends readonly unknown[], Result>(effect: (...args: Args) => Result) {
+  return (...args: Args): Result => runWithScmAccountScope(testAccountId, () => effect(...args));
+}
+const captureScmComparison = withAccount(captureComparison);
+const deleteCapturedScmComparison = withAccount(deleteComparison);
+const readCapturedScmComparison = withAccount(readComparison);
+const readCapturedScmComparisonFile = withAccount(readComparisonFile);
+const readCapturedScmComparisonIndex = withAccount(readComparisonIndex);
+const readCapturedScmComparisonPage = withAccount(readComparisonPage);
 
 type ReadObserver = Readonly<{ mock: Readonly<{ results: ReadonlyArray<Readonly<{ type: string; value: unknown }>> }> }>;
 async function observedBytes(fileReads: readonly ReadObserver[], handleReads: readonly ReadObserver[]): Promise<number> {
@@ -41,6 +54,40 @@ async function countReadBytes(consume: () => Promise<void>): Promise<number> {
 }
 
 describe('captured comparison selective storage reads', () => {
+  it('isolates the same immutable comparison identity by its requester Account', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-account-storage-' });
+    const requester = `${fixture.rootPath}-requester`;
+    const member = `${fixture.rootPath}-member`;
+    let comparisonId: string | undefined;
+    let memberCaptured = false;
+    let memberDeleted = false;
+    try {
+      await fs.writeFile(join(fixture.rootPath, fixture.trackedPath), 'Account-owned evidence\n');
+      const captured = await runWithScmAccountScope(requester, () => captureComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree' } }));
+      comparisonId = captured.comparison.id;
+      const request = { cwd: fixture.rootPath, comparisonId };
+      const retained = await readStoredScmComparison(resolveStoredScmComparisonPath({
+        activeServerDir: configuration.activeServerDir, comparisonId, accountId: requester,
+      }));
+      expect(retained.retainedRefs.length).toBeGreaterThan(0);
+      expect(await runWithScmAccountScope(member, () => readComparison(request)).catch(() => null)).toBeNull();
+      const independentlyCaptured = await runWithScmAccountScope(member, () => captureComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree' } }));
+      memberCaptured = true;
+      expect(independentlyCaptured.comparison.id).toBe(comparisonId);
+      await runWithScmAccountScope(member, () => deleteComparison(request));
+      memberDeleted = true;
+      for (const pin of retained.retainedRefs) {
+        expect(runScmExecutable(fixture.rootPath, 'git', ['rev-parse', '--verify', pin.ref])).toBe(pin.oid);
+      }
+      expect(await runWithScmAccountScope(requester, () => readComparison(request)))
+        .toMatchObject({ comparison: { id: comparisonId } });
+    } finally {
+      if (comparisonId) for (const account of [requester, ...(memberCaptured && !memberDeleted ? [member] : [])]) {
+        await runWithScmAccountScope(account, () => deleteComparison({ cwd: fixture.rootPath, comparisonId: comparisonId! }));
+      }
+      await fs.rm(fixture.rootPath, { recursive: true, force: true });
+    }
+  });
   it('reads only caller-demanded rows from a 9,119-file seekable capture', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-demand-storage-' });
     let comparisonId: string | undefined;
@@ -48,7 +95,7 @@ describe('captured comparison selective storage reads', () => {
       await fs.writeFile(join(fixture.rootPath, fixture.trackedPath), 'demanded immutable bytes\n');
       const captured = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree' } });
       comparisonId = captured.comparison.id;
-      const path = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons', 'repository', comparisonId + '.json');
+      const path = resolveStoredScmComparisonPath({ activeServerDir: configuration.activeServerDir, comparisonId, accountId: testAccountId });
       const stored = await readStoredScmComparison(path);
       const selected = stored.comparison.inventory.files[0]!;
       const input = ScmComparisonCaptureInputSchema.parse({ cwd: fixture.rootPath, comparisonId,
@@ -128,7 +175,7 @@ describe('captured comparison selective storage reads', () => {
       await fs.writeFile(join(fixture.rootPath, fixture.trackedPath), 'selected immutable bytes\n');
       const captured = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree' } });
       comparisonId = captured.comparison.id;
-      const path = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons', 'repository', comparisonId + '.json');
+      const path = resolveStoredScmComparisonPath({ activeServerDir: configuration.activeServerDir, comparisonId, accountId: testAccountId });
       const stored = await readStoredScmComparison(path);
       const selected = stored.comparison.inventory.files[0]!;
       const measure = async (prefixCount: number) => {
@@ -163,7 +210,7 @@ describe('captured comparison selective storage reads', () => {
       await fs.writeFile(join(fixture.rootPath, fixture.trackedPath), 'legacy immutable bytes\n');
       const captured = await captureScmComparison({ cwd: fixture.rootPath, source: { kind: 'workingTree' } });
       comparisonId = captured.comparison.id;
-      const path = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons', 'repository', comparisonId + '.json');
+      const path = resolveStoredScmComparisonPath({ activeServerDir: configuration.activeServerDir, comparisonId, accountId: testAccountId });
       const stored = await readStoredScmComparison(path);
       const legacy = JSON.stringify(stored);
       await fs.writeFile(path, legacy);

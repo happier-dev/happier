@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { runWithScmCommandOperation } from '../commandOperation';
 import { rm, unlink } from 'node:fs/promises';
 import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { ScmComparisonSchema, ScmComparisonSourceSchema, buildScmComparisonIdentity, classifyScmChangePath } from '@happier-dev/protocol/scm/comparison';
 import type { ScmComparison, ScmComparisonFile, ScmComparisonSource, ScmDiffSummaryMetadata } from '@happier-dev/protocol';
 import type { ScmDiffSummaryTurnEvidenceMode } from '@happier-dev/protocol/scm';
@@ -27,9 +27,62 @@ import { createGitTemporaryIndex } from '@happier-dev/cli-common/scm/gitTemporar
 import { splitUnifiedDiffByFile } from '@happier-dev/protocol/diff/splitUnifiedDiffByFile';
 import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
 import { projectCapturedComparisonIndex } from './projectCapturedComparison';
-import { StoredScmComparisonSchema, readStoredScmComparison, writeStoredScmComparison, withStoredScmComparison } from './comparisonStorage';
+import { StoredScmComparisonSchema, readStoredScmComparison, writeStoredScmComparison, withStoredScmComparison, resolveStoredScmComparisonPath, resolveStoredScmComparisonEndpointsPath } from './comparisonStorage';
 import type { StoredScmComparison, StoredScmComparisonReader } from './comparisonStorage';
 import type { ScmComparisonCaptureInput, ScmComparisonCaptureOutput } from '@happier-dev/protocol/scm/diffSummary';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { readScmComparisonOperations } from './comparisonOperations';
+import { resolveScmAccountStorageKey } from '../accountScope';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { copyWorkspaceTree } from '@/workspaces/source/copyWorkspaceTree';
+import { assertWorkspaceMaterializationSymlinkTarget, resolveContainedWorkspaceMaterializationPath } from '../workspace/workspaceMaterializationSafety';
+
+type ComparisonShelfScope = Readonly<{ comparisonId: string; sessionId?: string }>;
+type EndpointWriter = Readonly<{
+  directory(path: string): Promise<void>;
+  file(path: string, bytes: Uint8Array): Promise<void>;
+  link(path: string, target: string): Promise<void>;
+}>;
+export type ScmComparisonShelf = Readonly<{
+  refNamespace: string;
+  materializeEndpoints(scope: ComparisonShelfScope, writer: EndpointWriter): Promise<void>;
+  withStored<T>(scope: ComparisonShelfScope,
+    consume: (reader: StoredScmComparisonReader, sessionId: string | undefined) => Promise<T>): Promise<T>;
+  write(scope: ComparisonShelfScope, stored: StoredScmComparison, identity?: Parameters<typeof buildScmComparisonIdentity>[0]): Promise<void>;
+  remove(scope: ComparisonShelfScope, stored?: StoredScmComparison): Promise<void>;
+}>;
+const comparisonShelf = new AsyncLocalStorage<ScmComparisonShelf>();
+
+/** The worker receives only this request's evidence shelf, never Account credentials. */
+export function runWithScmComparisonShelf<T>(shelf: ScmComparisonShelf, effect: () => T): T {
+  return comparisonShelf.run(shelf, effect);
+}
+
+export const hostScmComparisonShelf: ScmComparisonShelf = {
+  get refNamespace() { return resolveScmAccountStorageKey(); },
+  materializeEndpoints: async (scope, writer) => {
+    const directory = resolveStoredScmComparisonEndpointsPath(comparisonPath(scope.comparisonId, scope.sessionId));
+    const name = (path: string) => relative(directory, path).split(sep).join('/');
+    // Reuse the tree owner's file and safe-link transfer; only its three writes cross the private bridge.
+    await copyWorkspaceTree({ from: { source: localWorkspaceSource, path: directory },
+      to: { path: directory, source: { ...localWorkspaceSource, kind: 'target', id: scope.comparisonId,
+        mkdir: async path => writer.directory(name(path)),
+        writeFile: async (path, bytes) => writer.file(name(path), bytes),
+        symlink: async (target, path) => writer.link(name(path), target),
+      } } });
+  },
+  withStored: (scope, consume) => withHostStoredComparison(scope, consume),
+  write: (scope, stored) => writeStoredScmComparison(comparisonPath(scope.comparisonId, scope.sessionId), stored),
+  remove: async (scope, stored) => {
+    const path = comparisonPath(scope.comparisonId, scope.sessionId);
+    await unlink(path);
+    if (stored?.workspaceReturn) await rm(resolveStoredScmComparisonEndpointsPath(path), { recursive: true, force: true });
+  },
+};
+
+function writeComparison(scope: ComparisonShelfScope, stored: StoredScmComparison, identity?: Parameters<typeof buildScmComparisonIdentity>[0]): Promise<void> {
+  return (comparisonShelf.getStore() ?? hostScmComparisonShelf).write(scope, stored, identity);
+}
 
 export type CapturedScmComparison = Readonly<{
   metadata: ScmDiffSummaryMetadata;
@@ -58,17 +111,24 @@ export function captureScmComparisonCommitTarget(input: Readonly<{ cwd: string; 
 }
 
 function comparisonNamespace(sessionId?: string): string {
-  return sessionId ? encodeRepositoryCheckpointScope(sessionId) : 'repository';
+  const account = (comparisonShelf.getStore() ?? hostScmComparisonShelf).refNamespace;
+  return `${account}/${sessionId ? encodeRepositoryCheckpointScope(sessionId) : 'repository'}`;
+}
+
+export function resolveCapturedScmComparisonRefPrefix(input: Readonly<{ comparisonId: string; sessionId?: string }>): string {
+  return `refs/happier/comparisons/${comparisonNamespace(input.sessionId)}/${input.comparisonId}/`;
 }
 
 function comparisonPath(id: string, sessionId?: string): string {
-  if (!/^[a-f0-9]{64}$/.test(id)) {
-    throw Object.assign(new Error('Captured comparison identity is invalid'), { code: 'DIFF_UNAVAILABLE' });
-  }
-  return join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons', comparisonNamespace(sessionId), `${id}.json`);
+  return resolveStoredScmComparisonPath({ activeServerDir: configuration.activeServerDir, comparisonId: id, sessionId });
 }
 
 async function withStoredComparison<T>(input: Readonly<{ comparisonId: string; sessionId?: string }>,
+  consume: (reader: StoredScmComparisonReader, sessionId: string | undefined) => Promise<T>): Promise<T> {
+  return (comparisonShelf.getStore() ?? hostScmComparisonShelf).withStored(input, consume);
+}
+
+async function withHostStoredComparison<T>(input: Readonly<{ comparisonId: string; sessionId?: string }>,
   consume: (reader: StoredScmComparisonReader, sessionId: string | undefined) => Promise<T>): Promise<T> {
   let opened = false;
   try { return await withStoredScmComparison(comparisonPath(input.comparisonId, input.sessionId), reader => {
@@ -100,7 +160,32 @@ async function readStoredComparison(input: Readonly<{ comparisonId: string; sess
 export async function prepareCapturedScmComparisonInvestigation(input: Readonly<{
   cwd: string; comparisonId: string; sessionId?: string; directory: string;
 }>): Promise<Readonly<{ beforeDirectory: string; afterDirectory: string }>> {
+  const selected = readScmComparisonOperations();
+  if (selected) return selected.investigate(input);
   const captured = await readCapturedScmComparison(input);
+  const { stored, sessionId } = await withStoredComparison(input, async (reader, sessionId) => ({ stored: reader.stored, sessionId }));
+  if (stored.workspaceReturn) {
+    const shelf = comparisonShelf.getStore();
+    if (shelf) {
+      const path = (name: string) => name === '' ? input.directory : resolveContainedWorkspaceMaterializationPath({
+        workspaceRoot: input.directory, candidatePath: name, pathRepresentation: 'native_literal',
+        errorMessage: 'Captured endpoint path escapes its investigation directory' });
+      await shelf.materializeEndpoints({ comparisonId: input.comparisonId, sessionId }, {
+        directory: async name => { await localWorkspaceSource.mkdir(path(name), { recursive: true }); },
+        file: async (name, bytes) => localWorkspaceSource.writeFile(path(name), bytes),
+        link: async (name, target) => {
+          const linkPath = path(name);
+          assertWorkspaceMaterializationSymlinkTarget({ workspaceRoot: input.directory, linkPath, target, pathRepresentation: 'native_literal' });
+          await localWorkspaceSource.symlink(target, linkPath);
+        },
+      });
+      return { beforeDirectory: join(input.directory, 'before'), afterDirectory: join(input.directory, 'after') };
+    }
+    if (currentWorkspaceSource().kind === 'target') throw Object.assign(
+      new Error('The captured native endpoints are unavailable on this execution target'), { code: 'DIFF_UNAVAILABLE' });
+    const directory = resolveStoredScmComparisonEndpointsPath(comparisonPath(input.comparisonId, sessionId));
+    return { beforeDirectory: join(directory, 'before'), afterDirectory: join(directory, 'after') };
+  }
   const endpoints = captured.comparison.endpoints;
   if (!endpoints.before || !endpoints.after) throw Object.assign(new Error('Captured endpoint objects are unavailable for surrounding-file investigation'), { code: 'DIFF_UNAVAILABLE' });
   // Retained pre-fix captures may contain replacement-influenced patches under
@@ -112,7 +197,7 @@ export async function prepareCapturedScmComparisonInvestigation(input: Readonly<
       let index: string | undefined;
       if (captured.comparison.source.kind === 'workingTree') {
         const { stored } = await readStoredComparison(input);
-        const indexRef = `refs/happier/comparisons/${comparisonNamespace(stored.sessionId)}/${input.comparisonId}/index`;
+        const indexRef = `${resolveCapturedScmComparisonRefPrefix({ ...input, sessionId: stored.sessionId })}index`;
         index = stored.retainedRefs.find(ref => ref.ref === indexRef)?.oid;
         if (!index) throw new Error('Captured staged lineage is unavailable');
       }
@@ -242,7 +327,7 @@ async function withCapturedScmComparison<T>(input: ReadCapturedScmComparisonInpu
       const captured = await qualifyCapturedScmComparison(input, reader.stored, sessionId);
       const result = await consume(captured, reader);
       if (reader.legacy) {
-        try { await writeStoredScmComparison(comparisonPath(input.comparisonId, sessionId), reader.stored); }
+        try { await writeComparison({ comparisonId: input.comparisonId, sessionId }, reader.stored); }
         catch { logger.warn('Retained comparison storage could not be upgraded; captured evidence remains readable.'); }
       }
       return result;
@@ -268,16 +353,22 @@ async function readCapturedFiles(input: ReadCapturedScmComparisonInput, kind: 'f
 }
 
 export async function readCapturedScmComparison(input: ReadCapturedScmComparisonInput): Promise<CapturedScmComparison> {
+  const selected = readScmComparisonOperations();
+  if (selected) return selected.read(input);
   return readCapturedFiles(input, 'full');
 }
 
 export async function readCapturedScmComparisonIndex(input: ReadCapturedScmComparisonInput): Promise<CapturedScmComparison> {
+  const selected = readScmComparisonOperations();
+  if (selected) return selected.index(input);
   return readCapturedFiles(input, 'index');
 }
 
 export async function readCapturedScmComparisonPage(input: ReadCapturedScmComparisonInput & Readonly<{
   projection: NonNullable<ScmComparisonCaptureInput['projection']>;
 }>): Promise<ScmComparisonCaptureOutput> {
+  const selected = readScmComparisonOperations();
+  if (selected) return selected.page(input);
   return withCapturedScmComparison(input, async (captured, reader) => {
     const position = input.projection.path ? await reader.findFile(input.projection.path) : undefined;
     const filtered = Boolean(input.projection.path);
@@ -291,6 +382,8 @@ export async function readCapturedScmComparisonPage(input: ReadCapturedScmCompar
 }
 
 export async function readCapturedScmComparisonFile(input: ReadCapturedScmComparisonInput & Readonly<{ path: string }>): Promise<CapturedScmComparison> {
+  const selected = readScmComparisonOperations();
+  if (selected) return selected.file(input);
   return readCapturedFiles(input, 'full', input.path);
 }
 
@@ -298,10 +391,11 @@ export async function readCapturedScmComparisonFile(input: ReadCapturedScmCompar
 export async function deleteCapturedScmComparison(input: Readonly<{
   cwd: string; comparisonId: string; sessionId?: string;
 }>): Promise<void> {
+  const selected = readScmComparisonOperations();
+  if (selected) return selected.delete(input);
   await readCapturedScmComparison(input);
-  const path = comparisonPath(input.comparisonId, input.sessionId);
-  const stored = await readStoredScmComparison(path);
-  const prefix = `refs/happier/comparisons/${comparisonNamespace(input.sessionId)}/${input.comparisonId}/`;
+  const { stored } = await readStoredComparison(input);
+  const prefix = resolveCapturedScmComparisonRefPrefix(input);
   // Validate every target before deleting any of them; session checkpoint pins are never targets.
   for (const retained of stored.retainedRefs) {
     if (['before', 'after', 'index'].some((role) => retained.ref === `${prefix}${role}`)) continue;
@@ -315,7 +409,7 @@ export async function deleteCapturedScmComparison(input: Readonly<{
       args: ['update-ref', '-d', retained.ref, retained.oid] });
     if (!removed.success) throw new Error(removed.stderr || 'Saved comparison pin could not be deleted');
   }
-  await unlink(path);
+  await (comparisonShelf.getStore() ?? hostScmComparisonShelf).remove(input, stored);
 }
 
 type Layer = 'staged' | 'unstaged' | 'untracked' | 'combined';
@@ -390,6 +484,8 @@ export async function captureScmPendingTree(cwd: string): Promise<string> {
 }
 
 export async function captureScmComparison(input: CaptureScmComparisonInput): Promise<CapturedScmComparison> {
+  const selected = readScmComparisonOperations();
+  if (selected) return selected.capture(input);
   return runWithScmCommandOperation(input.signal, () => captureComparison(input));
 }
 
@@ -541,9 +637,10 @@ async function captureComparison(input: CaptureScmComparisonInput): Promise<Capt
     input.signal?.throwIfAborted();
     reasons.push(error instanceof Error ? error.message : 'Comparison evidence is unavailable'); state = files.length ? 'incomplete' : 'unavailable';
   }
-  const id = buildScmComparisonIdentity({ source, repositoryRootPath: rootPath, beforeOid: before, afterOid: after, indexOid,
+  const identity = { source, repositoryRootPath: rootPath, beforeOid: before, afterOid: after, indexOid,
     ...((source.kind === 'session' || source.kind === 'turnCheckpoint') && sessionId ? { sessionId } : {}),
-    turnId, checkpointReceiptId: receiptId, turnEvidenceMode: evidenceMode, evidenceIdentity });
+    turnId, checkpointReceiptId: receiptId, turnEvidenceMode: evidenceMode, evidenceIdentity };
+  const id = buildScmComparisonIdentity(identity);
   const capturedSource = resolveCapturedScmComparisonSource(source, { sessionId, turnId, checkpointReceiptId: receiptId, turnEvidenceMode: evidenceMode });
   const comparison = ScmComparisonSchema.parse({ id, source: capturedSource, repository: { rootPath },
     ...(commitTarget ? { commitTarget } : {}),
@@ -558,7 +655,7 @@ async function captureComparison(input: CaptureScmComparisonInput): Promise<Capt
   try {
   for (const [role, oid] of [['before', before], ['after', after], ['index', indexOid]] as const) {
     if (!oid || source.kind === 'pullRequest') continue;
-    const ref = `refs/happier/comparisons/${comparisonNamespace(sessionId)}/${id}/${role}`;
+    const ref = `${resolveCapturedScmComparisonRefPrefix({ comparisonId: id, sessionId })}${role}`;
     const previous = await runGitCheckpointCommand({ cwd: rootPath, env: rangeEnvironment, args: ['rev-parse', '--verify', ref] });
     if (previous.success && previous.stdout.trim() !== oid) throw new Error('Retained comparison endpoint conflicts with its exact identity');
     if (!previous.success) {
@@ -570,8 +667,8 @@ async function captureComparison(input: CaptureScmComparisonInput): Promise<Capt
     }
     retainedRefs.push({ ref, oid });
   }
-  await writeStoredScmComparison(comparisonPath(id, sessionId), StoredScmComparisonSchema.parse({
-    ...(sessionId ? { sessionId } : {}), comparison, metadata, retainedRefs }));
+  await writeComparison({ comparisonId: id, sessionId }, StoredScmComparisonSchema.parse({
+    ...(sessionId ? { sessionId } : {}), comparison, metadata, retainedRefs }), identity);
   let retainedTemporary = false;
   for (const temporary of temporaryRefs) {
     try { await disposeOwnedRepositoryCheckpointRef({ cwd: rootPath, ...temporary }); }
@@ -580,8 +677,8 @@ async function captureComparison(input: CaptureScmComparisonInput): Promise<Capt
       retainedRefs.push({ ref: temporary.checkpointRef.ref, oid: temporary.expectedOid }); retainedTemporary = true;
     }
   }
-  if (retainedTemporary) await writeStoredScmComparison(comparisonPath(id, sessionId), StoredScmComparisonSchema.parse({
-    ...(sessionId ? { sessionId } : {}), comparison, metadata, retainedRefs }));
+  if (retainedTemporary) await writeComparison({ comparisonId: id, sessionId }, StoredScmComparisonSchema.parse({
+    ...(sessionId ? { sessionId } : {}), comparison, metadata, retainedRefs }), identity);
   } catch (error) {
     const cleanupFailures: unknown[] = [];
     for (const temporary of temporaryRefs) {

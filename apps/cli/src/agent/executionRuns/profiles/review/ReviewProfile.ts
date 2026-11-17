@@ -18,6 +18,7 @@ import { scmDiffSummaryResultStore } from '../../tasks/scmDiffSummary/results/re
 import { readRetainedReviewFindings } from '../../../reviews/normalize/readRetainedReviewFindings';
 import { presentScmDiffSummaryModelContext } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/presentScmDiffSummaryModelContext';
 import { readExecutionRunErrorCode } from '@/agent/runtime/bridges/executionRun/errors';
+import { bindScmExecutionRunProfileAccountScope } from '@/agent/runtime/bridges/executionRun/profileStart';
 
 function requestsWalkthrough(input: unknown) {
   const outputs = readScmDiffSummaryIntent(input).outputs;
@@ -30,7 +31,7 @@ function readIntentInputRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-export const ReviewProfile: ExecutionRunIntentProfile = {
+export const ReviewProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfileAccountScope({
   intent: 'review',
   supportsDetached: true,
   transcriptMaterialization: 'full',
@@ -173,4 +174,4 @@ export const ReviewProfile: ExecutionRunIntentProfile = {
     }),
   // review.triage (a ReviewComment transition) and review.follow_up (a resumed run) are handled by
   // the execution-run runtime; the review's result is never rewritten by an action.
-};
+});

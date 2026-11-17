@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// The publication fixture imports fs; load it before replacing that OS boundary.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () => (
+  import('@/plugins/projection/registry/builtIn/locators.testkit')
+));
 import { accountSettingsParse, BUILT_IN_ROLES_V1, resolveRoleSelectionV1, ProviderBoundModelRefSchema } from '@happier-dev/protocol';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
@@ -58,6 +63,7 @@ import { resolveReviewScmScope } from '@/agent/reviews/scope/resolve';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { runWithScmCommandRunner } from '@/scm/runtime';
+import { readScmAccountScope, runWithScmAccountScope } from '@/scm/accountScope';
 
 const TEST_BACKEND_ID = `${'summary'}.${'backend'}` as never;
 
@@ -101,7 +107,6 @@ function readOfferedSummaryModelId(): string {
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
   return createBundledPluginPublicationFsFixture(actual);
 });
 
@@ -183,6 +188,7 @@ describe('startExecutionRun', () => {
       const args = {
         params: {
           sessionId, intent: 'agent' as const,
+          requesterWorkAttributionV1: { serverId: 'home', accountId: 'requester-account', machineId: 'machine', installationId: 'installation' },
           actionRequestId: 'work-conversation-start',
           ...(workOrigin ? { launchOrigin: { kind: 'session' as const, sessionId: 'parent_session_1', draftCorrelationId: 'work-draft' } } : {}),
           backendTarget: { kind: 'builtInAgent' as const, agentId: TEST_BACKEND_ID },
@@ -190,12 +196,12 @@ describe('startExecutionRun', () => {
           runClass: 'long_lived' as const, ioMode: 'streaming' as const,
         },
         parentProvider: TEST_BACKEND_ID, sendAcp, streamedTranscriptSession: null,
-        createRuntime: () => { runtimeCreations += 1; return runtime; }, getNowMs: () => 1_700_000_000_000,
+        createRuntime: () => { expect(readScmAccountScope()).toBe('requester-account'); runtimeCreations += 1; return runtime; }, getNowMs: () => 1_700_000_000_000,
         budgetRegistry: null, runs, controllers, enqueueMarkerWrite,
         writeActivityMarker: async () => {}, finishRun: async () => {}, executeBoundedRun: async () => {},
         send: async () => ({ ok: true as const }), voiceAgentManager,
       } satisfies StartExecutionRunArgs;
-      const accepted = await startExecutionRun(args);
+      const accepted = await runWithScmAccountScope('machine-account', () => startExecutionRun(args));
       expect(await startExecutionRun(args)).toEqual(accepted);
       expect(runtimeCreations).toBe(1);
       expect(sent.filter(body => body.type === 'tool-call')).toEqual(expectedMarkers ? [expect.objectContaining({
@@ -211,6 +217,39 @@ describe('startExecutionRun', () => {
       await runtime.dispose();
       await voiceAgentManager.dispose();
     }
+  });
+
+  it.each(['marker-failure', 'stopped-before-runtime'] as const)('releases native preparation when start ends before runtime ownership (%s)', async outcome => {
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const voiceAgentManager = new VoiceAgentManager({ createRuntime: () => { throw new Error('Unused Voice boundary'); } });
+    // Native preparation is an OS resource boundary. No runtime exists yet to
+    // own its cleanup when retention fails or the admitted Run stops early.
+    let nativeResourceHeld = false;
+    let disposals = 0;
+    try {
+      await startExecutionRun({
+        params: { sessionId: 'parent-session', intent: 'agent',
+          backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID }, instructions: '',
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+          projectLaunchContext: { isCurrent: () => true, resolveRuntime: async () => null,
+            prepareNativeOperation: async () => { nativeResourceHeld = true; return undefined; },
+            disposeNativeOperation: async () => { nativeResourceHeld = false; disposals += 1; } } },
+        parentProvider: TEST_BACKEND_ID, sendAcp: async () => {}, streamedTranscriptSession: null,
+        createRuntime: () => { throw new Error('An early-ended start must not create a runtime'); },
+        getNowMs: () => 1, budgetRegistry: null, runs, controllers,
+        enqueueMarkerWrite: async () => {},
+        writeActivityMarker: async runId => {
+          if (outcome === 'marker-failure') throw new Error('Retention write failed');
+          runs.set(runId, { ...runs.get(runId)!, status: 'cancelled' });
+        },
+        finishRun: async (runId, next) => { runs.set(runId, { ...runs.get(runId)!, ...next }); },
+        executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
+      });
+      expect(nativeResourceHeld).toBe(false);
+      expect(disposals).toBe(1);
+      expect(controllers.size).toBe(0);
+    } finally { await voiceAgentManager.dispose(); }
   });
 
   beforeEach(() => {
@@ -1533,7 +1572,7 @@ describe('startExecutionRun', () => {
     }
   });
 
-  it('prepares a workspace-native saved comparison through the real detached diff-summary Run profile', async () => {
+  it('prepares a workspace-native saved comparison through the real detached diff-summary Run profile', () => runWithScmAccountScope('requester-account', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-detached-summary-start-' });
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
@@ -1573,7 +1612,7 @@ describe('startExecutionRun', () => {
       await voiceAgentManager.dispose();
       await removeTempDir(fixture.rootPath);
     }
-  });
+  }));
 
   it('starts fresh SCM diff-summary generation when cache bypass is requested', async () => {
     const runs = new Map<string, ExecutionRunState>();

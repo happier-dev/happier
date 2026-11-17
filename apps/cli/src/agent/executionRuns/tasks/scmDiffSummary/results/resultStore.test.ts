@@ -4,8 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ScmComparisonSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryGenerateSuccessSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { ScmDiffSummaryResultEditSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
-import { createScmDiffSummaryResultStore } from './resultStore';
+import { createScmDiffSummaryResultStore, scmDiffSummaryResultStore } from './resultStore';
 import { presentReviewFindingCitations } from '@/agent/executionRuns/profiles/review/reviewFindingCitations';
+import { configuration } from '@/configuration';
+import { runWithScmAccountScope, resolveScmAccountStorageDirectory } from '@/scm/accountScope';
+import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
+import { ScmDiffSummaryProfile } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/ScmDiffSummaryProfile';
+import type { ExecutionRunProfileStartParams } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
+import { retainExecutionRunState } from '@/daemon/executionRunRegistry';
 
 const filesystem = vi.hoisted(() => ({ measuring: false, opens: [] as string[], stats: 0, lstats: 0, directoryReads: 0,
   fileReads: 0, handleStats: 0,
@@ -94,6 +100,123 @@ async function setup() {
   return { directory, store, request: { cwd, sessionId: 'session-1', resultId: created.resultId } };
 }
 
+describe('saved SCM requester ownership', () => {
+  it('keeps another Account Run cost out of saved-result usage even with full repository access', async () => {
+    const accountId = await mkdtemp(join(tmpdir(), 'happier-scm-cost-owner-'));
+    onTestFinished(async () => {
+      await rm(resolveScmAccountStorageDirectory(join(configuration.activeServerDir, 'runtime', 'scm', 'results'), accountId),
+        { recursive: true, force: true });
+      await rm(accountId, { recursive: true, force: true });
+    });
+    const now = Date.now();
+    for (const [id, cost] of [[accountId, 1], [`${accountId}-member`, 100]] as const) {
+      const runId = `cost-${id.split('/').at(-1)}`;
+      await retainExecutionRunState({ runId, callId: runId, sidechainId: runId, sessionId: null, depth: 0,
+        requesterWorkAttributionV1: { serverId: 'home', accountId: id, machineId: 'machine', installationId: 'installation' },
+        intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Read',
+        permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+        launch: { cwd }, status: 'succeeded', startedAtMs: now,
+        structuredMeta: { kind: 'scm_diff_summary.v1', payload: { cost: { estimatedUsd: cost } } } });
+    }
+    expect(await executeScmActionOperation({ actionId: 'scm.diffSummary.result.list', input: { includeUsage: true },
+      workingDirectory: cwd, accessPolicy: { kind: 'osUser' }, actionContext: { runtimeAccountId: accountId },
+      authorizeSession: async () => true })).toMatchObject({ success: true,
+      sevenDayCost: { estimatedUsd: 1, pricedRunCount: 1, unpricedRunCount: 0 } });
+  });
+
+  it('publishes retained Run output for its requester when resumed under another Account host scope', async () => {
+    const accountId = await mkdtemp(join(tmpdir(), 'happier-scm-publication-owner-'));
+    const memberId = `${accountId}-member`;
+    onTestFinished(async () => {
+      for (const id of [accountId, memberId]) await rm(resolveScmAccountStorageDirectory(
+        join(configuration.activeServerDir, 'runtime', 'scm', 'results'), id), { recursive: true, force: true });
+      await rm(accountId, { recursive: true, force: true });
+    });
+    const start: ExecutionRunProfileStartParams = { sessionId: null, runId: 'requester-run', callId: 'call', sidechainId: 'sidechain',
+      requesterWorkAttributionV1: { serverId: 'home', accountId, machineId: 'machine', installationId: 'installation' },
+      intent: 'scm_diff_summary', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      instructions: 'Summarize', intentInput: { cwd, source: comparison.source, sourceKey: comparison.id, comparison,
+        metadata: { source: comparison.source, sourceKey: comparison.id }, outputs: ['summary'] },
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', startedAtMs: 1 };
+    const initial = await runWithScmAccountScope(memberId, () => ScmDiffSummaryProfile.onStarted!({ start,
+      rawText: '', finishedAtMs: 1 }));
+    const pending = ScmDiffSummaryGenerateOutputSchema.parse(initial?.toolResultOutput);
+    const resumed = { ...start, intentInput: { ...start.intentInput as Record<string, unknown>, resultId: pending.resultId } };
+    const complete = await runWithScmAccountScope(memberId, () => ScmDiffSummaryProfile.onTurnComplete!({ start: resumed,
+      previousStructuredMeta: initial?.structuredMeta, turnId: 'turn', rawText: JSON.stringify({ summaryMarkdown: 'Requester Run output' }), finishedAtMs: 2 }));
+    expect(complete?.toolResultOutput).toMatchObject({ success: true, summaryMarkdown: 'Requester Run output' });
+    const scope = { cwd, resultId: pending.resultId! };
+    expect(await runWithScmAccountScope(accountId, () => scmDiffSummaryResultStore.read(scope)))
+      .toMatchObject({ success: true, result: { output: { summaryMarkdown: 'Requester Run output' } } });
+    expect(await runWithScmAccountScope(memberId, () => scmDiffSummaryResultStore.read(scope)))
+      .toMatchObject({ success: false, errorCode: 'result_not_found' });
+  });
+
+  it('binds saved result Actions to the admitted Account even when both people can access the repository', async () => {
+    const accountId = await mkdtemp(join(tmpdir(), 'happier-scm-action-owner-'));
+    const accountDirectory = resolveScmAccountStorageDirectory(join(configuration.activeServerDir, 'runtime', 'scm', 'results'), accountId);
+    const memberDirectory = resolveScmAccountStorageDirectory(join(configuration.activeServerDir, 'runtime', 'scm', 'results'), `${accountId}-member`);
+    onTestFinished(async () => {
+      await rm(accountDirectory, { recursive: true, force: true });
+      await rm(memberDirectory, { recursive: true, force: true });
+      await rm(accountId, { recursive: true, force: true });
+    });
+    const saved = await runWithScmAccountScope(accountId, () => scmDiffSummaryResultStore.create({ cwd, output }));
+    const read = (principal: string) => executeScmActionOperation({ actionId: 'scm.diffSummary.result.read',
+      input: { cwd, resultId: saved.resultId }, workingDirectory: cwd, accessPolicy: { kind: 'osUser' },
+      actionContext: { runtimeAccountId: principal }, authorizeSession: async () => true });
+    expect(await read(accountId)).toMatchObject({ success: true, result: { resultId: saved.resultId } });
+    expect(await read(`${accountId}-member`)).toMatchObject({ success: false });
+    expect(await runWithScmAccountScope(`${accountId}-member`, () => read(accountId)))
+      .toMatchObject({ success: true, result: { resultId: saved.resultId } });
+    expect(await runWithScmAccountScope(accountId, () => read(`${accountId}-member`)))
+      .toMatchObject({ success: false });
+    expect(await executeScmActionOperation({ actionId: 'scm.diffSummary.result.list', input: {},
+      workingDirectory: cwd, accessPolicy: { kind: 'osUser' }, actionContext: { runtimeAccountId: `${accountId}-member` },
+      authorizeSession: async () => true })).toMatchObject({ success: true, results: [], count: 0 });
+    expect(await executeScmActionOperation({ actionId: 'scm.diffSummary.result.delete',
+      input: { cwd, resultId: saved.resultId, expectedRevision: saved.revision },
+      workingDirectory: cwd, accessPolicy: { kind: 'osUser' }, actionContext: { runtimeAccountId: `${accountId}-member` },
+      authorizeSession: async () => true })).toMatchObject({ success: false });
+    expect(await read(accountId)).toMatchObject({ success: true, result: { resultId: saved.resultId } });
+    expect(() => scmDiffSummaryResultStore.read({ cwd, resultId: saved.resultId })).toThrow('SCM requester Account is unavailable');
+    expect(() => scmDiffSummaryResultStore.list()).toThrow('SCM requester Account is unavailable');
+    expect(() => scmDiffSummaryResultStore.delete({ cwd, resultId: saved.resultId, expectedRevision: saved.revision }))
+      .toThrow('SCM requester Account is unavailable');
+    expect(await executeScmActionOperation({ actionId: 'scm.diffSummary.result.clear',
+      input: { results: [{ cwd, resultId: saved.resultId, comparisonId: comparison.id, expectedRevision: saved.revision }] },
+      workingDirectory: cwd, accessPolicy: { kind: 'osUser' }, authorizeSession: async () => true }))
+      .toMatchObject({ success: false, errorCode: 'result_unavailable' });
+    expect(await read(accountId)).toMatchObject({ success: true, result: { resultId: saved.resultId } });
+  });
+
+  it('keeps requester results private across creation, publication, inventory and later mutation', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-scm-account-results-'));
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
+    const requester = createScmDiffSummaryResultStore({ directory, accountId: 'manage-requester' });
+    const member = createScmDiffSummaryResultStore({ directory, accountId: 'folder-member' });
+    const result = await requester.create({ cwd, output });
+    const scope = { cwd, resultId: result.resultId };
+    expect(await member.list()).toMatchObject({ results: [], count: 0 });
+    expect(await member.read(scope)).toMatchObject({ success: false, errorCode: 'result_not_found' });
+    expect(await member.edit({ ...scope, expectedRevision: result.revision,
+      edit: { kind: 'renameWalkthrough', title: 'Foreign change' } })).toMatchObject({ success: false, errorCode: 'result_not_found' });
+    expect(await member.delete({ ...scope, expectedRevision: result.revision })).toMatchObject({ success: false, errorCode: 'result_not_found' });
+    expect(await requester.beginInput({ ...scope, inputId: 'requester-turn', outputs: ['summary'],
+      expectedRevision: result.revision })).toMatchObject({ success: true });
+    expect(await member.publish({ ...scope, inputId: 'requester-turn',
+      modelOutput: { summaryMarkdown: 'Foreign publication' } })).toMatchObject({ success: false, errorCode: 'result_not_found' });
+    expect(await requester.publish({ ...scope, inputId: 'requester-turn',
+      modelOutput: { summaryMarkdown: 'Requester publication' } })).toMatchObject({ success: true,
+      result: { output: { summaryMarkdown: 'Requester publication' } } });
+    const reopened = createScmDiffSummaryResultStore({ directory, accountId: 'manage-requester' });
+    expect(await reopened.read(scope)).toMatchObject({ success: true,
+      result: { output: { summaryMarkdown: 'Requester publication' } } });
+    expect(await member.list()).toMatchObject({ results: [], count: 0 });
+    expect(await reopened.list()).toMatchObject({ results: [{ resultId: result.resultId }], count: 1 });
+  });
+});
+
 async function setupPartialApplication() {
   const { store, request } = await setup();
   const moved = await store.edit({ ...request, expectedRevision: 0, edit: { kind: 'moveCommitChanges',
@@ -153,7 +276,7 @@ describe('saved SCM result owner', () => {
     await store.beginApplication({ ...scope, expectedRevision: 0, acceptance: { ...plan,
       comparisonId: comparison.id, repositoryRootPath: cwd, expectedHeadOid: 'a'.repeat(40), expectedRef: 'refs/heads/main' } });
     await store.mutateApplication(scope, result => ({ ...result.application!, steps: [{ groupId: 'g1', state: 'writing' }] }));
-    await store.mutateApplication(scope, result => ({ ...result.application!, stopAfterCurrent: true }));
+    await store.mutateApplication(scope, async result => ({ ...result.application!, stopAfterCurrent: true }));
     expect(onChanged.mock.calls.map(([change]) => change)).toEqual([1, 2, 3].map(revision => ({ resultId: saved.resultId, revision })));
     const reread = await createScmDiffSummaryResultStore({ directory }).read(scope);
     expect(reread).toMatchObject({ success: true, result: { revision: 3, application: { stopAfterCurrent: true } } });

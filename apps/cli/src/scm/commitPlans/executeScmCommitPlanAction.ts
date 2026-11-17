@@ -10,10 +10,12 @@ import type { ScmBackendRegistry } from '../registry';
 import type { ScmBackend, ScmBackendContext } from '../types';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { materializeScmCommitPlan, mergeScmCommitPlanHookTree, validateScmCommitPlanHookSelections } from './materializeCommitPlan';
+import { readScmComparisonOperations } from '../comparisons/comparisonOperations';
 
 type CommitPlanActionId = Extract<ScmActionId, `scm.diffSummary.commitPlan.${string}`>;
+export type ScmCommitPlanResultStore = Pick<ScmDiffSummaryResultStore, 'read' | 'readStoredScope' | 'beginApplication' | 'mutateApplication'>;
 type Params = Readonly<{ actionId: CommitPlanActionId; input: unknown; cwd: string; sessionId?: string;
-  signal?: AbortSignal; registry?: ScmBackendRegistry; accessPolicy?: FilesystemAccessPolicy; store?: ScmDiffSummaryResultStore }>;
+  signal?: AbortSignal; registry?: ScmBackendRegistry; accessPolicy?: FilesystemAccessPolicy; store?: ScmCommitPlanResultStore }>;
 function failure(errorCode: ScmDiffSummaryResultFailure['errorCode'], error: string, latestRevision?: number): ScmDiffSummaryResultFailure {
   return { success: false, errorCode, error, ...(latestRevision !== undefined ? { latestRevision } : {}) };
 }
@@ -42,7 +44,7 @@ function reasonFor(response: ScmCommitCreateResponse): ScmCommitPlanApplication[
 }
 
 /** One sequential host consumer of U1. No ref mutation, rollback or unresolved-outcome retry here. */
-async function applyRemaining(input: Readonly<{ store: ScmDiffSummaryResultStore; scope: ScmDiffSummaryResultScope;
+async function applyRemaining(input: Readonly<{ store: ScmCommitPlanResultStore; scope: ScmDiffSummaryResultScope;
   backend: ScmBackend; context: ScmBackendContext }>): Promise<ScmDiffSummaryResultResponse> {
   const { store, scope, backend, context } = input;
   const savedScope = await store.readStoredScope(scope);
@@ -160,6 +162,8 @@ async function applyRemaining(input: Readonly<{ store: ScmDiffSummaryResultStore
 }
 
 export async function executeScmCommitPlanAction(params: Params): Promise<ScmDiffSummaryResultResponse> {
+  const selected = readScmComparisonOperations();
+  if (selected) return selected.commitPlan(params);
   const store = params.store ?? scmDiffSummaryResultStore;
   const request = params.actionId === 'scm.diffSummary.commitPlan.accept' ? ScmCommitPlanAcceptInputSchema.parse(params.input)
     : params.actionId === 'scm.diffSummary.commitPlan.includeHookChanges' ? ScmCommitPlanIncludeHookChangesInputSchema.parse(params.input)

@@ -99,13 +99,24 @@ PR creation. They do not establish native cross-UID launch, descendant custody
 or protected host-socket denial; those remain separate native integration
 evidence, not an implication of these source tests.
 
-Machine-captured repository comparisons are readable by a Session Review on that
-same Machine and Home. The capture reader first checks the Session namespace,
+Machine-captured repository comparisons are readable by a Session Review for the
+same requester Account, Machine and Home. The capture reader first checks the Session namespace,
 then uses the repository capture only when that Session capture is absent.
 Repository, comparison and source checks still apply; corrupt captures do not
 fall back, and another Session's private capture is never searched. Investigation
 uses the retained pins from the actual capture namespace. Explicit deletion keeps
 its original namespace rather than deleting a Machine capture through a Session.
+
+The admitted caller owns both the analysis Run and its saved result. Result and
+comparison shelves, including Git retention refs, are Account-scoped on the host.
+Unattributed development shelves remain untouched and are excluded from Account
+reads: a folder path cannot establish their owner. Member workers receive only
+the selected evidence and result-operation callbacks, without Account credentials.
+Their repository work and native analysis Agent run as the folder member through
+the containing native operation; investigation files retire with that operation.
+Manage changes filesystem placement, not ownership of another person's Account
+data. Run and result revision hints use the original signed Action admission to
+wake only the requester's Account; they contain no result content.
 
 Captured Review keeps its existing read queue across neighboring file hydration
 and visibility changes. Pending reads are reused, and queued files that leave

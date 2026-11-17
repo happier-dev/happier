@@ -830,10 +830,11 @@ export async function notifyDaemonSessionHolder(body: Readonly<{
  */
 export async function notifyDaemonSessionActivityChanged(sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification,
   executionRunId?: string, providerInputAdmissionReady?: boolean, liveWork?: PushedSessionLiveWork,
-  options: DaemonControlRequestOptions = {}): Promise<SessionActivityChangedResult> {
+  options: DaemonControlRequestOptions & Readonly<{ executionAuthorizationToken?: string }> = {}): Promise<SessionActivityChangedResult> {
+  const { executionAuthorizationToken, ...requestOptions } = options;
   const response: unknown = await daemonPost('/session-activity-changed', { sessionId, ...(followOccurrence ? { followOccurrence } : {}),
     ...(executionRunId ? { executionRunId } : {}), ...(providerInputAdmissionReady === undefined ? {} : { providerInputAdmissionReady }),
-    ...(liveWork ? { liveWork } : {}) }, options);
+    ...(liveWork ? { liveWork } : {}), ...(executionAuthorizationToken ? { executionAuthorizationToken } : {}) }, requestOptions);
   const parsed = SessionActivityChangedResponseSchema.safeParse(response);
   if (!parsed.success || (parsed.data.personalFollow && parsed.data.personalFollow.sourceSessionId !== sessionId)) {
     throw new Error('session_activity_notification_unavailable');

@@ -4,13 +4,21 @@ import type { StoredCredentials } from '@/persistence';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { openSessionMessageContent } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { TurnChangeSet } from '@happier-dev/protocol';
+
+export type RepositoryCheckpointTranscriptEvidence = Readonly<{
+    earliestUserPrompt?: Readonly<{ seq: number; localId?: string | null }>;
+    turns: readonly TurnChangeSet[];
+}>;
+export type RepositoryCheckpointTranscriptPage = Readonly<{
+    hasMore: boolean; nextAfterSeq: number | null;
+}> & (Readonly<{
+    messages: readonly Readonly<{ content: unknown; seq: number; createdAt: number; localId?: string | null }>[];
+}> | Readonly<{ evidence: RepositoryCheckpointTranscriptEvidence }>);
 
 export type ReadRepositoryCheckpointTranscriptPage = (input: Readonly<{
-    sessionId: string; afterSeq?: number;
-}>) => Promise<Readonly<{
-    messages: readonly Readonly<{ content: unknown; seq: number; createdAt: number; localId?: string | null }>[];
-    hasMore: boolean; nextAfterSeq: number | null;
-}>>;
+    sessionId: string; scopeId?: string; afterSeq?: number;
+}>) => Promise<RepositoryCheckpointTranscriptPage>;
 
 /** Transport adapter: reuse currentness, authorization and the one mode-aware content opener. */
 export function createRepositoryCheckpointTranscriptPageReader(input: Readonly<{

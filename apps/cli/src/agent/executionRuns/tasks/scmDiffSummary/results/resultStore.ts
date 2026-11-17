@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { ScmDiffSummaryResultRevisionHint } from '@happier-dev/protocol/scm/diffSummaryResult';
@@ -13,6 +14,7 @@ import type { ScmDiffSummaryResultListInput } from '@happier-dev/protocol/scm/di
 import { ScmCommitPlanAcceptanceSchema, ScmCommitPlanApplicationSchema, isScmCommitPlanApplicationLocked } from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
 import type { ScmDiffSummaryGenerateOutput, ScmDiffSummaryModelOutput, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs, ScmDiffSummaryResult, ScmDiffSummaryResultEdit, ScmDiffSummaryResultResponse, ScmDiffSummaryResultFailure, ScmDiffSummaryResultDeleteResponse, ScmDiffSummaryGeneratorSelection, ScmDiffSummarySavedResultItem, ScmCommitPlanAcceptance, ScmCommitPlanApplication } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
+import { resolveScmAccountStorageDirectory, readScmExecutionAuthorization } from '@/scm/accountScope';
 import { daemonPost } from '@/daemon/controlHttp';
 import { prepareCapturedScmComparisonInvestigation, resolveCapturedScmComparisonSource } from '@/scm/comparisons/captureScmComparison';
 import { reviewFindingCitationsSchema, publishReviewFindingCitations, publishFindingCitationMarkdown, validatePublishedFindingCitationMarkdown,
@@ -109,7 +111,7 @@ export type ScmDiffSummaryResultStore = Readonly<{
   beginApplication(input: ScmDiffSummaryResultScope & Readonly<{ expectedRevision: number;
     acceptance: ScmCommitPlanAcceptance }>): Promise<ScmDiffSummaryResultResponse>;
   mutateApplication(scope: ScmDiffSummaryResultScope, transition: (result: ScmDiffSummaryResult) =>
-    ScmCommitPlanApplication | ScmDiffSummaryResultFailure): Promise<ScmDiffSummaryResultResponse>;
+    ScmCommitPlanApplication | ScmDiffSummaryResultFailure | Promise<ScmCommitPlanApplication | ScmDiffSummaryResultFailure>): Promise<ScmDiffSummaryResultResponse>;
 }>;
 
 function failure(errorCode: ScmDiffSummaryResultFailure['errorCode'], error: string, latestRevision?: number): ScmDiffSummaryResultFailure {
@@ -135,9 +137,9 @@ function preserveWalkthroughEdits(incoming: NonNullable<ScmDiffSummaryModelOutpu
     }) };
 }
 /** Saved domain state. Every machine/session writer rereads under the existing filesystem exclusion owner. */
-export function createScmDiffSummaryResultStore(options: Readonly<{ directory: string;
+export function createScmDiffSummaryResultStore(options: Readonly<{ directory: string; accountId?: string;
   onChanged?: (change: ScmDiffSummaryResultRevisionHint) => void }>): ScmDiffSummaryResultStore {
-  const directory = options.directory;
+  const directory = options.accountId ? resolveScmAccountStorageDirectory(options.directory, options.accountId) : options.directory;
   const selectionPath = join(directory, 'selection.json');
   async function withSelection<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     await ensureProtectedLocalStateDirectory(directory);
@@ -744,7 +746,7 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
       return locked(scope, async (stored) => {
         if (!stored) return failure('result_not_found', 'Saved result is unavailable.');
         if (!stored.result.application) return failure('application_unavailable', 'No accepted commit application exists.');
-        const application = transition(stored.result);
+        const application = await transition(stored.result);
         if ('success' in application) return application;
         const parsed = ScmCommitPlanApplicationSchema.parse(application);
         if (isDeepStrictEqual(parsed, stored.result.application)) return { success: true, result: stored.result };
@@ -759,15 +761,26 @@ export function createScmDiffSummaryResultStore(options: Readonly<{ directory: s
 
 let defaultStore: ScmDiffSummaryResultStore | undefined;
 let defaultStoreDirectory: string | undefined;
+const boundStore = new AsyncLocalStorage<ScmDiffSummaryResultStore>();
+
+/** Member workers consume the host's already requester-bound canonical store. */
+export function runWithScmDiffSummaryResultStore<T>(store: ScmDiffSummaryResultStore, effect: () => T): T {
+  return boundStore.run(store, effect);
+}
+
 function currentStore() {
-  const directory = join(configuration.activeServerDir, 'runtime', 'scm', 'results');
+  const override = boundStore.getStore();
+  if (override) return override;
+  const directory = resolveScmAccountStorageDirectory(join(configuration.activeServerDir, 'runtime', 'scm', 'results'));
   if (!defaultStore || defaultStoreDirectory !== directory) {
     const serverId = configuration.activeServerId;
     defaultStore = createScmDiffSummaryResultStore({ directory, onChanged: change => {
       if (configuration.activeServerId !== serverId) return;
       // Cross-process ingress is owned by the daemon's authenticated control transport.
       // Losing an ephemeral hint cannot revoke a committed result; readers catch up on reconnect.
-      void daemonPost('/scm-diff-summary-result-updated', change).catch(() => undefined);
+      const executionAuthorizationToken = readScmExecutionAuthorization()?.token;
+      void daemonPost('/scm-diff-summary-result-updated', { ...change,
+        ...(executionAuthorizationToken ? { executionAuthorizationToken } : {}) }).catch(() => undefined);
     } });
     defaultStoreDirectory = directory;
   }

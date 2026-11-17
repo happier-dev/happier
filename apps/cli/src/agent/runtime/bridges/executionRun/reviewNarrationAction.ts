@@ -14,7 +14,7 @@ import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSu
 import { prepareReviewWalkthroughTurn } from '@/agent/executionRuns/profiles/review/reviewWalkthroughTurn';
 import { presentReviewFindingCitations } from '@/agent/executionRuns/profiles/review/reviewFindingCitations';
 import { readRetainedReviewFindings } from '@/agent/reviews/normalize/readRetainedReviewFindings';
-import { buildExecutionRunProfileStartParams } from './profileStart';
+import { buildExecutionRunProfileStartParams, runWithScmExecutionRunAccountScope } from './profileStart';
 import { resolveExecutionRunLifecycle } from './resolveExecutionRunLifecycle';
 import { resolveExecutionRunResumeBackendOptions } from './resolveExecutionRunResumeBackendOptions';
 import { resolveExecutionRunRuntimeBackendTarget } from './backendTargets';
@@ -166,6 +166,10 @@ async function admitPrepared(host: Host, runId: string, prepared: Awaited<Return
 }
 
 export async function applyReviewWalkthroughAction(host: Host): Promise<ExecutionRunActionResult> {
+  return runWithScmExecutionRunAccountScope(host.runs.get(host.runId), () => applyReviewWalkthroughActionInAccountScope(host));
+}
+
+async function applyReviewWalkthroughActionInAccountScope(host: Host): Promise<ExecutionRunActionResult> {
   const parsed = ReviewWalkthroughRequestSchema.safeParse(host.input);
   if (!parsed.success) return failure('execution_run_invalid_action_input', 'Invalid walkthrough input.');
   const request = parsed.data;
@@ -314,6 +318,10 @@ export async function applyReviewWalkthroughAction(host: Host): Promise<Executio
 
 /** Resolve exact current findings and matching stops; the Action executor admits the resulting refinement. */
 export async function applyReviewExplainFindingsAction(host: Host): Promise<ExecutionRunActionResult> {
+  return runWithScmExecutionRunAccountScope(host.runs.get(host.runId), () => applyReviewExplainFindingsActionInAccountScope(host));
+}
+
+async function applyReviewExplainFindingsActionInAccountScope(host: Host): Promise<ExecutionRunActionResult> {
   const parsed = ReviewExplainFindingsRequestSchema.safeParse(host.input);
   if (!parsed.success) return failure('execution_run_invalid_action_input', 'Invalid finding explanation input.');
   const request = parsed.data;

@@ -23,6 +23,25 @@ import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKe
 // Source-only composition: loopback HTTP and the actual Follow dispatcher do
 // not launch the packaged CLI or require native-runtime build preparation.
 describe('private Session activity invalidation', () => {
+  it('carries the original requester admission through authenticated loopback result and detached Run hints', async () => {
+    const executionAuthorizationToken = 'original-home-admission';
+    const result = vi.fn();
+    const run = vi.fn();
+    const app = createDaemonControlApp({ getChildren: () => [], machineId: 'machine',
+      stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'token',
+      onScmDiffSummaryResultUpdated: result, onSessionActivityChanged: run });
+    try {
+      const address = new URL(await app.listen({ host: '127.0.0.1', port: 0 }));
+      const target = { pid: process.pid, httpPort: Number(address.port), controlToken: 'token' };
+      const change = { resultId: 'requester-result', revision: 3, executionAuthorizationToken };
+      await daemonPost('/scm-diff-summary-result-updated', change, { target });
+      await daemonPost('/session-activity-changed', { sessionId: null, executionRunId: 'requester-run', executionAuthorizationToken }, { target });
+      expect(result.mock.calls).toEqual([[change]]);
+      expect(run.mock.calls).toEqual([[null, undefined, 'requester-run', undefined, undefined, executionAuthorizationToken]]);
+    } finally { await app.close(); }
+  });
+
   it('forwards saved-result revisions from either process through authenticated content-free control ingress', async () => {
     const received: ScmDiffSummaryResultRevisionHint[] = [];
     const app = createDaemonControlApp({ getChildren: () => [], machineId: 'machine',

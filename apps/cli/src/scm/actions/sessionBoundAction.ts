@@ -26,7 +26,8 @@ import { getActionSpec, requiresExplicitScmMachineTarget } from '@happier-dev/pr
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { isOriginalOwnAccountActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { isOriginalAccountActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -94,7 +95,7 @@ export function createSessionBoundScmAction(
       } catch { return false; }
     };
     const localReviewContext = { ...context, serverId: configuration.activeServerId };
-    const requesterAccountId = context.externalActionCredential?.accountId ?? context.runtimeAccountId;
+    const requesterAccountId = readActionPrincipalAccountId(context);
     const [{ createCliScmReviewedMarkAction }, { resolveBackendTargetFromSessionMetadata }, { readAgentRoutingIdForContributionIdentity, indexAgentRoutingIdsByContributionIdentity }, { createRepositoryCheckpointTranscriptPageReader }, { isRetainedScmReviewAction, bindScmActionToSessionWorkspace }, { resolveSessionMachineWorkspacePath }, { executeScmActionOperation }] = await Promise.all([import("@/scm/actions/executeScmReviewedMarkAction"), import("@/session/backendTargets/resolveBackendTargetFromSessionMetadata"), import("@/plugins/projection/registry/agentRoutingIdentity"), import("@/scm/checkpoints/readRepositoryCheckpointTranscriptPage"), import("@/scm/actions/placement"), import("@/session/machineControlLocality"), import("@/scm/actions/executeScmActionOperation")]);
     const accountMarksDeps = params.credentials ? {
       executeReviewedMarks: (evidence: import('@happier-dev/protocol').ScmComparison | import('@happier-dev/protocol').ScmReviewedMarksSource, request: import('@happier-dev/protocol').ScmReviewedUnmarkInput, reviewed: boolean) => createCliScmReviewedMarkAction({
@@ -163,13 +164,10 @@ export function createSessionBoundScmAction(
       // runtime owner's credentials. Ordinary CLI callers prove access at Home.
       if (context.actionCaller?.kind === 'session' && context.actionCaller.sessionId !== sessionId) return false;
       if (context.rpcSessionAuthorization) return context.rpcSessionAuthorization.sessionId === sessionId;
-      // Retained results/captures belong to the Machine. Its authenticated
-      // custodian can still read exact evidence and retry personal mark Reset
-      // after the generator Session is gone. Shared Machine and Session callers retain
-      // the Session ceiling; a target selector alone never grants access.
-      if (machineCustodianReviewAccess) return true;
-      // Absent saved provenance needs custodian authority; a shared caller
-      // cannot prove standalone access through a Session lookup.
+      // A verified Machine requester can reach its own Account shelf after the
+      // generator Session is gone. Session callers retain their Session ceiling.
+      if (machineRequesterReviewAccess) return true;
+      // Standalone evidence needs an admitted Machine requester.
       if (!sessionId) return false;
       const { fetchSessionById } = await import("@/session/transport/http/sessionsHttp");
       const snapshot = await fetchSessionById({ reason: 'session-action', token: params.token, sessionId,
@@ -200,23 +198,23 @@ export function createSessionBoundScmAction(
     const signedAuthorization = context.externalActionExecutionAuthorization;
     const signedRequester = signedAuthorization?.requesterHttpProjection;
     const targetMachineId = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget.machineId : null;
-    const machineCustodianReviewAccess = isStoredScmReviewEvidenceAction(actionId, inputRecord)
+    const machineRequesterReviewAccess = isStoredScmReviewEvidenceAction(actionId, inputRecord)
       && !context.rpcSessionAuthorization
       && context.actionCaller?.kind !== 'session' && context.externalActionTarget?.kind === 'machine'
       && (admission
         ? admission.machineId === targetMachineId && admission.role === 'manage'
-          && admission.actorAccountId === admission.custodianAccountId
+          && admission.actorAccountId === requesterAccountId
           && await machineContext.verifyMachineAdmissionCurrent?.().catch(() => false)
         // Signed public Actions carry their own already-admitted Home witness, not
         // a socket Machine stamp. Consume its private currentness port in place;
         // a serialized binding or a Session/delegated invocation is insufficient.
-        : signedAuthorization && signedRequester && isOriginalOwnAccountActionCustody(signedAuthorization.binding)
+        : signedAuthorization && signedRequester && isOriginalAccountActionCustody(signedAuthorization.binding)
           && !signedAuthorization.binding.sessionActionSource
           && signedAuthorization.binding.actionId === actionId
           && signedAuthorization.binding.machineId === targetMachineId
           && externalActionTargetsEqualV1(signedAuthorization.binding.target, context.externalActionTarget)
           && signedRequester.accountId === signedAuthorization.binding.accountId
-          && signedRequester.accountId === context.runtimeAccountId
+          && signedRequester.accountId === requesterAccountId
           && signedRequester.serverId === (params.serverId ?? configuration.activeServerId)
           && signedRequester.serverIdentityId === signedAuthorization.binding.serverIdentityId
           && await signedRequester.isCurrent().catch(() => false));
@@ -252,7 +250,8 @@ export function createSessionBoundScmAction(
       await localRuntime?.release();
       // Live work for another Account needs the receiving identity owner.
       // Retained evidence keeps its existing Session authorization below.
-      if (params.credentials && nativeScmAction && (retainedReviewAction || installedScmOwner
+      const { isScmRpcOperationActive } = await import('@/scm/rpc/operationContext');
+      if (isScmRpcOperationActive() && params.credentials && nativeScmAction && (retainedReviewAction || installedScmOwner
         && (!signedAuthorization || signedAuthorization.binding.accountId === signedAuthorization.binding.custodianAccountId))) {
         const currentMachine = await readCurrentMachineControlIdentity();
         if (currentMachine.machineId === machineId) {
@@ -280,6 +279,7 @@ export function createSessionBoundScmAction(
               }
               const { executeScmDiffSummaryAction } = await import("@/scm/actions/executeScmDiffSummaryAction");
               return await executeScmDiffSummaryAction({
+                actionContext: localReviewContext,
                 request: summary, machineId, credentials: params.credentials,
                 ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
                 ...(readComparisonTranscriptPage ? { readTranscriptPage: readComparisonTranscriptPage } : {}), readPullRequestComparisonPage,
@@ -464,7 +464,8 @@ export function createSessionBoundScmAction(
     }
 
     const sessionBoundInput = bindScmActionToSessionWorkspace(actionId, inputRecord, workingDirectory, transport.sessionId);
-    if (!retainedReviewAction) {
+    const { isScmRpcOperationActive } = await import('@/scm/rpc/operationContext');
+    if (!retainedReviewAction || !isScmRpcOperationActive()) {
       if (!sessionMachineId) return { ok: false, errorCode: 'machine_not_selected', error: 'machine_not_selected' };
       return await executeMachineScmAction(sessionMachineId, sessionBoundInput,
         context.rpcSessionAuthorization ?? (resolveSocketRpcSessionAuthorization(getActionSpec(actionId).bindings?.rpcMethod ?? '')

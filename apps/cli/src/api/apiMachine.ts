@@ -18,7 +18,7 @@ import type { AutomationEventSourcesInvalidatedHostEventV1 } from '@happier-dev/
 import { join } from 'node:path';
 import { admitDeploymentArchiveFilesystemForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
 import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execution/runs/activityV1';
-import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, type ScmDiffSummaryResultRevisionHint } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, type ScmDiffSummaryResultPublisherHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import type { ExecutionRunResumeMaterializationAuthority } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
 import { ACCOUNT_CHANGES_PAGE_LIMIT_V1, changeRowsAlreadyHeld, isChangesPageFull, readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
@@ -3248,7 +3248,6 @@ export class ApiMachineClient {
             },
             resolveRequesterIdentity: context => this.resolveDeploymentSourceRequesterIdentity(context),
             resolveProjectRuntime: ingress => this.resolveProjectFiniteRuntime(ingress),
-            resolveProjectRuntime: ingress => this.resolveProjectFiniteRuntime(ingress),
             resolveRequesterRuntime: async ingress => {
                 if (!this.machineRuntimeInstallationId) return null;
                 return resolveAdmittedRequesterAccountReadRuntime({ ingress, serverId: this.machineRuntimeServerId,
@@ -4133,16 +4132,17 @@ export class ApiMachineClient {
         this.socket.emit(USAGE_SOURCES_INVALIDATION_EVENT_V1, payload);
     }
 
-    emitExecutionRunSourceUpdated(runId: string): void {
+    emitExecutionRunSourceUpdated(runId: string, executionAuthorizationToken?: ExecutionRunMachineActivityV1['executionAuthorizationToken']): void {
         const installationId = this.machineRuntimeInstallationId;
         if (!this.socket?.connected || this.projectionSchedulingClosed
             || configuration.activeServerId !== this.machineRuntimeServerId || !installationId
             || readInstallationIdentityIfExistsSync()?.installationId !== installationId) return;
-        const payload: ExecutionRunMachineActivityV1 = { machineId: this.machine.id, installationId, runId };
+        const payload: ExecutionRunMachineActivityV1 = { machineId: this.machine.id, installationId, runId,
+            ...(executionAuthorizationToken ? { executionAuthorizationToken } : {}) };
         this.socket.emit('execution-run-updated', payload);
     }
 
-    emitScmDiffSummaryResultUpdated(change: ScmDiffSummaryResultRevisionHint): void {
+    emitScmDiffSummaryResultUpdated(change: ScmDiffSummaryResultPublisherHint): void {
         const installationId = this.machineRuntimeInstallationId;
         if (!this.socket?.connected || this.projectionSchedulingClosed
             || configuration.activeServerId !== this.machineRuntimeServerId || !installationId

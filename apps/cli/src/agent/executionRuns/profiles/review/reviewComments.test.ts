@@ -1,3 +1,4 @@
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -114,6 +115,7 @@ afterEach(async () => {
 
 describe('canonical review Run comments', () => {
   it.each(['moved', 'changed', 'deleted'] as const)('publishes a finding against its captured comparison after the file is %s', async (change) => {
+    return runWithScmAccountScope('account', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-historical-' });
     repositories.push(fixture.rootPath);
     await writeFile(join(fixture.rootPath, fixture.trackedPath), 'historical input();\n');
@@ -141,9 +143,11 @@ describe('canonical review Run comments', () => {
     expect(runs.get(initial.runId)?.latestToolResult).toMatchObject({ materialization: { kind: 'complete' },
       findings: [{ comment: { id: 'comment-file-finding' } }] });
     expect(runs.get(initial.runId)?.error).toBeUndefined();
+    });
   });
 
   it.each(['deleted', 'renamed'] as const)('uses the before side when the comparison path was %s', async (change) => {
+    return runWithScmAccountScope('account', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-before-' });
     repositories.push(fixture.rootPath);
     const original = await readFile(join(fixture.rootPath, fixture.trackedPath), 'utf8');
@@ -161,9 +165,11 @@ describe('canonical review Run comments', () => {
     expect(result).toMatchObject({ status: 'materialized', failures: [] });
     expect(requests).toMatchObject([{ anchor: { kind: 'line', filePath: fixture.trackedPath, line: 1, side: 'before' },
       snapshot: { kind: 'text', source: 'diffSide', selectedLines: [original.split(/\r?\n/)[0]], diffContext: { side: 'before' } } }]);
+    });
   });
 
   it('never substitutes current bytes when the selected comparison is unavailable', async () => {
+    return runWithScmAccountScope('account', async () => {
     const requests: unknown[] = [];
     vi.mocked(axios.post).mockImplementation(async (_url, body) => {
       requests.push(body);
@@ -173,9 +179,11 @@ describe('canonical review Run comments', () => {
       findings: [findings[0]], reviewedFingerprint: null });
     expect(result).toMatchObject({ status: 'materialized', failures: [] });
     expect(requests).toMatchObject([{ anchor: { kind: 'finding', runId: 'review-run', findingId: 'file-finding' }, snapshot: { kind: 'none' } }]);
+    });
   });
 
   it.each(['bounded', 'retained'] as const)('preserves admitted target invocation scope through %s findings and re-raise transport', async (mode) => {
+    return runWithScmAccountScope('account', async () => {
     const workflowScope = { actionRequestId: 'workflow-1/invocation-1/0', invocationId: 'invocation-1',
       sessions: [{ serverId: 'home', sessionId: 'target-B' }] };
     const initial = { ...run(), sessionId: 'target-B',
@@ -223,9 +231,11 @@ describe('canonical review Run comments', () => {
     expect(admitted).toEqual(['create', 'transition']);
     expect(runs.get(initial.runId)?.latestToolResult).toMatchObject({ materialization: { kind: 'complete' },
       findings: [{ comment: { sessionId: 'target-B', state: 'open' } }] });
+    });
   });
 
   it('does not manufacture missing invocation scope from authored review input', async () => {
+    return runWithScmAccountScope('account', async () => {
     vi.mocked(axios.post).mockImplementation(async (_url, _body, config) => {
       const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(
         String(config?.headers?.[REVIEW_COMMENT_PRINCIPAL_HEADER_V1]), 'base64url').toString('utf8')));
@@ -237,9 +247,11 @@ describe('canonical review Run comments', () => {
         sessions: [{ serverId: 'home', sessionId: 'target-B' }] } } },
       findings: [findings[1]], reviewedFingerprint: null, workflowRunId: 'workflow-1' });
     expect(result).toMatchObject({ status: 'failed', commentIds: [], failures: [{ errorCode: 'not_authenticated' }] });
+    });
   });
 
   it('exposes saved publication refusal through public Run/get without replacing the manual output, then clears only superseded operation errors', async () => {
+    return runWithScmAccountScope('account', async () => {
     const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' },
       repository: { rootPath: root }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
     const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: comparison.id, comparison,
@@ -289,8 +301,10 @@ describe('canonical review Run comments', () => {
       await publishCurrent(code);
       expect(manager.get(initial.runId)?.error?.code).toBe(code === 'execution_run_send_outcome_unknown' ? undefined : code);
     }
+    });
   });
   it('persists retained review findings before transcript publication through the same signed comment owner', async () => {
+    return runWithScmAccountScope('account', async () => {
     vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200, data: { comment: commentForCreate(body), replayed: false } }));
     const initial = { ...run(), runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const };
     const runs = new Map([[initial.runId, initial]]);
@@ -306,8 +320,10 @@ describe('canonical review Run comments', () => {
       findings: [{ comment: { id: 'comment-file-finding' } }, { comment: { id: 'comment-global-finding' } }],
     } }]);
     expect(runs.get(initial.runId)).toMatchObject({ status: 'running', latestToolResult: { materialization: { kind: 'complete' } } });
+    });
   });
   it('carries persisted findings and partial materialization into the same retained narration input', async () => {
+    return runWithScmAccountScope('account', async () => {
     vi.mocked(axios.post).mockImplementation(async (_url, body) => {
       const input = ReviewCommentCreateRequestV1Schema.parse(body);
       return input.findingId === 'global-finding'
@@ -334,8 +350,10 @@ describe('canonical review Run comments', () => {
       provenance: { reviewedRuns: [{ runId: initial.runId, status: 'failed', hasOutput: true, reviewOutcome: 'partial' }] },
     } } });
     expect(runs.get(initial.runId)?.intentInput).not.toHaveProperty('reviewStatus');
+    });
   });
   it('admits review narration without an admission publication and retains the original review receipts', async () => {
+    return runWithScmAccountScope('account', async () => {
     vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200, data: { comment: commentForCreate(body), replayed: false } }));
     const comparison = ScmComparisonSchema.parse({ id: 'receipt-comparison', source: { kind: 'workingTree' },
       repository: { rootPath: root }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
@@ -364,8 +382,10 @@ describe('canonical review Run comments', () => {
       runId: initial.runId, reviewedFingerprint: 'launch-fingerprint',
       commentIds: ['comment-file-finding', 'comment-global-finding'], materialization: { kind: 'complete' },
     }] } });
+    });
   });
   it('persists valid findings from a failed retained review without claiming a complete review', async () => {
+    return runWithScmAccountScope('account', async () => {
     vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200, data: { comment: commentForCreate(body), replayed: false } }));
     const initial = { ...run(), runClass: 'long_lived' as const, retentionPolicy: 'resumable' as const };
     const runs = new Map([[initial.runId, initial]]);
@@ -378,8 +398,10 @@ describe('canonical review Run comments', () => {
       reviewOutcome: 'failed', materialization: { kind: 'complete' }, commentIds: ['comment-file-finding', 'comment-global-finding'],
       perEngineOutcome: [{ key: initial.backendId, runId: initial.runId, outcome: 'failed' }],
     } }, latestToolResult: { status: 'failed', perEngineOutcome: [{ key: initial.backendId, runId: initial.runId, outcome: 'failed' }] } });
+    });
   });
   it('keeps an admitted Workflow identity in private exact-daemon transport context, not request JSON', async () => {
+    return runWithScmAccountScope('account', async () => {
     let observed = false;
     const deps = createCliActionDeps({
       sessionId: 'cli-global', token: 'token-1', credentials: { token: 'token-1', encryption: null }, mode: 'plain', ctx: null,
@@ -396,13 +418,17 @@ describe('canonical review Run comments', () => {
       sessions: [{ serverId: 'home', sessionId: 'target-B' }] };
     await deps.executionRunStart(null, { intent: 'review' }, { exactMachineId: 'machine-1', workflowRunId: 'workflow-1', workflowScope });
     expect(observed).toBe(true);
+    });
   });
   it('does not infer user acceptance from an automatically opened comment', () => {
+    return runWithScmAccountScope('account', () => {
     const comment = commentForCreate({ workspace, sessionId: 'session-1', runId: 'review-run', findingId: 'file-finding', anchor: { kind: 'finding', runId: 'review-run', findingId: 'file-finding' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'Finding', clientMutationId: 'fixture' }, 'open');
     expect(projectReviewRunTriage([comment])).toEqual({ findings: [] });
+    });
   });
 
   it.each([{ filePath: 'missing.ts' }, { filePath: 'a.ts', startLine: 999 }])('keeps an unanchorable finding reachable without claiming exact code: %j', async (location) => {
+    return runWithScmAccountScope('account', async () => {
     const requests: unknown[] = [];
     vi.mocked(axios.post).mockImplementation(async (_url, body) => {
       requests.push(body);
@@ -411,8 +437,10 @@ describe('canonical review Run comments', () => {
     const result = await service().materialize({ run: run(), findings: [{ ...findings[0], ...location }], reviewedFingerprint: null });
     expect(result).toMatchObject({ status: 'materialized', commentIds: ['comment-file-finding'], failures: [] });
     expect(requests).toMatchObject([{ anchor: { kind: 'finding', runId: 'review-run', findingId: 'file-finding' }, snapshot: { kind: 'none' } }]);
+    });
   });
   it('records a live run\'s triage only in ReviewComment and never rewrites or re-publishes the review result', async () => {
+    return runWithScmAccountScope('account', async () => {
     const created = commentForCreate({ workspace, sessionId: 'session-1', runId: 'review-run', engineId: 'claude', findingId: 'file-finding', anchor: { kind: 'file', filePath: 'a.ts' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'Reject invalid input.', clientMutationId: 'fixture' }, 'proposed');
     vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { comment: plainStoredComment(created) } });
     vi.mocked(axios.post).mockImplementation(async (_url, body) => {
@@ -434,8 +462,10 @@ describe('canonical review Run comments', () => {
     expect(runs.get(live.runId)?.structuredMeta).toEqual(live.structuredMeta);
     expect((runs.get(live.runId)?.structuredMeta?.payload as { triage?: unknown }).triage).toBeUndefined();
     expect(committed).toEqual([]);
+    });
   });
   it('uses the live host Agent principal through real tool dispatch and signed HTTP, never input identity', async () => {
+    return runWithScmAccountScope('account', async () => {
     const execute = transport();
     // Unreached network/RPC ports are omitted from this boundary fixture.
     const executor = createActionExecutor({ reviewCommentAction: async (args) => execute(args.actionId, args.input, {
@@ -451,8 +481,10 @@ describe('canonical review Run comments', () => {
     expect(await bridge.executeActionByToolName('action_execute', { actionId: 'reviews.comments.list', input: { runId: 'review-run' }, agentId: 'forged' }, 'session-1')).toMatchObject({ ok: true });
     const unbound = createActionToolExecutorBridge({ executor, surface: 'agent' });
     expect(await unbound.executeActionByToolName('action_execute', { actionId: 'reviews.comments.list', input: {} }, 'session-1')).toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+    });
   });
   it('materializes every finding with actual engine identity, launch fingerprint, snapshots and a signed host intent', async () => {
+    return runWithScmAccountScope('account', async () => {
     const posted: unknown[] = [];
     vi.mocked(axios.post).mockImplementation(async (_url, body, config) => {
       posted.push(body);
@@ -472,9 +504,11 @@ describe('canonical review Run comments', () => {
     expect(result).toMatchObject({ status: 'materialized', commentIds: ['comment-file-finding', 'comment-global-finding'], engineId: 'claude' });
     expect(posted[0]).toMatchObject({ engineId: 'claude', reviewedFingerprint: 'launch-fingerprint', snapshot: { kind: 'text', selectedLines: ['input();'] }, metadata: { reviewGroupIds: ['panel-1'] } });
     expect(posted[1]).toMatchObject({ snapshot: { kind: 'none' }, findingIdentity: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    });
   });
 
   it('materializes automatic E2EE findings through signed authorized structure without disclosing sensitive bytes', async () => {
+    return runWithScmAccountScope('account', async () => {
     const posted: unknown[] = [];
     let prepared: ReviewCommentPreparedRecordV1[] = [];
     let commitment = '';
@@ -515,9 +549,11 @@ describe('canonical review Run comments', () => {
     expect(wire).not.toContain('input();');
     expect(posted).toHaveLength(2);
     expect(result).toMatchObject({ status: 'materialized', commentIds: ['comment-file-finding'] });
+    });
   });
 
   it('adds current panel membership to a deduplicated comment through a separately signed CAS transition', async () => {
+    return runWithScmAccountScope('account', async () => {
     const existing = commentForCreate({ workspace, sessionId: 'session-1', runId: 'older-run', engineId: 'codex', findingId: 'file-finding',
       anchor: { kind: 'file', filePath: 'a.ts' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'Finding', clientMutationId: 'older' });
     let attached = false;
@@ -534,6 +570,7 @@ describe('canonical review Run comments', () => {
     expect(await service().materialize({ run: run(), findings: [findings[0]], reviewedFingerprint: null }))
       .toMatchObject({ status: 'materialized', commentIds: [existing.id], comments: [{ comment: { serverRevision: 4 } }] });
     expect(attached).toBe(true);
+    });
   });
 
   it.each([
@@ -541,6 +578,7 @@ describe('canonical review Run comments', () => {
     { currentState: 'open' as const, groups: ['another-panel'], expected: 'failed' },
     { currentState: 'dismissed' as const, groups: ['panel-1'], expected: 'failed' },
   ])('accepts a concurrent re-raise only with proven membership and reopening: $currentState / $groups', async ({ currentState, groups, expected }) => {
+    return runWithScmAccountScope('account', async () => {
     const existing = commentForCreate({ workspace, sessionId: 'session-1', runId: 'older-run', engineId: 'codex', findingId: 'file-finding',
       anchor: { kind: 'file', filePath: 'a.ts' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'Finding', clientMutationId: 'older' }, 'dismissed');
     vi.mocked(axios.post).mockImplementation(async (url) => String(url).endsWith('/transition')
@@ -553,9 +591,11 @@ describe('canonical review Run comments', () => {
     expect(result.status).toBe(expected);
     if (expected === 'materialized') expect(result).toMatchObject({ commentIds: [existing.id], comments: [{ comment: { state: 'open', serverRevision: 4 } }] });
     else expect(result).toMatchObject({ commentIds: [], failures: [{ errorCode: 'review_comment_conflict' }] });
+    });
   });
 
   it('materializes a detached workflow review with only its admitted Workflow identity, without synthesizing a Session', async () => {
+    return runWithScmAccountScope('account', async () => {
     vi.mocked(axios.post).mockImplementation(async (_url, body, config) => {
       const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(String(config?.headers?.[REVIEW_COMMENT_PRINCIPAL_HEADER_V1]), 'base64url').toString('utf8')));
       expect(principal.actor).toEqual({ kind: 'workflow', runId: 'workflow-1' });
@@ -565,9 +605,11 @@ describe('canonical review Run comments', () => {
       return { status: 200, data: { comment: { ...commentForCreate(body), author: principal.actor }, replayed: false } };
     });
     expect(await service().materialize({ run: { ...run(), sessionId: null }, findings: [findings[1]], reviewedFingerprint: null, workflowRunId: 'workflow-1' })).toMatchObject({ status: 'materialized', commentIds: ['comment-global-finding'] });
+    });
   });
 
   it('reuses a canonical dismissed finding and re-raises it with fresh CAS rather than creating another comment', async () => {
+    return runWithScmAccountScope('account', async () => {
     let dismissed: ReviewCommentV1 | undefined;
     vi.mocked(axios.post).mockImplementation(async (url, body) => {
       if (!String(url).endsWith('/transition')) {
@@ -579,9 +621,11 @@ describe('canonical review Run comments', () => {
     });
     const result = await service().materialize({ run: run(), findings: [findings[1]], reviewedFingerprint: null });
     expect(result).toMatchObject({ status: 'materialized', commentIds: ['retained-comment'], comments: [{ findingId: 'global-finding', comment: { id: 'retained-comment', state: 'open', serverRevision: 9 } }] });
+    });
   });
 
   it('preserves defer under same-state CAS after the run is evicted, and propagates a real HTTP CAS conflict', async () => {
+    return runWithScmAccountScope('account', async () => {
     // A fresh host has no in-memory Run; durable references must remain usable.
     const bridge = new ExecutionRunHostBridge({ parentProvider: 'claude', cwd: root, sendAcp: async () => {}, reviewComments: service() });
     const created = commentForCreate({ workspace, sessionId: 'session-1', runId: 'review-run', engineId: 'claude', findingId: 'file-finding', anchor: { kind: 'file', filePath: 'a.ts' }, snapshot: { kind: 'none', capturedAt: 1 }, body: 'Reject invalid input.', clientMutationId: 'fixture' }, 'open');
@@ -601,9 +645,11 @@ describe('canonical review Run comments', () => {
       return { status: 409, data: { error: 'review_comment_conflict' } };
     });
     expect(await bridge.applyAction('review-run', { actionId: 'review.triage', input: { findings: [{ id: 'file-finding', commentId: created.id, status: 'reject', comment: 'Not reachable.' }] } })).toMatchObject({ ok: false, errorCode: 'review_comment_conflict' });
+    });
   });
 
   it('keeps terminal success unobservable until canonical materialization completes', async () => {
+    return runWithScmAccountScope('account', async () => {
     let release!: () => void;
     let observedRequest!: () => void;
     const requested = new Promise<void>((resolve) => { observedRequest = resolve; });
@@ -633,9 +679,11 @@ describe('canonical review Run comments', () => {
     expect(runs.get(initial.runId)).toMatchObject({ status: 'succeeded', latestToolResult: { commentIds: ['comment-file-finding', 'comment-global-finding'], reviewedFingerprint: 'launch-fingerprint', materialization: { kind: 'complete' } } });
     expect(runs.get(initial.runId)?.structuredMeta?.payload).toMatchObject({ findings: [{ comment: { id: 'comment-file-finding', state: 'proposed', serverRevision: 3 } }, { comment: { id: 'comment-global-finding' } }] });
     expect(published).toEqual([expect.objectContaining({ type: 'tool-result', output: expect.objectContaining({ reviewedFingerprint: 'launch-fingerprint', commentIds: ['comment-file-finding', 'comment-global-finding'] }) })]);
+    });
   });
 
   it.each(['launch-fingerprint', null])('retains launch fingerprint %s when invalid findings prevent review success', async (reviewedFingerprint) => {
+    return runWithScmAccountScope('account', async () => {
     const initial = { ...run(), intentInput: { reviewedFingerprint } };
     const runs = new Map([[initial.runId, initial]]);
     await finishExecutionRun({
@@ -645,8 +693,10 @@ describe('canonical review Run comments', () => {
     });
     expect(runs.get(initial.runId)).toMatchObject({ status: 'failed', error: { code: 'review_comment_materialization_failed' }, latestToolResult: { reviewedFingerprint, commentIds: [] } });
     expect(axios.post).not.toHaveBeenCalled();
+    });
   });
   it('rejects finding attribution to a different Run before persisting comments', async () => {
+    return runWithScmAccountScope('account', async () => {
     vi.mocked(axios.post).mockImplementation(async (_url, body) => ({ status: 200, data: { comment: commentForCreate(body), replayed: false } }));
     const initial = run();
     const runs = new Map([[initial.runId, initial]]);
@@ -657,8 +707,10 @@ describe('canonical review Run comments', () => {
       enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites, reviewComments: service() });
     expect(runs.get(initial.runId)).toMatchObject({ status: 'failed', latestToolResult: { materialization: { errorCode: 'review_findings_invalid' } } });
     expect(axios.post).not.toHaveBeenCalled();
+    });
   });
   it('retains a strict walkthrough envelope when a review narrator is terminalized', async () => {
+    return runWithScmAccountScope('account', async () => {
     const initial = run();
     const comparison = ScmComparisonSchema.parse({ id: 'comparison', source: { kind: 'workingTree' },
       repository: { rootPath: root }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [] } });
@@ -674,9 +726,11 @@ describe('canonical review Run comments', () => {
     expect(runs.get(initial.runId)).toMatchObject({ status: 'succeeded', latestToolResult: output });
     expect(ScmDiffSummaryGenerateOutputSchema.safeParse(runs.get(initial.runId)?.latestToolResult).success).toBe(true);
     expect(axios.post).not.toHaveBeenCalled();
+    });
   });
 
   it('retains successfully persisted comment ids when another finding fails materialization', async () => {
+    return runWithScmAccountScope('account', async () => {
     vi.mocked(axios.post).mockImplementation(async (_url, body) => {
       const request = ReviewCommentCreateRequestV1Schema.parse(body);
       return request.findingId === 'global-finding'
@@ -695,9 +749,11 @@ describe('canonical review Run comments', () => {
       reviewedFingerprint: 'launch-fingerprint', commentIds: ['comment-file-finding'],
       materialization: { kind: 'partial' }, materializationFailures: [{ findingId: 'global-finding', errorCode: 'review_comment_conflict' }],
     } });
+    });
   });
 
   it.each(['failed', 'cancelled', 'timeout'] as const)('retains the launch fingerprint on a %s review without claiming materialization', async (status) => {
+    return runWithScmAccountScope('account', async () => {
     const initial = run();
     const runs = new Map([[initial.runId, initial]]);
     await finishExecutionRun({
@@ -707,5 +763,6 @@ describe('canonical review Run comments', () => {
     });
     expect(runs.get(initial.runId)).toMatchObject({ status, latestToolResult: { reviewedFingerprint: 'launch-fingerprint', error: { code: 'invalid_output' } } });
     expect(axios.post).not.toHaveBeenCalled();
+    });
   });
 });

@@ -4,7 +4,7 @@ import { applyHunks, parseUnifiedDiffHunks, type Hunk, type HunkLine } from '@ha
 import type { ScmChangeOccurrence, ScmComparison } from '@happier-dev/protocol';
 import { runGitCheckpointCommand } from '../checkpoints/gitCheckpointCommands';
 import { readGitCheckpointDiffOutput } from '../checkpoints/gitCheckpointDiffOutput';
-import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';
+import { resolveCapturedScmComparisonRefPrefix } from '../comparisons/captureScmComparison';
 import { readGitComparisonFiles, type GitComparisonFile } from '../comparisons/readGitComparisonFiles';
 
 export type ScmCommitPlanMaterializationConflictReason = 'foreign_selection' | 'duplicate_selection'
@@ -298,7 +298,7 @@ export async function materializeScmCommitPlan(input: Readonly<{
     if (root !== comparison.repository.rootPath) throw new ScmCommitPlanMaterializationConflict('foreign_selection', 'Comparison belongs to another repository');
     const baseTreeOid = await tree(cwd, comparison.endpoints.before);
     const afterTreeOid = await tree(cwd, comparison.endpoints.after);
-    const indexRef = `refs/happier/comparisons/${input.sessionId ? encodeRepositoryCheckpointScope(input.sessionId) : 'repository'}/${comparison.id}/index`;
+    const indexRef = `${resolveCapturedScmComparisonRefPrefix({ comparisonId: comparison.id, sessionId: input.sessionId })}index`;
     const indexTreeOid = await tree(cwd, (await git(cwd, ['rev-parse', '--verify', indexRef])).trim());
     if (buildScmComparisonIdentity({ source: comparison.source, repositoryRootPath: root,
         beforeOid: comparison.endpoints.before, afterOid: comparison.endpoints.after, indexOid: indexTreeOid }) !== comparison.id) {

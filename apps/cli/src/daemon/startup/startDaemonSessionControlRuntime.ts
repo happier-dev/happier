@@ -12390,7 +12390,7 @@ export async function startDaemonSessionControlRuntime(
       skillStore: params.skillStore,
       skillUsageRecorder: params.skillUsageRecorder,
       onScmDiffSummaryResultUpdated: change => params.getApiMachineForSessions()?.emitScmDiffSummaryResultUpdated(change),
-      onSessionActivityChanged: async (sessionId, occurrence, executionRunId, providerInputAdmissionReady, liveWork) => {
+      onSessionActivityChanged: async (sessionId, occurrence, executionRunId, providerInputAdmissionReady, liveWork, executionAuthorizationToken) => {
         if (sessionId && providerInputAdmissionReady !== undefined) {
           const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
           if (tracked) tracked.providerInputAdmissionReady = providerInputAdmissionReady;
@@ -12398,7 +12398,7 @@ export async function startDaemonSessionControlRuntime(
         // The runner names its own Session. Its pushed live work applies without a read;
         // a content-free push rereads only that runner.
         sessionLiveWorkProducer.notifySessionChanged(sessionId, liveWork);
-        if (executionRunId && sessionId === null) params.getApiMachineForSessions()?.emitExecutionRunSourceUpdated(executionRunId);
+        if (executionRunId && sessionId === null) params.getApiMachineForSessions()?.emitExecutionRunSourceUpdated(executionRunId, executionAuthorizationToken);
         let result: Awaited<ReturnType<typeof dispatchSessionFollowOccurrence>> = undefined;
         if (occurrence) {
           result = await dispatchSessionFollowOccurrence({ occurrence, ...(sessionId ? { contextSessionId: sessionId } : {}) });

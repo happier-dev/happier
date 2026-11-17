@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { captureScmComparison } from '../comparisons/captureScmComparison';
 import { materializeScmCommitPlan, mergeScmCommitPlanHookTree, validateScmCommitPlanHookSelections } from './materializeCommitPlan';
+import { runWithScmAccountScope } from '../accountScope';
 
 const repositories: string[] = [];
 function repository(content: string): string {
@@ -22,7 +23,7 @@ function git(cwd: string, args: string[], input?: string): string {
 afterEach(() => { for (const cwd of repositories.splice(0)) rmSync(cwd, { recursive: true, force: true }); });
 
 describe('exact cumulative commit plan materialization', () => {
-    it('materializes groups in reverse order and diffs each actual previous tree', async () => {
+    it('materializes groups in reverse order and diffs each actual previous tree', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const before = Array.from({ length: 30 }, (_, i) => `line ${i + 1}\n`).join('');
         const cwd = repository(before);
         const after = before.replace('line 4\n', 'first\n').replace('line 25\n', 'last\n');
@@ -43,8 +44,8 @@ describe('exact cumulative commit plan materialization', () => {
         expect(readFileSync(join(cwd, '.git', 'index'))).toEqual(indexBefore);
         expect(git(cwd, ['rev-parse', 'HEAD'])).toBe(headBefore);
         expect(readFileSync(join(cwd, 'changes.txt'), 'utf8')).toBe(after);
-    });
-    it('distinguishes repeated hunk bodies by their captured occurrence', async () => {
+    }));
+    it('distinguishes repeated hunk bodies by their captured occurrence', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const lines = Array.from({ length: 40 }, (_, index) => `context ${index % 10}\n`);
         const cwd = repository(lines.join(''));
         lines[5] = 'changed\n'; lines[25] = 'changed\n';
@@ -55,8 +56,8 @@ describe('exact cumulative commit plan materialization', () => {
             groups: [{ id: 'second', changeRefs: [refs[1]!.id] }] });
         lines[5] = 'context 5\n';
         expect(git(cwd, ['show', `${result.steps[0]!.targetTreeOid}:changes.txt`])).toBe(lines.join(''));
-    });
-    it('refuses duplicate references and aliases as authority', async () => {
+    }));
+    it('refuses duplicate references and aliases as authority', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const cwd = repository('before\n');
         writeFileSync(join(cwd, 'changes.txt'), 'after\n');
         const { comparison } = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
@@ -66,8 +67,8 @@ describe('exact cumulative commit plan materialization', () => {
         ] })).rejects.toMatchObject({ reason: 'duplicate_selection' });
         await expect(materializeScmCommitPlan({ cwd, comparison,
             groups: [{ id: 'alias', changeRefs: [occurrence.alias] }] })).rejects.toMatchObject({ reason: 'foreign_selection' });
-    });
-    it('does not silently include an unselected staged prerequisite', async () => {
+    }));
+    it('does not silently include an unselected staged prerequisite', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const cwd = repository('before\n');
         writeFileSync(join(cwd, 'changes.txt'), 'staged\n'); git(cwd, ['add', '.']);
         writeFileSync(join(cwd, 'changes.txt'), 'unstaged\n');
@@ -80,8 +81,8 @@ describe('exact cumulative commit plan materialization', () => {
         ] });
         expect(git(cwd, ['show', `${result.steps[0]!.targetTreeOid}:changes.txt`])).toBe('staged\n');
         expect(git(cwd, ['show', `${result.steps[1]!.targetTreeOid}:changes.txt`])).toBe('unstaged\n');
-    });
-    it.each(['insertion', 'deletion'] as const)('maps an unstaged selection past a left-out staged %s and permits reversed group order', async (kind) => {
+    }));
+    it.each(['insertion', 'deletion'] as const)('maps an unstaged selection past a left-out staged %s and permits reversed group order', async (kind) => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const before = Array.from({ length: 40 }, (_, i) => `line ${i + 1}\n`).join('');
         const cwd = repository(before);
         const stagedText = kind === 'insertion' ? before.replace('line 4\n', 'line 4\nstaged inserted\n') : before.replace('line 4\n', '');
@@ -102,8 +103,8 @@ describe('exact cumulative commit plan materialization', () => {
         expect(git(cwd, ['show', `${reversed.steps[1]!.targetTreeOid}:changes.txt`])).toBe(after);
         expect(readFileSync(join(cwd, '.git', 'index'))).toEqual(indexBefore);
         expect(readFileSync(join(cwd, 'changes.txt'), 'utf8')).toBe(after);
-    });
-    it('does not import a left-out staged edit through unstaged hunk context', async () => {
+    }));
+    it('does not import a left-out staged edit through unstaged hunk context', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const before = Array.from({ length: 20 }, (_, i) => `line ${i + 1}\n`).join('');
         const cwd = repository(before);
         const stagedText = before.replace('line 5\n', 'staged context\n');
@@ -113,8 +114,8 @@ describe('exact cumulative commit plan materialization', () => {
         const ref = comparison.inventory.files[0]!.occurrences.find((ref) => ref.layer === 'unstaged')!;
         const result = await materializeScmCommitPlan({ cwd, comparison, groups: [{ id: 'unstaged', changeRefs: [ref.id] }] });
         expect(git(cwd, ['show', `${result.steps[0]!.targetTreeOid}:changes.txt`])).toBe(before.replace('line 7\n', 'selected unstaged\n'));
-    });
-    it('materializes adjacent staged and unstaged additions as successive exact trees', async () => {
+    }));
+    it('materializes adjacent staged and unstaged additions as successive exact trees', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const cwd = repository('before\nafter\n');
         writeFileSync(join(cwd, 'changes.txt'), 'before\nfirst\nafter\n'); git(cwd, ['add', '.']);
         writeFileSync(join(cwd, 'changes.txt'), 'before\nfirst\nsecond\nafter\n');
@@ -128,8 +129,8 @@ describe('exact cumulative commit plan materialization', () => {
         const patch = git(cwd, ['diff', result.steps[0]!.targetTreeOid, result.steps[1]!.targetTreeOid]);
         expect(patch).toContain('+second\n');
         expect(patch).not.toContain('+first\n');
-    });
-    it('materializes whole-file binary and untracked selections using captured objects', async () => {
+    }));
+    it('materializes whole-file binary and untracked selections using captured objects', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const cwd = repository('base\n');
         writeFileSync(join(cwd, 'binary.bin'), Buffer.from([0, 255, 23, 0]));
         writeFileSync(join(cwd, 'new.txt'), 'new file');
@@ -138,8 +139,8 @@ describe('exact cumulative commit plan materialization', () => {
             groups: [{ id: 'files', changeRefs: comparison.inventory.files.flatMap((file) => file.occurrences.map((ref) => ref.id)) }] });
         expect(execFileSync('git', ['show', `${result.steps[0]!.targetTreeOid}:binary.bin`], { cwd })).toEqual(Buffer.from([0, 255, 23, 0]));
         expect(git(cwd, ['show', `${result.steps[0]!.targetTreeOid}:new.txt`])).toBe('new file');
-    });
-    it('carries accepted hook additions into later trees and refuses collisions', async () => {
+    }));
+    it('carries accepted hook additions into later trees and refuses collisions', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const cwd = repository('base\n');
         const originalTreeOid = git(cwd, ['rev-parse', 'HEAD^{tree}']).trim();
         writeFileSync(join(cwd, 'hook.txt'), 'accepted hook\n'); git(cwd, ['add', '.']);
@@ -158,8 +159,8 @@ describe('exact cumulative commit plan materialization', () => {
         writeFileSync(join(cwd, 'changes.txt'), 'hook collision\n'); git(cwd, ['add', 'changes.txt']);
         await expect(mergeScmCommitPlanHookTree({ cwd, originalTreeOid,
             acceptedHookTreeOid: git(cwd, ['write-tree']).trim(), targetTreeOid })).rejects.toMatchObject({ reason: 'overlapping_selection', path: 'changes.txt' });
-    });
-    it('rejects stale range identities before producing any target tree', async () => {
+    }));
+    it('rejects stale range identities before producing any target tree', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const cwd = repository('before\n');
         writeFileSync(join(cwd, 'changes.txt'), 'after\n');
         const { comparison } = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
@@ -167,8 +168,8 @@ describe('exact cumulative commit plan materialization', () => {
         ref.before.startLine++;
         await expect(materializeScmCommitPlan({ cwd, comparison,
             groups: [{ id: 'stale', changeRefs: [ref.id] }] })).rejects.toMatchObject({ reason: 'stale_evidence' });
-    });
-    it('preserves exact rename, deletion and executable modes', async () => {
+    }));
+    it('preserves exact rename, deletion and executable modes', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const cwd = repository('rename me\n');
         writeFileSync(join(cwd, 'deleted.txt'), 'delete me\n');
         writeFileSync(join(cwd, 'mode.txt'), 'keep mode\n');
@@ -183,8 +184,8 @@ describe('exact cumulative commit plan materialization', () => {
         expect(git(cwd, ['show', `${target}:renamed café.txt`])).toBe('rename me\n');
         expect(git(cwd, ['ls-tree', target, '--', 'deleted.txt', 'changes.txt'])).toBe('');
         expect(git(cwd, ['ls-tree', target, '--', 'mode.txt'])).toMatch(/^100755 /);
-    });
-    it('splits text hunks without changing missing final newline or CRLF bytes', async () => {
+    }));
+    it('splits text hunks without changing missing final newline or CRLF bytes', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const before = Array.from({ length: 30 }, (_, i) => `line ${i + 1}\r\n`).join('').replace(/\r\n$/, '');
         const cwd = repository(before);
         const after = before.replace('line 4\r\n', 'first\r\n').replace('line 30', 'last');
@@ -194,8 +195,8 @@ describe('exact cumulative commit plan materialization', () => {
         const result = await materializeScmCommitPlan({ cwd, comparison,
             groups: [{ id: 'last', changeRefs: [refs[1]!.id] }] });
         expect(git(cwd, ['show', `${result.steps[0]!.targetTreeOid}:changes.txt`])).toBe(before.replace('line 30', 'last'));
-    });
-    it('materializes an exact copy without deleting or including modifications to its source', async () => {
+    }));
+    it('materializes an exact copy without deleting or including modifications to its source', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const cwd = repository('rename me\n');
         renameSync(join(cwd, 'changes.txt'), join(cwd, 'renamed.txt'));
         writeFileSync(join(cwd, 'changes.txt'), 'new original path\n'); git(cwd, ['add', '.']);
@@ -214,8 +215,8 @@ describe('exact cumulative commit plan materialization', () => {
         const modified = result.steps[1]!.targetTreeOid;
         expect(git(cwd, ['show', `${modified}:changes.txt`])).toBe('new original path\n');
         expect(git(cwd, ['show', `${modified}:renamed.txt`])).toBe('rename me\n');
-    });
-    it('does not let a configured union driver silently resolve accepted-hook collisions', async () => {
+    }));
+    it('does not let a configured union driver silently resolve accepted-hook collisions', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const cwd = repository('base\n');
         writeFileSync(join(cwd, '.gitattributes'), 'changes.txt merge=union\n');
         git(cwd, ['add', '.']); git(cwd, ['commit', '-m', 'union attribute']);
@@ -226,8 +227,8 @@ describe('exact cumulative commit plan materialization', () => {
         const targetTreeOid = git(cwd, ['write-tree']).trim();
         await expect(mergeScmCommitPlanHookTree({ cwd, originalTreeOid, acceptedHookTreeOid, targetTreeOid }))
             .rejects.toMatchObject({ reason: 'unrepresentable_selection', path: 'changes.txt' });
-    });
-    it('allows separate same-file hook edits but rejects early inclusion of a future exact selection', async () => {
+    }));
+    it('allows separate same-file hook edits but rejects early inclusion of a future exact selection', async () => runWithScmAccountScope('materialize-commit-plan-test', async () => {
         const before = Array.from({ length: 30 }, (_, i) => `line ${i + 1}\n`).join('');
         const cwd = repository(before);
         writeFileSync(join(cwd, 'changes.txt'), before.replace('line 25\n', 'future\n'));
@@ -242,5 +243,5 @@ describe('exact cumulative commit plan materialization', () => {
             acceptedHookTreeOid: targets.steps[0]!.targetTreeOid,
             remainingSteps: targets.steps.map((step) => ({ ...step, changeRefs })) }))
             .rejects.toMatchObject({ reason: 'overlapping_selection', path: 'changes.txt', changeRefs });
-    });
+    }));
 });

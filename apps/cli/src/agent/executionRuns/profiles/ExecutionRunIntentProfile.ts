@@ -20,6 +20,9 @@ import type { CaptureScmComparisonInput } from '@/scm/comparisons/captureScmComp
 export const EXECUTION_RUN_TASK_RESULT_MAX_CODE_UNITS = 512 * 1_024;
 
 export type ExecutionRunProfileStartParams = Readonly<{
+  /** Host-only original admission, excluded from provider inputs and retained state. */
+  executionAuthorization?: import('@happier-dev/protocol/actions/externalActionApi').ExternalActionExecutionAuthorizationV1;
+  requesterWorkAttributionV1?: import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1;
   sessionId: string | null;
   runId: string;
   callId: string;
@@ -27,6 +30,8 @@ export type ExecutionRunProfileStartParams = Readonly<{
   intent: ExecutionRunIntent;
   backendId: string;
   backendTarget: BackendTargetRefV1;
+  /** Host-only repository execution for this occurrence, never authored or persisted. */
+  scmComparisonOperations?: import('@/scm/comparisons/comparisonOperations').ScmComparisonOperations;
   /** Captured launch selection for same-Run profile continuations. */
   modelId?: string;
   modelSelection?: ProviderBoundModelRef;

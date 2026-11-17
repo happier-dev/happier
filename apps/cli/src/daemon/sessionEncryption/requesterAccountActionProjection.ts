@@ -666,12 +666,16 @@ export async function admitRequesterAccountActionContext(input: Readonly<{
   finally { if (!admitted) { live = false; settingsPublication?.dispose(); await observation?.dispose(); } }
 }
 
-/** Original own custody excludes delegated Session/Workflow requests and foreign Accounts. */
-export function isOriginalOwnAccountActionCustody(binding: ExternalActionExecutionAuthorizationBindingV1): boolean {
+/** Original Account custody excludes delegated Session/Workflow requests. */
+export function isOriginalAccountActionCustody(binding: ExternalActionExecutionAuthorizationBindingV1): boolean {
   return 'authentication' in binding
     && (binding.authentication.kind === 'account' || binding.authentication.kind === 'terminal')
-    && !binding.sessionActionOrigin && !binding.workflowActionOrigin
-    && binding.accountId === binding.custodianAccountId;
+    && !binding.sessionActionOrigin && !binding.workflowActionOrigin;
+}
+
+/** Original own custody additionally requires the Machine's Account. */
+export function isOriginalOwnAccountActionCustody(binding: ExternalActionExecutionAuthorizationBindingV1): boolean {
+  return isOriginalAccountActionCustody(binding) && binding.accountId === binding.custodianAccountId;
 }
 
 /** An original input may reuse only the custody already admitted for its exact Session. */

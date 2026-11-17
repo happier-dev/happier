@@ -35,6 +35,9 @@ import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/re
 import { prepareSessionMemoryInheritance } from '@/agent/prompting/coding/sessionPromptStack';
 import { readWorktreeChangeFingerprint } from '@/scm/readWorktreeChangeFingerprint';
 import { runScmCommand } from '@/scm/runtime';
+import { readScmAccountScope, runWithScmAccountScope } from '@/scm/accountScope';
+import { readScmComparisonOperations, runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
+import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
 import type { ExecutionRunHostRuntime } from './executionRunHostRuntime';
 import type { RegisterExecutionRunOccurrence } from './runOccurrenceWitness';
 import { projectExecutionRunInputTurn } from './runOccurrenceWitness';
@@ -355,6 +358,13 @@ type StartExecutionRunArgs = Readonly<{
 }>;
 
 export async function startExecutionRun(args: StartExecutionRunArgs): Promise<ExecutionRunStartResult> {
+  const accountId = args.params.requesterWorkAttributionV1?.accountId ?? readScmAccountScope();
+  return await (accountId ? runWithScmAccountScope(accountId, () => startExecutionRunInAccountScope(args),
+    args.params.projectLaunchContext?.ingress?.callerInputAuthorization)
+    : startExecutionRunInAccountScope(args));
+}
+
+async function startExecutionRunInAccountScope(args: StartExecutionRunArgs): Promise<ExecutionRunStartResult> {
   if (args.params.actionRequestAttributionV1) args = { ...args, params: { ...args.params,
     actionRequestAttributionV1: materializeActionRequestAttributionV1(args.params.actionRequestAttributionV1) } };
   const actionRequestId = typeof args.params.actionRequestId === 'string'
@@ -387,6 +397,7 @@ export async function startExecutionRun(args: StartExecutionRunArgs): Promise<Ex
       // delivery. Keep a known Run observable even when its initialization fails.
       const created = args.runs.get(runId);
       if (created) return projectExistingExecutionRunStartResult(created);
+      await args.params.projectLaunchContext?.disposeNativeOperation?.();
       throw markExecutionRunStartFailure(error, 'noRunCreated');
     }
   } finally {
@@ -395,6 +406,18 @@ export async function startExecutionRun(args: StartExecutionRunArgs): Promise<Ex
 }
 
 async function startAdmittedExecutionRun(
+  args: StartExecutionRunArgs, runId: string, requestBoundRunId: string | null,
+): Promise<ExecutionRunStartResult> {
+  const native = await args.params.projectLaunchContext?.prepareNativeOperation?.(
+    args.params.cwd ?? sessionWorkingDirectory(), args.params.signal ?? new AbortController().signal, runId);
+  return await (native?.memberIdentity
+    ? runWithScmComparisonOperations(createMemberScmComparisonOperations({ native,
+      signal: native.signal }),
+      () => startAdmittedExecutionRunInWorkspace(args, runId, requestBoundRunId))
+    : startAdmittedExecutionRunInWorkspace(args, runId, requestBoundRunId));
+}
+
+async function startAdmittedExecutionRunInWorkspace(
   args: StartExecutionRunArgs, runId: string, requestBoundRunId: string | null,
 ): Promise<ExecutionRunStartResult> {
   if (args.params.sessionId === null) {
@@ -696,7 +719,10 @@ async function startAdmittedExecutionRun(
   }
   if (requestBoundRunId) {
     const existing = args.runs.get(requestBoundRunId);
-    if (existing) return projectExistingExecutionRunStartResult(existing);
+    if (existing) {
+      await args.params.projectLaunchContext?.disposeNativeOperation?.().catch(() => {});
+      return projectExistingExecutionRunStartResult(existing);
+    }
   }
   if (args.params.intent === 'scm_commit_message') {
     args.budgetRegistry?.tryAcquireOneShotTask(runId, 'scm_commit_message', args.params.requesterWorkAttributionV1);
@@ -719,6 +745,9 @@ async function startAdmittedExecutionRun(
     args.runs.set(runId, {
       runId,
       ...(args.params.actionInvocation ? { actionInvocation: args.params.actionInvocation } : {}),
+      ...(args.params.projectLaunchContext?.ingress?.callerInputAuthorization
+        ? { executionAuthorization: args.params.projectLaunchContext.ingress.callerInputAuthorization } : {}),
+      ...(readScmComparisonOperations() ? { scmComparisonOperations: readScmComparisonOperations() } : {}),
       ...(args.params.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: args.params.requesterWorkAttributionV1 } : {}),
       callId,
       sidechainId,
@@ -782,6 +811,7 @@ async function startAdmittedExecutionRun(
     } as const;
     await args.enqueueMarkerWrite(runId, () => writeExecutionRunMarker(startMarkerPayload)).catch(() => {});
     if (args.runs.get(runId)?.status !== 'running') {
+      await args.params.projectLaunchContext?.disposeNativeOperation?.().catch(() => {});
       return startResult;
     }
 
@@ -1725,6 +1755,8 @@ async function startAdmittedExecutionRun(
       } catch {
         // best effort
       }
+    } else {
+      await args.params.projectLaunchContext?.disposeNativeOperation?.().catch(() => {});
     }
     if (inputFinalizationFailed && args.params.runClass === 'bounded') return startResult;
     throw e;

@@ -18,7 +18,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { MACHINE_ROLE_CONTROL_ROUTES } from './roles/machineRoleRpcNamespaces';
 import { configuration } from '@/configuration';
-import { ScmDiffSummaryResultRevisionHintSchema, type ScmDiffSummaryResultRevisionHint } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { ScmDiffSummaryResultPublisherHintSchema, type ScmDiffSummaryResultPublisherHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 import { DoctorSnapshotResourceVitalsSchema, type DoctorSnapshotResourceVitals } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import { createDaemonAdmissionDrain, DaemonAdmissionRefusalCodeSchema, EXECUTION_RUN_ADMISSION_PATH, ExecutionRunDaemonAdmissionResponseSchema, waitForDaemonAdmission, type DaemonAdmissionDrain } from './lifecycle/admissionDrain';
@@ -810,8 +810,8 @@ export function createDaemonControlApp({
     sessionCreationOutcome?: SessionCreationOutcome,
     reportedTrackingKey?: SessionTrackingKey | null,
   ) => void | Promise<void>;
-  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string, providerInputAdmissionReady?: boolean, liveWork?: PushedSessionLiveWork) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
-  onScmDiffSummaryResultUpdated?: (change: ScmDiffSummaryResultRevisionHint) => void;
+  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string, providerInputAdmissionReady?: boolean, liveWork?: PushedSessionLiveWork, executionAuthorizationToken?: string) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
+  onScmDiffSummaryResultUpdated?: (change: ScmDiffSummaryResultPublisherHint) => void;
   /**
    * Settles the existing PID-correlated spawn waiter for a strict terminal
    * creation failure. It is intentionally separate from ordinary Session
@@ -2011,7 +2011,7 @@ export function createDaemonControlApp({
 
   // The one machine result store is written by both Session and daemon processes.
   typed.post('/scm-diff-summary-result-updated', {
-    schema: { body: ScmDiffSummaryResultRevisionHintSchema,
+    schema: { body: ScmDiffSummaryResultPublisherHintSchema,
       response: { 200: z.strictObject({ ok: z.literal(true) }), 401: authSchema401,
         503: daemonAdmissionRefusedRouteResponseSchema } },
     preHandler: requireAuth,
@@ -2056,6 +2056,7 @@ export function createDaemonControlApp({
     schema: {
       body: z.strictObject({ sessionId: z.nullable(z.string().check(z.minLength(1))), followOccurrence: z.optional(SessionFollowOccurrenceNotificationSchema),
         executionRunId: z.optional(z.string().check(z.minLength(1))),
+        executionAuthorizationToken: z.optional(z.string().check(z.minLength(1))),
         providerInputAdmissionReady: z.optional(z.boolean()),
         liveWork: z.optional(z.strictObject({ runnerPid: z.number().check(z.int(), z.positive()),
           revision: z.number().check(z.int(), z.positive()), activity: SessionInputLiveWorkSchema })) }),
@@ -2092,7 +2093,10 @@ export function createDaemonControlApp({
         : !occurrence || 'sourceSessionId' in occurrence && occurrence.sourceSessionId === request.body.sessionId) {
         diagnose('started');
         let result: void | SessionActivityChangedResult;
-        try { result = request.body.liveWork !== undefined
+        try { result = request.body.executionAuthorizationToken !== undefined
+          ? await onSessionActivityChanged?.(request.body.sessionId, request.body.followOccurrence, request.body.executionRunId,
+            request.body.providerInputAdmissionReady, request.body.liveWork, request.body.executionAuthorizationToken)
+          : request.body.liveWork !== undefined
           ? await onSessionActivityChanged?.(request.body.sessionId, request.body.followOccurrence, request.body.executionRunId, request.body.providerInputAdmissionReady, request.body.liveWork)
           : request.body.providerInputAdmissionReady !== undefined
           ? await onSessionActivityChanged?.(request.body.sessionId, request.body.followOccurrence, request.body.executionRunId, request.body.providerInputAdmissionReady)
@@ -4642,8 +4646,8 @@ export function startDaemonControlServer({
     sessionCreationOutcome?: SessionCreationOutcome,
     reportedTrackingKey?: SessionTrackingKey | null,
   ) => void | Promise<void>;
-  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string, providerInputAdmissionReady?: boolean, liveWork?: PushedSessionLiveWork) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
-  onScmDiffSummaryResultUpdated?: (change: ScmDiffSummaryResultRevisionHint) => void;
+  onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string, providerInputAdmissionReady?: boolean, liveWork?: PushedSessionLiveWork, executionAuthorizationToken?: string) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
+  onScmDiffSummaryResultUpdated?: (change: ScmDiffSummaryResultPublisherHint) => void;
   onSessionStartupFailure?: (input: Readonly<{
     spawnNonce: string;
     errorDetail: SessionCreationTerminalSpawnErrorDetail;

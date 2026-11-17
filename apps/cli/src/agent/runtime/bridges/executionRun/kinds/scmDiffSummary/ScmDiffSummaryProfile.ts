@@ -20,6 +20,7 @@ import { buildReviewNarrationInputContext, readReviewNarration, readReviewFindin
 import { findingCitationInstructions, publishReviewFindingCitations } from '@/agent/executionRuns/profiles/review/reviewFindingCitations';
 import { resolveScmDiffSummarySettings } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { bindScmExecutionRunProfileAccountScope } from '../../profileStart';
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -126,7 +127,7 @@ function completeScmDiffSummaryTurn({ start, previousStructuredMeta }: Pick<Exec
     structuredMeta: { kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, payload: result } };
 }
 
-export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
+export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfileAccountScope({
   intent: 'scm_diff_summary',
   supportsDetached: true,
   transcriptMaterialization: 'full',
@@ -417,4 +418,4 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
     if (!published.success) return { toolResultOutput: output, structuredMeta: { kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, payload: output } };
     return { toolResultOutput: published.result.output, structuredMeta: { kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary, payload: published.result.output } };
   },
-};
+});

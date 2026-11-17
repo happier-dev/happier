@@ -294,12 +294,42 @@ describe('executionRunRegistry', () => {
         terminalOccurrenceId: undefined, finishedAtMs: undefined });
       await registry.reconcileRetainedExecutionRunRecords({ nowMs: 3, isPidAlive: () => false });
       const recovered = await registry.readRetainedExecutionRunRecord('lost-follow-source');
-      expect(post.mock.calls).toContainEqual(['/session-activity-changed', {
+      expect(post.mock.calls.filter(([path]) => path === '/session-activity-changed').map(([, body]) => body)).toContainEqual({
         sessionId: state.sessionId, executionRunId: 'lost-follow-source', followOccurrence: {
           original: { source: { kind: 'execution_run', sessionId: state.sessionId, runId: 'lost-follow-source' },
             terminalEventId: recovered?.state.terminalOccurrenceId }, event: { kind: 'failed_or_stopped' },
         },
-      }]);
+      });
+    } finally { post.mockRestore(); }
+  });
+
+  it('keeps requester hint admission through sealed reload and recovered host loss', async () => {
+    const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+    const executionAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'original-requester-admission', binding: {
+      serverIdentityId: 'home', accountId: 'requester', custodianAccountId: 'custodian', accountEncryptionMode: 'plain',
+      authentication: { kind: 'account', tokenEpoch: 0 }, machineId: 'machine', installationId: 'installation',
+      actionId: 'execution.run.start', requestId: 'original-request', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } });
+    const transport = await import('./controlHttp');
+    const post = vi.spyOn(transport, 'daemonPost').mockResolvedValue({ ok: true });
+    const state = { runId: 'requester-host-loss', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
+      intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Review',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+      status: 'running', startedAtMs: 1, executionAuthorization,
+    } as const;
+    try {
+      await executionRunRegistry.retainExecutionRunState(state);
+      // A later checkpoint without the live launch context must keep the original admission.
+      await executionRunRegistry.retainExecutionRunState({ ...state, executionAuthorization: undefined, summary: 'Checkpoint' });
+      const reloaded = await executionRunRegistry.readRetainedExecutionRunRecord(state.runId);
+      expect(reloaded).toMatchObject({ executionAuthorizationToken: executionAuthorization.token });
+      expect(reloaded?.state).not.toHaveProperty('executionAuthorization');
+      post.mockClear();
+      await executionRunRegistry.reconcileRetainedExecutionRunRecords({ nowMs: 3, isPidAlive: () => false });
+      expect((await executionRunRegistry.readRetainedExecutionRunRecord(state.runId))?.state.status).toBe('failed');
+      expect(post.mock.calls.filter(([path]) => path === '/session-activity-changed').map(([, body]) => body))
+        .toContainEqual({ sessionId: null, executionRunId: state.runId, executionAuthorizationToken: executionAuthorization.token });
     } finally { post.mockRestore(); }
   });
 

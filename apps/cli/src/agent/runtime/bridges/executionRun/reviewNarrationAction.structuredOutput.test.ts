@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { PluginAgentContributionV2Schema, readBackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { captureScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
@@ -46,11 +47,12 @@ it.each([
   execFileSync('git', ['init'], { cwd, stdio: 'ignore' });
   writeFileSync(join(cwd, 'change.ts'), 'change\n');
   const sessionId = 'review-model-admission-session';
-  const captured = await captureScmComparison({ cwd, sessionId, source: { kind: 'workingTree' } });
+  const captured = await runWithScmAccountScope(cwd, () => captureScmComparison({ cwd, sessionId, source: { kind: 'workingTree' } }));
   const backendTarget = { kind: 'builtInAgent', agentId: 'claude' } as const;
   const run: ExecutionRunState = {
     runId: 'review-model-admission-run', callId: 'review-model-admission-call', sidechainId: 'review-model-admission-sidechain',
     sessionId, depth: 0, intent: 'review', backendId: 'claude', backendTarget, instructions: '',
+    requesterWorkAttributionV1: { serverId: 'home', accountId: cwd, machineId: 'machine', installationId: 'installation' },
     permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
     status: 'succeeded', startedAtMs: 1, finishedAtMs: 2,
     resumeHandle: { kind: 'provider_session.v1', backendTarget: readBackendTargetRefV2(backendTarget), providerSessionId: 'saved-reviewer' },
@@ -74,7 +76,7 @@ it.each([
     getNowMs: () => 3, budgetRegistry: null, writeActivityMarker: async () => {},
   };
   try {
-    const result = await applyReviewWalkthroughAction({
+    const result = await runWithScmAccountScope('folder-member', () => applyReviewWalkthroughAction({
       runId: run.runId, cwd, runs, controllers,
       nativeModelRegistry,
       input: { reviewRunIds: [run.runId], comparisonId: captured.comparison.id,
@@ -86,7 +88,7 @@ it.each([
       // This is the Session transport boundary; an unsupported model must never reach it.
       enqueueInput: async input => ({ status: 'accepted', localId: input.localId }),
       onStateUpdated: () => {}, failNarration: async () => {},
-    });
+    }));
     expect(result).toMatchObject({ ok: false, errorCode: provider ? 'provider_connection_not_found' : 'model_structured_output_unsupported' });
     // A recovered Provider Run must reach its runtime preparation, where its
     // own binding can be admitted, rather than borrowing a native catalog fact.

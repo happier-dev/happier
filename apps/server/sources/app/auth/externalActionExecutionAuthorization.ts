@@ -4307,6 +4307,21 @@ function matchesExternalActionAuthorizationBinding(binding: ExternalActionExecut
     return sameManagedInput(binding, supplied);
 }
 
+/** Publication spends the original admission; the installed publisher cannot choose another recipient. */
+export async function verifyExternalActionMachinePublicationRequester(input: Readonly<{
+    authorizationToken: string;
+    custodianAccountId: string;
+    machineId: string;
+    installationId: string;
+}>): Promise<string | null> {
+    const binding = await auth.verifyExternalActionExecutionAuthorization(input.authorizationToken);
+    if (!binding
+        || binding.serverIdentityId !== await initializeServerIdentityCache()
+        || binding.custodianAccountId !== input.custodianAccountId
+        || binding.machineId !== input.machineId || binding.installationId !== input.installationId) return null;
+    return binding.accountId;
+}
+
 /** The installed writer proves transport; only this issuer/currentness owner proves the retained handoff root. */
 export async function verifyWorkspaceSyncHandoffSourceAuthorization(
     authorization: ExternalActionExecutionAuthorizationV1,

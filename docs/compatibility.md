@@ -1,5 +1,19 @@
 # Compatibility and version skew
 
+## Member SCM analysis ownership (unreleased 0.3)
+
+Machine Run and saved SCM result invalidations optionally carry the existing
+signed Action execution authorization. The authenticated installed publisher and
+signed Machine/installation binding select the requester Account; omission keeps
+the custodian-only event path. Result content remains behind its Account-scoped
+reader. Live Run callbacks retain the admission privately; the existing sealed
+Run checkpoint retains its original token for host-loss invalidation. This adds
+no grant, proof format, event channel or database
+migration. Matching development Protocol, CLI and server readers reload together
+because older strict hint readers reject the optional field. The inspected
+prospective `../0.2` frontier at `f10121a13b7031230f767a3e4e1328e22aa2e7f7`
+has neither of these hint contracts; no predecessor adapter is introduced.
+
 ## Workflow audience review (unreleased 0.3)
 
 The existing Artifact grant-list Action accepts optional `requestedAudience` and returns optional

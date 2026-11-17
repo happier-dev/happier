@@ -1,3 +1,4 @@
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,14 +33,17 @@ vi.mock('@/scm/scmBackendCatalog', () => ({
 
 describe('ReviewProfile', () => {
   it('does not demand native budget for findings-only review', async () => {
+    return runWithScmAccountScope('account', async () => {
     let budgetDemands = 0;
     expect(await ReviewProfile.finalizeStartParams?.({ cwd: '/repo', request: {
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, intent: 'review', instructions: 'Review the changes',
       permissionMode: 'read_only', runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming',
     }, resolveMaxInputUnicodeCharacters: async () => { budgetDemands++; return 1; } })).toBeUndefined();
     expect(budgetDemands).toBe(0);
+    });
   });
   it('presents only occurrence aliases to the reviewer before continuing into narration', () => {
+    return runWithScmAccountScope('account', () => {
     const comparison = ScmComparisonSchema.parse({ id: 'review-comparison', source: { kind: 'workingTree' },
       repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [], files: [{
         path: 'code.ts', changeKind: 'modified', binary: false, generated: false, lockfile: false,
@@ -61,15 +65,19 @@ describe('ReviewProfile', () => {
     const retainedContext = ReviewProfile.buildInitialInputContext?.({ start });
     expect(retainedContext).toBe(ReviewProfile.buildPrompt({ ...start, instructions: '' }));
     expect(retainedContext).toContain('"findings"');
+    });
   });
   it.each(['', 'Findings are published.\n'])('does not stream unfinished walkthrough JSON after %j', (prefix) => {
+    return runWithScmAccountScope('account', () => {
     for (const output of ['{', '{"walk', '```json\n', '```json\n{"walkthrough":', '{"walkthrough":{"title":"Reading']) {
       expect(ReviewProfile.computeSidechainStreamText?.({ fullText: `${prefix}${output}` })).toBe(prefix.trimEnd());
     }
     expect(ReviewProfile.computeSidechainStreamText?.({ fullText: 'The config uses {"allow":true} exactly.' }))
       .toBe('The config uses {"allow":true} exactly.');
+    });
   });
   it.each([false, true])('does not accept model-authored persisted finding references (follow-up: %s)', (followUp) => {
+    return runWithScmAccountScope('account', () => {
     const finding = { id: 'finding', title: 'Issue', summary: 'Check this', severity: 'high', category: 'correctness',
       comment: { id: 'forged-comment', state: 'resolved', serverRevision: 1, projectId: 'foreign-project' } };
     const start: ExecutionRunProfileStartParams = { sessionId: 'session', runId: 'run', callId: 'call', sidechainId: 'call',
@@ -88,8 +96,10 @@ describe('ReviewProfile', () => {
     expect(payload).not.toHaveProperty('commentIds');
     expect(payload).not.toHaveProperty('materialization');
     expect(payload).not.toHaveProperty('triage');
+    });
   });
   it.each(['partial', 'failed'] as const)('preserves %s review truth and uses newly materialized findings for the narration input', async (reviewOutcome) => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-review-partial-'));
     const comparison = ScmComparisonSchema.parse({ id: 'partial-comparison', source: { kind: 'workingTree' },
       repository: { rootPath: cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
@@ -109,8 +119,10 @@ describe('ReviewProfile', () => {
       expect(ReviewProfile.buildInitialInputContext?.({ start: { ...start, intentInput: current } })).toContain('persisted-comment');
       expect(narration.provenance).toMatchObject({ reviewedRuns: [{ reviewOutcome }] });
     } finally { await rm(cwd, { recursive: true, force: true }); }
+    });
   });
   it.each([false, true])('publishes findings before narration, including when its saved generator is replaced (%s)', async (replaced) => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-review-walkthrough-'));
     const comparison = ScmComparisonSchema.parse({ id: 'review-comparison', source: { kind: 'workingTree' },
       repository: { rootPath: cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
@@ -158,9 +170,11 @@ describe('ReviewProfile', () => {
       const saved = await scmDiffSummaryResultStore.read({ cwd, sessionId: start.sessionId!, resultId: output.resultId! });
       expect(saved.success && saved.result.output).toEqual(output);
     } finally { await rm(cwd, { recursive: true, force: true }); }
+    });
   });
 
   it('keeps published review findings and a failed narration state when the walkthrough turn fails', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-review-narration-failed-'));
     const comparison = ScmComparisonSchema.parse({ id: 'review-failure-comparison', source: { kind: 'workingTree' },
       repository: { rootPath: cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
@@ -178,8 +192,10 @@ describe('ReviewProfile', () => {
       expect(ScmDiffSummaryGenerateOutputSchema.parse(second?.toolResultOutput).outputs?.walkthrough?.state).toBe('failed');
       expect(first?.structuredMeta?.payload).toMatchObject({ summary: 'Retained findings' });
     } finally { await rm(cwd, { recursive: true, force: true }); }
+    });
   });
   it('keeps findings and settles saved narration when its lazy runtime budget is exhausted', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-review-budget-'));
     const comparison = ScmComparisonSchema.parse({ id: 'review-budget-comparison', source: { kind: 'workingTree' },
       repository: { rootPath: cwd }, endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } });
@@ -203,8 +219,10 @@ describe('ReviewProfile', () => {
           state: 'failed', reason: expect.stringContaining('capacity'), reasonCode: 'provider_input_too_large',
         } } } } });
     } finally { await rm(cwd, { recursive: true, force: true }); }
+    });
   });
   it('adds unsupported host-resolved SCM scope for non-repository review starts', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-review-non-repo-'));
     const request = {
       intent: 'review',
@@ -241,9 +259,11 @@ describe('ReviewProfile', () => {
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
+    });
   });
 
   it('preserves SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY while re-deriving scmReviewScope', async () => {
+    return runWithScmAccountScope('account', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-review-pr-scope-'));
     const scmPullRequestReviewScope = {
       kind: 'scm_pull_request_review_scope.v1',
@@ -307,9 +327,11 @@ describe('ReviewProfile', () => {
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
+    });
   });
 
   it('parses trailing JSON when model output includes preamble text', () => {
+    return runWithScmAccountScope('account', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
@@ -345,9 +367,11 @@ describe('ReviewProfile', () => {
     expect(res.structuredMeta?.kind).toBe('review_findings.v2');
     expect((res.structuredMeta as any).payload?.summary).toBe('Ok');
     expect((res.structuredMeta as any).payload?.overviewMarkdown).toContain('Overview');
+    });
   });
 
   it('validates and retains bounded proposed comments in structured output', () => {
+    return runWithScmAccountScope('account', () => {
     const start = {
       sessionId: 'sess_1', runId: 'run_1', callId: 'call_1', sidechainId: 'call_1',
       intent: 'review', backendId: 'coderabbit',
@@ -372,15 +396,19 @@ describe('ReviewProfile', () => {
     expect((res.structuredMeta?.payload as any).proposedComments).toEqual([
       expect.objectContaining({ findingId: 'finding-1', body: 'Validate the redirect.' }),
     ]);
+    });
   });
 
   it('leaves every review action to the runtime, so no action rewrites the review result', () => {
+    return runWithScmAccountScope('account', () => {
     // A finding's decision lives in its ReviewComment and host comments are materialized by the
     // host bridge; the profile has no reducer that could write a second copy into the result.
     expect(ReviewProfile.applyAction).toBeUndefined();
+    });
   });
 
   it('fails deterministically when model output is not strict JSON', () => {
+    return runWithScmAccountScope('account', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
@@ -405,9 +433,11 @@ describe('ReviewProfile', () => {
 
     expect(res.status).toBe('failed');
     expect((res.toolResultOutput as any)?.error?.code).toBe('invalid_output');
+    });
   });
 
   it('treats provider-specific plain text as invalid generic review output', () => {
+    return runWithScmAccountScope('account', () => {
     const start = {
       sessionId: 'sess_1',
       runId: 'run_1',
@@ -444,9 +474,11 @@ describe('ReviewProfile', () => {
 
     expect(res.status).toBe('failed');
     expect((res.toolResultOutput as any)?.error?.code).toBe('invalid_output');
+    });
   });
 
   it('exposes review.follow_up alongside review.triage for review findings payloads', () => {
+    return runWithScmAccountScope('account', () => {
     const actionIds = ReviewProfile.listAvailableActionIds?.({
       start: {
         sessionId: 'sess_1',
@@ -483,9 +515,11 @@ describe('ReviewProfile', () => {
     });
 
     expect(actionIds).toEqual(['review.triage', 'review.follow_up']);
+    });
   });
 
   it('hides review.follow_up for ephemeral review findings payloads', () => {
+    return runWithScmAccountScope('account', () => {
     const actionIds = ReviewProfile.listAvailableActionIds?.({
       start: {
         sessionId: 'sess_1',
@@ -522,9 +556,11 @@ describe('ReviewProfile', () => {
     });
 
     expect(actionIds).toEqual(['review.triage']);
+    });
   });
 
   it('builds a review-specific repair prompt and normalizes review sidechain text', () => {
+    return runWithScmAccountScope('account', () => {
     expect(ReviewProfile.emitFinalSidechainMessageWhenStreamed).toBe(true);
     const prompt = ReviewProfile.buildInvalidOutputRepairPrompt?.({
       rawText: 'not json',
@@ -552,5 +588,6 @@ describe('ReviewProfile', () => {
     expect(
       ReviewProfile.computeSidechainStreamText?.({ fullText: 'Review prose\n{"summary":"Ok","findings":[]}' }),
     ).toBe('Review prose');
+    });
   });
 });

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { open, writeFile } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { ScmComparisonSchema, ScmComparisonFileSchema } from '@happier-dev/protocol/scm/comparison';
@@ -9,6 +9,22 @@ import type { ScmComparisonFile } from '@happier-dev/protocol/scm/comparison';
 import { ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { writeFileAtomically } from '@/utils/fs/writeJsonAtomic';
 import { projectCapturedComparisonFileIndex } from './projectCapturedComparison';
+import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';
+import { resolveScmAccountStorageDirectory } from '../accountScope';
+
+export function resolveStoredScmComparisonPath(input: Readonly<{
+  activeServerDir: string; comparisonId: string; sessionId?: string; accountId?: string;
+}>): string {
+  if (!/^[a-f0-9]{64}$/.test(input.comparisonId)) {
+    throw Object.assign(new Error('Captured comparison identity is invalid'), { code: 'DIFF_UNAVAILABLE' });
+  }
+  return join(resolveScmAccountStorageDirectory(join(input.activeServerDir, 'runtime', 'scm', 'comparisons'), input.accountId),
+    input.sessionId ? encodeRepositoryCheckpointScope(input.sessionId) : 'repository', `${input.comparisonId}.json`);
+}
+
+export function resolveStoredScmComparisonEndpointsPath(comparisonPath: string): string {
+  return `${comparisonPath}.endpoints`;
+}
 
 export const StoredScmComparisonSchema = z.strictObject({
   sessionId: z.optional(z.string()), metadata: ScmDiffSummaryMetadataSchema, comparison: ScmComparisonSchema,

@@ -69,6 +69,8 @@ const RetainedRunStateSchema = z.strictObject({
 export const RetainedExecutionRunRecordSchema = z.strictObject({
   ownerPid: z.number().check(z.int(), z.positive()), ownerProcessStartTimeMs: z.optional(z.number().check(z.int(), z.nonnegative())),
   requesterWorkAttributionV1: z.optional(RequesterWorkAttributionV1Schema),
+  /** Original signed admission for requester hints after host loss; sealed with the private record. */
+  executionAuthorizationToken: z.optional(z.string().check(z.minLength(1))),
   state: RetainedRunStateSchema,
   /** Stable identity for redelivery if recovery is interrupted after the loss commit. */
   terminalEventId: z.optional(z.string().check(z.minLength(1))),
@@ -79,6 +81,7 @@ export function projectRetainedExecutionRunState(run: ExecutionRunState): Retain
   // Materialized auth, transient registrations, Account settings and turn authority
   // are deliberately not restart inputs. Resume re-resolves current material.
   const { runtimeSettings: _settings, requesterWorkAttributionV1: _attribution, projectSetup: _setup,
+    executionAuthorization: _authorization, scmComparisonOperations: _comparisonOperations,
     actionInvocation: _invocation, launch, ...state } = run;
   const { connectedServicesRegistration: _registration, connectedServicesSelectionAgent: _agent, ...selection } = launch ?? {};
   return RetainedRunStateSchema.parse({ ...state, ...(launch ? { launch: selection } : {}) });

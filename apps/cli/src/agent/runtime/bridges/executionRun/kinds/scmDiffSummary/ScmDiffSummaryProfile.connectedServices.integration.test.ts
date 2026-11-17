@@ -1,3 +1,4 @@
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { execFileSync } from 'node:child_process';
 
 import { describe, expect, it } from 'vitest';
@@ -23,6 +24,7 @@ const connectedRoute: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: 
 
 describe('saved SCM generator credential routing', () => {
   it('persists a late-resolved route through the live Run publisher', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-scm-live-route-', async cwd => {
       execFileSync('git', ['init', '-q'], { cwd });
       const captured = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
@@ -46,8 +48,10 @@ describe('saved SCM generator credential routing', () => {
       const saved = ScmDiffSummaryResultResponseSchema.parse(await scmDiffSummaryResultStore.read({ cwd, resultId: output.resultId! }));
       expect(saved).toMatchObject({ success: true, result: { generator: { connectedServices: connectedRoute } } });
     });
+    });
   });
   it.each([connectedRoute, null])('persists the admitted route through profile preparation and the saved-result reader (%j)', async connectedServices => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-scm-route-', async cwd => {
       execFileSync('git', ['init', '-q'], { cwd });
       const captured = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
@@ -69,8 +73,10 @@ describe('saved SCM generator credential routing', () => {
       const saved = ScmDiffSummaryResultResponseSchema.parse(await scmDiffSummaryResultStore.read({ cwd, resultId: output.resultId! }));
       expect(saved).toMatchObject({ success: true, result: { generator: { connectedServices } } });
     });
+    });
   });
   it.each([connectedRoute, null])('retains the captured route on the first Review continuation (%j)', async connectedServices => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-review-route-', async cwd => {
       execFileSync('git', ['init', '-q'], { cwd });
       const captured = await captureScmComparison({ cwd, source: { kind: 'workingTree' } });
@@ -95,6 +101,7 @@ describe('saved SCM generator credential routing', () => {
       expect(saved).toMatchObject({ success: true, result: { generator: {
         modelId: modelSelection.modelId, modelSelection, connectedServices,
       }, output: { runId: run.runId } } });
+    });
     });
   });
 });

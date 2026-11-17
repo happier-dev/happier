@@ -16,6 +16,8 @@ import { encryptStoredSessionPayload } from '@/session/transport/encryption/sess
 
 import { createCliActionDeps } from './createCliActionDeps';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
+import { runWithScmAccountScope } from '@/scm/accountScope';
+import { scmRpcOperationContextStorage } from '@/scm/rpc/operationContext';
 import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { updateSettings } from '@/persistence';
@@ -150,7 +152,6 @@ describe('exact-machine SCM Action targeting', () => {
     const { executeExternalAction } = await import('@/daemon/externalActions/executeExternalAction');
     const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
     const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
-    const { isApprovalRequiredByActionsSettings } = await import('@happier-dev/protocol/actions/actionApprovalPolicy');
     await withTempDir('scm-public-retained-custodian-', async home => {
       const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
       try {
@@ -222,13 +223,15 @@ describe('exact-machine SCM Action targeting', () => {
     });
   });
 
-  it('keeps saved results reachable by the verified Machine custodian after Session deletion without widening Session or shared access', async () => {
+  it.each(['owner', 'shared-user'] as const)('keeps requester results reachable after Session deletion through verified Machine Manage access (%s)', async requesterAccountId => runWithScmAccountScope(requesterAccountId, async () => {
     await withTempDir('scm-retained-custodian-', async home => {
+      return scmRpcOperationContextStorage.run({ context: { signal: new AbortController().signal }, workingDirectory: home,
+        accessPolicy: { kind: 'restrictedRoots', roots: [home] } }, async () => {
       const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
       try {
         env.patch({ HAPPIER_HOME_DIR: home, HAPPIER_ACTIVE_SERVER_ID: 'retained-home' });
         reloadConfiguration();
-        await updateSettings(settings => ({ ...settings, machineIdByServerId: { 'retained-home': 'machine' } }));
+        await updateSettings(settings => ({ ...settings, machineIdByServerId: { [configuration.activeServerId]: 'machine' } }));
         const sessionId = 'deleted-session';
         const saved = await scmDiffSummaryResultStore.create({ cwd: home, sessionId,
           output: ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'retained-comparison',
@@ -242,44 +245,58 @@ describe('exact-machine SCM Action targeting', () => {
         // below represents the already verified authenticated transport witness.
         vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, data: {} });
         const token = 'machine-custodian';
-        const executor = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
+        const deps = createCliActionDeps({ token, credentials: { token, encryption: null },
           sessionId: '', mode: 'plain', ctx: null,
-          scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [home] } }));
+          scmFilesystemAccessPolicy: { kind: 'restrictedRoots', roots: [home] } });
+        const executor = createActionExecutor(deps);
+        // Exercise the real receiving Action owner after the transport has admitted
+        // its typed Machine witness; root public-Action authentication is separate.
+        const invoke = (actionId: Parameters<NonNullable<typeof deps.scmActionExecute>>[0]['actionId'],
+          input: unknown, context: RpcActionExecutorContext) => deps.scmActionExecute!({ actionId, input, context,
+          executeCanonicalAction: (nestedId, nestedInput) => executor.execute(nestedId, nestedInput, context),
+          executeHostingProviderAction: (nestedId, nestedInput) => executor.execute(nestedId, nestedInput, context),
+        });
         const sibling = await scmDiffSummaryResultStore.create({ cwd: home, sessionId, output: saved.output });
         let machineVerifications = 0;
         const owner: RpcActionExecutorContext = { surface: 'rpc', authority: 'account_automation',
+          runtimeAccountId: requesterAccountId,
           serverId: configuration.activeServerId, externalActionTarget: { kind: 'machine', machineId: 'machine' },
-          machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+          machineAdmission: { actorAccountId: requesterAccountId, custodianAccountId: 'owner', machineId: 'machine',
             installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
           verifyMachineAdmissionCurrent: async () => { machineVerifications++; return true; } };
         const request = { cwd: home, resultId: saved.resultId };
+        const admittedRead = await invoke('scm.diffSummary.result.read', request, owner);
+        expect(admittedRead, JSON.stringify(admittedRead)).toMatchObject({ success: true, result: { resultId: saved.resultId } });
         for (const denied of [
           { ...owner, machineAdmission: undefined },
           { ...owner, verifyMachineAdmissionCurrent: undefined },
           { ...owner, verifyMachineAdmissionCurrent: async () => false },
-          { ...owner, machineAdmission: { ...owner.machineAdmission!, actorAccountId: 'shared-user' } },
+          { ...owner, machineAdmission: { ...owner.machineAdmission!, actorAccountId: 'another-account' } },
           { ...owner, machineAdmission: { ...owner.machineAdmission!, role: 'use' as const } },
           { ...owner, machineAdmission: { ...owner.machineAdmission!, machineId: 'other-machine' } },
           { ...owner, rpcSessionAuthorization: { kind: 'session.write' as const, sessionId: 'other-session' } },
           { ...owner, actionCaller: { kind: 'session' as const, sessionId: 'other-session', starterDepth: 0, turnDepth: 0 } },
         ]) {
-          expect(await executor.execute('scm.diffSummary.result.read', request, denied))
-            .toMatchObject({ ok: true, result: { success: false, errorCode: 'result_unavailable' } });
+          const response = await invoke('scm.diffSummary.result.read', request, denied);
+          expect(response).toMatchObject({ success: false, errorCode: 'result_unavailable' });
         }
         const beforeList = machineVerifications;
-        expect(await executor.execute('scm.diffSummary.result.list', {}, owner)).toMatchObject({ ok: true,
-          result: { success: true, count: 2, results: expect.arrayContaining([
+        expect(await invoke('scm.diffSummary.result.list', {}, owner)).toMatchObject({ success: true, count: 2, results: expect.arrayContaining([
             expect.objectContaining({ resultId: saved.resultId }), expect.objectContaining({ resultId: sibling.resultId }),
-          ]) } });
+          ]) });
         expect(machineVerifications - beforeList).toBe(1);
-        expect(await executor.execute('scm.diffSummary.result.read', request, owner)).toMatchObject({ ok: true,
-          result: { success: true, result: { resultId: saved.resultId, revision: 0 } } });
-        expect(await executor.execute('scm.diffSummary.result.delete', { ...request, expectedRevision: 0 },
-          { ...owner, bypassApprovals: true })).toMatchObject({ ok: true, result: { success: true } });
+        expect(await invoke('scm.diffSummary.result.read', request, owner)).toMatchObject({ success: true, result: { resultId: saved.resultId, revision: 0 } });
+        const otherAccount = requesterAccountId === 'owner' ? 'shared-user' : 'owner';
+        expect(await invoke('scm.diffSummary.result.read', request, { ...owner,
+          runtimeAccountId: otherAccount, machineAdmission: { ...owner.machineAdmission!, actorAccountId: otherAccount },
+        })).toMatchObject({ success: false });
+        expect(await invoke('scm.diffSummary.result.delete', { ...request, expectedRevision: 0 },
+          { ...owner, bypassApprovals: true })).toMatchObject({ success: true });
         expect(await scmDiffSummaryResultStore.read(request)).toMatchObject({ success: false, errorCode: 'result_not_found' });
       } finally { env.restore(); reloadConfiguration(); }
+      });
     });
-  });
+  }));
 
   it('retries only personal mark cleanup after custodian Clear deletes a result whose generator Session is absent', async () => {
     await withTempDir('scm-retained-clear-retry-', async home => {

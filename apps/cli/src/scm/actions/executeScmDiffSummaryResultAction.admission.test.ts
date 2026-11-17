@@ -1,3 +1,4 @@
+import { runWithScmAccountScope, resolveScmAccountStorageDirectory } from '@/scm/accountScope';
 import axios, { AxiosHeaders } from 'axios';
 import nacl from 'tweetnacl';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -27,6 +28,7 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('saved SCM producer admission', () => {
   it('admits usage scope only for in-window SCM runs and still excludes private costs', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-usage-scope-', async cwd => {
       const now = Date.now();
       const day = 24 * 60 * 60 * 1000;
@@ -41,6 +43,7 @@ describe('saved SCM producer admission', () => {
       for (const record of records) {
         await retainExecutionRunState({ runId: record.sessionId, callId: record.sessionId, sidechainId: record.sessionId,
           sessionId: record.sessionId, depth: 0, intent: record.intent,
+          requesterWorkAttributionV1: { serverId: 'home', accountId: cwd, machineId: 'machine', installationId: 'installation' },
           backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Read',
           permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
           launch: { cwd }, status: 'succeeded', startedAtMs: record.startedAtMs,
@@ -52,6 +55,7 @@ describe('saved SCM producer admission', () => {
       }
       const admitted: (string | undefined)[] = [];
       const response = await executeScmActionOperation({ actionId: 'scm.diffSummary.result.list', input: { includeUsage: true },
+        actionContext: { runtimeAccountId: cwd },
         workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] },
         // This is the real caller's Session authorization boundary, not a substituted scope owner.
         authorizeSession: async id => { admitted.push(id); return id !== 'usage-private'; } });
@@ -59,9 +63,11 @@ describe('saved SCM producer admission', () => {
         status: 'partial', estimatedUsd: 1.5, pricedRunCount: 2, unpricedRunCount: 0 } });
       expect(admitted.sort()).toEqual(['usage-allowed', 'usage-finished', 'usage-private']);
     });
+    });
   });
 
   it('spends a restricted Refine grant on its own child, never on direct Session send', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-refine-root-', async cwd => {
       const sessionId = 'session';
       const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison',
@@ -123,9 +129,11 @@ describe('saved SCM producer admission', () => {
         .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
       expect(sends).toHaveLength(1);
     });
+    });
   });
 
   it('keeps comparison selection body-free and reads an admitted exact id once, without disclosing denied scopes', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-saved-selection-', async cwd => {
       const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'selected-comparison',
         metadata: { source: { kind: 'workingTree' }, sourceKey: 'selected-comparison' },
@@ -171,8 +179,10 @@ describe('saved SCM producer admission', () => {
         await scmDiffSummaryResultStore.delete({ cwd, sessionId: 'private', resultId: denied.resultId, expectedRevision: 0 });
       }
     });
+    });
   });
   it('marks the live working-tree diff by content key without capturing it, and rejects stale keys', async () => {
+    return runWithScmAccountScope('account', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-live-marks-' });
     const cwd = fixture.rootPath;
     let value: unknown = null; let version = -1;
@@ -207,8 +217,10 @@ describe('saved SCM producer admission', () => {
         .toMatchObject({ success: false, errorCode: 'reviewed_marks_invalid_selection' });
       expect(value).toMatchObject({ reviewedChangeKeys: changeKeys });
     } finally { await removeTempDir(cwd); }
+    });
   });
   it('marks an exact retained comparison without a saved result and refuses private, foreign-Home and foreign-root captures', async () => {
+    return runWithScmAccountScope('account', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-comparison-marks-' });
     const cwd = fixture.rootPath;
     await writeFile(join(cwd, fixture.trackedPath), 'Captured change without narration\n');
@@ -266,8 +278,10 @@ describe('saved SCM producer admission', () => {
       await deleteCapturedScmComparison({ cwd, sessionId: 'private', comparisonId: privateCapture.comparison.id });
       await removeTempDir(cwd);
     }
+    });
   });
   it('omits private Session results and rejects every saved-result effect even when its Session selector is supplied', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-saved-admission-', async cwd => {
       const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison',
         analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
@@ -320,9 +334,11 @@ describe('saved SCM producer admission', () => {
         success: true, result: { revision: 0, output: { outputs: { walkthrough: { value: { title: 'Private Session title' } } } } },
       });
     });
+    });
   });
 
   it('admits a separately authorized Session while a different Home with the same Session id remains denied', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-saved-session-admission-', async cwd => {
       const sessionId = 'c111111111111111111111111';
       const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison',
@@ -358,9 +374,11 @@ describe('saved SCM producer admission', () => {
           serverUrl: 'https://home-a.test' })),
       })).toMatchObject({ success: false, errorCode: 'result_unavailable' });
     });
+    });
   });
 
   it('does not disclose a private capture by a caller-supplied Session namespace', async () => {
+    return runWithScmAccountScope('account', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-capture-admission-' });
     const cwd = fixture.rootPath;
     await writeFile(join(cwd, fixture.trackedPath), 'Private captured change\n');
@@ -375,9 +393,11 @@ describe('saved SCM producer admission', () => {
       await deleteCapturedScmComparison({ cwd, sessionId, comparisonId: captured.comparison.id });
       await removeTempDir(cwd);
     }
+    });
   });
 
   it('continues a workspace-native generator through its retained Machine Run without manufacturing a Session', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-saved-detached-discussion-', async cwd => {
       const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison', runId: 'detached-run',
         analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
@@ -410,9 +430,11 @@ describe('saved SCM producer admission', () => {
       }));
       expect(executeCanonicalAction.mock.calls.some(([actionId]) => actionId === 'session.message.send')).toBe(false);
     });
+    });
   });
 
   it('rejects a capture outside the admitted Machine root instead of substituting the working directory', async () => {
+    return runWithScmAccountScope('account', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-capture-root-admission-' });
     try {
       await withTempDir('happier-outside-machine-root-', async outside => {
@@ -422,9 +444,11 @@ describe('saved SCM producer admission', () => {
         })).toMatchObject({ success: false, errorCode: 'DIFF_UNAVAILABLE' });
       });
     } finally { await removeTempDir(fixture.rootPath); }
+    });
   });
 
   it('does not disclose private stored values through parsing failures before Session admission', async () => {
+    return runWithScmAccountScope('account', async () => {
     await withTempDir('happier-private-unreadable-admission-', async cwd => {
       const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison',
         analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
@@ -434,7 +458,7 @@ describe('saved SCM producer admission', () => {
         requestedOutputs: ['summary'], outputs: { summary: { state: 'pending' } },
       });
       const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'private-session', output });
-      const path = join(configuration.activeServerDir, 'runtime', 'scm', 'results', `${saved.resultId}.json`);
+      const path = join(resolveScmAccountStorageDirectory(join(configuration.activeServerDir, 'runtime', 'scm', 'results')), `${saved.resultId}.json`);
       const original = await readFile(path, 'utf8');
       try {
         const stored = JSON.parse(original);
@@ -451,6 +475,7 @@ describe('saved SCM producer admission', () => {
       } finally {
         await writeFile(path, original);
       }
+    });
     });
   });
 });

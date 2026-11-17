@@ -10,7 +10,9 @@ import { executeMemberScmRead, type MemberScmReadEffect, type MemberScmRemovalSe
 import { executeMemberSessionImport, type MemberSessionImportEffect, type MemberSessionImportRecord } from '@/session/handoff/agentBundle/memberImportEffect';
 import { executeMemberSessionDirectoryRemoval, type MemberSessionDirectoryRemovalEffect, type MemberSessionDirectoryRemovalService } from '@/session/creation/memberSessionDirectoryRemoval';
 
-export type WorkspaceEffectServices = Readonly<{
+import { executeMemberScmComparison, type MemberScmComparisonEffect, type MemberScmComparisonServices } from '@/scm/rpc/memberScmComparison';
+
+export type WorkspaceEffectServices = Partial<MemberScmComparisonServices> & Readonly<{
   connectedAccounts?: WorkspaceCheckoutEffectContext['connectedAccounts'];
   onEffectsIssued(): Promise<void>;
   complete(result: MaterializedProjectCheckout): Promise<void>;
@@ -52,7 +54,7 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
         if (message.kind !== 'run' || running) throw new Error('workspace_effect_protocol_invalid');
         // Admission/source descriptors are inherited solely from the parent
         // owner, exactly as in the existing background-process bootstrap.
-        const dispatched = message.context as WorkspaceCheckoutEffect | WorkspaceNativeSyncEffect | MemberScmReadEffect | MemberSessionImportEffect | MemberSessionDirectoryRemovalEffect;
+        const dispatched = message.context as WorkspaceCheckoutEffect | WorkspaceNativeSyncEffect | MemberScmReadEffect | MemberScmComparisonEffect | MemberSessionImportEffect | MemberSessionDirectoryRemovalEffect;
         const effect = 'kind' in dispatched && dispatched.kind === 'native_sync' ? dispatched.checkout : dispatched as WorkspaceCheckoutEffect;
         if (effect.workspaceRoot !== (io.currentDirectory ?? process.cwd)()) {
           throw privateProjectCheckoutRefusal();
@@ -66,6 +68,13 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
         running = (async () => {
           let effectsIssued = false;
           try {
+            if ('kind' in dispatched && dispatched.kind === 'scm_comparison') {
+              if (!services.completeScmRead || !services.comparisonShelf) throw privateProjectCheckoutRefusal();
+              await services.completeScmRead(await executeMemberScmComparison(dispatched, signal,
+                { ...services, comparisonShelf: services.comparisonShelf }));
+              send({ kind: 'settled', id: runId });
+              return;
+            }
             if ('kind' in dispatched && dispatched.kind === 'scm_read') {
               if (!services.completeScmRead) throw privateProjectCheckoutRefusal();
               await services.completeScmRead(await executeMemberScmRead(dispatched, signal, services));

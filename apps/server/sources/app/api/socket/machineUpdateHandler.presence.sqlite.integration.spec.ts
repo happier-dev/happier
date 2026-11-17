@@ -7,6 +7,8 @@ import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER,
     buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 
 import { auth } from '@/app/auth/auth';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { setAccountStatusInTx } from '@/app/home/governance/accountLifecycle';
 import { eventRouter } from '@/app/events/connectionEventRouter';
 import type { ClientConnection } from '@/app/events/eventPayloadTypes';
@@ -1237,6 +1239,72 @@ describe('Machine presence through current C41 recipients (real SQLite)', () => 
             expect(updates(1)).toEqual([]);
         } finally {
             eventRouter.removeConnection(owner.id, publisherConnection);
+            for (const reader of readers) eventRouter.removeConnection(reader.accountId, reader.connection);
+        }
+    });
+
+    it.each(['execution-run-updated', 'scm-diff-summary-result-updated'] as const)('delivers %s only to the signed requester from its admitted Machine publisher', async event => {
+        const custodian = await db.account.create({ data: { publicKey: `hint-custodian-${randomUUID()}`, encryptionMode: 'plain' } });
+        const requester = await db.account.create({ data: { publicKey: `hint-requester-${randomUUID()}`, encryptionMode: 'plain' } });
+        const machine = await createMachine(custodian.id);
+        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: machine.id,
+            principal: { kind: 'account', accountId: requester.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
+        const envelope = { v: 1 as const, requestId: randomUUID(), target: { kind: 'machine' as const, machineId: machine.id },
+            input: { cwd: '/workspace' } };
+        const executionAuthorization = await auth.mintExternalActionExecutionAuthorization({ accountId: requester.id,
+            authentication: { kind: 'account', tokenEpoch: requester.tokenEpoch }, serverIdentityId: await getOrCreateServerIdentityId(),
+            machineId: machine.id, actionId: 'execution.run.start', target: envelope.target, requestId: envelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input: envelope.input });
+        const otherMachine = await createMachine(custodian.id);
+        const otherEnvelope = { ...envelope, target: { kind: 'machine' as const, machineId: otherMachine.id } };
+        const otherAuthorization = await auth.mintExternalActionExecutionAuthorization({ accountId: custodian.id,
+            authentication: { kind: 'account', tokenEpoch: custodian.tokenEpoch }, serverIdentityId: await getOrCreateServerIdentityId(),
+            machineId: otherMachine.id, actionId: 'execution.run.start', target: otherEnvelope.target, requestId: otherEnvelope.requestId,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(otherEnvelope) }, { input: otherEnvelope.input });
+        const readers = [custodian, requester].map(account => {
+            const socket = Object.assign(createFakeSocket({ id: `hint-reader-${account.id}`, data: { clientType: 'user-scoped' } }),
+                { disconnect: vi.fn() });
+            const connection: ClientConnection = { userId: account.id, connectionType: 'user-scoped', socket: socket as unknown as Socket };
+            eventRouter.addConnection(account.id, connection);
+            return { accountId: account.id, socket, connection };
+        });
+        const publisher = Object.assign(createFakeSocket({ data: { clientType: 'machine-scoped', machineId: machine.id,
+            [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: machine.installationId } }), { disconnect: vi.fn() });
+        machineUpdateHandler(custodian.id, publisher as unknown as Socket, { operationSocketBatchLimits: {
+            ok: true, limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+        } });
+        const identity = event === 'execution-run-updated' ? { runId: 'requester-run' } : { resultId: 'requester-result', revision: 2 };
+        const payload = { machineId: machine.id, installationId: machine.installationId, ...identity,
+            executionAuthorizationToken: executionAuthorization.token };
+        const updates = (index: number) => readers[index]!.socket.emit.mock.calls
+            .filter(([name, value]) => name === 'ephemeral' && value?.type === event).map(([, value]) => value);
+        let machineReads = 0;
+        const stopObserving = observeSqliteRequests({ before: request => {
+            if (request.model === 'Machine' || request.model === 'MachineGrant') machineReads += 1;
+        } });
+        try {
+            const publish = getSocketHandler(publisher, event);
+            await publish({ machineId: machine.id, installationId: machine.installationId, ...identity });
+            expect(updates(0)).toEqual([{ type: event, machineId: machine.id, ...identity }]);
+            expect(updates(1)).toEqual([]);
+            readers[0]!.socket.emit.mockClear();
+            await publish(payload);
+            expect(updates(1)).toEqual([{ type: event, machineId: machine.id, ...identity }]);
+            expect(updates(0)).toEqual([]);
+            readers[1]!.socket.emit.mockClear();
+            // The opaque token is the existing signed admission; the daemon never supplies a recipient.
+            for (const invalid of [
+                { ...payload, executionAuthorizationToken: otherAuthorization.token },
+                { ...payload, executionAuthorizationToken: 'invalid' },
+                { ...payload, executionAuthorizationToken: executionAuthorization.token.slice(0, -8) },
+                { ...payload, installationId: 'another-installation' },
+                { ...payload, recipientAccountId: custodian.id },
+            ]) await publish(invalid);
+            expect(updates(1)).toEqual([]);
+            expect(updates(0)).toEqual([]);
+            expect(machineReads).toBe(0);
+        } finally {
+            stopObserving();
             for (const reader of readers) eventRouter.removeConnection(reader.accountId, reader.connection);
         }
     });

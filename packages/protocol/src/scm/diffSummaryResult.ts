@@ -58,8 +58,14 @@ export const ScmDiffSummaryResultRevisionHintSchema = lazyZodSchema(() => z.stri
   resultId: z.string().check(z.minLength(1)), revision: z.number().check(z.int(), z.nonnegative()),
 }));
 export type ScmDiffSummaryResultRevisionHint = z.infer<typeof ScmDiffSummaryResultRevisionHintSchema>;
-export const ScmDiffSummaryMachineResultUpdateSchema = lazyZodSchema(() => z.strictObject({
+/** Private publisher transport; the authorization never enters the reader's ephemeral hint. */
+export const ScmDiffSummaryResultPublisherHintSchema = lazyZodSchema(() => z.strictObject({
   ...ScmDiffSummaryResultRevisionHintSchema.shape,
+  executionAuthorizationToken: z.optional(z.string().check(z.minLength(1))),
+}));
+export type ScmDiffSummaryResultPublisherHint = z.infer<typeof ScmDiffSummaryResultPublisherHintSchema>;
+export const ScmDiffSummaryMachineResultUpdateSchema = lazyZodSchema(() => z.strictObject({
+  ...ScmDiffSummaryResultPublisherHintSchema.shape,
   machineId: z.string().check(z.minLength(1)), installationId: z.string().check(z.minLength(1)),
 }));
 export const ScmDiffSummaryResultUpdateEphemeralSchema = lazyZodSchema(() => z.strictObject({

@@ -327,7 +327,8 @@ async function writeRetainedExecutionRunRecord(record: RetainedExecutionRunRecor
       ? resolveExecutionRunFollowOccurrenceV1({ ...state, sessionId: state.sessionId, terminalEventId: state.terminalOccurrenceId ?? null }) : null;
     // Empty attention re-enters the same source range read, withdrawing an
     // outstanding original without inventing a terminal event or another log.
-    void notifyDaemonSessionActivityChanged(state.sessionId, occurrence ?? undefined, state.runId)
+    void notifyDaemonSessionActivityChanged(state.sessionId, occurrence ?? undefined, state.runId,
+      undefined, undefined, { executionAuthorizationToken: record.executionAuthorizationToken })
       .catch(error => logger.debug('[executionRunRegistry] Follow occurrence remains in retained Run custody', error));
   }
 }
@@ -346,11 +347,13 @@ export async function retainExecutionRunState(state: ExecutionRunState, terminal
     const identity = await readProcessIdentityByPid(process.pid);
     const current = await readRetainedExecutionRunRecord(state.runId);
     const attribution = requesterWorkAttributionV1 ?? state.requesterWorkAttributionV1 ?? current?.requesterWorkAttributionV1;
+    const executionAuthorizationToken = state.executionAuthorization?.token ?? current?.executionAuthorizationToken;
     const pendingEventId = terminalEventId ?? (state.status !== 'running'
       && current?.state.finishedAtMs === state.finishedAtMs ? current?.terminalEventId : undefined);
     await writeRetainedExecutionRunRecord({
       ownerPid: process.pid,
       ...(attribution ? { requesterWorkAttributionV1: RequesterWorkAttributionV1Schema.parse(attribution) } : {}),
+      ...(executionAuthorizationToken ? { executionAuthorizationToken } : {}),
       ...(identity?.processStartTimeMs !== undefined ? { ownerProcessStartTimeMs: identity.processStartTimeMs } : {}),
       state: projectRetainedExecutionRunState(state), ...(pendingEventId ? { terminalEventId: pendingEventId } : {}),
     }, JSON.stringify(current?.state.attention?.requests ?? []) !== JSON.stringify(state.attention?.requests ?? []),
