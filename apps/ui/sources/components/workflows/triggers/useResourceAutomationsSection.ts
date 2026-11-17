@@ -184,7 +184,7 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const reviewIssue = sourceSharing?.issue ?? review.issue;
     const reviewLoading = review.loading || (linkDraft !== null && Boolean(sourceSharing?.loading));
     const retryReview = sourceSharing?.issue ? sourceSharing.retryContent : review.retryContent;
-    const link = React.useMemo(() => ({ whenOptions, whenStatus, draft: linkDraft, setDraft,
+    const link = React.useMemo<ResourceAutomationsSectionRead['link']>(() => ({ whenOptions, whenStatus, draft: linkDraft, setDraft,
         missingAudience, issue: reviewIssue, loading: reviewLoading,
         retryReview, submit: submitLink }),
     [whenOptions, whenStatus, linkDraft, setDraft, missingAudience, reviewIssue, reviewLoading, retryReview, submitLink]);
