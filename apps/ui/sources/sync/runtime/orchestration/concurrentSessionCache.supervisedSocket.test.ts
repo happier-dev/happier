@@ -606,6 +606,37 @@ describe('concurrent session cache supervised sockets', () => {
         expect(h.requests('/v1/machines').length - machineReads).toBe(0);
     });
 
+    it('reads a second update-session push for a secondary-Home row after a row read already in flight', async () => {
+        h.setSessions(h.homeB, [h.session({ id: 'session-b', seq: 1, updatedAt: 1 })]);
+        await h.start(); await h.ready();
+        let releaseFirst!: () => void;
+        let rowReads = 0;
+        let current = h.session({ id: 'session-b', seq: 1, updatedAt: 1 });
+        h.setResponder(async (input) => {
+            if (new URL(String(input)).pathname !== '/v2/sessions/session-b') return null;
+            rowReads += 1;
+            // The server answers with the row as it was when the read arrived.
+            const response = Response.json({ session: current });
+            if (rowReads === 1) await new Promise<void>(resolve => { releaseFirst = resolve; });
+            return response;
+        });
+        const socket = h.socket();
+        const push = (seq: number) => {
+            const changed = h.session({ id: 'session-b', seq, metadataVersion: seq, updatedAt: seq,
+                metadata: { name: `Renamed ${seq}`, path: '/repo', host: 'host', machineId: 'machine-b' } });
+            current = changed;
+            h.setSessions(h.homeB, [changed]);
+            socket.trigger('update', { id: `renamed-${seq}`, seq, createdAt: seq, body: { t: 'update-session', id: 'session-b',
+                metadataLayoutVersion: 1, metadata: { version: changed.metadataVersion, value: changed.metadata } } });
+        };
+        push(2);
+        await vi.waitFor(() => expect(rowReads).toBe(1));
+        push(3);
+        await vi.waitFor(() => expect(releaseFirst).toBeTypeOf('function'));
+        releaseFirst();
+        await vi.waitFor(() => expect(rows()?.['session-b']?.updatedAt).toBe(3));
+    });
+
     it('refreshes only remote machine inventory after a machine update', async () => {
         h.setMachines(h.homeB, [h.machine(h.homeB)]);
         await h.start(); await h.ready();

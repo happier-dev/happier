@@ -1684,6 +1684,8 @@ async function connectManagedServer(
                             const sessionId = update.data.body.id;
                             if (update.data.body.t === 'new-session'
                                 || storage.getState().sessionListRowsByServerId[entry.id]?.[sessionId]) {
+                                // The push is newer than any read already in flight: don't join it.
+                                invalidateHomeAccountReadJoins(entry.id);
                                 fireAndForget(refreshConcurrentSessionListRow(entry, socket, sessionId), {
                                     tag: 'concurrentSessionCache.sessionRow',
                                 });
