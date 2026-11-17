@@ -8,6 +8,7 @@ import { openWorkflowFinalResultStoredEnvelopeV1 } from '@happier-dev/protocol/w
 import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import type { WorkflowRunRecipientCensusResponseV1 } from '@happier-dev/protocol/workflows';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
@@ -175,6 +176,12 @@ export function registerAutomationReplyHandoffRpcHandler(
 
         const signal = readSignal(context?.signal);
         if (signal.aborted) return unavailable('cancelled');
+        const reportFailure = (failedPhase: string, error: unknown) => context?.reportOperationDiagnostics?.({
+            failedPhase,
+            causeCode: readActionErrorCodeV1(error) ?? 'action_failed',
+            phaseDurationsMs: {},
+            phaseTimingsMs: [],
+        });
 
         const request = parsed.data;
         if (request.target.machineId !== options.machineId) {
@@ -418,6 +425,7 @@ export function registerAutomationReplyHandoffRpcHandler(
                 return unavailable('actionUnavailable');
             }
             if (!execution.result.ok) {
+                reportFailure('actionExecution', execution.result);
                 // `notStarted` is effect-safety evidence, not proof that the
                 // frozen Action contract is absent. Generation retirement,
                 // connected-account binding, and other pre-handler runtime
@@ -461,7 +469,8 @@ export function registerAutomationReplyHandoffRpcHandler(
                 settlement: projectSettlement(actionResult.data),
                 accountCurrentness: encryptionAfterInvoke.witness,
             });
-        } catch {
+        } catch (error) {
+            reportFailure('automationReplyHandoff', error);
             return signal.aborted ? unavailable('cancelled') : unavailable('actionExecutionFailed');
         } finally {
             if (lease) {

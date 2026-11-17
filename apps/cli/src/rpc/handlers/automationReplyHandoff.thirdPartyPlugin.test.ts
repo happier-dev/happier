@@ -32,7 +32,10 @@ const transportMocks = vi.hoisted(() => ({
   post: vi.fn(),
   createPublisherHeader: vi.fn(),
 }));
-vi.mock('axios', () => ({ default: { post: transportMocks.post } }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, post: transportMocks.post } };
+});
 vi.mock('@/plugins/installations/publisherProof', () => ({
   createDefaultPluginInstallationPublisherHeader: transportMocks.createPublisherHeader,
 }));
@@ -208,8 +211,21 @@ describe('Conversation Automation participation for a non-Channels plugin', () =
     }
     transportMocks.post.mockResolvedValueOnce({ data: { ...keyCensus,
       ownerAccountCurrentness: { ...witness, version: witness.version + 1 } } });
+    await expect(handler(dispatch)).resolves.toEqual({ kind: 'settled', settlement: { kind: 'accepted' }, accountCurrentness: witness });
+    expect(delivered).toEqual([
+      expect.objectContaining({ result, opaqueContext }),
+      expect.objectContaining({ result, opaqueContext }),
+    ]);
+    const alternateMaterial = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+      material: { type: 'legacy', secret: new Uint8Array(32).fill(8) } });
+    transportMocks.post.mockResolvedValueOnce({ data: { ...keyCensus,
+      ownerAccountCurrentness: { ...witness, contentKeyFingerprint:
+        convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(alternateMaterial.contentPublicKeyFingerprint) } } });
     await expect(handler(dispatch)).resolves.toEqual({ kind: 'settled', settlement: { kind: 'retry', retryAfterMs: 0 }, accountCurrentness: witness });
-    expect(delivered).toEqual([expect.objectContaining({ result, opaqueContext })]);
+    expect(delivered).toEqual([
+      expect.objectContaining({ result, opaqueContext }),
+      expect.objectContaining({ result, opaqueContext }),
+    ]);
   });
 
   it('binds an existing Account Automation, admits into it, and receives the delivered result', async () => {

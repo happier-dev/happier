@@ -847,6 +847,7 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
   });
 
   it('reports a retryable execution failure separately from a proven missing Action', async () => {
+    const reportOperationDiagnostics = vi.fn();
     const { handler } = createRegistration({
       execution: {
         matched: true,
@@ -858,9 +859,35 @@ describe('registerAutomationReplyHandoffRpcHandler', () => {
       },
     });
 
-    await expect(handler(request)).resolves.toEqual({
+    await expect(handler(request, { signal: new AbortController().signal, reportOperationDiagnostics })).resolves.toEqual({
       kind: 'unavailable',
       code: 'actionExecutionFailed',
+    });
+    expect(reportOperationDiagnostics).toHaveBeenCalledWith({
+      failedPhase: 'actionExecution',
+      causeCode: 'plugin_action_execution_failed',
+      phaseDurationsMs: {},
+      phaseTimingsMs: [],
+    });
+  });
+
+  it('retains a thrown delivery failure code without exposing private exception content', async () => {
+    const reportOperationDiagnostics = vi.fn();
+    const { handler } = createRegistration({
+      executeContributedAction: async () => {
+        throw Object.assign(new Error('Private provider content'), { code: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE' });
+      },
+    });
+
+    await expect(handler(request, { signal: new AbortController().signal, reportOperationDiagnostics })).resolves.toEqual({
+      kind: 'unavailable',
+      code: 'actionExecutionFailed',
+    });
+    expect(reportOperationDiagnostics).toHaveBeenCalledWith({
+      failedPhase: 'automationReplyHandoff',
+      causeCode: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE',
+      phaseDurationsMs: {},
+      phaseTimingsMs: [],
     });
   });
 

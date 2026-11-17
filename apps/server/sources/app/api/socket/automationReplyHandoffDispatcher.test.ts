@@ -137,6 +137,7 @@ describe("createAutomationReplyHandoffDaemonDispatcher", () => {
             settlement: { kind: "accepted" },
             accountCurrentness: { mode: "plain", version: 7, contentKeyFingerprint: null },
         });
+        expect(forwardRpc).toHaveBeenCalledWith(expect.objectContaining({ traceId: request.handoff.runId }));
     });
 
     it("classifies a schema-invalid dispatch request as stable pre-effect invalidRequest before any daemon effect", async () => {

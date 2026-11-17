@@ -67,6 +67,7 @@ export function createAutomationReplyHandoffDaemonDispatcher(params: Readonly<{
                 io: params.io,
                 targetUserId: request.data.target.accountId,
                 method: `${request.data.target.machineId}:${AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1}`,
+                traceId: request.data.handoff.runId,
                 callParams: request.data,
                 authorization: {
                     kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.AUTOMATION_REPLY_HANDOFF_SERVER_ORIGIN,
