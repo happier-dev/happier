@@ -1190,8 +1190,9 @@ it('retains credential denial correlation and the validated daemon cause through
   const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'RPC_FORBIDDEN', httpStatus: 403 } as const;
   const diagnostic = { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN', failureCause } as const;
   const projected = externalActionApi.projectExternalActionHttpError('credential_scope_denied', 'denied-request', undefined, diagnostic);
+  expect(projected.statusCode).toBe(400);
   expect(projected.payload).toMatchObject({ requestId: 'denied-request', diagnostic });
-  expect(externalActionApi.readActionCredentialScopeDeniedHttpFailureV1(projected.statusCode, projected.payload))
+  expect(externalActionApi.projectExternalActionHttpFailureV1(projected.payload))
     .toMatchObject({ ok: false, errorCode: 'credential_scope_denied', requestId: 'denied-request', failureCause });
 });
 

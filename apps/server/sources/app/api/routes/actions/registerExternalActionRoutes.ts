@@ -1138,7 +1138,7 @@ export function registerExternalActionRoutes(
             if (result.kind === "invalid_request") {
                 const projected = projectExternalActionHttpError(
                     result.errorCode,
-                    envelope.data.v === 2 ? envelope.data.requestId : undefined,
+                    envelope.data.requestId,
                     undefined,
                     undefined,
                     'phase' in result ? result.phase : undefined,

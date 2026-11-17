@@ -259,7 +259,9 @@ export function projectExternalActionHttpError(
   // Home has already authenticated and admitted the requester before relay.
   // A target's refusal cannot describe that requester's Home credential or grant.
   const statusCode = externalActionHttpErrorStatus(code);
-  if (origin === 'daemon' && (statusCode === 401 || statusCode === 403)) {
+  const daemonAuthorizationRefusal = (origin === 'daemon' || credentialScopeDiagnostic?.admissionStage === 'daemon_rpc')
+    && (statusCode === 401 || statusCode === 403);
+  if (daemonAuthorizationRefusal && credentialScopeDiagnostic === undefined) {
     return { statusCode: 400, payload: ExternalActionInvalidRequestHttpErrorSchema.parse({
       error: 'invalid_request', code,
       ...(requestId === undefined ? {} : { requestId }),
@@ -278,7 +280,7 @@ export function projectExternalActionHttpError(
   }) };
   if (code === 'present_user_required') return { statusCode: 403, payload: { error: code } };
   if (code === 'credential_scope_denied') return {
-    statusCode: 403,
+    statusCode: daemonAuthorizationRefusal ? 400 : 403,
     payload: ExternalActionCredentialScopeHttpErrorSchema.parse({
       error: code,
       ...(requestId === undefined ? {} : { requestId }),

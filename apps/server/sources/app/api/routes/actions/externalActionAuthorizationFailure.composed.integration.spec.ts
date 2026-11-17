@@ -30,6 +30,8 @@ it.each([
     ['invalid_token', 400, { error: 'invalid_request', code: 'invalid_token' }],
     ['credential_scope_denied', 400, { error: 'invalid_request', code: 'credential_scope_denied' }],
     ['invalid_envelope', 400, { error: 'invalid_request', code: 'invalid_envelope' }],
+    ['RPC_FORBIDDEN', 400, { error: 'credential_scope_denied',
+        diagnostic: { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN' } }],
 ] as const)('keeps a daemon %s refusal separate from the requester credential', async (errorCode, status, payload) => {
     const account = await db.account.create({ data: { encryptionMode: 'plain' } });
     const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
@@ -50,16 +52,17 @@ it.each([
         // Only the daemon transport is substituted; Home bearer admission,
         // authorization minting, relay parsing and HTTP projection stay real.
         forwardRpc: async () => { forwarded = true; return { ok: true,
-            result: { kind: 'invalid_request', errorCode } }; },
+            result: errorCode === 'RPC_FORBIDDEN' ? { error: 'forbidden', errorCode }
+                : { kind: 'invalid_request', errorCode } }; },
     }) });
     const request = { method: 'POST' as const, url: '/v1/actions/machines.services.list',
-        payload: { v: 1, target: { kind: 'machine', machineId: machine.id },
+        payload: { v: 1, requestId: 'daemon-refusal-request', target: { kind: 'machine', machineId: machine.id },
             input: { serverId: homeId, machineId: machine.id } } };
     try {
         const response = await instance.inject({ ...request, headers: { authorization: `Bearer ${token}` } });
         expect(forwarded).toBe(true);
         expect(response.statusCode, response.body).toBe(status);
-        expect(ExternalActionHttpErrorSchema.parse(response.json())).toEqual(payload);
+        expect(ExternalActionHttpErrorSchema.parse(response.json())).toEqual({ ...payload, requestId: 'daemon-refusal-request' });
         // Only an actually rejected requester credential may produce 401.
         forwarded = false;
         const rejected = await instance.inject({ ...request, headers: { authorization: 'Bearer invalid-requester-token' } });
