@@ -18,6 +18,8 @@ import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/acti
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { ApprovalProfileV1Schema } from '@happier-dev/protocol/actions/approvalProfiles';
 import { createActionExecutor, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploymentDeployInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol';
@@ -40,8 +42,8 @@ const runId = '52bd37c4-99c6-41cf-90a5-3a1be2b1e031';
 const invocationId = 'exact-child';
 const accountId = 'owner';
 const setupSources: JsonValue[] = [
-  { kind: 'accountPreset', presetId: 'preset', presetRevision: 0, setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }] } },
-  { kind: 'direct', setup: {} },
+  { kind: 'accountPresetOpaque', presetId: 'preset', presetRevision: 0, contentEncryptionMode: 'plain' },
+  { kind: 'direct', setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }] } },
 ];
 const parent = { actionId: 'machines.setup.apply' as const,
   input: { homeId: 'home', machineId: 'host', targets: [{ homeId: 'home', machineId: 'host', desiredRevision: 0, recipePlans: [], sources: setupSources }] } };
@@ -161,6 +163,11 @@ describe('Workflow approved operation private custody', () => {
     let produced: WorkflowApprovedOperationV1 | undefined;
     let starts = 0;
     const executor = createActionExecutor({ readApprovedOperation: request => request.runId ? reader({ ...request, runId: request.runId }) : Promise.resolve(null),
+      // The opened Artifact is the profile boundary; admission uses its real binding.
+      readApprovalProfile: id => bindApprovalProfileV1([{ id: 'ask-rollout',
+        profile: ApprovalProfileV1Schema.parse({ id: 'ask-rollout', name: 'Ask before rollout',
+          actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } }),
+        access: 'owner', revision: { headerVersion: 1, bodyVersion: 1 } }], id),
       machineSetupUpdatesRollout: async ({ context }) => {
         starts++;
         // This is the same root consent producer used by combined Run start.
@@ -169,9 +176,7 @@ describe('Workflow approved operation private custody', () => {
         return { operationId: 'rollout', runId: 'native-updates' };
       } });
     const result = await executor.execute(actionId, input, { ...h.context, serverId: 'home', surface: 'agent',
-      authority: 'account_automation', approvalProfileId: requireApproval ? 'ask-rollout' : 'account-only',
-      actionsSettings: normalizeActionsSettingsV1({ ...(h.context.actionsSettings ?? { v: 1, actions: {} }),
-        approvalProfiles: [{ id: 'ask-rollout', name: 'Ask before rollout', actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } }] }) });
+      authority: 'account_automation', approvalProfileId: requireApproval ? 'ask-rollout' : null });
     expect(starts).toBe(requireApproval ? 0 : 1);
     expect(result.ok, JSON.stringify(result)).toBe(!requireApproval);
     if (requireApproval) expect(result).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });

@@ -39,6 +39,16 @@ describe('Account approval profiles at Action admission', () => {
       input: { environmentId: 'env' }, settings, context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(false);
   });
 
+  it('applies a bound profile Ask when the host has no Account settings override', () => {
+    const profile = ApprovalProfileV1Schema.parse({ id: 'reviewed-list', name: 'Review listings',
+      actions: { 'machines.list': { approvalRequiredSurfaces: ['agent'] } } });
+    const decision = resolveActionApprovalRouting({ actionId: 'machines.list', spec: getActionSpec('machines.list'),
+      input: {}, context: { surface: 'agent', authority: 'account_automation', approvalProfileId: profile.id,
+        approvalProfile: bindApprovalProfileV1([{ id: profile.id, profile, access: 'owner',
+          revision: { headerVersion: 1, bodyVersion: 1 } }], profile.id) } });
+    expect(decision).toMatchObject({ required: true, profile: { status: 'available', requestedId: profile.id } });
+  });
+
   it('lets a profile Allowed waive Ask where the Account screen could, so a permissive profile is never a no-op', () => {
     const strict = normalizeActionsSettingsV1({ v: 1, actions: { 'deployments.deploy': { approvalRequiredSurfaces: ['agent'] } } });
     expect(deploy('blank', strict).required).toBe(true);
