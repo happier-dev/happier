@@ -2091,6 +2091,7 @@
     "sources/components/settings/appearance/themeProfiles/themeProfileScreenUtils.ts",
     "sources/components/settings/appearance/themeProfiles/useThemeLibraryModel.ts",
     "sources/components/settings/appearance/themeProfiles/useThemePluginShare.ts",
+    "sources/components/settings/appearance/themeProfiles/useThemeProfileEditorCss.ts",
     "sources/components/settings/appearance/themeProfiles/useThemeProfileEditorPreview.ts",
     "sources/components/settings/appearance/useApplyThemeSelection.ts",
     "sources/components/settings/attachments/AttachmentsSettingsView.tsx",

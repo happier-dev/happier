@@ -30,7 +30,7 @@ import { getThemeTryOnOwner } from '@/theme/profiles/themeTryOnRuntime';
 import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 import type { ThemeRadiusScaleName, ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { prepareThemeCss } from '@/theme/css/prepareThemeCss';
+import { useThemeProfileEditorCss } from './useThemeProfileEditorCss';
 import { ThemeProfileEditorView } from './ThemeProfileEditorView';
 import { useThemeActionExecution } from './useThemeActionExecution';
 import { createThemeProfileEditorActions } from './themeProfileEditorActions';
@@ -438,20 +438,18 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
         tokens: group.tokens,
     })), [groups]);
 
-    // CSS coverage for the CSS view: compiled once per changed draft CSS, and only while that view is open.
-    const draftCss = draft?.css ?? '';
-    const cssCoverage = React.useMemo(() => {
-        if (view !== 'css' || draftCss.trim().length === 0) return null;
-        const prepared = prepareThemeCss(draftCss);
-        return {
-            counts: { total: prepared.coverage.total, native: prepared.coverage.native, webOnly: prepared.coverage.webOnly },
-            webOnlyRules: prepared.detailedCoverage.rules.filter(rule => !rule.native)
-                .map(rule => ({ line: rule.range.line, selector: rule.selector })),
-        };
-    }, [draftCss, view]);
-    const revealCssLine = React.useCallback((line: number) => {
-        codeEditorRef.current?.revealLine(line, { focus: true, select: true });
-    }, []);
+    const cssEditor = useThemeProfileEditorCss({
+        draft,
+        mode,
+        view,
+        presented,
+        readonly,
+        document: draftDocument,
+        editorRef: codeEditorRef,
+        onChange: updateCss,
+        onViewChange: setView,
+        onQueryChange: setColorQuery,
+    });
 
     if (!draft || !resolvedDraft || !markPalette) {
         return (
@@ -487,6 +485,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             mark: preview,
             ...(!readonly ? { save: { disabled: saveDisabled, onPress: () => { void saveAndActivate(); } } } : {}),
             menu: menuActions,
+            ...(cssEditor.error ? { error: resolveActionExecutionErrorMessage(cssEditor.error, t('common.requestFailed')) } : {}),
             ...(persisted && !readonly && reference ? { onShare: () => share([reference]) } : {}),
         },
         readonly,
@@ -518,12 +517,15 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             invalidByToken,
             recentColors,
             query: colorQuery,
+            pickedTokenIds: cssEditor.pickedTokenIds,
+            highlightedTokenId: cssEditor.highlightedTokenId,
             onQueryChange: setColorQuery,
             onChange: updateColor,
             onInvalidChange: updateInvalid,
             onReset: resetToken,
         },
         preview,
+        picker: cssEditor.picker,
         style: {
             radius,
             onRadiusChange: updateRadius,
@@ -532,13 +534,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             typeface: BUNDLED_THEME_TYPEFACES.find(face => face.id === draft.style?.fontFamily)?.id ?? null,
             onTypefaceChange: updateTypeface,
         },
-        css: {
-            value: draft.css ?? '',
-            resetKey: draft.id,
-            onChange: updateCss,
-            editorRef: codeEditorRef,
-            ...(cssCoverage ? { coverage: cssCoverage.counts, webOnlyRules: cssCoverage.webOnlyRules, onRevealLine: revealCssLine } : {}),
-        },
+        css: cssEditor.css,
     };
     return <ThemeProfileEditorView {...viewProps} />;
 });

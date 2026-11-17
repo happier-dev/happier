@@ -518,6 +518,32 @@ describe('Theme profile settings screen', () => {
 });
 
 describe('Theme profile editor', () => {
+    it('connects picking and CSS reference insertion to the current draft', async () => {
+        const { JSDOM } = await import('jsdom');
+        const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/' });
+        vi.stubGlobal('window', dom.window);
+        vi.stubGlobal('document', dom.window.document);
+        onTestFinished(() => { vi.unstubAllGlobals(); dom.window.close(); });
+        const screen = await renderEditorScreen('new');
+        const view = () => screen.findAllByType(ThemeProfileEditorView)[0]!.props as ThemeProfileEditorViewProps;
+        expect(view().picker).toBeDefined();
+        expect(view().picker!.active).toBe(false);
+        await act(async () => { view().picker!.onToggle(); });
+        expect(view().picker!.active).toBe(true);
+        await act(async () => { view().picker!.onToggle(); view().onViewChange('css'); });
+        expect(view().css.surfaces?.some(surface => surface.id === 'composer')).toBe(true);
+        await screen.pressByTestIdAsync('settings-theme-surface-composer');
+        await flushHookEffects();
+        expect(view().css.value).toContain('[data-surface="composer"]');
+        expect(view().css.value).toContain('{');
+        await act(async () => {
+            const { prepareThemeCssAsync } = await import('@/theme/css/prepareThemeCss');
+            await prepareThemeCssAsync(view().css.value);
+        });
+        await flushHookEffects();
+        expect(view().css.coverage?.total).toBe(1);
+    });
+
     it('labels an installed Store starting preset by its source', async () => {
         setThemeProfiles({ activeProfileIds: { light: null, dark: null }, profiles: [{
             ...baseProfile('store-preset'), name: 'Installed palette', source: {

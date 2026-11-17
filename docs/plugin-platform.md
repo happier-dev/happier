@@ -13560,6 +13560,13 @@ the prepared table through the shared surface resolver. Missing optional fields
 preserve existing snapshots; matching development hosts and plugins reload together
 under the SDK direct cut. No persisted format or wire epoch changes.
 
+The theme editor's picker reads the canonical surface paint map only while
+inspection is active. Web picking uses the emitted surface attributes; native
+picking uses explicit host bindings on the composer, sidebar, dialog and send
+control. An unbound native host cannot be picked: the editor's surface reference
+still supplies its selector. These in-process presentation bindings add no SDK
+wire field or persistent inspection state.
+
 ### SCM operation environment (unreleased 0.3)
 
 The existing in-process SCM `BackendRuntimeServices` can provide
