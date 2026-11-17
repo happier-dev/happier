@@ -1,5 +1,6 @@
 import type {
     ExecutionRunPublicState} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
 import type {
     ScmDiffSummaryGenerateInput,
     ScmDiffSummaryGenerateOutput,
@@ -164,9 +165,13 @@ export type ScmDiffSummaryViewModel = Readonly<{
 export function selectScmDiffSummaryProducerModel(viewModel: Pick<ScmDiffSummaryViewModel, 'producer' | 'latestRun' | 'savedResult'> | null | undefined) {
     const saved = viewModel?.savedResult;
     const recordedSelection = viewModel?.latestRun?.resolvedSelection ?? saved?.generator;
-    const { modelSelection: recordedModelSelection, ...recordedFacts } = recordedSelection ?? {};
-    const selection = recordedSelection ? { ...recordedFacts,
-        ...(recordedModelSelection ? projectSessionModelRefToExecutionModelSelection(recordedModelSelection) : {}) } : undefined;
+    const recordedModelSelection = recordedSelection?.modelSelection;
+    let selection: Pick<ExecutionRunResolvedSelection, 'modelSelection' | 'teamCredentialModel' | 'connectedServices'> | undefined;
+    if (recordedSelection) {
+        const { modelSelection: _modelSelection, ...recordedFacts } = recordedSelection;
+        selection = { ...recordedFacts,
+            ...(recordedModelSelection ? projectSessionModelRefToExecutionModelSelection(recordedModelSelection) : {}) };
+    }
     let modelSelection: SessionModelRef | null = recordedModelSelection ?? null;
     const teamCredentialModel = viewModel?.latestRun?.resolvedSelection?.teamCredentialModel;
     if (teamCredentialModel) {
