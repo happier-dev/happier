@@ -345,7 +345,7 @@ export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actio
           try {
             return completeActionResult(parseSessionReadStateActionResponse(actionId, input, result));
           } catch (error) {
-            return withActionFailureCauseDiagnostic({ ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' },
+            return withActionFailureCauseDiagnostic({ ok: false as const, errorCode: 'invalid_action_output', error: 'invalid_action_output' },
               error, 'action.session_read_state.output');
           }
         }
