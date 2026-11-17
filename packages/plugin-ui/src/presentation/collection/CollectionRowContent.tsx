@@ -1,4 +1,4 @@
-import { Children, Fragment, isValidElement, useContext, type ReactElement, type ReactNode } from 'react';
+import { Children, Fragment, isValidElement, useContext, useState, type ReactElement, type ReactNode } from 'react';
 import {
   Platform,
   View,
@@ -449,7 +449,10 @@ export function HappierCollectionRowContent(
       {props.children}
     </HappierCollectionRowMain>
   );
-  const engaged = props.engagedTrailing ?? null;
+  // Its own control can hold focus (a Session's request peek). Keyboard focus there engages the row, but the
+  // status stays: hiding it would leave focus on a control that is invisible and out of the accessibility tree.
+  const [restingFocused, setRestingFocused] = useState(false);
+  const engaged = restingFocused ? null : props.engagedTrailing ?? null;
   const containerStyle = engaged && !beneath && Platform.OS === 'web' ? engagedPressTargetStyle(engaged.actionCount) : pressTarget;
   const restingTestID = props.trailingProps?.testID ? `${props.trailingProps.testID}:rest` : undefined;
   const main = props.renderContainer
@@ -469,6 +472,8 @@ export function HappierCollectionRowContent(
           aria-hidden={engaged ? true : undefined}
           accessibilityElementsHidden={engaged ? true : undefined}
           importantForAccessibility={engaged ? 'no-hide-descendants' : undefined}
+          onFocus={Platform.OS === 'web' ? () => setRestingFocused(true) : undefined}
+          onBlur={Platform.OS === 'web' ? () => setRestingFocused(false) : undefined}
         >
           {props.trailing}
         </View>
