@@ -1140,6 +1140,13 @@ updates do not consume stdin. Name/id selection resolves metadata through the
 canonical catalog and supplies the observed private-resource revision, exposed by
 the Action as `expectedUpdatedAt`, not a timestamp.
 
+Personal Saved Secret Action delivery uses the existing CLI HTTP budget,
+`HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS` (60 seconds by default), for the complete
+response wait. The shared `api/deliverExternalActionRequest.ts` owner returns
+`outcome_unknown` with `details.category: transport_timeout` when that deadline
+expires, without retrying the write. The Secret may already exist: reconcile its
+metadata with `secrets.list` before retrying a create.
+
 Registry token options select an existing Saved Secret's canonical ref rather
 than accepting a token value. The authenticated Action executor retains the
 originating Account context through private-resource reads and registry mutation.

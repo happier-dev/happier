@@ -1,3 +1,5 @@
+import { deliverExternalActionRequest } from './deliverExternalActionRequest';
+export { deliverExternalActionRequest } from './deliverExternalActionRequest';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { MachineRolesSetInputV1Schema, type MachineRolesSetInputV1 } from '@happier-dev/protocol/actions/specs/machineRoles';
@@ -65,7 +67,7 @@ import { SOCKET_RPC_EVENTS, SessionActionRpcOriginV1Schema, type WorkspaceSyncSo
   type WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionHttpErrorSchema, isExternalActionSubmittedUnknownHttpResponse, projectExternalActionPendingResetStartAdmissionV1, projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionHttpErrorSchema, projectExternalActionPendingResetStartAdmissionV1, projectExternalActionApprovalDecisionAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { openExternalActionRequestV2, openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ProjectServiceRelocateInputV1Schema, isProjectServiceMoveChildInputV1, readProjectServiceMoveChildEffectV1 } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -1305,38 +1307,6 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   return await deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body, envelope, headers,
     ...(material ? { material } : {}), ...(binding ? { binding } : {}),
     ...(input.signal ? { signal: input.signal } : {}), isCurrent });
-}
-
-/** One response owner for original and installed Workflow Action delivery. */
-export async function deliverExternalActionRequest(input: Readonly<{
-  actionId: string; serverHttpBaseUrl: string; body: unknown; envelope: ExternalActionRequestEnvelope;
-  headers: Readonly<Record<string, string>>; material?: Extract<AccountScopedCryptoMaterial, { type: 'dataKey' }>;
-  binding?: ExternalActionEncryptionBindingV2; signal?: AbortSignal; isCurrent(): Promise<boolean>;
-}>): Promise<ActionExecuteResult> {
-  const fail = (errorCode: string, issuerPhase?: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode,
-    ...(issuerPhase ? { failureCause: projectActionFailureCauseV1({ code: errorCode }, issuerPhase) } : {}) });
-  const isCurrent = input.isCurrent;
-  const phase = <T>(name: string, read: () => T | Promise<T>) => runTracedExternalActionInnerStage(`dispatch.${name}`, read);
-  input.signal?.throwIfAborted();
-  if (!await isCurrent()) return fail('target_unavailable', 'dispatch.delivery.currentness');
-  try {
-    const response = await phase('delivery', () => axios.post<unknown>(`${input.serverHttpBaseUrl}${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${input.actionId}`, input.body, {
-      headers: input.headers, ...(input.signal ? { signal: input.signal } : {}), validateStatus: () => true,
-    }));
-    // A received operation receipt remains true even when observation retired.
-    if (isExternalActionSubmittedUnknownHttpResponse(response.status, response.data)) return fail('outcome_unknown');
-    if (response.status < 200 || response.status >= 300) {
-      const refusal = ExternalActionHttpErrorSchema.safeParse(response.data);
-      if (refusal.success && 'requestId' in refusal.data && refusal.data.requestId !== undefined
-        && refusal.data.requestId !== input.envelope.requestId) return fail('invalid_action_output');
-      return refusal.success ? projectExternalActionHttpFailureV1(refusal.data) : fail('project_transport_unavailable');
-    }
-    if (input.envelope.v === 2 && input.material && input.binding) return openExternalActionResponseV2({ envelope: response.data,
-      binding: input.binding, request: input.envelope, material: input.material }) ?? fail('invalid_action_output');
-    const parsed = parseExternalActionResponseEnvelopeV1(response.data);
-    return parsed && parsed.actionId === input.actionId && parsed.requestId === input.envelope.requestId
-      ? readExternalActionResponseExecutionV1(parsed) : fail('invalid_action_output');
-  } catch { return fail('outcome_unknown'); }
 }
 
 export function createExternalActionMachineRpcExecution(input: Readonly<{

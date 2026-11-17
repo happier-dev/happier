@@ -422,6 +422,13 @@ root you have to guess.
   selected Home advertising the Action behind it.
 </Callout>
 
+In 0.3 development, a Personal Saved Secret command stops waiting for its Action
+response after the CLI HTTP budget (60 seconds by default, configurable with
+`HAPPIER_SESSION_CONTROL_HTTP_TIMEOUT_MS`). A deadline returns `outcome_unknown`
+with `details.category: transport_timeout`; the CLI does not retry the write.
+Check `happier actions invoke secrets.list --json` for the Secret before retrying
+a create, because the write may have completed without its response reaching you.
+
 ### Authentication and exact machine targeting
 
 These commands can use either authentication mode:
