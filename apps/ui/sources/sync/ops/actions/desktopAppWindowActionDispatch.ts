@@ -181,7 +181,16 @@ export async function applyDesktopSessionDraftTransaction(input: ComposerTransac
 export async function executeDesktopAppWindowClientAction(
     request: Parameters<NonNullable<ActionExecutorDeps['clientActionExecute']>>[0],
     options: DesktopAppWindowActionOptions = {},
+    delivery?: Readonly<{
+        clientId(): string;
+        dispatch(request: Parameters<NonNullable<ActionExecutorDeps['clientActionExecute']>>[0], clientId: string): Promise<ActionExecuteResult>;
+    }>,
 ): Promise<ActionExecuteResult> {
+    const clientId = request.input && typeof request.input === 'object' && 'clientId' in request.input
+        ? request.input.clientId : undefined;
+    if (delivery && typeof clientId === 'string' && clientId !== delivery.clientId()) {
+        return delivery.dispatch(request, clientId);
+    }
     const { serverId, runtimeAccountId: accountId } = request.context;
     if (!serverId || !accountId) return request.execute();
     const { resolveDesktopAppWindowForAction, waitForDesktopAppWindowPresentation } = await import('@/desktop/window/appWindowRuntime');

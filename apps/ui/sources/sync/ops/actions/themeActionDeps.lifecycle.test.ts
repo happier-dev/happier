@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { createThemeActionHarness as setup, themeActionDocument as document } from '@/dev/testkit/harness/themeActionHarness';
 import { createThemeActionExecute } from './themeActionDeps';
@@ -8,6 +9,21 @@ import { prepareThemeCss } from '@/theme/css/prepareThemeCss';
 
 const actionContext = { surface: 'ui' as const, authority: 'present_user' as const };
 describe('theme Actions through real library and try-on owners', () => {
+    it('rejects a Store preview without its listing before creating the overlay', async () => {
+        const f = setup();
+        const execute = createActionExecutor({ themeAction: createThemeActionExecute({
+            withLibrary: async operation => operation(f.library), readSelection: () => f.selection, clientId: () => '',
+            runtime: { preview: f.owner,
+                coverage: document => prepareThemeCss(document.profile.css ?? '').coverage,
+                detailedCoverage: document => prepareThemeCss(document.profile.css ?? '').detailedCoverage,
+                surfaceMap: () => [] },
+        }) });
+        const result = await execute.execute(THEME_ACTION_IDS.tryOn,
+            { document: document('store-without-listing'), mode: 'dark', origin: { kind: 'store' } }, actionContext);
+        expect(result).toMatchObject({ ok: false, errorCode: 'invalid_action_input' });
+        expect(f.owner.read()).toBeNull();
+        expect(f.writes()).toBe(0);
+    });
     it('imports and exports retained presentation fields, then undoes apply without deleting a saved theme', async () => {
         const f = setup();
         const execute = createThemeActionExecute({ withLibrary: async operation => operation(f.library),

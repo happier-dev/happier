@@ -8,7 +8,7 @@ import { importThemeProfileFromJson, exportThemeProfileToJson } from '@/theme/pr
 import type { BoundThemeRegistryLifecycle } from '@/registries/themeRegistryInstall';
 import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
 
-import type { ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
+import type { ThemeTryOnOrigin, ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
 import type { ThemeSurfacePaintDescriptor } from '@happier-dev/plugin-ui';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { THEME_PROFILE_TOKEN_DEFINITIONS } from '@/theme/profiles/themeProfileTokenRegistry';
@@ -27,7 +27,7 @@ export interface ThemeActionHost {
     clientId(): string;
     readSelection(): Readonly<Record<ThemeProfileMode, ThemeReference | null>>;
     withRegistryLifecycle?<TResult>(operation: (lifecycle: Pick<BoundThemeRegistryLifecycle, 'get' | 'prepareStorePreview' | 'install' | 'uninstall'>) => Promise<TResult>, context: ActionExecutorContext): Promise<TResult>;
-    dispatchClientAction?(request: Extract<ThemeActionRequest, { actionId: typeof THEME_ACTION_IDS.list | typeof THEME_ACTION_IDS.apply }>): ReturnType<NonNullable<ActionExecutorDeps['themeAction']>>;
+    dispatchClientAction?(request: Extract<ThemeActionRequest, { actionId: typeof THEME_ACTION_IDS.list }>): ReturnType<NonNullable<ActionExecutorDeps['themeAction']>>;
 }
 
 export function createThemeActionExecute(host: ThemeActionHost): NonNullable<ActionExecutorDeps['themeAction']> {
@@ -53,9 +53,7 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                 }
             }, request.context);
         }
-        if ((request.actionId === THEME_ACTION_IDS.list && request.input.includeDevices)
-            || (request.actionId === THEME_ACTION_IDS.apply && request.input.clientId
-                && request.input.clientId !== host.clientId())) {
+        if (request.actionId === THEME_ACTION_IDS.list && request.input.includeDevices) {
             return host.dispatchClientAction ? await host.dispatchClientAction(request)
                 : clientActionUnavailable(request.actionId);
         }
@@ -83,7 +81,18 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                 case THEME_ACTION_IDS.tryOn: {
                     const runtime = host.runtime;
                     if (!runtime) return clientActionUnavailable(request.actionId);
-                    const preview = runtime.preview.begin(request.input);
+                    const { origin, ...input } = request.input;
+                    let previewOrigin: ThemeTryOnOrigin;
+                    if (origin.kind === 'store') {
+                        const listing = origin.listing;
+                        if (!listing) return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };
+                        if (!host.withRegistryLifecycle) return clientActionUnavailable(request.actionId);
+                        const acquired = await host.withRegistryLifecycle(lifecycle => lifecycle.prepareStorePreview(listing), request.context);
+                        previewOrigin = { kind: 'store', listing, acquired };
+                    } else {
+                        previewOrigin = { kind: origin.kind };
+                    }
+                    const preview = runtime.preview.begin({ ...input, origin: previewOrigin });
                     return { previewRef: preview.previewRef, coverage: runtime.coverage(request.input.document), compatibility: request.input.document.compatibility };
                 }
                 case THEME_ACTION_IDS.revert:

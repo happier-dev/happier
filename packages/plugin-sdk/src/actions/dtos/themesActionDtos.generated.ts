@@ -110,6 +110,7 @@ export type ThemesActionInputById = {
             contributionId: string;
         };
         mode: 'dark' | 'light';
+        clientId?: string | undefined;
     } & {
         clientId?: string | undefined;
     };

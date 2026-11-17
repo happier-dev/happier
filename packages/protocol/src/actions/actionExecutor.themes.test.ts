@@ -32,6 +32,8 @@ it('retains unknown theme presentation at strict admission and preserves documen
 
 it('admits base-theme selection and an offline local receipt without fabricating a client identity', () => {
   expect(ThemeActionInputSchemas[THEME_ACTION_IDS.apply].safeParse({ ref: null, mode: 'light' }).success).toBe(true);
+  expect(ThemeActionInputSchemas[THEME_ACTION_IDS.apply].parse({ ref: null, mode: 'dark', clientId: 'other-app' }))
+    .toEqual({ ref: null, mode: 'dark', clientId: 'other-app' });
   const output = ThemeActionOutputSchemas[THEME_ACTION_IDS.apply];
   expect(output.safeParse({ applied: { mode: 'light' }, undoHandle: 'local-operation' }).success).toBe(true);
   expect(output.safeParse({ applied: { mode: 'dark', clientId: 'connected-app' }, undoHandle: 'connected-operation' }).success).toBe(true);

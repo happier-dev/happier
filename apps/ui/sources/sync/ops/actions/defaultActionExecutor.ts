@@ -1728,6 +1728,27 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     clientActionExecute: request => executeDesktopAppWindowClientAction(request, {
       screenCaptureSendDraftOnly: opts?.screenCaptureSendDraftOnly,
       screenCaptureWindowPress: opts?.screenCaptureWindowPress,
+    }, {
+      clientId: () => apiSocket.getSocketId(),
+      dispatch: async (request, clientId) => {
+        if (!accountContext) return clientActionUnavailable(request.actionId);
+        const machineId = resolveUiAccountActionFallbackMachineId(accountContext, { allowUnreachableFallback: true });
+        if (!machineId) return clientActionUnavailable(request.actionId);
+        try {
+          const response = await apiSocket.callClientAction({ machineId,
+            request: buildUiActionDispatchRequestV1(request),
+            answeringClient: { clientId, requireSingle: true },
+            signal: request.context.signal,
+          });
+          return parseClientActionDispatchResult(request.actionId, response.result)
+            ?? { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+        } catch (error) {
+          if (readRpcFailureCode(error) === RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE) {
+            return clientActionUnavailable(request.actionId);
+          }
+          throw error;
+        }
+      },
     }),
     desktopWindowsOpen: async ({ input, context }) => {
       context.signal?.throwIfAborted();
@@ -2000,13 +2021,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         dispatchClientAction: async request => {
           const machineId = resolveUiAccountActionFallbackMachineId(accountContext, { allowUnreachableFallback: true });
           if (!machineId) return clientActionUnavailable(request.actionId);
-          const discovery = request.actionId === THEME_ACTION_IDS.list;
-          const input = discovery ? { ...request.input, includeDevices: false } : request.input;
+          const input = { ...request.input, includeDevices: false };
           try {
             const response = await apiSocket.callClientAction({ machineId,
               request: buildUiActionDispatchRequestV1({ ...request, input }),
-              answeringClient: { clientId: discovery ? apiSocket.getSocketId() : request.input.clientId,
-                requireSingle: true, ...(discovery ? { includeCandidates: true } : {}) },
+              answeringClient: { clientId: apiSocket.getSocketId(), requireSingle: true, includeCandidates: true },
               signal: request.context.signal,
             });
             const execution = parseClientActionDispatchResult(request.actionId, response.result);
@@ -2014,7 +2033,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             if (!execution.ok) return execution;
             // The shared dispatch parser validated this exact Action's output at the network boundary.
             const result = execution.result as ThemeActionOutput;
-            return discovery ? { ...result, devices: response.answeringClients ?? [] } : result;
+            return { ...result, devices: response.answeringClients ?? [] };
           } catch (error) {
             if (readRpcFailureCode(error) === RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE) {
               return clientActionUnavailable(request.actionId);

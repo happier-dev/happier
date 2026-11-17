@@ -6,7 +6,7 @@ import type { ThemeActionId } from '@happier-dev/protocol/actions/themeActionIds
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
 import { createThemeActionHarness } from '@/dev/testkit/harness/themeActionHarness';
 import { createThemeActionExecute } from '@/sync/ops/actions/themeActionDeps';
-import { prepareThemeCss } from '@/theme/css/prepareThemeCss';
+import { prepareThemeProfileCss } from '@/theme/css/prepareThemeCss';
 import { createThemeProfileEditorActions, type ThemeEditorExecute } from './themeProfileEditorActions';
 
 function fixture() {
@@ -23,8 +23,8 @@ function actionBoundary() {
     const harness = createThemeActionHarness();
     const action = createThemeActionExecute({ withLibrary: operation => operation(harness.library),
         readSelection: () => harness.selection, clientId: () => '', runtime: { preview: harness.owner,
-            coverage: value => prepareThemeCss(value.profile.css ?? '').coverage,
-            detailedCoverage: value => prepareThemeCss(value.profile.css ?? '').detailedCoverage(), surfaceMap: () => [] } });
+            coverage: value => prepareThemeProfileCss(value.profile).coverage,
+            detailedCoverage: value => prepareThemeProfileCss(value.profile).detailedCoverage, surfaceMap: () => [] } });
     const execute: ThemeEditorExecute = async <Id extends ThemeActionId>(id: Id, input: ThemeActionInput<Id>): Promise<ThemeActionOutput<Id>> => {
         const admitted = ThemeActionInputSchemas[id].parse(input);
         calls.push({ id, input: admitted });
