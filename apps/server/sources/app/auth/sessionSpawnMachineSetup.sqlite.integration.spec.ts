@@ -4,7 +4,7 @@ import { forwardRpcCall } from '@/app/api/socket/rpc/forwardRpcCall';
 import { createSocketRoomDiscoveryHarness } from '@/app/api/testkit/socketHarness';
 import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol';
-import { resolveExternalActionExecutionMachineAdmissionInTx, verifyCurrentExternalActionPrincipal, verifyWorkflowExternalActionRequesterAuthorization } from './externalActionExecutionAuthorization';
+import { resolveExternalActionExecutionMachineAdmissionInTx, verifyCurrentExternalActionPrincipal, verifyExternalActionDomainExecutionRequest, verifyWorkflowExternalActionRequesterAuthorization } from './externalActionExecutionAuthorization';
 import { randomUUID } from 'node:crypto';
 import { projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/specs/session/lifecycle';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -24,7 +24,7 @@ import { auth } from './auth';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedDiscussionHttpFixture } from '@/app/api/routes/actions/discussionExecutionAuthorization.testkit';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupApplyInputV1Schema, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { db } from '@/storage/db';
 import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { inTx } from '@/storage/inTx';
@@ -49,6 +49,51 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
                 HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } });
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
+
+    it.each([true, false])('opens only the reviewed Agent install child codec under combined Setup Manage admission (person=%s)', async presentUser => {
+        const f = await createSignedDiscussionHttpFixture(undefined, [], false, undefined, { machineReads: true,
+            ...(presentUser ? {} : { allowedActionIds: ['machines.setup.apply'] }) });
+        try {
+            const homeId = await getOrCreateServerIdentityId();
+            const install = { machineId: f.machine.id, agentId: 'codex', intent: 'install',
+                waitForTerminal: true, consent: { vendorRecipe: true } };
+            const root = await f.mint('machines.setup.apply', MachineSetupApplyInputV1Schema.parse({ homeId, machineId: f.machine.id, targets: [{
+                homeId, machineId: f.machine.id, desiredRevision: 0,
+                sources: [{ kind: 'direct', setup: { items: [{ kind: 'agent', agentId: 'codex' }] } }],
+                recipePlans: [], appChildren: [{ sourceIndex: 0, itemIndex: 0,
+                    actionId: 'machines.agents.install', input: install }],
+            }] }), presentUser);
+            const reviewedChild = { actionId: 'machines.agents.install' as const, role: 'machine_setup_app',
+                inputDigest: computeActionInputApprovalDigestV1('machines.agents.install', install) };
+            const request = { method: 'GET', path: `/v1/machines/${f.machine.id}`, reviewedChild };
+            // The same signed requester can already read its root Machine codec.
+            expect(await f.verify(root, { method: 'GET', path: request.path })).not.toBeNull();
+            expect(await f.verify(root, { method: 'GET', path: request.path }, reviewedChild.actionId)).toBeNull();
+            expect(await f.verify(root, { ...request, path: `/v1/machines/${randomUUID()}` }, reviewedChild.actionId)).toBeNull();
+            expect(await f.verify(root, { ...request, method: 'POST' }, reviewedChild.actionId)).toBeNull();
+            expect(await f.verify(root, { ...request, body: {} }, reviewedChild.actionId)).toBeNull();
+            const signature = signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                installationId: root.binding.installationId, requestId: root.binding.requestId,
+                target: root.binding.target, effectActionId: reviewedChild.actionId,
+                ...request, privateKey: f.keyPair.secretKey });
+            // The native issuer admits role/input; HTTP verifies its signed proof.
+            for (const tamperedChild of [{ ...reviewedChild, role: 'unreviewed' }, { ...reviewedChild,
+                inputDigest: computeActionInputApprovalDigestV1(reviewedChild.actionId, { ...install, agentId: 'claude' }) }]) {
+                expect(await verifyExternalActionDomainExecutionRequest({ ...request, reviewedChild: tamperedChild,
+                    authorizationToken: root.token, effectActionId: reviewedChild.actionId,
+                    encodedTarget: encodeExternalActionResolvedTargetV1(root.binding.target), machineSignature: signature })).toBeNull();
+            }
+            const verified = await f.verify(root, request, reviewedChild.actionId);
+            if (!presentUser) {
+                expect(verified).toBeNull();
+                return;
+            }
+            expect(verified).toMatchObject({
+                effectActionId: reviewedChild.actionId, reviewedChildAdmission: reviewedChild,
+                binding: { actionId: 'machines.setup.apply', admittedMachineRole: 'manage' },
+            });
+        } finally { await f.app.close(); }
+    });
 
     it('admits the real public PAT spawn projection before reviewing Machine setup', async () => {
         const f = await createSignedDiscussionHttpFixture(undefined, [], false, undefined, {

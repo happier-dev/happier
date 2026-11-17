@@ -79,6 +79,7 @@ export function readSessionAgentReadinessChildActionV1(
 /** These finite native leaves need invocation data, not requester Account content. */
 export function isMachineSetupNativeCodecActionIdV1(actionId: string): boolean {
   return actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 || actionId === MACHINE_SETUP_UPDATES_APPLY_ACTION_ID_V1
+    || actionId === SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action
     || MACHINE_REBOOT_ACTION_IDS.some(id => id === actionId);
 }
 
