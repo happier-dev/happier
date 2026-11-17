@@ -100,9 +100,10 @@ export function projectAutomationSubjectPickerActionPage(input: Readonly<{
         case 'session': {
             const page = SessionListActionResultV1Schema.parse(input.result);
             if ('view' in page) throw new Error('Expected Session summary page');
+            const nextCursor = page.nextCursor ?? null;
             return { items: page.sessions.map(session => ({ label: session.title ?? session.id,
-                subject: { kind: 'session', serverId, sessionId: session.id } })), nextCursor: page.nextCursor,
-            coverage: page.nextCursor !== null || page.hasNext === true ? 'partial' : 'complete' };
+                subject: { kind: 'session', serverId, sessionId: session.id } })), nextCursor,
+            coverage: nextCursor !== null || page.hasNext === true ? 'partial' : 'complete' };
         }
         case 'approvalProfile': {
             const page = ActionPolicyOutputSchemas['actions.policy.get'].parse(input.result);

@@ -5,6 +5,14 @@ import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-pro
 import { projectAutomationSubjectPickerActionPage, resolveAutomationSubjectPickerListRead } from './automationSubjectPicker';
 
 describe('automation subject picker read ownership', () => {
+    it('normalizes an omitted Session continuation while preserving incomplete owner pages', () => {
+        const project = (result: unknown) => projectAutomationSubjectPickerActionPage({
+            kind: { kind: 'session' }, serverId: 'home-a', result,
+        });
+        expect(project({ sessions: [], hasNext: false })).toEqual({ items: [], nextCursor: null, coverage: 'complete' });
+        expect(project({ sessions: [], hasNext: true })).toEqual({ items: [], nextCursor: null, coverage: 'partial' });
+        expect(project({ sessions: [], nextCursor: 'next-session' })).toEqual({ items: [], nextCursor: 'next-session', coverage: 'partial' });
+    });
     it('preserves the Environment identity owner’s portable Home instead of a routing alias', () => {
         const environment = createDeploymentEnvironmentHeaderV1({ serverId: 'portable-home' });
         for (const kind of ['environment', 'backup'] as const) {
