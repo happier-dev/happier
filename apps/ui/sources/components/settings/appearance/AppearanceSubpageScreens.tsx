@@ -31,6 +31,9 @@ import { t } from '@/text';
 
 import { settingRendersOnHost } from '@/components/settings/catalog/settingDeclarations';
 
+import { MachineSummaryAppearanceSection } from '@/components/machines/summary/MachineSummaryAppearanceSection';
+import { useDeviceType } from '@/utils/platform/responsive';
+
 import { APPEARANCE_SETTINGS } from './appearanceSettings';
 import { AtmosphereMoments } from './AtmosphereAppearanceRows';
 import {
@@ -92,6 +95,18 @@ export const WidgetsAppearanceScreen = React.memo(
         />
         <WidgetFrameAppearanceSection />
         <SurfaceFinishAppearanceSection />
+      </ItemList>
+    );
+  },
+);
+
+/** Appearance › Machine summary: a device-local look, so it sits with the other looks, not the Account's machine policies. */
+export const MachineSummaryAppearanceScreen = React.memo(
+  function MachineSummaryAppearanceScreen() {
+    return (
+      <ItemList testID="settings-appearance-machine-summary-page" style={PAGE_LIST_STYLE}>
+        <SettingsPageHeader description={t('machineSummary.appearanceDescription')} />
+        <MachineSummaryAppearanceSection phone={useDeviceType() === 'phone'} />
       </ItemList>
     );
   },

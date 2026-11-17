@@ -1473,6 +1473,36 @@ describe('provisioner picker demand', () => {
     } finally { await screen.unmount(); }
   });
 
+  it('offers a Machine-run Account card the same short Choose as a ready one, never the Machine prompt as its status and button', async () => {
+    await installBundledMachinePlugins();
+    const serverId = await harness.addHome({ name: 'Cloud', serverUrl: 'https://machine-less.example.test',
+      serverIdentityId: 'srv_machine_less', accountId: 'owner', currentAccount: true });
+    const { FeaturesResponseSchema } = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
+    const features = FeaturesResponseSchema.parse(await (await harness.request('https://machine-less.example.test/v1/features')).json());
+    features.capabilities.guestCli = { source: 'home-payload', line: '0.3', channel: 'stable' };
+    harness.answer(serverId, '/v1/features', { body: features });
+    const { CONTRIBUTION: contribution } = await import('../../../../../../../packages/plugins/machine-vercel/src/machine/schemas');
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' },
+      snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
+    runtimeHost.current = 'browser';
+    onTestFinished(() => { runtimeHost.current = null; });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+    const { t } = await import('@/text');
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={vi.fn()} />);
+    try {
+      const key = buildQualifiedPluginContributionKey(contribution);
+      await waitForHomeGovernance(() => expect(screen.tree.findAll(node => typeof node.props.testID === 'string'
+        && node.props.testID.endsWith(`.${key}.action`))).not.toHaveLength(0));
+      const action = screen.tree.findAll(node => typeof node.props.testID === 'string' && node.props.testID.endsWith(`.${key}.action`))[0]!;
+      // Its configurator asks for the Machine; the card says nothing it cannot act on and its button stays one word.
+      expect(action.props.title).toBe(t('managedMachines.add.action.choose'));
+      expect(screen.getTextContent()).not.toContain(t('managedMachines.add.chooseController'));
+    } finally { await screen.unmount(); }
+  });
   it('tells two provisioners of one product apart by their declared kind and says a pending check in a word', async () => {
     const { serverId, release } = await arrangeCatalog({
       declared: [['alpha', 'Cua', 'sandbox'], ['beta', 'Cua', 'space']],

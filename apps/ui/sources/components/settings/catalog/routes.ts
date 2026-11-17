@@ -23,6 +23,7 @@ export const SETTINGS_ROUTES = {
     appearanceMoments: '/settings/appearance/moments',
     appearanceWidgets: '/settings/appearance/widgets',
     appearanceMotion: '/settings/appearance/motion',
+    appearanceMachineSummary: '/settings/appearance/machines',
     keyboard: '/settings/keyboard',
     language: '/settings/language',
     features: '/settings/features',

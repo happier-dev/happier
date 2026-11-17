@@ -16,8 +16,6 @@ import {
   SettingRow,
   SettingSection,
 } from '@/components/settings/shell/SettingRow';
-import { APPEARANCE_SETTINGS } from '@/components/settings/appearance/appearanceSettings';
-import { MachineSummaryAppearanceSection } from '@/components/machines/summary/MachineSummaryAppearanceSection';
 import { formatMachineDuration } from '@/components/machines/durationWords';
 import { PolicyValueSelect } from '@/components/machines/policy/PolicyValueSelect';
 import { formatPolicyDurationInput, parsePolicyDuration } from '@/components/machines/policy/policyDuration';
@@ -229,11 +227,6 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
           }
         />
       </ItemGroup>
-      {/* How every machine is summarized on this device (found from Appearance too): a
-          device-local display preference, after the Account's policies (lab m-defaults ends on Creating machines). */}
-      <SettingSection section={APPEARANCE_SETTINGS.sectionRefs.machineSummary}>
-        <MachineSummaryAppearanceSection phone={compact} />
-      </SettingSection>
     </ItemList>
   );
 });

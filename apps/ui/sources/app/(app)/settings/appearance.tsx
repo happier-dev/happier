@@ -16,7 +16,6 @@ import { useMotionAppearanceSummary, useWidgetsAppearanceSummary } from '@/compo
 import { AppearanceLivePreview } from '@/components/settings/appearance/AppearanceLivePreview';
 import { PageAsideColumns } from '@/components/ui/layout/PageAsideColumns';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
-import { buildSettingHref } from '@/components/settings/catalog/settingDeclarations';
 import { requestHomeCustomize } from '@/components/hub/header/homeCustomizeRequest';
 import { useMachineSummarySettingValue } from '@/components/machines/summary/useMachineSummarySetting';
 import { machineSummaryStyleTitle } from '@/components/machines/summary/MachineSummaryStyleTiles';
@@ -575,13 +574,13 @@ export const WorkspaceRouteBody = React.memo(function AppearanceSettingsScreen()
                         />
                     </SettingAnchor>
                 </SettingSection>
-                {/* The Machine summary's look lives with the machines it summarizes. */}
+                {/* The Machine summary is a look like the others here, set on its own page. */}
                 <Item
                     testID="settings-appearance-machine-summary"
                     title={t('machineSummary.settingTitle')}
                     icon={<Icon name="hard-drives" />}
                     detail={machineSummaryStyleTitle(machineSummaryStyle)}
-                    onPress={() => router.push(buildSettingHref(SETTINGS_ROUTES.machineDefaults, APPEARANCE_SETTINGS.settings.machineSummaryStyle))}
+                    onPress={() => router.push(SETTINGS_ROUTES.appearanceMachineSummary)}
                 />
             </ItemGroup>
             </SettingSection>

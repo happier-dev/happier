@@ -33,6 +33,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: 'appearance/moments', titleKey: 'settingsAppearance.glassControls.moments' },
     { name: 'appearance/widgets', titleKey: 'settingsAppearance.widgetsAndSurfaces' },
     { name: 'appearance/motion', titleKey: 'settingsAppearance.visualEffects.title' },
+    { name: 'appearance/machines', titleKey: 'machineSummary.settingTitle' },
     { name: 'appearance/themes', titleKey: 'settingsAppearance.themeProfiles.title' },
     { name: 'appearance/themes/[profileId]', titleKey: 'settingsAppearance.themeProfiles.editorTitle' },
     { name: 'appearance/themes/import', titleKey: 'settingsAppearance.themeProfiles.importProfile' },

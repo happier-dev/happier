@@ -214,10 +214,10 @@ export const APPEARANCE_MOTION_SETTINGS = defineSettingsPage({
     },
 });
 
-/** The Machine summary's look is set where machines are configured: Machines › Defaults. */
+/** Appearance › Machine summary: a device-local look, apart from the Account's machine policies. */
 export const APPEARANCE_MACHINE_SUMMARY_SETTINGS = defineSettingsPage({
     pageId: 'appearance',
-    subpage: movedRows('machineSummary', SETTINGS_ROUTES.machineDefaults, 'settings.machines'),
+    subpage: movedRows('machineSummary', SETTINGS_ROUTES.appearanceMachineSummary, 'machineSummary.settingTitle'),
     sections: {
         machineSummary: {
             titleKey: 'machineSummary.settingTitle',

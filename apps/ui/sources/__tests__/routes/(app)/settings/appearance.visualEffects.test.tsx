@@ -295,11 +295,15 @@ describe('Appearance: the four everyday decisions, then a page per rarely change
         }
     });
 
-    it('sets the Machine summary with the machines, and reveals it there', async () => {
+    it('sets the Machine summary on its own Appearance page, with the style tiles and one switch per metric', async () => {
         const { default: Appearance } = await import('@/app/(app)/settings/appearance');
         const screen = await renderSettingsView(<Appearance />, { flushOptions: { cycles: 0 } });
         await screen.pressByTestIdAsync('settings-appearance-machine-summary');
-        expect(sessionSettingsEntryState.routerPushSpy)
-            .toHaveBeenLastCalledWith('/settings/machines/defaults?setting=appearance.machineSummaryStyle');
+        expect(sessionSettingsEntryState.routerPushSpy).toHaveBeenLastCalledWith('/settings/appearance/machines');
+
+        const { default: MachineSummaryPage } = await import('@/app/(app)/settings/appearance/machines');
+        const page = await renderSettingsView(<MachineSummaryPage />, { flushOptions: { cycles: 0 } });
+        expect(page.findAllByProps({ testIdPrefix: 'settings-appearance-machineSummary-style' }).length).toBeGreaterThan(0);
+        expect(page.findAllByProps({ testID: 'settings-appearance-machineSummary-show-cpu' }).length).toBeGreaterThan(0);
     });
 });
