@@ -10,6 +10,7 @@ import { ExecutionRunGetResponseSchema} from '@happier-dev/protocol/execution/ru
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { SessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
@@ -441,9 +442,9 @@ describe('SessionWalkthroughView retained offline reading through real Account m
         let input!: Record<string, unknown>;
         let chooseEngine!: (engine: string) => void;
         function ReviewOptions(props: React.ComponentProps<typeof SessionWalkthroughView>) {
-            const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ engineIds: ['codex'] });
+            const [actionInput, setActionInput] = React.useState<Record<string, unknown>>({ reviewers: [{ kind: 'engine', engineId: 'codex' }] });
             input = actionInput;
-            chooseEngine = engine => setActionInput(previous => ({ ...previous, engineIds: [engine] }));
+            chooseEngine = engine => setActionInput(previous => ({ ...previous, reviewers: [{ kind: 'engine', engineId: engine }] }));
             launcher = useExecutionRunLaunchContext(props.sessionId, props.serverId ?? null);
             const { state } = useMachineCapabilitiesCache({ machineId: launcher.machineId, enabled: Boolean(launcher.machineId),
                 ...(props.serverId ? { serverId: props.serverId } : {}), request: { requests: [{ id: 'tool.executionRuns' }] } });
@@ -488,7 +489,7 @@ describe('SessionWalkthroughView retained offline reading through real Account m
                 : null);
             const modelId = `served-${agentId}`;
             await act(async () => picker().props.onSelect({ agentTargetKey: picker().props.agentTargetKey, providerConnectionId: null, modelId }));
-            expect(input.modelSelection).toMatchObject({ modelId, agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: agentId }) });
+            expect((input.reviewers as Array<{ modelSelection?: unknown }>)[0]?.modelSelection).toMatchObject({ modelId, agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: agentId }) });
             await act(async () => picker().props.onSelect(null));
             expect(input).not.toHaveProperty('modelSelection');
             expect(input).not.toHaveProperty('childSelection');
@@ -603,6 +604,39 @@ describe('SessionWalkthroughView retained offline reading through real Account m
             expect(generationCalls()).toHaveLength(2);
             expect(ScmDiffSummaryGenerateInputSchema.parse(generationCalls()[1]!.payload)).not.toHaveProperty('modelSelector');
         }
+    }, 120_000);
+
+    it('retries a saved reading with its exact Team model ref and Account default authentication', async () => {
+        const fixtureId = 'retry-team-default';
+        const modelSelection = SessionModelRefSchema.parse({ source: 'team_resource', teamId: 'summary-team',
+            resourceId: 'summary-resource', expectedResourceRevision: 7, deliveryMode: 'brokered',
+            agentTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }), modelId: 'gpt-6-luna' });
+        const comparison = { id: fixtureId, source: { kind: 'workingTree' }, repository: { rootPath: '/repo/exact' },
+            endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } };
+        boundary.savedSessionId = `${fixtureId}-producer`;
+        boundary.savedResult = ScmDiffSummaryResultSchema.parse({ resultId: `${fixtureId}-result`, revision: 1, canUndo: false,
+            generator: { backendTarget: { kind: 'backend', backendId: 'codex' }, modelId: modelSelection.modelId,
+                modelSelection },
+            output: { success: true, resultId: `${fixtureId}-result`, revision: 1, sourceKey: comparison.id, comparison,
+                producer: { kind: 'generation', modelId: modelSelection.modelId },
+                metadata: { sourceKey: comparison.id, source: comparison.source }, requestedOutputs: ['walkthrough'],
+                outputs: { walkthrough: { state: 'failed' } },
+                analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } } });
+        boundary.generate = () => ScmDiffSummaryGenerateOutputSchema.parse({ success: false, errorCode: 'SUMMARY_FAILED', error: 'Fixture ending' });
+        const { home, machine } = await mount({ kind: 'workingTree' }, boundary.savedSessionId);
+        const hook = await renderHook(() => useScmDiffSummaryBinding({ host: { sessionId: boundary.savedSessionId }, serverId: home.id,
+            machine: { machineId: machine.id, basePath: '/repo/exact' }, machineReachable: true, canControl: true, canSend: true,
+            launch: { canLaunchExecutionRuns: true }, comparison: { kind: 'workingTree' }, output: 'walkthrough' }), {
+            wrapper: ({ children }) => <InjectedAuthProvider credentials={accountCredentials}>{children}</InjectedAuthProvider>,
+        });
+        await vi.waitFor(() => expect(hook.getCurrent().viewModel?.resultId).toBe(boundary.savedResult!.resultId));
+        expect(hook.getCurrent().model).toEqual({ v: 1, modelSelection });
+        await act(async () => { await hook.getCurrent().onStart(); });
+        expect(generationCalls()).toHaveLength(1);
+        expect(ScmDiffSummaryGenerateInputSchema.parse(generationCalls()[0]!.payload)).toMatchObject({
+            modelSelector: { modelSelection },
+            cachePolicy: { mode: 'bypass' },
+        });
     }, 120_000);
 
     it('names a cold-loaded reading from the Session model list while the picker catalog cannot', async () => {

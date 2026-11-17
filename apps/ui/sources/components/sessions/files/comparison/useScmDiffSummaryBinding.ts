@@ -3,7 +3,7 @@ import type { SessionExecutionRunLaunchUnavailableReason } from '@/hooks/session
 import type { ScmDiffSummaryOutputKind } from '@happier-dev/protocol/scm/diffSummary';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isLlmTaskRunnerAutoV1, LlmTaskRunnerChoiceV1Schema, type LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { SessionModelRefSchema } from '@happier-dev/protocol/providers/selection/v2';
 
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { getStorage, useSetting } from '@/sync/domains/state/storage';
@@ -101,15 +101,17 @@ export function useScmDiffSummaryBinding(params: Readonly<{
     const { retryRestore, machineReachability } = restoration;
     const restoreState = !comparison ? 'idle' : viewModel ? 'ready' : restoration.restoreState;
     const producer = selectScmDiffSummaryProducerModel(viewModel);
-    const observedSelection = ProviderBoundModelRefSchema.safeParse(producer.backendTarget && producer.modelId
-        && !producer.selection?.modelSelection?.providerConnectionId && !viewModel?.latestRun?.resolvedSelection?.teamCredentialModel
-        ? { agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(producer.backendTarget)), providerConnectionId: null, modelId: producer.modelId } : null);
+    const observedSelection = SessionModelRefSchema.safeParse(producer.modelSelection ?? (producer.backendTarget && producer.modelId
+        ? { agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(producer.backendTarget)), providerConnectionId: null, modelId: producer.modelId } : null));
     // An explicit per-run choice (including Auto) wins. Otherwise keep the Account preference, or reuse the
     // displayed producer with its recorded authentication rather than turning a saved retry into fresh Auto.
     // A model-only observation may label the reading, but cannot reconstruct its authentication.
-    const recordedChoice = React.useMemo<LlmTaskRunnerChoiceV1 | null>(() => observedSelection.success && producer.selection?.connectedServices !== undefined
-        ? { v: 1, modelSelection: observedSelection.data, connectedServices: producer.selection.connectedServices } : null,
-    [observedSelection.success ? JSON.stringify(observedSelection.data) : null, JSON.stringify(producer.selection?.connectedServices)]);
+    const hasRecordedSelection = producer.modelSelection !== null;
+    const recordedChoice = React.useMemo<LlmTaskRunnerChoiceV1 | null>(() => observedSelection.success
+        && (hasRecordedSelection || producer.selection?.connectedServices !== undefined)
+        ? { v: 1, modelSelection: observedSelection.data,
+            ...(producer.selection?.connectedServices !== undefined ? { connectedServices: producer.selection.connectedServices } : {}) } : null,
+    [hasRecordedSelection, observedSelection.success ? JSON.stringify(observedSelection.data) : null, JSON.stringify(producer.selection?.connectedServices)]);
     const model: LlmTaskRunnerChoiceV1 = chosenModel ?? (storedChoice && !isLlmTaskRunnerAutoV1(storedChoice) ? storedChoice : recordedChoice ?? storedChoice ?? AUTO_CHOICE);
     const generationFailure = viewModel?.error && !(viewModel.error.reason === 'disabled' && explainEnabled) ? viewModel.error : null;
     const capturedComparison = viewModel?.comparison ?? null;
