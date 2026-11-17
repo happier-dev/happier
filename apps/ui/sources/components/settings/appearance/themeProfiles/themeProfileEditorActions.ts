@@ -1,3 +1,4 @@
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { mergeThemeProfileDocumentEdit, type ThemeProfileDocument, type ThemeProfileMode, type ThemeProfileV1, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import type { ThemeUiActionExecute } from './useThemeActionExecution';
@@ -25,7 +26,11 @@ export function createThemeProfileEditorActions(execute: ThemeEditorExecute) {
                 document = mergeThemeProfileDocumentEdit(document, { id: saved.entry.id });
             }
             const preview = await tryDocument(document, input.mode);
-            return execute(THEME_ACTION_IDS.keep, { previewRef: preview.previewRef });
+            const { entry } = await execute(THEME_ACTION_IDS.keep, { previewRef: preview.previewRef });
+            if (entry === null) {
+                throw createActionExecuteFailureError({ ok: false, errorCode: 'theme_not_found', error: 'theme_not_found' });
+            }
+            return entry;
         },
     };
 }

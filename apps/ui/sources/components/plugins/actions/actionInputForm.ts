@@ -20,8 +20,10 @@ export type ActionInputFormSubmissionResult = Readonly<{
     ok: boolean;
     /** A declined review leaves the form editable without announcing a failure. */
     cancelled?: true;
+    /** Displayed as diagnostic text. Action owners may provide their own operation phase. */
+    phase?: string;
 }
-    & Partial<Pick<PluginUiHostApiErrorPayloadV1, 'code' | 'layer' | 'phase' | 'retryable'>>>;
+    & Partial<Pick<PluginUiHostApiErrorPayloadV1, 'code' | 'layer' | 'retryable'>>>;
 
 /**
  * The transient form signal is distinct from the Action invocation signal.

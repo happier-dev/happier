@@ -17,7 +17,7 @@ function fixture() {
 }
 
 /** Real Action adapter, library and preview; only the Artifact storage is in memory. */
-function actionBoundary() {
+function actionBoundary(options: { keepDefault?: boolean } = {}) {
     const calls: { id: ThemeActionId; input: unknown }[] = [];
     const document = fixture();
     const harness = createThemeActionHarness();
@@ -30,7 +30,9 @@ function actionBoundary() {
         calls.push({ id, input: admitted });
         // The schema-admitted discriminant/input pair crosses the Action boundary.
         const result = await action({ actionId: id, input: admitted, context: { surface: 'ui' } } as ThemeActionRequest);
-        return ThemeActionOutputSchemas[id].parse(result) as ThemeActionOutput<Id>;
+        // The Keep wire contract also serves default-theme previews, which return no entry.
+        const response = options.keepDefault && id === THEME_ACTION_IDS.keep ? { ...result, entry: null } : result;
+        return ThemeActionOutputSchemas[id].parse(response) as ThemeActionOutput<Id>;
     };
     return { calls, execute, document, ...harness };
 }
@@ -61,6 +63,13 @@ describe('themeProfileEditorActions', () => {
         expect(selection.dark).toBeNull();
         expect(rows.get(document.profile.id)?.document.raw).toMatchObject({ name: 'Saved edit', schemaVersion: 2, futurePresentation: { texture: 'paper' } });
         expect(owner.read()).toBeNull();
+    });
+
+    it('reports a Keep response without a saved theme as a save failure', async () => {
+        const { execute, document } = actionBoundary({ keepDefault: true });
+        const editor = createThemeProfileEditorActions(execute);
+        await expect(editor.saveAndUse({ document, draft: document.profile, mode: 'light' }))
+            .rejects.toMatchObject({ code: 'theme_not_found' });
     });
 
     it('keeps a new draft without a preliminary save', async () => {

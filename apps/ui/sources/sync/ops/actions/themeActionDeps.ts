@@ -87,7 +87,7 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                 case THEME_ACTION_IDS.tryOn: {
                     const runtime = host.runtime;
                     if (!runtime) return clientActionUnavailable(request.actionId);
-                    const { origin, ...input } = request.input;
+                    const { origin, document, ...input } = request.input;
                     let previewOrigin: ThemeTryOnOrigin;
                     if (origin.kind === 'store' && origin.listing) {
                         const listing = origin.listing;
@@ -95,31 +95,31 @@ export function createThemeActionExecute(host: ThemeActionHost): NonNullable<Act
                         const acquired = await host.withRegistryLifecycle(lifecycle => lifecycle.prepareStorePreview(listing), request.context);
                         previewOrigin = { kind: 'store', listing, acquired };
                     } else if (origin.kind === 'store') {
-                        const source = input.document?.profile.source;
+                        const source = document?.profile.source;
                         if (source?.kind !== 'plugin') return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };
                         previewOrigin = { kind: 'store', reference: { kind: 'plugin', pluginId: source.pluginId, contributionId: source.contributionId } };
                     } else {
                         previewOrigin = { kind: origin.kind };
                     }
-                    if (!input.document) {
+                    if (!document) {
                         const preview = runtime.preview.begin({ ...input, document: null, selection: null, origin: previewOrigin });
                         return { previewRef: preview.previewRef, coverage: { total: 0, native: 0, webOnly: 0, affectedSurfaces: [], hides: [] },
                             compatibility: { status: 'supported', unsupportedPaths: [] } };
                     }
-                    await prepareThemeProfileCssAsync(input.document.profile);
-                    const source = input.document.profile.source;
+                    await prepareThemeProfileCssAsync(document.profile);
+                    const source = document.profile.source;
                     const reference: ThemeReference = source?.kind === 'plugin' ? { kind: 'plugin',
                         pluginId: source.pluginId, contributionId: source.contributionId }
                         : source?.kind === 'built-in' ? { kind: 'built-in', presetId: source.presetId }
-                        : { kind: 'artifact', id: input.document.profile.id };
+                        : { kind: 'artifact', id: document.profile.id };
                     const existing = previewOrigin.kind !== 'store' || 'reference' in previewOrigin ? await library.get(reference) : null;
-                    const selection = existing && sameStrictJsonValue(existing.raw, input.document.raw) ? reference : undefined;
+                    const selection = existing && sameStrictJsonValue(existing.raw, document.raw) ? reference : undefined;
                     if (previewOrigin.kind === 'store' && 'reference' in previewOrigin && !selection) {
                         return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };
                     }
-                    const preview = runtime.preview.begin({ ...input, origin: previewOrigin,
+                    const preview = runtime.preview.begin({ ...input, document, origin: previewOrigin,
                         ...(selection ? { selection } : {}) });
-                    return { previewRef: preview.previewRef, coverage: runtime.coverage(input.document), compatibility: input.document.compatibility };
+                    return { previewRef: preview.previewRef, coverage: runtime.coverage(document), compatibility: document.compatibility };
                 }
                 case THEME_ACTION_IDS.revert:
                     if (!host.runtime) return clientActionUnavailable(request.actionId);

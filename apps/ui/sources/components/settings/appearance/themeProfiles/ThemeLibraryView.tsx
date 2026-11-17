@@ -158,14 +158,15 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
 
       <SettingAnchor setting={THEMES_SETTINGS.settings.yourThemes}>
         {props.sections ? (
-          // One section per mode, every theme once (a two-mode theme sits in each of its modes' sections).
-          props.sections.map((section, index) => (
-            <ThemeSection key={section.mode} mode={section.mode} selectedKey={section.selectedKey} tiles={section.tiles}
-              title={t(section.mode === 'dark' ? 'themeLibrary.darkThemes' : 'themeLibrary.lightThemes')}
-              description={index === 0 && !props.hasOwnThemes ? t('settingsAppearance.themeProfiles.emptyDescription') : undefined}
-              testID={index === 0 && !props.hasOwnThemes ? 'settings-theme-profile-custom-empty' : undefined}
-              phone={phone} onChooseTheme={onChooseTheme} />
-          ))
+          <>
+            {props.sections.map((section, index) => (
+              <ThemeSection key={section.mode} mode={section.mode} selectedKey={section.selectedKey} tiles={section.tiles}
+                title={t(section.mode === 'dark' ? 'themeLibrary.darkThemes' : 'themeLibrary.lightThemes')}
+                description={index === 0 && !props.hasOwnThemes ? t('settingsAppearance.themeProfiles.emptyDescription') : undefined}
+                testID={index === 0 && !props.hasOwnThemes ? 'settings-theme-profile-custom-empty' : undefined}
+                phone={phone} onChooseTheme={onChooseTheme} />
+            ))}
+          </>
         ) : (
           <ThemeSection mode={mode} selectedKey={props.selectedKey} tiles={props.tiles} title={undefined}
             description={props.hasOwnThemes ? undefined : t('settingsAppearance.themeProfiles.emptyDescription')}

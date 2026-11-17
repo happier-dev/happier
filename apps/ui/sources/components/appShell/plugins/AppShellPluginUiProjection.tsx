@@ -206,9 +206,10 @@ type AppShellPluginUiProjectionSubscription = Readonly<{
     getSnapshot(): AppShellPluginUiProjectionValue;
     subscribe(listener: () => void): () => void;
 }>;
+const noProjectionSubscription = () => () => {};
 const AppShellPluginUiProjectionContext = React.createContext<AppShellPluginUiProjectionSubscription>({
     getSnapshot: () => EMPTY_APP_SHELL_PLUGIN_UI_PROJECTION_VALUE,
-    subscribe: () => () => {},
+    subscribe: noProjectionSubscription,
 });
 export type AppShellPluginUiDeclarationSources = Readonly<{
     projection: PluginUiProjectionModel | null;
@@ -1015,13 +1016,13 @@ export function useAppShellPluginUiProjectionSubscription(): AppShellPluginUiPro
     return React.useContext(AppShellPluginUiProjectionContext);
 }
 
-export function useAppShellPluginUiProjection<T>(selector: (value: AppShellPluginUiProjectionValue) => T): T;
-export function useAppShellPluginUiProjection(): AppShellPluginUiProjectionValue;
-export function useAppShellPluginUiProjection<T>(selector?: (value: AppShellPluginUiProjectionValue) => T): AppShellPluginUiProjectionValue | T {
+export function useAppShellPluginUiProjection<T>(selector: (value: AppShellPluginUiProjectionValue) => T, enabled?: boolean): T;
+export function useAppShellPluginUiProjection(selector?: undefined, enabled?: boolean): AppShellPluginUiProjectionValue;
+export function useAppShellPluginUiProjection<T>(selector?: (value: AppShellPluginUiProjectionValue) => T, enabled = true): AppShellPluginUiProjectionValue | T {
     const context = React.useContext(AppShellPluginUiProjectionContext);
     const select = useShallow<AppShellPluginUiProjectionValue, AppShellPluginUiProjectionValue | T>(selector ?? readAppShellPluginUiProjection);
     const getSnapshot = React.useCallback(() => select(context.getSnapshot()), [context, select]);
-    return React.useSyncExternalStore(context.subscribe, getSnapshot, getSnapshot);
+    return React.useSyncExternalStore(enabled ? context.subscribe : noProjectionSubscription, getSnapshot, getSnapshot);
 }
 
 /**

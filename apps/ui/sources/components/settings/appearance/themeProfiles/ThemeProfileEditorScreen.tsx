@@ -304,7 +304,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
             const reference = savedReference.current ?? (!isNewProfile ? initialSource.current.reference : null);
             const saved = await editorActions.saveAndUse({ document, draft: profile, mode: assetAppearance,
                 ...(reference ? { reference } : {}) });
-            savedReference.current = saved.entry.reference;
+            savedReference.current = saved.reference;
         } catch (error) {
             if (isActionApprovalDeclinedErrorCode(readActionErrorCodeV1(error))) return;
             alertActionFailure({ code: readActionErrorCodeV1(error), reason: resolveActionExecutionErrorMessage(error, t('common.requestFailed')) });

@@ -133,7 +133,7 @@ export const PrimaryCircleIconButton = React.memo(
           {({ pressed, focused }) => (
             <View
               {...inspection}
-              {...{ dataSet: themeSurfaceDataSet(surfaceAddress.surface, surfaceAddress.part, surfaceAddress.state ?? 'default') }}
+              {...{ dataSet: surfaceAddress }}
               style={[
                 styles.paint,
                 {
