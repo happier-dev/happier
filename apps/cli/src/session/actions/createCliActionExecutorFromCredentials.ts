@@ -2156,8 +2156,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                   ...(params.onRequesterSessionCredentialDisclosure
                     ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
                   ...(requestSignal ? { signal: requestSignal } : {}) });
-                const requester = spec.approvalResultCustody === 'live_only'
-                  && params.onApprovalRequested && accountId && context.serverIdentityId
+                const requester = params.onApprovalRequested && accountId && context.serverIdentityId
                   ? await executeOriginalAccountCliApprovalRequest({ actionId: parsedActionId.data, requestId,
                     target: requesterTarget, accountId, homeId: context.serverIdentityId,
                     token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl(),
@@ -2184,14 +2183,13 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           }, {
             signal: requestSignal,
             ...(onApprovalRequested ? { onApprovalRequested } : {}),
-            ...(liveResultCustody ? { timeoutMs: null } : {}),
+            ...(liveResultCustody || params.onApprovalRequested ? { timeoutMs: null } : {}),
             ...(daemonControlTarget ? { target: daemonControlTarget } : {}),
             ...(pairedTerminal && context.authority === 'account_automation'
               ? { authorityCeiling: 'account_automation' as const }
               : {}),
           });
-          const result = spec.approvalResultCustody === 'live_only'
-            && params.onApprovalRequested
+          const result = params.onApprovalRequested
             ? await executeLiveCliApprovalRequest({ onApprovalRequested: params.onApprovalRequested,
               execute: executeApprovalAction,
               context: signal ? { ...context, signal } : context, run })

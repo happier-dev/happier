@@ -16,10 +16,10 @@ export function createSignedRootActionApprovalAcknowledgement() {
       run(signal: AbortSignal, progress?: ActionExecutorContext['operationOwnerUpdate']): Promise<ActionExecuteResult>;
     }>): Promise<ActionExecuteResult> {
       const spec = getActionSpec(args.actionId);
-      if (args.surface !== 'cli' || spec.approvalInputCustody !== 'live_only' && spec.approvalResultCustody !== 'live_only') return await args.run(args.signal);
-      if (spec.approvalResultCustody === 'live_only') {
-        // A receipt cannot recover this output. Report Ask without giving up
-        // the original request that owns the native completion and result.
+      if (args.surface !== 'cli') return await args.run(args.signal);
+      if (spec.approvalResultCustody === 'live_only' || spec.approvalInputCustody !== 'live_only') {
+        // Report Ask for every retained invocation, independently of result
+        // custody. The original request still owns completion and its result.
         return await args.run(args.signal, { update: ({ progress }) => {
           if (progress?.phase === 'waiting_for_approval' && progress.approval?.actionId === args.actionId) {
             args.onApprovalRequested?.(progress.approval);

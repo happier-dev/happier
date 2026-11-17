@@ -14,7 +14,7 @@ export function createCliActionApprovalPresenter(options: Readonly<{
     if (options.json) console.error(JSON.stringify({ v: 1, ok: true, kind: options.envelopeKind,
       data: { kind: 'approval_request_created', artifactId, actionId: options.actionId },
     } satisfies SessionControlJsonEnvelope));
-    else console.error(`Waiting for approval: ${artifactId}`);
+    else console.error(`Awaiting approval ${artifactId} — approve in the app`);
     let approve = options.approve === true;
     if (!approve) {
       // Only a person at this terminal decides here. Without one, or when the

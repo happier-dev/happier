@@ -45,6 +45,36 @@ vi.mock('undici', async importOriginal => {
 describe('paired terminal Action admission', () => {
     afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+    it('streams approval for ordinary results at signed-root ingress', async () => {
+        await withConfiguredDaemonTestHome({ prefix: 'cli-ordinary-approval-' }, async () => {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
+                provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+            writeDaemonState({ pid: process.pid, httpPort: 43123, startedAt: Date.now(), startedWithCliVersion: 'test',
+                controlToken: 'fixture-control-token', machineId: 'own-machine', accountId: 'owner' });
+            const actionId = 'plugins.list';
+            const input = {};
+            const presented = vi.fn();
+            vi.stubGlobal('fetch', async (url: unknown, options: RequestInit) => {
+                if (String(url).endsWith('/ping')) return Response.json({ status: 'ok' });
+                expect(new Headers(options.headers).get('accept')).toBe('application/x-ndjson');
+                return new Response([
+                    { ok: true, result: { kind: 'approval_request_created', artifactId: 'ordinary-approval', actionId } },
+                    { ok: false, errorCode: 'approval_rejected', error: 'approval_rejected' },
+                ].map(value => JSON.stringify(value) + '\n').join(''), { headers: { 'content-type': 'application/x-ndjson' } });
+            });
+            const executor = createCliActionExecutorFromCredentials({
+                credentials: { token, encryption: null, credentialProvenance: 'stored_session' }, externalActionClient: true,
+                serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverApiUrl: 'https://home.test',
+                machineId: 'own-machine', onApprovalRequested: presented,
+                actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }), getAccountSettings: () => accountSettingsParse({}) },
+            });
+            const result = await executor.execute(actionId, input, { surface: 'cli' });
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+            expect(presented.mock.calls[0]?.[0]).toBe('ordinary-approval');
+        });
+    });
+
+
     it.each(['execute', 'prepare'] as const)('consumes a forwarded approval at the real signed-root %s ingress', async method => {
         await withConfiguredDaemonTestHome({ prefix: 'happier-terminal-deferred-approval-' }, async () => {
             const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,

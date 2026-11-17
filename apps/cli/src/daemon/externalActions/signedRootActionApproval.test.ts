@@ -77,7 +77,7 @@ it.each(['teams.invitations.create', 'teams.invitations.reissue', 'connectedServ
   }
 });
 
-it.each(['connectedServices.authentication.beginConnect', 'connectedServices.authentication.submitManual', 'connectedServices.authentication.completeOAuth'] as const)(
+it.each(['account.apiTokens.revoke', 'connectedServices.authentication.beginConnect', 'connectedServices.authentication.submitManual', 'connectedServices.authentication.completeOAuth'] as const)(
   'reports %s approval while retaining its live result on the original request', async actionId => {
   const owner = createSignedRootActionApprovalAcknowledgement();
   const approval = { kind: 'approval_request_created' as const, artifactId: 'manual-approval',

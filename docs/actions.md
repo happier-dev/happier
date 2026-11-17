@@ -9092,9 +9092,11 @@ approval decision route delivers consent to that daemon's retained invocation;
 standalone live invocations continue without a daemon placement, even when their
 registry can resolve a Machine. Only the daemon host that holds the waiter supplies
 that private custody fact.
-Account-target live-only invocations use the same CLI approval callback: the
-terminal presents the Artifact id before prompting and keeps the original
-invocation alive. In `--json` mode, an `actions_invoke` envelope carrying
+Retained CLI invocations use the same approval callback regardless of result
+custody: the terminal presents the Artifact id and points to approval in the app
+before prompting, while keeping the original invocation alive. Presented daemon
+requests use the invocation's cancellation signal without a transport deadline.
+Private-input-only requests keep their existing deferred acknowledgement lifetime. In `--json` mode, an `actions_invoke` envelope carrying
 `approval_request_created`, `artifactId` and `actionId` is written to stderr;
 stdout remains the final Action result. A decision from another surface closes
 the pending prompt through the invocation's existing cancellation signal.
