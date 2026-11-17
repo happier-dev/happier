@@ -83,13 +83,14 @@ const commands = new WeakMap<AdmittedServiceExecContextV1, CommandCapture | Read
     producer: CommandCapture; consumer: CommandCapture;
 }>>();
 
-/** Docker Compose v2.39.4 exec/run codec. Only the native generation owner supplies the prefix and service. */
+/** Docker Compose exec/run codec. Only the native generation owner supplies the prefix and service. */
 export function nativeServiceCommandArgs(prefix: readonly string[], service: string, command: ServiceCommandV1): readonly string[] {
     if (!service || !command.argv.length || command.argv.some(arg => arg.includes('\0'))) {
         throw new PluginError({ code: 'invalid_request', message: 'A literal service command is required' });
     }
+    // Compose run builds only with --build; its run command has no --no-build flag.
     return [...prefix, ...(command.mode === 'exec' ? ['exec', '-T']
-        : ['run', '--rm', '-T', '--no-build', '--pull', 'never', '--no-deps']), service, ...command.argv];
+        : ['run', '--rm', '-T', '--pull', 'never', '--no-deps']), service, ...command.argv];
 }
 
 /** Host-private factory: invoked only by the actual native render/current-generation owner. */

@@ -4012,7 +4012,7 @@ if (process.argv.includes('image') && process.argv.includes('pull') && process.a
                 expect(migration).toBeGreaterThanOrEqual(0);
                 expect(activation).toBeGreaterThan(migration);
                 expect(native[migration].args.slice(native[migration].args.indexOf('run'))).toEqual([
-                    'run', '--rm', '-T', '--no-build', '--pull', 'never', '--no-deps', 'app',
+                    'run', '--rm', '-T', '--pull', 'never', '--no-deps', 'app',
                     scenario === 'candidate_pending_check_zero' ? 'pending' : 'migrate', '--candidate-release',
                 ]);
                 if (scenario === 'candidate_pending_check_zero') {

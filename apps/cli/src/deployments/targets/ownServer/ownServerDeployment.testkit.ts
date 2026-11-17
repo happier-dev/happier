@@ -618,23 +618,26 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     const shell = mode === 'exec' && args[offset + 1] === '-it' && args[offset + 3] === '/bin/sh'
         && args.length === offset + 4;
     if (!shell && (!args.includes('-T') || args.includes('-it') || mode === 'run'
-        && (!args.includes('--rm') || !args.includes('--no-deps') || !args.includes('--no-build')
+        && (!args.includes('--rm') || !args.includes('--no-deps') || args.includes('--no-build')
             || args[args.indexOf('--pull') + 1] !== 'never'))) throw new Error('fixture_unsafe_finite_command');
     const outcome = state.commandOutcome || {};
     const runModel = mode === 'run' ? loadNativeModel(files[0]) : undefined;
-    const commandService = mode === 'run' ? runModel?.services?.[args[offset + 7]] : undefined;
+    let runServiceIndex = args.indexOf('--no-deps') + 1;
+    while (mode === 'run' && args[runServiceIndex] === '--env') runServiceIndex += 2;
+    const runService = mode === 'run' ? args[runServiceIndex] : undefined;
+    const commandService = runService ? runModel?.services?.[runService] : undefined;
     state.commands = [...(state.commands || []), { mode, args: args.slice(offset), running: !!outcome.hold,
         ...(commandService ? { imageConfigDigest: imageFor(commandService.image)?.image.configDigest,
             environmentMatchesExpected: Object.entries(outcome.expectedServiceValues?.environment || {})
                 .every(([name, value]) => commandService.environment?.[name] === value) } : {}) }]; save();
     const complete = () => {
     if (outcome.expectedRunImageConfigDigest) {
-        const service = args[offset + 7];
+        const service = runService;
         const nativeImage = imageFor(runModel?.services?.[service]?.image);
         write(JSON.stringify({ candidateImageMatches: nativeImage?.image.configDigest === outcome.expectedRunImageConfigDigest }));
     }
     if (outcome.expectedServiceValues) {
-        const service = runModel?.services?.[args[offset + 7]];
+        const service = runService ? runModel?.services?.[runService] : undefined;
         const expected = outcome.expectedServiceValues;
         write(JSON.stringify({ environmentMatchesExpected: Object.entries(expected.environment || {}).every(([name, value]) => service?.environment?.[name] === value)
                 && (expected.absentEnvironmentKeys || []).every(name => !Object.hasOwn(service?.environment || {}, name)),
@@ -651,7 +654,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     }
     if (outcome.environmentKey) {
         const project = args[args.indexOf('--project-name') + 1];
-        const service = args[offset + (mode === 'exec' ? 2 : 7)];
+        const service = mode === 'exec' ? args[offset + 2] : runService;
         const container = state.containers.find(row => row.Config.Labels['com.docker.compose.project'] === project
             && row.Config.Labels['com.docker.compose.service'] === service && row.State.Status === 'running');
         const value = mode === 'exec' ? container?.Config.Env.find(entry => entry.startsWith(outcome.environmentKey + '='))
@@ -662,7 +665,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     if (outcome.stdout) write(outcome.stdout);
     if (outcome.resource) {
         const { kind, source, expectedValue } = outcome.resource;
-        const service = args[offset + 7];
+        const service = runService;
         const reference = runModel?.services?.[service]?.[kind]?.find(item => typeof item === 'string' ? item === source : item.source === source);
         const resource = reference ? runModel?.[kind]?.[source] : undefined;
         let value;

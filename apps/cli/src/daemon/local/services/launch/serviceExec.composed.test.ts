@@ -908,7 +908,7 @@ describe('admitted finite Compose command', () => {
             const finite = invocations.filter(row => row.args.includes('run'));
             expect(finite).toHaveLength(1);
             expect(finite[0].args.slice(finite[0].args.indexOf('run'))).toEqual([
-                'run', '--rm', '-T', '--no-build', '--pull', 'never', '--no-deps', 'worker', ...argv]);
+                'run', '--rm', '-T', '--pull', 'never', '--no-deps', 'worker', ...argv]);
             // The host's ordinary environment is supported. The admitted
             // explicit project operand, not ambient COMPOSE_PROJECT_NAME,
             // selects the candidate's native project.
