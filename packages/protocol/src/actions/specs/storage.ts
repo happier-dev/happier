@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { isProjectCheckoutRemovalActionIdV1 } from '../projectActionIdsV1.js';
 import { STORAGE_OPERATION_INPUT_FIELDS } from './storageInputHints.js';
 import { MACHINE_STORAGE_ACTION_IDS } from './storageActionIdsV1.js';
 export { MACHINE_STORAGE_ACTION_IDS } from './storageActionIdsV1.js';
@@ -101,7 +102,8 @@ function cleanupSpec<const Id extends MachineStorageActionId>([id, title, descri
   readonly [Id, string, string, string, 'read' | 'write' | 'danger', 'safe' | 'danger', z.input<(typeof MACHINE_STORAGE_ACTION_INPUT_SCHEMAS)[Id]>?]): MachineStorageActionSpec<Id> {
   return {
     ...base, id, approval: { result: 'required' }, title, description, safety, sideEffectClass,
-    ...(id === 'machines.storage.docker.prune' ? { contextualDefaults: { machineId: 'current_session_machine' }, operation: {
+    ...(id === 'machines.storage.docker.prune' ? { contextualDefaults: { machineId: 'current_session_machine' } } : {}),
+    ...(id === 'machines.storage.docker.prune' || isProjectCheckoutRemovalActionIdV1(id) ? { operation: {
       version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' },
     } as const } : {}),
     ...(id === 'machines.storage.deleteNow' || id === 'machines.storage.trash.empty' || id === 'machines.storage.docker.prune'

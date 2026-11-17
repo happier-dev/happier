@@ -1,6 +1,10 @@
+import { createProjectSetupTrustClient } from '@/workspaces/projectSetup/projectSetupTrust';
+import { ProjectTrustMutationRequestV1Schema, type ProjectTrustContentV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
+import { createManagedSessionDirectories } from '@/session/creation/managedSessionDirectories';
+import { createStorageCategoryCatalog } from '@/storage/categoryCatalog';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { EventEmitter } from 'node:events';
-import { execFileSync, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,13 +24,26 @@ import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/
 import { configuration } from '@/configuration';
 import type { HostAgentIsolationLaunchSnapshot, HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
-import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED, readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { runWithHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol/scm/worktrees';
+import axios from 'axios';
+import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
+import { createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
+import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
+import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
+import { createPlainProjectAccountRefRow, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, type WorktreeRemovedEventV1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 
 const os = vi.hoisted(() => ({
   identity: undefined as unknown as import('node:async_hooks').AsyncLocalStorage<'member'>,
@@ -37,6 +54,7 @@ const os = vi.hoisted(() => ({
   direct: [] as Array<{ command: string; uid: number | undefined; member: boolean }>,
   runAs: [] as Array<{ args: readonly string[]; uid?: number }>,
   subprocessWorker: false,
+  terminalLaunch: false,
 }));
 os.identity = new AsyncLocalStorage<'member'>();
 
@@ -76,9 +94,12 @@ vi.mock('node:child_process', async original => {
       pid: undefined, exitCode: null as number | null, signalCode: null, killed: false });
     const finish = (code: number) => { child.exitCode = code; child.stdout.end(); child.stderr.end();
       child.emit('exit', code, null); child.emit('close', code, null); };
+    const terminal = os.terminalLaunch;
     queueMicrotask(() => void os.identity.run('member', async () => {
       try {
-        const frame = await readAgentLaunchFrame(child.stdin as Readable);
+        if (terminal) child.stdout.write(AGENT_LAUNCH_TERMINAL_READY);
+        const frame = await readAgentLaunchFrame(child.stdin as Readable, terminal ? 'terminal' : undefined);
+        if (terminal) child.stdout.write(AGENT_LAUNCH_TERMINAL_ACCEPTED);
         os.runAs.push({ args: frame.args, uid: frame.nativeIdentity?.agentUid });
         if (frame.args[0] === 'workspace-effect') {
           if (os.subprocessWorker) {
@@ -106,7 +127,7 @@ vi.mock('node:child_process', async original => {
   } };
 });
 afterEach(() => { os.repository = ''; os.secret = ''; os.daemonTouches.length = 0; os.memberReads.length = 0;
-  os.direct.length = 0; os.runAs.length = 0; os.subprocessWorker = false; vi.restoreAllMocks(); });
+  os.direct.length = 0; os.runAs.length = 0; os.terminalLaunch = false; os.subprocessWorker = false; vi.restoreAllMocks(); });
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=Owner test', '-c', 'user.email=owner@example.invalid', ...args],
   { cwd, encoding: 'utf8' });
@@ -118,7 +139,8 @@ async function repository(parent: string, name: string): Promise<string> {
   return path;
 }
 
-async function fixture() {
+async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
+  resolveProjectRuntime?: NonNullable<Parameters<typeof registerScmHandlers>[2]>['resolveProjectRuntime'] }> = {}) {
   const plugins = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
     runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
   onTestFinished(() => plugins.dispose());
@@ -176,13 +198,16 @@ async function fixture() {
     registry: createScmBackendRegistry([backend]),
     accessPolicy: { kind: 'osUser' },
     resolveRequester: effectAdmission.resolveRpcRequester,
+    ...(options.projectCleanupUnavailable ? { resolveProjectRuntime: async () => null } : {}),
+    ...(options.resolveProjectRuntime ? { resolveProjectRuntime: options.resolveProjectRuntime } : {}),
     // The member binding store (native OS state) names the member who owns a member folder.
     nativeOperationRuntime: { prepareNativeOperation, readMemberFolderOwner: async (path: string) =>
       path === memberRoot || path.startsWith(`${memberRoot}/`) ? { kind: 'isolated' as const, separationRequired: true,
         requester: { serverId: home, accountId: 'member-account', machineId, installationId } } : null },
   });
-  const invoke = (method: string, params: unknown, accountId: string, role: 'manage' | 'use', signal?: AbortSignal) =>
-    manager.invokeLocal(method, params, { rpcContext: {
+  const invoke = (method: string, params: unknown, accountId: string, role: 'manage' | 'use', signal?: AbortSignal,
+    localActionContext?: RpcHandlerContext['localActionContext']) =>
+    manager.invokeLocal(method, params, { ...(localActionContext ? { localActionContext } : {}), rpcContext: {
       callerAuthority: 'present_user',
       verifyMachineAdmissionCurrent: async () => true,
       ...(signal ? { signal } : {}),
@@ -190,7 +215,76 @@ async function fixture() {
         role, encryptionMode: 'plain' },
     } });
   os.repository = memberRepository;
-  return { directory, ownerRepository, memberRoot, memberRepository, invoke, manager };
+  return { directory, ownerRepository, memberRoot, memberRepository, invoke, manager, plugins,
+    prepareNativeOperation, home, machineId, installationId };
+}
+
+async function memberProjectRuntime(f: Awaited<ReturnType<typeof fixture>>, workspace: import('@happier-dev/protocol').WorkspaceRefV1) {
+    // Account HTTP is the boundary; accepted association, definition, consent,
+    // native preparation, member bridge, SCM and host event owner stay real.
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+    let trust: ProjectTrustContentV1 | null = null;
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (String(url).endsWith('/project-trust/read')) return { status: 200,
+        data: trust ? { status: 'present', revision: 1, content: trust } : { status: 'absent' } };
+      if (String(url).endsWith('/project-trust/mutate')) {
+        trust = ProjectTrustMutationRequestV1Schema.parse(body).content;
+        return { status: 200, data: { status: 'updated', revision: 1, cursor: 1 } };
+      }
+      return projectAccountRowsReadHttpResponse([createPlainProjectAccountRefRow(workspace)], String(url), body);
+    });
+    const operationRuntime = createHostActionOperationRuntime({ machineId: f.machineId,
+      custodyBinding: { serverId: f.home, installationId: f.installationId },
+      resolveAccountId: async () => 'owner-account', generateOperationId: () => 'member-removal' });
+    const terminalSessions = createTerminalPtySessionManager({ config: readDaemonTerminalPtyConfig({}).sessionManager,
+      platform: 'linux', env: {}, stopProcessTree: async () => {}, probeProcessGroup: () => 'absent',
+      ptyProvider: { spawn(params) {
+        // Adapt the PTY OS boundary to the fixture's real framed RunAs child.
+        // The child executes the actual accepted shell command as the member scope.
+        os.terminalLaunch = true;
+        let child: ChildProcess;
+        try {
+          child = spawn(params.file, typeof params.args === 'string' ? [params.args] : params.args,
+            { cwd: params.options.cwd, env: params.options.env, stdio: 'pipe' });
+        } finally { os.terminalLaunch = false; }
+        return { pid: child.pid ?? 3456, ownedProcessGroupId: child.pid ?? 3456,
+          write: value => { child.stdin?.write(value); }, resize() {},
+          kill() { child.stdin?.destroy(); },
+          onData(listener) { child.stdout?.on('data', listener); return { dispose() { child.stdout?.off('data', listener); } }; },
+          onExit(listener) {
+            const exit = (exitCode: number | null) => listener({ exitCode });
+            child.once('close', exit); return { dispose() { child.off('close', exit); } };
+          } };
+      } } });
+    onTestFinished(() => terminalSessions.dispose());
+    const token = `eyJhbGciOiJub25lIn0.${Buffer.from(JSON.stringify({ sub: 'owner-account' })).toString('base64url')}.signature`;
+    const runtime: ProjectFiniteActionRuntime = { serverId: f.home, machineId: f.machineId, accountId: 'owner-account',
+      credentials: { token, encryption: null }, serverHttpBaseUrl: 'https://home.example',
+      resolveHostHomeServerIdentityId: async () => f.home, isCurrent: async () => true,
+      operationRuntime, terminalSessions, nativeOperationRuntime: { prepareNativeOperation: f.prepareNativeOperation,
+        prepareConnectedAccountProcessEnvironment: async () => ({
+          produce: async environment => ({ environment, secretValues: [] }), dispose: async () => {},
+        }) },
+      workerAdmission: createProjectWorkerAdmission({ machineId: f.machineId, admissionDrain: createDaemonAdmissionDrain(),
+        readMemory: () => null,
+        readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: null }, source: 'stored', metadataVersion: 1 }) }),
+      resolveWorkspaceExecutionConfig: async () => null, nativeIo: { resolveTool: async () => null },
+      environmentIo: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
+      platform: 'linux', arch: 'x64', hostEnvironment: {}, successHomeDir: join(f.directory, 'setup-success'),
+    };
+
+    return { runtime, operationRuntime, async resumeCleanupReview() {
+      const scope = { accountId: 'owner-account', machineId: f.machineId };
+      await expect.poll(() => operationRuntime.store.get(scope, 'member-removal') !== null).toBe(true);
+      const current = await operationRuntime.runner.waitForTerminal(scope, 'member-removal', undefined, { includeSetupReview: true });
+      if (current?.setupReview) {
+        await createProjectSetupTrustClient({ credentials: runtime.credentials, serverHttpBaseUrl: runtime.serverHttpBaseUrl })
+          .approveReviewedEffect({ project: { serverId: f.home, projectId: workspace.projectKey! },
+            reviewedEffectDigest: current.setupReview.reviewedEffectDigest, currentEffectDigest: current.setupReview.reviewedEffectDigest,
+            approvedAtMs: 1, expectedRevision: 'absent', authority: 'present_user' });
+        await operationRuntime.handlers.getV2({ operationId: 'member-removal' });
+      }
+    } };
 }
 
 const gitLaunches = () => os.direct.filter(launch => launch.command.endsWith('git'));
@@ -280,6 +374,150 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     expect(gitLaunches().length).toBeGreaterThan(0);
     expect(daemonGit()).toEqual([]);
     expect(os.daemonTouches).toEqual([]);
+  });
+
+  it('preserves a member checkout when the original requester Project cleanup runtime is unavailable', async () => {
+    const f = await fixture({ projectCleanupUnavailable: true });
+    const worktree = join(f.memberRoot, 'linked-checkout');
+    git(f.memberRepository, 'worktree', 'add', '--detach', worktree);
+    const marker = join(worktree, 'person-work.txt');
+    await writeFile(marker, 'preserve this checkout\n');
+    git(worktree, 'add', 'person-work.txt');
+    git(worktree, 'commit', '-q', '-m', 'checkout content');
+    os.repository = f.memberRoot;
+    const response = await f.invoke(RPC_METHODS.SCM_WORKTREE_REMOVE, {
+      cwd: f.memberRepository, worktreePath: worktree, confirmed: true,
+      authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN,
+    }, 'manager-account', 'manage');
+    expect(response).toMatchObject({ success: false, actionErrorCode: 'project_setup_operation_unavailable' });
+    expect(await originalFs.readFile(marker, 'utf8')).toBe('preserve this checkout\n');
+    expect(os.daemonTouches).toEqual([]);
+    expect(daemonGit()).toEqual([]);
+  });
+
+  it('runs accepted cleanup in the member worker and publishes one removal from the original Manage operation', async () => {
+    let runtime: ProjectFiniteActionRuntime | null = null;
+    const f = await fixture({ resolveProjectRuntime: async () => runtime });
+    const worktree = join(f.memberRoot, 'cleanup-checkout');
+    const marker = join(f.memberRoot, 'cleanup-effects');
+    git(f.memberRepository, 'worktree', 'add', '--detach', worktree);
+    await mkdir(join(worktree, '.happier'));
+    const quote = (value: string) => `'${value.replace(/'/g, `'"'"'`)}'`;
+    await writeFile(join(worktree, '.happier/project.json'), JSON.stringify({ version: 1, workspace: {
+      teardown: [{ kind: 'command', command: `printf cleanup >> ${quote(marker)}` }],
+    } }));
+    git(worktree, 'add', '.happier/project.json');
+    git(worktree, 'commit', '-q', '-m', 'accepted cleanup');
+    const workspace = { id: 'member-checkout', serverId: f.home, machineId: f.machineId,
+      rootPath: worktree, projectKey: 'accepted-project', createdAtMs: 1 };
+    const prepared = await memberProjectRuntime(f, workspace);
+    runtime = prepared.runtime;
+    const operationRuntime = prepared.operationRuntime;
+    const broker = f.plugins.registry.stableEventsBroker;
+    if (!broker) throw new Error('Installed host event broker unavailable');
+    const removals: WorktreeRemovedEventV1[] = [];
+    const subscription = broker.subscribeHost({
+      target: { eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } },
+      privileged: true, isCurrent: () => true,
+      listener(event) {
+        if (event.eventId === MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 && event.payload.kind === 'worktreeRemoved')
+          removals.push(event.payload.removal);
+      },
+    });
+    onTestFinished(() => subscription.dispose());
+    os.repository = f.memberRoot; os.subprocessWorker = true;
+    const input = { cwd: f.memberRepository, worktreePath: worktree, confirmed: true,
+      authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN };
+    const pending = operationRuntime.observeExecution({ actionId: 'scm.worktree.remove', input,
+      actionRequestId: 'member-removal-request', execute: async operation => ({ ok: true,
+        result: await f.invoke(RPC_METHODS.SCM_WORKTREE_REMOVE, input, 'owner-account', 'manage', operation.signal,
+          { ...operation, surface: 'rpc', authority: 'present_user', actionsSettings: normalizeActionsSettingsV1({
+            v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.prepare': ['rpc'] } }) }) }) });
+    void pending.catch(() => undefined);
+    await prepared.resumeCleanupReview();
+    expect(await pending).toMatchObject({ ok: true, result: { success: true } });
+    expect(await originalFs.readFile(marker, 'utf8')).toBe('cleanup');
+    await expect(originalFs.access(worktree)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect.poll(() => removals.length).toBe(1);
+    expect(removals).toEqual([{ workspace: { serverId: f.home, machineId: f.machineId,
+      workspaceId: workspace.id, rootPath: worktree }, project: { serverId: f.home, projectId: 'accepted-project' },
+      machineId: f.machineId, operationId: 'member-removal', worktreePath: worktree,
+      outcome: 'removed', removalKind: 'deleted' }]);
+    expect(operationRuntime.store.list({ accountId: 'owner-account', machineId: f.machineId }).items)
+      .toMatchObject([{ operationId: 'member-removal', state: 'succeeded' }]);
+    expect(os.runAs.some(run => run.args[0] === 'workspace-effect')).toBe(true);
+    expect(os.daemonTouches).toEqual([]);
+    expect(daemonGit()).toEqual([]);
+  });
+
+  it.each(['remove', 'retire'] as const)('keeps private managed allocation cleanup in the member OS scope for Storage %s', async removalKind => {
+    const f = await fixture();
+    const activeServerDir = join(f.directory, 'private-records');
+    let runtime: ProjectFiniteActionRuntime | null = null;
+    const owner = createManagedSessionDirectories({ activeServerDir,
+      payloadPlacement: { root: f.memberRoot, agentUid: process.getuid!() },
+      resolveProjectRuntime: async () => runtime,
+      nativeOperationRuntime: { prepareNativeOperation: f.prepareNativeOperation,
+        readMemberFolderOwner: async () => ({ kind: 'isolated', separationRequired: true,
+          requester: { serverId: f.home, accountId: 'member-account', machineId: f.machineId, installationId: f.installationId } }) },
+    });
+    const allocation = await owner.materializeForFreshSpawn({ sessionCreationTag: `storage-${removalKind}` });
+    await owner.bind({ allocationId: allocation.allocationId, sessionId: 'storage-session' });
+    await mkdir(join(allocation.directory, '.happier'));
+    await writeFile(join(allocation.directory, '.happier/project.json'), JSON.stringify({ version: 1,
+      workspace: { teardown: [{ kind: 'command', command: 'true' }] } }));
+    await writeFile(join(allocation.directory, 'kept'), 'private-storage-bytes');
+    const workspace = { id: 'managed-storage', serverId: f.home, machineId: f.machineId,
+      rootPath: allocation.directory, projectKey: 'accepted-project', createdAtMs: 1 };
+    const prepared = await memberProjectRuntime(f, workspace); runtime = prepared.runtime;
+    const removals: WorktreeRemovedEventV1[] = [];
+    const subscription = f.plugins.registry.stableEventsBroker!.subscribeHost({
+      target: { eventId: MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, scope: { kind: 'account' } },
+      privileged: true, isCurrent: () => true, listener: event => {
+        if (event.eventId === MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 && event.payload.kind === 'worktreeRemoved')
+          removals.push(event.payload.removal);
+      },
+    });
+    onTestFinished(() => subscription.dispose());
+    const catalog = createStorageCategoryCatalog({ happyHomeDir: f.directory, activeServerDir,
+      tempRoot: join(f.directory, 'absent-tmp'), managedSessionDirectories: owner,
+      readTrackedSessions: () => [{ sessionId: 'storage-session', cwd: allocation.directory, running: false, stoppedAt: 1 }] });
+    const item = (await catalog.discover()).find(item => item.path === allocation.directory);
+    expect(item).toMatchObject({ categoryId: 'sessionFolders', sessionId: 'storage-session' });
+    if (!item) throw new Error('Managed allocation missing from real Storage catalog');
+    const adapter = await catalog.resolveAdapter(item);
+    expect(await originalFs.readFile(join(allocation.directory, 'kept'), 'utf8')).toBe('private-storage-bytes');
+    os.repository = f.memberRoot; os.subprocessWorker = true; os.daemonTouches = []; os.memberReads = [];
+    const pending = prepared.operationRuntime.observeExecution({
+      actionId: removalKind === 'remove' ? 'machines.storage.deleteNow' : 'machines.storage.trash.move',
+      input: { machineId: f.machineId, items: [] }, actionRequestId: 'storage-member-removal',
+      execute: async operation => {
+        const context = { ...operation, authority: 'present_user' as const, surface: 'rpc' as const,
+          actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {}, approvalWaivedSurfaces: { 'projects.prepare': ['rpc'] } }) };
+        const ingress: RpcHandlerContext = { signal: operation.signal, callerAuthority: 'present_user',
+          machineAdmission: { actorAccountId: 'owner-account', custodianAccountId: 'owner-account', machineId: f.machineId,
+            installationId: f.installationId, role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+        const removalContext = { ingress, context, operation };
+        if (removalKind === 'remove') await adapter.discard({ removalContext });
+        else await adapter.retire({ payloadPath: join(f.directory, 'retired-payload'), removalContext });
+        return { ok: true, result: {} };
+      } });
+    void pending.catch(() => undefined);
+    await prepared.resumeCleanupReview();
+    expect(await pending).toMatchObject({ ok: true });
+    await expect(originalFs.access(allocation.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    if (removalKind === 'retire') expect(await originalFs.readFile(join(f.directory, 'retired-payload', 'kept'), 'utf8')).toBe('private-storage-bytes');
+    expect(os.runAs.some(run => run.args[0] === 'workspace-effect')).toBe(true);
+    expect(os.daemonTouches).not.toContain(join(allocation.directory, '.happier/project.json'));
+    await expect.poll(() => removals.length).toBe(1);
+    expect(removals[0]).toMatchObject({ operationId: 'member-removal', workspace: {
+      workspaceId: workspace.id, rootPath: allocation.directory }, project: { serverId: f.home, projectId: 'accepted-project' },
+      outcome: 'removed', removalKind: removalKind === 'remove' ? 'deleted' : 'retired' });
+    if (removalKind === 'retire') {
+      await adapter.discard({ payloadPath: join(f.directory, 'retired-payload') });
+      await expect(originalFs.access(join(f.directory, 'retired-payload'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(removals).toHaveLength(1);
+    }
   });
 
   // SEC-FORKC-1115F F1: a member-planted Git state file must never be opened by the daemon.

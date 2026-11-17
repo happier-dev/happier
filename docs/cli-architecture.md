@@ -9708,6 +9708,10 @@ lookup finds their Session, and otherwise retains their files for normal resume
 binding. A cursor gap can therefore leave orphaned files; it must not delete a
 retained conversation's workspace.
 
+Member-owned managed allocations reuse the Session native member preparation
+and read bridge for cleanup; the original Account and operation remain in the
+host, and Storage retains its existing native Trash move.
+
 These private folders are separate working directories, not OS or tenant
 isolation. Agents retain the daemon user's filesystem access, including access to
 other managed folders. Claude's existing trust policy and user-scope skill/config

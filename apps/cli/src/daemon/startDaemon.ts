@@ -3337,7 +3337,10 @@ export async function startDaemon(
           catalog: {
             happyHomeDir: home, activeServerDir, installDir: projectPath(),
             ...(hostBootedAt !== undefined ? { bootedAt: hostBootedAt } : {}),
-            managedSessionDirectories: createManagedSessionDirectories({ activeServerDir }),
+            managedSessionDirectories: createManagedSessionDirectories({ activeServerDir,
+              nativeOperationRuntime: { prepareNativeOperation: request => apiMachine!.prepareNativeOperation(request),
+                readMemberFolderOwner: directory => apiMachine!.readMemberFolderOwner(directory) },
+              resolveProjectRuntime: async ingress => await apiMachine?.resolveProjectFiniteRuntime(ingress) ?? null }),
             worktreeOperations: createStorageWorktreeOperations({ happyHomeDir: home,
               resolveProjectRuntime: async ingress => await apiMachine?.resolveProjectFiniteRuntime(ingress) ?? null }),
             checkoutReferences: createProjectWorkspaceRetirement({ authority: { credentials: capturedCredentials, serverId: target.serverId },

@@ -1,3 +1,5 @@
+import type { ApiMachineClient } from '@/api/apiMachine';
+import { prepareManagedSessionDirectoryRemovalAsMember } from './memberSessionDirectoryRemoval';
 import { createHash } from 'node:crypto';
 import { lstat, rename, rm } from 'node:fs/promises';
 import { posix, win32 } from 'node:path';
@@ -93,6 +95,7 @@ export function createManagedSessionDirectories(input: Readonly<{
   protection?: ProtectedLocalStateOptions;
   /** Already admitted native identity and Workspace root; ownership records stay private. */
   payloadPlacement?: ManagedSessionDirectoryPayloadPlacement;
+  nativeOperationRuntime?: Pick<ApiMachineClient, 'prepareNativeOperation' | 'readMemberFolderOwner'>;
   resolveProjectRuntime?: (ingress: RpcHandlerContext) => Promise<ProjectFiniteActionRuntime | null>;
 }> = {}) {
   const platform = input.platform ?? process.platform;
@@ -321,6 +324,7 @@ export function createManagedSessionDirectories(input: Readonly<{
   };
   const removeAllocation = async (allocationId: string, options: Readonly<{
     beforeEffect?: () => Promise<void>; throwOnFailure?: boolean; removeDirectory?: () => Promise<void>;
+    removalContext?: StorageWorktreeRemovalContext;
   }> = {}): Promise<void> => {
     try {
       const record = await readRecord(allocationId);
@@ -329,14 +333,20 @@ export function createManagedSessionDirectories(input: Readonly<{
       if (record.inTrash) {
         const info = await lstat(record.inTrash.payloadPath);
         if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Managed allocation must be a directory, never a symlink');
-      } else await assertContained(target, record.payloadPlacement);
+      } else if (!record.payloadPlacement || !options.removalContext) await assertContained(target, record.payloadPlacement);
       // Filesystem locks remain durable pending removals for the cleanup owner to retry.
       await options.beforeEffect?.();
-      const payloadPath = record.inTrash?.payloadPath ?? target.directory;
-      if (record.payloadPlacement && platform === 'linux') await removeUnixPathTree(payloadPath);
-      else if (options.removeDirectory) await options.removeDirectory();
-      else await rm(payloadPath, { recursive: true, force: true });
-      await removeProtectedLocalStateFile(recordPath(allocationId), protection);
+      const prepared = !record.inTrash && options.removalContext
+        ? await prepareBoundRemoval(target.directory, record.payloadPlacement, options.removalContext) : undefined;
+      try {
+        const payloadPath = record.inTrash?.payloadPath ?? target.directory;
+        if (prepared?.member) await prepared.member.remove();
+        else if (record.payloadPlacement && platform === 'linux') await removeUnixPathTree(payloadPath);
+        else if (options.removeDirectory) await options.removeDirectory();
+        else await rm(payloadPath, { recursive: true, force: true });
+        await removeProtectedLocalStateFile(recordPath(allocationId), protection);
+        prepared?.removal.settle('deleted');
+      } finally { await prepared?.member?.dispose(); }
     } catch (error) {
       // Storage has its own per-item receipt/re-check path; a rejected approval
       // re-check must not turn an untouched allocation into a pending removal.
@@ -344,12 +354,26 @@ export function createManagedSessionDirectories(input: Readonly<{
       await markPendingRemoval(allocationId, error);
     }
   };
-  const prepareRemoval = async (directory: string, removalContext: StorageWorktreeRemovalContext) => {
+  const prepareRemoval = async (directory: string, removalContext: StorageWorktreeRemovalContext,
+    member?: Pick<ProjectFiniteActionRuntime, 'requesterIdentity' | 'agentIsolation'>) => {
     if (!input.resolveProjectRuntime) throw Object.assign(new Error('project_setup_operation_unavailable'), { code: 'project_setup_operation_unavailable' });
     const runtime = await input.resolveProjectRuntime(removalContext.ingress);
     if (!runtime) throw Object.assign(new Error('project_setup_operation_unavailable'), { code: 'project_setup_operation_unavailable' });
     const { prepareProjectCheckoutRemoval } = await import('@/workspaces/projectSetup/projectCheckoutRemoval');
-    return prepareProjectCheckoutRemoval({ runtime, ...removalContext, worktreePath: directory });
+    return prepareProjectCheckoutRemoval({ runtime: member ? { ...runtime, ...member } : runtime, ...removalContext, worktreePath: directory });
+  };
+  const prepareBoundRemoval = async (directory: string, placement: ManagedSessionDirectoryPayloadPlacement | undefined,
+    removalContext: StorageWorktreeRemovalContext) => {
+    if (!placement) return { removal: await prepareRemoval(directory, removalContext), member: undefined };
+    if (!input.nativeOperationRuntime) throw Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
+    let removal: ProjectCheckoutRemoval | undefined;
+    const member = await prepareManagedSessionDirectoryRemovalAsMember({ nativeOperationRuntime: input.nativeOperationRuntime,
+      ingress: removalContext.ingress, operation: removalContext.operation, directory, prepareRemoval: async (reads, nativeRuntime) => {
+        await runWithWorkspaceSource(createMemberWorkspaceReadSource(reads, placement.root), async () => {
+          removal = await prepareRemoval(directory, removalContext, nativeRuntime);
+        });
+      } });
+    return { removal: removal!, member };
   };
   const removeSessionRecords = async (sessionId: string, records: readonly ManagedSessionDirectoryEntry[], stopSession: StopSession) => {
     if (!records.length) return;
@@ -494,8 +518,9 @@ export function createManagedSessionDirectories(input: Readonly<{
       withPinnedUnixDirectory(paths.dirname(destination), destinationParent =>
         rename(paths.join(sourceParent.path, paths.basename(source)), paths.join(destinationParent.path, paths.basename(destination)))));
   };
-  const retireToTrash = async ({ allocationId, payloadPath, beforeEffect }: Readonly<{
+  const retireToTrash = async ({ allocationId, payloadPath, beforeEffect, removalContext }: Readonly<{
     allocationId: string; payloadPath: string; beforeEffect?: () => Promise<void>;
+    removalContext?: StorageWorktreeRemovalContext;
   }>) => {
     const record = await readRecord(allocationId);
     if (!record || record.pendingRemoval || (record.inTrash && !canonicalAbsolutePathsEqual(record.inTrash.payloadPath, payloadPath))) {
@@ -516,9 +541,13 @@ export function createManagedSessionDirectories(input: Readonly<{
     if (record.inTrash) throw new ManagedSessionDirectoryTrashError('owner_unavailable');
     await requireAbsent(payloadPath);
     await beforeEffect?.();
-    await movePayload(target.directory, payloadPath, record.payloadPlacement);
-    try { await writeRecord(allocationId, { ...record, inTrash: { payloadPath } }); }
-    catch (error) { await movePayload(payloadPath, target.directory, record.payloadPlacement); throw error; }
+    const prepared = removalContext ? await prepareBoundRemoval(target.directory, record.payloadPlacement, removalContext) : undefined;
+    try {
+      await movePayload(target.directory, payloadPath, record.payloadPlacement);
+      try { await writeRecord(allocationId, { ...record, inTrash: { payloadPath } }); }
+      catch (error) { await movePayload(payloadPath, target.directory, record.payloadPlacement); throw error; }
+      prepared?.removal.settle('retired');
+    } finally { await prepared?.member?.dispose(); }
   };
   const reinstateFromTrash = async ({ allocationId, payloadPath, restorePath, beforeEffect }: Readonly<{
     allocationId: string; payloadPath: string; restorePath: string; beforeEffect?: () => Promise<void>;
