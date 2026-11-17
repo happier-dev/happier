@@ -49,7 +49,7 @@ import axios from '@/api/client/credentialAxios';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
 import { retireObservedSessionRunnerMetadata } from '../sessions/plainRunnerRetirement';
 import { actionStartTargetUnavailableV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
-import { materializeSessionConnectedAccountProcessEnvironment, type SessionConnectedAccountProcessEnvironmentInput } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
+import { materializeSessionConnectedAccountProcessEnvironment, type SessionConnectedAccountProcessEnvironmentInput, type SessionConnectedAccountProcessEnvironmentProducer } from '@/daemon/connectedServices/materialize/processConnectedAccountEnvironment';
 import { resolveSystemToolLaunchPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -1456,6 +1456,7 @@ export async function startDaemonSessionControlRuntime(
   Readonly<{
     executeGuardLeftBehindAction: ReturnType<typeof createGuardLeftBehindActionExecutor>;
     readRequesterNativeOfferedModel: NonNullable<MachineRpcHandlerDeps['readRequesterNativeOfferedModel']>;
+    materializeSessionProcessEnvironment: SessionConnectedAccountProcessEnvironmentProducer;
     resolveExecutionRunLiveBrokerAuthority: NonNullable<MachineRpcHandlerDeps['resolveExecutionRunLiveBrokerAuthority']>;
     guardSources: Required<Pick<import('../guard/readGuardFacts').ReadGuardFactsDependencies, 'readBrowsers' | 'readServices' | 'readServiceTargets'>>;
     sessionLiveWorkProducer: ReturnType<typeof createSessionLiveWorkProducer>;
@@ -3110,7 +3111,7 @@ export async function startDaemonSessionControlRuntime(
               const credentials = accountContext?.bootstrap.credentials ?? params.credentials;
               const attached = await resolveExistingSessionAttachContext({ sessionId, token: credentials.token, credentials });
               const parsed = SessionCreationCorrespondenceV1ReadSchema.safeParse(attached.ok
-                ? attached.metadata.sessionCreationCorrespondenceV1 : undefined);
+                ? attached.metadata?.sessionCreationCorrespondenceV1 : undefined);
               const recipe = parsed.success ? parsed.data.recipe : undefined;
               const origin = recipe?.projectFilesOrigin;
               return await restoreSessionTargetRelay({ ...request, socketPath,

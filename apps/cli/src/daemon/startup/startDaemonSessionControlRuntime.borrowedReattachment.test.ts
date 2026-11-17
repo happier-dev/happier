@@ -25,6 +25,7 @@ import { startDaemonControlServer } from '../controlServer';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import type { TrackedSession } from '../types';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { createSessionHolderSocketPath } from '@/subprocess/supervision/sessionHolder';
 
 const boundary = vi.hoisted(() => ({
     metadata: {} as Record<string, unknown>,
@@ -96,6 +97,61 @@ afterEach(() => {
 });
 
 describe('startup borrowed-terminal reattachment', () => {
+    it.each([
+        { name: 'empty metadata', metadata: {} },
+        { name: 'null metadata', metadata: null },
+        { name: 'missing Home Session', metadata: undefined },
+    ])('settles held-target relay restoration through target admission without Project files metadata ($name)', async ({ metadata }) => {
+        const fixtureHome = await mkdtemp(join(tmpdir(), 'happier-03-held-relay-'));
+        envScope.patch({ HAPPIER_HOME_DIR: fixtureHome });
+        reloadConfiguration();
+        const attachResponse = createDeferred<void>();
+        // A Home response arrives after the startup composition has settled.
+        vi.mocked(fetchSessionByIdCompat).mockImplementationOnce(async () => {
+            await attachResponse.promise;
+            return metadata === undefined ? null : { ...createSessionRecordFixture({ id: boundary.sessionId, metadata: JSON.stringify(metadata), metadataVersion: 1 }),
+                encryptionMode: 'plain' };
+        });
+        const pid = 2_147_482_913;
+        const tracked: TrackedSession = {
+            trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: boundary.sessionId,
+            startedBy: 'daemon', reattachedFromDiskMarker: true,
+            spawnOptions: { directory: fixtureHome, managedTargetPlacement: { managedId: 'held-target', workspaceRoot: '/workspace' } },
+            heldAgentsV1: [{ role: 'primary', socketPath: '/target/primary.sock', holderPid: 100, agentPid: 101,
+                relaySocketPath: createSessionHolderSocketPath() }],
+        };
+        // Observe the real target-open refusal at its console boundary. The default
+        // adapter has no admitted provider here; restoration must still reach it.
+        const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'relay-owner' })).toString('base64url')}.fixture`;
+        let runtime: Awaited<ReturnType<typeof startDaemonSessionControlRuntime>> | undefined;
+        try {
+            runtime = await startDaemonSessionControlRuntime({
+                machineId: 'machine-held-relay', serverId: configuration.activeServerId,
+                serverBaseUrl: configuration.apiServerUrl, credentials: { token, encryption: null }, api: {} as never,
+                daemonSessionMutationCustody: { stageTranscriptMessage: async () => { throw new Error('Unexpected recording attachment'); },
+                    stageTranscriptEvent: async () => ({ persisted: true, delivered: false }), stage: async () => {} },
+                connectedServicesMaterializationBaseDir: join(fixtureHome, 'connected-services'),
+                getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
+                trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null,
+                spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
+                startupTerminalRecovery: { disconnectedTerminalHostCandidates: [], unresolvedTerminalHostSessionIds: [] },
+                beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
+            });
+            attachResponse.resolve();
+            await vi.waitFor(() => expect(output.mock.calls.flatMap(args => args.flatMap(argument =>
+                typeof argument === 'object' && argument !== null && 'code' in argument
+                    ? [argument.code] : []))).toContain('admission_unavailable'));
+        } finally {
+            await runtime?.stopControlServer();
+            output.mockRestore();
+            attachResponse.resolve();
+            await rm(fixtureHome, { recursive: true, force: true });
+        }
+    });
+
     it('keeps exact guest Process Stop within physical custody without custodian Home mutation', async () => {
         const fixtureHome = await mkdtemp(join(tmpdir(), 'happier-03-guest-process-stop-'));
         envScope.patch({ HAPPIER_HOME_DIR: fixtureHome });
