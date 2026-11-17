@@ -4,10 +4,10 @@ import { readFile as readHostFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-// The confined helper's one read budget (its preview owner); a larger file is the typed `too_large`.
-import { WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import type { SessionHolderChild, SessionHolderStreamProcess } from '@/subprocess/supervision/sessionHolder';
+import { attachSessionHolderWorkspaceChannel } from '@/subprocess/supervision/sessionHolder';
+import type { ManagedSessionTarget } from '@/machines/managed/acquire';
 import {
   runNativeConfinedWorkspaceSyncDelete,
   runNativeConfinedWorkspaceSyncObserve,
@@ -16,9 +16,25 @@ import {
 } from '@/workspaces/sync/workspaceSyncNativeConfinedFileSystem';
 
 import type { WorkspaceChildProcess, WorkspaceDirent, WorkspaceEntryStats, WorkspaceReadHandle, WorkspaceSource } from './workspaceSource';
+import { runWithWorkspaceSource } from './workspaceSource';
 import { holderWorkspaceRelativePath, resolveHolderWorkspaceCommand } from './holderWorkspaceCommand';
 
 export { resolveHolderWorkspaceCommand } from './holderWorkspaceCommand';
+
+/** Finite filesystem and command scope on one admitted target root. */
+export async function runWithHolderWorkspaceSource<T>(input: Readonly<{
+  target: Pick<ManagedSessionTarget, 'id' | 'holderPath' | 'helperPath' | 'openChannel'>;
+  rootPath: string;
+  signal: AbortSignal;
+}>, run: () => Promise<T>): Promise<T> {
+  const channel = input.target.openChannel([input.target.holderPath, 'workspace', '--root', input.rootPath], input.signal);
+  const holder = await attachSessionHolderWorkspaceChannel(channel).catch(error => { channel.destroy(); throw error; });
+  try {
+    const source = createHolderWorkspaceSource({ id: input.target.id, rootPath: input.rootPath,
+      helperPath: input.target.helperPath, holder });
+    return await runWithWorkspaceSource(source, run);
+  } finally { holder.detach(); channel.destroy(); }
+}
 
 type TargetEntry = Readonly<{ kind: string; size: number; mtimeMs: number; ctimeMs: number; mode: number; dev: number; ino: number }>;
 type TargetResult = Readonly<{ status: string; entry?: TargetEntry; entries?: readonly Readonly<{ name: string; kind: string }>[];
@@ -125,7 +141,8 @@ export function createHolderWorkspaceSource(input: Readonly<{
     return child as unknown as WorkspaceChildProcess;
   };
   const readFile = async (target: string): Promise<Buffer> => {
-    const outcome = await runNativeConfinedWorkspaceSyncRead({ rootPath: guestRoot, relativePath: relative(target), maxBytes: WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES }, helper);
+    const entry = (await meta(target, 'stat')).entry!;
+    const outcome = await runNativeConfinedWorkspaceSyncRead({ rootPath: guestRoot, relativePath: relative(target), maxBytes: Math.max(1, entry.size) }, helper);
     if (outcome.status !== 'content') {
       throw outcome.status === 'missing' ? errno('ENOENT', `No such file: ${target}`) : Object.assign(new Error(`Target file is not readable (${outcome.status})`), { code: outcome.status });
     }
@@ -168,7 +185,8 @@ export function createHolderWorkspaceSource(input: Readonly<{
     id: input.id,
     stat: async target => entryStats((await meta(target, 'stat')).entry!),
     lstat: async target => entryStats((await meta(target, 'lstat')).entry!),
-    readdir: async target => (await meta(target, 'list')).entries!.map((entry): WorkspaceDirent => ({
+    // The native JSON codec omits an empty entries slice.
+    readdir: async target => ((await meta(target, 'list')).entries ?? []).map((entry): WorkspaceDirent => ({
       name: entry.name, isFile: () => entry.kind === 'file', isDirectory: () => entry.kind === 'directory', isSymbolicLink: () => entry.kind === 'symlink',
     })) as WorkspaceDirent[],
     realpath: async target => path.posix.join(root, (await meta(target, 'realpath')).path ?? ''),

@@ -118,6 +118,9 @@ import { logger } from '@/ui/logger';
 import { withWebLatencyTrace } from '../externalActions/webLatencyTrace';
 import { observeConnectedServiceMaterializationPhase } from '../connectedServices/materialize/materializationPhase';
 import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { CustodySchema } from './requesterSessionCustody';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { ManagedWorkspaceRefV2WriteSchema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 // Genuine socket boundary: these custody tests do not establish runner availability.
 vi.mock('socket.io-client', () => ({ io: () => { throw new Error('Runner socket unavailable'); } }));
@@ -516,6 +519,63 @@ describe('requester Session lifecycle custody', () => {
       await deleted({ sessionId: 'deleted' });
     } finally { dispose(); }
   });
+  it.each(['plain', 'e2ee'] as const)('recovers closed native-target Sync custody without a fabricated host member (%s)', async mode => {
+    const secret = new Uint8Array(32).fill(27);
+    const host = await home({ sessionId: 'native-sync', ...(mode === 'e2ee' ? { encryptionSecret: secret } : {}) });
+    const requesterCredentials = mode === 'e2ee' ? { token: credentials.token, encryption: { type: 'legacy' as const, secret } } : credentials;
+    const workspace = ManagedWorkspaceRefV2WriteSchema.parse({ v: 2, kind: 'managed', id: 'native-workspace',
+      serverId: 'srv_original_home', managedId: 'managed-target', rootPath: '/guest/repo',
+      controller: { machineId: attribution.machineId, installationId: attribution.installationId }, createdAtMs: 1 });
+    const binding = { happyHomeDir: directory!, relationshipId: 'native-sync', attribution, workspace };
+    const sourceExecutionIdentity = mode === 'e2ee'
+      ? { kind: 'isolated' as const, requester: attribution, separationRequired: true } : undefined;
+    const custody = await requesterCredentialOwner.createWorkspaceSyncManagedTargetCredentialCustody({ ...binding,
+      credentials: requesterCredentials, homeServerIdentityId: workspace.serverId,
+      ...(sourceExecutionIdentity ? { sourceExecutionIdentity } : {}) });
+    const stored = JSON.parse(await readFile(custody.path, 'utf8'));
+    expect(stored).toMatchObject({ v: 2, scope: 'workspace_sync_relationship', endpointRole: 'managed_target', workspace });
+    expect(stored.executionIdentity).toBeUndefined();
+    expect(stored.machineAdmission).toBeUndefined();
+    expect(stored.sourceExecutionIdentity).toEqual(sourceExecutionIdentity);
+    // The actual unchanged v1 reader must refuse rather than drop the native locator.
+    expect(createStoredReadSchema(CustodySchema).safeParse(stored).success).toBe(false);
+    expect(await listRequesterSessionCredentialBindings({ happyHomeDir: directory!, ...attribution,
+      scope: 'workspace_sync_relationship', endpointRole: 'managed_target' })).toEqual({ status: 'ready', bindings: [{
+      sessionId: binding.relationshipId, scope: 'workspace_sync_relationship', endpointRole: 'managed_target', attribution, workspace,
+    }] });
+    const recovered = await requesterCredentialOwner.resolveWorkspaceSyncManagedTargetCredentialCustody({ ...binding,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary });
+    expect(recovered).toEqual({ credentials: { ...requesterCredentials, credentialProvenance: 'stored_session' }, workspace,
+      ...(sourceExecutionIdentity ? { sourceExecutionIdentity } : {}) });
+    expect(host.requests.some(request => request.path.startsWith('/v2/sessions/'))).toBe(false);
+    vi.stubEnv(REQUESTER_SESSION_ID_ENV, binding.relationshipId);
+    expect(await readRequesterSessionCredentialsForChild(custody.path)).toBeNull();
+  });
+
+  it.each(['managed', 'controller', 'installation', 'root', 'home', 'reference', 'account'] as const)('refuses a substituted native-target %s binding without replacing retained custody', async mismatch => {
+    const host = await home({ sessionId: 'native-binding' });
+    const workspace = ManagedWorkspaceRefV2WriteSchema.parse({ v: 2, kind: 'managed', id: 'native-workspace',
+      serverId: 'srv_original_home', managedId: 'managed-target', rootPath: '/guest/repo',
+      controller: { machineId: attribution.machineId, installationId: attribution.installationId }, createdAtMs: 1 });
+    const binding = { happyHomeDir: directory!, relationshipId: 'native-binding', attribution, workspace };
+    const custody = await requesterCredentialOwner.createWorkspaceSyncManagedTargetCredentialCustody({ ...binding, credentials });
+    const substituted = { ...binding,
+      ...(mismatch === 'account' ? { attribution: { ...attribution, accountId: 'other-account' } } : {}),
+      workspace: { ...workspace,
+        ...(mismatch === 'managed' ? { managedId: 'other-target' } : {}),
+        ...(mismatch === 'root' ? { rootPath: '/guest/other' } : {}),
+        ...(mismatch === 'home' ? { serverId: 'other-home' } : {}),
+        ...(mismatch === 'reference' ? { id: 'other-reference' } : {}),
+        controller: { ...workspace.controller,
+          ...(mismatch === 'controller' ? { machineId: 'other-controller' } : {}),
+          ...(mismatch === 'installation' ? { installationId: 'other-installation' } : {}) } } };
+    await expect(requesterCredentialOwner.resolveWorkspaceSyncManagedTargetCredentialCustody({ ...substituted,
+      serverHttpBaseUrl: origin, machineAdmissionBoundary: host.boundary })).resolves.toBeNull();
+    await expect(requesterCredentialOwner.createWorkspaceSyncManagedTargetCredentialCustody({ ...substituted, credentials }))
+      .rejects.toThrow('requester_session_custody_mismatch');
+    expect(JSON.parse(await readFile(custody.path, 'utf8')).workspace).toEqual(workspace);
+  });
+
   it.each(['plain', 'e2ee'] as const)('discovers each custody scope in the current Home store and recovers Sync with its captured identity (%s)', async mode => {
     const secret = new Uint8Array(32).fill(19);
     const host = await home({ sessionId: 'sync-relationship', ...(mode === 'e2ee' ? { encryptionSecret: secret } : {}) });

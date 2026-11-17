@@ -19,7 +19,8 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import { resolveProcessCustodySupportExecutable } from './processCustody';
 
 import { SESSION_HOLDER_ADOPT_ENV_KEY, resolveAgentSessionHolderLaunch, type SessionHolderChild } from './sessionHolder';
-import { SESSION_TARGET_PLACEMENT_ENV_KEY, connectSessionTarget, serveSessionTargetRelay, type SessionTargetOperations } from './sessionTargetRelay';
+import { SESSION_TARGET_PLACEMENT_ENV_KEY, assertSessionTargetWorkspaceUnambiguous, connectSessionTarget,
+    prepareTargetAgentLaunch, serveSessionTargetRelay, toSessionTargetPath, type SessionTargetOperations } from './sessionTargetRelay';
 
 /**
  * A Session placed in a target: the daemon holds the target's provider
@@ -29,6 +30,25 @@ import { SESSION_TARGET_PLACEMENT_ENV_KEY, connectSessionTarget, serveSessionTar
  * the Agent's holder in the target through the relay.
  */
 const holderExecutable = resolveSessionHolderExecutablePath();
+
+describe('Session target mapping across original Machine path styles', () => {
+    it.each([
+        { hostRoot: 'C:\\Users\\alice\\project\\', hostPath: 'c:/USERS/alice/project/src\\feature', expected: '/workspace/project/src/feature' },
+        { hostRoot: '/Users/alice/project/', hostPath: '/Users/alice/project/src\\feature', expected: '/workspace/project/src/feature' },
+        { hostRoot: '\\\\server\\share\\project', hostPath: '//SERVER/share/project/src/feature', expected: '/workspace/project/src/feature' },
+    ])('maps the original source without the controller OS parser: $hostRoot', ({ hostRoot, hostPath, expected }) => {
+        const workspace = { hostRoot, targetRoot: '/workspace/project' };
+        assertSessionTargetWorkspaceUnambiguous(workspace);
+        expect(toSessionTargetPath(workspace, hostPath)).toBe(expected);
+        expect(prepareTargetAgentLaunch({ workspace, executables: { agent: '/guest/agent' }, env: {} },
+            { command: 'agent', args: [], cwd: expected }).cwd).toBe(expected);
+    });
+
+    it.each(['C:\\Users\\alice2\\project', 'C:\\Users\\alice\\project\\..\\outside'])('refuses a path outside the original root: %s', path => {
+        expect(() => toSessionTargetPath({ hostRoot: 'C:\\Users\\alice\\project', targetRoot: '/workspace/project' }, path))
+            .toThrow(expect.objectContaining({ code: 'workspace_root_unsafe' }));
+    });
+});
 const AGENT_SOURCE = String.raw`
 import { createInterface } from 'node:readline';
 process.stdout.write(JSON.stringify({ cwd: process.cwd(), home: process.env.HAPPIER_TEST_AGENT_HOME ?? null, leaked: process.env.HAPPIER_TEST_HOST_ONLY ?? null }) + '\n');

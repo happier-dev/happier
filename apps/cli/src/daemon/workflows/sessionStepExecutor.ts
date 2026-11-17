@@ -156,6 +156,7 @@ export type WorkflowSessionStartup = (input: Readonly<{
     /** Portable definitions retain explicit native authentication as null. */
     connectedServices?: null;
     sessionPlacement?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionPlacementSelectionV1;
+    projectFiles?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1;
   }>;
   onObservation?: (operation: ActionOperationSnapshotV1) => Promise<void>;
 }>) => Promise<Readonly<{ sessionId: string }>>;
@@ -174,6 +175,8 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
   originRunId: string;
   /** Saved host selection frozen into the accepted Run, separate from its portable definition. */
   sessionPlacement?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionPlacementSelectionV1;
+  /** Effective private default frozen in the accepted Run, separate from authored placement. */
+  projectFiles?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1;
   /** Accepted Session origin, when the Workflow was started under a lead. */
   originSessionId?: string;
   /** Only selected model participants acquire C3 slot ownership. */
@@ -543,6 +546,7 @@ export function createProductionFreshWorkflowSessionConversation(deps: Readonly<
     const actionAdmission = { context: startupContext,
       ...(selection.connectedServices === null ? { connectedServices: null } : {}),
       ...(deps.sessionPlacement ? { sessionPlacement: deps.sessionPlacement } : {}),
+      ...(deps.projectFiles ? { projectFiles: deps.projectFiles } : {}),
       input: projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
         // Project shared authoring fields from their canonical owner. Workflow-only
         // selection keys and unset nullable Workflow defaults are not Action input.

@@ -207,6 +207,7 @@ describe('canonical Session creation admission', () => {
     { origin: 'machine_policy', authored: 'derived-native', rejoined: true },
     { origin: 'machine_policy', authored: 'added-native-same-value', rejoined: false },
     { origin: 'machine_policy', authored: 'changed-permission', rejoined: false },
+    { origin: 'machine_policy', authored: 'changed-project-files', rejoined: false },
     { origin: 'machine_policy', authored: 'added-managed', rejoined: false },
     { origin: undefined, authored: 'same', rejoined: false },
     { origin: undefined, authored: 'explicit-managed', rejoined: true },
@@ -219,6 +220,8 @@ describe('canonical Session creation admission', () => {
       recipe: { ...sessionCreationCorrespondence.recipe, managedCreation: { homeId: 'home', managedId: 'shared-original',
         controller: { machineId: 'machine-1', installationId: 'install' } },
         ...(scenario.origin ? { managedCreationOrigin: scenario.origin } : {}),
+        ...(scenario.authored === 'changed-project-files'
+          ? { projectFiles: { kind: 'sync' as const, mode: 'keep_synced' as const } } : {}),
         ...(nativeDerived ? { configuration: nativeConfiguration, nativeSandboxOrigin: 'machine_policy' as const } : {}) } };
     const fields = buildSessionMetadataEnvelopeCreateFields({ credentials: params.credentials,
       accountEncryptionMode: 'plain', storedContentMode: 'plain', agentState: null,
@@ -236,6 +239,7 @@ describe('canonical Session creation admission', () => {
     let allocations = 0;
     const authored = { ...sessionCreationCorrespondence, recipe: { ...sessionCreationCorrespondence.recipe,
       ...(scenario.authored === 'changed-permission' ? { requestedPermissionMode: 'read-only' } : {}),
+      ...(scenario.authored === 'changed-project-files' ? { projectFiles: { kind: 'copy_once' as const } } : {}),
       ...(scenario.authored === 'added-native-same-value' ? { configuration: nativeConfiguration } : {}),
       ...(scenario.authored === 'added-managed' || scenario.authored === 'explicit-managed'
         ? { managedCreation: retained.recipe.managedCreation } : {}) } };
@@ -272,8 +276,15 @@ describe('canonical Session creation admission', () => {
   it('resolves policy placement once and retries failed target preparation on the same retained unstarted Session', async () => {
     const managedCreation = { homeId: 'home', managedId: 'retained-after-preparation-failure',
       controller: { machineId: 'machine-1', installationId: 'installation' } };
+    const projectFilesSource = { target: { serverId: 'server-1', machineId: 'original-machine' }, directory: '/original/project' };
+    const sourceWorkspace = { serverId: 'server-1', machineId: 'original-machine', workspaceId: 'source-workspace', rootPath: '/original/project' };
     const correspondence = { ...sessionCreationCorrespondence, recipe: { ...sessionCreationCorrespondence.recipe,
-      managedCreation, managedCreationOrigin: 'machine_policy' as const } };
+      managedCreation, managedCreationOrigin: 'machine_policy' as const,
+      projectFilesSource,
+      projectFilesOrigin: { sourceWorkspace, targetWorkspace: { v: 2 as const, kind: 'managed' as const,
+        serverId: 'server-1', workspaceId: 'target-workspace', managedId: managedCreation.managedId,
+        controller: managedCreation.controller, rootPath: '/target/project' } },
+      projectFiles: { kind: 'copy_once' as const } } };
     const envelopes = buildSessionMetadataEnvelopeCreateFields({ credentials: params.credentials,
       accountEncryptionMode: 'plain', storedContentMode: 'plain', agentState: null,
       metadata: { path: '/repo', host: 'host', sessionCreationCorrespondenceV1: correspondence } });
@@ -300,8 +311,10 @@ describe('canonical Session creation admission', () => {
     });
     spawn.mockImplementation(async request => {
       const parsed = SpawnDaemonSessionRequestSchema.parse(request);
-      expect(parsed).toMatchObject({ managedTargetPlacement: { managedId: managedCreation.managedId },
-        sessionCreationCorrespondence: { recipe: { managedCreation, managedCreationOrigin: 'machine_policy' } } });
+      expect(parsed).toMatchObject({ managedTargetPlacement: { managedId: managedCreation.managedId,
+        projectFilesSource, projectFilesSourceWorkspace: sourceWorkspace,
+        projectFiles: correspondence.recipe.projectFiles },
+        sessionCreationCorrespondence: { recipe: { managedCreation, managedCreationOrigin: 'machine_policy', projectFilesSource } } });
       attempts += 1;
       if (!birthCommitted) {
         birthCommitted = true;
@@ -314,7 +327,9 @@ describe('canonical Session creation admission', () => {
     const request = { ...params, prepareSessionIsolation: async () => {
       allocations += 1;
       return { sessionCreationCorrespondence: correspondence,
-        managedTargetPlacement: { managedId: managedCreation.managedId, workspaceRoot: '/repo' } };
+        managedTargetPlacement: { managedId: managedCreation.managedId, workspaceRoot: '/repo',
+          projectFilesSource, projectFilesSourceWorkspace: sourceWorkspace,
+          projectFiles: correspondence.recipe.projectFiles } };
     } };
     await expect(createSpawnedSession(request)).rejects.toMatchObject({ code: 'target_prepare_failed' });
     await expect(createSpawnedSession(request)).resolves.toMatchObject({ disposition: 'rejoined', sessionId: unstarted.id });

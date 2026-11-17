@@ -14,6 +14,7 @@ import { createManagedNativeInvocation, reconcileManagedMachine } from './reconc
 import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient } from './acquire';
 import { createManagedPresetHydrator } from './presetHydration';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, writeFile, chmod, rm, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -474,6 +475,112 @@ describe('Session-target authority for managed provider channel roles', () => {
 describe('Session placement on a managed target (driver)', () => {
     const holder = { version: 'v1', resolveArtifacts: async () => ({ holder: { bytes: new Uint8Array([1]), sha256: 'a'.repeat(64) },
         helper: { bytes: new Uint8Array([2]), sha256: 'b'.repeat(64) } }) };
+
+    const syncWorkspace = { v: 2 as const, kind: 'managed' as const, id: 'native-workspace', serverId: homeId,
+        managedId: machine.id, controller: machine.controller!, rootPath: '/home/u/workspace', createdAtMs: 0 };
+
+    it.skipIf(process.platform === 'win32')('places requested holder artifacts through the admitted Sync target native port', async () => {
+        const guestHome = await mkdtemp(join(tmpdir(), 'sync-target-holder-'));
+        const lifetime = new AbortController();
+        onTestFinished(async () => { lifetime.abort(); await rm(guestHome, { recursive: true, force: true }); });
+        const h = harness({ targetExec: async body => {
+            const request = body as { argv: string[]; inputBase64?: string };
+            const child = promisify(execFile)('/bin/sh', ['-c', request.argv[2]!], {
+                cwd: guestHome, env: { ...process.env, HOME: guestHome, PATH: '/usr/bin:/bin' },
+            });
+            child.child.stdin?.on('error', () => {});
+            child.child.stdin?.end(request.inputBase64 ? Buffer.from(request.inputBase64, 'base64') : '');
+            const result = await child.then(result => ({ ...result, status: 0 }), (error: unknown) => {
+                if (!error || typeof error !== 'object' || !('code' in error) || typeof error.code !== 'number'
+                    || !('stdout' in error) || typeof error.stdout !== 'string'
+                    || !('stderr' in error) || typeof error.stderr !== 'string') throw error;
+                return { status: error.code, stdout: error.stdout, stderr: error.stderr };
+            });
+            return { ...guestExec(body), termination: { observed: { kind: 'exit' as const, exitCode: result.status },
+                requestedBy: { kind: 'none' as const } }, stdoutBase64: Buffer.from(result.stdout).toString('base64'),
+                stderrBase64: Buffer.from(result.stderr).toString('base64') };
+        }, targetPutFile: async body => {
+            const request = body as { guestPath: string; bytesBase64: string };
+            await writeFile(request.guestPath, Buffer.from(request.bytesBase64, 'base64'));
+        } });
+        const artifact = (contents: string) => ({ bytes: Buffer.from(contents), sha256: createHash('sha256').update(contents).digest('hex') });
+        const artifacts = { holder: artifact('fixture native holder'), helper: artifact('fixture filesystem helper') };
+        const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const request = { managedId: row.id, relationshipId: 'account-sync', requesterAccountId: 'owner',
+            workspace: { ...syncWorkspace, rootPath: join(guestHome, 'workspace') }, lifetime: lifetime.signal,
+            holder: { version: 'sync-v1', resolveArtifacts: async () => artifacts } };
+        const target = await driver.openWorkspaceSyncTarget(request);
+        const holderPath = join(guestHome, '.happier', 'holder', 'sync-v1', 'happier-session-holder');
+        const helperPath = join(guestHome, '.happier', 'holder', 'sync-v1', 'happier-process-custody');
+        expect(target).toMatchObject({ holderPath, helperPath, home: guestHome });
+        expect(await readFile(holderPath)).toEqual(artifacts.holder.bytes);
+        expect(await readFile(helperPath)).toEqual(artifacts.helper.bytes);
+        expect(h.calls).not.toContain('acquire');
+    });
+
+    it('keeps Account sync open after its creating Session ends, until the relationship ends', async () => {
+        const h = harness({ guest: true, holdStream: true });
+        const session = new AbortController(), relationship = new AbortController();
+        onTestFinished(() => { session.abort(); relationship.abort(); });
+        const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
+        let reads = 0;
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => { reads++; return row; } });
+        const sessionTarget = await driver.openSessionTarget({ managedId: row.id, sessionId: 'origin-session',
+            requesterAccountId: 'owner', lifetime: session.signal, holder });
+        const target = await driver.openWorkspaceSyncTarget({ managedId: row.id, relationshipId: 'account-sync',
+            requesterAccountId: 'owner', workspace: syncWorkspace, lifetime: relationship.signal });
+        const channel = target.openChannel(['happier', 'workspace', 'channel'], relationship.signal);
+        const closed = new Promise(resolve => channel.once('close', resolve));
+        channel.resume();
+        await expect.poll(() => h.calls.includes('stream')).toBe(true);
+        session.abort();
+        await expect(sessionTarget.exec('true', relationship.signal)).rejects.toMatchObject({ code: 'intent_changed' });
+        await expect(target.exec('true', relationship.signal)).resolves.toMatchObject({ status: 0 });
+        await expect(target.ensureWorkspaceRuntime()).resolves.toMatchObject({ binaryPath: expect.any(String) });
+        expect(channel.destroyed).toBe(false);
+        expect(reads).toBe(2); // One admission per lifetime, no reads per native effect.
+        expect(h.calls.every(role => ['bootstrap', 'exec', 'stream'].includes(role))).toBe(true);
+        expect(h.inputs.filter(body => typeof body === 'object' && body !== null && 'processConfig' in body)).toEqual([]);
+        relationship.abort();
+        await closed;
+        await expect(target.exec('true', new AbortController().signal)).rejects.toMatchObject({ code: 'intent_changed' });
+        expect(reads).toBe(2);
+        // Reconnect uses the retained Account relationship, with no live Session or holder.
+        const reconnect = new AbortController();
+        onTestFinished(() => reconnect.abort());
+        await expect(driver.openWorkspaceSyncTarget({ managedId: row.id, relationshipId: 'account-sync',
+            requesterAccountId: 'owner', workspace: syncWorkspace, lifetime: reconnect.signal })).resolves.toMatchObject({ id: target.id });
+    });
+
+    it.each(['home', 'machine', 'installation', 'account', 'managed'] as const)('refuses a sync target outside the admitted %s scope before native IO', async mismatch => {
+        const h = harness({ guest: true });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => machine });
+        const workspace = { ...syncWorkspace,
+            ...(mismatch === 'home' ? { serverId: 'other-home' } : {}),
+            ...(mismatch === 'managed' ? { managedId: 'other-target' } : {}),
+            controller: { ...syncWorkspace.controller,
+                ...(mismatch === 'machine' ? { machineId: 'other-machine' } : {}),
+                ...(mismatch === 'installation' ? { installationId: 'other-installation' } : {}) } };
+        await expect(driver.openWorkspaceSyncTarget({ managedId: machine.id, relationshipId: 'account-sync',
+            requesterAccountId: mismatch === 'account' ? 'other-account' : 'owner', workspace,
+            lifetime: new AbortController().signal })).rejects.toMatchObject({
+                code: mismatch === 'account' ? 'managed_target_access_unavailable' : 'admission_unavailable' });
+        expect(h.calls).toEqual([]);
+    });
+
+    it('opens the existing guest CLI for native workspace operations without enrolling a Machine', async () => {
+        const h = harness({ guest: true });
+        const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input, readPolicyCurrent: async () => row });
+        const target = await driver.openSessionTarget({ managedId: row.id, sessionId: 'workspace-session',
+            requesterAccountId: 'owner', lifetime: new AbortController().signal, holder });
+        const opened = await target.ensureWorkspaceRuntime();
+        expect(opened.binaryPath).toBe(resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli',
+            remoteHomeDir: '/home/u/.happier', channel: resolveManagedCliReleaseChannelSync({
+                argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label }));
+        expect(row.enrolledMachineId).toBeUndefined();
+    });
 
     it('publishes native SSH bootstrap trust on the original Session launch operation before network observation', async () => {
         const root = await mkdtemp(join(tmpdir(), 'session-bootstrap-trust-'));

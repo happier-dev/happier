@@ -8,6 +8,7 @@ export type ScmWorkspaceIntegrationWorkspaceTransferRequest = Readonly<{
   strategy: ScmWorkspaceIntegrationWorkspaceTransferStrategy;
   includeIgnoredMode: ScmWorkspaceIntegrationWorkspaceTransferIncludeIgnoredMode;
   ignoredIncludeGlobs: readonly string[];
+  exclusionCandidates?: readonly string[];
 }>;
 
 export type ScmWorkspaceIntegrationWorkspaceTransferEntry = Readonly<{
@@ -20,6 +21,7 @@ export type ScmWorkspaceIntegrationWorkspaceTransferMetadata = Readonly<Record<s
 
 export type ScmWorkspaceIntegrationWorkspaceTransferResult = Readonly<{
   entries: readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[];
+  excludedPaths?: readonly string[];
   metadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata | null;
 }>;
 
@@ -38,6 +40,7 @@ export function createScmWorkspaceIntegrationWorkspaceTransferResult(
 ): ScmWorkspaceIntegrationWorkspaceTransferResult {
   return {
     entries: input.entries.map(createScmWorkspaceIntegrationWorkspaceTransferEntry),
+    ...(input.excludedPaths ? { excludedPaths: [...input.excludedPaths] } : {}),
     metadata: input.metadata ?? null,
   };
 }

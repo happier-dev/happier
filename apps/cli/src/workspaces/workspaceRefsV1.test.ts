@@ -2,9 +2,26 @@ import { describe, expect, it } from 'vitest';
 
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
-import { materializeWorkspaceRefForMachineRoot, resolveWorkspaceRefById, resolveWorkspaceRefForMachineRoot } from './workspaceRefsV1';
+import { materializeWorkspaceRefForMachineRoot, materializeWorkspaceRefForManagedRoot, resolveWorkspaceRefById, resolveWorkspaceRefForMachineRoot } from './workspaceRefsV1';
 
 describe('workspace ref resolution', () => {
+    it('keeps a native guest distinct from its controller at the same root and reuses its accepted identity', () => {
+        const host = { id: 'host', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+        const input = { serverId: 'home', managedId: 'guest', controller: { machineId: 'machine', installationId: 'install' },
+            rootPath: '/repo', nowMs: 2, createId: () => 'native' };
+        const first = materializeWorkspaceRefForManagedRoot([host], input);
+        expect(first.workspaceRefs).toHaveLength(2);
+        expect(first.workspaceRef).toMatchObject({ id: 'native', v: 2, kind: 'managed', managedId: 'guest', controller: input.controller });
+        expect(first.workspaceRef).not.toHaveProperty('machineId');
+        expect(resolveWorkspaceRefForMachineRoot(first.workspaceRefs, { serverId: 'home', machineId: 'machine', rootPath: '/repo' })).toEqual(host);
+        const again = materializeWorkspaceRefForManagedRoot(first.workspaceRefs, { ...input, rootPath: '/repo/', createId: () => 'unused' });
+        expect(again.created).toBe(false);
+        expect(again.workspaceRef.id).toBe('native');
+        expect(again.workspaceRefs).toHaveLength(2);
+        expect(() => materializeWorkspaceRefForManagedRoot([
+            ...first.workspaceRefs, { ...first.workspaceRef, id: 'duplicate-native' },
+        ], input)).toThrow(expect.objectContaining({ code: 'workspace_ref_ambiguous' }));
+    });
     it('uses the admitted Home mapping for stored and target refs without crossing Homes or ambiguity', () => {
         const ref = { id: 'same', serverId: 'alias', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
         const context = { normalizeServerId: (id: string) => id === 'alias' ? 'canonical-home' : id };

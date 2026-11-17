@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { connect, createServer, type Server, type Socket } from 'node:net';
-import { isAbsolute, join, posix, relative, sep } from 'node:path';
+import { posix } from 'node:path';
 import type { Duplex } from 'node:stream';
 
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createOwnerOnlyLocalEndpoint } from '@/utils/ipc/ownerOnlyLocalEndpoint';
+import { getPathRemainderWithinBase, resolveSessionHandoffWorkspaceSessionPath } from '@/session/handoff/paths/sessionHandoffPathNormalization';
 
 import { observeLocalIpcPeerIdentity, resolveProcessCustodyPeerIdentityExecutable, type ProcessCustodyPeerIdentity } from './processCustody';
 import type { SessionHolderTarget } from './sessionHolder';
@@ -69,18 +70,20 @@ type SessionTargetWorkspace = NonNullable<SessionTargetLaunch['workspace']>;
  * path the Agent may see: protocol cwd/workspaceRoot, launch cwd).
  */
 export function toSessionTargetPath(workspace: SessionTargetWorkspace | undefined, hostPath: string): string {
-    const rest = workspace ? relative(workspace.hostRoot, hostPath) : '..';
-    if (rest === '..' || rest.startsWith(`..${sep}`) || isAbsolute(rest)) {
+    const rest = workspace ? getPathRemainderWithinBase(hostPath, workspace.hostRoot) : null;
+    if (rest === null) {
         throw targetLaunchError('workspace_root_unsafe', 'The Agent working directory is outside the Session target workspace');
     }
-    return rest ? posix.join(workspace!.targetRoot, ...rest.split(sep)) : workspace!.targetRoot;
+    try { return resolveSessionHandoffWorkspaceSessionPath({ targetRoot: workspace!.targetRoot, sessionRelativeCwd: rest }); }
+    catch { throw targetLaunchError('workspace_root_unsafe', 'The Agent working directory is outside the Session target workspace'); }
 }
 
 /** The inverse of `toSessionTargetPath`; `null` when `targetPath` is not under the target workspace. */
 function toSessionHostPath(workspace: SessionTargetWorkspace, targetPath: string): string | null {
-    const rest = posix.relative(workspace.targetRoot, targetPath);
-    if (rest === '..' || rest.startsWith('../') || posix.isAbsolute(rest)) return null;
-    return rest ? join(workspace.hostRoot, ...rest.split('/')) : workspace.hostRoot;
+    const rest = getPathRemainderWithinBase(targetPath, workspace.targetRoot);
+    if (rest === null) return null;
+    try { return resolveSessionHandoffWorkspaceSessionPath({ targetRoot: workspace.hostRoot, sessionRelativeCwd: rest }); }
+    catch { return null; }
 }
 
 function readPlacedSessionWorkspace(): SessionTargetWorkspace | null {
@@ -154,9 +157,8 @@ export function resolveSessionAgentMcpContextFile(hostContextFile: string | unde
  * or the reverse, would make `/workspace/a/x` both a host and a target path).
  */
 export function assertSessionTargetWorkspaceUnambiguous(workspace: SessionTargetWorkspace): void {
-    const host = workspace.hostRoot.split(sep).join('/');
-    if (host === workspace.targetRoot) return;
-    const nested = (outer: string, inner: string) => { const rest = posix.relative(outer, inner); return rest !== '' && rest !== '..' && !rest.startsWith('../') && !posix.isAbsolute(rest); };
+    const host = workspace.hostRoot;
+    const nested = (outer: string, inner: string) => { const rest = getPathRemainderWithinBase(inner, outer); return rest !== null && rest !== ''; };
     if (nested(host, workspace.targetRoot) || nested(workspace.targetRoot, host)) {
         throw targetLaunchError('workspace_root_unsafe', 'The Session path and the target workspace root must be equal or disjoint');
     }

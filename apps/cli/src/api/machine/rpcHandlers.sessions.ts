@@ -4,6 +4,7 @@ import {
   registerSessionSpawnNewRpcHandlers,
 } from '@/rpc/handlers/sessionLifecycle';
 import { registerSessionAgentTransitionRpcHandlers } from '@/rpc/handlers/sessionAgentTransition';
+import { registerSessionWorkspaceReturnRpcHandlers } from '@/rpc/handlers/sessionWorkspaceReturn';
 import { registerMachineSessionServerStartRpcHandler } from '@/rpc/handlers/sessionServerStartMachineBinding';
 import type { SessionSpawnDirectTargetTransport, MachineActionDirectTargetTransport } from '@/session/actions/createCliActionDeps';
 import { MACHINE_SESSION_LIFECYCLE_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
@@ -87,6 +88,9 @@ export function registerMachineSessionRpcHandlers(params: MachineSessionRpcFamil
     : undefined;
   registerSessionSpawnNewRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,
+    ...(params.deps?.workspaceSync?.readRequesterWorkspaceScope ? {
+      readRequesterWorkspaceScope: params.deps.workspaceSync.readRequesterWorkspaceScope,
+    } : {}),
     ...preparationTransport,
     ...(params.deps?.currentServerId ? { requesterBootstrapBoundary: {
       serverId: params.deps.currentServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
@@ -134,6 +138,7 @@ export function registerMachineSessionRpcHandlers(params: MachineSessionRpcFamil
   registerSessionAgentTransitionRpcHandlers(params.rpcHandlerManager, {
     readCredentials: readStoredCredentials,
   });
+  registerSessionWorkspaceReturnRpcHandlers(params.rpcHandlerManager, params.deps?.workspaceSync);
   // New Session is open on this Machine: the call is held while the intent lasts (its caller cancels
   // it when New Session closes or disconnects) and the daemon keeps its session host ready meanwhile.
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CREATION_INTENT, async (_raw: unknown, context) => {

@@ -17,6 +17,7 @@ import { t } from '@/text';
 /** Active Files reads evidence from the machine owner; a pinned identity is never recaptured. */
 export function useCapturedScmComparison(params: Readonly<{
     host: ScmDiffSummaryHost;
+    comparisonSessionId?: string;
     machine: Readonly<{ machineId: string; basePath: string }> | null;
     identity: Readonly<{ machineId: string | null; basePath: string | null }>;
     serverId?: string | null;
@@ -34,7 +35,8 @@ export function useCapturedScmComparison(params: Readonly<{
     const scope = resolution.kind === 'bound' ? resolution.scope : null;
     const { machine, identity } = params;
     const basePath = params.comparison.savedResult?.cwd ?? identity.basePath;
-    const sessionId = params.host.sessionId ?? null;
+    const hostSessionId = params.host.sessionId ?? null;
+    const sessionId = hostSessionId ?? params.comparisonSessionId ?? null;
     const sourceAvailable = Boolean(sessionId) || (params.comparison.kind !== 'session' && params.comparison.kind !== 'turnCheckpoint');
     const { comparisonId, ...unpinnedComparison } = params.comparison;
     const known = params.knownComparison && (!comparisonId || params.knownComparison.id === comparisonId)
@@ -61,9 +63,9 @@ export function useCapturedScmComparison(params: Readonly<{
         return pinnedComparisonId && unpinned?.comparison?.id === pinnedComparisonId ? unpinned : reads?.[selectedKey]?.value ?? null;
     }, [selectedKey, unpinnedKey, pinnedComparisonId]);
     const subscribe = React.useCallback((listener: () => void) => scope
-        ? subscribeScmDiffSummaryHostState(sessionId ? { sessionId } : { machineId: params.host.machineId!, cwd: basePath ?? '' },
+        ? subscribeScmDiffSummaryHostState(hostSessionId ? { sessionId: hostSessionId } : { machineId: params.host.machineId!, cwd: basePath ?? '' },
             serverAccountScopeKeySuffix(scope), listener) : () => {},
-    [scope?.serverId, scope?.accountId, sessionId, params.host.machineId, basePath]);
+    [scope?.serverId, scope?.accountId, hostSessionId, params.host.machineId, basePath]);
     const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     // A saved record may rediscover the same identity with only its first index page.
     // It must not replace the pages this owner already read for that capture.
@@ -104,6 +106,7 @@ export function useCapturedScmComparison(params: Readonly<{
         const read = async () => {
             try {
                 const result = await captureScmComparisonForSession({ ...params.host, serverId: scope.serverId,
+                    comparisonSessionId: params.comparisonSessionId,
                     scope, signal: abort.signal, shouldContinue: current,
                     input: { cwd: selected.savedResult?.cwd ?? machine.basePath, source: scmComparisonSourceOf(selected, sessionId ?? ''),
                         projection: { kind: 'index', ...(params.filePath ? { path: params.filePath } : {}),
@@ -116,6 +119,7 @@ export function useCapturedScmComparison(params: Readonly<{
                         const files = await Promise.all(comparison.inventory.files.map(async file => {
                             if (file.evidence.state !== 'deferred') return file;
                             const response = await readCapturedScmFileForSession({ ...params.host, serverId: scope.serverId,
+                                comparisonSessionId: params.comparisonSessionId,
                                 scope, signal: abort.signal, shouldContinue: current,
                                 input: { cwd: comparison.repository.rootPath, comparisonId: comparison.id,
                                     source: comparison.source, path: file.path } });
@@ -153,6 +157,7 @@ export function useCapturedScmComparison(params: Readonly<{
         setState(state => state?.key === key ? { ...state, loading: true, error: null } : state);
         try {
             const result = await captureScmComparisonForSession({ ...params.host, serverId: scope.serverId, scope,
+                comparisonSessionId: params.comparisonSessionId,
                 signal: abort.signal, shouldContinue: current,
                 input: { cwd: previous.repository.rootPath, source: previous.source, comparisonId: previous.id,
                     projection: { kind: 'index', cursor, limit: pageSizeRef.current! } } });
@@ -166,7 +171,7 @@ export function useCapturedScmComparison(params: Readonly<{
                 error: { message: error instanceof Error ? error.message : t('scmComparison.unsupportedReason'),
                     ...(error instanceof RpcError ? { code: error.rpcErrorCode } : {}) } } : state);
         }
-    }, [scope, binding, visible, key, params.host, params.active, demandReady]);
+    }, [scope, binding, visible, key, params.host, params.comparisonSessionId, params.active, demandReady]);
     return { comparison: scope && sourceAvailable ? knownOnly ?? visible?.comparison ?? null : null,
         page: knownOnly ? null : visible?.page ?? null, loadMore,
         error: !sourceAvailable ? t('scmComparison.unsupportedReason') : knownOnly ? null : visible?.error?.message ?? null,

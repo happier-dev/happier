@@ -10,10 +10,7 @@ import (
 	"strings"
 )
 
-const (
-	workspaceConfinedMaxRequestBytes = 64 * 1024
-	workspaceConfinedMaxPreviewBytes = 1024 * 1024
-)
+const workspaceConfinedMaxRequestBytes = 64 * 1024
 
 // Sizes in results must stay exact JSON numbers for the TypeScript reader.
 const workspaceConfinedMaxSafeJSONInteger = uint64(1<<53 - 1)
@@ -482,7 +479,7 @@ func decodeWorkspaceConfinedReadRequest(encoded []byte) (workspaceConfinedReadRe
 		return workspaceConfinedReadRequest{}, fmt.Errorf("missing maxBytes")
 	}
 	var maxBytes int64
-	if err := json.Unmarshal(maxEncoded, &maxBytes); err != nil || maxBytes < 1 || maxBytes > workspaceConfinedMaxPreviewBytes {
+	if err := json.Unmarshal(maxEncoded, &maxBytes); err != nil || maxBytes < 1 {
 		return workspaceConfinedReadRequest{}, fmt.Errorf("invalid maxBytes")
 	}
 	expectedDigest, err := decodeOptionalDigest(fields)

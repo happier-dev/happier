@@ -6,6 +6,7 @@ import {
     type ScmWorkspaceIntegrationWorkspaceTransferEntry,
 } from '../workspace/workspaceTransfer.js';
 import { runScmCommand } from '../runtime.js';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 
 function normalizeRelativePath(value: string): string {
     return value.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '');
@@ -27,6 +28,8 @@ async function runGitNullSeparatedPathList(params: Readonly<{
     cwd: string;
     args: readonly string[];
     maxStdoutBytes?: number;
+    stdin?: string;
+    allowNoMatches?: true;
 }>): Promise<readonly string[]> {
     const maxStdoutBytes = params.maxStdoutBytes ?? resolveGitLsFilesMaxOutputBytes();
     const result = await runScmCommand({
@@ -34,8 +37,9 @@ async function runGitNullSeparatedPathList(params: Readonly<{
         cwd: params.cwd,
         args: [...params.args],
         maxOutputBytes: maxStdoutBytes,
+        ...(params.stdin !== undefined ? { stdin: params.stdin } : {}),
     });
-    if (!result.success) {
+    if (!result.success && !(params.allowNoMatches && result.exitCode === 1)) {
         throw new Error((result.stderr || `git exited with code ${result.exitCode}`).trim());
     }
 
@@ -128,14 +132,31 @@ async function listExtraIgnoredPaths(sourcePath: string, patterns: readonly stri
     });
 }
 
-export async function resolveGitWorkspaceTransferEntries(input: ScmWorkspaceIntegrationWorkspaceTransferInput): Promise<readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[]> {
+export async function resolveGitWorkspaceTransferSelection(input: ScmWorkspaceIntegrationWorkspaceTransferInput): Promise<Readonly<{
+    entries: readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[];
+    excludedPaths: readonly string[];
+}>> {
     const sourcePath = input.context.cwd;
     const relativePaths = new Set(await listGitManagedPaths(sourcePath));
+    const ignoredPaths = await listSelectedIgnoredPaths(sourcePath, ['.']);
+    const excludedPaths = new Set<string>();
+    const exclusionCandidates = input.workspaceTransfer.exclusionCandidates ?? [];
+    const ignoredCandidates = new Set(input.workspaceTransfer.includeAllIgnored !== true
+        && exclusionCandidates.length > 0
+        ? await runGitNullSeparatedPathList({
+            cwd: sourcePath,
+            args: ['-C', sourcePath, 'check-ignore', '-z', '--stdin'],
+            stdin: `${exclusionCandidates.join('\0')}\0`,
+            allowNoMatches: true,
+        }) : []);
+    for (const relativePath of ignoredCandidates) excludedPaths.add(relativePath);
 
     if (input.workspaceTransfer.includeAllIgnored === true) {
-        for (const relativePath of await listSelectedIgnoredPaths(sourcePath, ['.'])) {
+        for (const relativePath of ignoredPaths) {
             relativePaths.add(relativePath);
         }
+    } else {
+        for (const relativePath of ignoredPaths) excludedPaths.add(relativePath);
     }
 
     for (const relativePath of await listExtraIgnoredPaths(
@@ -143,6 +164,7 @@ export async function resolveGitWorkspaceTransferEntries(input: ScmWorkspaceInte
         input.workspaceTransfer.extraIgnorePatterns ?? [],
     )) {
         relativePaths.delete(relativePath);
+        excludedPaths.add(relativePath);
     }
 
     // Explicit re-includes have final precedence, matching the continuous
@@ -152,9 +174,11 @@ export async function resolveGitWorkspaceTransferEntries(input: ScmWorkspaceInte
         validatePolicyPatterns(explicitIncludes);
         for (const relativePath of await listSelectedManagedPaths(sourcePath, explicitIncludes)) {
             relativePaths.add(relativePath);
+            excludedPaths.delete(relativePath);
         }
         for (const relativePath of await listSelectedIgnoredPaths(sourcePath, explicitIncludes)) {
             relativePaths.add(relativePath);
+            excludedPaths.delete(relativePath);
         }
     }
 
@@ -169,5 +193,21 @@ export async function resolveGitWorkspaceTransferEntries(input: ScmWorkspaceInte
             })),
     ];
 
-    return entries.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+    const excludedFiles: string[] = [];
+    const { lstat } = readRepositoryFileSystem();
+    for (const relativePath of [...excludedPaths].sort((left, right) => left.localeCompare(right))) {
+        const stats = await lstat(join(sourcePath, relativePath)).catch((error: unknown) => {
+            if (typeof error === 'object' && error !== null && 'code' in error
+                && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) return null;
+            throw error;
+        });
+        if ((stats && !stats.isDirectory()) || (!stats && ignoredCandidates.has(relativePath))) {
+            excludedFiles.push(relativePath);
+        }
+    }
+    return { entries, excludedPaths: excludedFiles };
+}
+
+export async function resolveGitWorkspaceTransferEntries(input: ScmWorkspaceIntegrationWorkspaceTransferInput): Promise<readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[]> {
+    return (await resolveGitWorkspaceTransferSelection(input)).entries;
 }

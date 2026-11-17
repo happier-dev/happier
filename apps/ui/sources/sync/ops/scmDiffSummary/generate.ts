@@ -60,6 +60,8 @@ export type ScmComparisonCaptureRpc = (
 ) => Promise<ScmComparisonCaptureResult>;
 
 export type CaptureScmComparisonParams<Input = ScmComparisonCaptureInput> = ScmDiffSummaryHost & Readonly<{
+    /** Retained comparison owner when evidence is read from a different Machine. */
+    comparisonSessionId?: string;
     serverId?: string | null;
     scope?: ServerAccountScope;
     signal?: AbortSignal;
@@ -283,8 +285,9 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         const retired = (): ScmComparisonCaptureResult => ({ success: false,
             error: 'The captured Account or Session retired.', errorCode: 'SCM_DIFF_SUMMARY_SCOPE_RETIRED' });
         if (!current()) return retired();
+        const sessionId = params.sessionId ?? params.comparisonSessionId;
         const request = { ...params.input, projection: params.input.projection ?? { kind: 'index' as const },
-            ...(params.sessionId ? { sessionId: params.sessionId } : {}) };
+            ...(sessionId ? { sessionId } : {}) };
         const result = await invokeUiScmAction({ actionId: 'scm.diffSummary.capture', input: request,
             schema: ScmComparisonCaptureOutputSchema, context: actionContext(params), executor: deps.actionExecutor,
             shouldContinue: current });
@@ -299,10 +302,11 @@ export function createScmDiffSummaryOperations(deps: ScmDiffSummaryOperationsDep
         cwd: string; comparisonId: string; source: ScmComparisonSource; path: string;
     }>>): Promise<ScmDiffFileResponse | Readonly<{ success: false; error: string; errorCode: string }>> => {
         const current = () => !params.signal?.aborted && params.shouldContinue?.() !== false;
+        const sessionId = params.sessionId ?? params.comparisonSessionId;
         const result = await invokeUiScmAction({ actionId: 'scm.diff.file',
             input: { cwd: params.input.cwd, captured: { comparisonId: params.input.comparisonId,
                 source: params.input.source, path: params.input.path,
-                ...(params.sessionId ? { sessionId: params.sessionId } : {}) } },
+                ...(sessionId ? { sessionId } : {}) } },
             schema: ScmDiffFileResponseSchema, context: actionContext(params), executor: deps.actionExecutor,
             shouldContinue: current });
         const parsed = ScmDiffFileResponseSchema.safeParse(result);

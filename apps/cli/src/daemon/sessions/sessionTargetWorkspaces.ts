@@ -1,5 +1,6 @@
 import type { Duplex } from 'node:stream';
 import { realpathSync } from 'node:fs';
+import type { WorkspaceManifest } from '@happier-dev/protocol';
 
 import { openSessionHolderWorkspaceClient, type SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
 import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
@@ -28,6 +29,7 @@ type Entry = {
     readonly target: SessionTargetWorkspaceTarget;
     readonly primarySocketPath: string;
     readonly workspace: Readonly<{ hostRoot: string; targetRoot: string }>;
+    readonly baseline?: WorkspaceManifest;
     client?: SessionHolderChild;
     source?: WorkspaceSource;
 };
@@ -40,9 +42,11 @@ export function registerSessionTargetWorkspace(input: Readonly<{
     primarySocketPath: string;
     target: SessionTargetWorkspaceTarget;
     workspace: Readonly<{ hostRoot: string; targetRoot: string }>;
+    baseline?: WorkspaceManifest;
 }>): void {
     if (input.lifetime.aborted) return;
-    const entry: Entry = { target: input.target, primarySocketPath: input.primarySocketPath, workspace: input.workspace };
+    const entry: Entry = { target: input.target, primarySocketPath: input.primarySocketPath, workspace: input.workspace,
+        ...(input.baseline ? { baseline: input.baseline } : {}) };
     entries.set(input.sessionId, entry);
     input.lifetime.addEventListener('abort', () => {
         if (entries.get(input.sessionId) === entry) entries.delete(input.sessionId);
@@ -103,4 +107,20 @@ export function resolveSessionTargetWorkspace(placement: WorkspaceSourcePlacemen
     entry.source ??= createHolderWorkspaceSource({ id: `${entry.target.id}:${sessionId}`, rootPath: entry.workspace.hostRoot,
         guestRootPath: entry.workspace.targetRoot, holder: client, helperPath: entry.target.helperPath });
     return entry.source!;
+}
+
+/** Finite transfers use guest-absolute tool paths, beside the existing request-path view. */
+export function resolveSessionTargetWorkspaceTransfer(sessionId: string): Readonly<{
+    source: WorkspaceSource;
+    workspace: Readonly<{ hostRoot: string; targetRoot: string }>;
+    baseline: WorkspaceManifest | null;
+}> | null {
+    const entry = entries.get(sessionId);
+    if (!entry) return null;
+    return {
+        workspace: entry.workspace,
+        baseline: entry.baseline ?? null,
+        source: createHolderWorkspaceSource({ id: `${entry.target.id}:${sessionId}`, rootPath: entry.workspace.targetRoot,
+            holder: workspaceClient(entry), helperPath: entry.target.helperPath }),
+    };
 }

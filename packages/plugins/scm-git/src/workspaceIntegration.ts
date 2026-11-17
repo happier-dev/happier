@@ -49,7 +49,7 @@ import {
     readGitRevision,
 } from './operations/materializeGitWorkspaceCheckout.js';
 import { reconcileGitWorkspaceCheckout } from './operations/reconcileWorkspaceCheckout.js';
-import { resolveGitWorkspaceTransferEntries } from './operations/resolveGitWorkspaceTransferEntries.js';
+import { resolveGitWorkspaceTransferEntries, resolveGitWorkspaceTransferSelection } from './operations/resolveGitWorkspaceTransferEntries.js';
 import { resolveGitWorkspaceTransferMetadata } from './workspaceTransferMetadata.js';
 import {
     materializePortableGitWorkspaceBundle,
@@ -297,7 +297,7 @@ export async function resolveGitWorkspaceTransferSource(
         });
     }
     return createScmWorkspaceIntegrationWorkspaceTransferResult({
-        entries: await resolveGitWorkspaceTransferEntries(input),
+        ...await resolveGitWorkspaceTransferSelection(input),
         metadata: await resolveGitWorkspaceTransferMetadata(input),
     });
 }
@@ -352,6 +352,7 @@ export async function assertPortableGitWorkspaceEntries(
 export function isGitAdministrativeWorkspacePath(input: Readonly<{
     relativePath: string;
 }>): boolean {
-    const normalizedRelativePath = normalizeRelativePath(input.relativePath);
+    // Exports can cross from case-sensitive worktrees to case-insensitive hosts.
+    const normalizedRelativePath = normalizeRelativePath(input.relativePath).toLowerCase();
     return normalizedRelativePath === '.git' || normalizedRelativePath.startsWith('.git/');
 }

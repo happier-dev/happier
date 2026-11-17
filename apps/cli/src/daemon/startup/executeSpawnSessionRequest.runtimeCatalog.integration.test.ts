@@ -14,16 +14,25 @@ import {
   createProviderBindingSecurityFingerprintV1,
   createProviderErrorV1,
   deriveSessionCreationTagV1,
+  ScmHostingProviderContributionSchema,
   isConnectedServiceUxDiagnosticSpawnErrorDetail,
+  type QualifiedConnectedAccountPurposeBindingsV1,
   type ProviderRuntimeBindingBasisV1,
 } from '@happier-dev/protocol';
+import {
+  GITHUB_SCM_HOSTING_PROVIDER_ID,
+  PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST,
+} from '@happier-dev/plugins-scm-github';
 import type { VendorResumeSupportParams } from '@/agent/catalog/types';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServices/connectedServiceChildEnvironment';
 import { consumeProviderBindingLaunchHandoffFromEnvironments } from '@/plugins/runtime/providerBindings/handoff';
 import type { ProviderSpawnAuthorizationAttempt } from '@/providers/spawn/authorize';
 import type { TrackedSession } from '../types';
-import { createConnectedAccountPurposeBindingOwner } from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import {
+  createConnectedAccountPurposeBindingOwner,
+  type ConnectedAccountPurposeBindingOwnerDependencies,
+} from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { AcpCatalogRecordV1Schema, type AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
@@ -3018,6 +3027,203 @@ describe('executeSpawnSessionRequest', () => {
     expect(createSpawnLifecycleCallbacks).toHaveBeenCalledWith(expect.objectContaining({
       connectedServiceSelectionsEnvRaw: '[{"kind":"group","serviceId":"openai-codex"}]',
     }));
+  });
+
+  it('binds the retained enrolled Git account from the Session recipe without a native target placement', async () => {
+    const hostingProvider = (GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0]!;
+    const gitAccount = {
+      service: {
+        pluginId: GITHUB_PLUGIN_MANIFEST.id,
+        localId: 'github-account',
+      },
+      accountId: 'enrolled-git-account',
+    };
+    const purpose = {
+      consumer: {
+        pluginId: GITHUB_PLUGIN_MANIFEST.id,
+        localId: hostingProvider.id,
+      },
+      purpose: 'authentication',
+    };
+    const durableDefaultAccount = {
+      service: gitAccount.service,
+      accountId: 'durable-default-account',
+    };
+    let durableBindings: QualifiedConnectedAccountPurposeBindingsV1 = {
+      v: 1,
+      bindings: [{
+        purpose,
+        target: {
+          kind: 'account',
+          account: durableDefaultAccount,
+        },
+      }],
+    };
+    const materializeAccount: ConnectedAccountPurposeBindingOwnerDependencies['materializeAccount'] = vi.fn(async ({ account, request }) => {
+      if (request.kind !== 'environment') throw new Error('Expected environment materialization');
+      return {
+        kind: 'environment' as const,
+        env: Object.fromEntries(request.keys.map(key => [key, `token:${account.accountId}`])),
+      };
+    });
+    const purposeBindingOwner = createConnectedAccountPurposeBindingOwner({
+      store: {
+        read: async () => durableBindings,
+        update: async mutate => {
+          durableBindings = mutate(durableBindings);
+          return durableBindings;
+        },
+        subscribe: () => ({ dispose() {} }),
+      },
+      selectTarget: async () => {
+        throw new Error('The Session recipe supplies the explicit Git account');
+      },
+      resolveTarget: async target => target.kind === 'account'
+        ? { displayName: target.account.accountId, account: target.account }
+        : null,
+      materializeAccount,
+      projectTargetAccounts: async () => {
+        throw new Error('The selected Git account does not need a list operation');
+      },
+      assertTargetAccountMaterializable: async () => undefined,
+    });
+    const contributes = {
+      ...createRegistryWithBackendOwners({ codex: 'happier.agent.codex' }),
+      scmHostingProviders: [{
+        id: hostingProvider.id,
+        provenance: 'first_party' as const,
+        source: { kind: 'bundled' as const },
+        pluginId: GITHUB_PLUGIN_MANIFEST.id,
+        definition: ScmHostingProviderContributionSchema.parse(hostingProvider),
+      }],
+    };
+    hoisted.requireCatalogEntry.mockReturnValue({});
+    hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
+      ok: true,
+      normalizedExistingSessionId: 'enrolled-session-1',
+      effectiveResume: '',
+      effectiveBackendTargetV2: {
+        kind: 'backend',
+        sourceKind: 'built_in',
+        backendId: 'codex',
+      },
+      sessionAttachPayload: {
+        v: 2,
+        encryptionMode: 'plain',
+        snapshot: {
+          metadata: {},
+          metadataVersion: 1,
+          agentState: null,
+          agentStateVersion: 1,
+          ownerMetadata: {
+            v: 1,
+            system: {
+              sessionCreationCorrespondenceV1: {
+                v: 1,
+                recipe: {
+                  projectFiles: {
+                    kind: 'git_clone',
+                    branch: 'main',
+                    source: {
+                      provider: {
+                        id: GITHUB_SCM_HOSTING_PROVIDER_ID,
+                        kind: 'github',
+                        displayName: 'GitHub',
+                        baseUrl: 'https://github.com',
+                      },
+                      repository: {
+                        nameWithOwner: 'owner/enrolled-project',
+                        cloneUrl: 'https://github.com/owner/enrolled-project.git',
+                      },
+                      protocol: 'https',
+                    },
+                    gitAccount,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      catalogAgentId: 'codex',
+    });
+    hoisted.ensureSessionDirectory.mockResolvedValueOnce({
+      ok: true,
+      directoryCreated: false,
+    });
+    hoisted.acquireAuthoritativePluginRuntimeRegistryLease.mockResolvedValueOnce({
+      registry: createAdmittedRuntimeRegistry(
+        { codex: 'happier.agent.codex' },
+        contributes,
+      ),
+      source: 'active',
+      release: vi.fn(async () => undefined),
+    });
+
+    const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
+    const { createSessionAttachFile } = await import('../sessionAttachFile');
+    const { resolveSpawnChildEnvironment } = await import('../spawn/resolveSpawnChildEnvironment');
+    const { routeSpawnModeAndWaitForWebhook } = await import('../spawn/routeSpawnModeAndWaitForWebhook');
+    vi.mocked(createSessionAttachFile).mockResolvedValueOnce({
+      filePath: '/tmp/enrolled-session-1-attach.json',
+      cleanup: vi.fn(async () => undefined),
+    });
+    vi.mocked(resolveSpawnChildEnvironment).mockResolvedValueOnce({
+      ok: true,
+      cleanupOnFailure: null,
+      cleanupOnExit: null,
+      expandedEnvironmentVariables: {},
+      extraEnvForChild: {},
+    });
+    vi.mocked(routeSpawnModeAndWaitForWebhook).mockImplementationOnce(async () => {
+      const signal = new AbortController().signal;
+      expect(await purposeBindingOwner.getBinding({
+        purpose,
+        serviceRefs: [gitAccount.service],
+        sessionId: 'enrolled-session-1',
+        signal,
+      })).toMatchObject({ account: gitAccount });
+      await expect(purposeBindingOwner.materialize({
+        purpose,
+        serviceRefs: [gitAccount.service],
+        sessionId: 'enrolled-session-1',
+        request: { kind: 'environment', keys: ['TOKEN'] },
+        signal,
+      })).resolves.toMatchObject({ env: { TOKEN: 'token:enrolled-git-account' } });
+      expect(materializeAccount).toHaveBeenCalledWith(expect.objectContaining({
+        account: gitAccount,
+      }));
+      expect(durableBindings).toEqual({
+        v: 1,
+        bindings: [{
+          purpose,
+          target: { kind: 'account', account: durableDefaultAccount },
+        }],
+      });
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorMessage: 'fixture launch refusal',
+      };
+    });
+
+    await expect(executeSpawnSessionRequest({
+      ...createParams(),
+      options: {
+        ...createParams().options,
+        existingSessionId: 'enrolled-session-1',
+        resume: undefined,
+      },
+      resolveManagedPurposeBindingIntentSelection:
+        purposeBindingOwner.resolveBindingIntentSelection,
+      activateSessionPurposeBindings:
+        purposeBindingOwner.activateSessionPurposeBindings,
+    })).resolves.toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorMessage: 'fixture launch refusal',
+    });
+
   });
 
   // The legacy service-keyed request-auth certificate is host-private and

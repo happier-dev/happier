@@ -1,4 +1,3 @@
-import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 
 import {
@@ -10,8 +9,9 @@ import type {
     ScmWorkspaceIntegrationWorkspaceTransferResult,
 } from '../types.js';
 import { runScmCommand } from '../runtime.js';
+import { readRepositoryFileSystem } from '../repositoryFileSystem.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
-import { resolveGitWorkspaceTransferEntries } from '../operations/resolveGitWorkspaceTransferEntries.js';
+import { resolveGitWorkspaceTransferSelection } from '../operations/resolveGitWorkspaceTransferEntries.js';
 import {
     isGitWorkspaceTransferMetadata,
     resolveGitWorkspaceTransferMetadata,
@@ -27,6 +27,7 @@ export async function resolvePortableGitWorkspaceRoot(input: Readonly<{
     cwd: string;
     repositoryRoot: string;
 }>): Promise<Readonly<{ repositoryRoot: string; sessionRelativeCwd: string }>> {
+    const { realpath } = readRepositoryFileSystem();
     const [repositoryRoot, sessionCwd] = await Promise.all([
         realpath(input.repositoryRoot).catch(() => null),
         realpath(input.cwd).catch(() => null),
@@ -82,6 +83,7 @@ async function readPortableBundleHeadRevision(input: Readonly<{
 export async function preparePortableGitWorkspaceTransfer(
     input: ScmWorkspaceIntegrationWorkspaceTransferInput & Readonly<{ artifactDirectory: string }>,
 ): Promise<ScmWorkspaceIntegrationWorkspaceTransferResult> {
+    const { mkdir, mkdtemp, rm } = readRepositoryFileSystem();
     const detectedRepositoryRoot = input.context.detection.rootPath;
     if (!input.context.detection.isRepo || !detectedRepositoryRoot) {
         throw selectionUnavailable('Git workspace transfer requires a detected worktree root');
@@ -113,10 +115,11 @@ export async function preparePortableGitWorkspaceTransfer(
             repositoryRoot,
             bundlePath,
         });
-        const [entries, metadata] = await Promise.all([
-            resolveGitWorkspaceTransferEntries(repositoryInput),
+        const [selection, metadata] = await Promise.all([
+            resolveGitWorkspaceTransferSelection(repositoryInput),
             resolveGitWorkspaceTransferMetadata(repositoryInput),
         ]);
+        const { entries, excludedPaths } = selection;
         if (!metadata) {
             throw selectionUnavailable('Git workspace has no portable checkout metadata');
         }
@@ -128,6 +131,7 @@ export async function preparePortableGitWorkspaceTransfer(
         }
 
         return createScmWorkspaceIntegrationWorkspaceTransferResult({
+            excludedPaths,
             entries: [
                 ...entries,
                 createScmWorkspaceIntegrationWorkspaceTransferEntry({
@@ -153,6 +157,7 @@ export async function materializePortableGitWorkspaceBundle(input: Readonly<{
     targetPath: string;
     workspaceIntegrationMetadata?: Readonly<Record<string, unknown>>;
 }>): Promise<void> {
+    const { rm } = readRepositoryFileSystem();
     const metadata = isGitWorkspaceTransferMetadata(input.workspaceIntegrationMetadata)
         ? input.workspaceIntegrationMetadata
         : null;

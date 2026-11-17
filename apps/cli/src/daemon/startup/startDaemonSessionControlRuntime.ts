@@ -6,6 +6,7 @@ import { createExternalActionHeaderRefusalError } from '@/api/externalActionHead
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createSparedHeldAgentCustody } from '@/daemon/processSupervision/sparedHeldAgents';
 import { reachHeldTargetAgent, restoreSessionTargetRelay, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount, buildProviderAccountUsagePersistenceTargetFromQualifiedCredential } from '../connectedServices/accountUsage/qualifiedAccountIdentity';
@@ -1184,6 +1185,9 @@ export async function startDaemonSessionControlRuntime(
     resolveProjectWorkerAction?: () => ActionExecutorDeps['projectWorkerAction'];
     /** Current source-daemon Sync preparation owner for compound service relocation. */
     resolveWorkspaceSyncHandoffAdapter?: () => import('@/workspaces/sync/workspaceSyncHandoffAdapter').WorkspaceSyncHandoffAdapter | null;
+    resolveManagedProjectFilesSync?: () => import('./createProductionDaemonWorkspaceSyncRuntime').ProductionDaemonWorkspaceSyncRuntime['prepareManagedProjectFilesSync'] | null;
+    resolveManagedProjectFilesSeed?: () => import('./createProductionDaemonWorkspaceSyncRuntime').ProductionDaemonWorkspaceSyncRuntime['prepareManagedProjectFilesSeed'] | null;
+    resolveManagedProjectFilesBaseline?: () => import('./createProductionDaemonWorkspaceSyncRuntime').ProductionDaemonWorkspaceSyncRuntime['readManagedProjectFilesBaseline'] | null;
     /** Existing helper lifetime owners expose generation-bound Stop, never raw signal callbacks. */
     readHelperProcessRoots?: () => readonly HappierProcessRootSource[];
     readTerminalRequesterAttribution?: (terminalId: string) => import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1 | undefined;
@@ -3096,9 +3100,28 @@ export async function startDaemonSessionControlRuntime(
         end: async (tracked: TrackedSession, held: SessionHeldAgentV1) => { await reach(tracked, held, 'end'); },
         serveRelay: async (tracked: TrackedSession, held: SessionHeldAgentV1) => {
           const request = authority(tracked, `reattach-${tracked.happySessionId}`);
-          return request && held.relaySocketPath ? await restoreSessionTargetRelay({ ...request, socketPath: held.relaySocketPath,
-            // The runner (or its session host) this daemon reattached, read live.
-            readTrustedCallerPid: () => tracked.sessionRunnerPid ?? tracked.pid }) : null;
+          const sessionId = tracked.happySessionId;
+          const socketPath = held.relaySocketPath;
+          if (!request || !sessionId || !socketPath) return null;
+          return await withSessionAccountContext(sessionId, async accountContext =>
+            await withSessionAccountHome(accountContext, async () => {
+              const credentials = accountContext?.bootstrap.credentials ?? params.credentials;
+              const attached = await resolveExistingSessionAttachContext({ sessionId, token: credentials.token, credentials });
+              const parsed = SessionCreationCorrespondenceV1ReadSchema.safeParse(attached.ok
+                ? attached.metadata.sessionCreationCorrespondenceV1 : undefined);
+              const recipe = parsed.success ? parsed.data.recipe : undefined;
+              const origin = recipe?.projectFilesOrigin;
+              return await restoreSessionTargetRelay({ ...request, socketPath,
+                ...(origin ? { projectFiles: { sessionId, primarySocketPath: held.socketPath, origin,
+                  readBaseline: async signal => origin.targetWorkspace.kind === 'managed'
+                    ? await params.resolveManagedProjectFilesBaseline?.()?.({ sessionId, targetWorkspace: origin.targetWorkspace, credentials,
+                      signal,
+                      contentPolicyDigest: origin.contentPolicyDigest
+                        ?? (recipe?.projectFiles?.kind === 'git_clone' ? undefined : recipe?.projectFiles?.contentPolicy?.policyDigest) }) ?? null
+                    : origin.baseline ?? null } } : {}),
+                // The runner (or its session host) this daemon reattached, read live.
+                readTrustedCallerPid: () => tracked.sessionRunnerPid ?? tracked.pid });
+            }));
         } };
     })(),
   });
@@ -4405,6 +4428,9 @@ export async function startDaemonSessionControlRuntime(
                 credentials: spawnParams.credentials,
                 // Called at spawn time only: the managed adapter is built later in this runtime.
                 openManagedSessionTarget: request => managedMachinePolicyAdapter.openSessionTarget(request),
+                resolveManagedProjectFilesSync: params.resolveManagedProjectFilesSync,
+                resolveManagedProjectFilesSeed: params.resolveManagedProjectFilesSeed,
+                resolveManagedProjectFilesBaseline: params.resolveManagedProjectFilesBaseline,
                 deviceLocalSecretStorage: spawnParams.deviceLocalSecretStorage,
                 api: spawnParams.api,
                 ...(spawnParams.readInstalledTeamCredentialProviderModel ? {

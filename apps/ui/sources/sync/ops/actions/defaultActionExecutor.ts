@@ -1,3 +1,4 @@
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
 import { requiresAuthenticatedMachineAdmissionForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createUiPluginCollectionSharingActionDeps } from './pluginCollectionSharingActionDeps';
@@ -1148,7 +1149,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         ? resolveWorkspaceRefById(rows.workspaceRefs, input.sourceWorkspaceRefId, accountContext.serverIdentityId ?? accountContext.serverId)
         : null;
       if (source?.kind !== 'resolved') return { ok: false, errorCode: 'workspace_ref_not_ready', error: 'workspace_ref_not_ready' };
-      workspaceSourceMachineId = source.ref.machineId;
+      workspaceSourceMachineId = resolveWorkspaceSyncExecutionMachineIdV1(source.ref);
       const target = args.context.externalActionTarget;
       if (target && (target.kind !== 'machine' || target.machineId !== workspaceSourceMachineId)) {
         return { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' };
@@ -3956,6 +3957,12 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return listAgentBackendsForVoiceTool({ includeDisabled, limit, machineId, serverId: accountContext.serverId,
         accountLifetime: accountContext.accountLifetime, acpCatalogSnapshot: catalog,
         backendEnabledByTargetKey: preferences.backendEnabledByTargetKey ?? null });
+    },
+    sessionWorkspaceReturn: async ({ actionId, input, context }) => {
+      if (!accountContext) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+      return await createUiAccountAction({ account: accountContext })({ actionId, input,
+        context: { ...context, serverId: accountContext.serverId, runtimeAccountId: accountContext.accountId,
+          externalActionTarget: { kind: 'machine', machineId: input.machineId } } });
     },
     workspaceFilesReplacePreview: async ({ machineId, ...request }, context) => {
       try {

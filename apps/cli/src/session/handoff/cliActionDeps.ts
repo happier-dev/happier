@@ -10,7 +10,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionHandoffTargetReplacementApprovalPreflight' | 'sessionHandoffStart'
-  | 'sessionHandoffStatusGet' | 'sessionHandoffPrepareTargetResume'>;
+  | 'sessionHandoffStatusGet' | 'sessionHandoffPrepareTargetResume' | 'sessionWorkspaceReturn'>;
 
 export function createCliSessionHandoffActionDeps(
   params: CliActionDepsParams,
@@ -34,6 +34,12 @@ export function createCliSessionHandoffActionDeps(
       ...(context.signal ? { signal: context.signal } : {}) });
   };
   return {
+    sessionWorkspaceReturn: ({ actionId, input, context }) => callMachineAction({
+      machineId: input.machineId, method: actionId, request: input, context,
+      effectActionId: actionId, exactMachine: true,
+      ...(context.serverId ? { serverId: context.serverId } : {}),
+      ...(context.signal ? { signal: context.signal } : {}),
+    }),
     // Recovery addresses the retained job on its admitted target, independently of the source Session.
     sessionHandoffStatusGet: (input, context) => requestRecovery('session.handoff.status.get', RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3, input, context),
     sessionHandoffPrepareTargetResume: (input, context) => requestRecovery('session.handoff.prepare_target.resume', RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3, input, context),

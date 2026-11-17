@@ -9,6 +9,7 @@ import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/i
 
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SESSION_WORKSPACE_RETURN_WRITE_SCOPED_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 import { MACHINE_ACCESS_LOSS_SERVER_ORIGIN, SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS,
   resolveSocketRpcSessionWriteAuthorizationMethod, type WorkspaceSyncSourceRoutingV1 } from '@happier-dev/protocol/socketRpc';
 
@@ -69,6 +70,25 @@ describe('authorizeMachineRpcRequest', () => {
     }
   });
 
+  it('admits native return capture only for its exact read-authorized Session', async () => {
+    const request = { method: 'machine-1:session.workspace.return.capture',
+      params: { sessionId: 'native-session', machineId: 'machine-1' } };
+    await expect(authorizeMachineRpcRequest(request)).resolves.toMatchObject({ ok: false });
+    await expect(authorizeMachineRpcRequest({ ...request,
+      authorization: { kind: 'session.read', sessionId: 'other-session' } })).resolves.toMatchObject({ ok: false });
+    await expect(authorizeMachineRpcRequest({ ...request,
+      authorization: { kind: 'session.read', sessionId: 'native-session' } })).resolves.toEqual({ ok: true });
+  });
+  it.each(SESSION_WORKSPACE_RETURN_WRITE_SCOPED_ACTION_IDS_V1)('binds reviewed project return to its exact Session: %s', async method => {
+    const request = { method: `machine-1:${method}`, params: { sessionId: 'own-session', machineId: 'machine-1' } };
+    await expect(authorizeMachineRpcRequest(request)).resolves.toMatchObject({ ok: false, admissionPredicate: 'session_authorization' });
+    await expect(authorizeMachineRpcRequest({ ...request,
+      authorization: { kind: 'session.read', sessionId: 'own-session' } })).resolves.toMatchObject({ ok: false });
+    await expect(authorizeMachineRpcRequest({ ...request,
+      authorization: { kind: 'session.write', sessionId: 'other-session' } })).resolves.toMatchObject({ ok: false, admissionPredicate: 'session_target' });
+    await expect(authorizeMachineRpcRequest({ ...request,
+      authorization: { kind: 'session.write', sessionId: 'own-session' } })).resolves.toEqual({ ok: true });
+  });
   it('accepts SCM work evidence stamps only through authenticated Home ingress with existing Machine admission', async () => {
     const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
       installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };

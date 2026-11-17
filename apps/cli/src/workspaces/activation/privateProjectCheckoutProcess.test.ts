@@ -183,7 +183,9 @@ it.skipIf(process.platform !== 'linux').each(['empty', 'same_machine', 'local_gi
           const recoveryRequest = { relationshipId: stagedRelationship.relationshipId, targetMachineId: 'machine', targetWorkspaceRefId: 'source' };
           const borrowedAccess = { relationship: stagedRelationship, canonicalRoot: sourceRoot,
             assertCurrentAuthority: async () => { await sourceOwnership.assertCurrentRootIdentity(sourceOwnership.owner.rootFingerprint!); } };
-          await expect(process.recoverConflictResolutionHere(recoveryRequest)).rejects.toMatchObject({ code: 'relationship_not_ready' });
+          // The controller's existing SOURCE loan is the member's canonical
+          // recovery authority even while the relationship is suspended.
+          expect(await process.recoverConflictResolutionHere(recoveryRequest)).toEqual({ status: 'settled' });
           expect(await process.recoverConflictResolutionHere(recoveryRequest, undefined, { localResolutionEndpoint: borrowedAccess })).toEqual({ status: 'settled' });
           await expect(process.recoverConflictResolutionHere(recoveryRequest, undefined,
             { localResolutionEndpoint: { ...borrowedAccess, relationship: { ...stagedRelationship, controllerMachineId: 'other-controller' } } }))

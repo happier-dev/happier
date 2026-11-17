@@ -1,5 +1,5 @@
 import type { WorkspaceRefResolutionContextV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { WorkspaceRefV1WriteSchema, type WorkspaceAddressV1, type WorkspaceProjectFactsV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { WorkspaceRefV1WriteSchema, ManagedWorkspaceRefV2WriteSchema, isManagedWorkspaceRefV2, type MachineWorkspaceRefV1, type ManagedWorkspaceRefV2, type WorkspaceAddressV1, type WorkspaceProjectFactsV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 function normalizeIdentifier(value: string): string {
@@ -45,7 +45,7 @@ export function materializeWorkspaceRefForMachineRoot(
         nowMs: number;
         createId: () => string;
     }> & Pick<WorkspaceProjectFactsV1, 'repositoryIdentity' | 'source'>,
-): Readonly<{ workspaceRefs: readonly WorkspaceRefV1[]; workspaceRef: WorkspaceRefV1; created: boolean }> {
+): Readonly<{ workspaceRefs: readonly WorkspaceRefV1[]; workspaceRef: MachineWorkspaceRefV1; created: boolean }> {
     const serverId = normalizeIdentifier(input.serverId);
     const machineId = normalizeIdentifier(input.machineId);
     const rootPath = input.rootPath.trim();
@@ -104,4 +104,43 @@ export function materializeWorkspaceRefForMachineRoot(
     }
     const next = Object.freeze([...currentRefs, parsed.data]);
     return Object.freeze({ workspaceRefs: next, workspaceRef: parsed.data, created: true });
+}
+
+/** Native filesystem identity stays qualified by its managed owner, never its routing Machine. */
+export function materializeWorkspaceRefForManagedRoot(
+    workspaceRefs: readonly WorkspaceRefV1[],
+    input: Readonly<{
+        serverId: string;
+        managedId: string;
+        controller: ManagedWorkspaceRefV2['controller'];
+        rootPath: string;
+        parentWorkspace?: WorkspaceAddressV1;
+        nowMs: number;
+        createId: () => string;
+    }>,
+): Readonly<{ workspaceRefs: readonly WorkspaceRefV1[]; workspaceRef: ManagedWorkspaceRefV2; created: boolean }> {
+    const serverId = input.serverId.trim();
+    const managedId = input.managedId.trim();
+    const rootPath = input.rootPath.trim();
+    const controller = { machineId: input.controller.machineId.trim(), installationId: input.controller.installationId.trim() };
+    const resolution = resolveWorkspaceRefV1(workspaceRefs, { v: 2, kind: 'managed', serverId, managedId, controller, rootPath });
+    if (resolution.kind === 'ambiguous') {
+        throw Object.assign(new Error('Workspace scope has multiple Account identities'), { code: 'workspace_ref_ambiguous' });
+    }
+    if (resolution.kind === 'invalid') throw Object.assign(new Error(resolution.reason), { code: 'workspace_ref_invalid' });
+    if (resolution.kind === 'resolved' && isManagedWorkspaceRefV2(resolution.ref)) {
+        return { workspaceRefs, workspaceRef: resolution.ref, created: false };
+    }
+    const id = input.createId();
+    let projectKey = id;
+    if (input.parentWorkspace) {
+        const parent = resolveWorkspaceRefV1(workspaceRefs, input.parentWorkspace);
+        if (input.parentWorkspace.serverId !== serverId || parent.kind !== 'resolved') {
+            throw Object.assign(new Error('Parent workspace is no longer current'), { code: 'workspace_ref_not_ready' });
+        }
+        projectKey = parent.ref.projectKey ?? parent.ref.id;
+    }
+    const workspaceRef = ManagedWorkspaceRefV2WriteSchema.parse({ id, serverId, v: 2, kind: 'managed',
+        managedId, controller, rootPath, projectKey, createdAtMs: input.nowMs });
+    return { workspaceRefs: Object.freeze([...workspaceRefs, workspaceRef]), workspaceRef, created: true };
 }

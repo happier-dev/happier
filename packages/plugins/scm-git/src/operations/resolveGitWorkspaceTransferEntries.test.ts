@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import { runWithRealGitScmRuntime } from '../testkit/scmRuntime.test-support.js';
 import { resolveGitWorkspaceTransferEntries } from './resolveGitWorkspaceTransferEntries.js';
+import { resolveGitWorkspaceTransferSource } from '../workspaceIntegration.js';
 
 const execFile = promisify(execFileCallback);
 
@@ -30,6 +31,70 @@ async function withHostScmRuntime<T>(callback: () => Promise<T>): Promise<T> {
 }
 
 describe('resolveGitWorkspaceTransferEntries', () => {
+    it('classifies missing baseline candidates with Git while committed and ordinary deleted files stay eligible', async () => {
+        const repoRoot = await makeTempDir('git-transfer-missing-omissions-');
+        try {
+            await runGit(repoRoot, ['init']);
+            await configureGitRepo(repoRoot);
+            await writeFile(join(repoRoot, '.gitignore'), '*.env\n');
+            await writeFile(join(repoRoot, 'ordinary.txt'), 'base\n');
+            await runGit(repoRoot, ['add', '.']);
+            await runGit(repoRoot, ['commit', '-m', 'initial']);
+            await rm(join(repoRoot, 'ordinary.txt'));
+            await writeFile(join(repoRoot, 'committed.env'), 'newly committed\n');
+            await runGit(repoRoot, ['add', '-f', 'committed.env']);
+            await runGit(repoRoot, ['commit', '-m', 'commit previously ignored path']);
+            const selected = await withHostScmRuntime(() => resolveGitWorkspaceTransferSource({
+                context: { cwd: repoRoot, projectKey: `test:${repoRoot}`,
+                    detection: { isRepo: true, rootPath: repoRoot, mode: '.git' } },
+                workspaceTransfer: { strategy: 'transfer_snapshot', includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [],
+                    exclusionCandidates: ['missing.env', 'missing\nsecret.env', 'ordinary.txt', 'committed.env'] },
+            }));
+            expect(selected?.entries.map(entry => entry.relativePath)).toContain('committed.env');
+            expect(selected).toHaveProperty('excludedPaths', ['missing\nsecret.env', 'missing.env']);
+            const eligibleOnly = await withHostScmRuntime(() => resolveGitWorkspaceTransferSource({
+                context: { cwd: repoRoot, projectKey: `test:${repoRoot}`,
+                    detection: { isRepo: true, rootPath: repoRoot, mode: '.git' } },
+                workspaceTransfer: { strategy: 'transfer_snapshot', includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [],
+                    exclusionCandidates: ['ordinary.txt', 'committed.env'] },
+            }));
+            expect(eligibleOnly).toHaveProperty('excludedPaths', []);
+        } finally { await rm(repoRoot, { recursive: true, force: true }); }
+    });
+
+    it('reports exact existing omitted files and distinguishes new ignores from real deletions', async () => {
+        const repoRoot = await makeTempDir('git-transfer-omissions-');
+        try {
+            await runGit(repoRoot, ['init']);
+            await configureGitRepo(repoRoot);
+            await mkdir(join(repoRoot, 'private'));
+            await writeFile(join(repoRoot, '.gitignore'), 'private/\n');
+            await writeFile(join(repoRoot, 'tracked.txt'), 'tracked\n');
+            await runGit(repoRoot, ['add', '.']);
+            await runGit(repoRoot, ['commit', '-m', 'initial']);
+            await writeFile(join(repoRoot, 'local.env'), 'copied initially\n');
+            await writeFile(join(repoRoot, 'private', 'secret.env'), 'ignored initially\n');
+            const input = {
+                context: { cwd: repoRoot, projectKey: `test:${repoRoot}`,
+                    detection: { isRepo: true, rootPath: repoRoot, mode: '.git' as const } },
+                workspaceTransfer: { strategy: 'transfer_snapshot' as const, includeIgnoredMode: 'exclude' as const,
+                    ignoredIncludeGlobs: [], includeAllIgnored: true },
+            };
+            const allFiles = await withHostScmRuntime(() => resolveGitWorkspaceTransferSource(input));
+            expect(allFiles?.entries.map(entry => entry.relativePath)).toContain('private/secret.env');
+            expect(allFiles).toHaveProperty('excludedPaths', []);
+
+            await writeFile(join(repoRoot, '.gitignore'), 'private/\nlocal.env\n');
+            await rm(join(repoRoot, 'tracked.txt'));
+            const selected = await withHostScmRuntime(() => resolveGitWorkspaceTransferSource({
+                ...input, workspaceTransfer: { ...input.workspaceTransfer, includeAllIgnored: false,
+                    extraIgnorePatterns: ['tracked.txt'] },
+            }));
+            expect(selected?.entries.map(entry => entry.relativePath)).not.toContain('local.env');
+            expect(selected).toHaveProperty('excludedPaths', ['local.env', 'private/secret.env']);
+        } finally { await rm(repoRoot, { recursive: true, force: true }); }
+    });
+
     it('applies the bounded policy overlay to tracked and untracked seed entries while explicit includes win', async () => {
         const repoRoot = await makeTempDir('git-transfer-policy-overlay-');
 
@@ -46,7 +111,7 @@ describe('resolveGitWorkspaceTransferEntries', () => {
             await runGit(repoRoot, ['add', '.gitignore', 'dist/tracked.txt']);
             await runGit(repoRoot, ['commit', '-m', 'initial']);
 
-            const entries = await withHostScmRuntime(async () => await resolveGitWorkspaceTransferEntries({
+            const selected = await withHostScmRuntime(async () => await resolveGitWorkspaceTransferSource({
                 context: {
                     cwd: repoRoot,
                     projectKey: `test:${repoRoot}`,
@@ -65,12 +130,13 @@ describe('resolveGitWorkspaceTransferEntries', () => {
                 },
             }));
 
-            expect(entries.map((entry) => entry.relativePath)).toEqual([
+            expect(selected?.entries.map((entry) => entry.relativePath)).toEqual([
                 '.gitignore',
                 'dist/tracked.txt',
                 'ignored/all-files.txt',
                 'ignored/selected.txt',
             ]);
+            expect(selected).toHaveProperty('excludedPaths', ['dist/ordinary.txt']);
         } finally {
             await rm(repoRoot, { recursive: true, force: true });
         }

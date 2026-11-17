@@ -60,8 +60,12 @@ import * as cliActionExecutorHarness from '@/session/actions/createCliActionExec
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionProjectFilesV1Schema, type SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
@@ -82,10 +86,10 @@ import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClie
 
 const spawnedSessionBirthMetadata = new Map<string, ReturnType<typeof buildCommittedLaunchMetadata>>();
 
-function installWorkflowRoleAccount(credentials: Readonly<{ token: string; encryption: null }>) {
+function installWorkflowRoleAccount(credentials: Readonly<{ token: string; encryption: null }>, settings = accountSettingsParse({})) {
   resetActiveAccountSettingsSnapshotForTests();
   setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKey(credentials), source: 'network',
-    settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: Date.now(),
+    settings, rawSettings: {}, settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: Date.now(),
     promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
 }
 
@@ -253,6 +257,172 @@ function observeSessionSpawnAdmissions() {
 }
 
 describe('workflow Session step executor', () => {
+  it.each([false, true])('freezes the verified controller Project files default through the public Workflow Action (authored override: %s)', async authoredOverride => {
+    const { WorkflowRunStartRequestV1Schema } = await import('@happier-dev/protocol/workflows/actionsV1');
+    const { createWorkflowRunActionOwner } = await import('@/session/actions/workflowRunActions');
+    const { createWorkflowActionExecutor } = await import('@/session/actions/workflowActionExecutor');
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+    const { retainVerifiedExternalActionRequester } = await import('@/daemon/agentIsolation/agentIsolationLaunchPolicy');
+    const { requesterActionContext } = await import('@/daemon/sessionEncryption/requesterAccountActionContext');
+    const { invokeAdmittedReviewedChild } = await import('@/daemon/externalActions/managedReviewedChild');
+    const { createWorkflowRunStorageTestkit } = await import('./workflowRunStorage.testkit');
+    const { prepareWorkflowAcceptedWorkspaceTarget } = await import('./resolveWorkflowWorkspace');
+    const { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } = await import('@happier-dev/protocol/workflows/workflowStoredContentV1');
+    const { createProjectAccountRowCipherV1 } = await import('@happier-dev/protocol/projects/projectAccountRowCipherV1');
+    const launches = installSessionCreationTransport();
+    const credentials = { token: 'token', encryption: null };
+    // The person has waived Ask for Project Open; its exact reviewed child plan still scopes execution.
+    installWorkflowRoleAccount(credentials, accountSettingsParse({ actionsSettingsV1: { v: 1,
+      approvalWaivedSurfaces: { 'projects.open': ['agent'] } } }));
+    const opens: ReturnType<typeof OpenProjectInputV1Schema.parse>[] = [];
+    const ordinaryRpc = readiness.callMachineRpc.getMockImplementation()!;
+    readiness.callMachineRpc.mockImplementation(async request => {
+      if (request.method !== RPC_METHODS.PROJECTS_OPEN) return ordinaryRpc(request);
+      const input = OpenProjectInputV1Schema.parse(request.request);
+      opens.push(input);
+      if (input.materialization.kind !== 'clone') throw new Error('Unexpected Project materialization');
+      const directory = `${input.materialization.destinationParentPath}/repository`;
+      return { kind: 'opened', workspace: { serverId: input.serverId, machineId: input.machineId,
+        workspaceId: 'cloned-project', rootPath: directory }, directory, setup: 'notRequired' };
+    });
+    const runId = 'f097af73-bd41-441b-b4c4-74f1c5658d7d';
+    const projectFiles = SessionProjectFilesV1Schema.parse({ kind: 'git_clone', branch: 'private-preset-branch', source: {
+      provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'owner/project', cloneUrl: 'https://github.com/owner/project.git' }, protocol: 'https',
+    } });
+    const placement = { kind: 'preset' as const, homeId: 'server-1', presetId: 'private-preset',
+      ...(authoredOverride ? { projectFiles: { ...projectFiles, branch: 'authored-branch' } } : {}) };
+    const directory = await fs.mkdtemp(join(tmpdir(), 'workflow-project-files-'));
+    onTestFinished(() => fs.rm(directory, { recursive: true, force: true }));
+    const project = { machineId: 'machine-1', directory, sessionPlacement: placement };
+    const authoredProject = structuredClone(project);
+    const target = { kind: 'machine' as const, machineId: project.machineId, project };
+    const original = WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'inline', definition: {
+      version: 1, defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } }, blocks: ['work'],
+    } } });
+    const controller = { machineId: 'controller', installationId: 'controller-installation' };
+    const child = { ...original, managedCreation: { homeId: 'server-1', managedId: 'managed', controller }, managedProjectFiles: projectFiles };
+    const requesterProjection = {
+      accountId: 'account-1', serverId: 'server-1', accountEncryptionMode: 'plain' as const,
+      projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null,
+        randomBytes: () => { throw new Error('Plain account needs no encryption randomness'); } }),
+      isCurrent: async () => true, readArtifact: async () => null,
+      // The requester custody is opened at the verified ingress boundary; the issuer only reads its presence.
+      [requesterActionContext]: {} as RequesterAccountActionContext,
+    };
+    const authorization = retainVerifiedExternalActionRequester({ isCurrent: async () => true,
+      authorization: { ...ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'verified-controller-continuation', binding: {
+        serverIdentityId: 'server-1', accountId: 'account-1', custodianAccountId: 'account-1',
+        authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+        actionId: 'workflow.run.start', requestId: 'continued-workflow', machineId: 'machine-1', installationId: 'guest-installation',
+        target, requestEnvelopeDigest: 'a'.repeat(43), admittedMachineRole: 'manage',
+        managedContinuation: { managedId: 'managed', creationRequestId: runId, expectedIntentRevision: 0,
+          acquireRequestEnvelopeDigest: 'b'.repeat(43), controller },
+      } }), requesterAccountProjection: requesterProjection },
+    });
+    const context = { surface: 'cli' as const, authority: 'present_user' as const, callerPermissionMode: 'default',
+      actionCaller: { kind: 'host' as const }, runtimeAccountId: 'account-1', serverId: 'server-1', serverIdentityId: 'server-1',
+      defaultSessionMachineId: 'machine-1', actionRequestId: 'continued-workflow', externalActionTarget: target,
+      externalActionExecutionAuthorization: authorization,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'workflow.run.start': ['cli'] } }) } satisfies ActionExecutorContext;
+    const storage = createWorkflowRunStorageTestkit({ runId, machineId: 'machine-1', origin: { kind: 'direct' } });
+    const owner = createWorkflowRunActionOwner({ storage, resolveAccountId: async () => 'account-1',
+      resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      definitions: { get: async () => { throw new Error('Inline source has no saved definition'); } },
+      // SCM inspection is an OS/plugin boundary; this owned temp folder is a plain directory.
+      prepareWorkspace: input => prepareWorkflowAcceptedWorkspaceTarget({ ...input, inspectLocation: async () => null }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    const executor = createActionExecutor({ workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }) });
+    const execute = (value: unknown, issued: ActionExecutorContext) => executor.execute('workflow.run.start', value, issued);
+    // A serialized field and signed continuation alone do not manufacture the host issuer's private proof.
+    const forged = await execute(child, context);
+    expect(storage.acceptedEnvelope()).toBeNull();
+    const admitted = await invokeAdmittedReviewedChild({ parent: { actionId: 'workflow.run.start', input: original },
+      requesterOwnedReview: true, actionId: 'workflow.run.start', actionInput: child, context, execute });
+    expect(admitted, JSON.stringify(admitted)).toMatchObject({ ok: true, result: { admission: 'created' } });
+    expect(forged).toMatchObject({ ok: false, errorCode: 'run_access_denied' });
+    const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId },
+      envelope: parseWorkflowStoredContentEnvelopeV1(storage.acceptedEnvelope()) });
+    if (opened.kind !== 'available') throw new Error(`Accepted snapshot unavailable: ${opened.kind}`);
+    const accepted = opened.content;
+    expect(context.externalActionTarget.project).toEqual(authoredProject);
+    expect(accepted.workspaceTarget.sessionPlacement).toEqual(authoredProject.sessionPlacement);
+    const effective = authoredOverride ? placement.projectFiles : projectFiles;
+    expect(accepted.workspaceTarget).toMatchObject({ projectFiles: effective });
+    const create = createProductionFreshWorkflowSessionConversation({ credentials,
+      serverId: 'server-1', machineId: 'machine-1', workDepth: 0, originRunId: runId,
+      ...accepted.workspaceTarget, machineAdmissionTransport: vi.fn() });
+    await expect(create({ creationKey: `workflow:${runId}`,
+      selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, connectedServices: null },
+      workspace: accepted.workspaceTarget.project })).resolves.toMatchObject({ sessionId: 'new-session' });
+    expect(opens).toHaveLength(1);
+    expect(opens[0]?.materialization).toMatchObject({ kind: 'clone', initialCheckout: { branch: effective?.kind === 'git_clone' ? effective.branch : undefined } });
+    expect(launches[0]?.sessionCreationCorrespondence?.recipe.projectFiles).toEqual(effective);
+  });
+
+  it('clones a private preset default for a Workflow leaf through the admitted target child', async () => {
+    const launches = installSessionCreationTransport();
+    const credentials = { token: 'token', encryption: null };
+    installWorkflowRoleAccount(credentials, accountSettingsParse({ actionsSettingsV1: { v: 1,
+      approvalWaivedSurfaces: { 'projects.open': ['agent'] } } }));
+    const calls: ReturnType<typeof OpenProjectInputV1Schema.parse>[] = [];
+    const ordinaryRpc = readiness.callMachineRpc.getMockImplementation()!;
+    readiness.callMachineRpc.mockImplementation(async request => {
+      if (request.method !== RPC_METHODS.PROJECTS_OPEN) return ordinaryRpc(request);
+      const input = OpenProjectInputV1Schema.parse(request.request);
+      calls.push(input);
+      if (input.materialization.kind !== 'clone') throw new Error('Preset default must clone its repository');
+      const directory = `${input.materialization.destinationParentPath}/repository`;
+      return { kind: 'opened', workspace: { serverId: input.serverId, machineId: input.machineId,
+        workspaceId: 'cloned-project', rootPath: directory }, directory, setup: 'notRequired' };
+    });
+    const projectFiles = SessionProjectFilesV1Schema.parse({ kind: 'git_clone', branch: 'feature/workflow', source: {
+      provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'owner/project', cloneUrl: 'https://github.com/owner/project.git' }, protocol: 'https',
+    } });
+    const runtimeChoice = { projectFiles };
+    const create = createProductionFreshWorkflowSessionConversation({ credentials,
+      serverId: 'server-1', machineId: 'machine-1', workDepth: 0, originRunId: 'private-clone-run',
+      ...runtimeChoice, machineAdmissionTransport: vi.fn(),
+    });
+    await expect(create({ creationKey: 'workflow:private-preset-clone',
+      selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, connectedServices: null },
+      workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
+    })).resolves.toMatchObject({ sessionId: 'new-session' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ machineId: 'machine-1', source: { kind: 'repository' },
+      materialization: { kind: 'clone', initialCheckout: { branch: projectFiles.branch }, authentication: 'connected_account' } });
+    expect(launches[0]?.directory).toMatch(/\/repository$/);
+    expect(launches[0]?.sessionCreationCorrespondence?.recipe.projectFiles).toEqual(projectFiles);
+  });
+
+  it.each([
+    { name: 'Project files leaf: preset default',
+      projectFiles: { kind: 'copy_once' } satisfies SessionProjectFilesV1, authored: false },
+    { name: 'Project files leaf: authored override',
+      projectFiles: { kind: 'sync', mode: 'keep_synced' } satisfies SessionProjectFilesV1, authored: true },
+  ])('$name', async ({ projectFiles, authored }) => {
+    const launches = installSessionCreationTransport();
+    const runtimeChoice = { projectFiles };
+    const create = createProductionFreshWorkflowSessionConversation({ credentials: { token: 'token', encryption: null },
+      serverId: 'server-1', machineId: 'machine-1', workDepth: 0, originRunId: 'project-files-run',
+      ...runtimeChoice,
+      ...(authored ? { sessionPlacement: { kind: 'machine' as const,
+        target: { serverId: 'server-1', machineId: 'machine-1' }, projectFiles: { kind: 'copy_once' as const } } } : {}),
+      machineAdmissionTransport: vi.fn(),
+    });
+    await expect(create({ creationKey: 'workflow:project-files',
+      selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        connectedServices: null },
+      workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
+    })).resolves.toMatchObject({ sessionId: 'new-session' });
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.sessionCreationCorrespondence?.recipe.projectFiles).toEqual({ kind: 'copy_once' });
+  });
+
   it.each([
     { name: 'refuses fresh Workflow birth when the receiving Machine isolation policy cannot be read',
       isolationPolicyV1: {}, allowed: false, sessionPlacement: undefined },

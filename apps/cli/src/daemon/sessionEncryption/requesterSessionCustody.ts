@@ -4,6 +4,7 @@ import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { SessionRequesterBootstrapCredentialsV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
+import { ManagedWorkspaceRefV2WriteSchema, type ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { configuration } from '@/configuration';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { bindRequesterSessionCredentialScope, decodeStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -16,18 +17,20 @@ export const REQUESTER_SESSION_CREDENTIAL_FILE_ENV = 'HAPPIER_SESSION_REQUESTER_
 
 export const REQUESTER_SESSION_ID_ENV = 'HAPPIER_SESSION_REQUESTER_SESSION_ID';
 
+const IsolatedExecutionIdentitySchema = z.strictObject({
+  kind: z.literal('isolated'),
+  requester: RequesterWorkAttributionV1Schema,
+  separationRequired: z.boolean(),
+  presentPerson: z.optional(z.literal(true)),
+  accountAutomation: z.optional(z.literal(true)),
+});
+
 export const CustodySchema = z.strictObject({
   v: z.literal(1),
   sessionId: z.string().check(z.minLength(1)),
   scope: z.optional(z.enum(['workflow_trigger', 'workspace_sync_relationship'])),
   endpointRole: z.optional(z.literal('source')),
-  executionIdentity: z.optional(z.strictObject({
-    kind: z.literal('isolated'),
-    requester: RequesterWorkAttributionV1Schema,
-    separationRequired: z.boolean(),
-    presentPerson: z.optional(z.literal(true)),
-    accountAutomation: z.optional(z.literal(true)),
-  })),
+  executionIdentity: z.optional(IsolatedExecutionIdentitySchema),
   automationId: z.optional(z.string().check(z.minLength(1))),
   retireWhenIdle: z.optional(z.literal(true)),
   attribution: RequesterWorkAttributionV1Schema,
@@ -45,6 +48,24 @@ export const CustodySchema = z.strictObject({
 
 export const CustodyStoredReadSchema = createStoredReadSchema(CustodySchema);
 
+/** v1 readers must refuse this epoch rather than discard its native locator. */
+export const WorkspaceSyncManagedTargetCustodySchema = z.strictObject({
+  v: z.literal(2),
+  sessionId: z.string().check(z.minLength(1)),
+  scope: z.literal('workspace_sync_relationship'),
+  endpointRole: z.literal('managed_target'),
+  attribution: RequesterWorkAttributionV1Schema,
+  workspace: ManagedWorkspaceRefV2WriteSchema,
+  sourceExecutionIdentity: z.optional(IsolatedExecutionIdentitySchema),
+  homeServerIdentityId: z.optional(z.string().check(z.minLength(1))),
+  credentials: SessionRequesterBootstrapCredentialsV1Schema,
+}).check(z.refine(value => value.sourceExecutionIdentity === undefined
+  || isDeepStrictEqual(value.sourceExecutionIdentity.requester, value.attribution)));
+
+export const RequesterCredentialCustodyStoredReadSchema = createStoredReadSchema(z.union([
+  CustodySchema, WorkspaceSyncManagedTargetCustodySchema,
+]));
+
 export type RequesterSessionCredentialBinding = Readonly<{
   happyHomeDir: string;
   sessionId: string;
@@ -53,8 +74,13 @@ export type RequesterSessionCredentialBinding = Readonly<{
   attribution: RequesterWorkAttributionV1;
 }>;
 
+export type ManagedWorkspaceSyncCredentialCustodyBinding = Omit<RequesterSessionCredentialBinding, 'scope' | 'endpointRole'>
+  & Readonly<{ scope: 'workspace_sync_relationship'; endpointRole: 'managed_target'; workspace: ManagedWorkspaceRefV2 }>;
+
+export type RequesterCredentialCustodyBinding = RequesterSessionCredentialBinding | ManagedWorkspaceSyncCredentialCustodyBinding;
+
 /** Local private state, not a Session lifecycle ledger or an authority witness. */
-export function requesterSessionCredentialDirectory(binding: Pick<RequesterSessionCredentialBinding, 'happyHomeDir' | 'endpointRole'>
+export function requesterSessionCredentialDirectory(binding: Pick<RequesterCredentialCustodyBinding, 'happyHomeDir' | 'endpointRole'>
   & Readonly<{ attribution: Pick<RequesterWorkAttributionV1, 'serverId'> }>): string {
   const root = join(binding.happyHomeDir, 'requester-session-credentials');
   // SOURCE Account custody and TARGET native identity are distinct records,
@@ -68,7 +94,7 @@ export function requesterSessionCredentialFilePrefix(binding: Pick<RequesterSess
     : binding.scope === 'workflow_trigger' ? 'workflow-trigger-' : 'session-';
 }
 
-export function requesterSessionCredentialPath(binding: Pick<RequesterSessionCredentialBinding, 'happyHomeDir' | 'sessionId' | 'scope' | 'endpointRole'>
+export function requesterSessionCredentialPath(binding: Pick<RequesterCredentialCustodyBinding, 'happyHomeDir' | 'sessionId' | 'scope' | 'endpointRole'>
   & Readonly<{ attribution: Pick<RequesterWorkAttributionV1, 'serverId'> }>): string {
   return join(requesterSessionCredentialDirectory(binding),
     `${requesterSessionCredentialFilePrefix(binding)}${encodeURIComponent(binding.sessionId)}.json`);

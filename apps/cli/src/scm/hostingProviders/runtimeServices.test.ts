@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import {
+  bindHostedSessionId,
+  runAddedHostedSession,
+} from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import {
   PluginConnectedAccountDescriptorContributionV2Schema,
@@ -312,6 +315,118 @@ function createAuthenticationBindingOwner(
 }
 
 describe('createHostScmHostingProviderRuntimeServices', () => {
+  it('keeps the finite clone Account ahead of the hosted Session selection for a later SCM push', async () => {
+    const service = { pluginId: GITHUB_PLUGIN_MANIFEST.id, localId: 'github-account' };
+    const purpose = {
+      consumer: { pluginId: GITHUB_PLUGIN_MANIFEST.id, localId: 'github' },
+      purpose: 'authentication' as const,
+    };
+    let bindings: QualifiedConnectedAccountPurposeBindingsV1 = {
+      v: 1,
+      bindings: [{
+        purpose,
+        target: { kind: 'account', account: { service, accountId: 'durable-default' } },
+      }],
+    };
+    let materializationAttempt = 0;
+    const materializeAccount = vi.fn(async ({ account }: Readonly<{ account: Readonly<{ accountId: string }> }>) => ({
+      kind: 'httpHeaders' as const,
+      headers: { Authorization: `Bearer ${account.accountId}-${++materializationAttempt}` },
+    }));
+    const owner = createConnectedAccountPurposeBindingOwner({
+      store: {
+        read: async () => bindings,
+        update: async (mutate) => { bindings = mutate(bindings); return bindings; },
+        subscribe: () => ({ dispose() {} }),
+      },
+      selectTarget: async () => { throw new Error('SCM materialization does not select accounts'); },
+      resolveTarget: async (target) => target.kind === 'account'
+        ? { displayName: target.account.accountId, account: target.account }
+        : null,
+      projectTargetAccounts: async ({ target }) => target.kind === 'account'
+        ? {
+          status: 'complete' as const,
+          accounts: [createListedDeploymentAccount(service, target.account.accountId, 'https://github.com')],
+        }
+        : { status: 'complete' as const, accounts: [] },
+      assertTargetAccountMaterializable: async () => undefined,
+      materializeAccount,
+    });
+    const sessionLease = owner.activateSessionPurposeBindings({
+      sessionId: 'project-files-selected-account',
+      purposes: [purpose],
+      bindings: [{
+        purpose,
+        target: { kind: 'account', account: { service, accountId: 'project-files-account' } },
+      }],
+    });
+    const services = createHostScmHostingProviderRuntimeServices({
+      ...createRuntimeInput(),
+      resolveConnectedAccountPurposeBindingOwner: () => owner,
+    });
+    const cloneSelection = await owner.prepareOperationSelection({
+      purpose,
+      serviceRefs: [service],
+      account: { service, accountId: 'clone-account' },
+      operationId: 'project-files-clone',
+      signal: new AbortController().signal,
+    });
+    let cloneSelectionDisposed = false;
+    const cloneServices = createHostScmHostingProviderRuntimeServices({
+      ...createRuntimeInput(),
+      resolveConnectedAccountPurposeBindingOwner: () => cloneSelection.owner,
+    });
+    const request = {
+      kind: 'scm_hosting_token' as const,
+      providerId: GITHUB_SCM_HOSTING_PROVIDER_ID,
+      host: 'github.com',
+      provider: githubProvider,
+    };
+    try {
+      await expect(runAddedHostedSession({
+        environment: process.env,
+        workingDirectory: process.cwd(),
+        end() {},
+      }, async () => {
+        bindHostedSessionId('project-files-selected-account');
+        const clone = await runAsHostingProvider(GITHUB_PLUGIN_MANIFEST.id, 'github', () => (
+          cloneServices.resolveScmHostingTokenMaterialization!(request)
+        ));
+        cloneSelection.dispose();
+        cloneSelectionDisposed = true;
+        const laterPush = await runAsHostingProvider(GITHUB_PLUGIN_MANIFEST.id, 'github', () => (
+          services.resolveScmHostingTokenMaterialization!(request)
+        ));
+        return { clone, laterPush };
+      })).resolves.toEqual({
+        clone: {
+          kind: 'available',
+          token: 'clone-account-1',
+          account: { service, accountId: 'clone-account' },
+        },
+        laterPush: {
+          kind: 'available',
+          token: 'project-files-account-2',
+          account: { service, accountId: 'project-files-account' },
+        },
+      });
+      expect(bindings.bindings[0]?.target).toEqual({
+        kind: 'account', account: { service, accountId: 'durable-default' },
+      });
+    } finally {
+      if (!cloneSelectionDisposed) cloneSelection.dispose();
+      sessionLease.dispose();
+    }
+
+    await expect(runAsHostingProvider(GITHUB_PLUGIN_MANIFEST.id, 'github', () => (
+      services.resolveScmHostingTokenMaterialization!(request)
+    ))).resolves.toEqual({
+      kind: 'available',
+      token: 'durable-default-3',
+      account: { service, accountId: 'durable-default' },
+    });
+  });
+
   it('materializes private Git clone authentication through the registered provider and bound Account owner', async () => {
     const owner = createAuthenticationBindingOwner(async input => {
       expect(input.account.accountId).toBe('bound-account');

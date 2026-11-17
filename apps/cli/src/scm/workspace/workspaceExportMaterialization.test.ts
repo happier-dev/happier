@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createScmBackendRegistry } from '@/scm/registry';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
+import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { computeWorkspaceSyncRootFingerprint, readWorkspaceSyncRootObjectIdentity } from '@/workspaces/sync/workspaceSyncRootIdentity';
 import { buildScmWorkspaceIntegrationWorkspaceExportArtifactsWithBlobProviderFromTransferEntries } from './workspaceExportArtifacts';
 import {
@@ -29,6 +33,23 @@ const naming = {
 } as const;
 const registry = createScmBackendRegistry([]);
 describe('workspace export materialization custody', () => {
+    it.each([false, true])('refuses unavailable source integration metadata and restores the existing target (Git=%s)', async git => {
+        const fixture = await mkdtemp(join(tmpdir(), 'workspace-export-missing-backend-'));
+        const target = join(fixture, 'target');
+        await mkdir(target); await writeFile(join(target, 'keep.txt'), 'original target');
+        const registration = createGitScmBackendRuntimeRegistration();
+        const availableRegistry = git ? createScmBackendRegistry([createRegisteredScmBackendAdapter({ definition: { id: 'git', kind: 'git' },
+            qualifiedId: 'happier.scm.git/git', executableDefinition: registration.runtime!, registration })]) : registry;
+        if (git) runScmExecutable(target, 'git', ['init', '-q']);
+        try {
+            await expect(materializeWorkspaceExportArtifactsWithScmWorkspace({
+                workspaceExportArtifacts: { manifest: { entries: [] }, workspaceIntegrationMetadata: { provider: 'unavailable-source-backend' } },
+                targetPath: target, conflictPolicy: 'replace_existing', blobProvider: { getBlobFilePath: () => undefined }, registry: availableRegistry, naming,
+            })).rejects.toMatchObject({ code: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE });
+            expect(await readFile(join(target, 'keep.txt'), 'utf8')).toBe('original target');
+        } finally { await rm(fixture, { recursive: true, force: true }); }
+    });
+
     it('preserves contained, dangling and cyclic link objects in a materialized workspace', async () => {
         const fixture = await mkdtemp(join(tmpdir(), 'workspace-export-contained-links-'));
         try {

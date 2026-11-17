@@ -1,4 +1,6 @@
+import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { prepareManagedOpaquePresetAcquireV1 } from '@happier-dev/cli-common/machines/managed';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
@@ -47,7 +49,7 @@ import { logger } from '@/ui/logger';
 import { readManagedGuestHomeWarning } from './homeQualification';
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 import type { RuntimeProviderModelManagementServices } from '@/providers/modelManagement/runtimeServices';
-import { executeManagedMachineAcquire, readManagedGuestDiagnostics, createManagedNativeBootstrapIO, ensureManagedGuestSessionHolder,
+import { executeManagedMachineAcquire, readManagedGuestDiagnostics, createManagedNativeBootstrapIO, ensureManagedGuestSessionHolder, probeManagedNativeGuestPlatform,
     type ManagedGuestPlatform, type SessionHolderArtifact } from '@happier-dev/cli-common/machines/managed';
 import { openManagedNativeChannel } from '@happier-dev/cli-common/machines/managed/nativeChannel';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -153,7 +155,7 @@ async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInp
             }
             const placement = readMachineProvisionerSessionPlacementV1(provisioner, opened.launch.choices);
             if (placement?.kind !== 'controller-local') throw new ManagedMachineControllerError('provider_unavailable');
-            localPlacement.onLocalSessionPlacement?.(placement);
+            localPlacement.onLocalSessionPlacement?.(placement, opened.projectFiles);
         }
         const prepared = await prepareManagedOpaquePresetAcquireV1({ content: preset.content,
             override: acquisition.presetContentOverride, provisioner, open });
@@ -212,7 +214,7 @@ export type ManagedMachineExecutionOptions = Readonly<{
     reuseIdle?: true;
     /** The receiving policy pins the provisioner behind its configured preset. */
     expectedProvisioner?: Readonly<{ pluginId: string; localId: string }>;
-    onLocalSessionPlacement?: (placement: NonNullable<MachineProvisionerContributionV1['sessionPlacement']>) => void;
+    onLocalSessionPlacement?: (placement: NonNullable<MachineProvisionerContributionV1['sessionPlacement']>, projectFiles?: SessionProjectFilesV1) => void;
     context?: ActionExecutorContext;
     signal?: AbortSignal;
     /** Scheduler retirement is separate from the independently admitted pending input. */
@@ -226,9 +228,9 @@ export type ManagedMachineExecutionOptions = Readonly<{
     /** The installed Action owner evaluates current policy/Ask at effect time. */
     runPolicyAction?: (machine: ManagedMachineFullV1, runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineFullV1>) => Promise<ManagedMachineFullV1>;
     /** Ordinary fresh Session admission retained only by its initiating host. */
-    runAgentStart?: (input: Readonly<{ machine: ManagedMachineFullV1 }>) => Promise<void>;
+    runAgentStart?: (input: Readonly<{ machine: ManagedMachineFullV1; projectFiles?: SessionProjectFilesV1 }>) => Promise<void>;
     /** Original admitted Workflow continuation on its ordinary enrolled Machine. */
-    runCreationContinuation?: (input: Readonly<{ machine: ManagedMachineFullV1 }>) => Promise<void>;
+    runCreationContinuation?: (input: Readonly<{ machine: ManagedMachineFullV1; projectFiles?: SessionProjectFilesV1 }>) => Promise<void>;
     runEnvironmentSetup?: (input: Readonly<{ machine: ManagedMachineFullV1; isCurrent(): Promise<boolean> }>) => Promise<ManagedMachineV1>;
     /** Content-free installed Account socket; every wake re-reads the signed row. */
     subscribeEnvironmentSetupChanges?: (callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
@@ -557,7 +559,22 @@ export type ManagedSessionTarget = Readonly<{
     exec(command: string, signal: AbortSignal): Promise<Readonly<{ status: number; stdout: string; stderr: string }>>;
     putFile(path: string, bytes: Uint8Array, signal: AbortSignal): Promise<void>;
     openChannel(argv: readonly string[], signal: AbortSignal): import('node:stream').Duplex;
+    /** The existing credential-free CLI installation, without Machine enrollment. */
+    ensureWorkspaceRuntime(): Promise<Readonly<{ binaryPath: string }>>;
 }>;
+
+/** The Account graph owner admits the existing relationship before opening or reconnecting it. */
+export type ManagedWorkspaceSyncTargetRequest = Readonly<{
+    managedId: string;
+    relationshipId: string;
+    requesterAccountId: string;
+    workspace: ManagedWorkspaceRefV2;
+    lifetime: AbortSignal;
+    holder?: ManagedSessionTargetRequest['holder'];
+}>;
+export type ManagedWorkspaceSyncTarget = Pick<ManagedSessionTarget,
+    'id' | 'platform' | 'home' | 'exec' | 'putFile' | 'openChannel' | 'ensureWorkspaceRuntime'>
+    & Partial<Pick<ManagedSessionTarget, 'holderPath' | 'helperPath'>>;
 
 export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcquisitionDriverInput) {
     const inFlight = new Map<string, Promise<JsonValue | null>>();
@@ -592,156 +609,172 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         client.assertConnection(retained.machine);
         return retained.machine;
     }
-    return {
-        /**
-         * Places one Session on a managed target under the target's EXISTING custody
-         * (O-MACH 2026-11-12): no per-spawn managed operation. Access: every Session on
-         * one target shares the guest user, so placing a Session needs access to the
-         * target row itself; this controller grants it only to the row's custodian
-         * (who holds every right on it). Requesters with a shared role are refused
-         * until the Home admits the placement with the spawn (the share-role owner).
-         * The row is admitted once and refreshed on relevant pushed changes:
-         * a rebuild, delete or custody hand-over (custodian ≠ requester) ends the authority.
-         */
-        async openSessionTarget(request: ManagedSessionTargetRequest): Promise<ManagedSessionTarget> {
-            const preparationSignal = request.operation
-                ? AbortSignal.any([request.lifetime, request.operation.signal]) : request.lifetime;
-            preparationSignal.throwIfAborted();
-            if (!input.readPolicyCurrent) throw new ManagedMachineControllerError('admission_unavailable');
-            const readCurrent = input.readPolicyCurrent;
-            const initial = await readCurrent(request.managedId, preparationSignal);
-            if (!initial || initial.id !== request.managedId) throw new ManagedMachineControllerError('admission_unavailable');
-            const admitsRequester = (row: ManagedMachineV1): boolean => row.custodianAccountId === request.requesterAccountId
-                || (row.acquisitionMode === 'resource-bound' && Boolean(request.committedSessionId)
-                    && row.enrollmentAccountId === request.requesterAccountId);
-            if (!admitsRequester(initial)) throw new ManagedMachineControllerError('managed_target_access_unavailable');
-            // The authority ends with the Session, and also when the row stops admitting this requester
-            // (custody handed over, row gone): every running channel is aborted then.
-            const revoked = new AbortController();
-            const lifetime = AbortSignal.any([request.lifetime, revoked.signal]);
-            const finiteSignal = AbortSignal.any([preparationSignal, revoked.signal]);
-            const hydrator = createManagedPresetHydrator(input);
-            const options = { requestId: `session-target:${request.sessionId}`, signal: lifetime, context: request.operation };
-            const admit = async (row: ManagedMachineV1 | null, signal = lifetime): Promise<ManagedMachineFullV1> => {
-                if (!row || row.id !== request.managedId) { revoked.abort(); throw new ManagedMachineControllerError('admission_unavailable'); }
-                if (!admitsRequester(row)) {
-                    revoked.abort();
-                    throw new ManagedMachineControllerError('managed_target_access_unavailable');
-                }
-                return await openPolicyMachine(row, { ...options, signal }, 'machines.managed.inspect', hydrator, request.committedSessionId);
-            };
-            let current = await admit(initial, finiteSignal);
-            if (current.acquisitionMode === 'resource-bound' && request.operation && !request.committedSessionId) {
-                throw new ManagedMachineControllerError('admission_unavailable');
-            }
-            const authority = createManagedNativeInvocation({ input, options,
-                machine: current, action: 'session.spawn_new', sessionTarget: { sessionId: request.sessionId, lifetime } }, () => current!);
-            const invoke = authority.invoke;
-            if (!current.resource) throw new ManagedMachineControllerError('admission_unavailable');
-            const correlation = { resource: current.resource };
-            // Pushed row changes (no polling): a hand-over or removal revokes even an idle open channel.
-            const unsubscribe = input.subscribeManagedMachineChanges?.(change => {
-                if (lifetime.aborted) return;
-                if (change?.kind === 'managed' && !change.managedIds.includes(request.managedId)) return;
-                if (change?.kind === 'machines' && !change.machineIds.includes(input.controller.machineId)) return;
-                return readCurrent(request.managedId, lifetime).then(async row => {
-                    try { current = await admit(row); authority.assertSessionTargetCurrent(correlation.resource.value); }
-                    catch { revoked.abort(); }
-                }, () => undefined);
-            });
-            if (unsubscribe) lifetime.addEventListener('abort', () => unsubscribe(), { once: true });
-            let io = createManagedNativeBootstrapIO(correlation, invoke);
-            let openChannel: ManagedSessionTarget['openChannel'] = (argv, signal) => openManagedNativeChannel(correlation, invoke, { argv, signal });
-            let placed: Awaited<ReturnType<typeof ensureManagedGuestSessionHolder>>;
-            try {
-                const carrier = ManagedBootstrapCarrierV1Schema.parse(await invoke('bootstrap', await authority.readBootstrapInput(), { signal: finiteSignal }));
-                if (carrier.kind === 'ssh') {
-                    const credential = await authority.materializeBootstrapCredential(carrier.credentialRef);
-                    const release = () => { void credential.dispose().catch(() => logger.warn('[managed] Session SSH credential cleanup failed')); };
-                    lifetime.addEventListener('abort', release, { once: true });
-                    if (lifetime.aborted) { release(); lifetime.throwIfAborted(); }
-                    const trust = await prepareManagedSessionSshTrust({ correlation: { homeId: current.homeId, managedId: current.id },
-                        carrier, guestHostPublicKey: credential.guestHostPublicKey });
-                    finiteSignal.throwIfAborted();
-                    authority.assertSessionTargetCurrent(correlation.resource.value);
-                    const ssh = createManagedSshSessionTransport({ carrier, credentialPath: credential.path,
-                        knownHostsPath: trust.knownHostsPath, lifetime });
-                    io = ssh.io;
-                    openChannel = ssh.openChannel;
-                }
-                placed = await ensureManagedGuestSessionHolder({ io, version: request.holder.version,
-                    resolveArtifacts: request.holder.resolveArtifacts, signal: finiteSignal });
-                const setup = hydrator.readSetupDefinition(current);
-                const setupRemaining = current.machineSetup?.state !== 'succeeded' && current.machineSetup?.state !== 'skipped'
-                    && Boolean(setup?.toolchain || setup?.items?.length || setup?.scripts?.some(script => script.body));
-                const selectedExecution = hydrator.readPresetDefinition(current)?.preparationExecution;
-                const channel = resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label;
-                let setupBinaryPath = selectedExecution?.binaryPath ?? resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli',
-                    remoteHomeDir: `${placed.platform.home}/.happier`, channel });
-                const setupClient = () => createManagedMachineControllerClient(input, {
-                    requestId: request.operation?.actionRequestId ?? options.requestId, signal: finiteSignal, context: request.operation,
-                }, 'machines.managed.inspect', hydrator);
-                let cliInstallationRequired = selectedExecution?.updateCli === true || !current.bootstrapInstalled && !selectedExecution;
-                const ensureRecipeInterpreter = async () => {
-                    if (cliInstallationRequired) {
-                        if (!current.preset) throw new ManagedMachineControllerError('admission_unavailable');
-                        request.operation?.operationOwnerUpdate?.update({ progress: {
-                            phase: 'ssh.installCli', label: 'Installing Happier',
-                        } });
-                        const installed = await installManagedNativePayload({
-                            channel,
-                            homeUrl: input.serverUrl, ...placed.platform, dedicatedIdentity: false,
-                            resource: correlation.resource.value, signal: finiteSignal,
-                            exec: io.exec, putFile: io.putFile, bootstrapExec: io.exec, cleanupExec: io.exec,
-                        });
-                        setupBinaryPath = installed.binaryPath;
-                        finiteSignal.throwIfAborted();
-                        current = await setupClient().reportBoundSessionSetup(current, {
-                            homeId: current.homeId, managedId: current.id, presetId: current.preset.id, presetRevision: current.preset.revision,
-                            target: { kind: 'bound', controller: input.controller, sessionId: request.committedSessionId! }, bootstrapInstalled: true,
-                        });
-                        cliInstallationRequired = false;
-                    }
-                    return setupBinaryPath;
-                };
-                if (current.acquisitionMode === 'resource-bound' && request.operation && selectedExecution?.updateCli) {
-                    await ensureRecipeInterpreter();
-                }
-                if (current.acquisitionMode === 'resource-bound' && request.operation && setupRemaining && setup) {
-                    await runBoundSessionSetup({ machine: current, setup, sessionId: request.committedSessionId!,
-                        requesterAccountId: request.requesterAccountId, transport: io, binaryPath: setupBinaryPath, ensureRecipeInterpreter,
-                        platform: placed.platform, recipes: input.runtimeRegistry.contributes.machineRecipes ?? [],
-                        sourceFacts: hydrator.readPresetDefinition(current)?.setupSourceFacts,
-                        savedSecrets: { credentials: input.credentials, serverHttpBaseUrl: input.serverUrl,
-                            authorization: request.operation.externalActionExecutionAuthorization },
-                        operation: request.operation, signal: finiteSignal,
-                        report: async (state, sourceFacts, errorCode) => {
-                            current = await setupClient().reportBoundSessionSetup(current, {
-                                homeId: current.homeId, managedId: current.id, presetId: current.preset!.id, presetRevision: current.preset!.revision,
-                                target: { kind: 'bound', controller: input.controller, sessionId: request.committedSessionId! },
-                                state, operation: { operationId: request.operation!.operationAcceptance?.operationId ?? request.operation!.actionRequestId! },
-                                sourceFacts, ...(errorCode === undefined ? {} : { errorCode }),
-                            });
-                        },
-                    });
-                }
-            } catch (error) {
+    async function openTarget(request: ManagedSessionTargetRequest): Promise<ManagedSessionTarget>;
+    async function openTarget(request: ManagedWorkspaceSyncTargetRequest): Promise<ManagedWorkspaceSyncTarget>;
+    async function openTarget(targetRequest: ManagedSessionTargetRequest | ManagedWorkspaceSyncTargetRequest): Promise<ManagedSessionTarget | ManagedWorkspaceSyncTarget> {
+        const sync = 'relationshipId' in targetRequest ? targetRequest : undefined;
+        const request = 'sessionId' in targetRequest ? targetRequest : {
+            ...targetRequest, sessionId: undefined, committedSessionId: undefined, operation: undefined,
+        };
+        if (sync && (sync.workspace.managedId !== sync.managedId || sync.workspace.serverId !== input.homeId
+            || sync.workspace.controller.machineId !== input.controller.machineId
+            || sync.workspace.controller.installationId !== input.controller.installationId)) {
+            throw new ManagedMachineControllerError('admission_unavailable');
+        }
+        const preparationSignal = request.operation
+            ? AbortSignal.any([request.lifetime, request.operation.signal]) : request.lifetime;
+        preparationSignal.throwIfAborted();
+        if (!input.readPolicyCurrent) throw new ManagedMachineControllerError('admission_unavailable');
+        const readCurrent = input.readPolicyCurrent;
+        const initial = await readCurrent(request.managedId, preparationSignal);
+        if (!initial || initial.id !== request.managedId) throw new ManagedMachineControllerError('admission_unavailable');
+        const admitsRequester = (row: ManagedMachineV1): boolean => row.custodianAccountId === request.requesterAccountId
+            || (!sync && row.acquisitionMode === 'resource-bound' && Boolean(request.committedSessionId)
+                && row.enrollmentAccountId === request.requesterAccountId);
+        if (!admitsRequester(initial)) throw new ManagedMachineControllerError('managed_target_access_unavailable');
+        // The authority ends with its admitted lifetime, and when the row stops admitting this requester
+        // (custody handed over, row gone): every running channel is aborted then.
+        const revoked = new AbortController();
+        const lifetime = AbortSignal.any([request.lifetime, revoked.signal]);
+        const finiteSignal = AbortSignal.any([preparationSignal, revoked.signal]);
+        const hydrator = createManagedPresetHydrator(input);
+        const options = { requestId: sync ? `workspace-sync-target:${sync.relationshipId}` : `session-target:${request.sessionId}`,
+            signal: lifetime, context: request.operation };
+        const admit = async (row: ManagedMachineV1 | null, signal = lifetime): Promise<ManagedMachineFullV1> => {
+            if (!row || row.id !== request.managedId) { revoked.abort(); throw new ManagedMachineControllerError('admission_unavailable'); }
+            if (!admitsRequester(row)) {
                 revoked.abort();
-                throw error;
+                throw new ManagedMachineControllerError('managed_target_access_unavailable');
             }
-            return Object.freeze({
-                id: `managed:${current.id}`, holderPath: placed.holderPath, helperPath: placed.helperPath, socketDirectory: placed.socketDirectory,
-                platform: placed.platform, home: placed.platform.home,
-                putFile: (path, bytes, signal) => io.putFile({ path, bytes, signal }),
-                exec: async (command, signal) => {
-                    // The command (Agent args, paths) crosses as the exec's input, never as provider argv:
-                    // host carriers (`docker exec`, `coder ssh`) and the guest list process argv.
-                    const result = await io.exec({ command: 'exec sh -s', input: command, signal });
-                    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
-                },
-                openChannel,
-            });
-        },
+            return await openPolicyMachine(row, { ...options, signal }, 'machines.managed.inspect', hydrator, request.committedSessionId);
+        };
+        let current = await admit(initial, finiteSignal);
+        if (current.acquisitionMode === 'resource-bound' && request.operation && !request.committedSessionId) {
+            throw new ManagedMachineControllerError('admission_unavailable');
+        }
+        const authority = createManagedNativeInvocation({ input, options, machine: current,
+            ...(sync ? { action: 'workspace.sync.relationship.create' as const,
+                workspaceSyncTarget: { relationshipId: sync.relationshipId, lifetime } }
+                : { action: 'session.spawn_new' as const, sessionTarget: { sessionId: request.sessionId!, lifetime } }) }, () => current!);
+        const invoke = authority.invoke;
+        if (!current.resource) throw new ManagedMachineControllerError('admission_unavailable');
+        const correlation = { resource: current.resource };
+        // Pushed row changes (no polling): a hand-over or removal revokes even an idle open channel.
+        const unsubscribe = input.subscribeManagedMachineChanges?.(change => {
+            if (lifetime.aborted) return;
+            if (change?.kind === 'managed' && !change.managedIds.includes(request.managedId)) return;
+            if (change?.kind === 'machines' && !change.machineIds.includes(input.controller.machineId)) return;
+            return readCurrent(request.managedId, lifetime).then(async row => {
+                try { current = await admit(row); authority.assertManagedTargetCurrent(correlation.resource.value); }
+                catch { revoked.abort(); }
+            }, () => undefined);
+        });
+        if (unsubscribe) lifetime.addEventListener('abort', () => unsubscribe(), { once: true });
+        let io = createManagedNativeBootstrapIO(correlation, invoke);
+        let openChannel: ManagedSessionTarget['openChannel'] = (argv, signal) => openManagedNativeChannel(correlation, invoke, { argv, signal });
+        let placed: Readonly<{ platform: ManagedGuestPlatform }> & Partial<Pick<ManagedSessionTarget, 'holderPath' | 'helperPath' | 'socketDirectory'>>;
+        let ensureWorkspaceRuntime!: ManagedSessionTarget['ensureWorkspaceRuntime'];
+        try {
+            const carrier = ManagedBootstrapCarrierV1Schema.parse(await invoke('bootstrap', await authority.readBootstrapInput(), { signal: finiteSignal }));
+            if (carrier.kind === 'ssh') {
+                const credential = await authority.materializeBootstrapCredential(carrier.credentialRef);
+                const release = () => { void credential.dispose().catch(() => logger.warn('[managed] Session SSH credential cleanup failed')); };
+                lifetime.addEventListener('abort', release, { once: true });
+                if (lifetime.aborted) { release(); lifetime.throwIfAborted(); }
+                const trust = await prepareManagedSessionSshTrust({ correlation: { homeId: current.homeId, managedId: current.id },
+                    carrier, guestHostPublicKey: credential.guestHostPublicKey });
+                finiteSignal.throwIfAborted();
+                authority.assertManagedTargetCurrent(correlation.resource.value);
+                const ssh = createManagedSshSessionTransport({ carrier, credentialPath: credential.path,
+                    knownHostsPath: trust.knownHostsPath, lifetime });
+                io = ssh.io;
+                openChannel = ssh.openChannel;
+            }
+            placed = request.holder ? await ensureManagedGuestSessionHolder({ io, version: request.holder.version,
+                resolveArtifacts: request.holder.resolveArtifacts, signal: finiteSignal })
+                : { platform: await probeManagedNativeGuestPlatform(io.exec, finiteSignal) };
+            const setup = hydrator.readSetupDefinition(current);
+            const setupRemaining = current.machineSetup?.state !== 'succeeded' && current.machineSetup?.state !== 'skipped'
+                && Boolean(setup?.toolchain || setup?.items?.length || setup?.scripts?.some(script => script.body));
+            const selectedExecution = hydrator.readPresetDefinition(current)?.preparationExecution;
+            const channel = resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label;
+            let setupBinaryPath = selectedExecution?.binaryPath ?? resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli',
+                remoteHomeDir: `${placed.platform.home}/.happier`, channel });
+            const setupClient = () => createManagedMachineControllerClient(input, {
+                requestId: request.operation?.actionRequestId ?? options.requestId, signal: finiteSignal, context: request.operation,
+            }, 'machines.managed.inspect', hydrator);
+            let cliInstallationRequired = selectedExecution?.updateCli === true || !current.bootstrapInstalled && !selectedExecution;
+            const ensureRecipeInterpreter = async () => {
+                if (cliInstallationRequired) {
+                    if (!current.preset && !sync) throw new ManagedMachineControllerError('admission_unavailable');
+                    request.operation?.operationOwnerUpdate?.update({ progress: {
+                        phase: 'ssh.installCli', label: 'Installing Happier',
+                    } });
+                    const installed = await installManagedNativePayload({
+                        channel,
+                        homeUrl: input.serverUrl, ...placed.platform, dedicatedIdentity: false,
+                        resource: correlation.resource.value, signal: finiteSignal,
+                        exec: io.exec, putFile: io.putFile, bootstrapExec: io.exec, cleanupExec: io.exec,
+                    });
+                    setupBinaryPath = installed.binaryPath;
+                    finiteSignal.throwIfAborted();
+                    if (!sync) current = await setupClient().reportBoundSessionSetup(current, {
+                        homeId: current.homeId, managedId: current.id, presetId: current.preset!.id, presetRevision: current.preset!.revision,
+                        target: { kind: 'bound', controller: input.controller, sessionId: request.committedSessionId! }, bootstrapInstalled: true,
+                    });
+                    cliInstallationRequired = false;
+                }
+                return setupBinaryPath;
+            };
+            ensureWorkspaceRuntime = async () => {
+                lifetime.throwIfAborted();
+                const binaryPath = await ensureRecipeInterpreter();
+                return { binaryPath };
+            };
+            if (current.acquisitionMode === 'resource-bound' && request.operation && selectedExecution?.updateCli) {
+                await ensureRecipeInterpreter();
+            }
+            if (current.acquisitionMode === 'resource-bound' && request.operation && setupRemaining && setup) {
+                await runBoundSessionSetup({ machine: current, setup, sessionId: request.committedSessionId!,
+                    requesterAccountId: request.requesterAccountId, transport: io, binaryPath: setupBinaryPath, ensureRecipeInterpreter,
+                    platform: placed.platform, recipes: input.runtimeRegistry.contributes.machineRecipes ?? [],
+                    sourceFacts: hydrator.readPresetDefinition(current)?.setupSourceFacts,
+                    savedSecrets: { credentials: input.credentials, serverHttpBaseUrl: input.serverUrl,
+                        authorization: request.operation.externalActionExecutionAuthorization },
+                    operation: request.operation, signal: finiteSignal,
+                    report: async (state, sourceFacts, errorCode) => {
+                        current = await setupClient().reportBoundSessionSetup(current, {
+                            homeId: current.homeId, managedId: current.id, presetId: current.preset!.id, presetRevision: current.preset!.revision,
+                            target: { kind: 'bound', controller: input.controller, sessionId: request.committedSessionId! },
+                            state, operation: { operationId: request.operation!.operationAcceptance?.operationId ?? request.operation!.actionRequestId! },
+                            sourceFacts, ...(errorCode === undefined ? {} : { errorCode }),
+                        });
+                    },
+                });
+            }
+        } catch (error) {
+            revoked.abort();
+            throw error;
+        }
+        return Object.freeze({
+            id: `managed:${current.id}`, holderPath: placed.holderPath, helperPath: placed.helperPath, socketDirectory: placed.socketDirectory,
+            platform: placed.platform, home: placed.platform.home,
+            putFile: (path, bytes, signal) => io.putFile({ path, bytes, signal }),
+            exec: async (command, signal) => {
+                // The command (Agent args, paths) crosses as the exec's input, never as provider argv:
+                // host carriers (`docker exec`, `coder ssh`) and the guest list process argv.
+                const result = await io.exec({ command: 'exec sh -s', input: command, signal });
+                return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+            },
+            openChannel,
+            ensureWorkspaceRuntime,
+        });
+    }
+    return {
+        /** Existing custody admits transport only; every guest shares the row's custodian Account. */
+        openSessionTarget: (request: ManagedSessionTargetRequest) => openTarget(request),
+        /** The Account relationship owns this channel independently of any creating Session. */
+        openWorkspaceSyncTarget: (request: ManagedWorkspaceSyncTargetRequest) => openTarget(request),
         async snapshotAdmitted({ machine, label, reason, options }: ManagedNativeSnapshotRequest): Promise<MachineProvisionerSnapshotResultV1> {
             options.signal?.throwIfAborted();
             const contribution = input.runtimeRegistry.contributes.machineProvisioners?.find(candidate =>
@@ -1338,7 +1371,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     enrolled = await client.row('current', client.correlation(admission.machine));
                     client.assertConnection(enrolled);
                     if (!enrolled.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
-                    await runCreationContinuation({ machine: enrolled });
+                    await runCreationContinuation({ machine: enrolled,
+                        projectFiles: hydrator.readPresetDefinition(enrolled)?.projectFiles });
                 }
                 return accepted;
             }

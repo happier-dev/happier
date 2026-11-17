@@ -1,4 +1,6 @@
-import { CustodySchema, CustodyStoredReadSchema, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, requesterSessionCredentialDirectory, requesterSessionCredentialFilePrefix } from './requesterSessionCustody';
+import { CustodySchema, WorkspaceSyncManagedTargetCustodySchema, RequesterCredentialCustodyStoredReadSchema,
+  type RequesterSessionCredentialBinding, type RequesterCredentialCustodyBinding, type ManagedWorkspaceSyncCredentialCustodyBinding,
+  requesterSessionCredentialPath, requesterSessionCredentialDirectory, requesterSessionCredentialFilePrefix } from './requesterSessionCustody';
 import type { ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 export { REQUESTER_SESSION_CREDENTIAL_FILE_ENV, REQUESTER_SESSION_ID_ENV, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, readRequesterSessionCredentialsForChild } from './requesterSessionCustody';
 import { readRequesterHomeWithinActionLifetime, rethrowRequesterHomeReadFailure } from './requesterCurrentness';
@@ -7,6 +9,7 @@ import { basename, join } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { isDeepStrictEqual } from 'node:util';
 import type { SessionRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { configuration } from '@/configuration';
 import { bindRequesterSessionCredentialScope, decodeStoredCredentials, encodeStoredCredentials, preserveStoredCredentialsHostContext, sameStoredCredentials, type StoredCredentials } from '@/persistence';
@@ -782,12 +785,17 @@ export async function isAdmittedRequesterSessionBootstrapCurrent(context: Pick<R
   catch { return false; }
 }
 
-async function readBoundCustody(path: string, expected: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution' | 'scope' | 'endpointRole'>) {
-  const value = CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
+async function readBoundCustody(path: string, expected: Pick<RequesterCredentialCustodyBinding, 'sessionId' | 'attribution' | 'scope' | 'endpointRole'>
+  & Readonly<{ workspace?: ManagedWorkspaceRefV2 }>) {
+  const value = RequesterCredentialCustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown);
   if (value.scope !== expected.scope || value.endpointRole !== expected.endpointRole
-    || value.sessionId !== expected.sessionId || !isDeepStrictEqual(value.attribution, expected.attribution)) return null;
+    || value.sessionId !== expected.sessionId || !isDeepStrictEqual(value.attribution, expected.attribution)
+    || value.v === 2 && !isDeepStrictEqual(value.workspace, expected.workspace)) return null;
   const credentials = decodeStoredCredentials(value.credentials);
-  return credentials ? { credentials, homeServerIdentityId: value.homeServerIdentityId, executionIdentity: value.executionIdentity } : null;
+  return credentials ? { credentials, homeServerIdentityId: value.homeServerIdentityId,
+    executionIdentity: value.v === 1 ? value.executionIdentity : undefined,
+    workspace: value.v === 2 ? value.workspace : undefined,
+    sourceExecutionIdentity: value.v === 2 ? value.sourceExecutionIdentity : undefined } : null;
 }
 
 /** Constrain an independently authenticated Account/Session source. Only ENOENT
@@ -808,7 +816,8 @@ export async function readRequesterSessionExecutionCustodyForHost(input: Request
 }
 
 type RequesterSessionCredentialReference = Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution' | 'scope' | 'endpointRole'>
-  & Readonly<{ automationId?: string }>;
+  & Readonly<{ automationId?: string; workspace?: never }>
+  | Omit<ManagedWorkspaceSyncCredentialCustodyBinding, 'happyHomeDir'> & Readonly<{ automationId?: never }>;
 
 export type RequesterSessionCredentialBindingsResult =
   | Readonly<{ status: 'ready'; bindings: readonly RequesterSessionCredentialReference[] }>
@@ -822,7 +831,7 @@ export async function listRequesterSessionCredentialBindings(input: Readonly<{
   installationId: string;
   sessionId?: string;
   scope?: RequesterSessionCredentialBinding['scope'];
-  endpointRole?: RequesterSessionCredentialBinding['endpointRole'];
+  endpointRole?: RequesterCredentialCustodyBinding['endpointRole'];
 }>): Promise<RequesterSessionCredentialBindingsResult> {
   const directory = requesterSessionCredentialDirectory({ ...input, attribution: { serverId: input.serverId } });
   let names: readonly string[];
@@ -847,7 +856,7 @@ export async function listRequesterSessionCredentialBindings(input: Readonly<{
         }
         throw error;
       }
-      const value = CustodyStoredReadSchema.parse(JSON.parse(contents) as unknown);
+      const value = RequesterCredentialCustodyStoredReadSchema.parse(JSON.parse(contents) as unknown);
       if (value.attribution.serverId !== input.serverId
         || path !== requesterSessionCredentialPath({ happyHomeDir: input.happyHomeDir,
           sessionId: value.sessionId, attribution: value.attribution, scope: value.scope, endpointRole: value.endpointRole }) || value.scope !== input.scope
@@ -856,9 +865,11 @@ export async function listRequesterSessionCredentialBindings(input: Readonly<{
       }
       if (value.endpointRole !== input.endpointRole) continue;
       if (value.attribution.machineId === input.machineId && value.attribution.installationId === input.installationId) {
-        bindings.push({ sessionId: value.sessionId, attribution: value.attribution, ...(value.scope ? { scope: value.scope } : {}),
-          ...(value.endpointRole ? { endpointRole: value.endpointRole } : {}),
-          ...(value.automationId ? { automationId: value.automationId } : {}) });
+        bindings.push(value.v === 2 ? { sessionId: value.sessionId, attribution: value.attribution,
+          scope: value.scope, endpointRole: value.endpointRole, workspace: value.workspace }
+          : { sessionId: value.sessionId, attribution: value.attribution, ...(value.scope ? { scope: value.scope } : {}),
+            ...(value.endpointRole ? { endpointRole: value.endpointRole } : {}),
+            ...(value.automationId ? { automationId: value.automationId } : {}) });
       }
     }
     return { status: 'ready', bindings };
@@ -976,7 +987,6 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
   machineAdmission?: Readonly<{ custodianAccountId: string; role?: 'use' | 'manage' }>;
   executionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
 }>): Promise<Readonly<{ path: string; created: boolean; cleanup(): Promise<void> }>> {
-  const path = requesterSessionCredentialPath(input);
   const contents = JSON.stringify(CustodySchema.parse({ v: 1, sessionId: input.sessionId,
     ...(input.scope ? { scope: input.scope } : {}),
     ...(input.endpointRole ? { endpointRole: input.endpointRole } : {}),
@@ -986,6 +996,15 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
     ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}),
     ...(input.machineAdmission ? { machineAdmission: { custodianAccountId: input.machineAdmission.custodianAccountId,
       ...(input.machineAdmission.role ? { role: input.machineAdmission.role } : {}) } } : {}) }));
+  return await writeRequesterCredentialCustody(input, contents);
+}
+
+async function writeRequesterCredentialCustody(input: RequesterCredentialCustodyBinding & Readonly<{
+  homeServerIdentityId?: string;
+  executionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
+  sourceExecutionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
+}>, contents: string): Promise<Readonly<{ path: string; created: boolean; cleanup(): Promise<void> }>> {
+  const path = requesterSessionCredentialPath(input);
   let created = true;
   try { await writePrivateOwnerFile({ path, contents }); }
   catch (error) {
@@ -994,7 +1013,8 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
     // from a different Account, Home, Machine, or installation.
     const existing = await readBoundCustody(path, input);
     if (!existing || existing.homeServerIdentityId !== input.homeServerIdentityId
-      || !isDeepStrictEqual(existing.executionIdentity, input.executionIdentity)) throw new Error('requester_session_custody_mismatch');
+      || !isDeepStrictEqual(existing.executionIdentity, input.executionIdentity)
+      || !isDeepStrictEqual(existing.sourceExecutionIdentity, input.sourceExecutionIdentity)) throw new Error('requester_session_custody_mismatch');
     created = false;
     await replacePrivateBearerFile({ path, contents });
   }
@@ -1002,7 +1022,7 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
 }
 
 /** Explicit custody retirement; a resumable Session's physical exit retains birth. */
-export async function retireRequesterSessionCredentialCustody(input: RequesterSessionCredentialBinding
+export async function retireRequesterSessionCredentialCustody(input: RequesterCredentialCustodyBinding
   | Readonly<{ happyHomeDir: string; serverId: string; sessionId: string }>): Promise<boolean> {
   const path = requesterSessionCredentialPath('attribution' in input ? input
     : { ...input, attribution: { serverId: input.serverId } });
@@ -1010,7 +1030,7 @@ export async function retireRequesterSessionCredentialCustody(input: RequesterSe
     // An observed deletion names the exact Home and Session. Its stored birth
     // supplies attribution even if the original installation is no longer live.
     const binding = 'attribution' in input ? input : { happyHomeDir: input.happyHomeDir, sessionId: input.sessionId,
-      attribution: { ...CustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown).attribution,
+      attribution: { ...RequesterCredentialCustodyStoredReadSchema.parse(JSON.parse(await readPrivateOwnerFile(path)) as unknown).attribution,
         serverId: input.serverId } };
     if (!await readBoundCustody(path, binding)) return false;
     await removePrivateBearerFile(path);
@@ -1034,7 +1054,8 @@ type RequesterCustodyRecoveryCurrentness =
   | Readonly<{ verifyMachineAdmissionCurrent(signal?: AbortSignal): Promise<boolean>; machineAdmissionBoundary?: never }>
   | Readonly<{ machineAdmissionBoundary: RequesterSessionMachineAdmissionBoundary; verifyMachineAdmissionCurrent?: never }>;
 
-async function resolveRequesterSessionCustody(input: Omit<Parameters<typeof resolveRequesterSessionCredentials>[0], 'verifyMachineAdmissionCurrent'>
+async function resolveRequesterSessionCustody(input: RequesterCredentialCustodyBinding
+  & Omit<Parameters<typeof resolveRequesterSessionCredentials>[0], keyof RequesterSessionCredentialBinding | 'verifyMachineAdmissionCurrent'>
   & RequesterCustodyRecoveryCurrentness,
   readMachineAdmissionCurrent?: (signal?: AbortSignal) => ReturnType<typeof readRequesterSessionMachineAdmissionCurrent>,
 ) {
@@ -1078,6 +1099,37 @@ async function resolveRequesterSessionCustody(input: Omit<Parameters<typeof reso
 /** The existing custody id slot holds the relationship id, never a fictional Session. */
 export type WorkspaceSyncRelationshipCredentialBinding = Omit<RequesterSessionCredentialBinding, 'sessionId' | 'scope' | 'endpointRole'>
   & Readonly<{ relationshipId: string }>;
+
+export type WorkspaceSyncManagedTargetCredentialBinding = WorkspaceSyncRelationshipCredentialBinding
+  & Readonly<{ workspace: ManagedWorkspaceRefV2 }>;
+
+/** Native receivers retain their real locator; only a real local SOURCE has a host identity. */
+export async function createWorkspaceSyncManagedTargetCredentialCustody(input: WorkspaceSyncManagedTargetCredentialBinding
+  & Readonly<{ credentials: StoredCredentials; homeServerIdentityId?: string;
+    sourceExecutionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> }>
+): ReturnType<typeof createRequesterSessionCredentialCustody> {
+  const binding: ManagedWorkspaceSyncCredentialCustodyBinding = { happyHomeDir: input.happyHomeDir,
+    sessionId: input.relationshipId, attribution: input.attribution, workspace: input.workspace,
+    scope: 'workspace_sync_relationship', endpointRole: 'managed_target' };
+  const contents = JSON.stringify(WorkspaceSyncManagedTargetCustodySchema.parse({ v: 2,
+    sessionId: binding.sessionId, attribution: binding.attribution, workspace: binding.workspace,
+    scope: binding.scope, endpointRole: binding.endpointRole, credentials: encodeStoredCredentials(input.credentials),
+    ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}),
+    ...(input.sourceExecutionIdentity ? { sourceExecutionIdentity: input.sourceExecutionIdentity } : {}) }));
+  return await writeRequesterCredentialCustody({ ...binding,
+    homeServerIdentityId: input.homeServerIdentityId, sourceExecutionIdentity: input.sourceExecutionIdentity }, contents);
+}
+
+/** The relationship owner consumes current Account/Machine admission before reopening this native locator. */
+export async function resolveWorkspaceSyncManagedTargetCredentialCustody(input: WorkspaceSyncManagedTargetCredentialBinding
+  & Readonly<{ serverHttpBaseUrl: string; machineAdmissionBoundary: RequesterSessionMachineAdmissionBoundary; signal?: AbortSignal }>
+): Promise<Readonly<{ credentials: StoredCredentials; workspace: ManagedWorkspaceRefV2;
+  sourceExecutionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }> }> | null> {
+  const stored = await resolveRequesterSessionCustody({ ...input, sessionId: input.relationshipId,
+    scope: 'workspace_sync_relationship', endpointRole: 'managed_target' });
+  return stored?.workspace ? { credentials: stored.credentials, workspace: stored.workspace,
+    ...(stored.sourceExecutionIdentity ? { sourceExecutionIdentity: stored.sourceExecutionIdentity } : {}) } : null;
+}
 
 /** Open captures the admitted requester once; recovery reuses this exact identity. */
 export async function createWorkspaceSyncRelationshipCredentialCustody(input: WorkspaceSyncRelationshipCredentialBinding

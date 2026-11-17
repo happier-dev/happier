@@ -78,10 +78,12 @@ export async function createWorkspaceSyncRelationshipForProject(
     contentPolicy: input.contentPolicy,
     targetBootstrap: input.destinationIntent,
     ...(input.purpose ? { purpose: input.purpose } : {}),
-    ...(request.targetReplacementApproval && request.targetReplacementApprovalReceiptId
+    ...(request.targetReplacementApproval
       ? {
           targetReplacementApproval: request.targetReplacementApproval,
-          targetReplacementApprovalReceiptId: request.targetReplacementApprovalReceiptId,
+          ...(request.targetReplacementApprovalReceiptId
+            ? { targetReplacementApprovalReceiptId: request.targetReplacementApprovalReceiptId }
+            : {}),
           // The admitted Action input is the exact approved input; there is no
           // second copy of it to keep in step with the artifact.
           targetReplacementApprovalActionInput: input,

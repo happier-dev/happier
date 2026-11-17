@@ -6,6 +6,7 @@ import {
 } from './portableWorkspacePath';
 
 import { buildNonPortableWorkspacePathError } from './workspaceTransferErrors';
+import { normalizeWorkspacePath } from './workspaceExportPackaging/normalizeWorkspacePath';
 
 export async function assertPortableWorkspaceEntriesWithScmWorkspace(input: Readonly<{
     entries: readonly Readonly<{
@@ -36,11 +37,15 @@ export function isAdministrativeWorkspacePathWithScmWorkspace(input: Readonly<{
     registry?: ScmBackendRegistry;
 }>): boolean {
     if (!input.registry) return false;
-    for (const backend of input.registry.listBackends()) {
-        if (backend.workspaceIntegration?.isAdministrativeWorkspacePath?.({
-            relativePath: input.relativePath,
-        }) === true) {
-            return true;
+    const segments = normalizeWorkspacePath(input.relativePath).split('/');
+    const backends = input.registry.listBackends();
+    for (let index = 0; index < segments.length; index++) {
+        for (const backend of backends) {
+            if (backend.workspaceIntegration?.isAdministrativeWorkspacePath?.({
+                relativePath: segments.slice(index).join('/'),
+            }) === true) {
+                return true;
+            }
         }
     }
 

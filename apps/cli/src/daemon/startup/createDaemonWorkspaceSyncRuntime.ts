@@ -1,7 +1,7 @@
+import { resolveWorkspaceSyncNativeRuntime } from '@/workspaces/sync/workspaceSyncNativeRuntime';
 import {
   assertMutagenEngineArtifactPayload,
   ensureInstalledFirstPartyComponent,
-  MUTAGEN_ENGINE_VERSION,
   resolveInstalledFirstPartyComponentPaths,
   resolveMutagenEngineArtifactPaths,
   resolveMutagenEngineArtifactTarget,
@@ -85,6 +85,7 @@ export type DaemonWorkspaceSyncRuntimeDependencies = Readonly<{
   spawnSidecar: SpawnWorkspaceSyncSidecar;
   launchLocalAgent: LaunchWorkspaceSyncLocalAgent;
   openPrivateLocalWorkspaceAgentStream?: WorkspaceSyncControllerOptions['openPrivateLocalWorkspaceAgentStream'];
+  openManagedWorkspaceAgentStream?: WorkspaceSyncControllerOptions['openManagedWorkspaceAgentStream'];
   admitRelationshipTransfer?: WorkspaceSyncControllerOptions['admitRelationshipTransfer'];
   resolvePrivateWorkspaceRoot?: WorkspaceSyncControllerOptions['resolvePrivateWorkspaceRoot'];
   stopRetainedNativeProcesses?: () => Promise<void>;
@@ -170,29 +171,9 @@ export function createDaemonWorkspaceSyncRuntime(
   const resolveRuntime = () => {
     if (verifiedRuntime) return verifiedRuntime;
     const pending = Promise.resolve().then(async () => {
-      const targetTriple = resolveTarget();
-      const validatePayload = (payloadRoot: string) => assertPayload({
-        payloadRoot,
-        targetTriple,
-        engineVersion: MUTAGEN_ENGINE_VERSION,
-      });
-      let installed: InstalledPaths;
-      let manifest: ArtifactManifest;
-      try {
-        installed = resolveInstalled({ componentId: 'mutagen-engine', channel: dependencies.releaseChannel });
-        manifest = await validatePayload(installed.resolvedCurrentPath ?? installed.currentPath);
-      } catch {
-        installed = await ensureInstalled({
-          componentId: 'mutagen-engine',
-          channel: dependencies.releaseChannel,
-          versionId: MUTAGEN_ENGINE_VERSION,
-          validatePayload,
-        });
-        manifest = await validatePayload(installed.resolvedCurrentPath ?? installed.currentPath);
-      }
-      const payloadRoot = installed.resolvedCurrentPath ?? installed.currentPath;
-      const paths = resolvePaths(payloadRoot, targetTriple);
-      return { managerPath: paths.managerPath, agentPath: paths.agentPath, dataDir: layout.dataDir, brokerDir: layout.brokerDir, manifest };
+      const native = await resolveWorkspaceSyncNativeRuntime({ releaseChannel: dependencies.releaseChannel,
+        resolveInstalled, ensureInstalled, resolvePaths, assertPayload, resolveTarget });
+      return { ...native, dataDir: layout.dataDir, brokerDir: layout.brokerDir };
     });
     verifiedRuntime = pending;
     void pending.finally(() => {
@@ -268,6 +249,7 @@ export function createDaemonWorkspaceSyncRuntime(
     ...(dependencies.openMachineCarrierTunnel ? { openMachineCarrierTunnel: dependencies.openMachineCarrierTunnel } : {}),
     openLocalWorkspaceAgentStream: openRootedAgent,
     openPrivateLocalWorkspaceAgentStream: dependencies.openPrivateLocalWorkspaceAgentStream,
+    openManagedWorkspaceAgentStream: dependencies.openManagedWorkspaceAgentStream,
     admitRelationshipTransfer: dependencies.admitRelationshipTransfer,
     resolvePrivateWorkspaceRoot: dependencies.resolvePrivateWorkspaceRoot,
     ...(dependencies.stageConflictResolutionAtTarget ? { stageConflictResolutionAtTarget: dependencies.stageConflictResolutionAtTarget } : {}),

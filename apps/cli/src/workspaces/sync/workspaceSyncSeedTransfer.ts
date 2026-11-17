@@ -2,9 +2,14 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gzipSync, gunzipSync } from 'node:zlib';
+import { encodeBase64, decodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { encodeContentValue, decodeContentValue } from '@happier-dev/protocol/crypto/contentByteCodec';
+import type { ActionOperationProgressUpdate } from '@/daemon/actionOperations/actionOperationTypes';
 import type { PinnedUnixDirectoryAccess } from '@/utils/fs/unixPathAccess';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
-import { WorkspaceManifestSchema } from '@happier-dev/protocol/workspaces/manifestSchema';
+import { WorkspaceManifestSchema, WorkspaceManifestRelativePathSchema, type WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 import type { WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { buildWorkspaceExportArtifactsWithBlobProviderFromWorkspaceIntegration } from '@/scm/workspace/workspaceTransferResolution';
@@ -30,6 +35,25 @@ type WorkspaceSyncSeedEnvelopeV1 = Readonly<{
   blobTransferIds: Readonly<Record<string, string>>;
 }>;
 
+/** Emitted at the actual seed effect; the containing Action owns its terminal outcome. */
+export const WORKSPACE_SYNC_SEED_COPY_PROGRESS = Object.freeze({
+  phase: 'project_files_copy', label: 'Copying project files',
+} satisfies ActionOperationProgressUpdate);
+
+/** Retain exact copied identities in the existing owning record without expanding every metadata update. */
+export function encodeWorkspaceSyncSeedBaseline(manifest: WorkspaceManifest): string {
+  return encodeBase64(encodeContentValue(manifest, gzipSync));
+}
+
+export function decodeWorkspaceSyncSeedBaseline(encoded: string): WorkspaceManifest {
+  const decoded = decodeContentValue(decodeBase64(encoded), gunzipSync);
+  if (decoded.status === 'authenticated') {
+    const manifest = WorkspaceManifestSchema.safeParse(decoded.value);
+    if (manifest.success) return manifest.data;
+  }
+  throw Object.assign(new Error('The original copied project baseline is unavailable'), { code: 'baseline_unavailable' });
+}
+
 const WORKSPACE_SYNC_SEED_MATERIALIZATION_NAMING = {
   siblingCopySuffixBase: 'happier-sync-seed',
   backupDirectoryPrefix: '.happier-sync-backup',
@@ -38,14 +62,17 @@ const WORKSPACE_SYNC_SEED_MATERIALIZATION_NAMING = {
 
 /** One content-policy projection for enrolled copy_once and managed Session seeds. */
 export function resolveWorkspaceSyncSeedTransfer(
-  contentPolicy: Pick<WorkspaceContentPolicyV1, 'selection' | 'extraIncludePatterns' | 'extraIgnorePatterns'>,
+  contentPolicy: Pick<WorkspaceContentPolicyV1, 'selection' | 'extraIncludePatterns' | 'extraIgnorePatterns' | 'contentOnly'>,
+  exclusionCandidates?: readonly string[],
 ): ScmWorkspaceIntegrationWorkspaceTransferRequestInput {
   const ignoredIncludeGlobs = [...contentPolicy.extraIncludePatterns];
   return {
     includeIgnoredMode: ignoredIncludeGlobs.length > 0 ? 'include_selected' as const : 'exclude' as const,
     ignoredIncludeGlobs,
+    ...(exclusionCandidates ? { exclusionCandidates } : {}),
     ...(contentPolicy.selection === 'all_files' ? { includeAllIgnored: true } : {}),
     extraIgnorePatterns: [...contentPolicy.extraIgnorePatterns],
+    ...(contentPolicy.contentOnly ? { contentOnly: true as const } : {}),
   };
 }
 
@@ -63,11 +90,15 @@ export async function createWorkspaceSyncSeedExport(input: Readonly<{
   payloadSource: ReturnType<typeof createBufferTransferPayloadSource>;
   onDemandScope: Omit<DirectPeerOnDemandTransferScope, 'resolvePayloadSourceOnOpen'> & Readonly<{
     resolvePayloadSourceOnOpen(input: Parameters<DirectPeerOnDemandTransferScope['resolvePayloadSourceOnOpen']>[0]):
-      Promise<ReturnType<typeof createFileTransferPayloadSource>>;
+      Promise<TransferPayloadSource>;
   }>;
   blobTransferIds: readonly string[];
+  excludedPaths?: readonly string[];
 }>> {
+  const source = currentWorkspaceSource();
   const built = await buildWorkspaceExportArtifactsWithBlobProviderFromWorkspaceIntegration(input);
+  const sizeByDigest = new Map(built.workspaceExportArtifacts.manifest.entries.flatMap(entry =>
+    entry.kind === 'file' ? [[entry.digest, entry.sizeBytes] as const] : []));
   const digests = [...new Set(built.workspaceExportArtifacts.manifest.entries.flatMap((entry) => (
     entry.kind === 'file' ? [entry.digest] : []
   )))];
@@ -80,6 +111,7 @@ export async function createWorkspaceSyncSeedExport(input: Readonly<{
   };
   return {
     blobTransferIds: [...digestByTransferId.keys()],
+    ...(built.workspaceExportArtifacts.excludedPaths ? { excludedPaths: built.workspaceExportArtifacts.excludedPaths } : {}),
     payloadSource: createBufferTransferPayloadSource(Buffer.from(JSON.stringify(envelope), 'utf8')),
     onDemandScope: {
       allowTransferId: (transferId) => digestByTransferId.has(transferId),
@@ -88,6 +120,22 @@ export async function createWorkspaceSyncSeedExport(input: Readonly<{
         const digest = digestByTransferId.get(transferId);
         const filePath = digest ? built.blobProvider?.getBlobFilePath(digest) : null;
         if (!digest || !filePath) throw new Error('Workspace sync seed blob is not authorized');
+        if (source.kind === 'target') {
+          let opened: ReturnType<typeof source.open> | undefined;
+          return {
+            kind: 'native', sizeBytes: sizeByDigest.get(digest)!, manifestHash: digest,
+            readChunk: async ({ offset, length }) => {
+              const file = await (opened ??= source.open(filePath, { noFollow: true }));
+              const bytes = Buffer.alloc(length);
+              const result = await file.read(bytes, 0, length, offset);
+              return bytes.subarray(0, result.bytesRead);
+            },
+            dispose: async () => {
+              try { if (opened) await (await opened).close(); }
+              finally { await built.blobProvider?.disposeBlobFilePath?.(digest); }
+            },
+          };
+        }
         return createFileTransferPayloadSource({
           filePath,
           ...(built.blobProvider?.disposeBlobFilePath
@@ -140,7 +188,7 @@ export async function materializeLocalWorkspaceSyncSeed(input: Readonly<{
   originalTargetExists?: boolean;
   targetFence?: WorkspaceTargetMaterializationFence;
   registry?: ScmBackendRegistry;
-}>): Promise<WorkspaceExportMaterializationCustody> {
+}>): Promise<WorkspaceExportMaterializationCustody & Readonly<{ manifest: WorkspaceManifest; excludedPaths?: readonly string[] }>> {
   const built = await buildWorkspaceExportArtifactsWithBlobProviderFromWorkspaceIntegration(input);
   try {
     const materialized = await materializeWorkspaceExportArtifactsWithScmWorkspace({
@@ -157,7 +205,9 @@ export async function materializeLocalWorkspaceSyncSeed(input: Readonly<{
       ...(input.originalTargetExists === undefined ? {} : { originalTargetExists: input.originalTargetExists }),
       ...(input.targetFence ? { targetFence: input.targetFence } : {}),
     });
-    return materialized.custody;
+    return { ...materialized.custody, get receipt() { return materialized.custody.receipt; },
+      manifest: built.workspaceExportArtifacts.manifest,
+      ...(built.workspaceExportArtifacts.excludedPaths ? { excludedPaths: built.workspaceExportArtifacts.excludedPaths } : {}) };
   } finally {
     await built.blobProvider?.dispose?.();
   }
@@ -174,6 +224,9 @@ function parseEnvelope(raw: Buffer, operationId: string): WorkspaceSyncSeedEnvel
   }
   const artifacts = record.workspaceExportArtifacts as Record<string, unknown>;
   const manifest = WorkspaceManifestSchema.parse(artifacts.manifest);
+  const excludedPaths = artifacts.excludedPaths;
+  if (excludedPaths !== undefined && !Array.isArray(excludedPaths)) throw new Error('Workspace sync seed exclusions are malformed');
+  const parsedExcludedPaths = excludedPaths?.map(path => WorkspaceManifestRelativePathSchema.parse(path));
   const metadata = artifacts.workspaceIntegrationMetadata;
   if (metadata !== undefined && (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))) {
     throw new Error('Workspace sync seed metadata is malformed');
@@ -191,6 +244,7 @@ function parseEnvelope(raw: Buffer, operationId: string): WorkspaceSyncSeedEnvel
     v: 1,
     workspaceExportArtifacts: {
       manifest,
+      ...(parsedExcludedPaths ? { excludedPaths: parsedExcludedPaths } : {}),
       ...(metadata ? { workspaceIntegrationMetadata: metadata as Readonly<Record<string, unknown>> } : {}),
     },
     blobTransferIds: parsedIds,
@@ -221,7 +275,7 @@ export async function materializeWorkspaceSyncSeedExport(input: Readonly<{
     targetFence?: WorkspaceTargetMaterializationFence;
     assertCanContinue?: () => Promise<void>;
   }>): Promise<Readonly<{ targetPath: string; custody: WorkspaceExportMaterializationCustody }>>;
-}>): Promise<WorkspaceExportMaterializationCustody> {
+}>): Promise<WorkspaceExportMaterializationCustody & Readonly<{ manifest: WorkspaceManifest; excludedPaths?: readonly string[] }>> {
   input.signal?.throwIfAborted();
   const operationDirectory = await mkdtemp(join(tmpdir(), 'happier-workspace-sync-seed-'));
   try {
@@ -258,7 +312,9 @@ export async function materializeWorkspaceSyncSeedExport(input: Readonly<{
         ? { assertCanContinue: async () => input.signal?.throwIfAborted() }
         : {}),
     });
-    return materialized.custody;
+    return { ...materialized.custody, get receipt() { return materialized.custody.receipt; },
+      manifest: envelope.workspaceExportArtifacts.manifest,
+      ...(envelope.workspaceExportArtifacts.excludedPaths ? { excludedPaths: envelope.workspaceExportArtifacts.excludedPaths } : {}) };
   } finally {
     await rm(operationDirectory, { recursive: true, force: true }).catch(() => undefined);
   }

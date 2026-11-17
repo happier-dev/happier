@@ -89,13 +89,14 @@ export type SessionSpawnDirectTargetTransport = Readonly<{
   spawnedSession: DirectSpawnedSessionTransport;
 }>;
 
-/** Host-private consumption of an opened Machine's isolation choice. */
+/** Host-private consumption of Machine isolation or an already bound authored preset. */
 export type AcquireSessionIsolationSandbox = (request: Readonly<{
   executeSessionIsolationAcquire: NonNullable<Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0]['executeSessionIsolationAcquire']>;
   parent: Readonly<{
     actionId: typeof import('@happier-dev/protocol/actions/actionIds').SESSION_SPAWN_NEW_ACTION_ID_V1;
     input: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2').SessionSpawnNewInputV2;
   }>;
+  projectFiles?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1;
   configuredSandbox: import('@happier-dev/protocol/machines/machineIsolationV1').MachineIsolationPolicyV1['configuredSandboxes'][string];
   lifecycle: 'fresh' | 'shared-kept';
   /** Finalize native intent from the qualified preset before admission or provision. */
@@ -104,6 +105,7 @@ export type AcquireSessionIsolationSandbox = (request: Readonly<{
   signal?: AbortSignal;
 }>) => Promise<Readonly<{
   managedCreation: import('@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1').SessionManagedCreationV1;
+  projectFiles?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1;
   sandboxTypeSupportsNativeSandbox: boolean;
   nativeSandbox?: 'on' | 'off';
 }>>;
@@ -228,6 +230,8 @@ export type CliActionDepsParams = Readonly<{
   prepareDeploymentTeardown?: ActionExecutorDeps['prepareDeploymentTeardown'];
   prepareDeploymentEnvironmentCreate?: ActionExecutorDeps['prepareDeploymentEnvironmentCreate'];
   prepareHostReviewedChildren?: ActionExecutorDeps['prepareHostReviewedChildren'];
+  /** Receiving daemon's exact admitted requester placement; never serialized. */
+  readRequesterWorkspaceScope?: () => Promise<import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').WorkspaceSyncRequesterAvailabilityV1>;
   deploymentPrepare?: ActionExecutorDeps['deploymentPrepare'];
   deploymentTemplateInstantiate?: ActionExecutorDeps['deploymentTemplateInstantiate'];
   deploymentMoveToRepository?: ActionExecutorDeps['deploymentMoveToRepository'];
@@ -304,6 +308,8 @@ export type CliActionDepsParams = Readonly<{
       /** Portable Workflow null explicitly selects native authentication. */
       connectedServices?: null;
       /** Placement retained by the original accepted Workflow run. */
+      /** Effective private preset choice frozen by the accepted Workflow. */
+      projectFiles?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1;
       sessionPlacement?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionPlacementSelectionV1;
       /** The original startup owner retains exact launch-retirement evidence. */
       projectCreationFailure?: (error: unknown) => import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1').SessionSpawnNewResultV1;

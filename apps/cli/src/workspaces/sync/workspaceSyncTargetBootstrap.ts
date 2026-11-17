@@ -8,7 +8,9 @@ import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/worksp
 import { realizeWorkspaceCheckoutWithScmWorkspace } from '@/scm/workspace/workspaceCheckoutOperations';
 import type { ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult } from '@/scm/workspace/workspaceCheckoutRealization';
 import { normalizeSessionHandoffWorkspaceRootPath } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
+import { decodeWorkspaceSyncSeedBaseline, encodeWorkspaceSyncSeedBaseline } from './workspaceSyncSeedTransfer';
 import type { HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
+import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 import type { WorkspaceRootOwnershipHandle, WorkspaceRootOwnershipManager } from './workspaceSyncRootOwnership';
 import {
   abortWorkspaceTargetMaterializationAfterFailure,
@@ -33,6 +35,9 @@ import {
   writeWorkspaceSyncFinalReadyFact as writeReadyFact,
   type WorkspaceSyncFinalReadyFactInput,
   type WorkspaceSyncRequesterCopyCustody,
+  type WorkspaceSyncNativeCopyOwner,
+  workspaceSyncNativeCopyOwnerKey,
+  matchesWorkspaceSyncNativeCopyReadyFact,
 } from './workspaceSyncFinalReadyFact';
 export type { WorkspaceSyncFinalReadyFact } from './workspaceSyncFinalReadyFact';
 
@@ -45,9 +50,13 @@ export type WorkspaceSyncTargetBootstrapInput = Readonly<{
   targetWorkspaceRefId: string;
   policyDigest: string;
   contentSelection: 'git_worktree' | 'all_files';
+  /** File-only finite seeds materialize before READY, including an empty destination. */
+  contentOnly?: true;
   /** Receiving target's current persisted Home definition; never a caller's transient marker. */
   workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
   requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody;
+  /** A finite managed Project copy keeps its accepted root across reviewed child operations. */
+  nativeCopyOwner?: WorkspaceSyncNativeCopyOwner;
   /** Host-private Action approval, reinspected at this target under root custody. */
   targetReplacementApproval?: HandoffTargetReplacementApprovalV1;
   /** Owner-local proof binding the unchanged chosen child root to this physical root. */
@@ -74,7 +83,7 @@ export type WorkspaceSyncTargetBootstrapInput = Readonly<{
     targetBootstrap: 'use_existing' | 'materialize_from_source_workspace';
     materializationReceiptPath: string;
     targetFence: WorkspaceTargetMaterializationFence;
-  }>) => Promise<WorkspaceExportMaterializationCustody | void>;
+  }>) => Promise<(WorkspaceExportMaterializationCustody & Readonly<{ manifest?: WorkspaceManifest; excludedPaths?: readonly string[] }>) | void>;
   materializeSeed?: (input: Readonly<{
     canonicalRoot: string;
     relationshipId: string;
@@ -83,7 +92,7 @@ export type WorkspaceSyncTargetBootstrapInput = Readonly<{
     materializationReceiptPath: string;
     originalTargetExists: boolean;
     targetFence: WorkspaceTargetMaterializationFence;
-  }>) => Promise<WorkspaceExportMaterializationCustody | void>;
+  }>) => Promise<(WorkspaceExportMaterializationCustody & Readonly<{ manifest?: WorkspaceManifest; excludedPaths?: readonly string[] }>) | void>;
 }>;
 
 export type WorkspaceSyncTargetBootstrapResult = Readonly<{
@@ -94,6 +103,8 @@ export type WorkspaceSyncTargetBootstrapResult = Readonly<{
   policyDigest: string;
   ownershipHandles: readonly WorkspaceRootOwnershipHandle[];
   materializationCustody?: WorkspaceExportMaterializationCustody;
+  copyOnceBaseline?: WorkspaceManifest;
+  copyOnceExcludedPaths?: readonly string[];
   /** True only when the exact durable READY fact was already observed or published. */
   readyPublished: boolean;
   requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody;
@@ -162,8 +173,10 @@ export async function removeWorkspaceSyncCommittedCopy(input: WorkspaceSyncCommi
   }
 }
 
-function finalReadyPath(materializationDirectory: string, relationshipId: string, endpointRole: 'alpha' | 'beta'): string {
-  return join(resolve(materializationDirectory), `${bootstrapOperationKey(relationshipId, endpointRole)}.ready.json`);
+function finalReadyPath(materializationDirectory: string, relationshipId: string, endpointRole: 'alpha' | 'beta', nativeCopyOwner?: WorkspaceSyncNativeCopyOwner): string {
+  const key = nativeCopyOwner ? createHash('sha256').update('workspace-native-copy-v1\0')
+    .update(workspaceSyncNativeCopyOwnerKey(nativeCopyOwner)).digest('hex') : bootstrapOperationKey(relationshipId, endpointRole);
+  return join(resolve(materializationDirectory), `${key}.ready.json`);
 }
 
 export type WorkspaceSyncTargetBootstrapDependencies = Readonly<{
@@ -173,6 +186,20 @@ export type WorkspaceSyncTargetBootstrapDependencies = Readonly<{
 
 export async function readWorkspaceSyncFinalReadyFact(materializationDirectory: string, relationshipId: string, endpointRole: 'alpha' | 'beta') {
   return await readWorkspaceSyncFinalReadyFactAtPath(finalReadyPath(materializationDirectory, relationshipId, endpointRole));
+}
+
+/** Read original seed correspondence from the accepted native root, never from its edited tree. */
+export async function readWorkspaceSyncNativeCopyOnceBaseline(input: Readonly<{
+  materializationDirectory: string; owner: WorkspaceSyncNativeCopyOwner; policyDigest: string;
+}>): Promise<WorkspaceManifest | null> {
+  const fact = await readWorkspaceSyncFinalReadyFactAtPath(finalReadyPath(input.materializationDirectory, '', 'beta', input.owner));
+  if (!fact) return null;
+  const canonicalRoot = await realpath(input.owner.target.rootPath).catch(() => null);
+  if (!canonicalRoot) return null;
+  const rootFingerprint = await computeWorkspaceSyncRootFingerprint(canonicalRoot).catch(() => null);
+  if (!rootFingerprint || !matchesWorkspaceSyncNativeCopyReadyFact(fact, input.owner,
+    { canonicalRoot, rootFingerprint, policyDigest: input.policyDigest })) return null;
+  return decodeWorkspaceSyncSeedBaseline(fact.copyOnceBaseline);
 }
 
 async function hasExactReadyFact(path: string, expected: WorkspaceSyncFinalReadyFactInput): Promise<boolean> {
@@ -310,6 +337,7 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
   targetWorkspaceRefId: string;
   policyDigest: string;
   contentSelection: 'git_worktree' | 'all_files';
+  contentOnly?: true;
   workerCopyCreation?: WorkspaceTargetMaterializationWorkerCopyCreation;
   requesterCopyCustody?: WorkspaceSyncRequesterCopyCustody;
   materializationDirectory: string;
@@ -318,6 +346,7 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
   requireMaterializationReceipt?: boolean;
   prepareGitTarget?: WorkspaceSyncTargetBootstrapInput['prepareGitTarget'];
 }>, dependencies: Pick<WorkspaceSyncTargetBootstrapDependencies, 'rehydrateMaterializationFromReceiptPath'> = {}): Promise<WorkspaceSyncTargetBootstrapResult | null> {
+  const contentSelection = input.contentOnly ? 'all_files' : input.contentSelection;
   const receiptPath = workspaceSyncMaterializationReceiptPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
   const readyPath = finalReadyPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
   if (input.requireMaterializationReceipt
@@ -411,7 +440,7 @@ export async function rehydrateWorkspaceSyncTargetBootstrap(input: Readonly<{
       await ownership.release();
       return null;
     }
-    if (input.contentSelection === 'git_worktree') {
+    if (contentSelection === 'git_worktree') {
       if (input.prepareGitTarget) {
         await input.prepareGitTarget({
           canonicalRoot,
@@ -460,6 +489,7 @@ export async function workspaceSyncTargetBootstrap(
   input: WorkspaceSyncTargetBootstrapInput,
   dependencies: WorkspaceSyncTargetBootstrapDependencies = { writeReadyFact },
 ): Promise<WorkspaceSyncTargetBootstrapResult> {
+  const contentSelection = input.contentOnly ? 'all_files' : input.contentSelection;
   const persistReadyFact = dependencies.writeReadyFact ?? writeReadyFact;
   if (!input.rootPath.trim()) throw bootstrapError('workspace_root_unsafe', 'workspace sync target root is blank');
   let sourceRoot: string | undefined;
@@ -478,7 +508,7 @@ export async function workspaceSyncTargetBootstrap(
   const requested = normalize(resolve(input.rootPath));
   if (requested === resolve('/')) throw bootstrapError('workspace_root_unsafe', 'workspace sync target root is invalid');
   const receiptPath = workspaceSyncMaterializationReceiptPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
-  const readyPath = finalReadyPath(input.materializationDirectory, input.relationshipId, input.endpointRole);
+  const readyPath = finalReadyPath(input.materializationDirectory, input.relationshipId, input.endpointRole, input.nativeCopyOwner);
   let created = false;
   let existingBeforeFence = await lstat(requested).catch((error: unknown) => {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
@@ -503,7 +533,7 @@ export async function workspaceSyncTargetBootstrap(
   )) {
     throw bootstrapError('workspace_root_unsafe', 'workspace sync source and target roots overlap');
   }
-  if (input.contentSelection === 'git_worktree' && !input.prepareGitTarget) {
+  if (contentSelection === 'git_worktree' && !input.prepareGitTarget) {
     throw bootstrapError('target_bootstrap_required', 'Git workspace sync target requires an explicit SCM bootstrap source');
   }
 
@@ -515,6 +545,8 @@ export async function workspaceSyncTargetBootstrap(
   });
   if ('kind' in ownership) throw bootstrapError('workspace_root_in_use', 'workspace sync target root overlaps an active operation');
   let materializationCustody: WorkspaceExportMaterializationCustody | undefined;
+  let copyOnceBaseline: WorkspaceManifest | undefined;
+  let copyOnceExcludedPaths: readonly string[] | undefined;
   let trustedReadyRequiresCommitOnlyCleanup = false;
   let rejectedOriginalMaterialization = false;
   try {
@@ -526,6 +558,22 @@ export async function workspaceSyncTargetBootstrap(
     }).catch((error: unknown) => {
       throw bootstrapError('target_bootstrap_required', `Workspace sync target recovery failed: ${(error as Error).message}`);
     });
+    if (input.nativeCopyOwner) {
+      const fact = await readWorkspaceSyncFinalReadyFactAtPath(readyPath);
+      const currentRoot = await realpath(requested).catch(() => null);
+      const fingerprint = currentRoot === canonicalRoot ? await computeWorkspaceSyncRootFingerprint(canonicalRoot).catch(() => null) : null;
+      if (fact && fingerprint && matchesWorkspaceSyncNativeCopyReadyFact(fact, input.nativeCopyOwner,
+        { canonicalRoot, rootFingerprint: fingerprint, policyDigest: input.policyDigest })) {
+        materializationCustody = interruptedCustody ?? undefined;
+        trustedReadyRequiresCommitOnlyCleanup = true;
+        const baseline = decodeWorkspaceSyncSeedBaseline(fact.copyOnceBaseline);
+        await ownership.bindCurrentRootIdentity();
+        return { canonicalRoot, created: false, state: 'READY', rootFingerprint: fingerprint,
+          policyDigest: input.policyDigest, ownershipHandles: [ownership], readyPublished: true,
+          copyOnceBaseline: baseline, ...(materializationCustody ? { materializationCustody } : {}),
+          publishReady: async () => await persistReadyFact(readyPath, fact), release: ownership.release };
+      }
+    }
     if (interruptedCustody) {
       if (input.workerCopyCreation) {
         try {
@@ -555,7 +603,7 @@ export async function workspaceSyncTargetBootstrap(
       if (restartReady && restartReadyFact) {
         materializationCustody = interruptedCustody;
         trustedReadyRequiresCommitOnlyCleanup = true;
-        if (input.contentSelection === 'git_worktree') {
+        if (contentSelection === 'git_worktree') {
           await input.prepareGitTarget!({
             canonicalRoot,
             ...(canonicalSourceRoot === undefined ? {} : { sourceRootPath: canonicalSourceRoot }),
@@ -653,9 +701,10 @@ export async function workspaceSyncTargetBootstrap(
       }
     }
     let existing = existingBeforeFence;
-    const gitOwnsMissingTargetMaterialization = existing === null
-      && input.contentSelection === 'git_worktree';
-    if (!existing && !gitOwnsMissingTargetMaterialization) {
+    const materializerOwnsMissingTarget = existing === null
+      && (contentSelection === 'git_worktree'
+        || input.contentOnly && input.targetBootstrap === 'materialize_from_source_workspace');
+    if (!existing && !materializerOwnsMissingTarget) {
       const createdTargetMaterialization = await beginWorkspaceTargetMaterialization({
         targetPath: canonicalRoot,
         backupDirectoryPrefix: '.happier-sync-backup',
@@ -675,7 +724,7 @@ export async function workspaceSyncTargetBootstrap(
     const targetState = existingBeforeFence === null
       ? 'missing'
       : (await readdir(canonicalRoot)).length === 0 ? 'empty' : 'nonempty';
-    if (input.contentSelection === 'git_worktree') {
+    if (contentSelection === 'git_worktree') {
       const gitMaterializationCustody = await input.prepareGitTarget!({
         canonicalRoot,
         ...(canonicalSourceRoot === undefined ? {} : { sourceRootPath: canonicalSourceRoot }),
@@ -687,14 +736,18 @@ export async function workspaceSyncTargetBootstrap(
         materializationReceiptPath: receiptPath,
         targetFence,
       });
-      if (gitMaterializationCustody) materializationCustody = gitMaterializationCustody;
+      if (gitMaterializationCustody) {
+        materializationCustody = gitMaterializationCustody;
+        copyOnceBaseline = gitMaterializationCustody.manifest;
+        copyOnceExcludedPaths = gitMaterializationCustody.excludedPaths;
+      }
       const preparedIdentity = await realpath(requested);
       if (getPathRemainderWithinBase(preparedIdentity, canonicalRoot) !== ''
         || getPathRemainderWithinBase(canonicalRoot, preparedIdentity) !== ''
         || !(await lstat(preparedIdentity)).isDirectory()) {
         throw bootstrapError('root_changed', 'workspace sync target root changed during SCM bootstrap');
       }
-    } else if (targetState === 'nonempty') {
+    } else if (targetState === 'nonempty' || input.contentOnly) {
       if (input.targetBootstrap === 'materialize_from_source_workspace') {
         if (!input.materializeSeed) {
           throw bootstrapError('target_bootstrap_seed_required', 'workspace sync target requires the selected source seed');
@@ -708,7 +761,11 @@ export async function workspaceSyncTargetBootstrap(
           originalTargetExists: existingBeforeFence !== null,
           targetFence,
         });
-        if (seedMaterializationCustody) materializationCustody = seedMaterializationCustody;
+        if (seedMaterializationCustody) {
+          materializationCustody = seedMaterializationCustody;
+          copyOnceBaseline = seedMaterializationCustody.manifest;
+          copyOnceExcludedPaths = seedMaterializationCustody.excludedPaths;
+        }
       }
       const seededIdentity = await realpath(requested);
       if (seededIdentity !== canonicalRoot || !(await lstat(seededIdentity)).isDirectory()) {
@@ -725,7 +782,9 @@ export async function workspaceSyncTargetBootstrap(
     const verifiedFingerprint = await computeWorkspaceSyncRootFingerprint(await realpath(requested));
     if (verifiedFingerprint !== fingerprint) throw bootstrapError('root_changed', 'workspace sync target root changed during bootstrap');
     const publishReady = async (): Promise<void> => await persistReadyFact(readyPath, {
-      ...(input.requesterCopyCustody ? { v: 2 as const, requesterCopyCustody: input.requesterCopyCustody } : { v: 1 as const }),
+      ...(input.nativeCopyOwner && copyOnceBaseline ? { v: 3 as const, kind: 'native_finite' as const,
+        nativeCopyOwner: input.nativeCopyOwner, copyOnceBaseline: encodeWorkspaceSyncSeedBaseline(copyOnceBaseline) }
+        : input.requesterCopyCustody ? { v: 2 as const, requesterCopyCustody: input.requesterCopyCustody } : { v: 1 as const }),
       relationshipId: input.relationshipId,
       endpointRole: input.endpointRole,
       targetWorkspaceRefId: input.targetWorkspaceRefId,
@@ -755,6 +814,8 @@ export async function workspaceSyncTargetBootstrap(
       canonicalRoot, created, state: 'READY', rootFingerprint: fingerprint, policyDigest: input.policyDigest,
       ownershipHandles: [ownership], publishReady, release: ownership.release,
       readyPublished: false,
+      ...(copyOnceBaseline ? { copyOnceBaseline } : {}),
+      ...(copyOnceExcludedPaths ? { copyOnceExcludedPaths } : {}),
       ...(retainedMaterializationCustody ? { materializationCustody: retainedMaterializationCustody } : {}),
     };
   } catch (error) {

@@ -21,6 +21,47 @@ function unavailable(): Error {
   return Object.assign(new Error('The private Workspace Sync source is unavailable'), { code: 'target_bootstrap_offline' });
 }
 
+/** One signed SOURCE export owner for host and managed-member receivers. */
+export function createPrivateWorkspaceSyncSourceSeedPreparation(request: Readonly<{
+  targetMachineId: string;
+  credentials: PrepareWorkspaceSyncPrivateExecutionInput['credentials'];
+  getTargetPhaseContext(): RpcHandlerContext | undefined;
+}>, dependencies: Pick<PrivateExecutionDependencies, 'openMachineCarrierTunnel' | 'callWorkspaceSeedExport' | 'callMachineRpc'>): PrivateProjectSyncNetwork['prepareSourceSeed'] {
+  return async seed => {
+    const openCarrier = dependencies.openMachineCarrierTunnel;
+    const context = request.getTargetPhaseContext();
+    if ((seed.sourceMachineId !== request.targetMachineId && !openCarrier) || !context || !dependencies.callWorkspaceSeedExport) throw unavailable();
+    const raw = await dependencies.callWorkspaceSeedExport({ machineId: seed.sourceMachineId,
+      request: { t: 'workspace_sync_seed_v1', operationId: seed.operationId, sourceWorkspaceRefId: seed.sourceWorkspaceRefId,
+        targetMachineId: request.targetMachineId, contentPolicy: seed.contentPolicy,
+        ...(seed.exclusionCandidates ? { exclusionCandidates: seed.exclusionCandidates } : {}) },
+      ...(seed.signal ? { signal: seed.signal } : {}) }, context);
+    if (!raw || typeof raw !== 'object' || !('success' in raw) || raw.success !== true
+      || !('transferId' in raw) || raw.transferId !== seed.operationId || !('sizeBytes' in raw)
+      || typeof raw.sizeBytes !== 'number' || !Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 0
+      || !('manifestHash' in raw) || typeof raw.manifestHash !== 'string'
+      || !('endpointCandidates' in raw) || !Array.isArray(raw.endpointCandidates)) throw unavailable();
+    const source = raw.endpointCandidates.map(candidate => TransferEndpointCandidateSchema.parse(candidate))[0];
+    if (!source) throw unavailable();
+    return {
+      transferId: seed.operationId, sizeBytes: raw.sizeBytes, manifestHash: raw.manifestHash,
+      openPayload: async payload => {
+        const tunnel = seed.sourceMachineId === request.targetMachineId ? null : await openCarrier!({ sourceMachineId: request.targetMachineId,
+          targetMachineId: seed.sourceMachineId, flow: 'file_transfer', ...(payload.signal ? { signal: payload.signal } : {}) });
+        const url = new URL(source.url);
+        url.protocol = 'http:'; url.hostname = '127.0.0.1';
+        if (tunnel) url.port = String(tunnel.localPort);
+        url.pathname = buildDirectPeerTransferEndpointPath(payload.transferId);
+        return { endpointCandidates: [{ ...source, kind: 'http' as const, url: url.toString() }], dispose: async () => { await tunnel?.close(); } };
+      },
+      dispose: async () => {
+        await dependencies.callMachineRpc({ credentials: request.credentials, machineId: seed.sourceMachineId,
+          method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE, request: { transferId: seed.operationId }, timeoutMs: null });
+      },
+    };
+  };
+}
+
 /** Requester network custody stays in the host; target bytes stay in the member. */
 export async function preparePrivateWorkspaceSyncExecution(request: PrepareWorkspaceSyncPrivateExecutionInput,
   dependencies: PrivateExecutionDependencies): Promise<WorkspaceSyncPrivateExecution> {
@@ -47,36 +88,8 @@ export async function preparePrivateWorkspaceSyncExecution(request: PrepareWorks
       machineId: call.machineId, method: call.method, request: call.request, timeoutMs: null,
       ...(call.signal ? { signal: call.signal } : {}) }),
     ...(request.callTargetPhase ? { callWorkspaceTargetPhase: request.callTargetPhase } : {}),
-    prepareSourceSeed: async seed => {
-      const openCarrier = dependencies.openMachineCarrierTunnel;
-      if (!openCarrier || !targetPhaseContext || !dependencies.callWorkspaceSeedExport) throw unavailable();
-      const raw = await dependencies.callWorkspaceSeedExport({ machineId: seed.sourceMachineId,
-        request: { t: 'workspace_sync_seed_v1', operationId: seed.operationId, sourceWorkspaceRefId: seed.sourceWorkspaceRefId,
-          targetMachineId: request.input.targetMachineId, contentPolicy: seed.contentPolicy },
-        ...(seed.signal ? { signal: seed.signal } : {}) }, targetPhaseContext);
-      if (!raw || typeof raw !== 'object' || !('success' in raw) || raw.success !== true
-        || !('transferId' in raw) || raw.transferId !== seed.operationId || !('sizeBytes' in raw)
-        || typeof raw.sizeBytes !== 'number' || !Number.isSafeInteger(raw.sizeBytes) || raw.sizeBytes < 0
-        || !('manifestHash' in raw) || typeof raw.manifestHash !== 'string'
-        || !('endpointCandidates' in raw) || !Array.isArray(raw.endpointCandidates)) throw unavailable();
-      const source = raw.endpointCandidates.map(candidate => TransferEndpointCandidateSchema.parse(candidate))[0];
-      if (!source) throw unavailable();
-      return {
-        transferId: seed.operationId, sizeBytes: raw.sizeBytes, manifestHash: raw.manifestHash,
-        openPayload: async payload => {
-          const tunnel = await openCarrier({ sourceMachineId: request.input.targetMachineId,
-            targetMachineId: seed.sourceMachineId, flow: 'file_transfer', ...(payload.signal ? { signal: payload.signal } : {}) });
-          const url = new URL(source.url);
-          url.protocol = 'http:'; url.hostname = '127.0.0.1'; url.port = String(tunnel.localPort);
-          url.pathname = buildDirectPeerTransferEndpointPath(payload.transferId);
-          return { endpointCandidates: [{ ...source, kind: 'http' as const, url: url.toString() }], dispose: () => tunnel.close() };
-        },
-        dispose: async () => {
-          await dependencies.callMachineRpc({ credentials: request.credentials, machineId: seed.sourceMachineId,
-            method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_RELEASE, request: { transferId: seed.operationId }, timeoutMs: null });
-        },
-      };
-    },
+    prepareSourceSeed: createPrivateWorkspaceSyncSourceSeedPreparation({ targetMachineId: request.input.targetMachineId,
+      credentials: request.credentials, getTargetPhaseContext: () => targetPhaseContext }, dependencies),
   };
   const nativeSync = await request.createNativeSync({ configuration: { serverId: request.accountRowsCustody.serverId,
     machineId: request.executionIdentity?.kind === 'isolated'

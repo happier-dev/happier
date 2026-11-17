@@ -1,9 +1,8 @@
+import type { Duplex } from 'node:stream';
 import { isDeepStrictEqual } from 'node:util';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { authorizeResolvedProjectExecLaunchForHost, spawnAuthorizedHostExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
-import { authorizeWorkspaceEffectLaunch, runWorkspaceEffectChild } from './workspaceEffectProcess';
-import { createBackgroundServiceProcessServiceHost } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessBridge';
-import { createBackgroundServiceProcessFrameDecoder, encodeBackgroundServiceProcessFrame, parseBackgroundServiceProcessMessage } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessProtocol';
+import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
+import { authorizeWorkspaceEffectLaunch, runWorkspaceEffectChild, runWorkspaceEffectChannel } from './workspaceEffectProcess';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import type { readAgentIsolationMemberWorkspaceRoot } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
@@ -89,56 +88,21 @@ export async function startPrivateProjectSyncProcess(input: PrivateProjectNative
   network: PrivateProjectSyncNetwork;
 }>): Promise<PrivateProjectNativeSync> {
   const launch = await prepareNativeWorkspaceEffectLaunch(input);
-  let transferred = false;
-  try {
-    await input.verifyCurrent(); input.launch.assertCurrent();
-    const process = spawnAuthorizedHostExecLaunchForHost(launch, { signal: input.launch.signal });
-    transferred = true;
-    const decoder = createBackgroundServiceProcessFrameDecoder();
-    const send = (value: unknown) => { process.child.stdin.write(encodeBackgroundServiceProcessFrame(value)); };
-    let resolveReady!: (value: PrivateProjectNativeSyncProcessPort) => void;
-    let rejectReady!: (error: unknown) => void;
-    const ready = new Promise<PrivateProjectNativeSyncProcessPort>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
-    let completeNativeSync!: () => void;
-    const nativeLifetime = new Promise<void>(resolve => { completeNativeSync = resolve; });
-    const services = createBackgroundServiceProcessServiceHost({ signal: input.launch.signal, services: {
-      ...(input.connectedAccounts ? { connectedAccounts: createWorkspaceEffectConnectedAccounts({ effect: input.effect,
-        owner: input.connectedAccounts, signal: input.launch.signal, assertCurrent: input.verifyCurrent }) } : {}),
-      onEffectsIssued: async () => { input.onEffectsIssued(); },
-      readNativeSyncConfiguration: async () => ({ configuration: input.configuration, network: input.network }),
-      // The existing bridge owns argument references for the duration of this
-      // call. Retain that call with the incumbent native invocation.
-      completeNativeSync: async (value: PrivateProjectNativeSyncProcessPort) => { resolveReady(value); await nativeLifetime; },
-      fail: async (error: Error) => { rejectReady(error); },
-    }, send: message => send({ kind: 'services', message }) });
-    const receive = (chunk: Buffer) => {
-      try {
-        for (const raw of decoder.push(chunk)) {
-          const message = parseBackgroundServiceProcessMessage(raw);
-          if (message.kind === 'services') services.receive(message.message);
-          else if (message.kind === 'settled') process.child.stdin.end();
-          else throw new Error('workspace_effect_protocol_invalid');
-        }
-      } catch (error) { rejectReady(error); void process.dispose('caller'); }
-    };
-    process.child.stdout.on('data', receive);
-    process.child.stdin.on('error', () => {});
-    let disposal: Promise<void> | undefined;
-    const disposeProcess = () => disposal ??= (async () => {
-      completeNativeSync();
-      try { await process.handle.wait(); } finally {
-        await process.dispose('caller'); await process.waitForSettlement();
-        process.child.stdout.off('data', receive); await services.dispose();
-      }
-    })();
-    try {
-      send({ kind: 'run', id: input.prepared.workspaceRefId,
-        context: { kind: 'native_sync', checkout: input.effect, memberHome: input.memberRoot.identity.home }, services: services.description });
-      const native = await Promise.race([ready, process.handle.waitForExit().then(() => {
-        throw new PluginError({ code: 'workspace_effect_outcome_unknown', message: 'The private workspace process ended before readiness' });
-      })]);
-      let closing: Promise<void> | undefined;
-      return { ...native, borrowSourceRootForCopy: async request => {
+  return startPrivateProjectSyncInvocation({ ...input, signal: input.launch.signal,
+    services: input.connectedAccounts ? { connectedAccounts: createWorkspaceEffectConnectedAccounts({ effect: input.effect,
+      owner: input.connectedAccounts, signal: input.launch.signal, assertCurrent: input.verifyCurrent }) } : {},
+  }, services =>
+    runWorkspaceEffectChild({ launch, signal: input.launch.signal, id: input.effect.workspaceRefId,
+      effect: { kind: 'native_sync', checkout: input.effect, memberHome: input.memberRoot.identity.home },
+      refusal: code => new PluginError({ code, message: 'The private workspace process is unavailable' }), services,
+      beforeSpawn: async () => { await input.verifyCurrent(); input.launch.assertCurrent(); },
+    }));
+}
+
+
+function retainNativeSyncPort(native: PrivateProjectNativeSyncProcessPort, disposeProcess: () => Promise<void>): PrivateProjectNativeSync {
+  let closing: Promise<void> | undefined;
+  return { ...native, borrowSourceRootForCopy: async request => {
         const loan = await native.borrowSourceRootForCopy(request);
         return loan && { ...loan, release: () => loan.dispose() };
       }, acquireWorkspaceSyncMachineIngress: async request => {
@@ -159,6 +123,51 @@ export async function startPrivateProjectSyncProcess(input: PrivateProjectNative
       }, dispose: () => closing ??= (async () => {
         try { await native.dispose(); } finally { await disposeProcess(); }
       })() };
-    } catch (error) { await disposeProcess(); throw error; }
-  } finally { if (!transferred) await launch.release(); }
+}
+
+/** A daemon-free guest uses the same credential-free worker and framed service
+ * pipe as a native member. Its provider keeps the admitted channel alive. */
+export async function startPrivateProjectSyncChannel(input: Readonly<{
+  channel: Duplex;
+  signal: AbortSignal;
+  effect: WorkspaceCheckoutEffect;
+  memberHome: string;
+  configuration: PrivateProjectSyncEffectConfiguration;
+  network: PrivateProjectSyncNetwork;
+  onEffectsIssued(): void;
+}>): Promise<PrivateProjectNativeSync> {
+  return startPrivateProjectSyncInvocation(input, services => runWorkspaceEffectChannel({
+    channel: input.channel, signal: input.signal, id: input.effect.workspaceRefId,
+    effect: { kind: 'native_sync', checkout: input.effect, memberHome: input.memberHome }, services,
+    refusal: code => new PluginError({ code, message: 'The native workspace process is unavailable' }),
+  }));
+}
+
+async function startPrivateProjectSyncInvocation(input: Readonly<{
+  services?: Readonly<Record<string, unknown>>;
+  signal: AbortSignal;
+  configuration: PrivateProjectSyncEffectConfiguration;
+  network: PrivateProjectSyncNetwork;
+  onEffectsIssued(): void;
+}>, run: (services: Readonly<Record<string, unknown>>) => ReturnType<typeof runWorkspaceEffectChannel>): Promise<PrivateProjectNativeSync> {
+  let resolveReady!: (value: PrivateProjectNativeSyncProcessPort) => void;
+  let rejectReady!: (error: unknown) => void;
+  const ready = new Promise<PrivateProjectNativeSyncProcessPort>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  let completeNativeSync!: () => void;
+  const nativeLifetime = new Promise<void>(resolve => { completeNativeSync = resolve; });
+  const running = run({
+    ...input.services,
+    onEffectsIssued: async () => { input.onEffectsIssued(); },
+    readNativeSyncConfiguration: async () => ({ configuration: input.configuration, network: input.network }),
+    completeNativeSync: async (native: PrivateProjectNativeSyncProcessPort) => { resolveReady(native); await nativeLifetime; },
+    fail: async (error: Error) => { rejectReady(error); },
+  });
+  const ended = running.then(outcome => {
+    if (outcome.failure !== undefined) throw outcome.failure;
+    throw new PluginError({ code: 'workspace_effect_outcome_unknown', message: 'The native workspace process ended' });
+  });
+  void ended.catch(() => {});
+  const disposeProcess = async () => { completeNativeSync(); await running; };
+  try { return retainNativeSyncPort(await Promise.race([ready, ended]), disposeProcess); }
+  catch (error) { completeNativeSync(); await running.catch(() => {}); throw error; }
 }

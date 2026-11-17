@@ -82,15 +82,20 @@ export type ManagedSessionTargetAuthority = Readonly<{
     /** The tracked Session's lifetime; its abort ends the authority and every running channel. */
     lifetime: AbortSignal;
 }>;
-const SESSION_TARGET_ROLES: ReadonlySet<string> = new Set(['bootstrap', 'exec', 'putFile', 'stream']);
+/** An Account graph relationship already admitted by the sync lifecycle owner. */
+export type ManagedWorkspaceSyncTargetAuthority = Readonly<{
+    relationshipId: string;
+    lifetime: AbortSignal;
+}>;
+const MANAGED_TARGET_ROLES: ReadonlySet<string> = new Set(['bootstrap', 'exec', 'putFile', 'stream']);
 
 /**
- * The one test that a row is still a Session's target, at admission and before
+ * The retained-row check shared by admitted Session and Account sync targets:
  * every call: controlled by this controller and installation, in this Home,
- * bound to a resource and not being deleted. The guest the Session reaches is
+ * bound to a resource and not being deleted. The guest each channel reaches is
  * the row's own resource, so a rebuild (new resource) ends the authority too.
  */
-function sessionTargetRow(row: ManagedMachineV1, input: Readonly<{ homeId: string; controller: Readonly<{ machineId: string; installationId: string }> }>) {
+function managedTargetRow(row: ManagedMachineV1, input: Readonly<{ homeId: string; controller: Readonly<{ machineId: string; installationId: string }> }>) {
     const admitted = row.controller?.machineId === input.controller.machineId && row.controller.installationId === input.controller.installationId
         && row.homeId === input.homeId && row.allocation === 'bound' && row.desired !== 'delete' && row.archivedAt === undefined;
     return admitted && row.resource ? row.resource.value : undefined;
@@ -101,6 +106,9 @@ type ManagedNativeInvocationInput = ManagedMachineReconciliationInput | (Omit<Ma
 }>) | (Omit<ManagedMachineReconciliationInput, 'action' | 'client'> & Readonly<{
     action: 'session.spawn_new';
     sessionTarget: ManagedSessionTargetAuthority;
+}>) | (Omit<ManagedMachineReconciliationInput, 'action' | 'client'> & Readonly<{
+    action: 'workspace.sync.relationship.create';
+    workspaceSyncTarget: ManagedWorkspaceSyncTargetAuthority;
 }>);
 
 export async function resolveManagedRoleCredentialAuthorizations(input: ManagedMachineAcquisitionDriverInput, provider: ManagedMachineFullV1['launch']['provider'], localId: string,
@@ -339,24 +347,24 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
     if (target.homeServerIdentityId !== params.input.homeId) throw new ManagedMachineControllerError('admission_unavailable');
     const admittedRestore = params.action === 'deployments.backups.restore'
         && params.options.context?.operationAcceptance?.actionId === params.action;
-    const sessionTarget = params.action === 'session.spawn_new' && 'sessionTarget' in params ? params.sessionTarget : undefined;
-    // A Session's target must be a row this controller controls; the row is never borrowed from another Machine.
-    if (sessionTarget && sessionTargetRow(machine, params.input) === undefined) throw new ManagedMachineControllerError('admission_unavailable');
-    const assertSessionTargetCurrent = (requested: unknown) => {
-        if (!sessionTarget) throw new ManagedMachineControllerError('admission_unavailable');
-        if (sessionTarget.lifetime.aborted) throw new ManagedMachineControllerError('intent_changed');
-        const ownResource = sessionTargetRow(readMachine(), params.input);
+    const targetAuthority = params.action === 'session.spawn_new' && 'sessionTarget' in params ? params.sessionTarget
+        : params.action === 'workspace.sync.relationship.create' && 'workspaceSyncTarget' in params ? params.workspaceSyncTarget : undefined;
+    // Both admitted lifetimes use the same controller-owned resource and channel authority.
+    if (targetAuthority && managedTargetRow(machine, params.input) === undefined) throw new ManagedMachineControllerError('admission_unavailable');
+    const assertManagedTargetCurrent = (requested: unknown) => {
+        if (!targetAuthority) throw new ManagedMachineControllerError('admission_unavailable');
+        if (targetAuthority.lifetime.aborted) throw new ManagedMachineControllerError('intent_changed');
+        const ownResource = managedTargetRow(readMachine(), params.input);
         if (ownResource === undefined || requested === undefined || !pluginJsonValuesEqual(requested, ownResource)) {
             throw new ManagedMachineControllerError('admission_unavailable');
         }
     };
     if (params.action !== 'machines.managed.inspect' && (!target.descriptor
-        || !params.nativePolicyAdmission && !admittedRestore && !sessionTarget && !params.options.context?.operationOwnerUpdate)) {
+        || !params.nativePolicyAdmission && !admittedRestore && !targetAuthority && !params.options.context?.operationOwnerUpdate)) {
         throw new ManagedMachineControllerError('admission_unavailable');
     }
-    // A Session's target authority serves concurrent invocations for the Session's life (its Agents' held
-    // channels next to finite execs); each is its own provider operation, never one shared identity.
-    let sessionTargetInvocations = 0;
+    // Held channels and finite effects share the admitted lifetime, with one provider operation per call.
+    let targetInvocations = 0;
     async function roleCredentialAuthorization(localId: string, input = params.input) {
         const launch = readMachine().launch;
         return resolveManagedRoleCredentialAuthorizations(input, launch.provider, localId, launch.credentials,
@@ -369,13 +377,13 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                 && !(params.includeGuestDiagnostics && role === 'exec')) {
                 throw new ManagedMachineControllerError('native_intent_unsupported');
             }
-            if (sessionTarget) {
+            if (targetAuthority) {
                 // Transport preparation and holder channels only; bootstrap returns a carrier, never enrolls.
                 const startsProcess = role === 'exec' && typeof body === 'object' && body !== null && 'processConfig' in body;
-                if (!SESSION_TARGET_ROLES.has(role) || startsProcess) throw new ManagedMachineControllerError('native_intent_unsupported');
+                if (!MANAGED_TARGET_ROLES.has(role) || startsProcess) throw new ManagedMachineControllerError('native_intent_unsupported');
                 // The body names the guest; it must be this row's own resource (every provider resolves the guest from it).
                 const requested = typeof body === 'object' && body !== null && !Array.isArray(body) && 'resource' in body ? body.resource : undefined;
-                assertSessionTargetCurrent(requested);
+                assertManagedTargetCurrent(requested);
                 // Channel roles never power a stopped target on: its power stays with the reconciler's desired state.
                 // (`stream` has no wake input: its providers never wake, e.g. Coder `--disable-autostart`.)
                 if (role === 'exec' || role === 'putFile') body = { ...(body as Record<string, unknown>), allowWake: false };
@@ -389,9 +397,9 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
             if (!occurrenceId) throw new ManagedMachineControllerError('provider_unavailable');
             const actionId = buildQualifiedPluginContributionKey({ pluginId: contribution.pluginId, localId });
             const requestedSignal = io?.signal ?? params.options.signal;
-            // A Session-held channel lives no longer than the Session (pushed, not re-checked).
-            const invocationSignal = sessionTarget
-                ? requestedSignal ? AbortSignal.any([requestedSignal, sessionTarget.lifetime]) : sessionTarget.lifetime
+            // The admitting Session or Account relationship owns cancellation, without repeated admission.
+            const invocationSignal = targetAuthority
+                ? requestedSignal ? AbortSignal.any([requestedSignal, targetAuthority.lifetime]) : targetAuthority.lifetime
                 : requestedSignal;
             if (invocationSignal?.aborted) throw new ManagedMachineControllerError('intent_changed');
             const stdoutDecoder = new TextDecoder();
@@ -403,7 +411,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
             const declaration = input.runtimeRegistry.contributes.actionsById?.get(actionId);
             const binding: ConnectedAccountInvocationPurposeBinding = {
                 identity: { pluginId: contribution.pluginId, localId },
-                operationId: sessionTarget ? `${params.options.requestId}:${++sessionTargetInvocations}`
+                operationId: targetAuthority ? `${params.options.requestId}:${++targetInvocations}`
                     : params.options.context?.externalActionExecutionAuthorization?.binding.requestId ?? params.options.requestId,
                 purposes: authorizations.map(authorization => authorization.purpose),
                 purposeBindings: projectManagedMachineRolePurposeBindingsV1(authorizations),
@@ -576,7 +584,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
         io?: Parameters<typeof invoke>[2],
     ) => ReturnType<typeof invoke> = invoke;
     return { contribution, occurrenceId, target, bootstrapCredentialKind, bootstrapCredential, roleCredentialAuthorization, invoke: admittedInvoke,
-        assertSessionTargetCurrent,
+        assertManagedTargetCurrent,
         readBootstrapInput: async () => {
             const row = readMachine();
             if (!row.resource) throw new ManagedMachineControllerError('admission_unavailable');

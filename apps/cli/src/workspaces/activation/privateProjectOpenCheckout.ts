@@ -8,11 +8,13 @@ import type { createAgentIsolationOperationContext } from '@/daemon/agentIsolati
 import { readAgentIsolationMemberWorkspaceRoot } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
+import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { logger } from '@/ui/logger';
 import { preparePrivateProjectCheckout, admitPrivateProjectCheckoutDestination, privateProjectCheckoutRefusal } from './privateProjectCheckout';
 import { prepareWorkspaceCheckoutEffect } from './workspaceEffect';
+import { deriveScmHostingProviderConnectedAccountPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import { materializePrivateProjectCheckoutProcess, startPrivateProjectSyncProcess } from './privateProjectCheckoutProcess';
 import type { PrivateProjectNativeSync, PrivateProjectSyncEffectConfiguration, PrivateProjectSyncNetwork } from './privateProjectSyncEffect';
 import type { PrepareWorkspaceSyncHandoffInput, WorkspaceSyncHandoffAdapter, WorkspaceSyncPrivateExecution } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
@@ -38,6 +40,8 @@ export type PrivateProjectCheckoutOpenRuntime = Readonly<{
     /** Existing exact-requester port captured by the same parent invocation.
      * Absence remains missing auth, never the daemon owner as a fallback. */
     connectedAccounts?: Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'listAccounts' | 'materialize'>;
+    /** Host-only finite projection for an explicit Project-files Git Account. */
+    prepareConnectedAccountOperationSelection?: ConnectedAccountPurposeBindingOwner['prepareOperationSelection'];
   }>>;
 }>;
 
@@ -113,6 +117,18 @@ export async function preparePrivateProjectOpenCheckout(input: Readonly<{
   const verifyCurrent = async () => {
     assertCurrent();
   };
+  const prepareGitAccountSelection = async (effect: Awaited<ReturnType<typeof prepareWorkspaceCheckoutEffect>>['effect']) => {
+    const gitAccount = input.request.materialization.kind === 'clone'
+      ? input.request.materialization.gitAccount : undefined;
+    if (!gitAccount) return undefined;
+    const authorization = (effect.contributions.scmHostingProviders ?? [])
+      .map(deriveScmHostingProviderConnectedAccountPurposeAuthorization)
+      .filter(value => value !== null);
+    const [scmAuthorization] = authorization;
+    if (authorization.length !== 1 || !scmAuthorization || !native.prepareConnectedAccountOperationSelection) return refuse();
+    return await native.prepareConnectedAccountOperationSelection({ ...scmAuthorization, account: gitAccount,
+      operationId: prepared.workspaceRefId, signal: input.signal });
+  };
   let disposal: Promise<void> | undefined;
   const release = () => disposal ??= (async () => {
     live = false;
@@ -157,10 +173,13 @@ export async function preparePrivateProjectOpenCheckout(input: Readonly<{
         workspaceRefId: prepared.workspaceRefId,
         workspaceRoot: memberRoot.workspaceRoot, ...(attach ? { existingRootPath: prepared.rootPath } : {}), registry: lease.registry });
       assertPluginCurrent = child.assertCurrent;
-      return materializePrivateProjectCheckoutProcess({ prepared, memberRoot, effect: child.effect,
-        launch: { agentIsolation, requesterIdentity: selected, signal: input.signal, assertCurrent },
-        managedHappierBinaryPath: snapshot.launch!.managedHappierBinaryPath,
-        connectedAccounts: native.connectedAccounts, verifyCurrent, onEffectsIssued: input.onEffectsIssued });
+      const selection = await prepareGitAccountSelection(child.effect);
+      try {
+        return await materializePrivateProjectCheckoutProcess({ prepared, memberRoot, effect: child.effect,
+          launch: { agentIsolation, requesterIdentity: selected, signal: input.signal, assertCurrent },
+          managedHappierBinaryPath: snapshot.launch!.managedHappierBinaryPath,
+          connectedAccounts: selection?.owner ?? native.connectedAccounts, verifyCurrent, onEffectsIssued: input.onEffectsIssued });
+      } finally { selection?.dispose(); }
     },
     async dispose() { if (!retained) await release(); },
   };

@@ -196,6 +196,7 @@ export async function runObservedWorkflowSessionStartup(
                 runtimeDescriptorV1: input.request.runtimeDescriptorV1,
                 ...(input.actionAdmission.connectedServices === null ? { connectedServices: null } : {}),
                 ...(input.actionAdmission.sessionPlacement ? { sessionPlacement: input.actionAdmission.sessionPlacement } : {}),
+                ...(input.actionAdmission.projectFiles ? { projectFiles: input.actionAdmission.projectFiles } : {}),
                 projectCreationFailure: error => {
                   spawnFailure = error;
                   const refusal = readWorkflowSessionStartupRefusal(error);

@@ -1,5 +1,7 @@
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile as execFileCallback } from 'node:child_process';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -7,10 +9,13 @@ import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
+import { createScmBackendRegistry } from '@/scm/registry';
 import type { ManagedSessionTargetRequest } from '@/machines/managed/acquire';
 import { connectSessionTarget } from '@/subprocess/supervision/sessionTargetRelay';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
 
 import { createSessionHolderSocketPath } from '@/subprocess/supervision/sessionHolder';
+import { resolveSessionTargetWorkspaceTransfer } from '@/daemon/sessions/sessionTargetWorkspaces';
 
 import { deliverSessionTargetLaunch, observeSessionTargetRunnerExit, prepareSessionTargetPlacement, projectSessionTargetLaunchFailure, restoreSessionTargetRelay } from './prepareSessionTargetPlacement';
 import { ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
@@ -33,6 +38,7 @@ function fakeCustody() {
             home: '/g', platform: { os: 'linux' as const, arch: 'x64' as const, home: '/g' },
             exec: async (command: string) => ({ status: 0, stdout: `ran:${command}`, stderr: '' }),
             putFile: async () => undefined,
+            ensureWorkspaceRuntime: async () => ({ binaryPath: '/g/.happier/happier' }),
             openChannel: () => new PassThrough() };
     } };
 }
@@ -74,6 +80,114 @@ describe('Session placement on a managed target at spawn', () => {
         } } });
         expect(JSON.stringify(result)).not.toContain('PRIVATE_NATIVE_OUTPUT');
     });
+
+    it.each(['copy_once', 'sync'] as const)('retains the exact %s native workspace identity even when kept reuse has no baseline in memory', async kind => {
+        const target = await fakeCustody().open({} as ManagedSessionTargetRequest);
+        const sourceWorkspace = { serverId: 'home', machineId: 'original', workspaceId: 'source', rootPath: 'C:\\Users\\person\\project' };
+        const targetWorkspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'native-workspace',
+            managedId: 'row-1', controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/guest/kept' };
+        const contentPolicyDigest = computeWorkspaceSyncPolicyDigest({ v: 1, selection: 'all_files',
+            extraIncludePatterns: [], extraIgnorePatterns: [] });
+        let retained: unknown;
+        const launch = await deliverSessionTargetLaunch({ target, sessionKey: 'kept', runnerEnvironment: {},
+            materializedRoot: null, requestAuthMaterializedRoot: null, agentCommand: null, agent: null,
+            workspace: { hostRoot: sourceWorkspace.rootPath, targetRoot: '/requested' }, onSessionEnd() {},
+            projectFiles: { activeServerDir: '/unused', projectFilesSourceWorkspace: sourceWorkspace,
+                ...(kind === 'sync' ? { selection: { kind, mode: 'keep_synced' as const } } : {}),
+                prepareSource: async () => ({ targetRootPath: targetWorkspace.rootPath, targetWorkspace, contentPolicyDigest }),
+                prepareSync: async () => ({ relationshipId: 'existing-sync', targetWorkspace, contentPolicyDigest }),
+                onWorkspaceSeed: (baseline, address, digest?: string) => { retained = { baseline, address, contentPolicyDigest: digest }; } } });
+        expect(launch.workspace).toEqual({ hostRoot: sourceWorkspace.rootPath, targetRoot: targetWorkspace.rootPath });
+        expect(retained).toEqual({ baseline: undefined, address: targetWorkspace, contentPolicyDigest });
+    });
+
+    it.each(['copy_once', 'sync'] as const)('delivers the reviewed content policy to the native %s Project child', async kind => {
+        const target = await fakeCustody().open({} as ManagedSessionTargetRequest);
+        const sourceWorkspace = { serverId: 'home', machineId: 'original', workspaceId: 'source', rootPath: '/original/project' };
+        const fields = { v: 1 as const, selection: 'git_worktree' as const,
+            extraIncludePatterns: ['.env.example'], extraIgnorePatterns: ['private/**'] };
+        const contentPolicy = { ...fields, policyDigest: computeWorkspaceSyncPolicyDigest(fields) };
+        // Reviewed Project SOURCE/TARGET calls are the remote transport boundary.
+        const refused = Object.assign(new Error('Observed reviewed native Project request'), { code: 'observed_policy' });
+        const inspect = async (request: { contentPolicy?: unknown }) => {
+            expect(request.contentPolicy).toEqual(contentPolicy);
+            throw refused;
+        };
+        await expect(deliverSessionTargetLaunch({ target, sessionKey: 'policy', runnerEnvironment: {},
+            materializedRoot: null, requestAuthMaterializedRoot: null, agentCommand: null, agent: null,
+            workspace: { hostRoot: sourceWorkspace.rootPath, targetRoot: sourceWorkspace.rootPath }, onSessionEnd() {},
+            projectFiles: { activeServerDir: '/unused', projectFilesSourceWorkspace: sourceWorkspace,
+                selection: kind === 'sync' ? { kind, mode: 'keep_synced', contentPolicy } : { kind, contentPolicy },
+                prepareSource: inspect, prepareSync: inspect } })).rejects.toBe(refused);
+    });
+
+    it('refuses an admitted remote source without its transport instead of reading that path on the controller', async () => {
+        const target = await fakeCustody().open({} as ManagedSessionTargetRequest);
+        const sourceWorkspace = { serverId: 'home', machineId: 'original-machine', workspaceId: 'original-workspace',
+            rootPath: '/original-machine/project-does-not-exist' };
+        await expect(deliverSessionTargetLaunch({ target, sessionKey: 'remote-source', runnerEnvironment: {},
+            materializedRoot: null, requestAuthMaterializedRoot: null, agentCommand: null, agent: null,
+            workspace: { hostRoot: sourceWorkspace.rootPath, targetRoot: sourceWorkspace.rootPath }, onSessionEnd: () => undefined,
+            projectFiles: { activeServerDir: '/unused', projectFilesSourceWorkspace: sourceWorkspace,
+                projectFilesSource: { target: { serverId: 'home', machineId: 'original-machine' }, directory: sourceWorkspace.rootPath } } }))
+            .rejects.toMatchObject({ code: 'workspace_source_operation_unavailable' });
+    });
+
+    it('delivers the chosen project before launching and maps the Session to its materialized guest root', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'stp-files-')); directories.push(root);
+        const hostRoot = join(root, 'host');
+        const home = join(root, 'guest');
+        await mkdir(hostRoot); await mkdir(home);
+        await writeFile(join(hostRoot, 'uncommitted.txt'), 'host sentinel');
+        const execFile = promisify(execFileCallback);
+        const target = { ...(await fakeCustody().open({} as ManagedSessionTargetRequest)), home,
+            exec: async (command: string, signal: AbortSignal) => {
+                try { const result = await execFile('sh', ['-c', command], { signal }); return { status: 0, ...result }; }
+                catch (error) { const result = error as { code?: number; stdout?: string; stderr?: string };
+                    return { status: result.code ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }; }
+            },
+            putFile: async (path: string, bytes: Uint8Array) => { await writeFile(path, bytes); },
+        };
+        const launch = await deliverSessionTargetLaunch({ target, sessionKey: 'project', runnerEnvironment: {},
+            materializedRoot: null, requestAuthMaterializedRoot: null, agentCommand: null, agent: null,
+            workspace: { hostRoot, targetRoot: hostRoot }, onSessionEnd: () => undefined,
+            projectFiles: { activeServerDir: root, registry: createScmBackendRegistry([]) } });
+        expect(launch.workspace?.targetRoot).toMatch(new RegExp(`^${home}/.happier/workspaces/`));
+        expect(await readFile(join(launch.workspace!.targetRoot, 'uncommitted.txt'), 'utf8')).toBe('host sentinel');
+    });
+
+    it('keeps the target work on sync reconnect and starts transport only after initial materialization', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'stp-sync-')); directories.push(root);
+        const hostRoot = join(root, 'host'); const home = join(root, 'guest');
+        await mkdir(hostRoot); await mkdir(home);
+        await writeFile(join(hostRoot, 'work.txt'), 'initial source');
+        const execFile = promisify(execFileCallback);
+        const target = { ...(await fakeCustody().open({} as ManagedSessionTargetRequest)), home,
+            exec: async (command: string, signal: AbortSignal) => {
+                try { return { status: 0, ...await execFile('sh', ['-c', command], { signal }) }; }
+                catch (error) { const result = error as { code?: number; stdout?: string; stderr?: string };
+                    return { status: result.code ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }; }
+            }, putFile: async (path: string, bytes: Uint8Array) => { await writeFile(path, bytes); } };
+        const start = () => deliverSessionTargetLaunch({ target, sessionKey: 'sync-project', runnerEnvironment: {},
+            materializedRoot: null, requestAuthMaterializedRoot: null, agentCommand: null, agent: null,
+            workspace: { hostRoot, targetRoot: hostRoot }, onSessionEnd: () => undefined,
+            projectFiles: { selection: { kind: 'sync', mode: 'keep_both_in_sync' }, activeServerDir: root,
+                registry: createScmBackendRegistry([]),
+                // The admitted endpoint transport is the boundary; real finite export runs above it.
+                prepareSync: async (input: Readonly<{ sourceRootPath: string; targetRootPath: string }>) => {
+                    expect(input.sourceRootPath).toBe(hostRoot);
+                    expect(await readFile(join(input.targetRootPath, 'work.txt'), 'utf8')).toBe(expectedGuest);
+                    return { relationshipId: 'transport-fixture' };
+                } } });
+        let expectedGuest = 'initial source';
+        const launched = await start();
+        await writeFile(join(launched.workspace!.targetRoot, 'work.txt'), 'existing sandbox edit');
+        await writeFile(join(hostRoot, 'work.txt'), 'new host edit');
+        expectedGuest = 'existing sandbox edit';
+        await start();
+        expect(await readFile(join(launched.workspace!.targetRoot, 'work.txt'), 'utf8')).toBe('existing sandbox edit');
+    });
+
     it('opens the target under the requester, relays it to the runner, and ends it with the launch resources', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'stp-')); directories.push(directory);
         const custody = fakeCustody();
@@ -174,11 +288,20 @@ describe('Session placement on a managed target at spawn', () => {
         await expect(restoreSessionTargetRelay({ ...request, socketPath: join(tmpdir(), 'elsewhere.sock') })).resolves.toBeNull();
         expect(custody.requests).toHaveLength(0);
 
-        const release = await restoreSessionTargetRelay({ ...request, socketPath });
+        const sourceWorkspace = { serverId: 'home', workspaceId: 'source', machineId: 'original', rootPath: 'C:\\Users\\person\\project' };
+        const targetWorkspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'actual-native-workspace',
+            managedId: 'row-1', controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/guest/project' };
+        const baseline = { entries: [] };
+        const release = await restoreSessionTargetRelay({ ...request, socketPath,
+            projectFiles: { sessionId: 'reattached-project-files', primarySocketPath: '/guest/primary.sock',
+                origin: { sourceWorkspace, targetWorkspace }, readBaseline: async () => baseline } });
         expect(release).toBeTypeOf('function');
+        expect(resolveSessionTargetWorkspaceTransfer('reattached-project-files')).toMatchObject({
+            workspace: { hostRoot: sourceWorkspace.rootPath, targetRoot: targetWorkspace.rootPath }, baseline });
         const reply = await connectSessionTarget({ id: 'managed:row-1', holderPath: '/h', socketDirectory: '/g/run', relaySocketPath: socketPath }).exec('true');
         expect(reply.stdout).toBe('ran:true');
         release!();
+        expect(resolveSessionTargetWorkspaceTransfer('reattached-project-files')).toBeNull();
         expect(custody.requests[0]!.lifetime.aborted).toBe(true);
         await expect.poll(() => existsSync(socketPath)).toBe(false);
     });

@@ -1979,6 +1979,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         : null;
     };
     const freshConversation = createProductionFreshWorkflowSessionConversation({
+      ...(accepted.workspaceTarget.projectFiles ? { projectFiles: accepted.workspaceTarget.projectFiles } : {}),
       credentials: params.execution.credentials,
       serverId: params.execution.serverId,
       machineId: params.machineId,

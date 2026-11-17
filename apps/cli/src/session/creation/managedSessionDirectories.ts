@@ -80,6 +80,18 @@ function absent(error: unknown): boolean {
 function conflict(): Error {
   return new SessionCreationCorrespondenceConflictError();
 }
+function managedDirectoryAllocation(root: string, identity: string, platform: NodeJS.Platform): ManagedSessionDirectoryAllocation {
+  const allocationId = createHash('sha256').update(identity).digest('hex');
+  return { allocationId, directory: (platform === 'win32' ? win32 : posix).join(root, allocationId) };
+}
+
+/** Predicts an admitted destination; the materialization owner alone creates it. */
+export function predictManagedSessionCreationDirectory(input: Readonly<{
+  root: string; sessionCreationTag: string; platform?: NodeJS.Platform;
+}>): ManagedSessionDirectoryAllocation {
+  if (!input.sessionCreationTag.trim()) throw conflict();
+  return managedDirectoryAllocation(input.root, `creation:${input.sessionCreationTag}`, input.platform ?? process.platform);
+}
 const missing = (): ManagedSessionDirectoryResolution => ({ ok: false, errorCode: 'SESSION_DIRECTORY_MISSING' });
 export class ManagedSessionDirectoryTrashError extends Error {
   constructor(readonly code: 'owner_unavailable' | 'restore_path_unsupported' | 'restore_occupied') {
@@ -104,8 +116,7 @@ export function createManagedSessionDirectories(input: Readonly<{
   const owners = paths.join(root, '.owners');
   const protection: ProtectedLocalStateOptions = { ...input.protection, authority: 'owned' };
   const allocation = (identity: string): ManagedSessionDirectoryAllocation => {
-    const allocationId = createHash('sha256').update(identity).digest('hex');
-    return { allocationId, directory: paths.join(input.payloadPlacement?.root ?? root, allocationId) };
+    return managedDirectoryAllocation(input.payloadPlacement?.root ?? root, identity, platform);
   };
   const recordedAllocation = (allocationId: string, record: ManagedSessionDirectoryRecord): ManagedSessionDirectoryAllocation => ({
     allocationId, directory: paths.join(record.payloadPlacement?.root ?? root, allocationId),
@@ -115,8 +126,7 @@ export function createManagedSessionDirectories(input: Readonly<{
     return paths.join(owners, `${allocationId}.json`);
   };
   const prepareForCreation = ({ sessionCreationTag }: Readonly<{ sessionCreationTag: string }>) => {
-    if (!sessionCreationTag.trim()) throw conflict();
-    return allocation(`creation:${sessionCreationTag}`);
+    return predictManagedSessionCreationDirectory({ root: input.payloadPlacement?.root ?? root, sessionCreationTag, platform });
   };
   const prepareForHandoff = ({ operationId }: Readonly<{ operationId: string }>) => {
     if (!operationId.trim()) throw conflict();

@@ -9,7 +9,7 @@ import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceS
 import { resolveCanonicalAbsolutePathComparisonIdentity } from '@/utils/path/expandHomeDirPath';
 import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import type { WorkspaceAddressV1, WorkspaceProjectFactsV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV1, type WorkspaceProjectFactsV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { StoredCredentials } from '@/persistence';
@@ -52,6 +52,8 @@ export type ProjectOpenRuntime = Readonly<{
     'environmentBindings' | 'secretEnvironment' | 'configEnvironment' | 'plugins' | 'successHomeDir'>>;
   /** Existing daemon Sync preparation, including its transport and root custody. */
   workspaceSyncAdapter?: WorkspaceSyncHandoffAdapter;
+  /** The daemon retains the native namespace; host filesystem preparation never handles it. */
+  materializeManagedProjectTarget?(input: OpenProjectInputV1, context: RpcHandlerContext): Promise<OpenProjectResultV1>;
   /** Installed host key lends transport signatures, never requester authority. */
   requesterMachineRpcSigning?: Readonly<{ installationId: string; privateKey: ExternalActionMachineRequestSigningKey }>;
   /** The chosen installed child forwards only its admitted original Project SOURCE purpose. */
@@ -149,6 +151,8 @@ function admitOpenSource(input: OpenProjectInputV1 & { source: Extract<OpenProje
 export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpenRuntime, context?: RpcHandlerContext,
   operationAcceptance?: NonNullable<RpcHandlerContext['localActionContext']>['operationAcceptance']): Promise<OpenProjectResultV1> {
   let effectsIssued = false;
+  let copyOnceBaseline: Opened['copyOnceBaseline'];
+  let copyOnceExcludedPaths: Opened['copyOnceExcludedPaths'];
   const refused = (code: string, error?: unknown): Extract<OpenProjectResultV1, { kind: 'refused' }> =>
     ({ ...projectRefusal(code, error), effectAttempted: effectsIssued,
       ...(code === 'workspace_private_checkout_required' ? { remediation: {
@@ -179,6 +183,10 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
   try {
     context.signal.throwIfAborted();
     if (!await context.verifyMachineAdmissionCurrent()) return refused('machine_access_denied');
+    if (input.materialization.kind === 'sync' && input.materialization.targetManaged) {
+      if (!runtime.materializeManagedProjectTarget) return refused('workspace_sync_unavailable');
+      return await runtime.materializeManagedProjectTarget({ ...input, serverId: homeId }, context);
+    }
     const requester = await resolveProjectRequester(authorityRuntime, context);
     const executionIdentity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: homeId,
       sessionRequester: context.requesterSessionBootstrap?.attribution,
@@ -219,6 +227,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           ? { ...selected, serverId: runtime.serverId } : selected);
         if (source.kind === 'ambiguous') return { kind: 'ambiguous', candidates: [...source.candidates] };
         if (source.kind !== 'resolved') return refused('workspace_unavailable');
+        if (isManagedWorkspaceRefV2(source.ref)) return refused('workspace_managed_target_required');
         if (input.materialization.kind !== 'sync' && source.ref.machineId !== runtime.machineId) return refused('source_machine_mismatch');
         sourceDirectory = sourceRootPath = source.ref.rootPath;
         sourceMachineId = source.ref.machineId;
@@ -410,11 +419,15 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         const materialized = ProjectOpenSyncMaterializationResultV1Schema.safeParse(sourceMaterialization);
         if (!materialized.success || materialized.data.kind === 'outcomeUnknown') return outcomeUnknown('Source Sync did not confirm materialization');
         if (materialized.data.kind === 'refused') return refused(materialized.data.code);
+        copyOnceBaseline = materialized.data.copyOnceBaseline;
+        copyOnceExcludedPaths = materialized.data.copyOnceExcludedPaths;
       }
       if (privateSync && sync && !remoteSyncSource && !sameSyncEndpoint && input.materialization.kind === 'sync') {
-        await materializeWorkspaceSyncForOpen(sync.adapter, { ...sync.request, action: input.materialization.workspaceAction,
+        const copyFacts = await materializeWorkspaceSyncForOpen(sync.adapter, { ...sync.request, action: input.materialization.workspaceAction,
           targetRootPath: privateCheckout!.prepared.rootPath, signal: context.signal,
           onEffectsIssued: () => { effectsIssued = true; } }, context);
+        copyOnceBaseline = copyFacts.copyOnceBaseline;
+        copyOnceExcludedPaths = copyFacts.copyOnceExcludedPaths;
       }
       const checkout = privateCheckout ? await privateCheckout.materialize() : await materializeProjectCheckout((remoteSyncSource || sameSyncEndpoint) && input.materialization.kind === 'sync' ? {
         materialization: { kind: 'attach' }, sourceDirectory: input.materialization.targetPath,
@@ -499,6 +512,8 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       }
       context.signal.throwIfAborted();
       return { kind: 'opened', workspace, directory: checkout.directory, setup,
+        ...((copyOnceBaseline ?? checkout.copyOnceBaseline) ? { copyOnceBaseline: copyOnceBaseline ?? checkout.copyOnceBaseline } : {}),
+        ...((copyOnceExcludedPaths ?? checkout.copyOnceExcludedPaths) ? { copyOnceExcludedPaths: copyOnceExcludedPaths ?? checkout.copyOnceExcludedPaths } : {}),
         facts: { projectKey: acceptedRef.ref.projectKey ?? acceptedRef.ref.id,
           ...(acceptedRef.ref.repositoryIdentity ? { repositoryIdentity: acceptedRef.ref.repositoryIdentity } : {}),
           ...(acceptedRef.ref.source ? { source: acceptedRef.ref.source } : {}) } };
@@ -555,7 +570,8 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
     // retains its own namespace and authority through the existing adapter.
     if (!context?.workspaceSyncSourceExecution || !admission || !routing.sourceContext
       || !context.verifyMachineAdmissionCurrent || !runtime.workspaceSyncAdapter
-      || (input.materialization.workspaceAction.kind !== 'copy_once' && input.materialization.workspaceAction.kind !== 'create_relationship')
+      || (input.materialization.workspaceAction.kind !== 'copy_once' && input.materialization.workspaceAction.kind !== 'create_relationship'
+        && input.materialization.workspaceAction.kind !== 'relationship')
       || !doesWorkspaceSyncProjectSourceRequestMatchRouting(input, originalRoot, routing)) {
       return refused('machine_admission_unavailable');
     }
@@ -563,14 +579,15 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
     try {
       context.signal.throwIfAborted();
       const selected = input.source.checkout;
-      await materializeWorkspaceSyncForOpen(runtime.workspaceSyncAdapter, { operationId: routing.operationId,
+      const copyFacts = await materializeWorkspaceSyncForOpen(runtime.workspaceSyncAdapter, { operationId: routing.operationId,
         accountServerId: runtime.serverId, action: input.materialization.workspaceAction,
         sourceMachineId: routing.sourceMachineId, sourceRootPath: routing.sourceRootPath,
         ...(selected ? { sourceWorkspaceRefId: selected.workspaceId } : {}), targetMachineId: input.machineId,
+        ...(input.materialization.targetManaged ? { targetManaged: input.materialization.targetManaged } : {}),
         targetRootPath: input.materialization.targetPath, signal: context.signal,
         onEffectsIssued: () => { issued = true; },
       }, context, routing.sourceContext);
-      return { kind: 'materialized' };
+      return { kind: 'materialized', ...copyFacts };
     } catch (error) {
       logger.warnLocalFile('[Project Open] Source Sync settlement failed', { effectsIssued: issued, code: codeOf(error),
         error: error instanceof Error ? error.stack ?? error.message : String(error) });
@@ -580,7 +597,7 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
   }
   if (!admission || admission.machineId !== runtime.machineId || !context?.verifyMachineAdmissionCurrent) return refused('machine_admission_unavailable');
   const action = input.materialization.workspaceAction;
-  if (action.kind !== 'copy_once' && action.kind !== 'create_relationship') return refused('invalid_materialization');
+  if (action.kind !== 'copy_once' && action.kind !== 'create_relationship' && action.kind !== 'relationship') return refused('invalid_materialization');
   let effectsIssued = false;
   try {
     context.signal.throwIfAborted();
@@ -600,9 +617,16 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
       const source = resolveWorkspaceRefV1(snapshot.workspaceRefs, selected.serverId === authorityRuntime.serverId
         ? { ...selected, serverId: runtime.serverId } : selected);
       if (source.kind !== 'resolved') return refused('source_machine_mismatch');
-      const target = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs, {
-        serverId: runtime.serverId, machineId: input.machineId, rootPath: input.materialization.kind === 'sync' ? input.materialization.targetPath : '',
-      });
+      if (isManagedWorkspaceRefV2(source.ref)) return refused('workspace_managed_target_required');
+      const managedTarget = input.materialization.kind === 'sync' ? input.materialization.targetManaged : undefined;
+      const managedTargetResolution = managedTarget && input.materialization.kind === 'sync'
+        ? resolveWorkspaceRefV1(snapshot.workspaceRefs, { v: 2, kind: 'managed', serverId: runtime.serverId,
+          ...managedTarget, rootPath: input.materialization.targetPath }) : undefined;
+      if (managedTargetResolution?.kind === 'ambiguous' || managedTargetResolution?.kind === 'invalid') return refused('workspace_sync_child_unavailable');
+      const target = managedTarget ? managedTargetResolution?.kind === 'resolved' ? managedTargetResolution.ref : undefined
+        : resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs, {
+          serverId: runtime.serverId, machineId: input.machineId, rootPath: input.materialization.kind === 'sync' ? input.materialization.targetPath : '',
+        });
       const mappingPurpose = requester.rows.authorization ? 'admitted_mapping' as const : 'physical_sync' as const;
       const childMachines = await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
         relationshipId: requester.rows.authorization?.binding.workspaceSyncAdmission?.relationshipId,
@@ -619,17 +643,18 @@ export async function materializeProjectSyncOnSource(input: OpenProjectInputV1, 
         ? { kind: 'materialized' } : refused('workspace_sync_child_unavailable');
       if (!runtime.workspaceSyncAdapter) return refused('workspace_sync_unavailable');
       context.signal.throwIfAborted();
-      await materializeWorkspaceSyncForOpen(runtime.workspaceSyncAdapter!, {
+      const copyFacts = await materializeWorkspaceSyncForOpen(runtime.workspaceSyncAdapter!, {
         operationId: requester.rows.authorization?.binding.workspaceSyncAdmission
           ? requester.rows.authorization.binding.requestId : randomUUID(), accountServerId: runtime.serverId, action,
         // Retain actual aliases until the incumbent Sync adapter derives physical copy custody.
         sourceMachineId: source.ref.machineId, sourceRootPath: source.ref.rootPath, sourceWorkspaceRefId: source.ref.id,
         targetMachineId: input.machineId, targetRootPath: input.materialization.kind === 'sync' ? input.materialization.targetPath : '',
+        ...(managedTarget ? { targetManaged: managedTarget } : {}),
         ...(target ? { targetWorkspaceRefId: target.id } : {}), signal: context.signal,
         onEffectsIssued: () => { effectsIssued = true; },
       }, context);
       context.signal.throwIfAborted();
-      return { kind: 'materialized' };
+      return { kind: 'materialized', ...copyFacts };
     });
   } catch (error) {
     logger.warnLocalFile('[Project Open] Source Sync settlement failed', { effectsIssued, code: codeOf(error),

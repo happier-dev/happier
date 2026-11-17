@@ -10,7 +10,8 @@ describe('reviewed Project files return', () => {
     const actionId = 'session.workspace.return.capture' as ActionId;
     const spec = getActionSpec(actionId);
     expect(spec.inputSchema.safeParse({ sessionId: 'sandbox', machineId: 'controller', stageRoot: '/other-person' }).success).toBe(false);
-    const captured = { workspace: { serverId: 'home', machineId: 'controller', workspaceId: 'private-stage', rootPath: '/requester/stage' }, baseline: { entries: [] } };
+    const captured = { workspace: { serverId: 'home', machineId: 'controller', workspaceId: 'private-stage', rootPath: '/requester/stage' }, baseline: { entries: [] }, excludedPaths: ['local.env'] };
+    expect(spec.outputSchema.parse(captured)).toEqual(captured);
     const executor = createActionExecutor({ sessionWorkspaceReturn: async () => captured } as ActionExecutorDeps);
     await expect(executor.execute(actionId, { sessionId: 'sandbox', machineId: 'controller' }, {
       surface: 'cli', authority: 'present_user', bypassApprovals: true,

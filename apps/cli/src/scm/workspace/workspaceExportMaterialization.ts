@@ -569,7 +569,6 @@ export async function inspectCommittedWorkspaceTargetMaterialization(input: Read
     try {
         sizeBytes = await measureWorkspaceSyncRegularFileBytesAtRoot({
             rootPath: dirname(canonicalRoot), relativePath: basename(canonicalRoot),
-            expectedRootIdentity: receipt.promotedTargetIdentity,
             assertCurrentAuthority: async () => { await inspectCurrent(); },
         });
     } catch {
@@ -711,6 +710,8 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
     blobProvider: WorkspaceExportBlobProvider;
     registry?: ScmBackendRegistry;
     sourcePath?: string;
+    /** SCM executes in the admitted controller when this filesystem is a native guest. */
+    reconcilePostMaterialization?: typeof reconcilePostMaterializationWithScmWorkspace;
     naming: WorkspaceExportMaterializationNaming;
     materializationReceiptPath?: string;
     originalTargetExists?: boolean;
@@ -820,7 +821,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
         await targetMaterialization.custody.bindPromotedTarget();
 
         await assertCanContinue?.();
-        await reconcilePostMaterializationWithScmWorkspace({
+        await (params.reconcilePostMaterialization ?? reconcilePostMaterializationWithScmWorkspace)({
             targetPath,
             previousTargetPath: targetMaterialization.previousTargetPath,
             sourcePath: params.sourcePath,

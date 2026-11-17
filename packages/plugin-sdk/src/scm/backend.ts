@@ -411,10 +411,14 @@ export type WorkspaceTransferRequest = Readonly<{
     includeAllIgnored?: boolean;
     /** Ordered, bounded Git-ignore patterns supplied by the workspace policy owner. */
     extraIgnorePatterns?: readonly string[];
+    /** Known file paths to classify for Git-worktree omissions, including absent baseline files. */
+    exclusionCandidates?: readonly string[];
 }>;
 
 export type WorkspaceTransferResult = Readonly<{
     entries: readonly WorkspaceTransferEntry[];
+    /** Exact omitted file paths, including supplied baseline candidates that remain Git-ignored. */
+    excludedPaths?: readonly string[];
     metadata?: WorkspaceTransferMetadata | null;
 }>;
 

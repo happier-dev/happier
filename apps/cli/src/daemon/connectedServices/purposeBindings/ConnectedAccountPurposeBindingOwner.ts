@@ -274,6 +274,12 @@ export type ConnectedAccountPurposeBindingLease = Readonly<{
   dispose(): void;
 }>;
 
+/** A host-private finite projection of one explicitly selected account. */
+export type ConnectedAccountPurposeOperationSelection = Readonly<{
+  owner: Pick<StablePluginConnectedAccountsOwner, 'getBinding' | 'listAccounts' | 'materialize'>;
+  dispose(): void;
+}>;
+
 export type ConnectedAccountSessionPurposeBindingLease =
   ConnectedAccountPurposeBindingLease;
 
@@ -511,6 +517,18 @@ export type ConnectedAccountPurposeBindingOwner =
       serviceRefs: readonly PluginContributionRef[];
       signal: AbortSignal;
     }>): Promise<ConnectedAccountPurposeBindingIntentSelection>;
+    /**
+     * Pins one explicit Account to one host operation without modifying the
+     * durable purpose default. Callers receive only the existing account port,
+     * scoped to this finite binding subject.
+     */
+    prepareOperationSelection(input: Readonly<{
+      purpose: QualifiedConnectedAccountPurposeV1;
+      serviceRefs: readonly PluginContributionRef[];
+      account: QualifiedConnectedAccountRef;
+      operationId: string;
+      signal: AbortSignal;
+    }>): Promise<ConnectedAccountPurposeOperationSelection>;
     /**
      * Resolves one current, immutable launch snapshot from already-authorized qualified
      * purpose declarations. This is a read of the canonical selection owner; it neither
@@ -1809,6 +1827,54 @@ export function createConnectedAccountPurposeBindingOwner(
     });
   };
 
+  const getBinding: StablePluginConnectedAccountsOwner['getBinding'] = input => {
+    if (input.observation) return readBindingObservation(input);
+    return withConnectedAccountBindingDiagnostic({
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+      pluginId: input.purpose.consumer.pluginId, localId: input.purpose.consumer.localId, purpose: input.purpose.purpose,
+    }, async () => {
+      const resolved = await runConnectedAccountBindingStage('binding_read', () => readAuthorizedResolved(input));
+      return resolved ? summary(input.purpose, resolved.target, resolved.resolved) : null;
+    });
+  };
+
+  const prepareOperationSelection: ConnectedAccountPurposeBindingOwner['prepareOperationSelection'] = async input => {
+    input.signal.throwIfAborted();
+    const purpose = QualifiedConnectedAccountPurposeV1Schema.parse(input.purpose);
+    const target = QualifiedConnectedAccountPurposeBindingTargetV1Schema.parse({
+      kind: 'account', account: input.account,
+    });
+    const selection = await resolveBindingIntentSelection({ purpose, target,
+      serviceRefs: input.serviceRefs, signal: input.signal });
+    const lease = activatePurposeBindings({
+      subject: { kind: 'operation', operationId: input.operationId, consumer: purpose.consumer,
+        isCurrent: () => !input.signal.aborted },
+      purposes: [purpose], bindings: [selection.binding], bindingSelections: [selection],
+    });
+    const rejectNestedExactSubject = (exactPurposeBindingSubjectId: string | undefined) => {
+      if (exactPurposeBindingSubjectId !== undefined) throw bindingOutOfScope();
+    };
+    return Object.freeze({
+      owner: Object.freeze({
+        // The operation subject is authoritative; an incidental hosted-Session
+        // scope cannot override the Account explicitly admitted for this clone.
+        getBinding: async ({ exactPurposeBindingSubjectId, sessionId: _sessionId, ...request }) => {
+          rejectNestedExactSubject(exactPurposeBindingSubjectId);
+          return await getBinding({ ...request, exactPurposeBindingSubjectId: lease.subjectId });
+        },
+        listAccounts: async ({ exactPurposeBindingSubjectId, sessionId: _sessionId, ...request }) => {
+          rejectNestedExactSubject(exactPurposeBindingSubjectId);
+          return await listAccounts({ ...request, exactPurposeBindingSubjectId: lease.subjectId });
+        },
+        materialize: async ({ exactPurposeBindingSubjectId, sessionId: _sessionId, ...request }) => {
+          rejectNestedExactSubject(exactPurposeBindingSubjectId);
+          return await materialize({ ...request, exactPurposeBindingSubjectId: lease.subjectId });
+        },
+      }),
+      dispose: () => lease.dispose(),
+    });
+  };
+
   return Object.freeze({
     activatePurposeBindings,
     readExecutionRunPurposeBindingSubjectId(runId) {
@@ -1844,6 +1910,7 @@ export function createConnectedAccountPurposeBindingOwner(
         bindings: state.bindings });
     },
     resolveBindingIntentSelection,
+    prepareOperationSelection,
     async resolveBindingIntent(input) {
       return (await resolveBindingIntentSelection(input)).binding;
     },
@@ -1958,16 +2025,7 @@ export function createConnectedAccountPurposeBindingOwner(
         release();
       }
     },
-    getBinding(input) {
-      if (input.observation) return readBindingObservation(input);
-      return withConnectedAccountBindingDiagnostic({
-        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-        pluginId: input.purpose.consumer.pluginId, localId: input.purpose.consumer.localId, purpose: input.purpose.purpose,
-      }, async () => {
-        const resolved = await runConnectedAccountBindingStage('binding_read', () => readAuthorizedResolved(input));
-        return resolved ? summary(input.purpose, resolved.target, resolved.resolved) : null;
-      });
-    },
+    getBinding,
     async requestSelection(input) {
       input.signal.throwIfAborted();
       const purpose = QualifiedConnectedAccountPurposeV1Schema.parse(input.purpose);

@@ -40,6 +40,11 @@ import { SOCKET_RPC_EVENTS, WorkspaceSyncTargetRoutingV1Schema } from '@happier-
 import { assertActionOutputContract } from '@/testkit/actionOutputContract';
 import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 import { resolvePublishedMachineEncryptionContext } from '@/api/machine/machineDataEncryptionKey';
+import { createWorkspaceSyncSeedExport, materializeWorkspaceSyncSeedExport } from './workspaceSyncSeedTransfer';
+import { materializeWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceExportMaterialization';
+import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
+import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
+import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/plugins/scm-git/src/backend';
 
 const socketIo = vi.hoisted(() => vi.fn());
 // Genuine transport boundary; the exact-Machine codec and managed observation reader remain real.
@@ -85,7 +90,9 @@ import {
   runNativeConfinedWorkspaceSyncRecover,
 } from './workspaceSyncNativeConfinedFileSystem';
 import { recoverWorkspaceSyncEntryReplacementAtRoot } from './workspaceSyncConflicts';
-import { computeWorkspaceSyncRootFingerprint, workspaceSyncMaterializationReceiptPath, workspaceSyncTargetBootstrap } from './workspaceSyncTargetBootstrap';
+import { computeWorkspaceSyncRootFingerprint, prepareWorkspaceSyncGitTarget, workspaceSyncMaterializationReceiptPath, workspaceSyncTargetBootstrap } from './workspaceSyncTargetBootstrap';
+import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
+import { realizeWorkspaceCheckoutWithScmWorkspace } from '@/scm/workspace/workspaceCheckoutOperations';
 import { materializeLocalWorkspaceSyncSeed } from './workspaceSyncSeedTransfer';
 import { deriveWorkspaceSyncConflictAsidePaths } from '@happier-dev/protocol';
 import {
@@ -1938,6 +1945,52 @@ function copyOncePrepareRequest(overrides: Record<string, unknown> = {}) {
     ...overrides,
   });
 }
+
+it.each([{ contentOnly: true, git: false }, { contentOnly: false, git: true }, { contentOnly: false, git: false }])('retains the remote copied base and includes portable Git only for a forward copy (%j)', async ({ contentOnly, git }) => {
+  const root = await mkdtemp(join(tmpdir(), 'content-only-target-base-'));
+  const sourcePath = join(root, 'source'); const targetPath = join(root, 'target');
+  await mkdir(sourcePath); await writeFile(join(sourcePath, 'work.bin'), Buffer.from([0, 255, 4]));
+  if (git) {
+    runScmExecutable(sourcePath, 'git', ['init', '-q']);
+    runScmExecutable(sourcePath, 'git', ['add', 'work.bin']);
+    runScmExecutable(sourcePath, 'git', ['-c', 'user.name=Happier Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'Original source']);
+  }
+  const registration = createGitScmBackendRuntimeRegistration();
+  const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({ definition: { id: 'git', kind: 'git' },
+    qualifiedId: 'happier.scm.git/git', executableDefinition: registration.runtime!, registration })]);
+  const policyInput = { ...gitContentPolicyInput, ...(contentOnly ? { contentOnly: true as const } : {}) };
+  const policy = { ...policyInput, policyDigest: computeWorkspaceSyncPolicyDigest(policyInput) };
+  const harness = createAuthorityHarness({ getProjectSnapshot: () => snapshot(sourcePath, targetPath, { includeRelationship: false }),
+    prepareGitTarget: input => prepareWorkspaceSyncGitTarget(input, {
+      inspectWorkspaceLocation: request => inspectWorkspaceLocationWithScmWorkspace({ ...request, registry }),
+      realizeWorkspaceCheckout: request => realizeWorkspaceCheckoutWithScmWorkspace({ ...request, registry }),
+    }),
+    // The finite Machine transport carries the real export and blob payloads below.
+    materializeRemoteSeed: async input => {
+      const exported = await createWorkspaceSyncSeedExport({ operationId: input.operationId, sourcePath, activeServerDir: root,
+        workspaceTransfer: { includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [], ...(contentOnly ? { contentOnly: true as const } : {}) }, registry });
+      return await materializeWorkspaceSyncSeedExport({ operationId: input.operationId, targetPath: input.canonicalRoot,
+        materializationReceiptPath: input.materializationReceiptPath, originalTargetExists: input.originalTargetExists,
+        targetFence: input.targetFence,
+        requestPayload: async request => {
+          const payload = request.transferId === input.operationId ? exported.payloadSource
+            : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId: request.transferId, requestBody: {} });
+          try { await writeTransferPayloadSourceToFile({ source: payload, destinationPath: request.destinationPath }); }
+          finally { await payload.dispose?.(); }
+        }, materializeWorkspaceExportArtifacts: request => materializeWorkspaceExportArtifactsWithScmWorkspace({ ...request, registry }),
+      });
+    },
+  });
+  try {
+    const result = await harness.authority.prepareBootstrapHere(copyOncePrepareRequest({ policyDigest: policy.policyDigest,
+      owner: { kind: 'copy_once', operation: { v: 1, operationId: 'copy-op-1', controllerMachineId: 'machine-a',
+        alphaWorkspaceRefId: 'workspace-alpha', betaWorkspaceRefId: 'workspace-beta', contentPolicy: policy } } }));
+    expect(result).toMatchObject({ state: 'ready', copyOnceBaseline: { entries: expect.arrayContaining([expect.objectContaining({ relativePath: 'work.bin' })]) } });
+    expect(await readFile(join(targetPath, 'work.bin'))).toEqual(Buffer.from([0, 255, 4]));
+    if (!git || contentOnly) await expect(stat(join(targetPath, '.git'))).rejects.toMatchObject({ code: 'ENOENT' });
+    else expect(runScmExecutable(targetPath, 'git', ['rev-parse', 'HEAD'])).toBe(runScmExecutable(sourcePath, 'git', ['rev-parse', 'HEAD']));
+  } finally { await harness.authority.releaseAllRetainedBootstraps(); await harness.cleanup(); await rm(root, { recursive: true, force: true }); }
+});
 
 function existingRelationshipPrepareRequest(overrides: Record<string, unknown> = {}) {
   return prepareRequest({

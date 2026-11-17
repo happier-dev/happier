@@ -460,9 +460,10 @@ describe('SCM diff summary operations', () => {
         await vi.waitFor(() => expect(resolve).toBeTypeOf('function'));
         current = false;
         ops.retireScope(scope);
+        const retiredState = ops.getState();
         resolve(pending);
         expect(await admission).toMatchObject({ ok: true, runId: pending.runId });
-        expect(ops.getState()).toEqual({ entriesByKey: {} });
+        expect(ops.getState()).toEqual(retiredState);
     });
     it('captures Files evidence independently of disabled narration without admitting a model run', async () => {
         // The capture producer keeps top-level turn selectors in metadata, not in source.

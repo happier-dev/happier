@@ -15,12 +15,15 @@ import type { WorkspaceSyncHandoffAdapter, PrepareWorkspaceSyncHandoffInput } fr
 import { isCanonicalAbsolutePathInsideRoot, resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { resolveDirectoryInCheckout } from './resolveDirectoryInCheckout';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 
 export type MaterializedProjectCheckout = Readonly<{
   rootPath: string;
   directory: string;
   created?: boolean;
   repositoryIdentity?: ScmHostingRepositoryIdentityV1;
+  copyOnceBaseline?: WorkspaceManifest;
+  copyOnceExcludedPaths?: readonly string[];
 }>;
 
 export type MaterializeProjectCheckoutInput = Readonly<{
@@ -158,11 +161,12 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
       onEffectsIssued: input.onEffectsIssued,
     };
     const { materializeWorkspaceSyncForOpen } = await import('@/workspaces/sync/workspaceSyncHandoffAdapter');
-    await materializeWorkspaceSyncForOpen(input.sync.adapter, request, input.sync.context);
+    const copyFacts = await materializeWorkspaceSyncForOpen(input.sync.adapter, request, input.sync.context);
     const rootPath = await existingDirectory(choice.targetPath);
     const sourceDirectory = input.sourceDirectory ?? request.sourceRootPath;
     const mapped = await resolveDirectoryInCheckout({ sourceDirectory, sourceRootPath: request.sourceRootPath, checkoutRootPath: rootPath });
-    return { rootPath, directory: await containedDirectory(rootPath, input.subdir ? await explicitSubdirectory(rootPath, input.subdir) : mapped) };
+    return { rootPath, directory: await containedDirectory(rootPath, input.subdir ? await explicitSubdirectory(rootPath, input.subdir) : mapped),
+      ...copyFacts };
   }
 
   const sourceRoot = await existingDirectory(input.sourceRootPath ?? input.sourceDirectory);

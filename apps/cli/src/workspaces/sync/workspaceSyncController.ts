@@ -1,7 +1,7 @@
 import { areWorkspaceSyncEntryExpectationsEqual, areWorkspaceSyncRelationshipDefinitionsEqual, ReadWorkspaceSyncFileV1Schema, WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES, WorkspaceSyncConflictInspectRpcRequestV1Schema, WorkspaceSyncConflictInspectRpcResultV1Schema, WorkspaceSyncConflictResolutionResultV1Schema, WorkspaceSyncConflictResolutionV1Schema, WorkspaceSyncCopyOnceV1Schema, WorkspaceSyncRelationshipsListRpcRequestV1Schema, WorkspaceSyncRelationshipsListRpcResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
-import { deriveWorkspaceSyncTopology } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { deriveWorkspaceSyncTopology, resolveWorkspaceSyncExecutionMachineIdV1 as executionMachineId } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpc/errors';
-import { WorkspaceRefV1Schema, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { WorkspaceRefV1Schema, isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { WorkspaceSyncConflictInspectEndpointV1, WorkspaceSyncConflictInspectRpcRequestV1, WorkspaceSyncConflictInspectRpcResultV1, WorkspaceSyncConflictResolutionResultV1, WorkspaceSyncConflictResolutionV1, WorkspaceSyncConflictResolveActionInputV1, WorkspaceSyncEntryExpectationV1, WorkspaceSyncPathSelectionV1, WorkspaceSyncSelectionDiagnoseV1, WorkspaceSyncRelationshipsListRpcRequestV1, WorkspaceSyncRelationshipsListRpcResultV1 } from '@happier-dev/protocol';
 import { machineCarrierUnavailableError } from '@/daemon/peer/iroh/machineCarrier';
 import { deriveWorkspaceSyncConflictAsidePaths, deriveWorkspaceSyncConflictOperationId } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -32,7 +32,7 @@ export type WorkspaceSyncResolvedRef = Readonly<{
   serverId?: string;
   machineId: string;
   rootPath: string;
-}>;
+}> | ManagedWorkspaceRefV2;
 export type WorkspaceSyncConflictResolutionAuthorizationAssert = (
   actionReceiptId: string,
   actionInput: WorkspaceSyncConflictResolveActionInputV1,
@@ -132,6 +132,8 @@ export type WorkspaceSyncControllerOptions = Readonly<{
     transferAdmission?: Promise<void>,
   ) => Promise<WorkspaceSyncMachineTunnel>;
   openLocalWorkspaceAgentStream?: WorkspaceSyncLocalAgentStreamOpen;
+  /** Native guest agent launched by the target authority through its admitted broker. */
+  openManagedWorkspaceAgentStream?: (input: Parameters<WorkspaceSyncLocalAgentStreamOpen>[0], endpoint: ManagedWorkspaceRefV2, transferAdmission?: Promise<void>) => Promise<WorkspaceSyncOwnedLocalAgent>;
   /** An admitted member verifies its own roots and launches its own agent. */
   openPrivateLocalWorkspaceAgentStream?: (input: Parameters<WorkspaceSyncLocalAgentStreamOpen>[0], transferAdmission?: Promise<void>) => Promise<WorkspaceSyncOwnedLocalAgent | null>;
   resolvePrivateWorkspaceRoot?: (rootPath: string) => Promise<string | null>;
@@ -343,6 +345,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
   private readonly borrowLinkedSourceRoot?: WorkspaceSyncControllerOptions['borrowLinkedSourceRoot'];
   private readonly openMachineCarrier?: WorkspaceSyncControllerOptions['openMachineCarrierTunnel'];
   private readonly openLocalAgent?: WorkspaceSyncLocalAgentStreamOpen;
+  private readonly openManagedAgent?: WorkspaceSyncControllerOptions['openManagedWorkspaceAgentStream'];
   private readonly openPrivateLocalAgent?: WorkspaceSyncControllerOptions['openPrivateLocalWorkspaceAgentStream'];
   private readonly admitRelationshipTransfer?: WorkspaceSyncControllerOptions['admitRelationshipTransfer'];
   private readonly resolvePrivateRoot?: WorkspaceSyncControllerOptions['resolvePrivateWorkspaceRoot'];
@@ -441,11 +444,11 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     }
   }
 
-  constructor(options: WorkspaceSyncControllerOptions) { this.adapter = options.adapter; this.lifecycle = options.lifecycle; this.localServerId = options.localServerId?.trim() || null; this.localMachineId = options.localMachineId; this.resolveRef = options.resolveWorkspaceRef; this.rootOwnershipManager = options.rootOwnershipManager; this.resolveDefinition = options.resolveRelationshipDefinition ?? (() => null); this.prepareTarget = options.prepareRelationshipTarget ?? (async () => undefined); this.recoverCopyTarget = options.recoverCopyOnceTarget; this.borrowLinkedSourceRoot = options.borrowLinkedSourceRoot; this.openMachineCarrier = options.openMachineCarrierTunnel; this.openLocalAgent = options.openLocalWorkspaceAgentStream; this.openPrivateLocalAgent = options.openPrivateLocalWorkspaceAgentStream; this.admitRelationshipTransfer = options.admitRelationshipTransfer; this.resolvePrivateRoot = options.resolvePrivateWorkspaceRoot; this.readAtTarget = options.readFileAtTarget; this.observeEntryAtTarget = options.observeEntryAtTarget; this.stageConflictResolutionAtTarget = options.stageConflictResolutionAtTarget; this.applyStagedConflictResolutionAtTarget = options.applyStagedConflictResolutionAtTarget; this.discardStagedConflictResolutionAtTarget = options.discardStagedConflictResolutionAtTarget; this.releaseConflictResolutionCaptureAtSource = options.releaseConflictResolutionCaptureAtSource; this.recoverConflictResolutionAtTarget = options.recoverConflictResolutionAtTarget; this.resolveAllDefinitions = options.resolveAllRelationshipDefinitions; this.assertConflictResolutionAuthorized = options.assertConflictResolutionAuthorized; this.probeGit = options.probeGitRuntimeDependency ?? (async (signal) => await probeScmExecutableAvailable({ bin: 'git', ...(signal ? { signal } : {}) })); this.onStatusPublished = options.onStatusPublished ?? (() => undefined); }
+  constructor(options: WorkspaceSyncControllerOptions) { this.adapter = options.adapter; this.lifecycle = options.lifecycle; this.localServerId = options.localServerId?.trim() || null; this.localMachineId = options.localMachineId; this.resolveRef = options.resolveWorkspaceRef; this.rootOwnershipManager = options.rootOwnershipManager; this.resolveDefinition = options.resolveRelationshipDefinition ?? (() => null); this.prepareTarget = options.prepareRelationshipTarget ?? (async () => undefined); this.recoverCopyTarget = options.recoverCopyOnceTarget; this.borrowLinkedSourceRoot = options.borrowLinkedSourceRoot; this.openMachineCarrier = options.openMachineCarrierTunnel; this.openLocalAgent = options.openLocalWorkspaceAgentStream; this.openManagedAgent = options.openManagedWorkspaceAgentStream; this.openPrivateLocalAgent = options.openPrivateLocalWorkspaceAgentStream; this.admitRelationshipTransfer = options.admitRelationshipTransfer; this.resolvePrivateRoot = options.resolvePrivateWorkspaceRoot; this.readAtTarget = options.readFileAtTarget; this.observeEntryAtTarget = options.observeEntryAtTarget; this.stageConflictResolutionAtTarget = options.stageConflictResolutionAtTarget; this.applyStagedConflictResolutionAtTarget = options.applyStagedConflictResolutionAtTarget; this.discardStagedConflictResolutionAtTarget = options.discardStagedConflictResolutionAtTarget; this.releaseConflictResolutionCaptureAtSource = options.releaseConflictResolutionCaptureAtSource; this.recoverConflictResolutionAtTarget = options.recoverConflictResolutionAtTarget; this.resolveAllDefinitions = options.resolveAllRelationshipDefinitions; this.assertConflictResolutionAuthorized = options.assertConflictResolutionAuthorized; this.probeGit = options.probeGitRuntimeDependency ?? (async (signal) => await probeScmExecutableAvailable({ bin: 'git', ...(signal ? { signal } : {}) })); this.onStatusPublished = options.onStatusPublished ?? (() => undefined); }
 
-  private assertLocalSourcePlacement(ref: WorkspaceSyncResolvedRef | null): asserts ref is WorkspaceSyncResolvedRef {
+  private assertLocalSourcePlacement(ref: WorkspaceSyncResolvedRef | null): asserts ref is Readonly<{ serverId?: string; machineId: string; rootPath: string }> {
     const serverMatches = this.localServerId === null || ref?.serverId?.trim() === this.localServerId;
-    if (!ref || ref.machineId.trim() !== this.localMachineId.trim() || !serverMatches) {
+    if (!ref || isManagedWorkspaceRefV2(ref) || executionMachineId(ref).trim() !== this.localMachineId.trim() || !serverMatches) {
       throw Object.assign(
         new Error('Workspace sync source machine is not enrolled in this Home'),
         { code: 'workspace_machine_not_enrolled' },
@@ -471,12 +474,12 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     const roles = resolveWorkspaceSyncRelationshipEndpointRoles({
       mode: definition.mode,
       controllerMachineId: definition.controllerMachineId,
-      alphaMachineId: alpha.machineId,
-      betaMachineId: beta.machineId,
+      alphaMachineId: executionMachineId(alpha),
+      betaMachineId: executionMachineId(beta),
     });
     if (roles?.sourceEndpointRole !== endpointRole) return null;
     const source = endpointRole === 'alpha' ? alpha : beta;
-    if (source.machineId.trim() !== this.localMachineId.trim()) return null;
+    if (isManagedWorkspaceRefV2(source) || executionMachineId(source).trim() !== this.localMachineId.trim()) return null;
     this.assertLocalSourcePlacement(source);
     const canonicalRoot = await this.resolvePrivateRoot?.(source.rootPath) ?? await realpath(source.rootPath).catch(() => source.rootPath);
     const custody = this.fences.get(definition.relationshipId);
@@ -510,7 +513,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       return null;
     }
     const ref = await this.resolveRef(workspaceRefId);
-    if (!ref || ref.machineId.trim() !== this.localMachineId.trim()) return null;
+    if (!ref || isManagedWorkspaceRefV2(ref) || executionMachineId(ref).trim() !== this.localMachineId.trim()) return null;
     this.assertLocalSourcePlacement(ref);
     const canonicalRoot = await this.resolvePrivateRoot?.(ref.rootPath) ?? await realpath(ref.rootPath).catch(() => ref.rootPath);
     const custody = this.fences.get(relationshipId);
@@ -593,12 +596,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       candidate.betaWorkspaceRefId,
     ]))];
     const resolved = await Promise.all(refIds.map(async (id) => [id, await this.resolveRef(id)] as const));
-    const workspaceRefs = resolved.flatMap(([id, ref]) => ref ? [{
-      id,
-      serverId: ref.serverId ?? this.localServerId ?? 'current-home',
-      machineId: ref.machineId,
-      rootPath: ref.rootPath,
-      createdAtMs: 0,
+    const workspaceRefs: WorkspaceRefV1[] = resolved.flatMap(([id, ref]) => ref ? [{
+      ...ref, id, serverId: ref.serverId ?? this.localServerId ?? 'current-home', createdAtMs: 0,
     }] : []);
     return { ...deriveWorkspaceSyncTopology({ workspaceRefs, relationships, serverId: this.localServerId ?? undefined }), workspaceRefs };
   }
@@ -720,7 +719,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     for (const role of roles) {
       const id = role === 'alpha' ? definition.alphaWorkspaceRefId : definition.betaWorkspaceRefId;
       const ref = await this.resolveWorkspaceRef(id, copyOperationId ?? definition.relationshipId);
-      if (!ref || ref.machineId !== this.localMachineId) continue;
+      if (!ref || isManagedWorkspaceRefV2(ref) || executionMachineId(ref) !== this.localMachineId) continue;
       const canonicalRoot = await this.resolvePrivateRoot?.(ref.rootPath) ?? await realpath(ref.rootPath).catch(() => ref.rootPath);
       if (carriedHandles.some((handle) => (
         getPathRemainderWithinBase(handle.owner.canonicalRoot, canonicalRoot) === ''
@@ -768,8 +767,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     const roles = resolveWorkspaceSyncRelationshipEndpointRoles({
       mode: definition.mode,
       controllerMachineId: definition.controllerMachineId,
-      alphaMachineId: alpha.machineId,
-      betaMachineId: beta.machineId,
+      alphaMachineId: executionMachineId(alpha),
+      betaMachineId: executionMachineId(beta),
     });
     // An unresolvable direction is target preparation's typed error to raise.
     if (!roles) return [];
@@ -1074,7 +1073,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       this.resolveRef(valid.betaWorkspaceRefId, valid.operationId),
     ]);
     if (valid.controllerMachineId !== this.localMachineId || !alpha || !beta
-      || alpha.machineId !== this.localMachineId) {
+      || isManagedWorkspaceRefV2(alpha) || executionMachineId(alpha) !== this.localMachineId) {
       await this.adapter.terminate(valid.operationId);
       return null;
     }
@@ -1105,7 +1104,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       this.copyFences.set(valid.operationId, [...borrowed, ...acquired]);
       this.copyOwnedFences.set(valid.operationId, acquired);
       try {
-        if (beta.machineId !== this.localMachineId) {
+        if (isManagedWorkspaceRefV2(beta) || executionMachineId(beta) !== this.localMachineId) {
           if (!this.recoverCopyTarget) throw Object.assign(new Error('Workspace copy target recovery is unavailable'), { code: 'peer_unavailable' });
           const target = await this.recoverCopyTarget(valid);
           this.copyTargetReleases.set(valid.operationId, target.release);
@@ -1227,7 +1226,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         if (!ref) throw Object.assign(new Error('Workspace conflict recovery endpoint is unavailable'), { code: 'peer_unavailable' });
         const result = await this.recoverConflictResolutionAtTarget({
           relationshipId: definition.relationshipId,
-          targetMachineId: ref.machineId,
+          targetMachineId: executionMachineId(ref),
           targetWorkspaceRefId: workspaceRefId,
           ...(signal ? { signal } : {}),
         });
@@ -1672,7 +1671,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         }
         observation = await this.observeEntryAtTarget({
           relationshipId: definition.relationshipId,
-          targetMachineId: target.machineId,
+          targetMachineId: executionMachineId(target),
           targetWorkspaceRefId: workspaceRefId,
           path,
           ...(signal ? { signal } : {}),
@@ -1863,7 +1862,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       try {
         const result = await recover({
           relationshipId: sourceRelationship.relationshipId,
-          targetMachineId: sourceRef.machineId,
+          targetMachineId: executionMachineId(sourceRef),
           targetWorkspaceRefId: valid.source.workspaceRefId,
           ...(signal ? { signal } : {}),
         });
@@ -1920,7 +1919,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
               path: alternative.destination.path, alternativeIndex: index,
             }),
             relationshipId: destinationLink.relationshipId,
-            targetMachineId: destinationRef.machineId,
+            targetMachineId: executionMachineId(destinationRef),
             targetWorkspaceRefId: alternative.destination.workspaceRefId,
             path: alternative.destination.path,
             ...(signal ? { signal } : {}),
@@ -1929,7 +1928,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
             try {
               const recovered = await recover({
                 relationshipId: destinationLink.relationshipId,
-                targetMachineId: destinationRef.machineId,
+                targetMachineId: executionMachineId(destinationRef),
                 targetWorkspaceRefId: alternative.destination.workspaceRefId,
                 ...(signal ? { signal } : {}),
               });
@@ -1945,11 +1944,11 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
             }
           }
           try {
-            captureSources.set(alternativeSourceRef.machineId, alternative.source.workspaceRefId);
+            captureSources.set(alternative.source.workspaceRefId, executionMachineId(alternativeSourceRef));
             await stage({
               ...common,
               sourceRelationshipId: sourceLink.relationshipId,
-              sourceMachineId: alternativeSourceRef.machineId,
+              sourceMachineId: executionMachineId(alternativeSourceRef),
               sourceWorkspaceRefId: alternative.source.workspaceRefId,
               sourceExpected: alternative.source.expected,
               targetExpected: alternative.destination.expected,
@@ -1998,14 +1997,14 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
             path: valid.path,
           }),
           relationshipId: relationship.relationshipId,
-          targetMachineId: ref.machineId, targetWorkspaceRefId: target.workspaceRefId,
+          targetMachineId: executionMachineId(ref), targetWorkspaceRefId: target.workspaceRefId,
           path: valid.path, ...(signal ? { signal } : {}),
         } as const;
         if (recover) {
           try {
             const result = await recover({
               relationshipId: relationship.relationshipId,
-              targetMachineId: ref.machineId, targetWorkspaceRefId: target.workspaceRefId,
+              targetMachineId: executionMachineId(ref), targetWorkspaceRefId: target.workspaceRefId,
               ...(signal ? { signal } : {}),
             });
             if (result.status === 'recovery_needed') {
@@ -2022,11 +2021,11 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
           }
         }
         try {
-          captureSources.set(sourceRef.machineId, valid.source.workspaceRefId);
+          captureSources.set(valid.source.workspaceRefId, executionMachineId(sourceRef));
           await stage({
             ...common,
             sourceRelationshipId: sourceRelationship.relationshipId,
-            sourceMachineId: sourceRef.machineId,
+            sourceMachineId: executionMachineId(sourceRef),
             sourceWorkspaceRefId: valid.source.workspaceRefId,
             sourceExpected: valid.source.expected,
             targetExpected: target.expected,
@@ -2082,7 +2081,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
               : destinationRef && this.observeEntryAtTarget
                 ? await this.observeEntryAtTarget({
                   relationshipId: destinationLink.relationshipId,
-                  targetMachineId: destinationRef.machineId,
+                  targetMachineId: executionMachineId(destinationRef),
                   targetWorkspaceRefId: alternative.destination.workspaceRefId,
                   path: alternative.destination.path,
                   ...(signal ? { signal } : {}),
@@ -2296,7 +2295,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
           if (!plan.applyStarted) await this.discardStagedConflictResolutionAtTarget?.({ ...plan.common, signal: undefined });
         }
       } finally {
-        for (const [sourceMachineId, sourceWorkspaceRefId] of captureSources) {
+        for (const [sourceWorkspaceRefId, sourceMachineId] of captureSources) {
           await this.releaseConflictResolutionCaptureAtSource?.({
             actionReceiptId, actionInput, operationId: actionReceiptId,
             sourceMachineId, sourceWorkspaceRefId,
@@ -2336,7 +2335,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     if (!target) throw Object.assign(new Error('Workspace sync preview target is unavailable'), { code: 'peer_unavailable' });
     return await this.readAtTarget({
       relationshipId: valid.relationshipId,
-      targetMachineId: target.machineId,
+      targetMachineId: executionMachineId(target),
       targetWorkspaceRefId,
       path: valid.path,
       ...(valid.expectedDigest === undefined ? {} : { expectedDigest: valid.expectedDigest }),
@@ -2372,8 +2371,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     const roles = resolveWorkspaceSyncRelationshipEndpointRoles({
       mode: 'relationshipId' in operation ? operation.mode : 'keep_synced',
       controllerMachineId: operation.controllerMachineId,
-      alphaMachineId: alpha.machineId,
-      betaMachineId: beta.machineId,
+      alphaMachineId: executionMachineId(alpha),
+      betaMachineId: executionMachineId(beta),
     });
     if (!roles) {
       throw Object.assign(new Error('Workspace sync source seed operation placement is invalid'), { code: 'controller_unavailable' });
@@ -2385,7 +2384,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     const target = roles.targetEndpointRole === 'alpha' ? alpha : beta;
     this.assertLocalSourcePlacement(source);
     if (sourceWorkspaceRefId !== request.sourceWorkspaceRefId
-      || target.machineId !== request.targetMachineId) {
+      || executionMachineId(target) !== request.targetMachineId) {
       throw Object.assign(new Error('Workspace sync source seed request does not match the active operation'), { code: 'target_unavailable' });
     }
     const canonicalSourcePath = await this.resolvePrivateRoot?.(source.rootPath) ?? await realpath(source.rootPath).catch(() => {
@@ -2899,7 +2898,12 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
         { code: ownershipLost ? 'workspace_root_ownership_lost' : 'relationship_not_owned' },
       );
     };
-    if (endpoint.machineId === this.localMachineId) {
+    if (isManagedWorkspaceRefV2(endpoint) && executionMachineId(endpoint) === this.localMachineId) {
+      if (!this.openManagedAgent) throw Object.assign(new Error('Native workspace agent is unavailable'), { code: 'agent_unavailable' });
+      return await retainIfStillOwned(await this.openManagedAgent({ operationId, role, workspaceRefId: endpointRefId,
+        canonicalRoot: endpoint.rootPath, ...(input.signal ? { signal: input.signal } : {}) }, endpoint, this.queues.get(operationId)?.transfer.admission));
+    }
+    if (executionMachineId(endpoint) === this.localMachineId) {
       const privateAgent = await this.openPrivateLocalAgent?.({ operationId, role, workspaceRefId: endpointRefId,
         canonicalRoot: endpoint.rootPath, ...(input.signal ? { signal: input.signal } : {}) }, this.queues.get(operationId)?.transfer.admission);
       if (privateAgent) return await retainIfStillOwned(privateAgent);
@@ -2931,8 +2935,8 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     if (!this.openMachineCarrier) throw machineCarrierUnavailableError();
     const tunnel = await this.openMachineCarrier({
       operationId,
-      sourceMachineId: counterpart.machineId,
-      targetMachineId: endpoint.machineId,
+      sourceMachineId: executionMachineId(counterpart),
+      targetMachineId: executionMachineId(endpoint),
       flow: 'workspace_sync',
       ...(input.signal ? { signal: input.signal } : {}),
     }, this.queues.get(operationId)?.transfer.admission);

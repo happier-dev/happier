@@ -7,6 +7,7 @@ import type { WorkspaceExportTransferEntry } from './workspaceExportPackaging/wo
 
 export type ScmWorkspaceIntegrationWorkspaceExportArtifacts = Readonly<{
     manifest: WorkspaceManifest;
+    excludedPaths?: readonly string[];
     workspaceIntegrationMetadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata;
 }>;
 
@@ -23,10 +24,12 @@ export function cloneScmWorkspaceIntegrationWorkspaceExportManifest(
 
 export function createScmWorkspaceIntegrationWorkspaceExportArtifacts(input: Readonly<{
     manifest: ScmWorkspaceIntegrationWorkspaceExportArtifacts['manifest'];
+    excludedPaths?: readonly string[];
     workspaceIntegrationMetadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata | null;
 }>): ScmWorkspaceIntegrationWorkspaceExportArtifacts {
     return {
         manifest: cloneScmWorkspaceIntegrationWorkspaceExportManifest(input.manifest),
+        ...(input.excludedPaths ? { excludedPaths: [...input.excludedPaths] } : {}),
         ...(input.workspaceIntegrationMetadata ? { workspaceIntegrationMetadata: input.workspaceIntegrationMetadata } : {}),
     };
 }

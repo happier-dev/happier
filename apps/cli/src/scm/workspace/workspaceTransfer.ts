@@ -12,6 +12,7 @@ export type ScmWorkspaceIntegrationWorkspaceTransferRequest = Readonly<{
     ignoredIncludeGlobs: readonly string[];
     includeAllIgnored?: boolean;
     extraIgnorePatterns?: readonly string[];
+    exclusionCandidates?: readonly string[];
 }>;
 
 export type ScmWorkspaceIntegrationWorkspaceTransferRequestInput = Readonly<{
@@ -20,6 +21,9 @@ export type ScmWorkspaceIntegrationWorkspaceTransferRequestInput = Readonly<{
     ignoredIncludeGlobs: readonly string[];
     includeAllIgnored?: boolean;
     extraIgnorePatterns?: readonly string[];
+    exclusionCandidates?: readonly string[];
+    /** Export orchestration operand; SCM backends still receive their normal file-selection request. */
+    contentOnly?: true;
 }>;
 
 export type ScmWorkspaceIntegrationWorkspaceTransferEntry = Readonly<{
@@ -32,6 +36,7 @@ export type ScmWorkspaceIntegrationWorkspaceTransferMetadata = Readonly<Record<s
 
 export type ScmWorkspaceIntegrationWorkspaceTransferResult = Readonly<{
     entries: readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[];
+    excludedPaths?: readonly string[];
     metadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata | null;
 }>;
 
@@ -44,6 +49,7 @@ export function createScmWorkspaceIntegrationWorkspaceTransferRequest(
         ignoredIncludeGlobs: [...input.ignoredIncludeGlobs],
         ...(input.includeAllIgnored === true ? { includeAllIgnored: true } : {}),
         ...(input.extraIgnorePatterns ? { extraIgnorePatterns: [...input.extraIgnorePatterns] } : {}),
+        ...(input.exclusionCandidates ? { exclusionCandidates: [...input.exclusionCandidates] } : {}),
     };
 }
 
@@ -59,10 +65,12 @@ export function createScmWorkspaceIntegrationWorkspaceTransferEntry(
 
 export function createScmWorkspaceIntegrationWorkspaceTransferResult(input: Readonly<{
     entries: readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[];
+    excludedPaths?: readonly string[];
     metadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata | null;
 }>): ScmWorkspaceIntegrationWorkspaceTransferResult {
     return {
         entries: input.entries.map((entry) => createScmWorkspaceIntegrationWorkspaceTransferEntry(entry)),
+        ...(input.excludedPaths ? { excludedPaths: [...input.excludedPaths] } : {}),
         metadata: input.metadata ?? null,
     };
 }

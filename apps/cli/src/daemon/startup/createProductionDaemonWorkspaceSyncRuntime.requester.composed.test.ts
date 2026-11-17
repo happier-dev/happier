@@ -1,11 +1,20 @@
 import { configuration } from '@/configuration';
 import { readAgentIsolationMemberBindingForAccount } from '@/daemon/agentIsolation/memberBindings';
 import { join } from 'node:path';
-import { mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { spawn } from 'node:child_process';
+import { Duplex } from 'node:stream';
+import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
+import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
+import { spawnSessionHolderChild } from '@/subprocess/supervision/sessionHolder';
+import { registerSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { scanWorkspaceManifest } from '@/scm/workspace/workspaceExportPackaging/scanWorkspaceManifest';
+import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import tweetnacl from 'tweetnacl';
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { createApiSessionSocketStub, resolveApiSessionSocketDefaultAck } from '@/testkit/backends/apiSessionSocketHarness';
 import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MachineUpdateOperationProtocolCapabilitiesResponseV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -35,7 +44,8 @@ import { deriveWorkspaceSyncEndpointId } from '@/workspaces/sync/transport/works
 import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
 
 const socketIo = vi.hoisted(() => vi.fn());
-const executionBoundary = vi.hoisted(() => ({ member: true, recovery: undefined as undefined | { pending: boolean; root: string; calls: number } }));
+const executionBoundary = vi.hoisted(() => ({ member: true, returnPromotionFailureRoot: '',
+  recovery: undefined as undefined | { pending: boolean; root: string; calls: number } }));
 vi.mock('socket.io-client', () => ({ io: socketIo }));
 vi.mock('node:fs', async original => {
   const actual = await original<typeof import('node:fs')>();
@@ -49,8 +59,15 @@ vi.mock('node:fs', async original => {
 // framed worker, controller and Account-row transaction all remain real.
 vi.mock('node:fs/promises', async original => {
   const actual = await original<typeof import('node:fs/promises')>();
-  const { workspaceCheckoutFilesystemBoundary } = await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
-  return workspaceCheckoutFilesystemBoundary(actual);
+  const { workspaceCheckoutFilesystemBoundary, workspaceCheckoutNativeBoundary } = await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+  const filesystem = workspaceCheckoutFilesystemBoundary(actual);
+  return { ...filesystem, rename: (...args: Parameters<typeof actual.rename>) => {
+    if (executionBoundary.returnPromotionFailureRoot && workspaceCheckoutNativeBoundary.identity.getStore() === 'member'
+      && String(args[1]).startsWith(executionBoundary.returnPromotionFailureRoot + '/')) {
+      throw Object.assign(new Error('Native return promotion denied'), { code: 'EACCES' });
+    }
+    return filesystem.rename(...args);
+  } };
 });
 vi.mock('../../../../../packages/cli-common/src/process/execFileWithDeadline', async original => {
   const actual = await original<typeof import('../../../../../packages/cli-common/src/process/execFileWithDeadline')>();
@@ -94,7 +111,83 @@ vi.mock('node:child_process', async original => {
   } };
 });
 // Native and HTTP boundaries stay installed until every fixture's onTestFinished cleanup settles.
-beforeEach(() => { native.reset(); vi.restoreAllMocks(); executionBoundary.recovery = undefined; });
+beforeEach(() => { native.reset(); vi.restoreAllMocks(); executionBoundary.recovery = undefined; executionBoundary.returnPromotionFailureRoot = ''; });
+
+it.skipIf(process.platform !== 'linux')('captures only a retained Session into the requester member and releases SOURCE custody after failed TARGET preparation', async () => {
+  executionBoundary.member = true;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'use', socketIo });
+  const directory = await mkdtemp(join(tmpdir(), 'native-return-capture-'));
+  const guestRoot = join(directory, 'guest');
+  await mkdir(guestRoot);
+  runScmExecutable(guestRoot, 'git', ['init', '-q']);
+  await writeFile(join(guestRoot, '.gitignore'), 'ignored.txt\n');
+  await writeFile(join(guestRoot, 'ignored.txt'), 'sandbox-only ignored bytes');
+  await writeFile(join(guestRoot, 'returned.txt'), 'sandbox bytes');
+  runScmExecutable(guestRoot, 'git', ['add', 'returned.txt']);
+  runScmExecutable(guestRoot, 'git', ['-c', 'user.name=Return fixture', '-c', 'user.email=return-fixture@example.test', 'commit', '-qm', 'base']);
+  const baseline = await scanWorkspaceManifest({ workspaceRoot: guestRoot, safeFilterPolicy: { excludeAdministrativePaths: true } });
+  const holderPath = resolveSessionHolderExecutablePath()!;
+  const helperPath = resolveProcessCustodySupportExecutable('linux')!;
+  const lifetime = new AbortController();
+  const sessionId = 'native-return-session';
+  const target = { id: sessionId, holderPath, helperPath, socketDirectory: directory,
+    exec: (command: string) => new Promise<{ status: number; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn('sh', ['-c', command], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = ''; let stderr = '';
+      child.stdout.on('data', bytes => { stdout += bytes.toString(); });
+      child.stderr.on('data', bytes => { stderr += bytes.toString(); });
+      child.once('error', reject); child.once('close', status => resolve({ status: status ?? 1, stdout, stderr }));
+    }),
+    openChannel: (argv: readonly string[]) => {
+      const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
+      const channel = Duplex.from({ readable: child.stdout, writable: child.stdin });
+      child.once('close', () => channel.destroy()); return channel;
+    },
+  };
+  const primarySocketPath = join(directory, 'holder.sock');
+  const agent = spawnSessionHolderChild({ executablePath: holderPath, socketPath: primarySocketPath,
+    command: 'sleep', args: ['600'], cwd: guestRoot, target });
+  await new Promise<void>((resolve, reject) => { agent.once('spawn', resolve); agent.once('error', reject); });
+  registerSessionTargetWorkspace({ sessionId, lifetime: lifetime.signal, primarySocketPath, target,
+    workspace: { hostRoot: setup.sourcePath, targetRoot: guestRoot }, baseline });
+  onTestFinished(async () => { lifetime.abort(); await agent.terminateGroup({ graceMs: 100 }); await rm(directory, { recursive: true, force: true }); });
+  const context: RpcHandlerContext = { signal: lifetime.signal, callerAuthority: 'present_user',
+    callerInputAuthorization: setup.account.authorization, verifyMachineAdmissionCurrent: async () => true,
+    machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: setup.installed.machineId,
+      installationId: setup.installed.installation.installationId, role: 'use', encryptionMode: 'plain' } };
+  const captured = await setup.fixture.parent.workspaceSync.captureSessionWorkspaceReturn!({ sessionId }, context);
+  expect(captured.workspace.rootPath.startsWith(setup.member.workspaceRoot + '/')).toBe(true);
+  expect(captured.baseline).toEqual(baseline);
+  expect(captured.excludedPaths).toContain('ignored.txt');
+  expect(await native.identity.run('member', () => readFile(join(captured.workspace.rootPath, 'returned.txt'), 'utf8'))).toBe('sandbox bytes');
+  await expect(native.identity.run('member', () => readFile(join(captured.workspace.rootPath, 'ignored.txt'))))
+    .rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(setup.fixture.parent.workspaceSync.captureSessionWorkspaceReturn!({ sessionId: 'unretained' }, context))
+    .rejects.toMatchObject({ code: 'workspace_source_operation_unavailable' });
+  expect(await agent.request({ op: 'status' })).toMatchObject({ ok: true, exit: null });
+  const retained = setup.fixture.parent.handoffAdapter.listPrivateExecutions?.().find(value => value.input.sourceWorkspaceRefId === captured.workspace.workspaceId);
+  expect(retained).toBeDefined();
+  // An independently selected destination cannot borrow this capture's native
+  // checkout. The ordinary SOURCE failure path must settle its native loan
+  // before closing the temporary source worker and rolling back its stage.
+  await expect(setup.fixture.parent.handoffAdapter.prepare({ ...retained!.input,
+    targetWorkspaceRefId: setup.targetRef.id, targetRootPath: setup.targetPath }))
+    .rejects.toMatchObject({ code: 'workspace_private_checkout_required' });
+  expect(setup.fixture.parent.handoffAdapter.resolvePrivateExecution?.({ operationId: retained!.input.operationId })).toBeNull();
+  await expect(native.identity.run('member', () => readFile(join(captured.workspace.rootPath, 'returned.txt'))))
+    .rejects.toMatchObject({ code: 'ENOENT' });
+  expect((await readProjectAccountRows({ credentials: setup.credentials, serverId: setup.installed.homeServerIdentityId,
+    selection: { kinds: ['workspace-ref'] } })).workspaceRefs.some(ref => ref.id === captured.workspace.workspaceId)).toBe(false);
+  // A real member filesystem refusal after bytes arrived must roll back the
+  // materializer's stage and release the existing capture, before publication.
+  const rootsBeforeFailure = await native.identity.run('member', () => readdir(setup.member.workspaceRoot));
+  executionBoundary.returnPromotionFailureRoot = setup.member.workspaceRoot;
+  await expect(setup.fixture.parent.workspaceSync.captureSessionWorkspaceReturn!({ sessionId }, context))
+    .rejects.toMatchObject({ code: 'EACCES' });
+  executionBoundary.returnPromotionFailureRoot = '';
+  expect(setup.fixture.parent.handoffAdapter.listPrivateExecutions?.().filter(value => value.execution.onSourceRootReleased)).toEqual([]);
+  expect(await native.identity.run('member', () => readdir(setup.member.workspaceRoot))).toEqual(rootsBeforeFailure);
+}, 240_000); // The existing native composition lane's budget covers two worker preparations.
 
 it.skipIf(process.platform !== 'linux').each(['requester', 'installed'] as const)('settles the normal SOURCE list after %s lifecycle Actions through two daemon compositions', async owner => {
   executionBoundary.member = false;

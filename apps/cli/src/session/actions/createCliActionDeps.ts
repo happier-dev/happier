@@ -5,7 +5,8 @@ import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { refreshActiveApprovalProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
 import { createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { sessionProjectFilesOpenChildrenV1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
 import { prepareCliProjectSourceTeamMove } from './projectSourceTeamMove';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -35,6 +36,12 @@ import { createCliSessionActionTransport } from '@/session/transport/cliActionTr
 import { createCliAgentStartContext } from './cliActionDeps/agentStart';
 import { createCliSessionStatusActionDeps } from '@/session/services/cliStatusActionDeps';
 import { createCliSessionHandoffActionDeps } from '@/session/handoff/cliActionDeps';
+import { SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
+import type { SessionWorkspaceReturnInputV1 } from '@happier-dev/protocol/actions/specs/session/projectFilesReturn';
+import { prepareEnrolledWorkspaceReturnChildren, prepareEnrolledWorkspaceReturn } from '@/workspaces/sync/enrolledWorkspaceReturn';
+import { projectManagedWorkspaceReturnFailure } from '@/workspaces/sync/managedWorkspaceReturn';
+import { readActionPrincipalAccountId } from './actionPrincipalAccount';
+import { readScmAccountScope, runWithScmAccountScope } from '@/scm/accountScope';
 import { createCliSessionLifecycleActionDeps } from '@/session/actions/lifecycle/cliActionDeps';
 import { createCliAgentCatalogActionDeps } from './cliActionDeps/agentCatalog';
 import { createCliSessionModelActionDeps } from '@/session/services/cliModelActionDeps';
@@ -1051,7 +1058,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const { sessionOpen, sessionFork, sessionContinueWithReplay, sessionRollback, checkpointCodeRollback, sessionCheckpoint, sessionRestore, sessionContinuationInspect, sessionAgentTransition, sessionArchiveSet } = createCliSessionLifecycleActionDeps(params, { callMachineAction, callResolvedSessionRpc, normalizeStringValue, notSupported, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveServerRequestHeaders, resolveTransportForSession, resumeInactiveSessionTransport,
     sessionStop: input => (readEffectiveDeps?.() ?? actionDeps).sessionStop!(input),
   });
-  const { sessionHandoffTargetReplacementApprovalPreflight, sessionHandoffStart, sessionHandoffStatusGet, sessionHandoffPrepareTargetResume } = createCliSessionHandoffActionDeps(params, { callMachineAction, notSupported, resolveTransportForSession });
+  const { sessionHandoffTargetReplacementApprovalPreflight, sessionHandoffStart, sessionHandoffStatusGet, sessionHandoffPrepareTargetResume, sessionWorkspaceReturn } = createCliSessionHandoffActionDeps(params, { callMachineAction, notSupported, resolveTransportForSession });
   const { sessionStatusGet, sessionWorkStateGet, sessionWaitIdle } = createCliSessionStatusActionDeps(params, { assertProjectRequesterCurrent, callMachineAction, callResolvedSessionRpc, executionRunActionFailure, homeAccountId, isSameActionHomeId, projectAccountAdmission, projectHomeId, projectRowsAuthority, readServerFeaturesSnapshot, resolveProjectHomeIdentity, resolveServerRequestHeaders, withProjectHome, machinesAgentsList: machineInventoryDeps.machinesAgentsList!, readHomeDomainAction: () => (readEffectiveDeps?.() ?? actionDeps).homeDomainAction });
   const workspaceSyncDeps = createCliWorkspaceSyncActionDeps(params, { actionHomeId, callMachineAction, normalizeStringValue, notSupported, projectHomeAdmission, projectHomeId, readProjectRows, readRecord, resolveProjectHomeIdentity });
 
@@ -1138,6 +1145,29 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...(params.prepareDeploymentTeardown ? { prepareDeploymentTeardown: params.prepareDeploymentTeardown } : {}),
     ...(params.prepareDeploymentEnvironmentCreate ? { prepareDeploymentEnvironmentCreate: params.prepareDeploymentEnvironmentCreate } : {}),
     prepareHostReviewedChildren: async request => {
+      if (request.actionId === SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1 && params.readRequesterWorkspaceScope) {
+        const input = request.input as SessionWorkspaceReturnInputV1;
+        try {
+          const transport = await resolveTransportForSession(input.sessionId, request.context.signal,
+            { actionId: request.actionId, context: request.context }, request.context.expectedSessionAddress);
+          if (!transport.ok) return executionRunActionFailure(transport.code);
+          const prepared = await prepareEnrolledWorkspaceReturnChildren({ sessionId: input.sessionId, machineId: input.machineId,
+            metadata: readTransportSessionOwnerMetadata(transport), activeServerDir: configuration.activeServerDir,
+            actionRequestId: request.context.actionRequestId, readRequesterWorkspaceScope: params.readRequesterWorkspaceScope });
+          if (prepared) return { children: prepared.children, executeAdmittedAction: async ({ context }: Readonly<{ context: ActionExecutorContext }>) => {
+            try {
+              const accountId = readActionPrincipalAccountId(context) ?? readScmAccountScope();
+              const prepare = () => prepareEnrolledWorkspaceReturn({ sessionId: input.sessionId,
+                activeServerDir: configuration.activeServerDir, prepared,
+                ...(context.hostReviewedChild ? { invokeReviewedChild: context.hostReviewedChild.invoke } : {}),
+                ...(context.signal ? { signal: context.signal } : {}) });
+              const result = await (accountId ? runWithScmAccountScope(accountId, prepare,
+                context.externalActionExecutionAuthorization) : prepare());
+              return 'ok' in result ? result : { ok: true as const, result };
+            } catch (error) { return projectManagedWorkspaceReturnFailure(error, 'workspace.return.prepare'); }
+          } };
+        } catch (error) { return projectManagedWorkspaceReturnFailure(error, 'workspace.return.prepare'); }
+      }
       const presetAuthoring = await prepareCliManagedMachinePresetAuthoring(request, {
         credentials: params.credentials, serverUrl: todoHomeBaseUrl,
       });
@@ -1172,7 +1202,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       if (wake) return wake;
       const workflow = await prepareWorkflowRunStartApproval(request, readEffectiveDeps?.() ?? actionDeps);
       if (workflow) return workflow;
-      const prepared = request.actionId === 'projects.service.relocate'
+      let prepared = request.actionId === 'projects.service.relocate'
         ? await prepareProjectServiceMoveChildren({ request: ProjectServiceRelocateInputV1Schema.parse(request.input),
             context: request.context, credentials: params.credentials, serverBaseUrl: todoHomeBaseUrl,
             inspectSetup: workspace => projectDeps.projectDefinitionAction!({ actionId: 'projects.inspect',
@@ -1188,6 +1218,13 @@ export function createCliActionDeps(params: CliActionDepsParams,
             } })
         : await params.prepareHostReviewedChildren?.(request) ?? null;
       if (prepared && 'ok' in prepared) return prepared;
+      if (request.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1) {
+        const input = request.input as SessionSpawnNewInputV2;
+        const children = sessionProjectFilesOpenChildrenV1({ executionTarget: input.executionTarget,
+          sessionPlacement: params.sessionSpawnBirthContext?.sessionPlacement ?? input.sessionPlacement,
+          projectFiles: params.sessionSpawnBirthContext?.projectFiles });
+        if (children.length) prepared = { ...prepared, children: [...(prepared?.children ?? []), ...children] };
+      }
       return prepareDeploymentTargetEnablementRetention(request, { homeId: actionHomeId,
         managedMachineAction: (readEffectiveDeps?.() ?? actionDeps).managedMachineAction }, prepared);
     },
@@ -1574,6 +1611,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     workspaceSyncConflictsList: workspaceSyncDeps.workspaceSyncConflictsList,
     workspaceSyncConflictInspect: workspaceSyncDeps.workspaceSyncConflictInspect,
     sessionHandoffStart,
+    sessionWorkspaceReturn,
     sessionHandoffStatusGet,
     sessionHandoffPrepareTargetResume,
     resolveAgentStartContext,

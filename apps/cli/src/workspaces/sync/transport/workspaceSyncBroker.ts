@@ -1,14 +1,12 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { chmod, mkdir, rm } from 'node:fs/promises';
+import { chmod, mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { connect as netConnect, createServer, type Server, type Socket } from 'node:net';
+import { createServer, type Server, type Socket } from 'node:net';
 import { readWebLatencyTracePoint, timeWebLatencyPhase, withWebLatencyTrace, type WebLatencyTracePoint } from '@/daemon/externalActions/webLatencyTrace';
 
-import {
-  startProcessCustodySecurePipeRelay,
-  type ProcessCustodySecurePipeRelay,
-  type ProcessCustodySecurePipeRelayStart,
-} from '@/subprocess/supervision/processCustodySecurePipeRelay';
+import type { ProcessCustodySecurePipeRelayStart } from '@/subprocess/supervision/processCustodySecurePipeRelay';
+
+import { createOwnerOnlyLocalEndpoint, type OwnerOnlyLocalEndpoint } from '@/utils/ipc/ownerOnlyLocalEndpoint';
 
 import {
   BrokerControlFrameDecoder,
@@ -29,6 +27,17 @@ import {
   WORKSPACE_SYNC_BROKER_MAX_MESSAGE_BYTES,
   WORKSPACE_SYNC_BROKER_MAX_REQUEST_FRAME_BYTES,
 } from './workspaceSyncBrokerProtocol';
+
+export type WorkspaceSyncBrokerEndpoint = OwnerOnlyLocalEndpoint;
+
+/** Workspace-sync broker endpoint: the shared owner-only endpoint under the workspace-sync pipe prefix. */
+export function createWorkspaceSyncBrokerEndpoint(input: Readonly<{
+  endpointPath: string;
+  platform?: NodeJS.Platform;
+  startWindowsRelay?: ProcessCustodySecurePipeRelayStart;
+}>): WorkspaceSyncBrokerEndpoint {
+  return createOwnerOnlyLocalEndpoint({ ...input, windowsPipePrefix: 'happier-workspace-sync-' });
+}
 
 export interface WorkspaceSyncBrokerOpenContext {
   endpointId: string;
@@ -61,76 +70,9 @@ export interface WorkspaceSyncBrokerConfig {
   createEndpoint?: (endpointPath: string) => WorkspaceSyncBrokerEndpoint;
 }
 
-export interface WorkspaceSyncBrokerEndpoint {
-  readonly endpointPath: string;
-  readonly kind: 'unix' | 'named_pipe';
-  connect(path?: string): Socket;
-  listen(server: Server, path?: string): Promise<void>;
-  secure(path?: string): Promise<void>;
-  remove(path?: string): Promise<void>;
-  peerPid(socket: Socket): number | undefined;
-}
 
 export const WORKSPACE_SYNC_BROKER_HANDSHAKE_DEADLINE_MS = 15_000;
 export const MAX_PREAUTHENTICATED_CONTROL_CONNECTIONS = 8;
-
-export function createWorkspaceSyncBrokerEndpoint(input: Readonly<{
-  endpointPath: string;
-  platform?: NodeJS.Platform;
-  startWindowsRelay?: ProcessCustodySecurePipeRelayStart;
-}>): WorkspaceSyncBrokerEndpoint {
-  const isWindows = (input.platform ?? process.platform) === 'win32';
-  const startWindowsRelay = input.startWindowsRelay ?? startProcessCustodySecurePipeRelay;
-  const endpointPath = isWindows && !input.endpointPath.startsWith('\\\\.\\pipe\\')
-    ? `\\\\.\\pipe\\happier-workspace-sync-${Buffer.from(input.endpointPath).toString('hex').slice(-48)}`
-    : input.endpointPath;
-  const peerPids = new WeakMap<Socket, number>();
-  let windowsRelay: ProcessCustodySecurePipeRelay | undefined;
-  return {
-    endpointPath,
-    kind: isWindows ? 'named_pipe' : 'unix',
-    connect: (path = endpointPath) => netConnect(path),
-    listen: async (server, path = endpointPath) => {
-      if (isWindows) {
-        if (windowsRelay) throw new Error('workspace-sync named-pipe relay is already listening');
-        windowsRelay = await startWindowsRelay({
-          pipeName: path,
-          onConnection: (socket, peerPid) => {
-            peerPids.set(socket, peerPid);
-            server.emit('connection', socket);
-          },
-        });
-        return;
-      }
-      await new Promise<void>((resolve, reject) => {
-        const onError = (error: Error) => {
-          server.off('listening', onListening);
-          reject(error);
-        };
-        const onListening = () => {
-          server.off('error', onError);
-          resolve();
-        };
-        server.once('error', onError);
-        server.once('listening', onListening);
-        server.listen(path);
-      });
-    },
-    secure: async (path = endpointPath) => {
-      if (!isWindows) await chmod(path, 0o600);
-    },
-    remove: async (path = endpointPath) => {
-      if (isWindows) {
-        const relay = windowsRelay;
-        windowsRelay = undefined;
-        await relay?.close();
-      } else {
-        await rm(path, { force: true });
-      }
-    },
-    peerPid: (socket) => peerPids.get(socket),
-  };
-}
 
 type PendingStream = {
   requestId: string;

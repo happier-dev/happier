@@ -159,6 +159,29 @@ function workerCopySnapshot(sourceRootPath = '/source', targetRootPath = '/targe
 }
 
 describe('WorkspaceSyncRelationshipOwner', () => {
+  it.each([undefined, 'project_files'] as const)('persists and reopens one native endpoint with %s purpose without collapsing it into the host root', async purpose => {
+    const harness = createHarness({}, { workspaceRefs: [{ id: 'source_ref', projectKey: 'accepted-project', serverId: 'server_a',
+      machineId: 'machine_source', rootPath: '/source', createdAtMs: 1 }], relationships: [] });
+    const { targetMachineId: _targetMachineId, ...hostInput } = createInput;
+    const input = { ...hostInput, targetRootPath: createInput.sourceRootPath,
+      sourceWorkspaceRefId: 'source_ref', targetWorkspaceRefId: 'target_ref', ...(purpose ? { purpose } : {}),
+      targetManaged: { managedId: 'guest', controller: { machineId: 'machine_source', installationId: 'install' } } };
+    const first = await harness.owner.prepareCreate(input);
+    await first.commit();
+    const snapshot = parseProjectAccountSnapshotV1(harness.read());
+    expect(snapshot.workspaceRefs).toHaveLength(2);
+    expect(snapshot.workspaceRefs.find(ref => ref.id === first.relationship.betaWorkspaceRefId)).toMatchObject({
+      v: 2, kind: 'managed', managedId: 'guest', controller: input.targetManaged.controller,
+      projectKey: purpose === 'project_files' ? 'accepted-project' : 'target_ref',
+    });
+    expect(first.relationship).not.toHaveProperty('provenance');
+    const reopened = createHarness({}, harness.read());
+    const reused = await reopened.owner.prepareCreate(input);
+    expect(reused.reused).toBe(true);
+    expect(reused.relationship).toEqual(first.relationship);
+    expect(parseProjectAccountSnapshotV1(reopened.read()).workspaceRefs).toHaveLength(2);
+    await reused.commit();
+  });
   it('persists the endpoint identities already prepared by an admitted native Open', async () => {
     const harness = createHarness();
     const prepared = await harness.owner.prepareCreate({

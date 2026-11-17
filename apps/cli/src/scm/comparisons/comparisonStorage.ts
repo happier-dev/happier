@@ -7,6 +7,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { ScmComparisonSchema, ScmComparisonFileSchema } from '@happier-dev/protocol/scm/comparison';
 import type { ScmComparisonFile } from '@happier-dev/protocol/scm/comparison';
 import { ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol';
 import { writeFileAtomically } from '@/utils/fs/writeJsonAtomic';
 import { projectCapturedComparisonFileIndex } from './projectCapturedComparison';
 import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';
@@ -29,6 +30,14 @@ export function resolveStoredScmComparisonEndpointsPath(comparisonPath: string):
 export const StoredScmComparisonSchema = z.strictObject({
   sessionId: z.optional(z.string()), metadata: ScmDiffSummaryMetadataSchema, comparison: ScmComparisonSchema,
   retainedRefs: z.array(z.strictObject({ ref: z.string(), oid: z.string() })),
+  workspaceReturn: z.optional(z.strictObject({
+    baselineAvailable: z.boolean(),
+    entries: z.array(z.strictObject({ path: z.string(),
+      expectedDestination: WorkspaceSyncEntryExpectationV1Schema,
+      selectedExpectation: WorkspaceSyncEntryExpectationV1Schema,
+      conflicts: z.array(z.strictObject({ path: z.string(), code: z.literal('both_changed') })),
+    })),
+  })),
 });
 export type StoredScmComparison = z.infer<typeof StoredScmComparisonSchema>;
 export type StoredScmComparisonReader = Readonly<{

@@ -33,6 +33,22 @@ const otherService = {
   localId: 'subscription',
 } as const;
 
+it('uses an explicit finite Account selection without replacing the default, and retires it after disposal', async () => {
+  const { owner, store } = createOwner();
+  const signal = new AbortController().signal;
+  const selected = await owner.prepareOperationSelection!({ purpose, serviceRefs: [service],
+    account: { service, accountId: 'work' }, operationId: 'explicit-clone', signal });
+  expect(await selected.owner.getBinding({ purpose, serviceRefs: [service], signal })).toMatchObject({ account: { accountId: 'work' } });
+  const request = { purpose, serviceRefs: [service], signal,
+    request: { kind: 'environment' as const, keys: ['TOKEN'] } };
+  expect(await selected.owner.materialize(request)).toMatchObject({ env: { TOKEN: 'token:work' } });
+  expect(store.current()).toEqual({ v: 1, bindings: [] });
+  selected.dispose();
+  await expect(selected.owner.materialize(request)).rejects.toThrow();
+  await expect(owner.prepareOperationSelection!({ purpose, serviceRefs: [service],
+    account: { service: otherService, accountId: 'foreign' }, operationId: 'wrong-service', signal })).rejects.toThrow();
+});
+
 const testAuthentication = PluginConnectedAccountAuthenticationV2Schema.parse({ defaultModeId: 'token', modes: [{
   id: 'token', kind: 'manual', outcomeReconciliation: 'none',
   fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }],

@@ -146,7 +146,8 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
     input.signal.throwIfAborted();
     return { requesterIdentity: selected, memberIdentity, workingDirectory, agentIsolation,
       materialTarget: { runtimeHome: launch.runtimeHome, ...(memberIdentity ? { memberIdentity } : {}) },
-      ...(material ? { material, connectedAccounts: material.connectedAccounts } : {}),
+      ...(material ? { material, connectedAccounts: material.connectedAccounts,
+        prepareConnectedAccountOperationSelection: material.prepareConnectedAccountOperationSelection } : {}),
       async dispose() {
         target = undefined;
         // The caller's native process custody has settled before this lease releases.

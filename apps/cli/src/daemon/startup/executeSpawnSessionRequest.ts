@@ -1,17 +1,30 @@
 import { randomUUID } from 'node:crypto';
+import type { OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
+import { invokeReviewedProjectOpen } from '@/workspaces/activation/invokeReviewedProjectOpen';
 import { createMemberAgentCliLaunchContext } from '@/plugins/runtime/exec/system/tools/agentCliBinding';
 import { NativeSessionDirectoryResultSchema } from '@/rpc/handlers/fileSystem/sessionDirectoryEffect';
 import { prepareAdmittedScmEffect } from '@/workspaces/activation/workspaceEffect';
+import { deriveScmHostingProviderConnectedAccountPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import type { PersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
 import { configuration } from '@/configuration';
+import { resolveDefaultScmBackendRegistry } from '@/scm/scmBackendCatalog';
+import { prepareManagedSessionProjectFilesSeed, prepareManagedSessionProjectFilesSync } from './prepareManagedSessionProjectFilesSync';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { deliverSessionTargetLaunch, observeSessionTargetRunnerExit, prepareSessionTargetPlacement, projectSessionTargetLaunchFailure, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import { SESSION_TARGET_PLACEMENT_ENV_KEY, type SessionTargetPlacement } from '@/subprocess/supervision/sessionTargetRelay';
 import { registerSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { persistSessionProjectFilesOrigin } from '@/daemon/sessions/sessionProjectFilesOrigin';
+import type { SessionProjectFilesOriginV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 import { createSessionInitialAccessFile } from '../spawn/sessionInitialAccessFile';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol';
+import type {
+    ConnectedServiceBindingsV2,
+    QualifiedConnectedAccountPurposeBindingV1,
+    QualifiedConnectedAccountPurposeV1,
+} from '@happier-dev/protocol';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import {
@@ -184,6 +197,10 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     credentials: SpawnCredentials;
     /** The managed driver's Session-target custody (daemon-held; see `managedTargetPlacement`). */
     openManagedSessionTarget?: OpenManagedSessionTarget;
+    /** Current daemon relationship owner, resolved when target files are prepared. */
+    resolveManagedProjectFilesSync?: () => import('./createProductionDaemonWorkspaceSyncRuntime').ProductionDaemonWorkspaceSyncRuntime['prepareManagedProjectFilesSync'] | null;
+    resolveManagedProjectFilesSeed?: () => import('./createProductionDaemonWorkspaceSyncRuntime').ProductionDaemonWorkspaceSyncRuntime['prepareManagedProjectFilesSeed'] | null;
+    resolveManagedProjectFilesBaseline?: () => import('./createProductionDaemonWorkspaceSyncRuntime').ProductionDaemonWorkspaceSyncRuntime['readManagedProjectFilesBaseline'] | null;
     deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     api: SpawnApi;
     connectedServicesMaterializationBaseDir: string;
@@ -945,6 +962,9 @@ export async function executeSpawnSessionRequest(
             let settleSessionTargetRunnerExit: () => void = () => undefined;
             const sessionTargetRunnerExit = new Promise<void>(resolve => { settleSessionTargetRunnerExit = resolve; });
             let sessionTarget: Extract<Awaited<ReturnType<typeof prepareSessionTargetPlacement>>, { ok: true }> | undefined;
+            let sessionTargetWorkspace: Readonly<{ hostRoot: string; targetRoot: string }> | undefined;
+            let sessionTargetBaseline: WorkspaceManifest | undefined;
+            let sessionTargetOrigin: SessionProjectFilesOriginV1 | undefined;
             const sessionTargetKey = optionsWithProviderIsolation.spawnNonce ?? normalizedExistingSessionId ?? randomUUID();
 
 
@@ -1141,6 +1161,87 @@ export async function executeSpawnSessionRequest(
             const managedPurposes = managedPurposeBindings.map(
                 (binding) => binding.purpose,
             );
+            const projectFiles =
+                effectiveOptionsForSpawn.managedTargetPlacement?.projectFiles
+                ?? launchSessionAttachPayload?.snapshot?.ownerMetadata?.system
+                    ?.sessionCreationCorrespondenceV1?.recipe.projectFiles;
+            const projectFilesGitAccount = projectFiles?.kind === 'git_clone'
+                ? projectFiles.gitAccount
+                : undefined;
+            let projectFilesScmAuthorization: Exclude<
+                ReturnType<
+                    typeof deriveScmHostingProviderConnectedAccountPurposeAuthorization
+                >,
+                null
+            > | undefined;
+            let projectFilesPurposeBindingSnapshot:
+                | Readonly<{
+                    purposes: readonly QualifiedConnectedAccountPurposeV1[];
+                    bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+                }>
+                | undefined;
+            if (projectFilesGitAccount && projectFiles?.kind === 'git_clone') {
+                const providers = (
+                    appliedPluginRuntimeLease.registry.contributes
+                        .scmHostingProviders ?? []
+                ).filter((provider) => (
+                    provider.pluginId !== undefined
+                    && `${provider.pluginId}/${provider.definition.id}`
+                        === projectFiles.source.provider.id
+                ));
+                const authorizations = providers
+                    .map(
+                        deriveScmHostingProviderConnectedAccountPurposeAuthorization,
+                    )
+                    .filter((authorization) => authorization !== null);
+                const [authorization] = authorizations;
+                const signal = preparationSignal
+                    ?? params.signal
+                    ?? new AbortController().signal;
+                if (
+                    authorizations.length !== 1
+                    || !authorization
+                    || !params.resolveManagedPurposeBindingIntentSelection
+                ) {
+                    return await refuseSpawn({
+                        type: 'error',
+                        errorCode:
+                            SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                        errorMessage:
+                            'connected_account_session_binding_unavailable',
+                    });
+                }
+                try {
+                    const selection =
+                        await params.resolveManagedPurposeBindingIntentSelection({
+                            purpose: authorization.purpose,
+                            target: {
+                                kind: 'account',
+                                account: projectFilesGitAccount,
+                            },
+                            serviceRefs: authorization.serviceRefs,
+                            signal,
+                        });
+                    if (!await selection.isCurrent(signal)) {
+                        throw new Error(
+                            'project_files_connected_account_selection_unavailable',
+                        );
+                    }
+                    projectFilesScmAuthorization = authorization;
+                    projectFilesPurposeBindingSnapshot = {
+                        purposes: [authorization.purpose],
+                        bindings: [selection.binding],
+                    };
+                } catch {
+                    return await refuseSpawn({
+                        type: 'error',
+                        errorCode:
+                            SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                        errorMessage:
+                            'connected_account_session_binding_unavailable',
+                    });
+                }
+            }
             let sessionPurposeBindingSnapshot:
                 ReturnType<
                     typeof composeConnectedAccountSessionPurposeBindingSnapshot
@@ -1156,6 +1257,9 @@ export async function executeSpawnSessionRequest(
                                 purposes: managedPurposes,
                                 bindings: managedPurposeBindings,
                             }]
+                            : []),
+                        ...(projectFilesPurposeBindingSnapshot
+                            ? [projectFilesPurposeBindingSnapshot]
                             : []),
                     ]);
             } catch {
@@ -1391,6 +1495,59 @@ export async function executeSpawnSessionRequest(
             if (sessionTarget && effectiveOptionsForSpawn.managedTargetPlacement) {
                 // The launch step: this Session's own Agent material and CLI into the target, then the placement to the runner.
                 try {
+                    const prepareCloneAccountSelection =
+                        requesterRuntime?.connectedAccountsOwner
+                            .prepareOperationSelection;
+                    if (
+                        projectFilesGitAccount
+                        && projectFilesScmAuthorization
+                        && !prepareCloneAccountSelection
+                    ) {
+                        throw new Error(
+                            'project_files_connected_account_selection_unavailable',
+                        );
+                    }
+                    const cloneAccountSelection = projectFilesGitAccount
+                        && projectFilesScmAuthorization
+                        && prepareCloneAccountSelection
+                        ? await prepareCloneAccountSelection({
+                            ...projectFilesScmAuthorization,
+                            account: projectFilesGitAccount,
+                            operationId: sessionTarget.sessionKey,
+                            signal: sessionTarget.signal,
+                        })
+                        : undefined;
+                    try {
+                    const retainedOrigin = launchSessionAttachPayload?.snapshot?.ownerMetadata?.system?.sessionCreationCorrespondenceV1?.recipe.projectFilesOrigin;
+                    sessionTargetOrigin = retainedOrigin;
+                    const managedPlacement = { ...effectiveOptionsForSpawn.managedTargetPlacement,
+                        ...(retainedOrigin ? { projectFilesSourceWorkspace: retainedOrigin.sourceWorkspace } : {}) };
+                    const targetPreparationSignal = sessionTarget.signal;
+                    const projectFilesCustody = () => {
+                        if (!requesterAccountId) throw Object.assign(new Error('Requester Sync custody is unavailable'), { code: 'project_requester_authority_unavailable' });
+                        return { targetManaged: { managedId: managedPlacement.managedId,
+                            ...(effectiveOptionsForSpawn.managedCreation?.controller
+                                ? { controller: effectiveOptionsForSpawn.managedCreation.controller } : {}) },
+                            requesterAccountId, credentials: params.credentials,
+                            openProject: async (request: OpenProjectInputV1) => {
+                                const result = await invokeReviewedProjectOpen({ request,
+                                    role: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target.role,
+                                    invokeReviewedChild: effectiveOptionsForSpawn.spawnActionContext?.hostReviewedChild?.invoke,
+                                    signal: targetPreparationSignal });
+                                if (!result.ok) throw Object.assign(new Error(result.error, { cause: result }), {
+                                    code: result.errorCode, ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+                                    ...(result.details !== undefined ? { details: result.details } : {}),
+                                    ...(result.effectAttempted !== undefined ? { effectAttempted: result.effectAttempted } : {}),
+                                });
+                                return result.opened;
+                            },
+                            ...(managedPlacement.projectFilesSourceWorkspace ? { sourceWorkspace: managedPlacement.projectFilesSourceWorkspace } : {}),
+                            ...(effectiveOptionsForSpawn.spawnActionContext ? { actionContext: effectiveOptionsForSpawn.spawnActionContext } : {}),
+                            ...(requesterRuntime ? { bootstrap: requesterRuntime.bootstrap } : {}),
+                            ...(preparedAgentIsolationIdentity.requesterNativeIdentity
+                                ? { sourceExecutionIdentity: preparedAgentIsolationIdentity.requesterNativeIdentity.requesterIdentity,
+                                    sourceHomeServerIdentityId: preparedAgentIsolationIdentity.requesterNativeIdentity.requesterIdentity.homeServerIdentityId } : {}) };
+                    };
                     const launch = await deliverSessionTargetLaunch({ target: sessionTarget.target, sessionKey: sessionTarget.sessionKey,
                         runnerEnvironment: extraEnvForChild, onSessionEnd: sessionTarget.onSessionEnd,
                         agent: catalogAgentId ? { id: catalogAgentId, catalog: appliedPluginRuntimeLease.registry } : null,
@@ -1398,9 +1555,68 @@ export async function executeSpawnSessionRequest(
                         requestAuthMaterializedRoot: connectedServiceAuth?.requestAuthMaterializedRoot ?? null,
                         agentCommand: spawnEnvironment.agentCliLaunchSpec?.command ?? null,
                         workspace: { hostRoot: effectiveOptionsForSpawn.directory, targetRoot: effectiveOptionsForSpawn.managedTargetPlacement.workspaceRoot },
+                        projectFiles: { selection: effectiveOptionsForSpawn.managedTargetPlacement.projectFiles,
+                            activeServerDir: configuration.activeServerDir,
+                            ...(effectiveOptionsForSpawn.projectSetupOperation
+                                ? { onProgress: effectiveOptionsForSpawn.projectSetupOperation.operationProgress.update } : {}),
+                            ...(managedPlacement.projectFilesSource ? { projectFilesSource: managedPlacement.projectFilesSource } : {}),
+                            ...(managedPlacement.projectFilesSourceWorkspace ? { projectFilesSourceWorkspace: managedPlacement.projectFilesSourceWorkspace } : {}),
+                            prepareSource: async request => {
+                                const runtime = params.resolveManagedProjectFilesSeed?.();
+                                if (!runtime) throw Object.assign(new Error('Managed Workspace Sync is unavailable'), { code: 'workspace_sync_unavailable' });
+                                const prepared = await prepareManagedSessionProjectFilesSeed({ ...projectFilesCustody(), ...request, runtime,
+                                    sourceRootPath: request.sourceWorkspace.rootPath });
+                                return { ...prepared, targetRootPath: prepared.targetWorkspace.rootPath };
+                            },
+                            prepareSync: async request => {
+                                const runtime = params.resolveManagedProjectFilesSync?.();
+                                if (!runtime) throw Object.assign(new Error('Managed Workspace Sync is unavailable'), { code: 'workspace_sync_unavailable' });
+                                return await prepareManagedSessionProjectFilesSync({ ...projectFilesCustody(), ...request, runtime });
+                            },
+                            onWorkspaceSeed: (baseline, targetWorkspace, preparedContentPolicyDigest) => {
+                                sessionTargetBaseline = baseline;
+                                if (!sessionTargetOrigin && managedPlacement.projectFilesSourceWorkspace && targetWorkspace) {
+                                    const contentPolicyDigest = preparedContentPolicyDigest ?? (managedPlacement.projectFiles?.kind === 'git_clone'
+                                        ? undefined : managedPlacement.projectFiles?.contentPolicy?.policyDigest);
+                                    sessionTargetOrigin = { sourceWorkspace: managedPlacement.projectFilesSourceWorkspace, targetWorkspace,
+                                        ...(contentPolicyDigest ? { contentPolicyDigest } : {}) };
+                                }
+                            },
+                            registry: await resolveDefaultScmBackendRegistry({ pluginRuntimeRegistry: cloneAccountSelection
+                                ? {
+                                    ...appliedPluginRuntimeLease.registry,
+                                    resolveConnectedAccountPurposeBindingOwner: () =>
+                                        cloneAccountSelection.owner,
+                                }
+                                : appliedPluginRuntimeLease.registry,
+                                includeHostingProviders: effectiveOptionsForSpawn.managedTargetPlacement.projectFiles?.kind === 'git_clone' }) },
                         agentCliInstall: { env: params.processEnv ?? process.env },
                         signal: sessionTarget.signal });
+                    sessionTargetWorkspace = launch.workspace;
+                    if (!retainedOrigin && sessionTargetOrigin && launchExistingSessionId && launchSessionAttachPayload) {
+                        const retained = await persistSessionProjectFilesOrigin({ credentials: params.credentials,
+                            sessionId: launchExistingSessionId, origin: sessionTargetOrigin });
+                        sessionTargetOrigin = retained.origin;
+                        const snapshot = retained.snapshot;
+                        if (snapshot.mode !== 'owner') throw Object.assign(new Error('Private Project files origin is unavailable'), { code: 'metadata_privacy_upgrade_required' });
+                        launchSessionAttachPayload = { ...launchSessionAttachPayload, snapshot: {
+                            ...launchSessionAttachPayload.snapshot, ...snapshot.value, metadataVersion: snapshot.metadataVersion,
+                            agentStateVersion: snapshot.agentStateVersion, metadataLayoutVersion: snapshot.metadataLayoutVersion,
+                            ownerMetadataEnvelope: snapshot.ownerMetadataEnvelope,
+                        } };
+                    }
+                    if (!sessionTargetBaseline && sessionTargetOrigin?.targetWorkspace.kind === 'managed' && launchExistingSessionId) {
+                        sessionTargetBaseline = await params.resolveManagedProjectFilesBaseline?.()?.({
+                            sessionId: launchExistingSessionId, targetWorkspace: sessionTargetOrigin.targetWorkspace, credentials: params.credentials,
+                            contentPolicyDigest: sessionTargetOrigin.contentPolicyDigest
+                                ?? (managedPlacement.projectFiles?.kind === 'git_clone' ? undefined : managedPlacement.projectFiles?.contentPolicy?.policyDigest),
+                            signal: sessionTarget.signal,
+                        }) ?? undefined;
+                    }
                     extraEnvForChild[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({ ...sessionTarget.placement, launch } satisfies SessionTargetPlacement);
+                    } finally {
+                        cloneAccountSelection?.dispose();
+                    }
                 } catch (error) {
                     return await refuseSpawn(projectSessionTargetLaunchFailure(error));
                 }
@@ -1616,14 +1832,14 @@ export async function executeSpawnSessionRequest(
             });
             if (spawnResult.type === 'success') diagnosticSessionId = spawnResult.sessionId || diagnosticSessionId;
             if (spawnResult.type === 'success' && spawnResult.sessionId && sessionTarget?.placement.primarySocketPath
-                && effectiveOptionsForSpawn.managedTargetPlacement) {
+                && sessionTargetWorkspace) {
                 // Files/Git for this Session use its target workspace through the primary Agent's holder.
                 const target = sessionTarget.target;
                 const signal = sessionTarget.signal;
                 registerSessionTargetWorkspace({ sessionId: spawnResult.sessionId, lifetime: signal, primarySocketPath: sessionTarget.placement.primarySocketPath,
                     target: { id: target.id, holderPath: target.holderPath, helperPath: target.helperPath, socketDirectory: target.socketDirectory,
                         exec: command => target.exec(command, signal), openChannel: argv => target.openChannel(argv, signal) },
-                    workspace: { hostRoot: effectiveOptionsForSpawn.directory, targetRoot: effectiveOptionsForSpawn.managedTargetPlacement.workspaceRoot } });
+                    workspace: sessionTargetWorkspace, baseline: sessionTargetBaseline });
             }
             recordPreparationPhase('runner_webhook');
             if (spawnResult.type === 'success' && spawnResult.sessionId && !launchExistingSessionId && managedAllocation && managedDirectoryOwner) {

@@ -36,7 +36,6 @@ func TestDecodeWorkspaceConfinedReadRequestIsClosedAndBounded(t *testing.T) {
 	invalid := []string{
 		`{"v":2,"rootPath":"C:\\work","relativePath":"a","maxBytes":1}`,
 		`{"v":1,"rootPath":"C:\\work","relativePath":"a","maxBytes":0}`,
-		`{"v":1,"rootPath":"C:\\work","relativePath":"a","maxBytes":1048577}`,
 		`{"v":1,"rootPath":"C:\\work","relativePath":"a","maxBytes":1,"extra":true}`,
 		`{"v":1,"v":1,"rootPath":"C:\\work","relativePath":"a","maxBytes":1}`,
 		`{"v":1,"rootPath":"C:\\work","relativePath":"a","maxBytes":1} {}`,
@@ -46,6 +45,13 @@ func TestDecodeWorkspaceConfinedReadRequestIsClosedAndBounded(t *testing.T) {
 		if _, err := decodeWorkspaceConfinedReadRequest([]byte(encoded)); err == nil {
 			t.Fatalf("accepted invalid read request: %s", encoded)
 		}
+	}
+}
+
+func TestWorkspaceConfinedReadAcceptsTransferSizeBeyondPreview(t *testing.T) {
+	request, err := decodeWorkspaceConfinedReadRequest([]byte(`{"v":1,"rootPath":"C:\\work","relativePath":"large.bin","maxBytes":1048577}`))
+	if err != nil || request.maxBytes != 1048577 {
+		t.Fatalf("transfer read must retain its caller-owned size: %#v %v", request, err)
 	}
 }
 

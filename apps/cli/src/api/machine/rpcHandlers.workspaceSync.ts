@@ -44,6 +44,12 @@ export type WorkspaceSyncRpcController = Readonly<{
 }>;
 
 export type MachineWorkspaceSyncRpcService = Readonly<{
+  captureSessionWorkspaceReturn?(input: Readonly<{ sessionId: string }>, context?: RpcHandlerContext): Promise<import('@happier-dev/protocol/actions/specs/session/projectFilesReturn').SessionWorkspaceReturnCaptureResultV1>;
+  /** Project Open executes an admitted native destination in its retained namespace. */
+  materializeManagedProjectTarget?(input: import('@happier-dev/protocol/projects/openProjectV1').OpenProjectInputV1,
+    context: RpcHandlerContext): Promise<import('@happier-dev/protocol/projects/openProjectV1').OpenProjectResultV1>;
+  /** Existing requester placement observation, without acquiring a Sync controller. */
+  readRequesterWorkspaceScope?(context?: RpcHandlerContext): Promise<import('@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas').WorkspaceSyncRequesterAvailabilityV1>;
   hasRetainedRecoveryAdmission?: WorkspaceSyncTargetAuthority['hasRetainedRecoveryAdmission'];
   /** One requester Account admission for each controller call. The returned
    * view shares the installed controller and its retained native jobs. */
@@ -134,6 +140,7 @@ export function resolvePrivateWorkspaceSyncTargetExecution(
   }
   const { input, execution } = capture;
   const identity = execution.executionIdentity;
+  if (!execution.nativeSync && identity?.kind !== 'isolated') return { kind: 'no_private_capture' };
   const home = routing.accountServerId;
   const workspaceRefId = admission.targetWorkspaceRefId;
   const matches = identity?.kind === 'isolated'
@@ -188,6 +195,21 @@ function requireEmptyRequest(raw: unknown): void {
   if (raw === undefined || raw === null) return;
   if (typeof raw === 'object' && !Array.isArray(raw) && Object.keys(raw).length === 0) return;
   throw Object.assign(new Error('Invalid workspace sync request'), { code: 'invalid_request' });
+}
+
+function projectNativeTargetContext(context: RpcHandlerContext | undefined): RpcHandlerContext | undefined {
+  return context && {
+    signal: context.signal,
+    localActionContext: context.localActionContext,
+    callerInputAuthorization: context.callerInputAuthorization,
+    machineAdmission: context.machineAdmission,
+    callerAuthority: context.callerAuthority,
+    sessionActionOrigin: context.sessionActionOrigin,
+    callerInputConstraints: context.callerInputConstraints,
+    workspaceSyncTargetRouting: context.workspaceSyncTargetRouting,
+    workspaceSyncSourceWriterTargetRouting: context.workspaceSyncSourceWriterTargetRouting,
+    verifyMachineAdmissionCurrent: context.verifyMachineAdmissionCurrent,
+  };
 }
 
 function createWorkspaceSyncRpcRegistrar(registrar: RpcHandlerRegistrar): RpcHandlerRegistrar {
@@ -433,7 +455,7 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
     const request = HandoffTargetReplacementPreflightV1Schema.parse(raw);
     const native = privateNativeTarget(context);
     return HandoffTargetReplacementPreflightResultV1Schema.parse(
-      await (native ? native.preflightHandoffTargetReplacementHere(request, signal(context?.signal))
+      await (native ? native.preflightHandoffTargetReplacementHere(request, signal(context?.signal), projectNativeTargetContext(context))
         : service().preflightHandoffTargetReplacement(request, signal(context?.signal), context)),
     );
   });
@@ -447,7 +469,7 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
       await bind(request.owner.relationshipId);
     }
     return WorkspaceSyncTargetBootstrapPrepareResultV1Schema.parse(
-      await (native ? native.prepareBootstrapHere(request, signal(context?.signal))
+      await (native ? native.prepareBootstrapHere(request, signal(context?.signal), projectNativeTargetContext(context))
         : service().prepareBootstrapAtTarget(request, signal(context?.signal), context)),
     );
   });
@@ -455,7 +477,7 @@ export function registerMachineWorkspaceSyncRpcHandlers(params: Readonly<{
     const request = WorkspaceSyncTargetBootstrapReleaseV1Schema.parse(raw);
     const native = privateNativeTarget(context);
     return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(
-      await (native ? native.releaseBootstrapHere(request, signal(context?.signal))
+      await (native ? native.releaseBootstrapHere(request, signal(context?.signal), projectNativeTargetContext(context))
         : service().releaseBootstrapAtTarget(request, signal(context?.signal), context)),
     );
   });

@@ -13242,6 +13242,10 @@ rather than adding optional native locators to Machine V1 references: old reader
 must reject an unsupported target instead of treating its guest path as a host path.
 Return review consumes the existing SCM comparison owner and carries file-content
 changes only; Git internals/history and ignored files remain in the sandbox.
+The current SCM selection returns excluded paths separately from copied content,
+including known paths from the immutable copied baseline, so an ignored omission
+cannot become a host deletion during Return. These transfer facts do not change
+the acquisition policy or retain ignored file contents.
 Both-changed paths preserve the host by default, with explicit conflict replacement.
 Runtime transfer and loaded journey evidence remain separate from acceptance of
 the authored choice.

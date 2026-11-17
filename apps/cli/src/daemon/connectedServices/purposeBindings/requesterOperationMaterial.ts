@@ -9,6 +9,7 @@ import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptio
 import { resolveQualifiedConnectedAccountAtomicV4Negotiation } from '@/api/client/qualifiedConnectedAccountApi';
 import { fetchServerFeaturesSnapshot, readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { projectConnectedAccountPurposeBindingOwner } from '@/plugins/runtime/composition/connectedAccountAssembly';
+import type { ConnectedAccountPurposeBindingOwner } from './ConnectedAccountPurposeBindingOwner';
 import { logger } from '@/ui/logger';
 
 /** The parent admits private requester Account custody once before this owner.
@@ -154,6 +155,20 @@ export async function prepareRequesterOperationMaterial(input: Readonly<{
     materialize: async request => runConnectedAccountRead(request.signal,
       (owner, signal) => owner.materialize({ ...request, signal })),
   };
+  const prepareConnectedAccountOperationSelection = async (input: Parameters<ConnectedAccountPurposeBindingOwner['prepareOperationSelection']>[0]) => {
+    const signal = operationSignal(input.signal);
+    try {
+      const owner = await readConnectedAccounts(signal);
+      if (!owner.prepareOperationSelection) throw unavailable();
+      const selection = await owner.prepareOperationSelection({ ...input, signal });
+      try { await assertCurrent(signal); }
+      catch (error) { selection.dispose(); throw error; }
+      return selection;
+    } catch (error) {
+      try { await dispose(); } catch { /* Keep the original owner refusal; dispose reports its fixed diagnostic. */ }
+      throw error;
+    }
+  };
   return { connectedAccounts, readRuntime, readConnectedAccounts, credentials: account.credentials,
-    operationContext, isCurrent, dispose };
+    prepareConnectedAccountOperationSelection, operationContext, isCurrent, dispose };
 }

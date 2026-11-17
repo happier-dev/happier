@@ -1,0 +1,92 @@
+import axios from 'axios';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SessionMetadataTuplePatchV1Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import { buildSessionCreationCorrespondence, type SessionProjectFilesOriginV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { persistSessionProjectFilesOrigin, withSessionProjectFilesOrigin } from './sessionProjectFilesOrigin';
+
+// Home HTTP is the boundary. The owner-envelope codec, metadata tuple mutation,
+// stored recipe and copied-base codec are real.
+vi.mock('axios');
+afterEach(() => vi.restoreAllMocks());
+
+const credentials = { token: 'project-files-owner', encryption: null };
+const originalPolicy = { v: 1 as const, selection: 'git_worktree' as const, extraIncludePatterns: ['.env.example'], extraIgnorePatterns: ['private/**'] };
+const originalPolicyDigest = computeWorkspaceSyncPolicyDigest(originalPolicy);
+const correspondence = () => buildSessionCreationCorrespondence({
+  identity: { callerCreationNamespace: 'owner', creationKey: 'copied-base' },
+  recipe: { execution: { machineId: 'controller', directory: { kind: 'path', path: '/source/project' } },
+    organization: { folderId: null, tagIds: [] },
+    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+});
+const origin = (sourceRoot = 'C:\\Users\\person\\project'): SessionProjectFilesOriginV1 => ({
+  sourceWorkspace: { serverId: 'home', workspaceId: 'source', machineId: 'original', rootPath: sourceRoot },
+  targetWorkspace: { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'actual-native-workspace',
+    managedId: 'sandbox', controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/guest/project' },
+  ...{ contentPolicyDigest: originalPolicyDigest },
+});
+
+function createHome() {
+  const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain', storedContentMode: 'plain',
+    metadata: createTestMetadata({ sessionCreationCorrespondenceV1: correspondence() }), agentState: null });
+  let raw = createSessionRecordFixture({ id: 'same-session', encryptionMode: 'plain', metadataLayoutVersion: 1,
+    metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata,
+    metadataVersion: 1, agentState: null, agentStateVersion: 0, share: null });
+  V2SessionByIdResponseSchema.parse({ session: raw });
+  vi.mocked(axios.get).mockImplementation(async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v2/sessions/same-session') return { status: 200, data: { session: raw } };
+    if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+    return { status: 404, data: {} };
+  });
+  vi.mocked(axios.patch).mockImplementation(async (_url, body) => {
+    const patch = SessionMetadataTuplePatchV1Schema.parse(body);
+    if (patch.mode !== 'owner') throw new Error('Expected existing owner tuple');
+    raw = { ...raw, metadata: patch.sharedMetadata.ciphertext, ownerMetadata: patch.ownerMetadata,
+      metadataVersion: raw.metadataVersion + 1, agentState: patch.agentState.ciphertext, agentStateVersion: raw.agentStateVersion + 1 };
+    return { status: 200, data: { success: true, metadataLayoutVersion: 1,
+      sharedMetadata: { version: raw.metadataVersion }, agentState: { version: raw.agentStateVersion } } };
+  });
+  return () => raw;
+}
+
+describe('native copied Project files retained by the existing Session recipe owner', () => {
+  it('includes the actual native address and original source in the existing birth correspondence', () => {
+    const contentPolicyDigest = originalPolicyDigest;
+    const retained = withSessionProjectFilesOrigin(correspondence(), { ...origin(), ...{ contentPolicyDigest }, baseline: { entries: [] } });
+    expect(retained.recipe.projectFilesOrigin?.targetWorkspace).toEqual(origin().targetWorkspace);
+    expect(retained.recipe.projectFilesOrigin?.sourceWorkspace).toEqual(origin().sourceWorkspace);
+    expect(retained.recipe.projectFilesOrigin?.baseline).toBeUndefined();
+    expect(retained.recipe.projectFilesOrigin).toMatchObject({ contentPolicyDigest });
+  });
+
+  it('recovers the original endpoints after the same Session restarts, without reinterpreting the source on its controller', async () => {
+    const readRaw = createHome();
+    const initial = await persistSessionProjectFilesOrigin({ credentials, sessionId: 'same-session', origin: origin() });
+    expect(initial.origin).toEqual(origin());
+    // The launch attach payload can use the exact committed tuple, without
+    // fetching it again or independently resealing Account-owned metadata.
+    expect(initial.snapshot.mode).toBe('owner');
+    if (initial.snapshot.mode !== 'owner') throw new Error('Expected owner launch tuple');
+    expect(initial.snapshot.value.ownerMetadata.system?.sessionCreationCorrespondenceV1?.recipe.projectFilesOrigin).toEqual(origin());
+    expect(initial.snapshot.ownerMetadataEnvelope).toEqual(readRaw().ownerMetadata);
+    // A new call has no daemon registry or in-memory recipe from the first call.
+    const recovered = await persistSessionProjectFilesOrigin({ credentials, sessionId: 'same-session', origin: origin('C:\\other-host\\project') });
+    expect(recovered.origin).toEqual(initial.origin);
+    expect(recovered.origin.sourceWorkspace.rootPath).toBe('C:\\Users\\person\\project');
+    expect(recovered.origin.baseline).toBeUndefined();
+    const envelope = readRaw().ownerMetadata;
+    expect(JSON.stringify(envelope)).toContain('actual-native-workspace');
+    expect(JSON.stringify(envelope)).not.toContain('"machineId":"sandbox"');
+  });
+
+  it('surfaces a metadata write refusal before launch instead of pretending the base was retained', async () => {
+    createHome();
+    vi.mocked(axios.patch).mockResolvedValue({ status: 403, data: { error: 'forbidden' } });
+    await expect(persistSessionProjectFilesOrigin({ credentials, sessionId: 'same-session', origin: origin() }))
+      .rejects.toMatchObject({ response: { status: 403 } });
+  });
+});

@@ -1,7 +1,7 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
-import { ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedMachineActionOutputSchemasV1, ManagedGetOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedPresetAcquireInputV1, ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedMachineActionOutputSchemasV1, ManagedGetOutputV1Schema, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveAccountExecutionRuntime, type AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -9,6 +9,7 @@ import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliAction
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
+import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { ManagedMachineFullV1, ManagedMachineV1, ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -245,12 +246,16 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                     return await openManagedMachineRead({ credentials: controllerCredentials, serverHttpBaseUrl: params.serverBaseUrl,
                         read, ...(signal ? { signal } : {}) });
                 } } : {}),
-                ...(agentStart && executeSessionStart ? { runAgentStart: async ({ machine }) => {
+                ...(agentStart && executeSessionStart ? { runAgentStart: async ({ machine, projectFiles }) => {
                     if (signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
                     if (!machine.enrolledMachineId) {
                         throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
                     }
+                    const selectedProjectFiles = agentStart.sessionPlacement?.projectFiles ?? projectFiles;
                     const result = await executeSessionStart({ ...agentStart,
+                        ...(selectedProjectFiles ? { sessionPlacement: {
+                            ...(agentStart.sessionPlacement ?? { kind: 'managed' as const }), projectFiles: selectedProjectFiles,
+                        } } : {}),
                         executionTarget: { serverId: params.serverId, machineId: machine.enrolledMachineId },
                         managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },
                     }, context, machine);
@@ -325,27 +330,41 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal);
             if (!origin || !params.installationIdentity) throw new ManagedMachineControllerError('controller_unavailable');
             const homeId = origin.serverIdentityId;
-            const response = await axios.post<unknown>(`${params.serverBaseUrl.replace(/\/+$/, '')}/v1/machines/presets/get`,
-                { homeId, id: request.configuredSandbox.presetId },
-                { headers: { Authorization: `Bearer ${(params.controllerCredentials ?? params.credentials).token}` },
-                    ...(request.signal ? { signal: request.signal } : {}) });
-            const read = ManagedMachinePresetGetResultV1Schema.parse(response.data);
-            if (read.kind === 'refused') throw new ManagedMachineControllerError(read.code);
             const controller = { machineId: params.machineId, installationId: params.installationIdentity.installationId };
+            const configured = 'configuredSandbox' in request ? request : undefined;
+            let acquisition: ManagedAcquireInputV1;
+            if ('acquisition' in request) acquisition = ManagedAcquireInputV1Schema.parse(request.acquisition);
+            else {
+                const response = await axios.post<unknown>(`${params.serverBaseUrl.replace(/\/+$/, '')}/v1/machines/presets/get`,
+                    { homeId, id: request.configuredSandbox.presetId },
+                    { headers: { Authorization: `Bearer ${(params.controllerCredentials ?? params.credentials).token}` },
+                        ...(request.signal ? { signal: request.signal } : {}) });
+                const read = ManagedMachinePresetGetResultV1Schema.parse(response.data);
+                if (read.kind === 'refused') throw new ManagedMachineControllerError(read.code);
+                acquisition = ManagedAcquireInputV1Schema.parse({
+                    selection: { kind: 'preset', homeId, id: read.preset.id, revision: read.preset.revision }, controller,
+                    ...(request.lifecycle === 'fresh' ? { creationScopeRetention: { effect: 'delete' as const } }
+                        : { retention: { kind: 'until-delete' as const } }),
+                });
+            }
+            // Preparation selected the carrier. This receiving owner consumes it;
+            // it never chooses another Pool member or a different Home.
+            if (!isManagedPresetAcquireInputV1(acquisition) || acquisition.selection.homeId !== homeId
+                || !sameStrictJsonValue(acquisition.controller, controller)) {
+                throw new ManagedMachineControllerError('controller_unavailable');
+            }
             let sandboxTypeSupportsNativeSandbox = false;
+            let presetProjectFiles: SessionProjectFilesV1 | undefined;
             let nativeSandbox: 'on' | 'off' | undefined;
-            const acquisition = ManagedAcquireInputV1Schema.parse({
-                selection: { kind: 'preset', homeId, id: read.preset.id, revision: read.preset.revision }, controller,
-                ...(request.lifecycle === 'fresh' ? { creationScopeRetention: { effect: 'delete' as const } }
-                    : { retention: { kind: 'until-delete' as const } }),
-            });
             const options: ManagedCreationAcquisitionOptions = {
-                acquisitionMode: 'resource-bound', expectedProvisioner: request.configuredSandbox.provisioner,
-                onLocalSessionPlacement: placement => {
+                acquisitionMode: 'resource-bound',
+                ...(configured ? { expectedProvisioner: configured.configuredSandbox.provisioner } : {}),
+                onLocalSessionPlacement: (placement, projectFiles) => {
+                    presetProjectFiles = projectFiles;
                     sandboxTypeSupportsNativeSandbox = placement.supportsAgentNativeSandbox === true;
                     nativeSandbox = request.resolveNativeSandbox?.(sandboxTypeSupportsNativeSandbox);
                 },
-                ...(request.lifecycle === 'shared-kept' ? { reuseIdle: true } : {}),
+                ...(configured?.lifecycle === 'shared-kept' ? { reuseIdle: true } : {}),
             };
             let consumed = false;
             const result = await invokeHostReviewedChildV1({
@@ -372,6 +391,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 if (!terminal.ok) throw ManagedMachineControllerError.fromActionFailure(terminal, MANAGED_ACQUIRE_ACTION_ID_V1);
             }
             return { managedCreation: { homeId, managedId: accepted.managedId, controller }, sandboxTypeSupportsNativeSandbox,
+                projectFiles: request.projectFiles ?? presetProjectFiles,
                 ...(nativeSandbox ? { nativeSandbox } : {}) };
         }) satisfies AcquireSessionIsolationSandbox,
         acquireWorkflowPlacement: (async request => {
@@ -388,10 +408,11 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             let consumed = false;
             const acquisition = preparation.acquisition;
             const options: ManagedCreationAcquisitionOptions = { requestId: request.start.runId,
-                runCreationContinuation: async ({ machine }) => {
+                runCreationContinuation: async ({ machine, projectFiles }) => {
                     if (!machine.enrolledMachineId) throw new ManagedMachineControllerError('intent_changed');
                     const { workspaceRefId: _previousWorkspace, ...authoredProject } = preparation.project;
                     const result = await executeWorkflow({ ...request.start,
+                        managedProjectFiles: request.start.managedProjectFiles ?? projectFiles,
                         managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },
                     }, { ...authoredProject, machineId: machine.enrolledMachineId }, continuationContext, machine);
                     workflowResult = result.ok ? { ...result, result: WorkflowRunStartResultV1Schema.parse(result.result) } : result;
@@ -435,6 +456,14 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             new Promise<import('@/machines/managed/acquire').ManagedSessionTarget>((resolve, reject) => {
                 void withBoundDriver(params, request.lifetime, async driver => {
                     resolve(await driver.openSessionTarget(request));
+                    if (request.lifetime.aborted) return;
+                    await new Promise(settle => request.lifetime.addEventListener('abort', settle, { once: true }));
+                }).catch(reject);
+            }),
+        openWorkspaceSyncTarget: (request: import('@/machines/managed/acquire').ManagedWorkspaceSyncTargetRequest) =>
+            new Promise<import('@/machines/managed/acquire').ManagedWorkspaceSyncTarget>((resolve, reject) => {
+                void withBoundDriver(params, request.lifetime, async driver => {
+                    resolve(await driver.openWorkspaceSyncTarget(request));
                     if (request.lifetime.aborted) return;
                     await new Promise(settle => request.lifetime.addEventListener('abort', settle, { once: true }));
                 }).catch(reject);

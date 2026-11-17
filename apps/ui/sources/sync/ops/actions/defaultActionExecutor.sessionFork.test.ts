@@ -16,6 +16,8 @@ import {
 import { type ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
 import { type SessionRollbackTarget } from '@happier-dev/protocol/sessions/rollback';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseSocketRpcAuthorizationContext, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -26,7 +28,8 @@ import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/c
 import { createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installSessionActionRpcBoundary, installSessionActionFixture } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
@@ -52,6 +55,10 @@ afterAll(restoreExecutorModuleLoader);
 const { storage } = await import('@/sync/domains/state/storage');
 const { sync } = await import('@/sync/sync');
 const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+const projectFilesReturnData = await import('../sessionProjectFilesReturn');
+const { prepareSessionProjectFilesReturn, applySessionProjectFilesReturn, readSessionProjectFilesReturnComparison,
+  replaceSessionProjectFilesReturnConflict } = projectFilesReturnData;
+const { createScmDiffSummaryOperations } = await import('../scmDiffSummary/generate');
 const { resolveSessionComposerSend } = await import('@/sync/domains/input/slashCommands/resolveSessionComposerSend');
 const { executeSessionComposerResolution } = await import('@/sync/domains/input/slashCommands/executeSessionComposerResolution');
 const { useSessionForkStrategyFlow } = await import('@/sync/domains/sessionFork/useSessionForkStrategyFlow');
@@ -136,12 +143,14 @@ describe('default Action executor Session lifecycle contracts', () => {
     clearDaemonMergedProjectionCacheForTests();
     storage.setState(originalState, true);
     await homes.reset();
-    serverId = await homes.addHome({ name: 'Session Home', serverUrl: 'https://session-actions.test', accountId: 'alice' });
+    serverId = await homes.addHome({ name: 'Session Home', serverUrl: 'https://session-actions.test',
+      serverIdentityId: 'srv_session_actions', accountId: 'alice', currentAccount: true });
     homes.answer(serverId, '/v1/machines', { body: [
       createPlainMachineRowFixture({ id: 'machine_1', accountId: 'alice' }),
       createPlainMachineRowFixture({ id: 'machine_2', accountId: 'alice' }),
     ] });
     connection = await restoreServerAccountForTest({ serverUrl: 'https://session-actions.test', accountId: 'alice',
+      serverIdentityId: 'srv_session_actions', credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }) },
       request: createSessionReadBatchFetchBoundary(homes.request) });
     storage.getState().activateProfileScope({ serverId, accountId: 'alice' });
     await storage.getState().activateSettingsScope({ serverId, accountId: 'alice' });
@@ -507,6 +516,108 @@ describe('default Action executor Session lifecycle contracts', () => {
     const result = await executor().execute(actionId, { sessionId: 'sess_parent', ...(actionId === 'session.handoff' ? { targetMachineId: 'machine_2' } : {}) }, context());
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
     expect(outgoing[0]?.method).toMatch(/^machine_1:/u);
+  });
+
+  it('reviews copied project changes with no-change, conflict and failed data states', () => {
+    const projectReview = projectFilesReturnData.projectSessionProjectFilesReturnReviewState;
+    const projectApply = projectFilesReturnData.projectSessionProjectFilesReturnApplyState;
+    const review = { returnId: 'a'.repeat(64), sessionId: 'sess_parent', repositoryRootPath: '/repo', paths: [] };
+    expect(projectReview?.({ ok: true, result: review })).toEqual({ kind: 'no_changes', review });
+    const changed = { ...review, paths: [{ path: 'src', files: [], conflicts: [{ path: 'src/file.ts', code: 'both_changed' as const }] }] };
+    expect(projectReview?.({ ok: true, result: changed })).toEqual({ kind: 'conflicts', review: changed });
+    const ready = { ...changed, paths: [{ ...changed.paths[0], conflicts: [] }], applyUnavailableReason: 'baseline_unavailable' as const };
+    expect(projectReview?.({ ok: true, result: ready })).toEqual({ kind: 'ready', review: ready });
+    const failure = { ok: false as const, errorCode: 'conflict_changed' as const, error: 'conflict_changed', details: { appliedPaths: ['done.ts'], path: 'src/file.ts' } };
+    expect(projectReview?.(failure)).toEqual({ kind: 'failed', failure });
+    expect(projectApply?.(failure)).toEqual({ kind: 'failed', failure });
+    const applied = { appliedPaths: ['done.ts'], conflicts: [{ path: 'src/file.ts', code: 'both_changed' as const }] };
+    expect(projectApply?.({ ok: true, result: applied })).toEqual({ kind: 'conflicts', result: applied });
+    expect(projectApply?.({ ok: true, result: { ...applied, conflicts: [] } }))
+      .toEqual({ kind: 'applied', result: { ...applied, conflicts: [] } });
+  });
+
+  it('reviews copied project changes through pinned Machine evidence and hydrates exact Session files', async () => {
+    installSession();
+    const originalMachine = storage.getState().machines.machine_2;
+    storage.setState({ machines: { ...storage.getState().machines, machine_2: {
+      ...originalMachine, operationProtocolCapabilities: { scmComparisonIndexPaging: { protocolVersions: [1] } },
+    } }, machineListByServerId: { [serverId]: storage.getState().machineListByServerId[serverId]!.map(machine =>
+      machine.id === 'machine_2' ? { ...machine, operationProtocolCapabilities: { scmComparisonIndexPaging: { protocolVersions: [1] } } } : machine) } });
+    const file = { path: 'file.ts', changeKind: 'modified', binary: false, generated: false, lockfile: false,
+      evidence: { state: 'available' as const, unifiedDiff: '--- host\n+++ sandbox\n@@ -1 +1 @@\n-old\n+new\n' }, occurrences: [] };
+    const comparison = { id: 'a'.repeat(64), source: { kind: 'workingTree' as const },
+      repository: { rootPath: '/original' }, endpoints: { before: 'host', after: 'sandbox' },
+      inventory: { state: 'complete' as const, files: [{ ...file, evidence: { state: 'deferred', reason: 'index_projection' } }], reasons: [] } };
+    daemonAnswer = () => ({ success: true, comparison,
+      metadata: { source: comparison.source, sourceKey: comparison.id }, page: { totalFiles: 2, nextCursor: 1 } });
+    const operations = createScmDiffSummaryOperations();
+    expect(await operations.captureComparison({ machineId: 'machine_2', comparisonSessionId: 'sess_parent', serverId,
+      input: { cwd: '/original', source: comparison.source, comparisonId: comparison.id,
+        projection: { kind: 'index', limit: 7 } } })).toMatchObject({ success: true, comparison });
+    expect(rpcRequests(RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE).at(-1)).toMatchObject({
+      method: `machine_2:${RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE}`,
+      params: { sessionId: 'sess_parent', comparisonId: comparison.id, cwd: '/original', projection: { kind: 'index', limit: 7 } },
+    });
+    const nextComparison = { ...comparison, inventory: { ...comparison.inventory,
+      files: [{ ...comparison.inventory.files[0], path: 'second.ts' }] } };
+    daemonAnswer = () => ({ success: true, comparison: nextComparison,
+      metadata: { source: comparison.source, sourceKey: comparison.id }, page: { totalFiles: 2, nextCursor: null } });
+    expect(await operations.captureComparison({ machineId: 'machine_2', comparisonSessionId: 'sess_parent', serverId,
+      input: { cwd: '/original', source: comparison.source, comparisonId: comparison.id,
+        projection: { kind: 'index', cursor: 1, limit: 7 } } })).toMatchObject({ success: true, comparison: nextComparison });
+    expect(rpcRequests(RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE).at(-1)).toMatchObject({
+      method: `machine_2:${RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE}`, params: { sessionId: 'sess_parent',
+        comparisonId: comparison.id, projection: { kind: 'index', cursor: 1, limit: 7 } },
+    });
+    daemonAnswer = () => ({ success: true, diff: file.evidence.unifiedDiff, capturedFile: file });
+    expect(await operations.readCapturedFile({ machineId: 'machine_2', comparisonSessionId: 'sess_parent', serverId,
+      input: { cwd: '/original', source: comparison.source, comparisonId: comparison.id, path: 'file.ts' } }))
+      .toMatchObject({ success: true, capturedFile: file });
+    expect(rpcRequests(RPC_METHODS.SCM_DIFF_FILE).at(-1)).toMatchObject({
+      method: `machine_2:${RPC_METHODS.SCM_DIFF_FILE}`, params: { cwd: '/original',
+        captured: { sessionId: 'sess_parent', comparisonId: comparison.id, path: 'file.ts' } },
+    });
+  });
+
+  it('reviews copied project changes through the original controller and retains partial return effects', async () => {
+    installSession();
+    const review = { returnId: 'a'.repeat(64), sessionId: 'sess_parent', repositoryRootPath: '/repo', paths: [],
+      applyUnavailableReason: 'baseline_unavailable' as const };
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine_1', installationId: 'return-installation',
+      tokenEpoch: 0, actionId: SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[0], requesterInvocation: 'credentials',
+      execute: () => review });
+    daemonAnswer = () => review;
+    expect(await prepareSessionProjectFilesReturn({
+      sessionId: 'sess_parent', machineId: 'machine_1',
+    }, context())).toEqual({ ok: true, result: review });
+    expect(homes.requests).toContainEqual(expect.objectContaining({ path: `/v1/actions/${SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[0]}` }));
+    const comparison = { success: true, comparison: { id: review.returnId, source: { kind: 'workingTree' },
+      repository: { rootPath: '/repo' }, endpoints: { before: 'host', after: 'sandbox' },
+      inventory: { state: 'complete', files: [], reasons: [] } },
+      metadata: { source: { kind: 'workingTree' }, sourceKey: review.returnId } };
+    daemonAnswer = () => comparison;
+    expect(await readSessionProjectFilesReturnComparison({ machineId: 'machine_1', review }, { ...context(), bypassApprovals: true }))
+      .toEqual({ ok: true, result: comparison });
+    expect(rpcRequests(RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE).at(-1))
+      .toMatchObject({ method: `machine_1:${RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE}`,
+        params: { cwd: '/repo', sessionId: 'sess_parent', comparisonId: review.returnId, source: { kind: 'workingTree' } } });
+    let appliedInput: unknown;
+    let applyAnswer: unknown = { ok: false, errorCode: 'conflict_changed', error: 'conflict_changed', details: { appliedPaths: ['README.md'], path: 'src' } };
+    await answerExternalActionAccountForHome(homes, serverId, { machineId: 'machine_1', installationId: 'return-installation',
+      tokenEpoch: 0, actionId: SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[1], requesterInvocation: 'optional',
+      execute: input => { appliedInput = input; return applyAnswer; },
+      failure: value => { const parsed = ActionExecuteFailureSchema.safeParse(value); return parsed.success ? parsed.data : null; } });
+    daemonAnswer = () => applyAnswer;
+    expect(await applySessionProjectFilesReturn({
+      sessionId: 'sess_parent', machineId: 'machine_1', returnId: 'return-1', paths: ['src'],
+    }, { ...context(), bypassApprovals: true })).toMatchObject({ ok: false, errorCode: 'conflict_changed',
+      details: { appliedPaths: ['README.md'], path: 'src' } });
+    applyAnswer = { appliedPaths: ['src/file.ts'], conflicts: [] };
+    expect(await replaceSessionProjectFilesReturnConflict({ sessionId: 'sess_parent', machineId: 'machine_1',
+      returnId: 'return-1', path: 'src/file.ts' }, { ...context(), bypassApprovals: true }))
+      .toMatchObject({ ok: true, result: { appliedPaths: ['src/file.ts'], conflicts: [] } });
+    expect(appliedInput)
+      .toMatchObject({ paths: ['src/file.ts'], replaceConflictPaths: ['src/file.ts'] });
   });
 
   it('preserves source authority and direct-to-persisted workspace options on handoff', async () => {

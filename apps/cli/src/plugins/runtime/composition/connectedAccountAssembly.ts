@@ -66,13 +66,17 @@ export function projectConnectedAccountPurposeBindingOwner(
 ): Pick<
     ConnectedAccountPurposeBindingOwner,
     'getBinding' | 'materialize' | 'watch' | 'listAccounts'
-> | null {
+> & Partial<Pick<ConnectedAccountPurposeBindingOwner,
+    'prepareOperationSelection'>> | null {
     return owner
         ? Object.freeze({
             getBinding: owner.getBinding,
             materialize: owner.materialize,
             watch: owner.watch,
             listAccounts: owner.listAccounts,
+            ...(owner.prepareOperationSelection ? {
+                prepareOperationSelection: owner.prepareOperationSelection,
+            } : {}),
         })
         : null;
 }

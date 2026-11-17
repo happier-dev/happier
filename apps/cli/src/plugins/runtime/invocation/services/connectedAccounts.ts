@@ -58,6 +58,11 @@ export type ConnectedAccountMaterializationCredentialRevisionBasis = Readonly<{
 }>;
 
 export type StablePluginConnectedAccountsOwner = Readonly<{
+    /**
+     * Host-private finite Account selection. The returned projection is used by
+     * an admitted operation only and never crosses a plugin or guest boundary.
+     */
+    prepareOperationSelection?: import('@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner').ConnectedAccountPurposeBindingOwner['prepareOperationSelection'];
     /** Host-private snapshot for finite SCM Action credential admission. */
     resolveCurrentSessionPurposeBindingSnapshot?(input: Readonly<{
         authorizedPurposes: readonly import('@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner').ConnectedAccountPurposeAuthorizationScope[];

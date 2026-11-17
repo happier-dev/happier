@@ -1,5 +1,5 @@
 import { readScmHostingBearerToken, readScmHostingBasicCredentials } from '@happier-dev/plugin-sdk/scm/hosting';
-import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { resolveRegistryConnectedAccountActionPurposeAuthorizations } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
@@ -18,7 +18,10 @@ import { createHostScmHostingProviderRegistry } from './hostRegistry';
 import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
 import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { createStableManagedExecutableResolver } from '@/plugins/runtime/invocation/services/managedExecutableResolver';
-import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import {
+    readHostedSessionScope,
+    sessionProcessEnvironment,
+} from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { StablePluginManagedDependenciesHost } from '@/plugins/runtime/invocation/services/managedDependencies';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
@@ -40,9 +43,9 @@ type ScmHostingProviderRuntimeRegistryInput = Readonly<{
         scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
         connectedAccountDescriptors?: readonly ResolvedConnectedAccountDescriptorContribution[];
         systemTools?: ResolvedExecutablePluginRuntimeRegistry['contributes']['systemTools'];
+        actionsById?: ResolvedExecutablePluginRuntimeRegistry['contributes']['actionsById'];
     }>;
     scmHostingProvidersById: ResolvedExecutablePluginRuntimeRegistry['scmHostingProvidersById'];
-    actionsById?: ResolvedExecutablePluginRuntimeRegistry['actionsById'];
     envAllowedNamesByPluginId?: ResolvedExecutablePluginRuntimeRegistry['envAllowedNamesByPluginId'];
     managedDependencies?: Pick<StablePluginManagedDependenciesHost, 'resolveExecutable'>;
     resolveConnectedAccountPurposeBindingOwner?: () => (
@@ -219,6 +222,7 @@ async function resolveScmHostingConfiguredDeployments(
     signal.throwIfAborted();
     const deploymentsByProviderId = new Map<string, ScmHostingProviderConfiguredDeployments>();
     const owner = input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
+    const sessionId = readHostedSessionScope()?.sessionId;
     if (!owner?.listAccounts) return deploymentsByProviderId;
     const listAccounts = owner.listAccounts.bind(owner);
     // Each provider has its own authorized metadata read. Waiting for an unrelated
@@ -232,6 +236,7 @@ async function resolveScmHostingConfiguredDeployments(
         try {
             const listed = await listAccounts({
                 ...authorization,
+                ...(sessionId ? { sessionId } : {}),
                 signal,
             });
             signal.throwIfAborted();
@@ -277,9 +282,9 @@ function createHostScmHostingProviderOperationRegistry(
                 }
                 return undefined;
             }
-            const actionPurposes = input.actionsById ? resolveRegistryConnectedAccountActionPurposeAuthorizations({
-                registry: { actionsById: input.actionsById }, qualifiedActionId: formatQualifiedPluginActionId(action),
-            }) : null;
+            const actionPurposes = resolveRegistryConnectedAccountActionPurposeAuthorizations({
+                registry: input.contributes, qualifiedActionId: buildQualifiedPluginContributionKey(action),
+            });
             const matching = authorization && actionPurposes?.filter(candidate =>
                 candidate.serviceRefs.length === authorization.serviceRefs.length
                 && candidate.serviceRefs.every(service => authorization.serviceRefs.some(declared =>
@@ -346,6 +351,7 @@ export function createHostScmHostingProviderRuntimeServices(
         origin: string,
         authority: ReturnType<typeof captureHostingAuthAuthority>,
         signal: AbortSignal,
+        sessionId: string | undefined,
     ) {
         if (!owner.getBinding || !owner.listAccounts) return null;
         let deployment: ReturnType<typeof normalizeConnectedAccountConfiguredBase>;
@@ -353,10 +359,18 @@ export function createHostScmHostingProviderRuntimeServices(
             deployment = normalizeConnectedAccountConfiguredBase(request.provider.baseUrl);
         } catch { return null; }
         if (deployment.origin !== origin) return null;
-        const binding = await owner.getBinding({ ...authorization, signal });
+        const binding = await owner.getBinding({
+            ...authorization,
+            ...(sessionId ? { sessionId } : {}),
+            signal,
+        });
         assertHostingAuthCurrent(authority, signal);
         if (!binding) return { kind: 'unbound' as const };
-        const listed = await owner.listAccounts({ ...authorization, signal });
+        const listed = await owner.listAccounts({
+            ...authorization,
+            ...(sessionId ? { sessionId } : {}),
+            signal,
+        });
         assertHostingAuthCurrent(authority, signal);
         const selected = listed.accounts.find((account) => sameQualifiedConnectedAccountRef(account.account, binding.account));
         if (!selected) return null;
@@ -399,7 +413,16 @@ export function createHostScmHostingProviderRuntimeServices(
                 input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
             if (!owner) return { kind: 'missing', reason: 'credential_unavailable' };
             const signal = options?.signal ?? new AbortController().signal;
-            const target = await resolveBoundHostingAccount(owner, authorization, requestSnapshot, origin, authority, signal);
+            const sessionId = readHostedSessionScope()?.sessionId;
+            const target = await resolveBoundHostingAccount(
+                owner,
+                authorization,
+                requestSnapshot,
+                origin,
+                authority,
+                signal,
+                sessionId,
+            );
             if (!target) return { kind: 'missing', reason: 'credential_unavailable' };
             if (target.kind === 'unbound' && requestSnapshot.kind === 'scm_hosting_token'
                 && requestSnapshot.boundAccountOnly) return { kind: 'missing', reason: 'account_unbound' };
@@ -417,6 +440,7 @@ export function createHostScmHostingProviderRuntimeServices(
             }
             const result = await owner.materialize({
                 ...authorization,
+                ...(sessionId ? { sessionId } : {}),
                 ...(target.kind === 'account' ? { expectedAccount: target.account } : { nativeService }),
                 request: createScmConnectedAccountMaterializationRequest(origin),
                 signal,
@@ -463,10 +487,20 @@ export function createHostScmHostingProviderRuntimeServices(
                 input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
             if (!owner) return { kind: 'missing', reason: 'credential_unavailable' };
             const signal = options?.signal ?? new AbortController().signal;
-            const target = await resolveBoundHostingAccount(owner, authorization, requestSnapshot, origin, authority, signal);
+            const sessionId = readHostedSessionScope()?.sessionId;
+            const target = await resolveBoundHostingAccount(
+                owner,
+                authorization,
+                requestSnapshot,
+                origin,
+                authority,
+                signal,
+                sessionId,
+            );
             if (target?.kind !== 'account') return { kind: 'missing', reason: 'credential_unavailable' };
             const result = await owner.materialize({
                 ...authorization,
+                ...(sessionId ? { sessionId } : {}),
                 expectedAccount: target.account,
                 request: createScmConnectedAccountMaterializationRequest(origin),
                 signal,

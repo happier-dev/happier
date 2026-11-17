@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { createReadStream } from 'node:fs';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, posix, relative, sep } from 'node:path';
 import type { ManagedSessionTarget, ManagedSessionTargetRequest } from '@/machines/managed/acquire';
 import { installAgentCliForTarget, planAgentCliInstallForRuntime, type AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
@@ -16,6 +16,15 @@ import { readSessionTargetHolderArtifacts } from '@/subprocess/supervision/sessi
 import { assertSessionTargetWorkspaceUnambiguous, createTargetHolderSocketPath, serveSessionTargetRelay, type SessionTargetLaunch, type SessionTargetPlacement } from '@/subprocess/supervision/sessionTargetRelay';
 import { logger } from '@/ui/logger';
 import type { TrackedSession } from '@/daemon/types';
+import type { ScmBackendRegistry } from '@/scm/registry';
+import type { ActionOperationProgressUpdate } from '@/daemon/actionOperations/actionOperationTypes';
+import type { SessionProjectFilesSourceV1, SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
+import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
+import type { WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
+import type { WorkspaceAddressV1, WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { SessionProjectFilesOriginV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { registerSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 
 export type OpenManagedSessionTarget = (request: ManagedSessionTargetRequest) => Promise<ManagedSessionTarget>;
 
@@ -178,6 +187,8 @@ function openSessionTargetAuthority(input: SessionTargetAuthorityRequest, lifeti
 export async function restoreSessionTargetRelay(input: SessionTargetAuthorityRequest & Readonly<{
     socketPath: string;
     readTrustedCallerPid(): number | null;
+    projectFiles?: Readonly<{ sessionId: string; primarySocketPath: string; origin: SessionProjectFilesOriginV1;
+        readBaseline?(signal: AbortSignal): Promise<WorkspaceManifest | null> }>;
 }>): Promise<(() => void) | null> {
     if (!isSessionHolderSocketPath(input.socketPath)) return null;
     const lifetime = new AbortController();
@@ -185,6 +196,16 @@ export async function restoreSessionTargetRelay(input: SessionTargetAuthorityReq
         const target = await openSessionTargetAuthority(input, lifetime.signal);
         if (!target) return null;
         await serveSessionTargetRelay({ operations: target, lifetime: lifetime.signal, readTrustedCallerPid: input.readTrustedCallerPid, socketPath: input.socketPath });
+        if (input.projectFiles) {
+            const { sessionId, primarySocketPath, origin } = input.projectFiles;
+            const baseline = input.projectFiles.readBaseline
+                ? await input.projectFiles.readBaseline(lifetime.signal) : origin.baseline ?? null;
+            registerSessionTargetWorkspace({ sessionId, lifetime: lifetime.signal, primarySocketPath,
+                target: { id: target.id, holderPath: target.holderPath, helperPath: target.helperPath, socketDirectory: target.socketDirectory,
+                    exec: command => target.exec(command, lifetime.signal), openChannel: argv => target.openChannel(argv, lifetime.signal) },
+                workspace: { hostRoot: origin.sourceWorkspace.rootPath, targetRoot: origin.targetWorkspace.rootPath },
+                ...(baseline ? { baseline } : {}) });
+        }
         return () => lifetime.abort();
     } catch (error) {
         lifetime.abort();
@@ -267,7 +288,7 @@ async function hashFile(path: string): Promise<string> {
  *   reached from a target: typed refusal.
  */
 export async function deliverSessionTargetLaunch(input: Readonly<{
-    target: Pick<ManagedSessionTarget, 'home' | 'platform' | 'helperPath' | 'exec' | 'putFile' | 'openChannel'>;
+    target: Pick<ManagedSessionTarget, 'id' | 'holderPath' | 'home' | 'platform' | 'helperPath' | 'exec' | 'putFile' | 'openChannel'>;
     sessionKey: string;
     runnerEnvironment: Readonly<Record<string, string>>;
     materializedRoot: string | null;
@@ -279,6 +300,19 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
      */
     agent: Readonly<{ id: string; catalog: SessionTargetAgentCatalog }> | null;
     workspace: Readonly<{ hostRoot: string; targetRoot: string }>;
+    /** The admitted Project files choice; absent selection means Copy once. */
+    projectFiles?: Readonly<{ selection?: SessionProjectFilesV1; activeServerDir: string; registry?: ScmBackendRegistry;
+        onProgress?(progress: ActionOperationProgressUpdate): void;
+        projectFilesSource?: SessionProjectFilesSourceV1;
+        projectFilesSourceWorkspace?: WorkspaceAddressV1;
+        prepareSource?(input: Readonly<{ sourceWorkspace: WorkspaceAddressV1; targetRootPath: string; contentPolicy?: WorkspaceContentPolicyV1; signal: AbortSignal }>):
+            Promise<Readonly<{ targetRootPath: string; baseline?: WorkspaceManifest; targetWorkspace?: WorkspaceAddressV2;
+                contentPolicyDigest?: WorkspaceContentPolicyV1['policyDigest'] }>>;
+        onWorkspaceSeed?(baseline: WorkspaceManifest | undefined, targetWorkspace?: WorkspaceAddressV2,
+            contentPolicyDigest?: WorkspaceContentPolicyV1['policyDigest']): void;
+        prepareSync?(input: Readonly<{ sourceRootPath: string; targetRootPath: string; contentPolicy?: WorkspaceContentPolicyV1;
+            mode: Extract<SessionProjectFilesV1, { kind: 'sync' }>['mode']; signal: AbortSignal }>): Promise<Readonly<{
+                relationshipId: string; targetWorkspace?: WorkspaceAddressV2; contentPolicyDigest?: WorkspaceContentPolicyV1['policyDigest'] }>> }>;
     /** The placement's Session-end steps (`prepareSessionTargetPlacement`). */
     onSessionEnd(step: () => Promise<void>): void;
     /** This Machine's environment for staging a release for the target (managed tools root, GitHub token); GitHub is the boundary. */
@@ -289,12 +323,69 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
     if (input.requestAuthMaterializedRoot) {
         throw refusal('connected_service_target_unsupported', 'This Agent credential is served on this Machine only and cannot reach a Session target');
     }
-    assertSessionTargetWorkspaceUnambiguous(input.workspace);
     const { credentialEntries, runtime } = await readSessionTargetAgent(input.agent);
     if (input.materializedRoot && !credentialEntries?.length) {
         throw refusal('connected_service_target_unsupported', 'This Agent does not declare which credential files a Session target needs');
     }
     if (!/^[A-Za-z0-9._-]+$/u.test(input.sessionKey)) throw refusal('invalid_request', 'Session target key is not a plain name');
+    let workspace = input.workspace;
+    if (input.projectFiles) {
+        if (input.projectFiles.selection?.kind === 'sync' && !input.projectFiles.prepareSync) {
+            throw refusal('project_files_mode_unavailable', 'This Project files mode is unavailable for the target');
+        }
+        const targetPathForRoot = (root: string) => posix.join(input.target.home, '.happier', 'workspaces', createHash('sha256').update(root).digest('hex'));
+        if (input.projectFiles.selection?.kind === 'git_clone') {
+            const { source, branch } = input.projectFiles.selection;
+            const identity = normalizeScmHostingRepositoryIdentity({ kind: source.provider.kind,
+                deployment: source.provider.baseUrl, repository: source.repository.nameWithOwner });
+            const targetPath = targetPathForRoot(JSON.stringify({ repository: identity, branch }));
+            const { inspectManagedWorkspaceSyncSeedTarget } = await import('@/workspaces/sync/materializeManagedWorkspaceSyncSeed');
+            workspace = { hostRoot: input.workspace.hostRoot, targetRoot: targetPath };
+            if (await inspectManagedWorkspaceSyncSeedTarget({ target: input.target, targetPath, signal }) === 'copy') {
+                const { materializeManagedProjectClone } = await import('@/scm/rpc/repositoryProvisioningDispatch');
+                const materialized = await materializeManagedProjectClone({ target: input.target,
+                    selection: input.projectFiles.selection, destinationParentPath: posix.dirname(targetPath),
+                    destinationDirectoryName: posix.basename(targetPath), registry: input.projectFiles.registry, signal });
+                workspace = { hostRoot: input.workspace.hostRoot, targetRoot: materialized.targetRoot };
+                if (materialized.baseline) input.projectFiles.onWorkspaceSeed?.(materialized.baseline);
+            }
+        } else if (input.projectFiles.projectFilesSourceWorkspace) {
+            const sourceWorkspace = input.projectFiles.projectFilesSourceWorkspace;
+            const targetRootPath = targetPathForRoot(JSON.stringify([sourceWorkspace.serverId, sourceWorkspace.machineId, sourceWorkspace.rootPath]));
+            workspace = { hostRoot: sourceWorkspace.rootPath, targetRoot: targetRootPath };
+            // The SOURCE owner carries admitted original-Machine bytes; the
+            // controller must never interpret that root as its own local path.
+            // Sync's existing relationship bootstrap also seeds its source,
+            // while finite Copy once uses the same SOURCE transport directly.
+            if (input.projectFiles.selection?.kind !== 'sync') {
+                if (!input.projectFiles.prepareSource) throw refusal('workspace_source_operation_unavailable', 'The selected Project files source transport is unavailable');
+                const materialized = await input.projectFiles.prepareSource({ sourceWorkspace, targetRootPath, signal,
+                    ...(input.projectFiles.selection?.contentPolicy ? { contentPolicy: input.projectFiles.selection.contentPolicy } : {}) });
+                workspace = { hostRoot: sourceWorkspace.rootPath, targetRoot: materialized.targetRootPath };
+                input.projectFiles.onWorkspaceSeed?.(materialized.baseline, materialized.targetWorkspace, materialized.contentPolicyDigest);
+            }
+        } else {
+            if (input.projectFiles.projectFilesSource) throw refusal('workspace_source_operation_unavailable', 'The selected Project files source is unavailable');
+            const sourcePath = await realpath(input.workspace.hostRoot);
+            const { materializeManagedWorkspaceSyncSeed } = await import('@/workspaces/sync/materializeManagedWorkspaceSyncSeed');
+            const materialized = await materializeManagedWorkspaceSyncSeed({ target: input.target,
+                sourcePath, targetPath: targetPathForRoot, activeServerDir: input.projectFiles.activeServerDir,
+                registry: input.projectFiles.registry, signal, onProgress: input.projectFiles.onProgress,
+                ...(input.projectFiles.selection?.contentPolicy ? { contentPolicy: input.projectFiles.selection.contentPolicy } : {}) });
+            workspace = materialized.workspace;
+            if (materialized.baseline) input.projectFiles.onWorkspaceSeed?.(materialized.baseline);
+        }
+        if (input.projectFiles.selection?.kind === 'sync') {
+            const materialized = await input.projectFiles.prepareSync!({ sourceRootPath: workspace.hostRoot, targetRootPath: workspace.targetRoot,
+                mode: input.projectFiles.selection.mode, signal,
+                ...(input.projectFiles.selection.contentPolicy ? { contentPolicy: input.projectFiles.selection.contentPolicy } : {}) });
+            if (materialized.targetWorkspace) {
+                workspace = { hostRoot: workspace.hostRoot, targetRoot: materialized.targetWorkspace.rootPath };
+                input.projectFiles.onWorkspaceSeed?.(undefined, materialized.targetWorkspace, materialized.contentPolicyDigest);
+            }
+        }
+    }
+    assertSessionTargetWorkspaceUnambiguous(workspace);
     const q = safeBashSingleQuote;
     const sessions = posix.join(input.target.home, '.happier', 'sessions');
     const base = posix.join(sessions, input.sessionKey);
@@ -343,7 +434,7 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
             ? await placeAgentCliRelease({ target: input.target, sessionKey: input.sessionKey, release, run, signal })
             : await installAgentCliInTarget({ target: input.target, runtime, env, signal });
     }
-    return { executables, env, workspace: input.workspace, lockPath: posix.join(base, '.live'), lockExecutable: input.target.helperPath };
+    return { executables, env, workspace, lockPath: posix.join(base, '.live'), lockExecutable: input.target.helperPath };
 }
 
 type AgentCliRelease = Readonly<{ root: string; files: ReadonlyArray<string>; command: string }>;

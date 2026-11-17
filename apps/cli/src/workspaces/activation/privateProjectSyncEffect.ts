@@ -1,27 +1,32 @@
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { PluginError, isPluginError } from '@happier-dev/plugin-sdk/errors';
 import type { TransferEndpointCandidate, WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
 import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
-import { createWorkspaceSyncTargetAuthority, type WorkspaceSyncTargetAuthority, type WorkspaceSyncTargetAuthorityDependencies, type WorkspaceSyncConflictRecoveryContext } from '@/workspaces/sync/workspaceSyncTargetAuthority';
+import { createWorkspaceSyncTargetAuthority, isWorkspaceSyncLocalNamespace, type WorkspaceSyncLocalManagedTarget, type WorkspaceSyncTargetAuthority, type WorkspaceSyncTargetAuthorityDependencies, type WorkspaceSyncConflictRecoveryContext } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { createWorkspaceRootOwnershipManager, type WorkspaceRootOwnershipHandle, type WorkspaceRootOwnershipRequest, type WorkspaceRootOwnershipResult } from '@/workspaces/sync/workspaceSyncRootOwnership';
 import { prepareWorkspaceSyncGitTarget } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
 import { createWorkspaceSyncSeedExport, materializeLocalWorkspaceSyncSeed, materializeWorkspaceSyncSeedExport, resolveWorkspaceSyncSeedTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';
-import { readTransferPayloadChunk } from '@/machines/transfer/transferPayloadSource';
+import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
+import { readTransferPayloadChunk, resolveTransferPayloadSizeBytes } from '@/machines/transfer/transferPayloadSource';
 import { materializeWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceExportMaterialization';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { realizeWorkspaceCheckoutWithScmWorkspace } from '@/scm/workspace/workspaceCheckoutOperations';
 import { requestDirectPeerTransferToFile } from '@/machines/transfer/directPeerTransport';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { resolveWorkspaceSyncNativeRuntime } from '@/workspaces/sync/workspaceSyncNativeRuntime';
 import { launchWorkspaceSyncLocalAgent } from '@/daemon/startup/workspaceSyncNativeProcessLaunchers';
-import type { MaterializedProjectCheckout } from './materializeProjectCheckout';
+import { materializeProjectCheckout, type MaterializedProjectCheckout } from './materializeProjectCheckout';
 import { createWorkspaceEffectScmRegistry, executeWorkspaceCheckoutEffect, type WorkspaceCheckoutEffect, type WorkspaceCheckoutEffectContext } from './workspaceEffect';
 import { privateProjectCheckoutRefusal, resolvePrivateProjectCheckoutRoot } from './privateProjectCheckout';
 import type { WorkspaceSyncSourceRootLoan } from '@/workspaces/sync/workspaceSyncTypes';
+import type { WorkspaceSyncNativeCopyOwner } from '@/workspaces/sync/workspaceSyncFinalReadyFact';
+import type { ScmWorkspaceIntegrationWorkspaceTransferMetadata } from '@/scm/workspace/workspaceTransfer';
 
 export type PrivateProjectNativeSync = Pick<WorkspaceSyncTargetAuthority,
   'preflightHandoffTargetReplacementHere' | 'prepareBootstrapHere' | 'prepareBootstrapAtTarget' | 'getPreparedBootstrapOwnership' | 'releaseBootstrapHere' | 'borrowSourceRootForCopy'
-  | 'acquireWorkspaceSyncMachineIngress' | 'openLocalWorkspaceAgentIngress' | 'reconcileRetainedBootstraps' | 'releaseAllRetainedBootstraps'
-  | 'readFileHere' | 'observeEntryHere'> & Readonly<{
+  | 'authorizeWorkspaceSyncMachineAgent' | 'acquireWorkspaceSyncMachineIngress' | 'openLocalWorkspaceAgentIngress' | 'reconcileRetainedBootstraps' | 'releaseAllRetainedBootstraps'
+  | 'readFileHere' | 'observeEntryHere' | 'stageConflictResolutionHere' | 'applyStagedConflictResolutionHere' | 'discardStagedConflictResolutionHere' | 'releaseConflictResolutionCaptureHere'> & Readonly<{
   recoverConflictResolutionHere(request: Parameters<WorkspaceSyncTargetAuthority['recoverConflictResolutionHere']>[0], signal?: AbortSignal,
     context?: Omit<WorkspaceSyncConflictRecoveryContext, 'getProjectSnapshot'>): ReturnType<WorkspaceSyncTargetAuthority['recoverConflictResolutionHere']>;
   replaceSnapshot(snapshot: ActiveProjectAccountRowsSnapshot | null): Promise<void>;
@@ -29,10 +34,26 @@ export type PrivateProjectNativeSync = Pick<WorkspaceSyncTargetAuthority,
   resolveLocalRoot(rootPath: string): Promise<string>;
   acquireLocalRoot(request: WorkspaceRootOwnershipRequest): Promise<WorkspaceRootOwnershipResult>;
   /** SOURCE seed of this member's own folder, built as the member; returns the seed envelope. */
-  prepareSourceSeedExport(request: Readonly<{ operationId: string; sourcePath: string; contentPolicy: WorkspaceContentPolicyV1 }>): Promise<Uint8Array>;
+  prepareSourceSeedExport(request: Readonly<{ operationId: string; sourcePath: string; contentPolicy: WorkspaceContentPolicyV1; exclusionCandidates?: readonly string[] }>): Promise<Uint8Array>;
+  /** Finite Session return bytes materialized only into this admitted checkout. */
+  materializeCapturedSeed(request: Readonly<{
+    operationId: string;
+    resolvePayloadSource(input: Readonly<{ transferId: string }>): Promise<Readonly<{
+      sizeBytes: number;
+      manifestHash: string;
+      readChunk(input: Readonly<{ offset: number; length: number }>): Promise<Uint8Array>;
+      dispose(): Promise<void>;
+    }>>;
+  }>): Promise<Readonly<{ dispose(): Promise<void> }>>;
+  /** Canonical reviewed capture envelope and blob descriptors, read in this endpoint's filesystem. */
+  prepareSourceConflictResolutionExport(request: Parameters<WorkspaceSyncTargetAuthority['prepareConflictResolutionExport']>[0]): Promise<Readonly<{
+    payload: Uint8Array;
+    blobs: Awaited<ReturnType<WorkspaceSyncTargetAuthority['prepareConflictResolutionExport']>>['blobs'];
+  }>>;
   /** One chunk of a blob named by that seed, read as the member. */
   readSourceSeedBlob(request: Readonly<{ operationId: string; transferId: string; offset: number; length: number }>): Promise<Uint8Array>;
   dispose(): Promise<void>;
+  agentExecutablePath: string;
 }>;
 
 /** Same-binary transport uses the existing bridge's disposable result scope. */
@@ -53,19 +74,40 @@ export type PrivateProjectSyncEffectConfiguration = Readonly<{
   serverId: string;
   machineId: string;
   accountId: string;
+  localManagedTarget?: WorkspaceSyncLocalManagedTarget;
   snapshot: ActiveProjectAccountRowsSnapshot;
   /** Already verified by the incumbent managed Mutagen runtime owner. */
-  agent: Readonly<{ executablePath: string }>;
+  agent: Readonly<{ executablePath: string }> | Readonly<{ releaseChannel: PublicReleaseRingId }>;
 }>;
 
 export type PrivateProjectSyncNetwork = Pick<WorkspaceSyncTargetAuthorityDependencies,
-  'refreshProjectSnapshot' | 'readChildMachineFacts' | 'callWorkspaceTargetPhase' | 'callMachineRpc'> & Readonly<{
+  'refreshProjectSnapshot' | 'readChildMachineFacts' | 'callWorkspaceTargetPhase' | 'callMachineRpc' | 'assertConflictResolutionAuthorized' | 'requestResolutionExport' | 'assertTargetReplacementAuthorized'> & Readonly<{
+  /** Location facts come from the controller's SCM owner over the admitted target transport. */
+  inspectNativeWorkspaceLocation?(input: Readonly<{ signal?: AbortSignal }>): ReturnType<typeof inspectWorkspaceLocationWithScmWorkspace>;
+  /** The admitted controller owns SCM integration over its exact target transport. */
+  reconcileNativeWorkspaceIntegration?(input: Readonly<{ workspaceIntegrationMetadata?: ScmWorkspaceIntegrationWorkspaceTransferMetadata;
+    signal?: AbortSignal }>): Promise<void>;
+  /** The native worker consumes the existing transfer source; host paths never cross into its filesystem. */
+  requestNativeResolutionExport?(request: Parameters<NonNullable<WorkspaceSyncTargetAuthorityDependencies['requestResolutionExport']>>[0]): Promise<Readonly<{
+    resolvePayloadSource(input: Readonly<{ transferId: string }>): Promise<Readonly<{
+      sizeBytes: number;
+      manifestHash: string;
+      readChunk(input: Readonly<{ offset: number; length: number }>): Promise<Uint8Array>;
+    }>>;
+    release(): Promise<void>;
+  }>>;
   /** Parent owns requester/transport authority; the member owns every file write. */
   prepareSourceSeed(input: Readonly<{ operationId: string; sourceMachineId: string;
-    sourceWorkspaceRefId: string; contentPolicy: WorkspaceContentPolicyV1; signal?: AbortSignal }>): Promise<Readonly<{
+    sourceWorkspaceRefId: string; contentPolicy: WorkspaceContentPolicyV1; exclusionCandidates?: readonly string[]; signal?: AbortSignal }>): Promise<Readonly<{
     transferId: string;
     sizeBytes: number;
     manifestHash: string;
+    /** Callback-backed finite bytes; a guest never receives a carrier-local TCP endpoint. */
+    resolvePayloadSource?(input: Readonly<{ transferId: string }>): Promise<Readonly<{
+      sizeBytes: number;
+      manifestHash: string;
+      readChunk(input: Readonly<{ offset: number; length: number }>): Promise<Uint8Array>;
+    }>>;
     openPayload(input: Readonly<{ transferId: string; signal?: AbortSignal }>): Promise<Readonly<{
       endpointCandidates: readonly TransferEndpointCandidate[];
       dispose(): Promise<void>;
@@ -79,6 +121,15 @@ export type WorkspaceNativeSyncEffect = Readonly<{
   checkout: WorkspaceCheckoutEffect;
   /** Captured native home, never inferred from an Account or request path. */
   memberHome: string;
+}>;
+
+/** Finite recovery of the original copied base in the retained guest namespace. */
+export type WorkspaceNativeCopyBaselineEffect = Readonly<{
+  kind: 'native_copy_baseline';
+  workspaceRoot: string;
+  memberHome: string;
+  owner: WorkspaceSyncNativeCopyOwner;
+  policyDigest: WorkspaceContentPolicyV1['policyDigest'];
 }>;
 
 /** Private same-binary boundary preserves the canonical owner's typed refusal. */
@@ -95,8 +146,15 @@ export function privateSyncEffectError(error: unknown): Error {
 export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyncEffect,
   configuration: PrivateProjectSyncEffectConfiguration, network: PrivateProjectSyncNetwork,
   context: WorkspaceCheckoutEffectContext): Promise<PrivateProjectNativeSyncProcessPort> {
+  const agentExecutablePath = 'executablePath' in configuration.agent ? configuration.agent.executablePath
+    : (await resolveWorkspaceSyncNativeRuntime(configuration.agent)).agentPath;
   const checkout = effect.checkout;
-  const targetRoot = join(checkout.workspaceRoot, checkout.workspaceRefId);
+  const managedTarget = configuration.localManagedTarget && configuration.snapshot.workspaceRefs.find(ref => ref.id === checkout.workspaceRefId
+    && isWorkspaceSyncLocalNamespace(ref, configuration.serverId, configuration.machineId, configuration.localManagedTarget));
+  const targetRoot = configuration.localManagedTarget ? managedTarget?.rootPath : join(checkout.workspaceRoot, checkout.workspaceRefId);
+  if (!targetRoot || configuration.localManagedTarget && (dirname(targetRoot) !== checkout.workspaceRoot || checkout.existingRootPath !== targetRoot)) {
+    throw privateProjectCheckoutRefusal();
+  }
   if (checkout.request.materialization.kind !== 'sync' || checkout.request.materialization.targetPath !== targetRoot) {
     throw privateProjectCheckoutRefusal();
   }
@@ -104,11 +162,14 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
   const sourceDescriptor = checkout.request.source;
   const source = sourceDescriptor.kind === 'workspace'
     ? snapshot.workspaceRefs.find(ref => ref.id === sourceDescriptor.workspaceId && ref.serverId === configuration.serverId) : undefined;
-  const localSource = source?.machineId === configuration.machineId ? source : undefined;
-  if (localSource && localSource.rootPath !== resolvePrivateProjectCheckoutRoot(checkout.workspaceRoot, localSource.id)) throw privateProjectCheckoutRefusal();
-  const localRoots = new Map([[checkout.workspaceRefId, targetRoot], ...(localSource ? [[localSource.id, localSource.rootPath] as const] : [])]);
+  const isLocalWorkspace = (ref: import('@happier-dev/protocol').WorkspaceRefV1) => isWorkspaceSyncLocalNamespace(ref, configuration.serverId, configuration.machineId, configuration.localManagedTarget);
+  const localSource = source && isLocalWorkspace(source) ? source : undefined;
+  if (localSource && !configuration.localManagedTarget && localSource.rootPath !== resolvePrivateProjectCheckoutRoot(checkout.workspaceRoot, localSource.id)) throw privateProjectCheckoutRefusal();
+  const localRoots = new Map<string, { rootPath: string; ownership?: WorkspaceRootOwnershipHandle }>([
+    [checkout.workspaceRefId, { rootPath: targetRoot }], ...(localSource ? [[localSource.id, { rootPath: localSource.rootPath }] as const] : []),
+  ]);
   const assertLocalRoot = (rootPath: string, workspaceRefId?: string) => {
-    if (workspaceRefId ? localRoots.get(workspaceRefId) !== rootPath : ![...localRoots.values()].includes(rootPath)) throw privateProjectCheckoutRefusal();
+    if (workspaceRefId ? localRoots.get(workspaceRefId)?.rootPath !== rootPath : ![...localRoots.values()].some(entry => entry.rootPath === rootPath)) throw privateProjectCheckoutRefusal();
   };
   const stateDirectory = join(effect.memberHome, '.happier', 'workspace-sync');
   const rootOwnershipManager = createWorkspaceRootOwnershipManager({ lockDirectory: join(effect.memberHome, '.happier', 'runtime', 'workspace-sync-root-ownership') });
@@ -117,16 +178,33 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
   };
   const replaceSnapshot = (next: ActiveProjectAccountRowsSnapshot | null) => {
     const target = next?.workspaceRefs.find(ref => ref.id === checkout.workspaceRefId && ref.serverId === configuration.serverId);
-    if (target && (target.rootPath !== targetRoot || target.machineId !== configuration.machineId)) throw privateProjectCheckoutRefusal();
+    if (target && (target.rootPath !== targetRoot || !isLocalWorkspace(target))) throw privateProjectCheckoutRefusal();
     const nextSource = localSource && next?.workspaceRefs.find(ref => ref.id === localSource.id && ref.serverId === configuration.serverId);
-    if (nextSource && (nextSource.rootPath !== localSource?.rootPath || nextSource.machineId !== configuration.machineId)) throw privateProjectCheckoutRefusal();
+    if (nextSource && (nextSource.rootPath !== localSource?.rootPath || !isLocalWorkspace(nextSource))) throw privateProjectCheckoutRefusal();
     snapshot = next;
   };
   replaceSnapshot(snapshot);
   const registry = await createWorkspaceEffectScmRegistry(checkout, context);
+  const nativeResolutionExport = network.requestNativeResolutionExport;
+  const requestResolutionExport: WorkspaceSyncTargetAuthorityDependencies['requestResolutionExport'] = nativeResolutionExport
+    ? async request => {
+      const remote = await nativeResolutionExport(request);
+      return {
+        requestPayload: async ({ transferId, destinationPath }) => {
+          const source = await remote.resolvePayloadSource({ transferId });
+          await writeTransferPayloadSourceToFile({ source: { kind: 'native', sizeBytes: source.sizeBytes,
+            manifestHash: source.manifestHash, readChunk: async input => Buffer.from(await source.readChunk(input)) }, destinationPath });
+        },
+        release: remote.release,
+      };
+    } : configuration.localManagedTarget ? undefined : network.requestResolutionExport;
   const authority = createWorkspaceSyncTargetAuthority({
     localServerId: configuration.serverId, localMachineId: configuration.machineId, localAccountId: configuration.accountId,
     localWorkspaceRefId: checkout.workspaceRefId,
+    ...(configuration.localManagedTarget ? { localManagedTarget: configuration.localManagedTarget } : {}),
+    ...(network.assertConflictResolutionAuthorized ? { assertConflictResolutionAuthorized: network.assertConflictResolutionAuthorized } : {}),
+    ...(requestResolutionExport ? { requestResolutionExport } : {}),
+    ...(network.assertTargetReplacementAuthorized ? { assertTargetReplacementAuthorized: network.assertTargetReplacementAuthorized } : {}),
     getProjectSnapshot: () => snapshot,
     ...(network.refreshProjectSnapshot ? { refreshProjectSnapshot: async (signal, ingress) => {
       const next = await network.refreshProjectSnapshot!(signal, ingress);
@@ -137,12 +215,28 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
     ...(network.callWorkspaceTargetPhase ? { callWorkspaceTargetPhase: network.callWorkspaceTargetPhase } : {}),
     callMachineRpc: network.callMachineRpc,
     resolutionMaterialDirectory: join(stateDirectory, 'resolution'),
+    resolveLocalResolutionEndpoint: async (relationshipId, workspaceRefId) => {
+      const root = localRoots.get(workspaceRefId);
+      const handle = root?.ownership;
+      const relationship = snapshot?.relationships.find(row => row.relationshipId === relationshipId);
+      if (!root || !handle || !relationship) return null;
+      return { relationship, canonicalRoot: handle.owner.canonicalRoot, assertCurrentAuthority: async () => {
+        if (root.ownership !== handle || handle.owner.rootFingerprint === null) {
+          throw Object.assign(new Error('Workspace root ownership is unavailable'), { code: 'workspace_root_ownership_lost' });
+        }
+        await handle.assertCurrentRootIdentity(handle.owner.rootFingerprint);
+      } };
+    },
     bootstrap: {
       materializationDirectory: join(stateDirectory, 'materialization'), rootOwnershipManager,
       prepareGitTarget: input => {
         if (input.sourceRootPath) assertLocalRoot(input.sourceRootPath);
         return prepareWorkspaceSyncGitTarget(input, {
-          inspectWorkspaceLocation: input => inspectWorkspaceLocationWithScmWorkspace({ ...input, registry: registry.registry }),
+          inspectWorkspaceLocation: input => {
+            if (!configuration.localManagedTarget) return inspectWorkspaceLocationWithScmWorkspace({ ...input, registry: registry.registry });
+            if (!network.inspectNativeWorkspaceLocation) throw Object.assign(new Error('Native SCM target transport is unavailable'), { code: 'workspace_sync_unavailable' });
+            return network.inspectNativeWorkspaceLocation({ signal: context.signal });
+          },
           realizeWorkspaceCheckout: input => realizeWorkspaceCheckoutWithScmWorkspace({ ...input, registry: registry.registry }),
         });
       },
@@ -151,30 +245,46 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
         // Same-machine source must be readable by the already selected member;
         // it never borrows daemon traversal or a different OS identity.
         return materializeLocalWorkspaceSyncSeed({ ...input, activeServerDir: stateDirectory,
-          targetPath: input.canonicalRoot, workspaceTransfer: resolveWorkspaceSyncSeedTransfer(input.contentPolicy), registry: registry.registry });
+          targetPath: input.canonicalRoot, workspaceTransfer: resolveWorkspaceSyncSeedTransfer(input.contentPolicy, input.exclusionCandidates), registry: registry.registry });
       },
       materializeRemoteSeed: async input => {
         const prepared = await network.prepareSourceSeed({ operationId: input.operationId, sourceMachineId: input.sourceMachineId,
-          sourceWorkspaceRefId: input.sourceWorkspaceRefId, contentPolicy: input.contentPolicy, signal: input.signal });
+          sourceWorkspaceRefId: input.sourceWorkspaceRefId, contentPolicy: input.contentPolicy,
+          ...(input.exclusionCandidates ? { exclusionCandidates: input.exclusionCandidates } : {}), signal: input.signal });
         try {
+          if (configuration.localManagedTarget && !prepared.resolvePayloadSource) {
+            throw Object.assign(new Error('Native workspace seed byte source is unavailable'), { code: 'target_bootstrap_offline' });
+          }
           return await materializeWorkspaceSyncSeedExport({ operationId: input.operationId, targetPath: input.canonicalRoot,
             materializationReceiptPath: input.materializationReceiptPath, originalTargetExists: input.originalTargetExists,
             targetFence: input.targetFence, signal: input.signal,
             requestPayload: async request => {
+              if (prepared.resolvePayloadSource) {
+                const source = await prepared.resolvePayloadSource({ transferId: request.transferId });
+                await writeTransferPayloadSourceToFile({ source: { kind: 'native', sizeBytes: source.sizeBytes,
+                  manifestHash: source.manifestHash, readChunk: async chunk => Buffer.from(await source.readChunk(chunk)) },
+                destinationPath: request.destinationPath });
+                return;
+              }
               const payload = await prepared.openPayload({ transferId: request.transferId, signal: input.signal });
               try {
                 await requestDirectPeerTransferToFile({ ...request, endpointCandidates: payload.endpointCandidates, signal: input.signal,
                   ...(request.transferId === input.operationId ? { expectedSizeBytes: prepared.sizeBytes, expectedManifestHash: prepared.manifestHash } : {}) });
               } finally { await payload.dispose(); }
             },
-            materializeWorkspaceExportArtifacts: request => materializeWorkspaceExportArtifactsWithScmWorkspace({ ...request, registry: registry.registry }),
+            materializeWorkspaceExportArtifacts: request => materializeWorkspaceExportArtifactsWithScmWorkspace({ ...request, registry: registry.registry,
+              ...(configuration.localManagedTarget && network.reconcileNativeWorkspaceIntegration ? {
+                reconcilePostMaterialization: async ({ workspaceIntegrationMetadata }) =>
+                  network.reconcileNativeWorkspaceIntegration!({ workspaceIntegrationMetadata, signal: input.signal }),
+              } : {}),
+            }),
           });
         } finally { await prepared.dispose(); }
       },
     },
     openRootedAgent: async input => {
       context.signal.throwIfAborted();
-      return launchWorkspaceSyncLocalAgent({ executablePath: configuration.agent.executablePath,
+      return launchWorkspaceSyncLocalAgent({ executablePath: agentExecutablePath,
         args: ['synchronizer', '--external', '--root', input.canonicalRoot], dataDirectory: join(stateDirectory, 'mutagen'), signal: input.signal });
     },
   });
@@ -184,10 +294,12 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
     try { return await operation(); } catch (error) { throw privateSyncEffectError(error); }
   };
   let disposal: Promise<void> | undefined;
+  let capturedSeed: Awaited<ReturnType<typeof materializeWorkspaceSyncSeedExport>> | undefined;
   // The daemon serves these seeds but never opens a path in this member folder (MEMBER-CHILD-READS-1115).
-  const sourceSeeds = new Map<string, Awaited<ReturnType<typeof createWorkspaceSyncSeedExport>>['onDemandScope']>();
+  const sourceSeeds = new Map<string, Readonly<{ scope: Awaited<ReturnType<typeof createWorkspaceSyncSeedExport>>['onDemandScope']; actionReceiptId?: string }>>();
   const disposableHandle = (handle: WorkspaceRootOwnershipHandle): DisposableRootHandle => ({ ...handle, dispose: handle.release });
   return {
+    agentExecutablePath,
     borrowSourceRootForCopy: request => call(async () => {
       if (request.workspaceRefId !== checkout.workspaceRefId && request.workspaceRefId !== source?.id) throw privateProjectCheckoutRefusal();
       const loan = await authority.borrowSourceRootForCopy(request);
@@ -201,9 +313,9 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
       assertBoundId(request.targetWorkspaceRefId);
       return disposableHandle(await authority.getPreparedBootstrapOwnership(request));
     }),
-    prepareBootstrapHere: (request, signal, ingress) => call(async () => {
+    prepareBootstrapHere: (request, signal, ingress, admitted) => call(async () => {
       assertBoundId(request.targetWorkspaceRefId); context.onEffectsIssued();
-      return authority.prepareBootstrapHere(request, signal, ingress);
+      return authority.prepareBootstrapHere(request, signal, ingress, admitted);
     }),
     prepareBootstrapAtTarget: (request, ingress) => call(async () => {
       assertBoundId(request.targetWorkspaceRefId); context.onEffectsIssued();
@@ -224,25 +336,36 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
     acquireLocalRoot: request => call(async () => {
       assertLocalRoot(request.canonicalRoot); context.onEffectsIssued();
       const result = await rootOwnershipManager.tryAcquire(request);
-      return 'kind' in result ? result : disposableHandle(result);
+      if ('kind' in result) return result;
+      for (const entry of localRoots.values()) {
+        if (entry.rootPath === request.canonicalRoot) entry.ownership = result;
+      }
+      const release = async () => {
+        await result.release();
+        for (const entry of localRoots.values()) {
+          if (entry.ownership === result) delete entry.ownership;
+        }
+      };
+      return { ...result, release, dispose: release };
     }),
     openLocalWorkspaceAgentIngress: request => call(async () => {
       assertLocalRoot(request.canonicalRoot, request.workspaceRefId);
       const ingress = await authority.openLocalWorkspaceAgentIngress(request);
       return { ...ingress, dispose: ingress.close };
     }),
-    releaseBootstrapHere: (request, signal, ingress) => call(async () => {
-      assertBoundId(request.targetWorkspaceRefId); return authority.releaseBootstrapHere(request, signal, ingress);
+    releaseBootstrapHere: (request, signal, ingress, admitted) => call(async () => {
+      assertBoundId(request.targetWorkspaceRefId); return authority.releaseBootstrapHere(request, signal, ingress, admitted);
     }),
     acquireWorkspaceSyncMachineIngress: request => call(async () => {
       const ingress = await authority.acquireWorkspaceSyncMachineIngress(request);
       return { ...ingress, dispose: ingress.close };
     }),
+    authorizeWorkspaceSyncMachineAgent: request => call(() => authority.authorizeWorkspaceSyncMachineAgent(request)),
     reconcileRetainedBootstraps: () => call(() => authority.reconcileRetainedBootstraps()),
     releaseAllRetainedBootstraps: () => call(() => authority.releaseAllRetainedBootstraps()),
     recoverConflictResolutionHere: (request, signal, recoveryContext) => call(async () => {
       const localResolutionEndpoint = recoveryContext?.localResolutionEndpoint;
-      assertLocalRoot(localRoots.get(request.targetWorkspaceRefId) ?? '', request.targetWorkspaceRefId);
+      assertLocalRoot(localRoots.get(request.targetWorkspaceRefId)?.rootPath ?? '', request.targetWorkspaceRefId);
       if (localResolutionEndpoint) assertLocalRoot(localResolutionEndpoint.canonicalRoot, request.targetWorkspaceRefId);
       context.onEffectsIssued();
       return authority.recoverConflictResolutionHere(request, signal, { localResolutionEndpoint });
@@ -250,21 +373,78 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
     prepareSourceSeedExport: request => call(async () => {
       assertLocalRoot(request.sourcePath);
       const built = await createWorkspaceSyncSeedExport({ operationId: request.operationId, activeServerDir: stateDirectory,
-        sourcePath: request.sourcePath, workspaceTransfer: resolveWorkspaceSyncSeedTransfer(request.contentPolicy), registry: registry.registry });
-      sourceSeeds.set(request.operationId, built.onDemandScope);
+        sourcePath: request.sourcePath, workspaceTransfer: resolveWorkspaceSyncSeedTransfer(request.contentPolicy, request.exclusionCandidates), registry: registry.registry });
+      sourceSeeds.set(request.operationId, { scope: built.onDemandScope });
       return new Uint8Array(built.payloadSource.payload);
     }),
+    materializeCapturedSeed: request => call(async () => {
+      context.signal.throwIfAborted();
+      context.onEffectsIssued();
+      capturedSeed = await materializeWorkspaceSyncSeedExport({ operationId: request.operationId,
+        targetPath: targetRoot, signal: context.signal,
+        requestPayload: async payload => {
+          const source = await request.resolvePayloadSource({ transferId: payload.transferId });
+          try {
+            await writeTransferPayloadSourceToFile({ source: { kind: 'native', sizeBytes: source.sizeBytes,
+              manifestHash: source.manifestHash, readChunk: async chunk => Buffer.from(await source.readChunk(chunk)) },
+            destinationPath: payload.destinationPath });
+          } finally { await source.dispose(); }
+        },
+        materializeWorkspaceExportArtifacts: payload => materializeWorkspaceExportArtifactsWithScmWorkspace({ ...payload, registry: registry.registry }),
+      });
+      const custody = capturedSeed;
+      return { dispose: async () => { await custody.abort(); if (capturedSeed === custody) capturedSeed = undefined; } };
+    }),
+    prepareSourceConflictResolutionExport: request => call(async () => {
+      assertBoundId(request.sourceWorkspaceRefId);
+      const built = await authority.prepareConflictResolutionExport(request);
+      sourceSeeds.set(request.operationId, { scope: built.onDemandScope, actionReceiptId: request.actionReceiptId });
+      return { payload: new Uint8Array(await readTransferPayloadChunk({ source: built.payloadSource, offset: 0,
+        length: await resolveTransferPayloadSizeBytes(built.payloadSource) })), blobs: built.blobs };
+    }),
     readSourceSeedBlob: request => call(async () => {
-      const seed = sourceSeeds.get(request.operationId);
+      const seed = sourceSeeds.get(request.operationId)?.scope;
       if (!seed?.allowTransferId(request.transferId)) throw privateProjectCheckoutRefusal();
       const source = await seed.resolvePayloadSourceOnOpen({ transferId: request.transferId, requestBody: undefined });
       return new Uint8Array(await readTransferPayloadChunk({ source, offset: request.offset, length: request.length }));
     }),
+    stageConflictResolutionHere: (request, signal) => call(async () => {
+      assertBoundId(request.targetWorkspaceRefId); context.onEffectsIssued();
+      return authority.stageConflictResolutionHere(request, signal);
+    }),
+    applyStagedConflictResolutionHere: (request, signal) => call(async () => {
+      assertBoundId(request.targetWorkspaceRefId); context.onEffectsIssued();
+      return authority.applyStagedConflictResolutionHere(request, signal);
+    }),
+    discardStagedConflictResolutionHere: (request, signal) => call(async () => {
+      assertBoundId(request.targetWorkspaceRefId); return authority.discardStagedConflictResolutionHere(request, signal);
+    }),
+    releaseConflictResolutionCaptureHere: request => call(async () => {
+      await authority.releaseConflictResolutionCaptureHere(request);
+      for (const [operationId, entry] of sourceSeeds) {
+        if (entry.actionReceiptId === request.actionReceiptId) sourceSeeds.delete(operationId);
+      }
+    }),
     readFileHere: (request, signal) => call(async () => { assertBoundId(request.workspaceRefId); return authority.readFileHere(request, signal); }),
     observeEntryHere: (request, signal) => call(async () => { assertBoundId(request.workspaceRefId); return authority.observeEntryHere(request, signal); }),
     replaceSnapshot: next => call(async () => { replaceSnapshot(next); }),
-    inspectCheckout: subdir => call(() => executeWorkspaceCheckoutEffect({ ...checkout, existingRootPath: targetRoot,
-      request: { ...checkout.request, source: { kind: 'workspace', workspaceId: checkout.workspaceRefId }, materialization: { kind: 'attach' }, subdir } }, context)),
-    dispose: () => disposal ??= (async () => { await authority.releaseAllRetainedBootstraps(); await registry.dispose(); })(),
+    inspectCheckout: subdir => call(async () => {
+      if (configuration.localManagedTarget) {
+        if (await realpath(targetRoot) !== targetRoot) throw privateProjectCheckoutRefusal();
+        return materializeProjectCheckout({ materialization: { kind: 'attach' }, sourceDirectory: targetRoot,
+          sourceRootPath: targetRoot, subdir, signal: context.signal });
+      }
+      return executeWorkspaceCheckoutEffect({ ...checkout, existingRootPath: targetRoot,
+        request: { ...checkout.request, source: { kind: 'workspace', workspaceId: checkout.workspaceRefId }, materialization: { kind: 'attach' }, subdir } }, context);
+    }),
+    dispose: () => disposal ??= (async () => {
+      await authority.releaseAllRetainedBootstraps();
+      for (const root of localRoots.values()) {
+        await root.ownership?.release();
+        delete root.ownership;
+      }
+      await capturedSeed?.abort();
+      await registry.dispose();
+    })(),
   };
 }

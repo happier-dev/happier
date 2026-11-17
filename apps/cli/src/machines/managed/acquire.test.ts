@@ -197,7 +197,7 @@ function driver(options: Readonly<{ guestCliFetch?: typeof fetch }> = {}) {
  * A retained setup replay is now a real opaque preset row: Home holds only
  * lifecycle state while the local keyholder opens the exact admitted snapshot.
  */
-function plainOpaqueSetupReplayFixture() {
+function plainOpaqueSetupReplayFixture(projectFiles?: { kind: 'sync'; mode: 'keep_synced' }) {
     const presetId = 'setup-replay-preset';
     const launch = input.selection.launch;
     const resource = { contributionRef: launch.provider, schemaVersion: launch.schemaVersion, value: {} };
@@ -214,6 +214,7 @@ function plainOpaqueSetupReplayFixture() {
         v: 1,
         name: 'Setup replay preset',
         launch,
+        ...(projectFiles ? { projectFiles } : {}),
         setup: { scripts: [{ body: 'echo admitted', affects: 'none' }] },
     } });
     const snapshotContent = replaceManagedMachinePresetLaunchNameV1({ presetId, mode: 'plain', content: authored.content,
@@ -1105,7 +1106,8 @@ esac
         expect(writes.some(path => /\/(submit|report|enrollment-context)$/u.test(path))).toBe(false);
     });
     it('runs setup after Join and before the admitted first message without buying again', async () => {
-        const fixture = plainOpaqueSetupReplayFixture();
+        const projectFiles = { kind: 'sync' as const, mode: 'keep_synced' as const };
+        const fixture = plainOpaqueSetupReplayFixture(projectFiles);
         let retained = fixture.admission.machine;
         const writes: string[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async url => {
@@ -1123,7 +1125,9 @@ esac
                 sequence.push('setup');
                 retained = { ...retained, machineSetup: { ...retained.machineSetup!, state: 'succeeded' } };
                 return retained;
-            }, runAgentStart: async ({ machine: prepared }) => {
+            }, runAgentStart: async (continuation) => {
+                const prepared = continuation.machine;
+                expect(continuation).toMatchObject({ projectFiles });
                 expect(prepared.machineSetup?.state).toBe('succeeded'); sequence.push('message');
             } });
         expect(sequence).toEqual(['setup', 'message']);

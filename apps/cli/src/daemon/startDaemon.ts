@@ -1,4 +1,5 @@
 import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
+import { readSessionTargetHolderArtifacts } from '@/subprocess/supervision/sessionHolderTargetArtifacts';
 import { publishDaemonHostEvent } from './events/publishDaemonHostEvent';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import { readRequesterAccountActionContext } from './sessionEncryption/requesterAccountActionContext';
@@ -2601,6 +2602,9 @@ export async function startDaemon(
       externalActionAccountId,
       resolveProjectWorkerAction: () => projectWorkerAction,
       resolveWorkspaceSyncHandoffAdapter: () => workspaceSyncRuntimeCustody.get()?.handoffAdapter ?? null,
+      resolveManagedProjectFilesSync: () => workspaceSyncRuntimeCustody.get()?.prepareManagedProjectFilesSync ?? null,
+      resolveManagedProjectFilesSeed: () => workspaceSyncRuntimeCustody.get()?.prepareManagedProjectFilesSeed ?? null,
+      resolveManagedProjectFilesBaseline: () => workspaceSyncRuntimeCustody.get()?.readManagedProjectFilesBaseline ?? null,
       readHelperProcessRoots: () => [...roleActivations?.get('voice')?.worker.readProcessRoots() ?? [],
         ...workspaceSyncRuntimeCustody.get()?.readProcessRoots() ?? []],
       readTerminalRequesterAttribution: terminalId => {
@@ -4171,7 +4175,16 @@ export async function startDaemon(
               localMachineId: registeredMachineId,
               releaseChannel: configuration.publicReleaseRing,
               credentials,
+              openManagedWorkspaceTarget: ({ workspace, relationshipId, requesterAccountId, lifetime }) =>
+                managedMachinePolicyAdapter.openWorkspaceSyncTarget({ managedId: workspace.managedId,
+                  workspace, relationshipId, requesterAccountId, lifetime,
+                  holder: { version: configuration.currentCliVersion, resolveArtifacts: readSessionTargetHolderArtifacts } }),
               isCurrent,
+              callWorkspaceProjectSource: async (request, context) => {
+                const client = apiMachineForSessions;
+                if (!client) throw Object.assign(new Error('Workspace source authority is unavailable'), { code: 'peer_unavailable' });
+                return await client.callWorkspaceSyncProjectSource({ ...request, context });
+              },
               callWorkspacePrepareBetween: async (descriptor, ingress) => {
                 const client = apiMachineForSessions;
                 const authorization = ingress.callerInputAuthorization;

@@ -555,8 +555,15 @@ describe('daemon managed Machine Action factory', () => {
             expect(nativeRoles.filter(role => role === 'prepare-destroy')).toHaveLength(1);
         }
     });
-    it.each(['supported', 'unsupported', 'failed'] as const)(
-      'runs a Machine isolation preset through native Sandbox qualification (%s)', async nativeSandbox => {
+    it.each([
+        { nativeSandbox: 'supported', overrideProjectFiles: false, authoredPreset: false },
+        { nativeSandbox: 'supported', overrideProjectFiles: true, authoredPreset: false },
+        { nativeSandbox: 'unsupported', overrideProjectFiles: false, authoredPreset: false },
+        { nativeSandbox: 'failed', overrideProjectFiles: false, authoredPreset: false },
+        { nativeSandbox: 'supported', overrideProjectFiles: false, authoredPreset: true },
+        { nativeSandbox: 'failed', overrideProjectFiles: false, authoredPreset: true },
+    ] as const)(
+      'runs a reviewed Session preset through native qualification ($nativeSandbox, override=$overrideProjectFiles, authored=$authoredPreset)', async ({ nativeSandbox, overrideProjectFiles, authoredPreset }) => {
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const accountCredentials = { token, encryption: null };
@@ -568,7 +575,7 @@ describe('daemon managed Machine Action factory', () => {
         const controller = { machineId: 'controller', installationId: 'installation' };
         const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'Local sandbox', choices: {} };
         const content = sealManagedMachinePresetContentV1({ presetId: 'isolation-preset', mode: 'plain',
-            content: { v: 1, name: launch.name, launch } });
+            content: { v: 1, name: launch.name, launch, projectFiles: { kind: 'sync', mode: 'keep_synced' } } });
         const preset = { id: 'isolation-preset', homeId: 'srv_home', revision: 1, owner: { kind: 'account', accountId: 'account' },
             controller, contentEncryptionMode: 'plain', ...content };
         let machine = ManagedMachineV1Schema.parse({ id: 'isolation-resource', homeId: 'srv_home', custodianAccountId: 'account',
@@ -686,7 +693,14 @@ describe('daemon managed Machine Action factory', () => {
             acquireSessionIsolationSandbox: async request => {
                 try {
                     const resolveNativeSandbox = request.resolveNativeSandbox;
-                    return await managed.acquireSessionIsolationSandbox({ ...request,
+                    // Authored placement was bound before Session admission; the receiving
+                    // acquisition owner consumes it without selecting its Pool again.
+                    const { configuredSandbox: _configured, lifecycle: _lifecycle, ...sharedRequest } =
+                        'configuredSandbox' in request ? request : { ...request, configuredSandbox: undefined, lifecycle: undefined };
+                    const acquisitionRequest = authoredPreset ? { ...sharedRequest, acquisition: {
+                        selection: { kind: 'preset' as const, homeId: preset.homeId, id: preset.id, revision: preset.revision }, controller,
+                    } } : request;
+                    return await managed.acquireSessionIsolationSandbox({ ...acquisitionRequest,
                         ...(resolveNativeSandbox ? { resolveNativeSandbox: supports => {
                             isolationQualifications.push(supports);
                             return resolveNativeSandbox(supports);
@@ -721,6 +735,8 @@ describe('daemon managed Machine Action factory', () => {
             runActionOperation: operations.runActionOperation });
         const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'isolation-spawn',
             executionTarget: { serverId: configuration.activeServerId, machineId: 'controller' }, directory: { kind: 'path', path: '/tmp' },
+            ...(overrideProjectFiles ? { sessionPlacement: { kind: 'machine',
+                target: { serverId: configuration.activeServerId, machineId: 'controller' }, projectFiles: { kind: 'copy_once' } } } : {}),
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, memoryEnabled: false,
             configuration: { mode: { value: null, updatedAtMs: 1 },
                 model: { value: null, updatedAtMs: 1, selectionSource: 'inherited' },
@@ -760,7 +776,7 @@ describe('daemon managed Machine Action factory', () => {
         const diagnostic = JSON.stringify({ result, isolationChildResults, isolationQualifications, isolationFailure,
             isolationAdmissions, isolationReports, isolationChildOperation, roles, launched });
         if (nativeSandbox === 'unsupported') {
-            expect(result, diagnostic).toMatchObject({ ok: true, result: { type: 'error', code: 'target_unavailable',
+            expect(result, diagnostic).toMatchObject({ ok: false, errorCode: 'target_unavailable', details: { type: 'error', code: 'target_unavailable',
                 failureCause: { nativeErrorReason: 'not_available_in_sandbox_type' } } });
             expect(isolationAdmissions).toEqual([]);
             expect(roles).toEqual([]);
@@ -770,8 +786,9 @@ describe('daemon managed Machine Action factory', () => {
         expect(launchedWhileAcquiring, diagnostic).toEqual([]);
         if (nativeSandbox === 'failed') {
             expect(isolationChildOperation, diagnostic).toMatchObject({ kind: 'found', operation: { state: 'failed' } });
-            expect(result, diagnostic).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed',
-                launchError: { kind: 'launch_error', code: 'native_acquire_failed' } } });
+            const failure = { type: 'error', code: 'spawn_failed',
+                launchError: { kind: 'launch_error', code: 'native_acquire_failed' } };
+            expect(result, diagnostic).toMatchObject({ ok: false, errorCode: 'spawn_failed', details: failure });
             expect(launched).toEqual([]);
             return;
         }
@@ -780,6 +797,9 @@ describe('daemon managed Machine Action factory', () => {
             .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
         expect(isolationChildOperation, diagnostic).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
         expect(isolationAdmissions, diagnostic).toEqual([expect.objectContaining({ acquisitionMode: 'resource-bound' })]);
+        if (authoredPreset) expect(isolationAdmissions[0]).toMatchObject({ input: {
+            selection: { kind: 'preset', homeId: preset.homeId, id: preset.id, revision: preset.revision }, controller,
+        } });
         expect(machine.acquisitionMode).toBe('resource-bound');
         // Bootstrap opens a transport carrier; installing a CLI or daemon would
         // also require native exec/file effects or enrollment HTTP, which the
@@ -788,7 +808,9 @@ describe('daemon managed Machine Action factory', () => {
         expect(nativeInputs, diagnostic).toContainEqual({ role: 'bootstrap', input: { resource: {} } });
         expect(machine.enrolledMachineId).toBeUndefined();
         expect(launched).toHaveLength(1);
-        expect(launched[0]).toMatchObject({ nativeSandbox: 'on' });
+        expect(launched[0]).toMatchObject({ nativeSandbox: 'on', managedTargetPlacement: {
+            projectFiles: overrideProjectFiles ? { kind: 'copy_once' } : { kind: 'sync', mode: 'keep_synced' },
+        } });
     });
 
     it.each(['spawn-child', 'release', 'ordinary'] as const)('receives %s native admission without borrowing another Account or repeating its approved effect', async kind => {
@@ -1950,18 +1972,44 @@ describe('daemon managed Machine Action factory', () => {
         ]);
     });
 
-    it('re-enters ordinary Session admission with the actual enrolled Machine and retained private input', async () => {
+    it.each([false, true])('re-enters ordinary Session admission with the actual enrolled Machine and retained private input (override=%s)', async overrideProjectFiles => {
+        vi.mocked(globalThis.fetch).mockImplementation(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+            capabilities: { serverIdentity: { serverIdentityId: 'srv_home' },
+                guestCli: { source: 'public-release', line: '0.3', channel: 'publicdev' } } })));
         const selection = { kind: 'one-off' as const, homeId: 'srv_home', controller: { machineId: 'controller', installationId: 'installation' },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
             retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
-        const enrolled = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account', enrollmentIdentity, launch: selection.launch,
-            controller: selection.controller, allocation: 'bound', resource: { contributionRef: selection.launch.provider, schemaVersion: 1, value: { id: 'native' } },
+        const projectFiles = { kind: 'sync' as const, mode: 'keep_synced' as const };
+        const presetId = 'enrolled-project-files';
+        const authored = sealManagedMachinePresetContentV1({ presetId, mode: 'plain', content: {
+            v: 1, name: selection.launch.name, launch: selection.launch, projectFiles,
+        } });
+        const resource = { contributionRef: selection.launch.provider, schemaVersion: 1, value: { id: 'native' } };
+        const reviewedFacts = ManagedConfigurationFactsV1Schema.parse({ launch: selection.launch,
+            optionStatus: 'current', prerequisites: [], billing: { location: 'cloud', stoppedBilling: 'unknown' },
+            retentionCapabilities: { supportedIntents: ['delete'] }, retention: selection.retention, wakeOnAcceptedMessage: false });
+        const snapshot = replaceManagedMachinePresetLaunchNameV1({ presetId, mode: 'plain', content: authored.content,
+            launchName: selection.launch.name, reviewedFacts, nativeResult: { kind: 'bound', resource } });
+        if (!snapshot) throw new Error('Could not capture the enrolled private preset');
+        const content = { ...authored, content: snapshot };
+        const presetContentOverride = createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'plain',
+            projection: projectManagedMachinePresetForRecipientV1({ content: content.content,
+                recipients: content.recipients, recipientAccountId: 'account' }), enrollmentIdentity });
+        if (!presetContentOverride) throw new Error('Could not project enrolled preset');
+        const acquisition = { selection: { kind: 'preset' as const, homeId: selection.homeId, id: presetId, revision: 1 },
+            controller: selection.controller, retention: selection.retention,
+            wakeOnAcceptedMessage: selection.wakeOnAcceptedMessage, presetContentOverride };
+        const enrolled = { id: 'managed', homeId: 'srv_home', custodianAccountId: 'account',
+            preset: { id: presetId, revision: 1, contentEncryptionMode: 'plain' },
+            controller: selection.controller, allocation: 'bound',
             creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
             enrolledMachineId: 'actual-guest', retention: selection.retention, wakeOnAcceptedMessage: false };
         const bodies: unknown[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             bodies.push(body);
-            return { status: 200, data: String(url).endsWith('/admit') ? { machine: enrolled, replayed: false } : { machine: enrolled } };
+            return { status: 200, data: String(url).endsWith('/admit')
+                ? { machine: enrolled, presetContent: content, presetContentOverride, replayed: true }
+                : { machine: enrolled } };
         });
         // Ordinary spawn's daemon/network boundary is substituted; schema,
         // permission and Agent-start admission are the real Action executor.
@@ -1972,11 +2020,17 @@ describe('daemon managed Machine Action factory', () => {
                 organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'accepted', localId: 'message' } };
         } });
         const start = { creationKey: SessionCreationKeyV1Schema.parse('start'), directory: { kind: 'managed' as const },
+            ...(overrideProjectFiles ? { sessionPlacement: { kind: 'managed' as const, projectFiles: { kind: 'copy_once' as const } } } : {}),
             agentTarget: { kind: 'agent' as const, identity: { pluginId: 'acme.agent', localId: 'coding' } }, initialInput: { text: 'Private task' } };
-        const managedMachineAction = adapter(true, (input, context) => executor.execute('session.spawn_new', input, context));
+        const accountToken = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
+            provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+        const native = nativeFixture({ privateNative: true, credentialPurposes: [] });
+        const managedMachineAction = adapter(true, (input, context) => executor.execute('session.spawn_new', input, context),
+            undefined, 'not-used-by-this-test', { token: accountToken, encryption: null },
+            undefined, undefined, undefined, native.runtimeRegistry);
         const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account', generateOperationId: () => 'operation' });
-        await expect(operations.observeExecution({ actionId: 'machines.managed.acquire', input: { enrollmentIdentity, selection, agentStart: start }, actionRequestId: 'request',
-            execute: async (context) => ({ ok: true, result: await managedMachineAction({ actionId: 'machines.managed.acquire', input: { enrollmentIdentity, selection, agentStart: start },
+        await expect(operations.observeExecution({ actionId: 'machines.managed.acquire', input: { ...acquisition, agentStart: start }, actionRequestId: 'request',
+            execute: async (context) => ({ ok: true, result: await managedMachineAction({ actionId: 'machines.managed.acquire', input: { ...acquisition, agentStart: start },
                 context: { ...context, surface: 'agent', authority: 'account_automation', callerPermissionMode: 'yolo',
                     serverId: configuration.activeServerId, runtimeAccountId: 'account', actionCaller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
                     causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' },
@@ -1990,6 +2044,7 @@ describe('daemon managed Machine Action factory', () => {
         if (terminal.kind === 'found') expect(terminal.operation.error).toBeUndefined();
         expect(terminal).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
         expect(started).toMatchObject([{ executionTarget: { serverId: configuration.activeServerId, machineId: 'actual-guest' },
+            sessionPlacement: { kind: 'managed', projectFiles: overrideProjectFiles ? { kind: 'copy_once' } : projectFiles },
             actionCaller: { kind: 'session', sessionId: 'lead' }, workDepth: 1, initialInput: start.initialInput,
             managedCreation: { homeId: enrolled.homeId, managedId: enrolled.id, controller: enrolled.controller } }]);
         expect(JSON.stringify(bodies)).not.toContain('Private task');

@@ -152,6 +152,8 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   /** Host policy placement resolves only after the existing creation owner finds no retained Session. */
   prepareSessionIsolation?: () => Promise<Readonly<{
     sessionCreationCorrespondence: SessionCreationCorrespondenceV1;
+    directory?: string;
+    directoryKind?: 'path' | 'managed';
     managedTargetPlacement?: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2').SessionManagedTargetPlacementV1;
     nativeSandbox?: 'on' | 'off';
   }> | undefined>;
@@ -1131,22 +1133,31 @@ export async function createSpawnedSession(
       const retained = SessionCreationCorrespondenceV1ReadSchema.safeParse(ownerMetadata?.sessionCreationCorrespondenceV1);
       if (retained.success) {
         const recipe = params.sessionCreationCorrespondence.recipe;
-        const restorePlacement = retained.data.recipe.managedCreationOrigin === 'machine_policy'
+        const restorePlacement = retained.data.recipe.managedCreationOrigin !== undefined
           && recipe.managedCreation === undefined && retained.data.recipe.managedCreation !== undefined;
-        const restoreNativeSandbox = retained.data.recipe.nativeSandboxOrigin === 'machine_policy'
+        const restoreNativeSandbox = retained.data.recipe.nativeSandboxOrigin !== undefined
           && params.authoredNativeSandbox === undefined;
         if (restorePlacement || restoreNativeSandbox) {
           const managedCreation = retained.data.recipe.managedCreation;
           const nativeSandbox = retained.data.recipe.configuration?.nativeSandbox;
+          const projectFilesSource = recipe.projectFilesSource ?? retained.data.recipe.projectFilesSource;
+          const projectFilesOrigin = retained.data.recipe.projectFilesOrigin;
+          const projectFiles = recipe.projectFiles ?? retained.data.recipe.projectFiles;
           applyIsolation({
             sessionCreationCorrespondence: { ...params.sessionCreationCorrespondence, recipe: {
               ...recipe,
-              ...(restorePlacement ? { managedCreation, managedCreationOrigin: 'machine_policy' as const } : {}),
-              ...(restoreNativeSandbox ? { nativeSandboxOrigin: 'machine_policy' as const,
+              ...(restorePlacement ? { managedCreation, managedCreationOrigin: retained.data.recipe.managedCreationOrigin,
+                ...(projectFilesSource ? { projectFilesSource } : {}),
+                ...(projectFilesOrigin ? { projectFilesOrigin } : {}),
+                ...(projectFiles ? { projectFiles } : {}) } : {}),
+              ...(restoreNativeSandbox ? { nativeSandboxOrigin: retained.data.recipe.nativeSandboxOrigin,
                 configuration: withSessionNativeSandbox(recipe.configuration, nativeSandbox) ?? null } : {}),
             } },
             ...(restorePlacement && managedCreation ? { managedTargetPlacement: {
-              managedId: managedCreation.managedId, workspaceRoot: params.directory } } : {}),
+              managedId: managedCreation.managedId, workspaceRoot: params.directory,
+              ...(projectFilesSource ? { projectFilesSource } : {}),
+              ...(projectFilesOrigin ? { projectFilesSourceWorkspace: projectFilesOrigin.sourceWorkspace } : {}),
+              ...(projectFiles ? { projectFiles } : {}) } } : {}),
             ...(restoreNativeSandbox && nativeSandbox !== undefined ? { nativeSandbox } : {}),
           });
         }

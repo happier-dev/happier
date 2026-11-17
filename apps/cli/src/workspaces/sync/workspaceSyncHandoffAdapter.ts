@@ -38,6 +38,10 @@ import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/age
 import type { PrivateProjectNativeSync, PrivateProjectSyncEffectConfiguration, PrivateProjectSyncNetwork } from '@/workspaces/activation/privateProjectSyncEffect';
 import type { WorkspaceSyncTargetPhaseDescriptor } from './workspaceSyncTargetAuthority';
 import { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
+import { isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import type { ManagedWorkspaceSyncTarget } from '@/machines/managed/acquire';
+import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 
 /**
  * Handoff's only workspace integration seam.  The adapter deliberately knows
@@ -56,6 +60,14 @@ export type WorkspaceSyncPrivateExecution = Readonly<{
   accountRowsCustody: ProjectAccountSessionCustody;
   executionIdentity?: HostRequesterExecutionIdentity;
   nativeSync?: PrivateProjectNativeSync;
+  /** An isolated host source is a distinct native endpoint of this same capture. */
+  sourceNativeSync?: PrivateProjectNativeSync;
+  /** The same retained Account execution owns a daemon-free managed endpoint. */
+  managedTarget?: Readonly<{
+    workspace: ManagedWorkspaceRefV2;
+    open(): Promise<Readonly<{ target: ManagedWorkspaceSyncTarget; native: PrivateProjectNativeSync; signal: AbortSignal }>>;
+    close(): Promise<void>;
+  }>;
   getSnapshot?: () => ActiveProjectAccountRowsSnapshot | null;
   replaceSnapshot?: (snapshot: ActiveProjectAccountRowsSnapshot) => Promise<void>;
   callTargetPhase?: (descriptor: WorkspaceSyncTargetPhaseDescriptor) => Promise<unknown>;
@@ -68,6 +80,8 @@ export type WorkspaceSyncPrivateExecution = Readonly<{
   recoverConflictResolutionAtTarget?: (request: Parameters<PrivateProjectNativeSync['recoverConflictResolutionHere']>[0],
     signal?: AbortSignal) => ReturnType<PrivateProjectNativeSync['recoverConflictResolutionHere']>;
   assertTransferCurrent(): Promise<void>;
+  /** Finite captured SOURCE cleanup, after its native ownership loan settles. */
+  onSourceRootReleased?(): Promise<void>;
   retainRelationship?(relationshipId: string): Promise<void>;
   release(): Promise<void>;
 }>;
@@ -102,6 +116,8 @@ export type PrepareWorkspaceSyncHandoffInput = Readonly<{
   action: WorkspaceSyncHandoffAction;
   sourceMachineId: string;
   targetMachineId: string;
+  /** Native destination namespace; targetMachineId remains its actual routing controller. */
+  targetManaged?: Pick<ManagedWorkspaceRefV2, 'managedId' | 'controller'>;
   sourceWorkspaceRefId?: string;
   targetWorkspaceRefId?: string;
   sourceRootPath: string;
@@ -161,6 +177,8 @@ export type WorkspaceSyncHandoffAdapterDeps = Readonly<{
     release(reason: 'abort' | 'commit'): Promise<void>;
     ownershipHandles?: readonly WorkspaceRootOwnershipHandle[];
     targetWorkspace?: WorkspaceRefV1;
+    copyOnceBaseline?: WorkspaceManifest;
+    copyOnceExcludedPaths?: readonly string[];
   }>>;
 }>;
 
@@ -192,12 +210,14 @@ export interface WorkspaceSyncHandoffAdapter {
 
 /** One containing agent-free Open; the same adapter owns clean bytes, READY and commit custody. */
 export async function materializeWorkspaceSyncForOpen(adapter: WorkspaceSyncHandoffAdapter, request: PrepareWorkspaceSyncHandoffInput,
-  context?: RpcHandlerContext, authority?: WorkspaceSyncHandoffSourcePhaseAuthority): Promise<void> {
+  context?: RpcHandlerContext, authority?: WorkspaceSyncHandoffSourcePhaseAuthority): Promise<Pick<WorkspaceSyncHandoffPrepared, 'copyOnceBaseline' | 'copyOnceExcludedPaths'>> {
   const prepared = await adapter.prepare(request, authority, context);
   // A retained prepare can be reused; finalization still starts forward effects.
   request.onEffectsIssued?.();
   await adapter.finalize({ operationId: request.operationId, prepared, signal: request.signal });
   await adapter.commit({ operationId: request.operationId, prepared, signal: request.signal });
+  return { ...(prepared.copyOnceBaseline ? { copyOnceBaseline: prepared.copyOnceBaseline } : {}),
+    ...(prepared.copyOnceExcludedPaths ? { copyOnceExcludedPaths: prepared.copyOnceExcludedPaths } : {}) };
 }
 
 type PreparedOperation = Readonly<{
@@ -209,6 +229,8 @@ type PreparedOperation = Readonly<{
     release(reason: 'abort' | 'commit'): Promise<void>;
     ownershipHandles?: readonly WorkspaceRootOwnershipHandle[];
     targetWorkspace?: WorkspaceRefV1;
+    copyOnceBaseline?: WorkspaceManifest;
+    copyOnceExcludedPaths?: readonly string[];
   }>;
   finalizedStatus?: WorkspaceSyncStatusV1;
   finalizedRoute?: Extract<WorkspaceSyncPrepareBetweenResultV1, { ok: true }>['traversed'];
@@ -226,13 +248,14 @@ function sameAdmittedInput(left: PrepareWorkspaceSyncHandoffInput, right: Prepar
     'sourceWorkspaceRefId', 'targetWorkspaceRefId', 'sourceRootPath', 'targetRootPath',
     'targetReplacementApprovalReceiptId'] as const).every(field => left[field] === right[field])
     && isDeepStrictEqual(left.action, right.action)
+    && isDeepStrictEqual(left.targetManaged, right.targetManaged)
     && isDeepStrictEqual(left.targetReplacementApproval, right.targetReplacementApproval)
     && isDeepStrictEqual(left.targetReplacementApprovalActionInput, right.targetReplacementApprovalActionInput);
 }
 
 export function sameExecutionWorkspace(input: Pick<PrepareWorkspaceSyncHandoffInput,
-  'sourceWorkspaceRefId' | 'targetWorkspaceRefId' | 'sourceMachineId' | 'targetMachineId' | 'sourceRootPath' | 'targetRootPath'>): boolean {
-  return input.sourceWorkspaceRefId !== undefined && input.sourceWorkspaceRefId === input.targetWorkspaceRefId
+  'sourceWorkspaceRefId' | 'targetWorkspaceRefId' | 'sourceMachineId' | 'targetMachineId' | 'sourceRootPath' | 'targetRootPath' | 'targetManaged'>): boolean {
+  return !input.targetManaged && input.sourceWorkspaceRefId !== undefined && input.sourceWorkspaceRefId === input.targetWorkspaceRefId
     && input.sourceMachineId === input.targetMachineId && input.sourceRootPath === input.targetRootPath;
 }
 
@@ -289,6 +312,7 @@ function copyOnceInput(input: PrepareWorkspaceSyncHandoffInput): WorkspaceSyncCo
     alphaWorkspaceRefId: input.sourceWorkspaceRefId,
     betaWorkspaceRefId: input.targetWorkspaceRefId,
     contentPolicy: validateWorkspaceSyncContentPolicy(input.action.contentPolicy),
+    ...(input.action.exclusionCandidates ? { exclusionCandidates: input.action.exclusionCandidates } : {}),
   };
 }
 
@@ -495,7 +519,8 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           serverId: accountServerId,
           sourceMachineId: input.sourceMachineId,
           sourceRootPath: input.sourceRootPath,
-          targetMachineId: input.targetMachineId,
+          ...(input.targetManaged ? { targetManaged: input.targetManaged, purpose: 'project_files' as const }
+            : { targetMachineId: input.targetMachineId }),
           targetRootPath: input.targetRootPath,
           ...(input.sourceWorkspaceRefId ? { sourceWorkspaceRefId: input.sourceWorkspaceRefId } : {}),
           ...(input.targetWorkspaceRefId ? { targetWorkspaceRefId: input.targetWorkspaceRefId } : {}),
@@ -505,10 +530,10 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           // under target custody; a non-empty replacement still fails closed
           // until the canonical Action approval is replayed.
           targetBootstrap: 'materialize_from_source_workspace',
-          ...(input.targetReplacementApproval ? { targetReplacementApproval: input.targetReplacementApproval } : {}),
+          ...(input.targetReplacementApproval ? { targetReplacementApproval: input.targetReplacementApproval,
+            targetReplacementApprovalActionInput: input.targetReplacementApprovalActionInput } : {}),
           ...(input.targetReplacementApprovalReceiptId ? {
             targetReplacementApprovalReceiptId: input.targetReplacementApprovalReceiptId,
-            targetReplacementApprovalActionInput: input.targetReplacementApprovalActionInput,
           } : {}),
           flushBeforeCommit: true,
           ...(input.signal ? { signal: input.signal } : {}),
@@ -554,7 +579,8 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           serverId: accountServerId,
           sourceMachineId: input.sourceMachineId,
           sourceRootPath: input.sourceRootPath,
-          targetMachineId: input.targetMachineId,
+          ...(input.targetManaged ? { targetManaged: input.targetManaged, purpose: 'project_files' as const }
+            : { targetMachineId: input.targetMachineId }),
           targetRootPath: input.targetRootPath,
           ...(input.sourceWorkspaceRefId ? { sourceWorkspaceRefId: input.sourceWorkspaceRefId } : {}),
           ...(input.targetWorkspaceRefId ? { targetWorkspaceRefId: input.targetWorkspaceRefId } : {}),
@@ -580,7 +606,8 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
         if (input.action.kind === 'copy_once' && fence?.targetWorkspace) {
           const target = fence.targetWorkspace;
           effectiveInput = { ...effectiveInput, targetWorkspaceRefId: target.id,
-            targetMachineId: target.machineId, targetRootPath: target.rootPath };
+            targetMachineId: resolveWorkspaceSyncExecutionMachineIdV1(target), targetRootPath: target.rootPath,
+            targetManaged: isManagedWorkspaceRefV2(target) ? { managedId: target.managedId, controller: target.controller } : undefined };
         }
         let status: WorkspaceSyncStatusV1 | undefined;
         let traversed: WorkspaceSyncHandoffPrepared['traversed'];
@@ -597,6 +624,8 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           kind: input.action.kind,
           operationId: input.operationId,
           action: input.action,
+          ...(input.action.kind === 'copy_once' && fence?.copyOnceBaseline ? { copyOnceBaseline: fence.copyOnceBaseline } : {}),
+          ...(input.action.kind === 'copy_once' && fence?.copyOnceExcludedPaths ? { copyOnceExcludedPaths: fence.copyOnceExcludedPaths } : {}),
           ...(input.action.kind === 'relationship'
             ? { relationshipId: input.action.relationshipId, relationshipCreated: false }
             : {}),

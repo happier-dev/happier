@@ -6,7 +6,8 @@ import { areWorkspaceSyncRelationshipDefinitionsEqual, areWorkspaceSyncWorkerCop
 import type { WorkspaceContentPolicyV1, WorkspaceRefV1, WorkspaceSyncPersistentModeV1, WorkspaceSyncRelationshipV1, WorkspaceSyncStatusV1, HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol';
 import type { WorkspaceSyncCommittedCopyTargetV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 
-import { materializeWorkspaceRefForMachineRoot, resolveWorkspaceRefById, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
+import { materializeWorkspaceRefForMachineRoot, materializeWorkspaceRefForManagedRoot, resolveWorkspaceRefById, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
+import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectAccountSnapshotMutation, ProjectAccountSnapshotMutationResult } from '@/workspaces/projectAccountRows';
 import type { ProjectWorkerDependency } from '@/workspaces/execution/projectWorkerAdmission';
 import { deriveWorkspaceSyncRelationshipId } from './workspaceSyncRelationshipIdentity';
@@ -20,13 +21,13 @@ export type MaterializeWorkspaceSyncEndpointsInput = Readonly<{
   serverId: string;
   sourceMachineId: string;
   sourceRootPath: string;
-  targetMachineId: string;
   targetRootPath: string;
   sourceWorkspaceRefId?: string;
   targetWorkspaceRefId?: string;
-  purpose?: 'worker_clean_copy';
+  purpose?: 'worker_clean_copy' | 'project_files';
   signal?: AbortSignal;
-}>;
+}> & (Readonly<{ targetMachineId: string; targetManaged?: never }>
+  | Readonly<{ targetMachineId?: never; targetManaged: Pick<ManagedWorkspaceRefV2, 'managedId' | 'controller'> }>);
 
 export type PrepareWorkspaceSyncRelationshipInput = MaterializeWorkspaceSyncEndpointsInput & Readonly<{
   operationId: string;
@@ -252,17 +253,19 @@ export function createWorkspaceSyncRelationshipOwner(
         nowMs: nowMs(),
         createId: () => input.sourceWorkspaceRefId ?? createId(),
       });
-      const second = materializeWorkspaceRefForMachineRoot(first.workspaceRefs, {
+      const targetInput = {
         serverId: input.serverId,
-        machineId: input.targetMachineId,
         rootPath: input.targetRootPath,
-        ...(input.purpose === 'worker_clean_copy' ? { parentWorkspace: {
+        ...(input.purpose === 'worker_clean_copy' || input.purpose === 'project_files' ? { parentWorkspace: {
           serverId: first.workspaceRef.serverId, workspaceId: first.workspaceRef.id,
           machineId: first.workspaceRef.machineId, rootPath: first.workspaceRef.rootPath,
         } } : {}),
         nowMs: nowMs(),
         createId: () => input.targetWorkspaceRefId ?? createId(),
-      });
+      };
+      const second = input.targetManaged
+        ? materializeWorkspaceRefForManagedRoot(first.workspaceRefs, { ...targetInput, ...input.targetManaged })
+        : materializeWorkspaceRefForMachineRoot(first.workspaceRefs, { ...targetInput, machineId: input.targetMachineId });
       if ((input.sourceWorkspaceRefId && first.workspaceRef.id !== input.sourceWorkspaceRefId)
         || (input.targetWorkspaceRefId && second.workspaceRef.id !== input.targetWorkspaceRefId)) {
         throw ownerError('workspace_ref_not_ready', 'Prepared workspace endpoint identity differs from its existing root');

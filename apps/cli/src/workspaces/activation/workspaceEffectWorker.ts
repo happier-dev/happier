@@ -1,11 +1,14 @@
 import type { Readable, Writable } from 'node:stream';
+import { join } from 'node:path';
 import { createBackgroundServiceProcessFrameDecoder, encodeBackgroundServiceProcessFrame, parseBackgroundServiceProcessMessage } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessProtocol';
 import { createBackgroundServiceProcessServiceClient, type BackgroundServiceProcessBridgeValue } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessBridge';
 import { executeWorkspaceCheckoutEffect, type WorkspaceCheckoutEffect, type WorkspaceCheckoutEffectContext } from './workspaceEffect';
 import type { MaterializedProjectCheckout } from './materializeProjectCheckout';
 import { privateProjectCheckoutRefusal } from './privateProjectCheckout';
 import { executePrivateProjectSyncEffect, privateSyncEffectError, type PrivateProjectNativeSyncProcessPort,
-  type PrivateProjectSyncEffectConfiguration, type PrivateProjectSyncNetwork, type WorkspaceNativeSyncEffect } from './privateProjectSyncEffect';
+  type PrivateProjectSyncEffectConfiguration, type PrivateProjectSyncNetwork, type WorkspaceNativeSyncEffect, type WorkspaceNativeCopyBaselineEffect } from './privateProjectSyncEffect';
+import { readWorkspaceSyncNativeCopyOnceBaseline } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
+import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 import { executeMemberScmRead, type MemberScmReadEffect, type MemberScmRemovalService } from '@/scm/rpc/memberScmRead';
 import { executeMemberSessionImport, type MemberSessionImportEffect, type MemberSessionImportRecord } from '@/session/handoff/agentBundle/memberImportEffect';
 import { executeMemberSessionDirectoryRemoval, type MemberSessionDirectoryRemovalEffect, type MemberSessionDirectoryRemovalService } from '@/session/creation/memberSessionDirectoryRemoval';
@@ -19,6 +22,7 @@ export type WorkspaceEffectServices = Partial<MemberScmComparisonServices> & Rea
   fail(error: Error, effectsIssued: boolean): Promise<void>;
   readNativeSyncConfiguration?(): Promise<Readonly<{ configuration: PrivateProjectSyncEffectConfiguration; network: PrivateProjectSyncNetwork }>>;
   completeNativeSync?(result: PrivateProjectNativeSyncProcessPort): Promise<void>;
+  completeNativeCopyBaseline?(result: WorkspaceManifest | null): Promise<void>;
   /** A local repository operation run as the member: its whole SCM response. */
   completeScmRead?(response: unknown): Promise<void>;
   /** Existing Project removal owner; child supplies filesystem facts and the destructive effect. */
@@ -54,8 +58,8 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
         if (message.kind !== 'run' || running) throw new Error('workspace_effect_protocol_invalid');
         // Admission/source descriptors are inherited solely from the parent
         // owner, exactly as in the existing background-process bootstrap.
-        const dispatched = message.context as WorkspaceCheckoutEffect | WorkspaceNativeSyncEffect | MemberScmReadEffect | MemberScmComparisonEffect | MemberSessionImportEffect | MemberSessionDirectoryRemovalEffect;
-        const effect = 'kind' in dispatched && dispatched.kind === 'native_sync' ? dispatched.checkout : dispatched as WorkspaceCheckoutEffect;
+        const dispatched = message.context as WorkspaceCheckoutEffect | WorkspaceNativeSyncEffect | WorkspaceNativeCopyBaselineEffect | MemberScmReadEffect | MemberScmComparisonEffect | MemberSessionImportEffect | MemberSessionDirectoryRemovalEffect;
+        const effect = 'kind' in dispatched && dispatched.kind === 'native_sync' ? dispatched.checkout : dispatched;
         if (effect.workspaceRoot !== (io.currentDirectory ?? process.cwd)()) {
           throw privateProjectCheckoutRefusal();
         }
@@ -104,7 +108,16 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
               send({ kind: 'settled', id: runId });
               return;
             }
-            const result = await executeWorkspaceCheckoutEffect(effect, { signal,
+            if ('kind' in dispatched && dispatched.kind === 'native_copy_baseline') {
+              if (!services.completeNativeCopyBaseline) throw privateProjectCheckoutRefusal();
+              await services.completeNativeCopyBaseline(await readWorkspaceSyncNativeCopyOnceBaseline({
+                materializationDirectory: join(dispatched.memberHome, '.happier', 'workspace-sync', 'materialization'),
+                owner: dispatched.owner, policyDigest: dispatched.policyDigest,
+              }));
+              send({ kind: 'settled', id: runId });
+              return;
+            }
+            const result = await executeWorkspaceCheckoutEffect(effect as WorkspaceCheckoutEffect, { signal,
               connectedAccounts: services.connectedAccounts,
               onEffectsIssued: () => { effectsIssued = true; void services.onEffectsIssued().catch(() => {}); },
             });

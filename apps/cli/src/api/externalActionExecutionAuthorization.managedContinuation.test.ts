@@ -213,7 +213,8 @@ describe('managed continuation through the ordinary public Action transport', ()
         const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`,
             encryption: mode === 'plain' ? null : { type: 'legacy' as const, secret } };
         const parent = { ...root, binding: { ...root.binding, custodianAccountId: foreign ? 'company' : 'account', accountEncryptionMode: mode,
-            ...('workflowRoot' in testCase ? { actionId: 'workflow.run.start', requestId: 'workflow-request' } : {}) } };
+            ...('workflowRoot' in testCase ? { actionId: 'workflow.run.start', requestId: 'workflow-request',
+                target: { kind: 'machine', machineId: 'controller', project: { machineId: 'controller', directory: '/repo' } } } : {}) } };
         const ownMaterial = { type: 'dataKey' as const, machineKey: deriveAccountMachineKeyFromRecoverySecret(secret) };
         const contentKeyFingerprint = mode === 'plain' ? null
             : convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(

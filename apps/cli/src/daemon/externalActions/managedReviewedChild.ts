@@ -5,7 +5,8 @@ import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsola
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createHostReviewedChildPortV1, type HostReviewedParentV1, type HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutor';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { WORKFLOW_RUN_START_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { WorkflowRunStartRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/socketRpc';
 import { ManagedAcquireInputV1Schema, isManagedPresetAcquireInputV1, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -52,6 +53,26 @@ export async function invokeAdmittedReviewedChild(input: Readonly<{
   }
   if (parent?.actionId === 'projects.service.relocate') return invokeMoveReviewedChild(input, parent);
   const continuation = binding?.managedContinuation;
+  if (parent?.actionId === WORKFLOW_RUN_START_ACTION_ID_V1) {
+    if (!verified || !binding || !continuation?.controller
+      || input.actionId !== WORKFLOW_RUN_START_ACTION_ID_V1 || binding.actionId !== input.actionId
+      || !readRequesterAccountActionContext(context.externalActionExecutionAuthorization))
+      return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
+    const original = WorkflowRunStartRequestV1Schema.safeParse(parent.input);
+    const child = WorkflowRunStartRequestV1Schema.safeParse(input.actionInput);
+    if (!original.success || original.data.managedCreation || original.data.managedProjectFiles || !child.success
+      || original.data.runId !== continuation.creationRequestId)
+      return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
+    const expected = { ...original.data, managedCreation: { homeId: binding.serverIdentityId,
+      managedId: continuation.managedId, controller: continuation.controller },
+      ...(child.data.managedProjectFiles ? { managedProjectFiles: child.data.managedProjectFiles } : {}) };
+    if (!sameStrictJsonValue(child.data, expected)) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
+    // The opened installation codec and Home's admitted creation bind the
+    // original Run to this exact enrolled continuation, including its input.
+    return invokeReviewedChild({ input, parent, parentInput: original.data,
+      children: [{ action: WORKFLOW_RUN_START_ACTION_ID_V1, role: WORKFLOW_RUN_START_ACTION_ID_V1,
+        input: normalizeStrictJsonValue(expected) }], role: WORKFLOW_RUN_START_ACTION_ID_V1 });
+  }
   if (!parent || parent.actionId !== 'machines.managed.acquire' || !binding || !continuation) return null;
   const acquired = ManagedAcquireInputV1Schema.safeParse(parent.input);
   if (!acquired.success) return null;

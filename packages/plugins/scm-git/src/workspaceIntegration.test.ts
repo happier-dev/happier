@@ -11,6 +11,7 @@ import {
     classifyGitPortableWorkspacePath,
     createGitWorkspaceCheckout,
     inspectGitWorkspaceLocation,
+    isGitAdministrativeWorkspacePath,
     materializeGitWorkspaceSourceCheckout,
     verifyGitPreparedReviewWorkspace,
     reconcileGitWorkspacePostMaterialization,
@@ -147,6 +148,21 @@ describe('git workspace integration', { timeout: 20_000 }, () => {
         expect(classifyGitPortableWorkspacePath({ relativePath: '.git/HEAD' })).toBe('non_portable');
         expect(classifyGitPortableWorkspacePath({ relativePath: '.git/worktrees/feature-auth/HEAD' })).toBe('non_portable');
         expect(classifyGitPortableWorkspacePath({ relativePath: 'README.md' })).toBe('unknown');
+    });
+
+    it.skipIf(process.platform !== 'linux')('keeps Linux-exportable case variants out of case-insensitive checkout administration', async () => {
+        const repoRoot = await makeTempDir('git-case-variant-admin-');
+        try {
+            await runGit(repoRoot, ['init']);
+            await mkdir(join(repoRoot, '.GIT'));
+            await writeFile(join(repoRoot, '.GIT', 'config'), 'sandbox configuration');
+            const paths = (await runGit(repoRoot, ['ls-files', '--others', '--exclude-standard'])).split('\n');
+            expect(paths).toContain('.GIT/config');
+            expect(paths.filter(relativePath => !isGitAdministrativeWorkspacePath({ relativePath }))).toEqual([]);
+            expect(isGitAdministrativeWorkspacePath({ relativePath: '.github/workflows/check.yml' })).toBe(false);
+        } finally {
+            await rm(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('rejects non-portable linked-worktree admin entries during portable import validation', async () => {

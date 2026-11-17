@@ -54,6 +54,29 @@ const contentPolicyInput = { v: 1 as const, selection: 'all_files' as const, ext
 let pluginRuntimeHome: Promise<string> | undefined;
 let pluginRuntimeDevelopmentRoots: ReturnType<typeof createDaemonPluginDevelopmentRootsOwner> | undefined;
 
+/** Install the same daemon-applied SCM runtime used by composed native fixtures. */
+export async function acquireWorkspaceSyncTestScmRuntime(onPhase?: (phase: string) => void): Promise<PluginRuntimeRegistryLease> {
+  return await pluginReloadController.acquireRuntimeRegistry({
+      resolveRuntimeRegistry: async () => {
+        onPhase?.('SCM runtime home');
+        const happyHomeDir = await (pluginRuntimeHome ??= mkdtemp(join(tmpdir(), 'happier-bind-child-plugin-runtime-')));
+        const developmentRoots = pluginRuntimeDevelopmentRoots ??= createDaemonPluginDevelopmentRootsOwner({
+          happyHomeDir,
+          // This fixture admits exact bundled source roots lazily. It does not
+          // initialize watchers or authorize a development-reload workflow.
+          submitObservation: async () => { throw new Error('Development reload is not installed in this fixture'); },
+        });
+        onPhase?.('SCM contribution registry');
+        const contributes = await resolveMergedContributionRegistry({ happyHomeDir });
+        const pluginIds = [...new Set([...(contributes.scmHostingProviders ?? []), ...(contributes.scmBackends ?? [])]
+          .flatMap(contribution => contribution.pluginId ? [contribution.pluginId] : []))];
+        onPhase?.('SCM executable plugin registry');
+        return await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, contributes, pluginIds,
+          resolveDevelopmentSourceAuthority: developmentRoots.resolveDevelopmentSourceAuthority });
+      },
+    });
+}
+
 /** Native artifact/process boundaries with the real broker, controller and target admission. */
 export function createWorkspaceSyncNativeProcessTestBoundary(options: Readonly<{
   onCommand?: (command: MutagenControlCommandV1) => Promise<void>;
@@ -467,25 +490,7 @@ export async function composeBindChildSourcePhaseTestRuntime(options: Readonly<{
     // canonical owner demands every declared backend and hosting provider, so
     // admit those exact public plugin occurrences, not just Git/Sapling.
     options.onCompositionPhase?.('SCM runtime lease acquisition');
-    pluginRuntimeLease = await pluginReloadController.acquireRuntimeRegistry({
-      resolveRuntimeRegistry: async () => {
-        options.onCompositionPhase?.('SCM runtime home');
-        const happyHomeDir = await (pluginRuntimeHome ??= mkdtemp(join(tmpdir(), 'happier-bind-child-plugin-runtime-')));
-        const developmentRoots = pluginRuntimeDevelopmentRoots ??= createDaemonPluginDevelopmentRootsOwner({
-          happyHomeDir,
-          // This fixture admits exact bundled source roots lazily. It does not
-          // initialize watchers or authorize a development-reload workflow.
-          submitObservation: async () => { throw new Error('Development reload is not installed in this fixture'); },
-        });
-        options.onCompositionPhase?.('SCM contribution registry');
-        const contributes = await resolveMergedContributionRegistry({ happyHomeDir });
-        const pluginIds = [...new Set([...(contributes.scmHostingProviders ?? []), ...(contributes.scmBackends ?? [])]
-          .flatMap(contribution => contribution.pluginId ? [contribution.pluginId] : []))];
-        options.onCompositionPhase?.('SCM executable plugin registry');
-        return await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, contributes, pluginIds,
-          resolveDevelopmentSourceAuthority: developmentRoots.resolveDevelopmentSourceAuthority });
-      },
-    });
+    pluginRuntimeLease = await acquireWorkspaceSyncTestScmRuntime(options.onCompositionPhase);
   }
   const workerAdmissions = new Map<string, ReturnType<typeof createProjectWorkerAdmission>>();
   async function compose(machineId: string) {

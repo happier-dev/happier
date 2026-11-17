@@ -175,7 +175,7 @@ function nativeDomainError(record: Record<string, unknown>): Error {
   });
 }
 
-function parseReadResult(line: string): NativeConfinedReadOutcome {
+function parseReadResult(line: string, maxBytes: number): NativeConfinedReadOutcome {
   const record = parseRecord(line);
   if (record.v !== 1 || record.t !== 'workspace-confined-result' || typeof record.status !== 'string') {
     throw unsafe('native workspace confinement returned an invalid preview result');
@@ -207,8 +207,8 @@ function parseReadResult(line: string): NativeConfinedReadOutcome {
         || !isDigest(record.digest)
       ) break;
       const content = parseBase64(record.contentBase64);
-      if (content.byteLength !== record.size || content.byteLength > WORKSPACE_SYNC_FILE_PREVIEW_MAX_BYTES) {
-        throw unsafe('native workspace confinement returned content outside the preview bound');
+      if (content.byteLength !== record.size || content.byteLength > maxBytes) {
+        throw unsafe('native workspace confinement returned content outside the requested bound');
       }
       return { status: 'content', content, digest: record.digest, size: record.size };
     }
@@ -335,11 +335,11 @@ async function runExchange<T>(input: Readonly<{
   request: Readonly<Record<string, unknown>>;
   assertCurrentAuthority?: () => Promise<void>;
   parseResult(line: string): T;
+  maxContentBytes?: number;
   dependencies: WorkspaceSyncNativeConfinedDependencies;
 }>): Promise<T> {
   const platform = input.dependencies.platform ?? process.platform;
-  const linuxPromotionCommand = input.command === 'workspace-confined-apply' || input.command === 'workspace-confined-inspect' || input.command === 'workspace-confined-recover';
-  if (platform !== 'win32' && platform !== 'darwin' && !(platform === 'linux' && linuxPromotionCommand)) {
+  if (platform !== 'win32' && platform !== 'darwin' && platform !== 'linux') {
     throw unsafe(`native workspace filesystem confinement is unavailable on ${platform}`);
   }
   const resolveExecutable = input.dependencies.resolveExecutable ?? resolveProcessCustodySupportExecutable;
@@ -400,7 +400,9 @@ async function runExchange<T>(input: Readonly<{
       if (settled) return;
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       stdoutBytes += bytes.byteLength;
-      if (stdoutBytes > STDOUT_MAX_BYTES) {
+      const stdoutLimit = input.maxContentBytes === undefined ? STDOUT_MAX_BYTES
+        : Math.ceil(input.maxContentBytes * 4 / 3) + 64 * 1024;
+      if (stdoutBytes > stdoutLimit) {
         finishReject(unsafe('native workspace confinement exceeded its output bound'));
         return;
       }
@@ -454,6 +456,7 @@ export async function runNativeConfinedWorkspaceSyncRead(
 ): Promise<NativeConfinedReadOutcome> {
   return await runExchange({
     command: 'workspace-confined-read',
+    maxContentBytes: input.maxBytes,
     request: {
       v: 1,
       rootPath: input.rootPath,
@@ -462,7 +465,7 @@ export async function runNativeConfinedWorkspaceSyncRead(
       ...(input.expectedDigest === undefined ? {} : { expectedDigest: input.expectedDigest }),
     },
     ...(input.assertCurrentAuthority ? { assertCurrentAuthority: input.assertCurrentAuthority } : {}),
-    parseResult: parseReadResult,
+    parseResult: line => parseReadResult(line, input.maxBytes),
     dependencies,
   });
 }

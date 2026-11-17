@@ -6,6 +6,7 @@ import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
 import type { WorkflowRunRecipientCensusResponseV1 } from '@happier-dev/protocol/workflows';
 import { WorkflowRunRecipientKeyEnvelopesV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import { AutomationAccountCurrentnessWitnessV1Schema } from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
+import { SessionManagedCreationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
 /**
  * In-memory stand-in for the server's opaque Workflow Run storage owner.
@@ -121,6 +122,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
   const publishChange = () => { for (const observer of changeObservers) observer(); };
 
   let acceptedEnvelope: string | null = params.acceptedEnvelope ?? null;
+  let managedCreationId: string | null = null;
   let checkpointEnvelope: string | null = null;
   let resultEnvelope: string | null = null;
   let state: WorkflowRunStateV1 = params.state ?? 'queued';
@@ -209,6 +211,8 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
       case 'admit': {
         if (acceptedEnvelope === null) {
           retainAdmissionKeys(operation);
+          managedCreationId = operation.managedCreation === undefined ? null
+            : SessionManagedCreationV1Schema.parse(operation.managedCreation).managedId;
           acceptedEnvelope = String(operation.acceptedEnvelope);
           const delivery = operation.resultDelivery;
           if (delivery && typeof delivery === 'object' && 'kind' in delivery
@@ -240,7 +244,7 @@ export function createWorkflowRunStorageTestkit(params: Readonly<{
         const rootProgress = ordered().find(row => row.index.parentRecordId === null
           && row.index.sequence === '0' && row.index.memberOrdinal === '0' && row.index.attempt === '0') ?? null;
         if (operation.projection === 'control') return { run: { state: run.state, revision: run.revision }, rootProgress };
-        return { run, acceptedEnvelope, checkpointEnvelope, resultEnvelope, keyCensus, rootProgress };
+        return { run, acceptedEnvelope, checkpointEnvelope, resultEnvelope, keyCensus, rootProgress, managedCreationId };
       }
       case 'list': {
         const root = ordered().find(row => row.index.parentRecordId === null);
