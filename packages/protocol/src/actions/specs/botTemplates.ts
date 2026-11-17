@@ -67,6 +67,12 @@ export const BOT_TEMPLATE_ACTION_SPECS_V1: readonly (PreNormalizedActionSpec & R
     ...(id === 'template.instantiate' || id === 'template.updates.apply' ? {
       projectObservationInput: (value: unknown) => projectRecipientInput(id, value),
       approvalPresentation: { summary: () => null, projectInput: (value: unknown) => projectRecipientInput(id, value),
+        // The template a Copy starts from reads as that template, not its kind, Home and Artifact id.
+        referenceForField: (path: string, value: unknown) => {
+          const source = path === 'source' ? readRecord(value) : null;
+          return source?.kind === 'artifact' && typeof source.artifactId === 'string'
+            ? { kind: 'artifact' as const, id: source.artifactId } : undefined;
+        },
         inputSchema: id === 'template.instantiate' ? instantiateReviewSchema : updateReviewSchema },
     } : {}),
     sideEffectClass: id === 'template.open' || id === 'template.preview' || id === 'template.export_file' || id === 'template.updates.diff' ? 'read' : 'write',

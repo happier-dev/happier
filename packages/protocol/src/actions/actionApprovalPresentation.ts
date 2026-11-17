@@ -632,7 +632,7 @@ function appendApprovalStructuredEntries(
   }
   // A declared descendant must be visited even when its containing object or flat list could read as one line.
   const containsReference = (Array.isArray(value) || isRecord(value))
-    && (references?.referenceForField !== undefined || references?.fields.has(references.path) === true);
+    && (references?.fields.has(references.path) === true || hasDeclaredApprovalReferenceBelow(value, references));
   if (containsReference) {
     output.push({ label, value: null, depth });
     appendApprovalStructuredMembers(value, depth + 1, output, widgetStructure, references);
@@ -728,6 +728,20 @@ function describeKindLedApprovalGroup(value: unknown): string | null {
   return words.join(' · ');
 }
 
+/**
+ * Whether an Action's declared `referenceForField` names something inside this value. Only then must the value be
+ * visited member by member; a value with nothing declared in it keeps its own one-line reading ("Directory  ~/repo").
+ */
+function hasDeclaredApprovalReferenceBelow(value: unknown, references: ApprovalStructuredReferences | undefined): boolean {
+  if (!references?.referenceForField || !(Array.isArray(value) || isRecord(value))) return false;
+  const { referenceForField: declare, path: parent, input } = references;
+  const members: [string, unknown][] = Array.isArray(value) ? value.map(item => ['[]', item]) : Object.entries(value);
+  return members.some(([key, item]) => {
+    const path = `${parent}.${key}`;
+    return declare(path, item, input) !== undefined || hasDeclaredApprovalReferenceBelow(item, { ...references, path });
+  });
+}
+
 function appendApprovalStructuredMembers(value: unknown, depth: number, output: ApprovalStructuredValueEntry[], widgetStructure = false,
   references?: ApprovalStructuredReferences): void {
   const members: [string | undefined, string, unknown][] = Array.isArray(value)
@@ -760,7 +774,7 @@ function describeApprovalConnectedServices(value: unknown): readonly ApprovalStr
 function describeApprovalStructuredValue(values: readonly unknown[], widgetStructure = false,
   references?: ApprovalStructuredReferences): readonly ApprovalStructuredValueEntry[] | undefined {
   const containsReference = (Array.isArray(values[0]) || isRecord(values[0]))
-    && (references?.referenceForField !== undefined || references?.fields.has(references.path) === true);
+    && (references?.fields.has(references.path) === true || hasDeclaredApprovalReferenceBelow(values[0], references));
   if (values.length !== 1 || isApprovalScalar(values[0]) && !containsReference) return undefined;
   const output: ApprovalStructuredValueEntry[] = [];
   appendApprovalStructuredMembers(values[0], 0, output, widgetStructure, references);

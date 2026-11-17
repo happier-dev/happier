@@ -479,6 +479,17 @@ describe('approval field presentation', () => {
     expect(fields.rows.some(row => row.kind === 'unrepresentable')).toBe(false);
   });
 
+  it('reads a Copy\'s template source as the template itself, not its kind, Home and id', () => {
+    const source = { kind: 'artifact', serverId: 'home', artifactId: '80f7dabe-1f05-44b7-8e44-d98f2127f523' };
+    const fields = describeApprovalActionFields({ actionId: 'template.instantiate', actionArgs: { source, expectedVersion: '1.2.0',
+      name: 'Release captain', creation: { directory: { kind: 'path', path: '~/code/happier' } } } });
+    const row = fields.rows.find(candidate => candidate.kind === 'value' && candidate.path === 'source');
+    expect(row).toMatchObject({ kind: 'value', reference: { kind: 'artifact', id: source.artifactId } });
+    // Declaring that one reference keeps every other value's own reading: the directory stays one line.
+    const creation = fields.rows.find(candidate => candidate.kind === 'value' && candidate.path === 'creation');
+    expect(creation && 'entries' in creation ? creation.entries?.map(entry => entry.label) : null).toEqual(['Directory']);
+  });
+
   it.each(['session.spawn_new', 'template.instantiate'] as const)('keeps raw launch environment and private connected references out of %s observations and review', actionId => {
     const creation = { executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'managed' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
