@@ -483,7 +483,7 @@ it.each(['cli', 'ui'] as const)('enrolls real failure observers after admitted L
         expect(completed, JSON.stringify({ completed, requests })).toMatchObject({ ...linked, failureObserver: { status: 'enrolled',
           sources: expect.arrayContaining(Object.values(DEPLOYMENT_RECEIPT_EVENT_REFS_V1).map(eventRef => ({
             automationId: expect.any(String), triggerId: expect.any(String), eventRef,
-            sourceInstanceId: expect.any(String), filter: null, pendingObservation: { periodMs: null } }))) } });
+            sourceInstanceId: expect.any(String), filter: null, pendingObservation: { periodMs: 1000 } }))) } });
         const triggers = [...persisted.values()].flatMap(row => row.triggers.map(trigger => ({ row, trigger })));
         expect(triggers).toHaveLength(2);
         for (const { row, trigger } of triggers) {
