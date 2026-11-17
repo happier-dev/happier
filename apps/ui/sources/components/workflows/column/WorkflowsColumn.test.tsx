@@ -210,7 +210,8 @@ describe('WorkflowsColumn', () => {
         const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
         const { WorkflowsColumnActions } = await import('./WorkflowsColumnActions');
         const { WORKFLOWS_NEW_ROUTE } = await import('../workflowsRoutes');
-        const { NewAccountTriggerPopover } = await import('../triggers/AccountTriggersSection');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
         const screen = await renderScreen(<WorkflowsColumnActions canCreate />, { wrapper: TestAuth });
         const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflows-column:add:menu')!;
         const items = menu.props.items as readonly import('@/components/ui/forms/dropdown/DropdownMenu').DropdownMenuItem[];
@@ -218,7 +219,19 @@ describe('WorkflowsColumn', () => {
         await act(async () => menu.props.onSelect('blank'));
         expect(routerPush).toHaveBeenCalledWith(WORKFLOWS_NEW_ROUTE);
         await act(async () => menu.props.onSelect('trigger'));
-        expect(screen.findAllByType(NewAccountTriggerPopover)).toHaveLength(1);
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected the current authoring Account');
+        const route = routerPush.mock.calls.at(-1)?.[0];
+        expect(route).toMatchObject({ pathname: '/workflows/[id]', params: { id: 'new', serverId: lifetime.scope.serverId } });
+        expect(readWorkflowDefinitionDraftSeed(route.params.definitionDraftSeedId, lifetime.scope))
+            .toMatchObject({ initialView: 'sentence' });
+        await screen.update(<WorkflowsColumnActions canCreate={false} />);
+        const more = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'workflows-column:more:menu')!;
+        await act(async () => more.props.onSelect('trigger'));
+        const moreRoute = routerPush.mock.calls.at(-1)?.[0];
+        expect(moreRoute).toMatchObject({ pathname: '/workflows/[id]', params: { id: 'new', serverId: lifetime.scope.serverId } });
+        expect(readWorkflowDefinitionDraftSeed(moreRoute.params.definitionDraftSeedId, lifetime.scope))
+            .toMatchObject({ initialView: 'sentence' });
     });
     it('lists saved and Account Workflows as one Library and opens each at its own target (Q7)', async () => {
         const [{ AutomationDefinitionDetailSchema, AutomationDefinitionListResponseSchema }, { AutomationStoredWorkflowDefinitionRecipeV2Schema },

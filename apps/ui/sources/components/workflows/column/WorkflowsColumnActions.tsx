@@ -7,10 +7,11 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
-import { NewAccountTriggerPopover } from '@/components/workflows/triggers/AccountTriggersSection';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
 import { WorkflowExamplesPopover } from '../library/WorkflowExamplesPopover';
 import { useWorkflowAgentAuthoring } from '../authoring/useWorkflowAgentAuthoring';
+import { prepareWorkflowSentenceEditorEntry } from '../authoring/workflowSentenceAuthoring';
 import { buildWorkflowAgentAuthoringSeed } from '@/sync/domains/workflows/workflowAgentAuthoringSeed';
 import { WORKFLOWS_IMPORT_ROUTE, WORKFLOWS_NEW_ROUTE, WORKFLOWS_RUN_SETTINGS_ROUTE } from '../workflowsRoutes';
 
@@ -27,11 +28,16 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
     const openAgent = useWorkflowAgentAuthoring();
     const [addOpen, setAddOpen] = React.useState(false);
     const [moreOpen, setMoreOpen] = React.useState(false);
-    const [newTriggerOpen, setNewTriggerOpen] = React.useState(false);
     const [examplesOpen, setExamplesOpen] = React.useState(false);
     const addAnchorRef = React.useRef<View>(null);
     const addOpenerRef = props.addOpenerRef;
     const canCreate = props.canCreate;
+    const openTrigger = () => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) return;
+        const entry = prepareWorkflowSentenceEditorEntry({ name: t('workflows.newWorkflow') }, lifetime);
+        if (entry) router.pushRetainingCurrent(entry);
+    };
     React.useEffect(() => {
         if (!addOpenerRef || !canCreate) return;
         addOpenerRef.current = () => setAddOpen(true);
@@ -87,7 +93,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                 itemRowProps={CREATION_MENU_ROW_PROPS}
                 onSelect={(id) => {
                     setMoreOpen(false);
-                    if (id === 'trigger') { setNewTriggerOpen(true); return; }
+                    if (id === 'trigger') { openTrigger(); return; }
                     router.push(WORKFLOWS_RUN_SETTINGS_ROUTE as never);
                 }}
                 placement="bottom"
@@ -117,7 +123,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                     itemRowProps={CREATION_MENU_ROW_PROPS}
                     onSelect={(id) => {
                         setAddOpen(false);
-                        if (id === 'trigger') { setNewTriggerOpen(true); return; }
+                        if (id === 'trigger') { openTrigger(); return; }
                         if (id === 'example') { setExamplesOpen(true); return; }
                         if (id === 'agent') { openAgent(buildWorkflowAgentAuthoringSeed({ kind: 'create' })); return; }
                         router.pushRetainingCurrent((id === 'import' ? WORKFLOWS_IMPORT_ROUTE : WORKFLOWS_NEW_ROUTE) as never);
@@ -140,9 +146,6 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                     )}
                 />
             </View> : null}
-            {newTriggerOpen ? (
-                <NewAccountTriggerPopover anchorRef={addAnchorRef} onRequestClose={() => setNewTriggerOpen(false)} />
-            ) : null}
             {examplesOpen ? <WorkflowExamplesPopover anchorRef={addAnchorRef} onRequestClose={() => setExamplesOpen(false)} /> : null}
         </View>
     );
