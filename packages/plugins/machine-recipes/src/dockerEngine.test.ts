@@ -26,12 +26,26 @@ it('requires a deliberate Docker configuration choice and binds only the reviewe
 it('offers rootless alongside legacy group inputs without admitting shared daemon settings in rootless mode', () => {
   const recipe = MachineRecipeV1Schema.parse({ id: 'docker-engine', ...dockerEngine });
   const schema = compilePluginJsonSchema(recipe.inputSchema);
-  expect(isValidPluginJsonSchemaValue(schema, { mode: 'rootless', daemonConfig: {} })).toBe(true);
+  const inputs = { mode: 'rootless', daemonConfig: {} };
+  const facts = { 'daemon.username': 'happier' };
+  expect(isValidPluginJsonSchemaValue(schema, inputs)).toBe(true);
   expect(isValidPluginJsonSchemaValue(schema, { mode: 'rootless', daemonConfig: { icc: false } })).toBe(false);
   expect(isValidPluginJsonSchemaValue(schema, { mode: 'group', daemonConfig: {} })).toBe(true);
-  const authored = recipe.steps.find(step => step.id === 'docker-rootless-install');
-  expect(authored).toBeDefined();
-  if (!authored) throw new Error('Missing rootless install');
-  expect(resolveMachineRecipeStepInputsV1(authored, { mode: 'rootless', daemonConfig: {} }, { 'daemon.username': 'happier' }))
+  const launcher = recipe.steps.find(step => step.id === 'docker-rootless-launcher');
+  const linger = recipe.steps.find(step => step.id === 'docker-rootless-linger');
+  const install = recipe.steps.find(step => step.id === 'docker-rootless-install');
+  if (!launcher || !linger || !install) throw new Error('Missing rootless setup declaration');
+
+  const resolvedLauncher = resolveMachineRecipeStepInputsV1(launcher, inputs, facts);
+  if (resolvedLauncher.kind !== 'file' || resolvedLauncher.content?.kind !== 'literal') {
+    throw new Error('Expected literal rootless launcher');
+  }
+  expect(resolvedLauncher.content.value).toContain("username='happier'\n");
+  expect(resolvedLauncher.content.value).toContain('{{range .SecurityOptions}}{{println .}}{{end}}');
+  expect(resolvedLauncher.content.value).toContain('flags=(unconfined) {\\n  userns,\\n}');
+  expect(resolveMachineRecipeStepInputsV1(linger, inputs, facts)).toMatchObject({
+    kind: 'command', args: ['enable-linger', 'happier'], check: { args: ['-f', '/var/lib/systemd/linger/happier'] },
+  });
+  expect(resolveMachineRecipeStepInputsV1(install, inputs, facts))
     .toMatchObject({ kind: 'script', shell: 'sh', body: '/usr/local/bin/happier-docker-rootless\n' });
 });

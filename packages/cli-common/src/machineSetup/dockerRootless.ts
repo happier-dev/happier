@@ -3,7 +3,8 @@ const launcher = '/usr/local/bin/happier-docker-rootless';
 /** Docker owns the socket and persists its endpoint in the user's rootless context.
  * Keep the shared daemon running: existing applications may still use it.
  * Contract: https://docs.docker.com/engine/security/rootless/ */
-const install = '#!/bin/sh\nset -eu\nusername=\'${daemonUsername}\'\n' + `
+const installTemplate = "#!/bin/sh\nset -eu\nusername='{daemonUsername}'\n";
+const installBody = `
 if [ "$#" -eq 1 ] && [ "$1" = --check ]; then
     if [ "$(id -un)" = "$username" ]; then
         docker info --format '{{range .SecurityOptions}}{{println .}}{{end}}'
@@ -48,14 +49,16 @@ HAPPIER_ROOTLESS_USER
 export function createDockerRootlessSteps<T extends string | { kind: 'targetFact'; fact: 'daemon.username' }>(username: T) {
     // Preserve the concrete-step type for native callers and bind only recipe declarations.
     const lingerPath = (typeof username === 'string' ? `/var/lib/systemd/linger/${username}`
-        : { kind: 'template', value: '/var/lib/systemd/linger/${username}', variables: { username } }) as
+        : { kind: 'template', value: '/var/lib/systemd/linger/{username}', variables: { username } }) as
         T extends string ? string : { kind: 'template'; value: string; variables: { username: T } };
     return [
         { id: 'docker-rootless-prerequisites', kind: 'package' as const, manager: 'apt',
             packages: ['uidmap', 'slirp4netns', 'rootlesskit', 'dbus-user-session', 'curl', 'ca-certificates', 'iptables', 'kmod', 'apparmor'].map(name => ({ name })) },
         { id: 'docker-rootless-launcher', kind: 'file' as const, path: launcher, owner: 'root', group: 'root', mode: 0o755,
-            content: typeof username === 'string' ? { kind: 'literal' as const, value: install.replace('${daemonUsername}', () => username) }
-                : { kind: 'template' as const, value: install, variables: { daemonUsername: username } } },
+            // Bind the shell body as a literal so its Go and AppArmor braces are preserved.
+            content: typeof username === 'string'
+                ? { kind: 'literal' as const, value: installTemplate.replace('{daemonUsername}', () => username) + installBody }
+                : { kind: 'template' as const, value: `${installTemplate}{installBody}`, variables: { daemonUsername: username, installBody } } },
         { id: 'docker-rootless-linger', kind: 'command' as const, executable: 'loginctl', args: ['enable-linger', username],
             requiredFacts: [{ kind: 'init' as const, system: 'systemd' as const }],
             check: { executable: 'test', args: ['-f', lingerPath], unsatisfiedExitCodes: [1] } },
