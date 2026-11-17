@@ -60,7 +60,7 @@ describe('resolveEffectiveActionInputFields', () => {
       const replacement = { ...ref, recipeId: 'ffmpeg' };
       const item = { kind: 'softwareRecipe', selection: { ref, inputs: {} } };
       const sources = [{ kind: 'direct', setup: { items: [item, item] } },
-        { kind: 'accountPreset', presetId: 'retained', presetRevision: 1, setup: {} }];
+        { kind: 'accountPresetOpaque', presetId: 'retained', presetRevision: 1, contentEncryptionMode: 'plain' }];
       const first = { homeId: 'home', machineId: 'first', desiredRevision: 0, recipePlans: [], sources };
       const second = { ...first, machineId: 'second' };
       const input = actionId === 'machines.setup.plan' ? { homeId: 'home', machineId: 'first', sources }

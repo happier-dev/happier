@@ -27,7 +27,7 @@ describe('public approval read schema', () => {
       decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: true, result },
     });
     const observed = projectApprovalRequestForPublicRead(request);
-    expect(getActionSpec('approval.request.get').outputSchema.safeParse({ artifactId: 'approval', request: observed, queryPlan }).success).toBe(true);
+    expect(getActionSpec('approval.request.get').outputSchema.safeParse({ artifactId: 'approval', request: observed, canAllow: false, queryPlan }).success).toBe(true);
     expect(observed).toMatchObject({ execution: { result } });
   });
 
@@ -43,7 +43,7 @@ describe('public approval read schema', () => {
       v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' },
       actionId: 'agents.acp.backends.installFromRegistry', actionArgs, summary: 'Install agent',
     });
-    const result = { artifactId: 'approval', request: projectApprovalRequestForPublicRead(request), queryPlan };
+    const result = { artifactId: 'approval', request: projectApprovalRequestForPublicRead(request), canAllow: false, queryPlan };
     expect(getActionSpec('approval.request.get').outputSchema.parse(result)).toEqual(result);
     expect(result.request).toMatchObject({ actionArgs });
   });
@@ -63,7 +63,7 @@ describe('public approval read schema', () => {
       decision: { kind: 'approve', decidedAtMs: 2 },
       execution: { executedAtMs: 3, ok: true, result },
     });
-    const publicResult = { artifactId: 'approval', request: projectApprovalRequestForPublicRead(request), queryPlan };
+    const publicResult = { artifactId: 'approval', request: projectApprovalRequestForPublicRead(request), canAllow: false, queryPlan };
     expect(getActionSpec('approval.request.get').outputSchema.parse(publicResult)).toEqual(publicResult);
     expect(publicResult.request).toMatchObject({ execution: { result: { status: output.status } } });
   });
@@ -95,7 +95,7 @@ describe('public approval read schema', () => {
     const schema = getActionSpec('approval.request.get').outputSchema;
     for (const request of [builtIn, target]) {
       const publicRead = projectApprovalRequestForPublicRead(request);
-      const result = { artifactId: 'approval', request: publicRead, queryPlan };
+      const result = { artifactId: 'approval', request: publicRead, canAllow: false, queryPlan };
       expect(schema.parse(result)).toEqual(result);
       expect(publicRead).toMatchObject({ executionOriginV1: { actionRequestAttributionV1: attribution } });
       expect(schema.safeParse({ ...result, request }).success).toBe(false);
@@ -117,7 +117,7 @@ describe('public approval read schema', () => {
       execution: { executedAtMs: 3, ok: true, result: { count: 1 }, privateReceipt: 'private-receipt' },
     });
     const publicRead = projectApprovalRequestForPublicRead(request);
-    const result = { artifactId: 'approval', request: publicRead, queryPlan };
+    const result = { artifactId: 'approval', request: publicRead, canAllow: false, queryPlan };
     const schema = getActionSpec('approval.request.get').outputSchema;
     expect(schema.parse(result)).toEqual(result);
     expect(schema.safeParse({ ...result, request }).success).toBe(false);

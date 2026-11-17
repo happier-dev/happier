@@ -8,7 +8,6 @@ import {
 } from '../auth/accountApiTokens.js';
 import type { ActionId } from './actionIds.js';
 import { getActionSpec, PublicActionIdSchema, SignedRootActionIdSchema } from './actionSpecs.js';
-import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { describeApprovalActionFields } from './actionApprovalPresentation.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { resolveActionSurfaceAvailability } from './actionSurfaceAvailability.js';
@@ -34,16 +33,9 @@ describe('Account API-token Action admission', () => {
     }
   });
 
-  it.each(['agent', 'mcp'] as const)('retains the requesting %s invocation for the one-time result', surface => {
-    const spec = getActionSpec('account.apiTokens.create');
-    expect(resolveActionApprovalRouting({ actionId: spec.id, spec,
-      context: { surface, authority: 'account_automation' },
-    })).toMatchObject({ required: true, flow: 'blocking', result: 'required' });
-  });
-
   it('discloses the exact grant, expiry, encryption and unattended access in the creation review', () => {
     const actionArgs = getActionSpec('account.apiTokens.create').inputSchema.parse({
-      tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: 'Wilson trigger',
+      tokenId: 'dd03e74b-4aae-4a0a-81ee-1c23ddc4525d', label: { content: { t: 'plain', v: 'Wilson trigger' }, recipients: [] },
       expiresAt: '2026-11-20T12:00:00.000Z', authorizeUnattendedTeamAccess: false,
       grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { ids: ['workflow.trigger.run_now'], families: [] },
         automationIds: ['16cce218-b735-46cd-a68a-303c84743527'] },

@@ -13,6 +13,8 @@ describe('machine agent sign-in Action parity', () => {
     }
     const start = getActionSpec(ActionIdSchema.parse('machines.agents.signIn.start'));
     expect(start.inputSchema.safeParse({ machineId: 'machine', agentId: 'codex', method: 'connected' }).success).toBe(true);
+    expect(start.inputSchema.safeParse({ machineId: 'machine', agentId: 'happier.scm.forge.github/gh', method: 'native' }).success).toBe(true);
+    expect(start.inputSchema.safeParse({ machineId: 'machine', agentId: 'happier.scm.forge.github/gh', method: 'native', launchId: 'device_code' }).success).toBe(false);
     expect(start.inputSchema.safeParse({ machineId: 'machine', agentId: 'codex', method: 'made-up' }).success).toBe(false);
   });
 });
