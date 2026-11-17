@@ -39,6 +39,8 @@ import { VOICE_TRANSCRIPT_MEMORY_KEY } from '@/voice/persistence/voiceTranscript
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { getRetainedLocalVoiceEffectOutcomes } from '@/voice/tools/localVoiceEffectOutcomeCustody';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -1358,8 +1360,9 @@ describe('VoiceExecutionTransport (streaming)', () => {
     if (!owner.ok) throw new Error('Invalid native request Session owner metadata');
     const shared = projectSessionSharedMetadataV1({ metadata: target.metadata });
     storage.getState().applySessions([{
-      ...target, metadataLayoutVersion: 1, metadata: shared,
-      ownerMetadataView: projectSessionOwnerCompatibilityViewV1({ sharedMetadata: shared, ownerMetadata: owner.ownerMetadata }),
+      ...target, metadataLayoutVersion: 1, metadata: parseDecryptedSessionMetadata(shared, 1),
+      ownerMetadataView: readSessionOwnerMetadataView({ metadataLayoutVersion: 1,
+        ownerMetadataView: projectSessionOwnerCompatibilityViewV1({ sharedMetadata: shared, ownerMetadata: owner.ownerMetadata }) }),
       agentState: { requests: { 'native-write': request }, completedRequests: {} },
     }]);
     expect(targetInitialContext()).toContain('<request_id>native-write</request_id>');

@@ -138,7 +138,7 @@ async function publishCarrierFixture() {
     authoringMemory: structuredClone(state.authoringMemory), settings: settingsParse(state.settings),
     settingsScope: { serverId: account!.serverId, accountId: 'voice-account' } });
   const listOnly = Object.keys(machines).length === 0;
-  const inventory = listOnly
+  const inventory: ReturnType<typeof createMachineFixture>[] = listOnly
     ? (state.machineListByServerId[homeId] ?? []).map((partial: Parameters<typeof createMachineFixture>[0]) =>
       createMachineFixture({ activeAt: Date.now(), ...partial }))
     : Object.values(storage.getState().machines);

@@ -39,6 +39,7 @@ import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/cat
 
 import { storage } from '@/sync/domains/state/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { parseToken } from '@/utils/auth/parseToken';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
@@ -1929,7 +1930,7 @@ describe('retained global Voice Run authority', () => {
       });
       harness = await createStandaloneVoicePolicyHarness({ mode: 'off', dispatch, initializeSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
         machines: [createHydratedPlainMachineFixture({ id: 'voice-machine', accountId: 'account-a', machine: { activeAt: Date.now() } })],
-        settings: { voice: { providers: { local_conversation: { schemaVersion: 1, config: { agent: { rootSessionPolicy: 'continue' } } } } } },
+        settings: normalizeVoiceSettingsLocalDelta({ voice: { providers: { local_conversation: { schemaVersion: 1, config: { agent: { rootSessionPolicy: 'continue' } } } } } }, storage.getState().settings),
         handleRequest: async (path, init) => path === '/v1/machines'
           ? Response.json([createPlainMachineRowFixture({ id: 'voice-machine', accountId: 'account-a' })])
           : createPlainMachineReadHttpResponseFixture(path, init, 'account-a') ?? createEmptyAccountBootstrapHttpResponse(path, init),
