@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { machineSetup } from '@happier-dev/cli-common';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -77,10 +77,12 @@ const fixtures: readonly Fixture[] = [
   { key: 'happier.machine.cua/byoc', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.daytona/daytona', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.docker-sandboxes/docker-sandboxes', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
+  { key: 'happier.machine.docker-sandboxes/docker-cloud', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.e2b/e2b', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.fly/fly', declaredRole: 'sandbox', identity: sandbox, carrier: 'native', guestHome: true },
   { key: 'happier.machine.freestyle/freestyle', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.maritime/maritime', declaredRole: 'server', identity: dedicated, carrier: 'native' },
+  { key: 'happier.machine.maritime/maritime-sandbox', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.modal/modal', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.railway/railway', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
   { key: 'happier.machine.superserve/superserve', declaredRole: 'sandbox', identity: sandbox, carrier: 'native' },
@@ -98,6 +100,17 @@ function provisioners() {
     [`${manifest.id}/${definition.id}`, definition] as const)));
 }
 
+beforeEach(() => {
+  const fetch = globalThis.fetch;
+  // Home HTTP is external; source selection and enrollment stay real.
+  vi.spyOn(globalThis, 'fetch').mockImplementation((request, init) => {
+    const url = request instanceof Request ? request.url : String(request);
+    if (url === 'https://catalog-home.example.test/v1/features') {
+      return Promise.resolve(Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } }));
+    }
+    return fetch(request, init);
+  });
+});
 afterEach(() => { sshBoundary.run = null; vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe('normalized Machine catalog at the shared enrollment boundary', () => {
@@ -165,6 +178,7 @@ describe('normalized Machine catalog at the shared enrollment boundary', () => {
         if (request.command.includes('mktemp')) return ok('/tmp/happier-bootstrap-transfer.catalog\n');
         if (request.command.includes('current_target##*/')) return ok('current=test\nprevious=\nversion=test\n');
         if (request.command.includes("'service' 'list'")) return ok(JSON.stringify({ services: [], platform: fixture.platform === 'Darwin' ? 'darwin' : 'linux' }));
+        if (request.command.includes('managed_guest_cli_absent')) return ok('managed_guest_cli_absent\n');
         // The guest executable is an OS boundary. Invalid pairing output stops
         // after identity/installer/service preflight, before any Account access.
         if (request.command.includes("'auth'")) return ok('{}\n');

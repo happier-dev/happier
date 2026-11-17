@@ -144,6 +144,20 @@ describe('current managed native credential composition', () => {
     expect(await observe(2)).toBe(2 * await observe(1));
   });
 
+  it('refuses cancellation before acquiring a source or applying vendor policy', async () => {
+    const f = await fixture();
+    try {
+      const sourceReads = f.source.sourceReads;
+      const abort = new AbortController();
+      abort.abort();
+      expect(await composeManagedNativeCredentials({ ...f.input, signal: abort.signal }))
+        .toEqual({ kind: 'refused', code: 'provider_authorization_changed' });
+      expect(f.source.sourceReads).toBe(sourceReads);
+      expect(f.handles).toHaveLength(0);
+      expect(f.calls).toHaveLength(0);
+    } finally { await f.cleanup(); }
+  });
+
   it.each(['source-withdrawal', 'failure', 'cancellation'] as const)('reports the actual post-IO %s outcome and awaits source cleanup', async outcome => {
     const f = await fixture();
     try {
@@ -154,8 +168,9 @@ describe('current managed native credential composition', () => {
         if (outcome === 'failure') throw new Error('native-source-secret');
       });
       const result = await composeManagedNativeCredentials({ ...f.input, signal: abort.signal });
-      expect(result).toEqual(outcome === 'source-withdrawal' ? { kind: 'confirmed', binding: f.binding.safeFacet }
-        : { kind: 'unknown', code: 'action_outcome_unknown' });
+      // Cancellation after a confirmed vendor effect cannot erase that outcome.
+      expect(result).toEqual(outcome === 'failure' ? { kind: 'unknown', code: 'action_outcome_unknown' }
+        : { kind: 'confirmed', binding: f.binding.safeFacet });
       expect(JSON.stringify(result)).not.toContain('native-source-secret');
       expect(f.calls).toHaveLength(1);
       expect(await f.handles[0]!.readRenderedHeaders()).toMatchObject({ ok: false });

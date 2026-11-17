@@ -172,11 +172,14 @@ for (const failure of ['ready', 'preserved', 'shared', 'first-launch', 'first-sh
               code: 'skills_unavailable', detail: 'project_skill_migration_unavailable' }] }]);
           } else {
             if (failure === 'provided-reach') {
-              // No rule matches the supplied different Project: no native materialization is needed.
-              expect(result.delivery).toBeUndefined();
+              // The different Project excludes its migrated skill; the Everywhere guide remains on.
+              expect(result.reach?.context).toEqual({ machineId: 'machine', machinePlatform: 'posix',
+                directory: '/elsewhere', projectKey: 'other-project', agentId: 'test' });
+              expect(result.delivery?.items.map(item => item.skillId)).toEqual(['happier:happier']);
               expect(result.unavailable).toBeUndefined();
-              expect(result.plan.items.filter(item => item.state === 'delivered')).toEqual([]);
-            } else expect(result.delivery?.items.map(item => item.skillId)).toEqual(['skill']);
+              expect(result.plan.items.find(item => item.skillId === 'skill')).toMatchObject({ state: 'off', reason: 'no_rule' });
+              expect(result.plan.items.filter(item => item.state === 'delivered').map(item => item.skillId)).toEqual(['happier:happier']);
+            } else expect(result.delivery?.items.map(item => item.skillId)).toEqual(['skill', 'happier:happier']);
             if (operationContext) {
               const daemon = getActiveAccountSettingsSnapshot();
               expect(daemon?.scopeKey === snapshot.scopeKey).toBe(false);

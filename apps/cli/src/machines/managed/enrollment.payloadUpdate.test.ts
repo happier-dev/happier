@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -15,7 +15,18 @@ import { runManagedMachineEnrollment, type ManagedNativeBootstrapIO } from './en
 const execFileAsync = promisify(execFile);
 
 describe('retained guest QA payload replacement', () => {
-    afterEach(() => vi.unstubAllEnvs());
+    beforeEach(() => {
+        const fetch = globalThis.fetch;
+        // Home HTTP is external; the actual payload supplier and promotion stay real.
+        vi.spyOn(globalThis, 'fetch').mockImplementation((request, init) => {
+            const url = request instanceof Request ? request.url : String(request);
+            if (url === 'https://home.example.test/v1/features') {
+                return Promise.resolve(Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } }));
+            }
+            return fetch(request, init);
+        });
+    });
+    afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
     it.skipIf(process.platform === 'win32')('replaces two builds reporting the same version without pairing or replacing the Machine', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-retained-payload-'));
@@ -74,6 +85,7 @@ describe('retained guest QA payload replacement', () => {
         ].join('\n');
         try {
             await mkdir(payloadRoot);
+            await writeFile(join(payloadRoot, 'package.json'), JSON.stringify({ version: '0.2.10' }));
             await mkdir(guestHome);
             vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payloadRoot);
             const installedBinary = join(guestHome, '.happier/cli/current/happier');
