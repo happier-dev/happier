@@ -2857,7 +2857,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     } finally { http.mockRestore(); await runtime.dispose(); await services.dispose(); }
   });
 
-  it('retains the typed provider cause when approved replay registry acquisition throws', async () => {
+  it.each(['typed', 'native', 'unknown_code'] as const)('retains the provider cause when approved replay registry acquisition throws (%s)', async kind => {
     const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: {
       'acme.managed/actions/inspect': { approvalRequiredSurfaces: ['api'] },
@@ -2883,19 +2883,29 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         credentials: { token: 'daemon-token', encryption: null },
         isApprovalExecutionOriginCurrent: async () => true,
         // The committed registry's filesystem/module acquisition is the failing boundary.
-        acquireRuntimeRegistryLease: async () => { throw new PluginError({ code: 'provider_request_rejected',
-          details: { nativeCause, diagnostic: 'token=fixture-private-token' } }); },
+        acquireRuntimeRegistryLease: async () => {
+          if (kind === 'typed') throw new PluginError({ code: 'provider_request_rejected',
+            details: { nativeCause, diagnostic: 'token=fixture-private-token' } });
+          throw Object.assign(new TypeError('PRIVATE_PROVIDER_RESPONSE'), {
+            code: kind === 'native' ? 'ECONNRESET' : 'PRIVATE_EXTERNAL_CODE',
+          });
+        },
         targetActionApprovals: { targetActionApprovalsGet: async () => persisted,
           targetActionApprovalsUpdate: async ({ request }) => { persisted = request; return { ok: true }; } },
         now: () => 2,
       });
       const result = await replay({ artifactId: 'provider-cause-replay', decision: 'approve' });
-      expect(result).toMatchObject({ ok: false, errorCode: 'provider_request_rejected',
-        details: { code: 'provider_request_rejected', details: { nativeCause } } });
+      const failureCode = kind === 'typed' ? 'provider_request_rejected' : 'plugin_action_execution_failed';
+      if (kind === 'typed') expect(result).toMatchObject({ ok: false, errorCode: failureCode,
+        details: { code: failureCode, details: { nativeCause } } });
+      else expect(result).toEqual({ ok: false, errorCode: failureCode, error: failureCode });
       expect(JSON.stringify(result)).not.toContain('fixture-private-token');
-      expect(persisted).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'provider_request_rejected' } });
+      expect(persisted).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: failureCode } });
       expect(diagnostic.mock.calls).toEqual([['[ExternalAction] Approved contributed Action replay failed',
-        { code: 'provider_request_rejected' }]]);
+        { code: failureCode, failureCause: expect.objectContaining({ phase: 'external_action.approved_replay',
+          errorClass: kind === 'typed' ? 'Error' : 'TypeError',
+          errorCode: kind === 'native' ? 'ECONNRESET' : null }) }]]);
+      expect(JSON.stringify([result, diagnostic.mock.calls])).not.toContain('PRIVATE_');
     } finally {
       diagnostic.mockRestore();
       await runtime.dispose();

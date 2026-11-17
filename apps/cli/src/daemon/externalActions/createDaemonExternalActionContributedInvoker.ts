@@ -11,7 +11,7 @@ import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/pro
 import { projectTargetActionApprovalInvocationV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { createTargetActionApprovalDecision, buildTargetActionApprovalDecisionResult } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
-import { ActionOperationCredentialUseV1Schema, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionOperationCredentialUseV1Schema, projectActionFailureCauseV1, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
 import { configuration } from '@/configuration';
@@ -371,7 +371,8 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
               data: redactPluginInvocationResultData(failure.data, projectPluginFailureMessage),
             }),
           }) : targetActionReplayFailure('plugin_action_execution_failed');
-          logger.warnLocalFile('[ExternalAction] Approved contributed Action replay failed', { code: failureCode });
+          logger.warnLocalFile('[ExternalAction] Approved contributed Action replay failed', { code: failureCode,
+            failureCause: projectActionFailureCauseV1(error, 'external_action.approved_replay', { allowUnknownErrorCode: false }) });
         }
       }
       observingCredentialUse = false;
