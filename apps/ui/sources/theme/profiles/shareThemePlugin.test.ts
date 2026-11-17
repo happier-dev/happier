@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { parseThemeProfileDocument, type ThemeProfileDocument, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionFamily';
-import type { HostReviewedChildInvocationV1, HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteResult, ActionExecutorContext, HostReviewedChildInvocationV1, HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { recordPresentUserApprovalV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { prepareHostReviewedChildPolicyV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleApproval';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
 import { createThemeProfileLibrary, type ThemeProfileArtifactAdapter } from './themeProfileLibrary';
 import { createShareThemePlugin } from './shareThemePlugin';
 import { createThemeActionExecute } from '@/sync/ops/actions/themeActionDeps';
 
-function setup(count: number, packFails = false) {
+function setup(count: number, packFails = false, includeFuturePresentation = true) {
     const documents = Array.from({ length: count }, (_, index) => {
         const parsed = parseThemeProfileDocument({
             schemaVersion: 1, id: `theme-${index}`, name: `Theme ${index}`,
@@ -16,7 +23,7 @@ function setup(count: number, packFails = false) {
             seeds: { canvas: '#121212', accent: '#aabbcc' },
             style: { radius: 'round', fontFamily: 'system' },
             css: '[data-surface="session"] {\n content: "quoted";\n}',
-            futurePresentation: { ink: index },
+            ...(includeFuturePresentation ? { futurePresentation: { ink: index } } : {}),
         });
         if (!parsed.ok) throw new Error('Invalid fixture');
         return parsed.document;
@@ -62,6 +69,64 @@ function setup(count: number, packFails = false) {
 }
 
 describe('share themes as a plugin', () => {
+    it('carries an approved CLI Share to both native Machine children instead of creating another approval', async () => {
+        const state = setup(1, false, false);
+        const target = { kind: 'machine' as const, machineId: state.request.input.machineId };
+        const effects: string[] = [];
+        const approvals: string[] = [];
+        const childResults: ActionExecuteResult[] = [];
+        const actionsSettings = ActionsSettingsV1Schema.parse({ v: 1 });
+        // The incident's parent was already approved, with a present-user CLI
+        // origin. Only Machine transport, filesystem and Artifact storage are substituted.
+        const machine = createActionExecutor({
+            approvalsCreate: async ({ request }) => {
+                approvals.push(request.actionId);
+                return { artifactId: 'nested-scaffold-approval' };
+            },
+            pluginsDevLoopAction: async ({ actionId }) => {
+                effects.push(actionId);
+                return actionId === 'plugins.scaffold'
+                    ? { ok: true, kind: 'plugins_scaffold', createdPaths: { targetDir: state.path } }
+                    : { ok: true, kind: 'plugins_pack', package: { archivePath: `${state.path}.tgz`, archiveDigest: 'archive-digest' } };
+            },
+        });
+        const context: ActionExecutorContext = {
+            surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+            runtimeAccountId: 'owner', serverId: 'home', actionRequestId: 'share-themes', externalActionTarget: target, actionsSettings,
+            presentUserApproval: recordPresentUserApprovalV1({ actionId: THEME_ACTION_IDS.sharePlugin,
+                input: state.request.input, requestId: 'share-themes', artifactId: 'approved-share', decidingAccountId: 'owner' }),
+        };
+        const declaration = getActionSpec(THEME_ACTION_IDS.sharePlugin).hostReviewedChildren;
+        if (!declaration) throw new Error('Share must declare its native children');
+        const children = typeof declaration === 'function' ? declaration(state.request.input) : declaration;
+        const policies = children.map(child => {
+            const policy = prepareHostReviewedChildPolicyV1(child, context, undefined, true);
+            if (!policy) throw new Error('Missing admitted child policy');
+            return policy;
+        });
+        const child = createHostReviewedChildPortV1({ actionId: THEME_ACTION_IDS.sharePlugin,
+            input: state.request.input, context, plan: { children }, policies, reviewAdmitted: true,
+            execute: async (input, context, actionId) => {
+                const invocation = projectExternalActionRequesterInvocationV1({ actionId, context,
+                    account: { accountId: 'owner', serverId: 'home' }, target });
+                if (!invocation) throw new Error('Missing requester invocation');
+                const execution = await machine.execute(actionId, input, {
+                    surface: invocation.surface, authority: invocation.authority, actionCaller: invocation.caller,
+                    runtimeAccountId: 'owner', serverId: 'home', actionRequestId: context.actionRequestId,
+                    externalActionTarget: target, presentUserConfirmation: invocation.presentUserConfirmation, actionsSettings,
+                });
+                childResults.push(execution);
+                return execution;
+            },
+        });
+        const outcome = await state.share({ ...state.request, context: { ...context, hostReviewedChild: child } })
+            .then(result => ({ result }), error => ({ error }));
+        expect(outcome, JSON.stringify({ childResults, approvals, effects })).toEqual({ result: { project: state.path,
+            archive: `${state.path}.tgz`, digest: 'archive-digest' } });
+        expect(effects).toEqual(['plugins.scaffold', 'plugins.pack']);
+        expect(approvals).toEqual([]);
+    });
+
     it.each([1, 40])('shares %i selected themes with one scaffold and one pack, preserving retained data', async count => {
         const state = setup(count);
         await expect(state.share(state.request)).resolves.toEqual({ project: state.path, archive: `${state.path}.tgz`, digest: 'archive-digest' });
