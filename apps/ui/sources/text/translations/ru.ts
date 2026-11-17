@@ -12825,6 +12825,19 @@ deleteWarning: "Сохранённые входы и данные сайтов �
             contextual_ui: {
                 title: "Где появляется",
                 subtitle: "Там, где его показывает плагин.",
+                bindings: {
+                  primary: "Основные действия",
+                  secondary: "Другие действия",
+                  rowAction: "Действия строки",
+                  contextMenu: "Контекстное меню",
+                  commandPalette: "Палитра команд",
+                  toolbar: "Панель инструментов",
+                  detailsPanel: "Панель сведений",
+                  composerPrimary: "Поле ввода",
+                  composerMore: "Меню поля ввода",
+                  composerSlash: "Слэш-команды",
+                  messageMenu: "Меню сообщения",
+                },
             },
 
             voice: {

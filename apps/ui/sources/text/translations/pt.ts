@@ -13091,6 +13091,19 @@ deleteWarning: "Isso exclui os logins e dados de sites salvos no perfil e fecha 
             contextual_ui: {
                 title: "Onde aparece",
                 subtitle: "Onde o plugin a mostrar.",
+                bindings: {
+                  primary: "Ações principais",
+                  secondary: "Mais ações",
+                  rowAction: "Ações da linha",
+                  contextMenu: "Menu de contexto",
+                  commandPalette: "Paleta de comandos",
+                  toolbar: "Barra de ferramentas",
+                  detailsPanel: "Painel de detalhes",
+                  composerPrimary: "Editor de mensagens",
+                  composerMore: "Menu do editor",
+                  composerSlash: "Comandos de barra",
+                  messageMenu: "Menu da mensagem",
+                },
             },
 
             voice: {

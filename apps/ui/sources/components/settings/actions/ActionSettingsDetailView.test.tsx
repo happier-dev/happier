@@ -636,7 +636,7 @@ describe('ActionSettingsDetailView', () => {
                                 description: 'Checks the Inspector plugin.',
                                 icon: null,
                                 surfaces: ['ui'],
-                                placementBindings: ['toolbar'],
+                                placementBindings: ['toolbar', 'detailsPanel'],
                             }],
                         },
                     },
@@ -657,9 +657,15 @@ describe('ActionSettingsDetailView', () => {
         expect(renderedProps(Item).some((item) => (
             item.testID === 'settings-actions:action:happier.inspector/actions/self-check:target:plugin'
         ))).toBe(true);
-        expect(renderedProps(Item).some((item) => (
+        const whereItAppears = renderedProps(Item).filter((item) => (
             item.testID === 'settings-actions:action:happier.inspector/actions/self-check:target:contextual_ui'
-        ))).toBe(true);
+        ));
+        // "Where it appears" names the contribution's declared bindings by their own names, never their ids.
+        const { t } = await import('@/text');
+        expect(whereItAppears.map((item) => item.subtitle)).toContain([
+            t('settingsActions.targets.contextual_ui.bindings.toolbar'),
+            t('settingsActions.targets.contextual_ui.bindings.detailsPanel'),
+        ].join(' · '));
         for (const targetId of ['api', 'plugin'] as const) {
             const target = renderedProps(Item).find((item) => (
                 item.testID === `settings-actions:action:happier.inspector/actions/self-check:target:${targetId}`

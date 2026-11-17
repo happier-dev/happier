@@ -12803,6 +12803,19 @@ deleteWarning: "Spowoduje to usunięcie zapisanych logowań i danych witryn prof
             contextual_ui: {
                 title: "Gdzie się pojawia",
                 subtitle: "Tam, gdzie pokazuje ją jej wtyczka.",
+                bindings: {
+                  primary: "Główne akcje",
+                  secondary: "Więcej akcji",
+                  rowAction: "Akcje wiersza",
+                  contextMenu: "Menu kontekstowe",
+                  commandPalette: "Paleta poleceń",
+                  toolbar: "Pasek narzędzi",
+                  detailsPanel: "Panel szczegółów",
+                  composerPrimary: "Edytor wiadomości",
+                  composerMore: "Menu edytora",
+                  composerSlash: "Polecenia z ukośnikiem",
+                  messageMenu: "Menu wiadomości",
+                },
             },
 
             voice: {

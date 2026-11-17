@@ -4,6 +4,7 @@ import { Stack, useLocalSearchParams } from '@/components/appShell/workspace/des
 import { StyleSheet } from 'react-native-unistyles';
 
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { PluginActionPlacementV2Schema, type PluginActionPlacementV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { findActionSpec, getActionSpec, isActionEffectHookableV1, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { AutomationTriggerActionIdV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
 import { SubjectTriggersSectionContent } from '@/components/workflows/triggers/SubjectTriggersSection';
@@ -95,13 +96,28 @@ function decodeActionIdParam(value: string | string[] | undefined): ActionSettin
         : resource ? formatQualifiedPluginResourcePolicyId(resource) : null;
 }
 
+/** One name per contribution placement binding, keyed by the Protocol vocabulary so a new binding must be named. */
+const PLACEMENT_BINDING_TITLE_KEYS = {
+    primary: 'settingsActions.targets.contextual_ui.bindings.primary',
+    secondary: 'settingsActions.targets.contextual_ui.bindings.secondary',
+    rowAction: 'settingsActions.targets.contextual_ui.bindings.rowAction',
+    contextMenu: 'settingsActions.targets.contextual_ui.bindings.contextMenu',
+    commandPalette: 'settingsActions.targets.contextual_ui.bindings.commandPalette',
+    toolbar: 'settingsActions.targets.contextual_ui.bindings.toolbar',
+    detailsPanel: 'settingsActions.targets.contextual_ui.bindings.detailsPanel',
+    'composer.primary': 'settingsActions.targets.contextual_ui.bindings.composerPrimary',
+    'composer.more': 'settingsActions.targets.contextual_ui.bindings.composerMore',
+    'composer.slash': 'settingsActions.targets.contextual_ui.bindings.composerSlash',
+    'message.menu': 'settingsActions.targets.contextual_ui.bindings.messageMenu',
+} as const satisfies Record<PluginActionPlacementV2, string>;
+
 function getTargetSubtitle(
     target: ActionSettingsTargetEntry,
     controlState: ActionSettingsTargetControlState,
     actionId: ActionSettingsActionId,
     placementTitles: readonly string[],
 ): string {
-    // "Where it appears" names the surfaces this Action declares, by their own titles, never their ids.
+    // "Where it appears" names the surfaces the contribution declares, by their own titles, never their ids.
     const subtitle = target.id === 'contextual_ui' && placementTitles.length > 0
         ? placementTitles.join(' · ') : t(target.subtitleKey);
     const withReason = target.reasonKey ? `${subtitle} ${t(target.reasonKey)}` : subtitle;
@@ -259,8 +275,16 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
         entry?.targets.filter((row) => targetMatchesSearch(row, searchQuery) && (!inProfile || isProfileTargetRow(row))) ?? []
     ), [entry?.targets, inProfile, searchQuery]);
     const orderedTargets = React.useMemo(() => orderTargetsByCategory(filteredTargets), [filteredTargets]);
-    const placementTitles = React.useMemo(() => entry?.targets.flatMap((row) => row.definition.kind === 'placement'
-        ? [t(row.titleKey)] : []) ?? [], [entry?.targets]);
+    // The contribution's own placement bindings say where "Where it appears" points; host placements have rows of their own.
+    const placementTitles = React.useMemo(() => {
+        const contributed = contributedActions.find((action) => entry?.actionId === formatQualifiedPluginActionId({
+            pluginId: action.pluginId, localId: action.localId,
+        }));
+        return (contributed?.placementBindings ?? []).flatMap((binding) => {
+            const placement = PluginActionPlacementV2Schema.safeParse(binding);
+            return placement.success ? [t(PLACEMENT_BINDING_TITLE_KEYS[placement.data])] : [];
+        });
+    }, [contributedActions, entry?.actionId]);
     // Only Actions whose spec declares Machine approval scope offer per-Machine preferences.
     const machineScoped = React.useMemo(() => {
         if (inProfile) return null;

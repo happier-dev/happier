@@ -14852,6 +14852,19 @@ const enSettingsActions = {
     contextual_ui: {
       title: "Where it appears",
       subtitle: "Wherever its plugin shows it.",
+      bindings: {
+        primary: "Main actions",
+        secondary: "More actions",
+        rowAction: "Row actions",
+        contextMenu: "Context menu",
+        commandPalette: "Command palette",
+        toolbar: "Toolbar",
+        detailsPanel: "Details panel",
+        composerPrimary: "Composer",
+        composerMore: "Composer menu",
+        composerSlash: "Slash commands",
+        messageMenu: "Message menu",
+      },
     },
     foreign_session_html: {
       title: 'HTML in other people’s Sessions',

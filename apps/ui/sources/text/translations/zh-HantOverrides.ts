@@ -10740,6 +10740,19 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             contextual_ui: {
                 title: "顯示位置",
                 subtitle: "由其外掛決定顯示的位置。",
+                bindings: {
+                  primary: "主要操作",
+                  secondary: "更多操作",
+                  rowAction: "列操作",
+                  contextMenu: "內容選單",
+                  commandPalette: "命令面板",
+                  toolbar: "工具列",
+                  detailsPanel: "詳細資料面板",
+                  composerPrimary: "輸入框",
+                  composerMore: "輸入框選單",
+                  composerSlash: "斜線指令",
+                  messageMenu: "訊息選單",
+                },
             },
 
             voice: {

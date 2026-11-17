@@ -12974,6 +12974,19 @@ deleteWarning: "Se borran los inicios de sesión y datos de sitios guardados en 
             contextual_ui: {
                 title: "Dónde aparece",
                 subtitle: "Donde su plugin la muestre.",
+                bindings: {
+                  primary: "Acciones principales",
+                  secondary: "Más acciones",
+                  rowAction: "Acciones de fila",
+                  contextMenu: "Menú contextual",
+                  commandPalette: "Paleta de comandos",
+                  toolbar: "Barra de herramientas",
+                  detailsPanel: "Panel de detalles",
+                  composerPrimary: "Editor de mensajes",
+                  composerMore: "Menú del editor",
+                  composerSlash: "Comandos de barra",
+                  messageMenu: "Menú del mensaje",
+                },
             },
 
             voice: {

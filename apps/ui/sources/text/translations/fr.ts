@@ -12812,6 +12812,19 @@ deleteWarning: "Les connexions et données des sites enregistrées dans ce profi
             contextual_ui: {
                 title: "Où elle apparaît",
                 subtitle: "Partout où son plugin l’affiche.",
+                bindings: {
+                  primary: "Actions principales",
+                  secondary: "Autres actions",
+                  rowAction: "Actions de ligne",
+                  contextMenu: "Menu contextuel",
+                  commandPalette: "Palette de commandes",
+                  toolbar: "Barre d’outils",
+                  detailsPanel: "Panneau de détails",
+                  composerPrimary: "Éditeur de message",
+                  composerMore: "Menu de l’éditeur",
+                  composerSlash: "Commandes slash",
+                  messageMenu: "Menu du message",
+                },
             },
 
             voice: {

@@ -12898,6 +12898,19 @@ deleteWarning: "Gespeicherte Anmeldungen und Website-Daten dieses Profils werden
             contextual_ui: {
                 title: "Wo es erscheint",
                 subtitle: "Überall, wo sein Plugin es anzeigt.",
+                bindings: {
+                  primary: "Hauptaktionen",
+                  secondary: "Weitere Aktionen",
+                  rowAction: "Zeilenaktionen",
+                  contextMenu: "Kontextmenü",
+                  commandPalette: "Befehlspalette",
+                  toolbar: "Symbolleiste",
+                  detailsPanel: "Detailbereich",
+                  composerPrimary: "Eingabefeld",
+                  composerMore: "Eingabefeldmenü",
+                  composerSlash: "Slash-Befehle",
+                  messageMenu: "Nachrichtenmenü",
+                },
             },
             foreign_session_html: {
                 title: 'HTML in Sessions anderer Personen',

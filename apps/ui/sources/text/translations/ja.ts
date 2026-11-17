@@ -13271,6 +13271,19 @@ deleteWarning: "このプロファイルに保存されたログイン情報と�
             contextual_ui: {
                 title: "表示される場所",
                 subtitle: "プラグインが表示する場所。",
+                bindings: {
+                  primary: "メインアクション",
+                  secondary: "その他のアクション",
+                  rowAction: "行のアクション",
+                  contextMenu: "コンテキストメニュー",
+                  commandPalette: "コマンドパレット",
+                  toolbar: "ツールバー",
+                  detailsPanel: "詳細パネル",
+                  composerPrimary: "コンポーザー",
+                  composerMore: "コンポーザーメニュー",
+                  composerSlash: "スラッシュコマンド",
+                  messageMenu: "メッセージメニュー",
+                },
             },
 
             voice: {

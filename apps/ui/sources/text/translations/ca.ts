@@ -12211,6 +12211,19 @@ deleteWarning: "Això elimina els inicis de sessió i les dades dels llocs desat
             contextual_ui: {
                 title: "On apareix",
                 subtitle: "Allà on el seu connector la mostri.",
+                bindings: {
+                  primary: "Accions principals",
+                  secondary: "Més accions",
+                  rowAction: "Accions de fila",
+                  contextMenu: "Menú contextual",
+                  commandPalette: "Paleta d’ordres",
+                  toolbar: "Barra d’eines",
+                  detailsPanel: "Tauler de detalls",
+                  composerPrimary: "Editor de missatges",
+                  composerMore: "Menú de l’editor",
+                  composerSlash: "Ordres de barra",
+                  messageMenu: "Menú del missatge",
+                },
             },
 
             voice: {

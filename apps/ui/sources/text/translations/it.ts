@@ -13195,6 +13195,19 @@ deleteWarning: "Le credenziali e i dati dei siti salvati nel profilo vengono eli
             contextual_ui: {
                 title: "Dove appare",
                 subtitle: "Ovunque il suo plugin la mostri.",
+                bindings: {
+                  primary: "Azioni principali",
+                  secondary: "Altre azioni",
+                  rowAction: "Azioni di riga",
+                  contextMenu: "Menu contestuale",
+                  commandPalette: "Tavolozza dei comandi",
+                  toolbar: "Barra degli strumenti",
+                  detailsPanel: "Pannello dei dettagli",
+                  composerPrimary: "Editor dei messaggi",
+                  composerMore: "Menu dell’editor",
+                  composerSlash: "Comandi slash",
+                  messageMenu: "Menu del messaggio",
+                },
             },
 
             voice: {

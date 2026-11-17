@@ -12605,6 +12605,19 @@ deleteWarning: "这会删除配置文件中保存的登录信息和网站数据�
             contextual_ui: {
                 title: "显示位置",
                 subtitle: "由其插件决定显示的位置。",
+                bindings: {
+                  primary: "主要操作",
+                  secondary: "更多操作",
+                  rowAction: "行操作",
+                  contextMenu: "上下文菜单",
+                  commandPalette: "命令面板",
+                  toolbar: "工具栏",
+                  detailsPanel: "详情面板",
+                  composerPrimary: "输入框",
+                  composerMore: "输入框菜单",
+                  composerSlash: "斜杠命令",
+                  messageMenu: "消息菜单",
+                },
             },
 
             voice: {
