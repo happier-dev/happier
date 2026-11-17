@@ -144,7 +144,6 @@ export function SelectionTiles<T extends string>(props: SelectionTilesProps<T>):
         style={[
           resolveHappierTextStepStyle(resolveHappierTypeScale(tileText.role, Platform.OS, tileText.emphasis), typography),
           role === 'visualLabel' || role === 'visualSublabel' ? { textAlign: 'center' as const } : null,
-          role === 'visualSublabel' ? { marginTop: -4 } : null,
           { color },
         ]}
       >

@@ -258,7 +258,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...tileVariant('visualSublabel'),
         textAlign: 'center',
         color: theme.colors.text.tertiary,
-        marginTop: -4,
     },
     title: {
         ...tileVariant('cardTitle'),
