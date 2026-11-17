@@ -18,7 +18,7 @@ export type CapturePillState = (
     | Readonly<{ kind: 'starting' }>
     | Readonly<{ kind: 'started' }>
     | Readonly<{ kind: 'sent'; session: string; detail: string }>
-    | Readonly<{ kind: 'added'; session: string; imageNumber: number; waiting: number }>
+    | Readonly<{ kind: 'added'; session: string; imageNumber: number }>
     | Readonly<{ kind: 'failed'; session: string; cause: string; operation?: CaptureDelivery | 'discard'; phase?: 'preparation' | 'delivery' }>
     | Readonly<{ kind: 'discarded'; title?: string }>
 ) & Readonly<{ cleanupWarning?: string }>;
@@ -37,7 +37,7 @@ function pillLines(state: CapturePillState): Readonly<{ title: string; detail: s
         case 'sent': return { title: t('screenCapture.pill.sent', { session: state.session }), detail: state.detail };
         case 'added': return {
             title: t('screenCapture.pill.added', { number: state.imageNumber }),
-            detail: state.waiting > 1 ? t('screenCapture.pill.waiting', { session: state.session, count: state.waiting }) : state.session,
+            detail: state.session,
         };
         // One line per failed step, so Retry plainly repeats the step the title names.
         case 'failed': return {

@@ -309,7 +309,7 @@ function WindowSceneBody(props: Readonly<{
         if (props.scene === 'send-fail') return { ok: false, cause: 'The upload stopped halfway' };
         return delivery === 'send'
             ? { ok: true, pill: { kind: 'sent', session: 'Fix checkout total clipping', detail: 'Claude · MacBook Pro · with your note' } }
-            : { ok: true, pill: { kind: 'added', session: 'Fix checkout total clipping', imageNumber: 2, waiting: 2 } };
+            : { ok: true, pill: { kind: 'added', session: 'Fix checkout total clipping', imageNumber: 2 } };
     }, [annotator, props.scene]);
     return (
         <Desk>
@@ -352,7 +352,7 @@ function WindowSceneBody(props: Readonly<{
                     await new Promise((resolve) => setTimeout(resolve, 900));
                     return delivery === 'send'
                         ? { ok: true, pill: { kind: 'sent', session: 'Fix checkout total clipping', detail: 'Claude · MacBook Pro · with your note' } }
-                        : { ok: true, pill: { kind: 'added', session: 'Fix checkout total clipping', imageNumber: 2, waiting: 2 } };
+                        : { ok: true, pill: { kind: 'added', session: 'Fix checkout total clipping', imageNumber: 2 } };
                 }}
                 thumbnailUri={thumbnail}
                 hasWork={edited || note.length > 0}

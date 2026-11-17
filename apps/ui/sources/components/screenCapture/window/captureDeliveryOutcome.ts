@@ -22,6 +22,6 @@ export function resolveCaptureDeliveryOutcome(input: Readonly<{
         ? receipt.imageNumber : 1;
     const pill: CapturePillState = input.newSession ? { kind: 'started' }
         : delivery === 'send' ? { kind: 'sent', session, detail }
-        : { kind: 'added', session, imageNumber, waiting: imageNumber };
+        : { kind: 'added', session, imageNumber };
     return { ok: true, pill: result?.ok ? pill : { ...pill, cleanupWarning: result?.error ?? result?.errorCode ?? t('common.error') } };
 }
