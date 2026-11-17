@@ -1,6 +1,10 @@
 import axios from 'axios';
+import * as fs from 'node:fs/promises';
+import { configuration } from '@/configuration';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { ProjectAccountRowV1Schema, ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema,
   ProjectAccountRowMutationRequestV1Schema, buildProjectAccountRowPhysicalKeyV1,
@@ -22,8 +26,8 @@ import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountR
 let accountFixtureSequence = 0;
 afterEach(() => { vi.restoreAllMocks(); accountFixtureSequence += 1; });
 
-function executor() {
-  const token = `header.${Buffer.from(JSON.stringify({ sub: `project-account-${accountFixtureSequence}` })).toString('base64url')}.signature`;
+function executor(accountId = `project-account-${accountFixtureSequence}`) {
+  const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
   return createActionExecutor(createCliActionDeps({
     token, credentials: { token, encryption: null },
     sessionId: 'cli-global', mode: 'plain', ctx: null,
@@ -34,17 +38,25 @@ function executor() {
 describe('project definition exact Machine transport', () => {
   it('dispatches setup edits through the bound Project owner and preserves its association refusal', async () => {
     accountBoundary();
-    const actions = executor();
-    const context = { authority: 'present_user' as const, surface: 'cli' as const };
+    const accountId = 'setup-editor';
+    const actions = executor(accountId);
+    const context: ActionExecutorContext = { authority: 'present_user', surface: 'cli', actionCaller: { kind: 'host' },
+      runtimeAccountId: accountId, serverId: 'home-a', serverIdentityId: 'home-a', actionRequestId: 'setup-association-check',
+      actionsSettings: normalizeActionsSettingsV1({ v: 1 }) };
     // An existing Account Project mutation proves this exact Home boundary works.
     expect(await actions.execute('projects.organization.update', {
       projectRef: { serverId: 'home-a', projectKey: 'first' }, expectedRevision: 2, label: 'Setup edit control',
     }, context)).toMatchObject({ ok: true, result: { ok: true, revision: 3 } });
-    expect(await actions.execute('projects.setup.set', {
+    const input = {
       projectRef: { serverId: 'home-a', projectKey: 'first' }, expectedRevision: 3,
       workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'visible', rootPath: '/work/visible' },
       intent: { kind: 'personal', setupOverrides: null },
-    }, context)).toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_workspace_association_mismatch' } });
+    } as const;
+    // Exercise the real in-flow confirmation owner; child policy consumes the
+    // same normalized Account settings before the Project association check.
+    expect(await actions.execute('projects.setup.set', input,
+      bindPresentUserActionConfirmationV1('projects.setup.set', input, context)))
+      .toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_workspace_association_mismatch' } });
   });
   it('carries original requester authority to Project Open instead of using ambient Account transport', async () => {
     const token = 'requester-token';
@@ -235,13 +247,16 @@ describe('projects.list through the real CLI Account composition', () => {
       return { key, revision: 0, content: memoryCipher.seal(key, value) };
     });
     const { post, rows } = accountBoundary({ visibleUnpinned: true, memoryRows });
+    let retireOnMachineRead = false;
     const get = vi.mocked(axios.get);
     const readBoundary = get.getMockImplementation()!;
     get.mockImplementation(async (url, config) => {
       expect(config?.headers).toMatchObject({ 'x-requester-proof': 'bob' });
       expect(config?.headers).not.toHaveProperty('Authorization');
       expect(url).not.toContain('/v1/account/encryption');
-      return readBoundary(url, config);
+      const response = await readBoundary(url, config);
+      if (retireOnMachineRead && url.endsWith('/v1/machines')) current = false;
+      return response;
     });
     const rowBoundary = post.getMockImplementation()!;
     post.mockImplementation(async (url, body, config) => {
@@ -251,7 +266,7 @@ describe('projects.list through the real CLI Account composition', () => {
     });
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.signature`;
     const owner = createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
-      sessionId: 'custodian-session', mode: 'plain', ctx: null, serverId: 'home-a', serverHttpBaseUrl: 'https://home-a.test' }));
+      sessionId: 'custodian-session', mode: 'plain', ctx: null, serverId: 'home-a', serverIdentityId: 'home-a', serverHttpBaseUrl: 'https://home-a.test' }));
     let current = true;
     const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'original-proof', binding: {
       accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'identity',
@@ -266,14 +281,19 @@ describe('projects.list through the real CLI Account composition', () => {
       createRequestHeaders: async () => current ? { 'x-requester-proof': 'bob' } : null } });
     const context: ActionExecutorContext = { surface: 'mcp', bypassApprovals: true, externalActionExecutionAuthorization: authorization };
     const before = structuredClone(rows);
+    const reads = vi.spyOn(fs, 'readFile');
     expect(await owner.execute('projects.list', {}, context)).toMatchObject({ ok: true, result: { items: [
       { projectKey: { id: 'visible' }, reachable: true }, { projectKey: { id: 'first' }, reachable: true },
       { projectKey: { id: 'second' }, reachable: false },
     ] } });
     expect(rows).toEqual(before);
+    expect.soft(reads.mock.calls.filter(([file]) => file === configuration.settingsFile)).toHaveLength(1);
     current = false; get.mockClear(); post.mockClear();
     expect(await owner.execute('projects.list', {}, context)).toMatchObject({ ok: false });
     expect(get).not.toHaveBeenCalled(); expect(post).not.toHaveBeenCalled();
+    current = true; retireOnMachineRead = true;
+    expect(await owner.execute('projects.list', {}, context)).toMatchObject({ ok: false });
+    expect(get.mock.calls.some(([url]) => url.endsWith('/v1/machines'))).toBe(true);
   });
 
   it('ranks qualified Project anchors from authoring memory without writing structural rows or using leaf recency', async () => {
@@ -334,6 +354,57 @@ describe('projects.list through the real CLI Account composition', () => {
       .toMatchObject({ ok: true, result: { items: [{ projectKey: { serverId: 'home-a', id: 'second' } }], truncated: false } });
     expect(await owner.execute('projects.list', { includeHidden: true, limit: 1 }, { surface: 'cli', bypassApprovals: true }))
       .toMatchObject({ ok: true, result: { items: [{ projectKey: { serverId: 'home-a', id: 'first' } }], truncated: true, coverage: 'partial' } });
+  });
+
+  it('admits requester Project rows once per read and preserves Home, Account, custody and cancellation refusals', async () => {
+    const { post } = accountBoundary({ visibleUnpinned: true });
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.signature`;
+    const deps = createCliActionDeps({ token, credentials: { token, encryption: null },
+      sessionId: 'custodian-session', mode: 'plain', ctx: null, serverId: 'home-a', serverIdentityId: 'home-a',
+      serverHttpBaseUrl: 'https://home-a.test' });
+    let current = true;
+    const authorization: ExternalActionExecutionAuthorizationV1 = { v: 1, token: 'original-proof', binding: {
+      accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home-a',
+      machineId: 'machine-a', custodianAccountId: 'alice', installationId: 'installation', actionId: 'action.options.resolve',
+      requestId: 'request-project-choices', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine-a' }, accountEncryptionMode: 'plain',
+    } };
+    Object.defineProperty(authorization, 'requesterAccountProjection', { value: { accountId: 'bob', serverId: 'home-a', accountEncryptionMode: 'plain',
+      projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) }),
+      isCurrent: async () => current, readArtifact: async () => null } });
+    Object.defineProperty(authorization, 'requesterHttpProjection', { value: { accountId: 'bob', serverId: 'home-a', serverIdentityId: 'home-a',
+      serverHttpBaseUrl: 'https://home-a.test', accountEncryptionMode: 'plain', isCurrent: async () => current,
+      createRequestHeaders: async () => current ? { 'x-requester-proof': 'bob' } : null } });
+    const context: ActionExecutorContext = { surface: 'mcp', externalActionExecutionAuthorization: authorization };
+    // Observe the real filesystem boundary: each pinned Home admission reads
+    // its saved profiles once to reject ambiguous identities. No owner is mocked.
+    const reads = vi.spyOn(fs, 'readFile');
+    const choices = await deps.projectWorkspaceRefs!({}, context);
+    expect(choices).toMatchObject({ workspaceRefs: [
+      { id: 'first' }, { id: 'second' }, { id: 'visible' },
+    ] });
+    expect(post.mock.calls).toHaveLength(1);
+    expect(post.mock.calls[0]?.[2]?.headers).toMatchObject({ 'x-requester-proof': 'bob' });
+    expect(post.mock.calls[0]?.[2]?.headers).not.toHaveProperty('Authorization');
+    expect(reads.mock.calls.filter(([file]) => file === configuration.settingsFile)).toHaveLength(1);
+    for (const refused of [
+      { ...context, serverId: 'another-home' },
+      { ...context, runtimeAccountId: 'another-account' },
+      { surface: 'mcp' as const, externalActionCredential: {
+        accountId: 'alice', principalId: 'alice', credentialId: 'unadmitted', grant: API_TOKEN_FULL_GRANT_V1,
+      } },
+    ]) {
+      post.mockClear();
+      expect(await deps.projectWorkspaceRefs!({}, refused)).toMatchObject({ ok: false, errorCode: 'project_account_access_denied' });
+      expect(post).not.toHaveBeenCalled();
+    }
+    current = false; post.mockClear();
+    await expect(deps.projectWorkspaceRefs!({}, context)).rejects.toMatchObject({ code: 'project_requester_authority_unavailable' });
+    expect(post).not.toHaveBeenCalled();
+    current = true;
+    const cancelled = new AbortController(); cancelled.abort();
+    await expect(deps.projectWorkspaceRefs!({}, { ...context, signal: cancelled.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(post).not.toHaveBeenCalled();
   });
 
   it('offers the visible checkouts of this Home as the typed Checkout input choices, through the admission the input validator uses', async () => {
@@ -452,9 +523,9 @@ describe('workspace metadata parity through the real CLI Account composition', (
       expect(await owner.execute('projects.organization.update', { projectRef, expectedRevision: 2, label: 'Stale' }, context))
         .toMatchObject({ ok: true, result: { ok: false, errorCode: 'project_organization_conflict', currentRevision: revision } });
     }
-    expect(await owner.execute('projects.organization.update', { projectRef, expectedRevision: revision, label: null }, approvedPresentUser))
-      .toEqual({ ok: true, result: { ok: true, revision: ++revision,
-        row: { hidden: true, pinned: true, atmosphere: 'home', promptStack } } });
+    const reset = await owner.execute('projects.organization.update', { projectRef, expectedRevision: revision, label: null }, approvedPresentUser);
+    expect(reset.ok && reset.result).toEqual({ ok: true, revision: ++revision,
+      row: { hidden: true, pinned: true, atmosphere: 'home', promptStack } });
     expect(rows.filter(row => !(row.key.kind === 'project-organization' && row.key.projectKey === 'first'))).toEqual(unchangedRows);
     const beforeRefusal = structuredClone(rows);
     expect(await owner.execute('projects.organization.update', {
@@ -527,8 +598,8 @@ describe('workspace metadata parity through the real CLI Account composition', (
     const { rows } = accountBoundary({ promptStack });
     const untouched = rows.filter(row => !(row.key.kind === 'workspace-ref' && row.key.id === 'second'));
     const owner = executor();
-    expect(await owner.execute('projects.workspace.forget', { serverId: 'home-a', workspaceId: 'second' }, approvedPresentUser))
-      .toEqual({ ok: true, result: { ok: true, workspaceId: 'second' } });
+    const forgotten = await owner.execute('projects.workspace.forget', { serverId: 'home-a', workspaceId: 'second' }, approvedPresentUser);
+    expect(forgotten.ok && forgotten.result).toEqual({ ok: true, workspaceId: 'second' });
     expect(rows.find(row => row.key.kind === 'workspace-ref' && row.key.id === 'second')).toMatchObject({ revision: 3, content: null });
     expect(rows.find(row => row.key.kind === 'relationship-graph')).toMatchObject({ revision: 0,
       content: { t: 'plain', v: { value: { relationships: [] } } } });

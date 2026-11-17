@@ -44,7 +44,7 @@ function isOrganizationPayload(payload: ProjectAccountRowPayloadV1): payload is 
 }
 export function createCliProjectActionDeps(
   params: Pick<CliActionDepsParams, 'serverId' | 'credentials' | 'isCredentialCurrent' | 'machineActionDirectTargetTransport' | 'onRequesterSessionCredentialDisclosure' | 'projectAction' | 'projectWorkerAccountAction' | 'projectDefinitionAction' | 'serverHttpBaseUrl' | 'serverIdentityId' | 'token'>,
-  { readAdmittedProjectRows, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, assertProjectRequesterCurrent, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome }: Readonly<{
+  { readAdmittedProjectRows, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome }: Readonly<{
     readAdmittedProjectRows: CliAdmittedProjectRowsReader;
     callMachineAction: CliMachineActionCall;
     isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent;
@@ -55,7 +55,7 @@ export function createCliProjectActionDeps(
     readProjectRows: CliProjectAdmission['readProjectRows'];
     resolveProjectHomeIdentity: CliProjectAdmission['resolveProjectHomeIdentity'];
     withProjectHome: CliProjectAdmission['withProjectHome'];
-    assertProjectRequesterCurrent: CliProjectAdmission['assertProjectRequesterCurrent'];
+    admitProjectRows: CliProjectAdmission['admitProjectRows'];
     readProjectRequesterArtifact: CliProjectAdmission['readProjectRequesterArtifact'];
     projectHomeId: string;
     widgetHomeId: string;
@@ -331,11 +331,11 @@ export function createCliProjectActionDeps(
     },
     projectsList: async (args, context) => {
       const requestedServerId = args.serverId ?? context?.serverId ?? projectHomeId;
-      const refused = await projectAccountAdmission(requestedServerId, context);
-      if (refused) return refused;
+      const admitted = await admitProjectRows(requestedServerId, context, 'projects.list', context?.signal);
+      if (!admitted.ok) return admitted;
       const serverId = await resolveProjectHomeIdentity();
       return runWithServerHttpBaseUrl(todoHomeBaseUrl, async () => {
-        const authority = { ...projectRowsAuthority(context, 'projects.list', context?.signal), serverId };
+        const authority = { ...admitted.input, serverId };
         const [{ readProjectAccountRows }, { readProjectLastOpenedMemoryMap }] = await Promise.all([import("@/workspaces/projectAccountRows"), import("@/workspaces/projectLastOpenedMemory")]);
         const snapshot = await readProjectAccountRows({ ...authority, selection: { kinds: ['workspace-ref', 'project-organization'], serverId } });
         const recency = await readProjectLastOpenedMemoryMap(authority);
@@ -351,9 +351,7 @@ export function createCliProjectActionDeps(
           ? { authorization: authority.authorization, effectActionId: authority.effectActionId }
           : { token: authority.credentials.token }), serverHttpBaseUrl: todoHomeBaseUrl, signal: context?.signal }); }
         catch { context?.signal?.throwIfAborted(); machines = null; }
-        await assertProjectRequesterCurrent(context);
-        const changed = await projectAccountAdmission(requestedServerId, context);
-        if (changed) return changed;
+        await admitted.assertCurrent();
         const items = projected.items.map(({ ref, ...item }) => {
           const machine = machines?.find(candidate => candidate.id === ref.machineId);
           return { ...item, serverId: ref.serverId, machineId: ref.machineId, rootPath: ref.rootPath,

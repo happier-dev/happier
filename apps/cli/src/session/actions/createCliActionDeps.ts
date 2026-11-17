@@ -351,7 +351,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
   const actionHomeId = params.serverIdentityId ?? projectHomeId;
   const localMachineId = params.machineActionDirectTargetTransport?.machineId
     ?? params.sessionSpawnDirectTargetTransport?.machineId;
-  const { resolveProjectHomeIdentity, projectHomeAdmission, projectAccountAdmission, withProjectHome, projectRowsAuthority, assertProjectRequesterCurrent, readProjectRows, readProjectRequesterArtifact } = createCliProjectAdmission(params, { projectHomeId, actionHomeId, executionRunActionFailure });
+  const { resolveProjectHomeIdentity, projectHomeAdmission, projectAccountAdmission, admitProjectRows, withProjectHome, projectRowsAuthority, assertProjectRequesterCurrent, readProjectRows, readProjectRequesterArtifact } = createCliProjectAdmission(params, { projectHomeId, actionHomeId, executionRunActionFailure });
 
   const isSameActionHomeId = (serverId: string) => areServerProfileIdentifiersEquivalent(actionHomeId, serverId, identifier =>
     identifier === projectHomeId || identifier === params.serverIdentityId ? params.serverIdentityId : undefined);
@@ -972,7 +972,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     },
   });
   const { sessionPermissionModeSet, ...permissionActionDeps } = createCliPermissionActionDeps(params, { callSessionActionRpc, readSessionActionRpcOrigin, resolveServerRequestHeaders, resolveTransportForSession, resumeInactiveSessionTransport, withProjectHome });
-  const readAdmittedProjectRows = createCliAdmittedProjectRowsReader({ widgetHomeId, projectAccountAdmission, readProjectRows, assertProjectRequesterCurrent });
+  const readAdmittedProjectRows = createCliAdmittedProjectRowsReader({ widgetHomeId, admitProjectRows, withProjectHome });
   const readRepositoryWorkspaceMachine = async (
     workspace: Parameters<typeof resolveAdmittedRepositoryWorkspace>[0]['workspace'], context: ActionExecutorContext, actionId: string,
   ): ReturnType<typeof resolveDeploymentTemplateExecutionMachineIdV1> => {
@@ -1021,7 +1021,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       ...(context.signal ? { signal: context.signal } : {}) });
   };
 
-  const projectDeps = createCliProjectActionDeps(params, { readAdmittedProjectRows, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, assertProjectRequesterCurrent, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome });
+  const projectDeps = createCliProjectActionDeps(params, { readAdmittedProjectRows, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome });
   const machineResourceDeps = createCliMachineResourceActionDeps(params, { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, machineRebootReferences,
     readEnvironmentAccess: deploymentStorageDeps.readEnvironmentAccess,
     observeEnvironmentAccessChanges: deploymentStorageDeps.observeEnvironmentAccessChanges, executionRunActionFailure });

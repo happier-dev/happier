@@ -10,11 +10,13 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { isManagedControllerCodecActionV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 export type CliProjectAdmissionFailure = Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
+type CliProjectRowsAdmission = CliProjectAdmissionFailure | Readonly<{ ok: true; input: ProjectAccountRowsInput; assertCurrent: () => Promise<void> }>;
 type RequesterArtifactReadOptions = Omit<NonNullable<Parameters<NonNullable<ExternalActionExecutionAuthorizationV1['requesterAccountProjection']>['readArtifact']>[1]>, 'authorization'>;
 export type CliProjectAdmission = Readonly<{
   resolveProjectHomeIdentity: () => Promise<string>;
   projectHomeAdmission: (serverId?: string, context?: ActionExecutorContext) => Promise<CliProjectAdmissionFailure | null>;
   projectAccountAdmission: (serverId?: string, context?: ActionExecutorContext) => Promise<CliProjectAdmissionFailure | null>;
+  admitProjectRows: (serverId: string, context: ActionExecutorContext | undefined, effectActionId: string, signal?: AbortSignal) => Promise<CliProjectRowsAdmission>;
   withProjectHome: <T>(operation: () => Promise<T>) => Promise<T>;
   projectRowsAuthority: (context?: ActionExecutorContext, effectActionId?: string, signal?: AbortSignal) => ProjectAccountRowsInput;
   assertProjectRequesterCurrent: (context?: ActionExecutorContext) => Promise<void>;
@@ -92,15 +94,25 @@ export function createCliProjectAdmission(
     if (!params.credentials) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
     return { credentials: params.credentials, serverId: projectHomeId, ...(signal ? { signal } : {}) };
   };
-  const assertProjectRequesterCurrent = async (context?: ActionExecutorContext) => {
+  const assertProjectRequesterCustodyCurrent = async (context?: ActionExecutorContext) => {
     const authorization = context?.externalActionExecutionAuthorization;
-    if (!authorization) return;
-    if (await projectAccountAdmission(projectHomeId, context)
-      || authorization.requesterAccountProjection && !await authorization.requesterAccountProjection.isCurrent()
-      || !await authorization.requesterHttpProjection!.isCurrent()) {
+    if (authorization && (authorization.requesterAccountProjection && !await authorization.requesterAccountProjection.isCurrent()
+      || !await authorization.requesterHttpProjection!.isCurrent())) {
       throw Object.assign(new Error('project_requester_authority_unavailable'), { code: 'project_requester_authority_unavailable' });
     }
     context?.signal?.throwIfAborted();
+  };
+  const assertProjectRequesterCurrent = async (context?: ActionExecutorContext) => {
+    if (!context?.externalActionExecutionAuthorization) return;
+    if (await projectAccountAdmission(projectHomeId, context)) {
+      throw Object.assign(new Error('project_requester_authority_unavailable'), { code: 'project_requester_authority_unavailable' });
+    }
+    await assertProjectRequesterCustodyCurrent(context);
+  };
+  const admitProjectRows: CliProjectAdmission['admitProjectRows'] = async (serverId, context, effectActionId, signal) => {
+    const denied = await projectAccountAdmission(serverId, context);
+    return denied ?? { ok: true, input: projectRowsAuthority(context, effectActionId, signal),
+      assertCurrent: () => assertProjectRequesterCustodyCurrent(context) };
   };
   const readProjectRows = async (selection: ProjectAccountRowsSelection, signal?: AbortSignal, context?: ActionExecutorContext, effectActionId?: string) => {
     const { readProjectAccountRows } = await import("@/workspaces/projectAccountRows");
@@ -115,26 +127,26 @@ export function createCliProjectAdmission(
     await assertProjectRequesterCurrent(context);
     return artifact?.artifactId === ref.artifactId ? artifact : null;
   };
-  return { resolveProjectHomeIdentity, projectHomeAdmission, projectAccountAdmission, withProjectHome, projectRowsAuthority, assertProjectRequesterCurrent, readProjectRows, readProjectRequesterArtifact };
+  return { resolveProjectHomeIdentity, projectHomeAdmission, projectAccountAdmission, admitProjectRows, withProjectHome, projectRowsAuthority, assertProjectRequesterCurrent, readProjectRows, readProjectRequesterArtifact };
 }
 
 export type CliAdmittedProjectRowsReader = (selection: ProjectAccountRowsSelection, signal: AbortSignal | undefined, context: ActionExecutorContext | undefined, fallbackActionId: string) => Promise<Awaited<ReturnType<typeof readProjectAccountRows>> | null>;
 export function createCliAdmittedProjectRowsReader(
-  { widgetHomeId, projectAccountAdmission, readProjectRows, assertProjectRequesterCurrent }: Readonly<{
+  { widgetHomeId, admitProjectRows, withProjectHome }: Readonly<{
     widgetHomeId: string;
-    projectAccountAdmission: CliProjectAdmission['projectAccountAdmission'];
-    readProjectRows: CliProjectAdmission['readProjectRows'];
-    assertProjectRequesterCurrent: CliProjectAdmission['assertProjectRequesterCurrent'];
+    admitProjectRows: CliProjectAdmission['admitProjectRows'];
+    withProjectHome: CliProjectAdmission['withProjectHome'];
   }>,
 ): CliAdmittedProjectRowsReader {
 
-  // One admission for every read of the Account's Project rows by a widget input: the validator and the choices.
+  // Admit the finite row read once; the row owner retains HTTP and custody checks.
   const readAdmittedProjectRows = async (selection: ProjectAccountRowsSelection, signal: AbortSignal | undefined, context: ActionExecutorContext | undefined, fallbackActionId: string) => {
-    if (await projectAccountAdmission(widgetHomeId, context)) return null;
-    const rows = await readProjectRows(selection, signal, context, context?.externalActionExecutionAuthorization?.binding.actionId ?? fallbackActionId);
-    await assertProjectRequesterCurrent(context);
+    const admitted = await admitProjectRows(widgetHomeId, context, context?.externalActionExecutionAuthorization?.binding.actionId ?? fallbackActionId, signal);
+    if (!admitted.ok) return null;
+    const { readProjectAccountRows } = await import("@/workspaces/projectAccountRows");
+    const rows = await withProjectHome(() => readProjectAccountRows({ ...admitted.input, selection }));
     signal?.throwIfAborted();
-    return await projectAccountAdmission(widgetHomeId, context) ? null : rows;
+    return rows;
   };
   return readAdmittedProjectRows;
 }
