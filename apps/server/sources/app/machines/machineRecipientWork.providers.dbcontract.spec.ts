@@ -11,6 +11,7 @@ import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import * as access from './machineAccess';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
+import { readMachineAudienceAccountIdsInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
 
 const provider = getDbProviderFromEnv(process.env, 'postgres');
 describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', () => {
@@ -43,6 +44,32 @@ describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', 
         return inTx(tx => access.setMachineAccessGrantInTx(tx, {
             actorAccountId, machineId, principal: { kind: 'account', accountId }, level: 'view' }));
     };
+
+    it.each(provider === 'postgres' ? ['postgres', 'pglite'] : [provider])(
+        'reads Machine audience and recipient work with the %s backend SQL dialect', async backend => {
+            const f = await fixture();
+            const previousProvider = process.env.HAPPIER_DB_PROVIDER;
+            try {
+                // The real PostgreSQL adapter also verifies its PGlite-compatible SQL dialect.
+                process.env.HAPPIER_DB_PROVIDER = backend;
+                await db.$transaction(async tx => {
+                    const statements: unknown[] = [];
+                    const traced = new Proxy(tx, { get(target, property, receiver) {
+                        const value = Reflect.get(target, property, receiver);
+                        if (property !== '$queryRawUnsafe') return typeof value === 'function' ? value.bind(target) : value;
+                        return (...args: unknown[]) => { statements.push(args[0]); return Reflect.apply(value, target, args); };
+                    } });
+                    expect(await readMachineAudienceAccountIdsInTx(traced, f.machine.id)).toEqual([f.owner.id]);
+                    expect(await readMachineRecipientWorkInTx(traced, { actorAccountId: f.owner.id,
+                        ownerFingerprints: new Map([[f.machine.id, null]]) }))
+                        .toEqual(new Map([[f.machine.id, { cursor: 0, recipients: [] }]]));
+                    expect(statements).toHaveLength(2);
+                });
+            } finally {
+                if (previousProvider === undefined) delete process.env.HAPPIER_DB_PROVIDER;
+                else process.env.HAPPIER_DB_PROVIDER = previousProvider;
+            }
+        });
 
     it('acquires structural audience through the shared membership read without opening content or keys', async () => {
         const f = await fixture();

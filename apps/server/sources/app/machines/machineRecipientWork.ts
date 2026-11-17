@@ -6,6 +6,7 @@ import type { TeamRoleV1 } from '@happier-dev/protocol/teams';
 import { iterateResourceGrantPrincipalAccountIdsFromFacts, type ResourceGrantPrincipalFacts } from '@/app/teams/resourceGrantAccess';
 import type { Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/db';
+import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { AccountStatus, TeamMembershipStatus } from '@/storage/enums.generated';
 import { isEffectiveTeamMembership } from '@/app/teams/memberships/effectiveMembership';
@@ -36,10 +37,11 @@ type RecipientRow = AudienceRow & Readonly<{
 
 /** One membership acquisition for structural and recipient-envelope projections. */
 function machineAudienceQuery(ids: readonly string[], provider: ReturnType<typeof getDbProviderFromEnv>, custodianAccountId?: string) {
-    const bind = (index: number) => provider === 'postgres' ? `$${index}` : '?';
+    const dialect = resolveDbSqlDialect(provider);
+    const bind = (index: number) => dialect === 'postgres' ? `$${index}` : '?';
     // Keep the typed Team arm second: PostgreSQL resolves each UNION pair
     // before later arms, so two leading NULL membership columns become text.
-    const absentArchive = provider === 'postgres' ? 'CAST(NULL AS TIMESTAMP)' : 'NULL';
+    const absentArchive = dialect === 'postgres' ? 'CAST(NULL AS TIMESTAMP)' : 'NULL';
     const selection = custodianAccountId === undefined
         ? `SELECT "id", "accountId" FROM "Machine" WHERE "id" IN (${ids.map((_, index) => bind(index + 1)).join(',')})`
         : `SELECT ${bind(1)} AS "id", ${bind(2)} AS "accountId"`;
