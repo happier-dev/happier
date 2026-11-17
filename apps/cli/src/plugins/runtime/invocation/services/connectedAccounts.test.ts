@@ -4,7 +4,9 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { logger } from '@/ui/logger';
 import { readPluginActionError } from '@happier-dev/protocol/plugins/actions/invocation';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
+import type { ActionHandler, PluginAccountActionContext, PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { derivePluginAccountContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { createPluginRegistrationScope } from '@/plugins/runtime/api/registrationScope';
 import { CRABBOX_PLUGIN, CRABBOX_COORDINATOR_PROVISIONER } from '../../../../../../../packages/plugins/machine-crabbox/src/manifest';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { resolveManifestHostAccessRequests } from '@/plugins/runtime/hostAccess/manifestRequests';
@@ -175,14 +177,21 @@ describe('Crabbox coordinator check through declared host capabilities', () => {
             materialize: async () => ({ kind: 'environment', env: { CRABBOX_COORDINATOR_URL: 'https://coordinator.example.test/native',
                 CRABBOX_COORDINATOR_TOKEN: 'selected-private-token', CRABBOX_ORG: 'test-org' } }),
         })).bind({ ...seed, plugin: { id: manifest.id, version: manifest.version }, contribution: { id: checkId, qualifiedId: `${manifest.id}/actions/${checkId}` } }, scopes);
-        const handlers = new Map<string, ActionHandler>();
-        await CRABBOX_PLUGIN.activate({ actions: { register(id: string, handler: ActionHandler) {
-            handlers.set(id, handler); return { dispose() {} };
-        } }, connectedAccounts: { register() { return { dispose() {} }; } } } as unknown as PluginApi);
+        if (check.execution.target !== 'account') throw new Error('Coordinator check must execute in the Account realm');
+        const target = check.execution.account;
+        const registration = createPluginRegistrationScope({ pluginId: manifest.id,
+            target: { realm: 'account', ...target },
+            rights: derivePluginAccountContributionRegistrationRights(manifest.contributes, target),
+        });
+        onTestFinished(() => registration.dispose());
+        await CRABBOX_PLUGIN.activateAccount(registration.api, target);
+        const handlers = new Map(registration.commit().flatMap(entry => entry.family === 'actions'
+            // The admitted Account realm restores the public callback type at the capture boundary.
+            ? [[entry.localId, entry.value as unknown as PluginAccountActionHandler] as const] : []));
         const network = vi.fn(async () => { throw new Error('Check must not contact the coordinator'); });
         const context = { invokedAtMs: 123, signal: seed.signal, services: { connectedAccounts,
             http: { request: network }, managedServices: { dependencies: { status: async () => ({ state: 'missing' }) } },
-        } } as unknown as PluginInvocationContext;
+        } } as unknown as PluginAccountActionContext;
         expect(await handlers.get(checkId)!({}, context)).toMatchObject({ available: true });
         expect(network).not.toHaveBeenCalled();
         expect(await handlers.get(optionsId)!({ backendId: 'aws', transport: 'coordinator', namespace: 'test-org', target: 'linux',

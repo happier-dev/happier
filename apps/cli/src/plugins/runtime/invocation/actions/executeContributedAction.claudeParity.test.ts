@@ -1,6 +1,7 @@
 import fastify from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, deriveSessionCreationTagV1, formatQualifiedPluginActionId } from '@happier-dev/protocol';
+import { AccountSettingsSchema, createActionExecutor, deriveSessionCreationTagV1, FeaturesResponseSchema, formatQualifiedPluginActionId, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-claude/manifest';
 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -8,19 +9,22 @@ import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRu
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { admitPluginContributionGraph } from '@/plugins/projection/registry/normalize/admission';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionInvoker, createCommittedContributedActionSchemaReader } from './createCommittedContributedActionDeps';
 import { executeContributedAction } from './executeContributedAction';
 
 // Account credentials and HTTP/Machine transport are system boundaries. The
 // bundled declaration, activation, dispatcher and Session-send owners stay real.
+const credentials = vi.hoisted(() => ({ token: 'claude-parity-fixture', encryption: null }));
 vi.mock('@/persistence', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/persistence')>(),
-    readStoredCredentials: async () => ({ token: 'claude-parity-fixture', encryption: null }),
+    readStoredCredentials: async () => credentials,
 }));
 
 // Source tests consume the current source through the workspace resolver;
@@ -43,7 +47,6 @@ describe('Claude native team Action surface parity', () => {
         vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
         vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
         const home = fastify();
-        const origin = 'http://claude-parity-home.test';
         const session = createSessionRecordFixture({
             id: sessionId, active: true, encryptionMode: 'plain',
             metadata: JSON.stringify({ sessionCreationCorrespondenceV1: {
@@ -62,6 +65,19 @@ describe('Claude native team Action surface parity', () => {
         });
         home.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
         home.get(`/v2/sessions/${sessionId}`, async () => ({ session }));
+        home.get(`/v1/machines/${machineId}`, async () => ({ machine: MachinePublishedRowV1Schema.parse({
+            id: machineId, managedMachineRef: null, metadata: null, metadataVersion: 0,
+            daemonState: null, daemonStateVersion: 0, storageMode: 'plain',
+            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, active: true,
+            revokedAt: null, replacedByMachineId: null,
+        }) }));
+        const features = FeaturesResponseSchema.parse({ features: {}, capabilities: {
+            serverIdentity: { serverIdentityId: 'claude-parity-home' },
+            session: { pendingInput: { protocolVersion: 5 } },
+        } });
+        home.get('/v1/features', async () => features);
+        home.get('/v1/features/authenticated', async () => features);
+        const origin = await home.listen({ host: '127.0.0.1', port: 0 });
         const restoreHttp = installAxiosFastifyAdapter({ app: home, origin });
         const admissions: unknown[] = [];
         let fixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
@@ -70,14 +86,21 @@ describe('Claude native team Action surface parity', () => {
             // Source admission consumes the authored manifest through the real
             // normalizer. Bundled projection drift has its own canonical gate.
             // Unrelated app-preseed UI artifacts are outside this Action seam.
+            const loadedPlugins = bundled.loadedPlugins.filter(plugin => plugin.pluginId === pluginId)
+                .map(plugin => ({ ...plugin, manifest: normalizePluginManifestV2(PLUGIN_MANIFEST) }));
             const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({
-                loadResult: { loadedPlugins: bundled.loadedPlugins.filter(plugin => plugin.pluginId === pluginId)
-                    .map(plugin => ({ ...plugin, manifest: normalizePluginManifestV2(PLUGIN_MANIFEST) })), diagnosticsByPluginId: {} },
+                loadResult: { loadedPlugins, diagnosticsByPluginId: {} },
+                admittedGraph: admitPluginContributionGraph({ loadedPlugins, referenceGraph: bundled.admittedGraph }),
                 provenance: 'first_party',
             }));
             fixture = await runWithServerHttpBaseUrl(origin, () => createAdmittedPluginRuntimeFixture({
                 runtimeOptions: {
                     contributes,
+                    scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider({
+                        getAccountSettings: () => AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1, actions: {},
+                            approvalWaivedSurfaces: { 'session.message.send': ['plugin'] } } }),
+                        allowEnvironmentOverride: false,
+                    }) },
                     pluginIds: [pluginId], resolveCurrentMachineId: () => machineId,
                     machineAdmissionTransport: async (request) => {
                         admissions.push(request);
