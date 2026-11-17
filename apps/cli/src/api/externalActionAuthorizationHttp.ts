@@ -96,11 +96,15 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
       return { ok: false, code: 'auth_unavailable' };
     }
     const failure = projectExternalActionHttpFailureV1(refusal.data);
+    const permanentlyUnsupported = 'code' in refusal.data && refusal.data.code === 'target_unavailable'
+      && failure.failureCause?.phase === 'execution_authorization'
+      && failure.failureCause.errorCode === 'unsupported_operation';
     return { ok: false, code: 'code' in refusal.data ? refusal.data.code : refusal.data.error,
       ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
       ...(failure.details === undefined ? {} : { details: failure.details }),
       ...(failure.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
-      ...(classifyServerEndpointError(createHttpStatusError(response.status, 'Home authorization unavailable')).retryable
+      ...(!permanentlyUnsupported
+        && classifyServerEndpointError(createHttpStatusError(response.status, 'Home authorization unavailable')).retryable
         ? { retryable: true as const } : {}),
       ...('code' in refusal.data && refusal.data.code === 'target_unavailable'
         && 'diagnostic' in refusal.data && refusal.data.diagnostic !== undefined

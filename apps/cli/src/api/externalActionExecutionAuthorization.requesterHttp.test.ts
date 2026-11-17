@@ -969,6 +969,23 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(post).toHaveBeenCalledTimes(2);
   });
 
+  it.each(['unsupported', 'transient'] as const)('settles a permanent Home mint refusal while retaining transient conflicts (%s)', async kind => {
+    const failureCause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'unsupported_operation', httpStatus: null };
+    vi.spyOn(axios, 'post').mockResolvedValue({ status: 409, data: {
+      error: 'invalid_request', code: 'target_unavailable', requestId: envelope.requestId,
+      ...(kind === 'unsupported' ? { failureCause } : {}),
+    } });
+    const outcome = await executionAuthorizationOwner.mintExternalActionExecutionAuthorization({
+      actionId: 'ui.current_context.read', envelope: { ...envelope, input: {} }, machineId: target.machineId,
+      pat: accountToken, serverHttpBaseUrl: 'https://home.test',
+    });
+    if (kind === 'unsupported') {
+      expect(outcome).toEqual({ ok: false, code: 'target_unavailable', requestId: envelope.requestId, failureCause });
+    } else {
+      expect(outcome).toEqual({ ok: false, code: 'target_unavailable', requestId: envelope.requestId, retryable: true });
+    }
+  });
+
   it('preserves retryable Home mint transport failure during requester preparation', async () => {
     const post = vi.spyOn(axios, 'post').mockRejectedValue(Object.assign(new Error('private connection detail'), { code: 'ECONNRESET' }));
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'bob', tokenEpoch: 7,

@@ -811,7 +811,10 @@ export function registerExternalActionRoutes(
                     'credential_scope_denied', body.data.envelope.requestId, undefined, undefined, undefined, undefined,
                     { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null });
                 return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId,
-                    undefined, undefined, undefined, admission?.diagnostic);
+                    undefined, undefined, undefined, admission?.diagnostic,
+                    admission?.code === 'unsupported_operation'
+                        ? { phase: 'execution_authorization', errorClass: 'Error', errorCode: admission.code, httpStatus: null }
+                        : undefined);
             }
             const machine = await db.machine.findFirst({
                 where: { id: receivingMachineId, accountId: admission.custodianAccountId,

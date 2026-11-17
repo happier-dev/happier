@@ -623,6 +623,28 @@ describe('installed Session proposal admission at the Home mint route', () => {
         } finally { publishedSession.mockRestore(); await app.close(); }
     });
 
+    it('retains a permanent unsupported Machine operation in the Home mint refusal', async () => {
+        const { app, dispatch } = createApp('account');
+        storage.state.accountGrants.push({ accountId: 'other-account', accessLevel: 'view', account: {
+            id: 'other-account', status: 'active', name: null, firstName: null, lastName: null, username: null, avatar: null,
+        } });
+        const requestId = 'unsupported-member-client';
+        try {
+            const response = await app.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1('ui.current_context.read'),
+                headers: { 'x-test-user-id': 'other-account', 'x-test-auth-token-kind': 'api_token',
+                    'x-test-api-token-account-id': 'other-account', 'x-test-api-token-principal-id': 'other-account',
+                    'x-test-api-token-credential-id': 'member-service' },
+                payload: { v: 1, machineId: 'machine', envelope: { v: 1, requestId,
+                    target: { kind: 'machine', machineId: 'machine' }, input: {} } } });
+            expect(response.statusCode, response.body).toBe(409);
+            expect(response.json()).toMatchObject({ error: 'invalid_request', code: 'target_unavailable',
+                requestId, failureCause: { phase: 'execution_authorization',
+                    errorClass: 'Error', errorCode: 'unsupported_operation', httpStatus: null } });
+            expect(dispatch).not.toHaveBeenCalled();
+        } finally { await app.close(); }
+    });
+
     it('reports only a bounded Machine refusal witness from the actual Home mint route', async () => {
         const { app } = createApp('terminal');
         const witness = vi.spyOn(app.log, 'warn');
