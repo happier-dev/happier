@@ -2772,7 +2772,7 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
-  sessionConfigOptionSet?: (args: Readonly<{ sessionId: string; configId: string; valueId: string | null }>) => Promise<unknown>;
+  sessionConfigOptionSet?: (args: Readonly<{ sessionId: string; configId: string; valueId: string | null }>, context: ActionExecutorContext) => Promise<unknown>;
   sessionConnectedServicesAuthSet?: (args: SessionConnectedServiceAuthSwitchRpcParams & Readonly<{ machineId: string; serverId?: string | null }>, context: ActionExecutorContext) => Promise<unknown>;
   sessionModesList?: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
 

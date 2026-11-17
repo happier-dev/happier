@@ -14,7 +14,7 @@ import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget }
 import { resolveMachineControlTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { computeSessionConfigOptionControls } from '@/sync/domains/sessionControl/configOptionsControl';
-import { PROVIDER_REASONING_EFFORT_LEVELS_V1, PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import { readSessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
@@ -22,8 +22,11 @@ import { discoverMachineModelsForActions } from '@/sync/ops/modelDiscovery';
 import { buildSessionModelDiscoveryContext } from '@/sync/ops/sessionModelDiscovery';
 import type { LazyActionAccountContext } from './actionAccountContext';
 
-export function createUiSessionConfigOptionAction(account: LazyActionAccountContext | undefined): NonNullable<ActionExecutorDeps['sessionConfigOptionSet']> {
-    return async ({ sessionId, configId, valueId }) => {
+export function createUiSessionConfigOptionAction(
+    account: LazyActionAccountContext | undefined,
+    providerAction: ActionExecutorDeps['providerActionExecute'],
+): NonNullable<ActionExecutorDeps['sessionConfigOptionSet']> {
+    return async ({ sessionId, configId, valueId }, context) => {
         // Withdrawal records existing null intent; it does not select a currently offered value.
         if (valueId !== null) {
             const state = storage.getState();
@@ -84,9 +87,32 @@ export function createUiSessionConfigOptionAction(account: LazyActionAccountCont
             const choiceIds = control?.option.options?.map(choice => choice.value)
                 ?? control?.option.groups?.flatMap(group => group.options.map(choice => choice.value))
                 ?? [];
-            const declaredChoiceIds = selection && !control
-                ? readUnpublishedProviderModelChoiceIds(metadata, selection, configId)
-                : null;
+            let declaredChoiceIds: readonly string[] | null = null;
+            if (selection?.providerConnectionId && !control) {
+                const binding = readSessionProviderBindingMetadataV1(metadata);
+                let model = binding?.model && binding.connectionId === selection.providerConnectionId && binding.model.id === selection.modelId
+                    ? binding.model : null;
+                if (!model && providerAction) {
+                    const serverId = account?.serverId ?? getActiveServerSnapshot().serverId;
+                    const machineId = resolveMachineControlTargetForSessionFromState(state, { serverId, sessionId })?.machineId
+                        ?? metadata?.machineId ?? null;
+                    if (machineId) {
+                        const result = await providerAction({ actionId: 'providers.models.projection', input: {
+                            machineId, agentTargetKey: selection.agentTargetKey, currentSelection: selection,
+                            sourceConnectionId: selection.providerConnectionId, refreshPolicy: 'current_only',
+                        } }, context);
+                        if (!result.ok) return result;
+                        const projection = DaemonProviderModelProjectionResponseV1Schema.parse(result.result);
+                        if (projection.status === 'error') {
+                            return { ok: false, errorCode: projection.error.code, error: projection.error.code, details: projection.error };
+                        }
+                        model = projection.groups.find(group => group.connectionId === selection.providerConnectionId)
+                            ?.rows.find(row => row.ref.modelId === selection.modelId)?.descriptor ?? null;
+                    }
+                }
+                const option = model?.modelOptions?.find(candidate => candidate.id === configId);
+                declaredChoiceIds = option?.options?.map(choice => choice.value) ?? [];
+            }
             if (declaredChoiceIds) {
                 if (!declaredChoiceIds.includes(valueId)) {
                     return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -101,26 +127,4 @@ export function createUiSessionConfigOptionAction(account: LazyActionAccountCont
         });
         return { ok: true, sessionId, configId, valueId };
     };
-}
-
-/**
- * The selected Provider model's choices when the Session's own catalog does not hold them. A Provider-bound
- * runner publishes no Session option state: the running Provider model's choices are in its launch
- * binding. A Provider model armed for the next message has no descriptor in Session state,
- * so only the shared Provider effort level is checked:
- * its start admission keeps a retained effort the model declares and omits one it does not
- * (docs/providers.md).
- */
-function readUnpublishedProviderModelChoiceIds(
-    metadata: Readonly<Record<string, unknown>> | null,
-    selection: Readonly<{ providerConnectionId: string | null; modelId: string }>,
-    configId: string,
-): readonly string[] | null {
-    if (selection.providerConnectionId === null) return null;
-    const binding = readSessionProviderBindingMetadataV1(metadata);
-    if (binding?.model && binding.connectionId === selection.providerConnectionId && binding.model.id === selection.modelId) {
-        const option = binding.model.modelOptions?.find(candidate => candidate.id === configId);
-        return option?.options?.map(choice => choice.value) ?? [];
-    }
-    return configId === PROVIDER_REASONING_EFFORT_OPTION_ID ? PROVIDER_REASONING_EFFORT_LEVELS_V1 : null;
 }

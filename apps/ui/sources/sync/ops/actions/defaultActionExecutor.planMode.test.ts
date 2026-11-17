@@ -52,6 +52,7 @@ import { normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts } from '@/
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { createProviderModelProjectionFixture, createProviderModelProjectionGroupFixture } from '@/dev/testkit/harness/providerSettingsHarness';
 
 vi.mock('socket.io-client', async importOriginal =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -3155,8 +3156,8 @@ describe('default Action executor mode and catalog contracts', () => {
       compatibilityFingerprint: 'compatibility:v1:a', bindingSecurityFingerprint: 'binding-security:v1:a',
       displaySnapshot: { providerName: 'Gateway', connectionName: 'Work', connectionRole: 'named' as const, connectionDisplayNameMode: 'custom' as const },
     };
-    const install = (modelId: string) => installSession('s1', {
-      path: '/tmp/project', host: 'localhost', flavor: 'codex',
+    const install = (modelId: string, machineId?: string) => installSession('s1', {
+      path: '/tmp/project', host: 'localhost', flavor: 'codex', ...(machineId ? { machineId } : {}),
       providerBindingV1: binding,
       modelSelectionIntentV1: { v: 1, updatedAt: 2, selection: {
         agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_work', modelId,
@@ -3181,19 +3182,40 @@ describe('default Action executor mode and catalog contracts', () => {
       }, context());
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
       expect(readOverride(read)).toMatchObject({ overrides: { reasoning_effort: { value: 'medium' } } });
+      expect(outgoing).toEqual([]);
     });
 
-    it('retains a Provider effort level for a model armed for the next message', async () => {
-      // The armed model's descriptor is not Session state; its start admission keeps or omits the retained value.
-      const read = install('armed-model');
+    it('uses the pending Provider model descriptor for an inactive Session effort choice', async () => {
+      // Live Muse: a personal model is armed after a stopped Team-backed run; no new launch binding exists yet.
+      const read = install('armed-model', 'machine-a');
+      storage.setState({ sessions: { ...storage.getState().sessions,
+        s1: { ...storage.getState().sessions.s1!, active: false },
+      } });
+      const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_work', modelId: 'armed-model' };
+      const projection = createProviderModelProjectionFixture({ agentTargetKey: selection.agentTargetKey,
+        groups: [createProviderModelProjectionGroupFixture({ connectionId: selection.providerConnectionId, rows: [{
+          ref: selection, descriptor: { id: selection.modelId, name: 'Armed model', modelOptions: [{
+            ...effort, currentValue: 'max', options: [{ value: 'minimal', name: 'Minimal' }, { value: 'max', name: 'Max' }],
+          }] }, sources: { manual: false, static: false, probe: true }, confidence: 'probe',
+          compatibility: { result: { status: 'experimental', selectedProtocol: 'openai-responses',
+            reasons: ['model_capability_toolRoundTrips_unknown'], confirmationScope: { kind: 'model', modelId: selection.modelId } },
+            compatibilityFingerprint: 'compatibility:v1:a', confirmed: true },
+          endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
+        }] })] });
+      daemonAnswer = () => projection;
+      const initialMetadataVersion = read().metadataVersion;
       expect(await createDefaultActionExecutor().execute('session.config_option.set', {
-        sessionId: 's1', configId: 'reasoning_effort', valueId: 'not-a-level',
-      }, context())).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-      const result = await createDefaultActionExecutor().execute('session.config_option.set', {
         sessionId: 's1', configId: 'reasoning_effort', valueId: 'high',
+      }, context())).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      expect(read().metadataVersion).toBe(initialMetadataVersion);
+      const result = await createDefaultActionExecutor().execute('session.config_option.set', {
+        sessionId: 's1', configId: 'reasoning_effort', valueId: 'minimal',
       }, context());
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-      expect(readOverride(read)).toMatchObject({ overrides: { reasoning_effort: { value: 'high' } } });
+      expect(readOverride(read)).toMatchObject({ overrides: { reasoning_effort: { value: 'minimal' } } });
+      expect(outgoing).toHaveLength(2);
+      expect(outgoing.every(request => request.method === `machine-a:${RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION}`
+        && (request.params as { refreshPolicy?: string }).refreshPolicy === 'current_only')).toBe(true);
     });
 
     it.each(['declared', 'unknown', 'unavailable'] as const)('discovers native model options for a direct Action (%s)', async (catalog) => {

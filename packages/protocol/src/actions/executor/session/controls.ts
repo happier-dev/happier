@@ -384,7 +384,7 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
             sessionId,
             configId: String(data.configId),
             valueId: data.valueId === null ? null : String(data.valueId),
-          });
+          }, ctx);
           return completeActionResult(res);
         }
 

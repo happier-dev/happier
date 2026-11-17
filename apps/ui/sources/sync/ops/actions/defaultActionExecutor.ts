@@ -1424,6 +1424,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       return (owner ?? opts?.homeDomainAction ?? capturedFamilyPorts!.homeDomainAction)(args);
     })
     : undefined;
+  const providerActionExecute = accountContext
+    ? createUiProviderActionExecuteV1(accountContext, { onRpcDispatched: opts?.onProviderRpcDispatched })
+    : undefined;
   let deps: ActionExecutorDeps = {
     browserProfileLoginsImport: ({ input, context }) => importBrowserProfileLoginsInContext(accountContext ?? null, input,
       call => actionMachineRpc({ serverId: accountContext?.serverId, accountId: accountContext?.accountId,
@@ -2081,7 +2084,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           personalSavedSecretActionExecute: createUiPersonalSavedSecretActionExecute(accountContext, (opts?.homeDomainAction ?? capturedFamilyPorts!.homeDomainAction)!),
         } : {}),
       }),
-      providerActionExecute: createUiProviderActionExecuteV1(accountContext, { onRpcDispatched: opts?.onProviderRpcDispatched }),
+      providerActionExecute,
     } : {}),
     ...(accountContext ? { remoteHostActionExecute: createUiRemoteHostActionExecuteV1(accountContext, opts?.openRoute, opts?.homeRuntimeRunner) } : {}),
     ...(accountContext ? { artifactAccessAction: createArtifactAccessActionsV1({
@@ -4516,7 +4519,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       });
       return { ok: true, sessionId, modeId: normalizedModeId };
     },
-    sessionConfigOptionSet: createUiSessionConfigOptionAction(accountContext ?? undefined),
+    sessionConfigOptionSet: createUiSessionConfigOptionAction(accountContext ?? undefined, providerActionExecute),
     ...createUiSessionCapabilityActionDeps(accountContext ?? undefined),
     sessionConnectedServicesAuthSet: setSessionConnectedServiceAuthBinding,
     sessionModelUnarm: async ({ sessionId, serverId, context }) => {
