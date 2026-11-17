@@ -5,7 +5,7 @@ import { canonicalAbsolutePathsEqual, expandHomeDirPath, isCanonicalAbsolutePath
 
 type Volume = Readonly<{ id: string; label: string; mount: string }>;
 export type StorageFilesystemCapacityReader = (path: string) => Promise<Readonly<{
-    bavail: number | bigint; bsize: number | bigint;
+    bavail: number | bigint; bsize: number | bigint; blocks?: number | bigint;
 }>>;
 
 /** One mount identity owner for demand reads and Storage projections. */
@@ -23,7 +23,7 @@ export async function readStoragePathCapacity(path: string, deps: Readonly<{
     readVolumes(): readonly Volume[];
     readFilesystemCapacity?: StorageFilesystemCapacityReader;
     nowMs?: () => number;
-}>): Promise<StoragePathCapacityV1> {
+}>): Promise<StoragePathCapacityV1 & Readonly<{ totalBytes?: number }>> {
     let selectedPath = expandHomeDirPath(path);
     if (!isAbsolute(selectedPath)) return { status: 'unknown', path: selectedPath, reason: 'path_not_absolute' };
     const readFilesystemCapacity: StorageFilesystemCapacityReader = deps.readFilesystemCapacity
@@ -35,8 +35,10 @@ export async function readStoragePathCapacity(path: string, deps: Readonly<{
         if (!Number.isSafeInteger(freeBytes) || freeBytes < 0) {
             return { status: 'unknown', path: selectedPath, reason: 'capacity_unrepresentable' };
         }
+        const totalBytes = facts.blocks === undefined ? undefined : Number(BigInt(facts.blocks) * BigInt(facts.bsize));
         const volume = storageVolumeForPath(deps.readVolumes(), selectedPath);
-        return { status: 'known', path: selectedPath, freeBytes, observedAt: (deps.nowMs ?? Date.now)(),
+        return { status: 'known', path: selectedPath, freeBytes,
+            ...(totalBytes !== undefined && Number.isSafeInteger(totalBytes) && totalBytes >= 0 ? { totalBytes } : {}), observedAt: (deps.nowMs ?? Date.now)(),
             ...(volume ? { volume: { volumeId: volume.id, mountPath: volume.mount, label: volume.label } } : {}) };
     } catch (error) {
         const reason = error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'

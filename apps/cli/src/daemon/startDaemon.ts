@@ -286,7 +286,7 @@ import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import { startBackgroundRegistryUpdateCheck } from '@/registries/updates/startBackgroundRegistryUpdateCheck';
 import { createCliRegistryUpdateCheck } from '@/registries/updates/createCliRegistryUpdateCheck';
 import { createClientActionMachineRpcExecutor } from '@/plugins/runtime/invocation/actions/clientActionMachineRpc';
-import { DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY } from '@/plugins/runtime/context/daemonDatabaseLimitsPolicy';
+import { createMachinePluginDaemonDatabaseLimitsPolicy } from '@/plugins/runtime/context/daemonDatabaseLimitsPolicy';
 import { createDaemonPluginAvailabilityReporter } from '@/plugins/availability/daemonReporter';
 import { createDaemonPluginRegistryProjectionInvalidation } from './pluginRegistryProjectionInvalidation';
 import { withTrackedSessionRpc, withTrackedSessionRpcContext } from './sessionEncryption/withTrackedSessionRpc';
@@ -1977,7 +1977,7 @@ export async function startDaemon(
         withSource: (sourceId, use) => runWithServerHttpBaseUrl(readPluginRegistrySourceHome(), () => pluginRegistrySourceHost.withSource(sourceId, use)),
       },
       ...(managedResourcePreflight ? { managedResourcePreflight } : {}),
-      daemonDatabaseLimits: DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY,
+      daemonDatabaseLimits: createMachinePluginDaemonDatabaseLimitsPolicy({ readPolicy: () => machineResourcesPolicy?.read() ?? { status: 'unavailable' } }),
       resolveCurrentMachineId: () => machineId,
       readDaemonRequesterWorkAttribution: () => projectDaemonRequesterWorkAttribution(
         machineResourceTarget(), resolveBoundHomeServerIdentityId()),

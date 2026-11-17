@@ -92,6 +92,56 @@ function observedRowsResponseCount(): number {
 }
 
 describe('plugin daemon database owner', () => {
+    it('prepares Machine allocation above Preview, projects it and rolls back growth at the quota', async () => {
+        const { createMachinePluginDaemonDatabaseLimitsPolicy } = await import('./daemonDatabaseLimitsPolicy');
+        const { MachineResourcesPolicyV1Schema } = await import('@happier-dev/protocol/machines/resources/machineResourcesPolicyV1');
+        const home = await makeHappyHome();
+        let reads = 0;
+        let freeBytes = 144 * 1024 * 1024;
+        const policy = createMachinePluginDaemonDatabaseLimitsPolicy({
+            readPolicy: () => ({ status: 'ready', revision: 1, source: 'stored', policy: MachineResourcesPolicyV1Schema.parse({ v: 1, alerts: { disk: { threshold: { freeBytes: 0 } } } }) }),
+            readCapacity: async path => { reads++; return { status: 'known', path, freeBytes, observedAt: 0 }; },
+        });
+        const paths = resolvePluginStorePaths({ happyHomeDir: home });
+        const definition = { migrations: [{ version: 1, id: 'create', up: async (tx: import('@happier-dev/plugin-sdk/storage').DatabaseTransaction) => { await tx.execute('CREATE TABLE events (at INTEGER, body BLOB)'); } }], incumbentQueryFixture: { id: 'events', run: async (tx: import('@happier-dev/plugin-sdk/storage').DatabaseTransaction) => { await tx.query('SELECT at FROM events LIMIT 1'); } } };
+        const input = { pluginId: 'acme.capture', occurrenceId: 'allocation', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+            declarations: [{ id: 'main', migrations: [{ version: 1, id: 'create' }], incumbentQueryFixtureId: 'events', retention: [{ table: 'events', timeColumn: 'at' }] }], runtime: { main: definition } };
+        let host = createStablePluginDaemonDatabaseHost({ paths, daemonDatabaseLimits: policy });
+        try {
+            await host.prepare(input);
+            expect(host.readCapability(input.pluginId)).toMatchObject({ status: 'available', protocolMaximumDatabaseBytes: freeBytes, limits: { maximumDatabaseBytes: freeBytes } });
+            const database = await host.bind(input).database('main', definition);
+            await database.execute('INSERT INTO events VALUES (0, zeroblob(136314880))');
+            await expect(database.execute('INSERT INTO events VALUES (1, zeroblob(16777216))')).rejects.toMatchObject({ code: 'daemon_database_quota_exceeded' });
+            expect(await database.query('SELECT COUNT(*) AS count FROM events')).toEqual([{ count: 1 }]);
+            expect(reads).toBe(1);
+            await host.close();
+            freeBytes = 0;
+            host = createStablePluginDaemonDatabaseHost({ paths, daemonDatabaseLimits: policy });
+            await host.prepare(input);
+            const reopened = await host.bind(input).database('main', definition);
+            await expect(reopened.execute('INSERT INTO events VALUES (1, zeroblob(1048576))')).rejects.toMatchObject({ code: 'daemon_database_quota_exceeded' });
+            await reopened.execute('DELETE FROM events');
+            expect(await reopened.query('SELECT COUNT(*) AS count FROM events')).toEqual([{ count: 0 }]);
+            expect(reads).toBe(2);
+        } finally { await host.close(); await rm(home, { recursive: true, force: true }); }
+    });
+
+    it('projects policy unavailable for an opted-in store with unknown capacity', async () => {
+        const { createMachinePluginDaemonDatabaseLimitsPolicy } = await import('./daemonDatabaseLimitsPolicy');
+        const { MachineResourcesPolicyV1Schema } = await import('@happier-dev/protocol/machines/resources/machineResourcesPolicyV1');
+        const home = await makeHappyHome();
+        const host = createStablePluginDaemonDatabaseHost({ paths: resolvePluginStorePaths({ happyHomeDir: home }), daemonDatabaseLimits: createMachinePluginDaemonDatabaseLimitsPolicy({
+            readPolicy: () => ({ status: 'ready', revision: 1, source: 'stored', policy: MachineResourcesPolicyV1Schema.parse({ v: 1 }) }),
+            readCapacity: async path => ({ status: 'unknown', path, reason: 'ENOTSUP' }),
+        }) });
+        try {
+            await host.prepare({ pluginId: 'acme.capture', occurrenceId: 'unknown', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+                declarations: [{ id: 'main', migrations: [], incumbentQueryFixtureId: 'events', retention: [{ table: 'events', timeColumn: 'at' }] }], runtime: {} });
+            expect(host.readCapability('acme.capture')).toEqual({ status: 'unavailable', code: 'daemon_database_policy_unavailable' });
+        } finally { await host.close(); await rm(home, { recursive: true, force: true }); }
+    });
+
     it('expires declared telemetry in bounded chunks only on the existing log-retention pass', async () => {
         const happyHomeDir = await makeHappyHome();
         const limits = {

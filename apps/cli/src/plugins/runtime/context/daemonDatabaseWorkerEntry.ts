@@ -65,7 +65,11 @@ function parseRequest(value: unknown): DaemonDatabaseWorkerRequest | null {
 
 function serializeError(error: unknown): Readonly<{ message: string; code: string | null }> {
     const message = error instanceof Error ? error.message : String(error ?? 'SQLite database worker failed');
-    const candidateCode = error instanceof Error ? (error as Error & { code?: unknown }).code : null;
+    const native = error instanceof Error ? error as Error & { code?: unknown; errcode?: unknown } : null;
+    // node:sqlite exposes SQLITE_FULL as errcode 13; Bun exposes its symbolic code.
+    const candidateCode = native?.errcode === 13 || native?.code === 'SQLITE_FULL'
+        ? 'daemon_database_quota_exceeded'
+        : native?.code;
     return {
         message: message.trim().length > 0 ? message : 'SQLite database worker failed',
         code: typeof candidateCode === 'string' && candidateCode.trim().length > 0 ? candidateCode : null,

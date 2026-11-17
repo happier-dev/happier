@@ -93,3 +93,21 @@ export function createMachineResourcesPolicyRuntime(dependencies: Readonly<{
     stop() { stopped = true; snapshot = { status: 'unavailable' }; listeners.clear(); keyListeners.clear(); },
   };
 }
+
+/** One preparation-time allocation, using the Machine's existing low-disk headroom. */
+export async function resolveMachineDatabaseAllocation(input: Readonly<{
+  readPolicy: () => MachineResourcesPolicyGetResultV1;
+  readCapacity: (path: string) => ReturnType<typeof import('../../storage/pathCapacity').readStoragePathCapacity>;
+  directory: string;
+  retainedBytes: number;
+}>): Promise<number | null> {
+  const snapshot = input.readPolicy();
+  if (snapshot.status !== 'ready') return null;
+  const capacity = await input.readCapacity(input.directory);
+  if (capacity.status !== 'known') return null;
+  const threshold = snapshot.policy.alerts.disk.threshold;
+  if ('freeFraction' in threshold && capacity.totalBytes === undefined) return null;
+  const headroom = 'freeBytes' in threshold ? threshold.freeBytes : threshold.freeFraction * capacity.totalBytes!;
+  const allocation = input.retainedBytes + Math.floor(Math.max(0, capacity.freeBytes - headroom));
+  return Number.isSafeInteger(allocation) ? allocation : null;
+}

@@ -1,3 +1,5 @@
+import { resolveMachineDatabaseAllocation } from '@/daemon/resources/machineResourcesPolicy';
+import { readStoragePathCapacity } from '@/storage/pathCapacity';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1, PLUGIN_DAEMON_DATABASE_PROTOCOL_MAXIMUM_BYTES_V1 } from '@happier-dev/protocol/plugins/data/daemonDatabaseLimitsV1';
 
 import type {
@@ -9,14 +11,27 @@ const limits = Object.freeze({
     ...PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1,
 }) satisfies PluginDaemonDatabaseLimits;
 
-/**
- * One production policy for trusted Preview plugins. The database host remains
- * the sole enforcement point; this source injects the evidence-backed Preview
- * allocation measured by Background Indexer. It is not API-frozen while the
- * remaining compiled-runtime, platform/lifecycle, and event-loop plan gates
- * are still open.
- */
-export const DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY: PluginDaemonDatabaseLimitsPolicy = Object.freeze({
+/** Unretained stores keep the existing Preview profile and statement bounds. */
+export const DEFAULT_PLUGIN_DAEMON_DATABASE_LIMITS_POLICY = Object.freeze({
     protocolMaximumDatabaseBytes: PLUGIN_DAEMON_DATABASE_PROTOCOL_MAXIMUM_BYTES_V1,
-    resolvePluginLimits: () => limits,
-});
+    resolvePluginLimits: (_pluginId: string) => limits,
+}) satisfies PluginDaemonDatabaseLimitsPolicy;
+
+/** Retention declarations opt the existing plugin-wide owner into Machine allocation. */
+export function createMachinePluginDaemonDatabaseLimitsPolicy(dependencies: Readonly<{
+    readPolicy: Parameters<typeof resolveMachineDatabaseAllocation>[0]['readPolicy'];
+    readCapacity?: Parameters<typeof resolveMachineDatabaseAllocation>[0]['readCapacity'];
+}>): PluginDaemonDatabaseLimitsPolicy {
+    return {
+        protocolMaximumDatabaseBytes: PLUGIN_DAEMON_DATABASE_PROTOCOL_MAXIMUM_BYTES_V1,
+        resolvePluginLimits(_pluginId, context) {
+            if (!context) return limits;
+            return resolveMachineDatabaseAllocation({
+                readPolicy: dependencies.readPolicy,
+                readCapacity: dependencies.readCapacity ?? (path => readStoragePathCapacity(path, { readVolumes: () => [] })),
+                directory: context.directory,
+                retainedBytes: context.retainedBytes,
+            }).then(maximumDatabaseBytes => maximumDatabaseBytes === null ? null : { ...limits, maximumDatabaseBytes, protocolMaximumDatabaseBytes: maximumDatabaseBytes });
+        },
+    };
+}

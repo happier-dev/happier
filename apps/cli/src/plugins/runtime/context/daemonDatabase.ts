@@ -129,7 +129,7 @@ function requirePositiveSafeInteger(value: number, name: string): number {
 
 function validateLimits(limits: PluginDaemonDatabaseLimits): PluginDaemonDatabaseLimits {
     return Object.freeze({
-        maximumDatabaseBytes: requirePositiveSafeInteger(limits.maximumDatabaseBytes, 'maximumDatabaseBytes'),
+        maximumDatabaseBytes: limits.maximumDatabaseBytes === 0 ? 0 : requirePositiveSafeInteger(limits.maximumDatabaseBytes, 'maximumDatabaseBytes'),
         maximumInputBytes: requirePositiveSafeInteger(limits.maximumInputBytes, 'maximumInputBytes'),
         maximumResultBytes: requirePositiveSafeInteger(limits.maximumResultBytes, 'maximumResultBytes'),
         maximumResultRows: requirePositiveSafeInteger(limits.maximumResultRows, 'maximumResultRows'),
@@ -741,7 +741,7 @@ async function configureHostDatabase(
     const pageSize = await readPragmaNumber(worker, 'PRAGMA page_size', 'page_size', false, options);
     const maximumPages = Math.floor(limits.maximumDatabaseBytes / pageSize);
     if (maximumPages < 1) {
-        fail('daemon_database_limits_invalid', 'maximumDatabaseBytes is smaller than a SQLite page');
+        fail('daemon_database_quota_exceeded', 'No SQLite page growth is available within the daemon database byte budget');
     }
     // This remains the per-file ceiling; the owner checks all open plugin
     // databases together before each transaction commits.
@@ -1679,15 +1679,15 @@ export function createPluginDaemonDatabaseOwner(params: Readonly<{
     });
 }
 
-/**
- * Host configuration is injected rather than defaulted: the plan reserves
- * numeric policy for the measured Background Indexer evidence. The protocol
- * ceiling prevents an individual plugin resolver from manufacturing a larger
- * private allocation once that policy is supplied.
- */
+/** Preparation resolves one plugin-wide allocation and its matching capability ceiling. */
 export type PluginDaemonDatabaseLimitsPolicy = Readonly<{
     protocolMaximumDatabaseBytes: number;
-    resolvePluginLimits(pluginId: string): PluginDaemonDatabaseLimits | null;
+    resolvePluginLimits(pluginId: string, context?: Readonly<{
+        declarations: readonly PluginDaemonDatabaseContributionV1[];
+        directory: string;
+        retainedBytes: number;
+    }>): (PluginDaemonDatabaseLimits & { protocolMaximumDatabaseBytes?: number }) | null
+        | Promise<(PluginDaemonDatabaseLimits & { protocolMaximumDatabaseBytes?: number }) | null>;
 }>;
 
 /**
@@ -1744,6 +1744,7 @@ export type StablePluginDaemonDatabaseHost = Readonly<{
 }>;
 
 type PreparedPluginDaemonDatabaseOwner = Readonly<{
+    protocolMaximumDatabaseBytes: number;
     occurrenceId: string;
     limits: PluginDaemonDatabaseLimits;
     owner: PluginDaemonDatabaseOwner;
@@ -1964,19 +1965,6 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
     let closed = false;
     let closePromise: Promise<void> | null = null;
 
-    const resolvePluginLimits = (pluginId: string): PluginDaemonDatabaseLimits | null => {
-        if (!params.daemonDatabaseLimits || protocolMaximumDatabaseBytes === null) return null;
-        const limits = params.daemonDatabaseLimits.resolvePluginLimits(pluginId);
-        if (!limits) return null;
-        const normalized = validateLimits(limits);
-        if (normalized.maximumDatabaseBytes > protocolMaximumDatabaseBytes) {
-            fail(
-                'daemon_database_limits_invalid',
-                'Plugin daemon database byte budget exceeds the configured protocol hard ceiling',
-            );
-        }
-        return normalized;
-    };
 
     return Object.freeze({
         async runRetention(days, nowMs, operation = {}): Promise<DaemonDatabaseRetentionPassResult> {
@@ -2000,7 +1988,17 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
             }
             const declarations = normalizeDaemonDatabaseDeclarations(input.declarations);
             if (declarations.length === 0) return;
-            const limits = resolvePluginLimits(input.pluginId);
+            const context = declarations.some(declaration => declaration.retention?.length) ? {
+                declarations,
+                directory: await ensurePluginDatabasesDirectory({ namespace: assertPluginDatabaseNamespace(input.pluginId), paths: params.paths }),
+                retainedBytes: [...(await readPersistedPluginDatabaseFileBytes({ pluginId: input.pluginId, paths: params.paths })).values()].reduce((sum, bytes) => sum + bytes, 0),
+            } : undefined;
+            const resolved = await params.daemonDatabaseLimits?.resolvePluginLimits(input.pluginId, context);
+            const limits = resolved ? validateLimits(resolved) : null;
+            const effectiveCeiling = resolved?.protocolMaximumDatabaseBytes ?? protocolMaximumDatabaseBytes;
+            if (limits && (effectiveCeiling === null || limits.maximumDatabaseBytes > effectiveCeiling)) {
+                fail('daemon_database_limits_invalid', 'Plugin daemon database byte budget exceeds the configured protocol hard ceiling');
+            }
             if (!limits) {
                 unavailableCodesByPluginId.set(input.pluginId, 'daemon_database_policy_unavailable');
                 return;
@@ -2035,6 +2033,7 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
             }
             preparedByPluginId.set(input.pluginId, Object.freeze({
                 occurrenceId: input.occurrenceId,
+                protocolMaximumDatabaseBytes: effectiveCeiling!,
                 limits,
                 owner,
             }));
@@ -2155,7 +2154,7 @@ export function createStablePluginDaemonDatabaseHost(params: Readonly<{
             if (prepared && protocolMaximumDatabaseBytes !== null && !retiredPluginIds.has(pluginId)) {
                 return Object.freeze({
                     status: 'available' as const,
-                    protocolMaximumDatabaseBytes,
+                    protocolMaximumDatabaseBytes: prepared.protocolMaximumDatabaseBytes,
                     limits: prepared.limits,
                 });
             }

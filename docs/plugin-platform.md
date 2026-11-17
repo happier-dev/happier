@@ -2974,8 +2974,20 @@ expiry to the existing maintenance timer. Null retention keeps rows indefinitely
 Ingest and Resource publication do not request maintenance or arm a timer; the
 existing policy, volume and idle edges discover newly retained data. Stopping a
 recording does not remove its declared database from retention. The native log
-byte budget applies only to native logs; plugin databases keep their existing
-database quota.
+byte budget applies only to native logs. Retention-declared plugin databases opt
+into a Machine allocation resolved once at preparation: retained plugin database
+bytes plus the nonnegative difference between measured free bytes on that exact
+database filesystem and the Machine's existing low-disk alert threshold. A
+percentage threshold uses that filesystem's total capacity. At or below the
+threshold the store cannot grow and reports `daemon_database_quota_exceeded`;
+reads and non-growth deletion remain available. Unknown policy or capacity yields
+`daemon_database_policy_unavailable`. The next preparation re-resolves allocation;
+there is no per-statement filesystem probe or new timer. `logRetentionDays` governs
+occupancy through the existing pruner, without a predictive bytes-per-day estimate.
+The allocation remains shared across all databases and Environments of the plugin;
+the prepared capability reports the same byte ceiling the host enforces.
+Unretained plugins retain the Preview allocation and existing statement bounds.
+Other disk writers can still consume admitted free space; this is no reservation.
 
 Consumed Agent reader operations bind the available subset of that same service
 set through the ordinary invocation owner. An Agent manifest can also require
