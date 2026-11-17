@@ -6,6 +6,8 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { List } from '@happier-dev/plugin-ui/components';
+import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { CapabilityRow } from '@/components/capabilities/row/CapabilityRow';
 import {
   presentCapabilityStatus,
@@ -25,7 +27,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 import { useStoreProjectScope } from '@/components/settings/plugins/model/useStoreProjectScope';
-import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { PageDirectoryRowsContext } from '@/components/ui/lists/listPresentation';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -190,7 +191,7 @@ export function ManagedInventoryDirectory(
     ? [{ reference: { type: 'registryItem' as const, kind: 'app' as const, ...row.native.catalogTemplate }, title: row.native.title }] : []),
   [state.rows]);
   return (
-    <StoreDiscoverRegistryIdentityScope items={appListings} presented={appListings.length > 0}>
+    <CorePluginUiPresentationScope><StoreDiscoverRegistryIdentityScope items={appListings} presented={appListings.length > 0}>
       {state.attention.length > 0 ? (
         <ItemGroup
           testID={`${props.testIDPrefix}.needs`}
@@ -260,7 +261,7 @@ export function ManagedInventoryDirectory(
           testID={`${props.testIDPrefix}.section.included`}
         />
       ) : null}
-    </StoreDiscoverRegistryIdentityScope>
+    </StoreDiscoverRegistryIdentityScope></CorePluginUiPresentationScope>
   );
 }
 
@@ -393,6 +394,7 @@ function InventorySection(
   }>,
 ) {
   const { section, state } = props;
+  const { theme } = useUnistyles();
   const [expanded, setExpanded] = React.useState(false);
   const family = section.family?.result;
   const coverage = family?.coverage;
@@ -441,11 +443,11 @@ function InventorySection(
   // A section of names alone (Agents) is a genuinely title-only collection: compact rows, not the described floor
   // its columns would otherwise stand at; one described row keeps its peers on the catalog floor (S10 §5.2).
   const titleOnly = shown.every((row) => !state.presentations.get(row.key)?.facts.context);
-  const rows = shown.map((row) => {
+  const renderRow = (row: InstalledRow) => {
     const presentation = state.presentations.get(row.key);
     const title = presentation?.facts.title ?? row.key;
     const home = presentation?.home.href;
-    const rendered = (
+    return (
       <CapabilityRow
         key={row.key}
         testID={`${props.testID}.row.${row.key}`}
@@ -462,8 +464,7 @@ function InventorySection(
         onPress={home ? () => props.go(home) : undefined}
       />
     );
-    return props.columns > 1 ? <ItemGroupColumn key={row.key}>{rendered}</ItemGroupColumn> : rendered;
-  });
+  };
   return (
     <ItemGroup
       testID={props.testID}
@@ -482,11 +483,14 @@ function InventorySection(
       ) : null}
       {/* Installed is a page directory: its rows stand on the section's edges, as Discover's do. */}
       <PageDirectoryRowsContext.Provider value>
-        {props.columns > 1 ? (
-          // A page directory's columns part by the directory's own gap: each row's fill reaches past its column's edges.
-          <ItemGroupColumns columns={props.columns} paddingHorizontal={0} paddingVertical={0}
-            columnGap={HAPPIER_COLLECTION_LIST_METRICS.catalogRow.directoryColumnGap}>{rows}</ItemGroupColumns>
-        ) : rows}
+        <List items={shown} keyForItem={row => row.key} renderItem={renderRow}
+          testID={`${props.testID}.rows`}
+          pageLayout={{
+            estimatedRowHeight: titleOnly ? HAPPIER_COLLECTION_LIST_METRICS.rowMinHeight : HAPPIER_COLLECTION_LIST_METRICS.catalogRow.minHeight,
+            columns: props.columns,
+            columnGapPx: HAPPIER_COLLECTION_LIST_METRICS.catalogRow.directoryColumnGap,
+            rowGapPx: props.columns > 1 ? theme.space.s16 : 0,
+          }} />
       </PageDirectoryRowsContext.Provider>
       {rail ? (
         // A long open page closes where it ends too: Fewer sits between Previous and Next.

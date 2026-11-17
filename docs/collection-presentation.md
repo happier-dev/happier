@@ -15,6 +15,13 @@ acknowledgement; callers retain catalog acquisition, held facts and admitted Act
 
 A Collection presents keyed items through one headless model, shared list/table/board/grid anatomy and responsive detail composition. The caller owns the data, route, actions and view preference. The presentation layer owns how those facts fit together.
 
+In 0.3 development source, a custom-rendered `List` can use `pageLayout` to
+window its rows in the containing physical page. Its `estimatedRowHeight` comes
+from the existing row presentation owner; the shared virtualizer measures the
+rendered heights. Optional `columns`, `columnGapPx` and `rowGapPx` preserve the
+directory layout through the shared measured-width rule. This uses the same
+page window and positioning owner as Collection, without adding a scroller.
+
 Peek expansion has one mount-lifetime owner in the headless model. The Collection
 reads its expanded set to place Peek cells; rows and Peek content use the model's
 key-local `useExpanded` subscription so toggling one Peek does not render sibling rows.

@@ -9,6 +9,8 @@ import { useHappierCollection } from '../presentation/collection/useCollection.j
 import { Collection } from './Collection.js';
 import { List } from './List.js';
 import { PluginUiProviderInternal } from './PluginUiProvider.js';
+import { PluginUiScrollActivityProvider, type PluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
+import { HAPPIER_COLLECTION_LIST_METRICS } from '../presentation/collection/CollectionList.js';
 
 // A supplied platform boundary with a one-row window. Revealing a row mounts it
 // on the next React commit, so List must retain its own pending physical focus.
@@ -54,6 +56,41 @@ function mount(children: React.ReactNode, hostVirtualizer: CollectionVirtualizer
 const items = [{ id: 'a', title: 'Alpha' }, { id: 'b', title: 'Beta' }, { id: 'c', title: 'Gamma' }];
 
 describe('host-injected Collection virtualizer', () => {
+  it.each([0, 16])('windows custom rows and their %s px gaps in the physical page, keeping actions reachable', async (rowGapPx) => {
+    const rows = Array.from({ length: 200 }, (_, index) => ({ id: String(index) }));
+    const rowHeight = HAPPIER_COLLECTION_LIST_METRICS.catalogRow.minHeight;
+    let window = { top: 0, bottom: rowHeight * 4 };
+    const listeners = new Set<() => void>();
+    const offsets: number[] = [];
+    const tracker: PluginUiScrollActivityTracker = { onScroll() {}, onLayout() {}, onContentSizeChange() {},
+      subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      getWindow: () => window, measureSpan: async () => ({ top: 0 }), invalidateLayout() {}, getLayoutRevision: () => 0,
+      scrollToOffset(offset) { offsets.push(offset); window = { top: offset, bottom: offset + rowHeight * 4 }; listeners.forEach(listener => listener()); } };
+    const activated: string[] = [];
+    let revealLast!: () => void;
+    function Example() {
+      const [request, setRequest] = React.useState<Readonly<{ key: string }> | undefined>();
+      revealLast = () => setRequest({ key: '199' });
+      return <List items={rows} keyForItem={item => item.id} pageLayout={{ estimatedRowHeight: rowHeight, rowGapPx }}
+        revealRequest={request}
+        renderItem={item => <button data-testid="custom-row" onClick={() => activated.push(item.id)}>{item.id}</button>} />;
+    }
+    const view = mount(<PluginUiScrollActivityProvider tracker={tracker}>
+      <Example />
+    </PluginUiScrollActivityProvider>);
+    try {
+      await act(async () => {});
+      expect(view.container.querySelector('[data-testid="injected-virtualizer"]')).toBeNull();
+      expect(view.container.querySelectorAll('[data-testid="custom-row"]')).toHaveLength(Math.floor(window.bottom / (rowHeight + rowGapPx)) + 1);
+      await act(async () => { revealLast(); });
+      expect(offsets.at(-1)).toBe((rowHeight + rowGapPx) * 199);
+      const visible = [...view.container.querySelectorAll<HTMLButtonElement>('[data-testid="custom-row"]')];
+      // List retains its current roving stop while the distant physical window is revealed.
+      expect(visible.map(node => node.textContent)).toEqual(['0', '198', '199']);
+      act(() => visible.at(-1)!.click());
+      expect(activated).toEqual(['199']);
+    } finally { view.unmount(); }
+  });
   it('chooses an unmounted radio row through the existing reveal and focus lifecycle', () => {
     const changes: string[] = [];
     function Example() {

@@ -2,6 +2,7 @@ import { createContext, type MutableRefObject, type ReactNode } from 'react';
 
 import type { HappierPageSheetColors } from '../presentation/layout/PageSection.js';
 import type { HappierStyleProp } from '../presentation/portableTypes.js';
+import type { PageCollectionGeometry } from '../presentation/collection/pageCollectionVirtualizer.js';
 
 /**
  * @internal What the Collection (`Collection.tsx`) asks of the virtualized List engine it presents through. The
@@ -48,14 +49,7 @@ export type ListCollectionControl = Readonly<{
   /** Collection's existing row/header geometry, windowed in the containing physical page. */
   /** Rows a live interaction anchors to; a windowed page keeps them mounted wherever the viewport is. */
   retainedRowKeys?: readonly string[];
-  pageVirtualization?: Readonly<{
-    rowHeight(key: string): number;
-    headerHeight: number;
-    width: number | null;
-    defaultRowHeight: number;
-    /** A catalog directory's row-major columns: the windowed rows are laid out in lines of these. */
-    directory?: Readonly<{ columns: number; columnGapPx: number; lineTestID?: string }>;
-  }>;
+  pageVirtualization?: PageCollectionGeometry;
   /**
    * A page-scrolling list's groups are page sections: each group's rows sit on one page sheet under its header
    * (the page anatomy every other section of the page uses), in these colours.

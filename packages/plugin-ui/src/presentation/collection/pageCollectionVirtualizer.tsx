@@ -10,8 +10,9 @@ import { CatalogDirectory } from './CatalogDirectory.js';
  * `directory` is a catalog directory's row-major columns: rows window by line (a line is one cell of up to `columns` rows),
  * and a section with a single row spans its line, exactly as `CatalogDirectory` draws them without windowing.
  */
-type PageGeometry = Readonly<{
+export type PageCollectionGeometry = Readonly<{
   rowHeight(key: string): number; headerHeight: number; width: number | null; defaultRowHeight: number;
+  rowGapPx?: number;
   directory?: Readonly<{ columns: number; columnGapPx: number; lineTestID?: string }>;
 }>;
 /**
@@ -21,12 +22,12 @@ type PageGeometry = Readonly<{
  */
 type Cell<Item> = Readonly<{
   key: string; offset: number; height: number; index: number; count: number; columns: number; sectionIndex: number | null;
-  header: boolean; part: boolean; unit: string | null; inSheet: boolean; items: readonly Item[]; keys: readonly string[];
+  header: boolean; part: boolean; unit: string | null; inSheet: boolean; items: readonly Item[]; keys: readonly string[]; gap?: number;
 }>;
 const NO_MEASUREMENTS: ReadonlyMap<string, number> = new Map();
-function sameMeasuredGeometry(left: PageGeometry, right: PageGeometry) {
+function sameMeasuredGeometry(left: PageCollectionGeometry, right: PageCollectionGeometry) {
   return left.width === right.width && left.headerHeight === right.headerHeight && left.defaultRowHeight === right.defaultRowHeight
-    && left.directory?.columns === right.directory?.columns;
+    && left.directory?.columns === right.directory?.columns && left.rowGapPx === right.rowGapPx;
 }
 
 /**
@@ -56,14 +57,14 @@ export function usePageWindow(tracker: PluginUiScrollActivityTracker) {
 /** List's positioning adapter for rows inside an already-owned physical page, never another scroller. */
 export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, tabStopKey, retainedKeys }: Readonly<{
   request: CollectionVirtualizerRequest<Item>;
-  geometry: PageGeometry;
+  geometry: PageCollectionGeometry;
   tracker: PluginUiScrollActivityTracker;
   tabStopKey: string | null;
   /** Rows a live interaction anchors to (a deep link's popover); they stay mounted wherever the viewport is. */
   retainedKeys?: ReadonlySet<string>;
 }>) {
   const { root, span, measure, near } = usePageWindow(tracker);
-  const [measurements, setMeasurements] = useState<Readonly<{ geometry: PageGeometry; heights: ReadonlyMap<string, number> }>>(
+  const [measurements, setMeasurements] = useState<Readonly<{ geometry: PageCollectionGeometry; heights: ReadonlyMap<string, number> }>>(
     () => ({ geometry, heights: NO_MEASUREMENTS }),
   );
   // Recomposition and text scaling change the owning geometry; old cell measurements no longer describe it.
@@ -85,8 +86,9 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
       for (let start = 0; start < data.length; start += lineSize) {
         const items = data.slice(start, start + lineSize);
         const keys = items.map((item, offsetInLine) => request.keyForItem(item, start + offsetInLine));
+        const gap = start + lineSize < data.length ? geometry.rowGapPx ?? 0 : 0;
         append({ key: qualify(keys[0]!), index: start, count: items.length, columns: lineSize, sectionIndex, header: false, part: false,
-          unit, inSheet: unit !== null, items, keys }, Math.max(...keys.map(key => geometry.rowHeight(key))));
+          unit, inSheet: unit !== null, items, keys, gap }, Math.max(...keys.map(key => geometry.rowHeight(key))) + gap);
       }
     };
     if (request.kind === 'flat') {
@@ -132,7 +134,7 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
   const inWindow = (cell: Cell<Item>) => near(cell.offset, cell.height);
   const pinned = (cell: Cell<Item>) => !cell.header && cell.keys.some(key => key === tabStopKey || (retainedKeys?.has(key) ?? false));
   const renderCell = (cell: Cell<Item>) => (
-    <View key={cell.key} onLayout={(event: HappierLayoutChangeEvent) => {
+    <View key={cell.key} style={cell.gap ? { paddingBottom: cell.gap } : undefined} onLayout={(event: HappierLayoutChangeEvent) => {
       const height = event.nativeEvent.layout.height;
       if (height <= 0 || height === cell.height) return;
       setMeasurements(current => ({ geometry,

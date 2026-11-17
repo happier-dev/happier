@@ -6,6 +6,7 @@ export function CatalogDirectory(props: Readonly<{
   rows: readonly ReactElement[];
   columns: number;
   columnGapPx: number;
+  rowGapPx?: number;
   lineTestID?: string;
   /** A windowed line holds some of a section's rows: its own count says nothing about whether the section is a lone row. */
   spanLoneRow?: boolean;
@@ -16,7 +17,7 @@ export function CatalogDirectory(props: Readonly<{
   const cellStyle = { width: `${100 / columns}%`, minWidth: 0, paddingHorizontal: halfGap } as const;
   return (
     <View testID={columns > 1 ? props.lineTestID : undefined}
-      style={[WRAP_STYLE, { marginHorizontal: -halfGap }]}>
+      style={[WRAP_STYLE, { marginHorizontal: -halfGap, rowGap: props.rowGapPx ?? 0 }]}>
       {props.rows.map((row, index) => <View key={row.key ?? index} style={cellStyle}>{row}</View>)}
     </View>
   );

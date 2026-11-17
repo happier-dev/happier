@@ -1559,6 +1559,13 @@ component; the shared list owner retains row semantics, accessibility,
 virtualization, and host presentation behavior. Do not replace it with a raw
 list implementation just to reproduce a curated List surface.
 
+In 0.3 development source, a `List` with `items` and `renderItem` can pass
+`pageLayout={{ estimatedRowHeight }}` to window its custom rows in the containing
+Happier page. Use the existing row owner's height for the initial estimate; the
+shared page virtualizer measures rendered rows. Optional `columns`,
+`columnGapPx` and `rowGapPx` retain a directory layout. The containing page keeps
+scroll ownership; omitting `pageLayout` retains ordinary List scrolling.
+
 In 0.3 development source, `leadHappierListRows` and
 `HappierListOverflowFooter` are public `/components` and root exports for a
 bounded list. Call `leadHappierListRows(rows, expanded)` and render its returned

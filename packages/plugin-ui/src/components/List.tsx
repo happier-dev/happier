@@ -43,6 +43,7 @@ import { useHappierPageChrome } from '../presentation/layout/pageChrome.js';
 import type {
   HappierFocusable,
   HappierGestureResponderEvent,
+  HappierLayoutChangeEvent,
   HappierPortableStyle,
   HappierStyleProp,
 } from '../presentation/portableTypes.js';
@@ -115,8 +116,9 @@ import {
 import { NATIVE_COLLECTION_VIRTUALIZER } from '../presentation/collection/nativeCollectionVirtualizer.js';
 import { PageCollectionVirtualizer } from '../presentation/collection/pageCollectionVirtualizer.js';
 import { useOptionalPluginUiScrollActivityTracker } from '../presentationHost/scrollActivity.js';
-import { HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, type HappierCollectionRowRole } from '../presentation/collection/CollectionList.js';
+import { HAPPIER_COLLECTION_LIST_METRICS, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, type HappierCollectionRowRole } from '../presentation/collection/CollectionList.js';
 import { CatalogDirectory } from '../presentation/collection/CatalogDirectory.js';
+import { resolveHappierColumnCountForWidth } from '../presentation/layout/columnLayout.js';
 
 const LIST_MORE_ACTIONS_TRANSLATION_KEY = 'happier.plugin-ui.list.moreActions';
 
@@ -341,6 +343,9 @@ type VirtualizedListSectionData<Item> = ReactNativeSectionListData<
 >;
 
 type VirtualizedListSharedProps<Item> = Readonly<{
+  /** Window custom rows in the containing physical page, retaining its scroller. Heights are measured from
+   * rendered rows; the estimate comes from the caller's existing row geometry. Columns use the shared width rule. */
+  pageLayout?: Readonly<{ estimatedRowHeight: number; columns?: number; columnGapPx?: number; rowGapPx?: number }>;
   /** Replace platform rendering only; List keeps selection, focus and viewport custody. */
   virtualizer?: CollectionVirtualizer;
   /** Stable identity is mandatory for inserts/reorders and virtualized state retention. */
@@ -1794,15 +1799,41 @@ function VirtualizedList<Item>(
   const wrapSectionHeader = collectionControl?.wrapSectionHeader;
   const sectionHeaderAction = collectionControl?.sectionHeaderAction;
   // Page rows use the existing physical page; positioned page mode windows them without another scroller.
-  const pageScroll = collectionControl?.pageScroll === true;
+  const pageScroll = props.pageLayout !== undefined || collectionControl?.pageScroll === true;
   const pageTracker = useOptionalPluginUiScrollActivityTracker();
-  const pageGeometry = collectionControl?.pageVirtualization;
+  const pageWidth = useRef<number | null>(null);
+  const [pageColumns, setPageColumns] = useState(1);
+  const resolvePageColumns = useCallback((width: number | null) => resolveHappierColumnCountForWidth({
+    availableWidthPx: width ?? 0, requestedColumns: props.pageLayout?.columns ?? 1,
+    columnGapPx: props.pageLayout?.columnGapPx,
+  }), [props.pageLayout?.columns, props.pageLayout?.columnGapPx]);
+  const hasPageLayout = props.pageLayout !== undefined;
+  useLayoutEffect(() => {
+    if (hasPageLayout) setPageColumns(resolvePageColumns(pageWidth.current));
+  }, [hasPageLayout, resolvePageColumns]);
+  const onPageLayout = useCallback((event: HappierLayoutChangeEvent) => {
+    pageWidth.current = event.nativeEvent.layout.width;
+    setPageColumns(resolvePageColumns(pageWidth.current));
+  }, [resolvePageColumns]);
+  const pageRowHeight = props.pageLayout?.estimatedRowHeight;
+  const pageColumnGap = props.pageLayout?.columnGapPx;
+  const pageRowGap = props.pageLayout?.rowGapPx;
+  const authorPageGeometry = useMemo(() => pageRowHeight === undefined ? undefined : {
+    rowHeight: () => pageRowHeight,
+    defaultRowHeight: pageRowHeight,
+    headerHeight: HAPPIER_COLLECTION_LIST_METRICS.groupLabelHeight,
+    width: null,
+    rowGapPx: pageRowGap,
+    directory: { columns: pageColumns, columnGapPx: pageColumnGap ?? 0 },
+  }, [pageRowHeight, pageRowGap, pageColumnGap, pageColumns]);
+  const pageGeometry = authorPageGeometry ?? collectionControl?.pageVirtualization;
   const retainedRowKeys = collectionControl?.retainedRowKeys;
   const retainedVirtualizerKeys = useMemo(() => (retainedRowKeys === undefined ? undefined
     : new Set(retainedRowKeys.flatMap(key => visibleSections === undefined ? [key] : [encodeHappierSectionRowCellKey(key)]))),
   [retainedRowKeys, visibleSections === undefined]);
   const pageSheet = pageScroll ? collectionControl?.pageSheet : undefined;
-  const catalogDirectory = pageScroll ? collectionControl?.catalogDirectory : undefined;
+  const catalogDirectory = authorPageGeometry === undefined ? pageScroll ? collectionControl?.catalogDirectory : undefined
+    : { ...authorPageGeometry.directory, rowGapPx: authorPageGeometry.rowGapPx };
   // Rows exist to sit on it: an empty or still-reading list keeps its own empty state on the page.
   const flatPageSheet = pageSheet !== undefined && visibleSections === undefined && (visibleItems?.length ?? 0) > 0;
   const oneSheetSections = pageSheet?.oneSheet === true && visibleSections !== undefined && visibleSections.some((section) => section.data.length > 0);
@@ -1821,6 +1852,7 @@ function VirtualizedList<Item>(
       previous.width === pageGeometry.width &&
       previous.headerHeight === pageGeometry.headerHeight &&
       previous.defaultRowHeight === pageGeometry.defaultRowHeight &&
+      previous.rowGapPx === pageGeometry.rowGapPx &&
       previous.directory?.columns === pageGeometry.directory?.columns
     )
       return;
@@ -2041,7 +2073,8 @@ function VirtualizedList<Item>(
     testID: props.testID,
     style: emptyFillsRegion ? [props.style, emptyScrollerStyle] : props.style,
     // An ungrouped directory stands the header gap below its search whether or not its rows are windowed.
-    contentContainerStyle: visibleSections === undefined && catalogDirectory !== undefined
+    contentContainerStyle: props.pageLayout !== undefined ? props.contentContainerStyle
+      : visibleSections === undefined && catalogDirectory !== undefined
       ? [densityStyle, flatPageSheetStyle, props.contentContainerStyle]
       : [densityStyle, props.contentContainerStyle],
     extraData,
@@ -2211,6 +2244,8 @@ function VirtualizedList<Item>(
     <ListMultiSelectionProvider store={multiStore}>
       <View
         ref={listRootRef}
+        testID={props.pageLayout !== undefined && props.testID !== undefined ? `${props.testID}:stage` : undefined}
+        onLayout={props.pageLayout === undefined ? undefined : onPageLayout}
         style={pageScroll ? pageScrollListBoxStyle : virtualizedListBoxStyle}
       >
         {headerContent}
