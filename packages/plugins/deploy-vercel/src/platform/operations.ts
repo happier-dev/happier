@@ -1,4 +1,4 @@
-import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import type {
   DeploymentTargetDeployInputV1, DeploymentTargetUploadDeployInputV1, DeploymentTargetProviderIdentityV1,
@@ -121,7 +121,14 @@ async function send(context: VercelPlatformContext, url: string, method: HttpMet
     credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'deploy.manage', origin, method,
       headerNames: ['authorization'] },
     ...content,
-  }, { signal: context.signal });
+  }, { signal: context.signal }).catch((error: unknown) => {
+    // The host reads the body after dispatch; losing it cannot establish a failed write.
+    if (method !== 'GET' && isPluginError(error) && error.code === 'plugin_fetch_response_too_large') {
+      throw new PluginError({ code: 'outcome_unknown', retryable: false,
+        failureCause: projectActionFailureCauseV1(error, phase === undefined ? 'deployment.provider' : `deployment.provider.${phase}`) });
+    }
+    throw error;
+  });
   // A received response remains evidence even if cancellation arrives with it.
   const value = response.status < 200 || response.status >= 300 ? body(response) : null;
   if (record(value) && record(value.error)) {

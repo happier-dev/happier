@@ -90,3 +90,20 @@ it.each(['pages-create', 'workers-create'])('refuses %s for Git without a proven
     expect(requests).toBe(0);
   } finally { await kit.dispose(); }
 });
+
+it.each(['pages-create', 'workers-create'])('keeps %s uncertain with its cause when the created response cannot be read', async actionId => {
+  const { PluginError } = await import('@happier-dev/plugin-sdk');
+  const requests: HttpRequest[] = [];
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {
+    http: createPluginHttpFixture({ async request(request) {
+      requests.push(request);
+      // The HTTP body reader raises this after receiving the provider response.
+      throw new PluginError({ code: 'plugin_fetch_response_too_large', message: 'private response contents' });
+    } }),
+  } });
+  try {
+    await expect(kit.invokeAction(actionId, input(actionId))).rejects.toMatchObject({ code: 'outcome_unknown',
+      retryable: false, data: { failureCause: { errorCode: 'plugin_fetch_response_too_large' } } });
+    expect(requests).toHaveLength(1);
+  } finally { await kit.dispose(); }
+});

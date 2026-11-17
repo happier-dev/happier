@@ -225,3 +225,19 @@ it('deploys the reviewed commit to a project it created with Git, as the live fi
       gitSource: { type: 'github', repoId: '1424792902', ref: sha, sha } });
   } finally { await kit.dispose(); }
 });
+
+it('keeps a project create uncertain when the provider response exceeds the host body limit', async () => {
+  const { PluginError } = await import('@happier-dev/plugin-sdk');
+  let requests = 0;
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: {
+    http: createPluginHttpFixture({ async request() {
+      requests++;
+      throw new PluginError({ code: 'plugin_fetch_response_too_large', message: 'private response contents' });
+    } }),
+  } });
+  try {
+    await expect(kit.invokeAction('project-create', input)).rejects.toMatchObject({ code: 'outcome_unknown',
+      retryable: false, data: { failureCause: { errorCode: 'plugin_fetch_response_too_large' } } });
+    expect(requests).toBe(1);
+  } finally { await kit.dispose(); }
+});

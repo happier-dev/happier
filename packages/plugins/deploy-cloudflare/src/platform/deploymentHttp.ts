@@ -62,6 +62,11 @@ async function send(context: DeploymentContext, input: HttpRequest, phase: Phase
   try {
     response = await context.http.request(input, { signal: context.signal });
   } catch (error) {
+    // The body limit is raised after a response arrives, so it cannot prove a write failed.
+    if (mutation && isPluginError(error) && error.code === 'plugin_fetch_response_too_large') {
+      throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
+        failureCause: projectActionFailureCauseV1(error, `deployment.provider.${phase}`) });
+    }
     if (isPluginError(error)) throw error;
     if (phase === 'teardown') throw new PluginError({ code: 'outcome_unknown', retryable: false, details: { phase },
       failureCause: projectActionFailureCauseV1(error, 'deployment.provider.teardown') });
