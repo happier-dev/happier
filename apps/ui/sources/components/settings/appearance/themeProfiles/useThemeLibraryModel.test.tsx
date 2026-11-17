@@ -54,6 +54,16 @@ describe('theme library controller', () => {
         await act(async () => hook.getCurrent().onChooseTheme(saved.mode));
         await vi.waitFor(() => expect(state.selection[saved.mode]).toBeNull());
         expect(state.selection[otherMode]).toBe(otherBefore);
+        settings = normalizeActionsSettingsV1({ v: 1, actions: { [THEME_ACTION_IDS.delete]: { disabledSurfaces: ['ui'] } } });
+        await act(async () => { hook.getCurrent().tiles.find(tile => tile.key === 'header')!.onDelete!(); });
+        await vi.waitFor(() => expect(hook.getCurrent().notice?.action).toBeDefined());
+        expect(await state.library.get(saved.reference)).not.toBeNull();
+        expect(state.selection[saved.mode]).toBeNull();
+        settings = normalizeActionsSettingsV1({ v: 1 });
+        await act(async () => { hook.getCurrent().notice!.action!.onPress(); });
+        await vi.waitFor(async () => expect(await state.library.get(saved.reference)).toBeNull());
+        expect(state.selection[saved.mode]).toBeNull();
+        expect(state.selection[otherMode]).toBe(otherBefore);
         await hook.unmount();
     });
 });

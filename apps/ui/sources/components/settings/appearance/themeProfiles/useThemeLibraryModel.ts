@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { themeSurfaceLabel } from '@/theme/css/themeSurfaceLabels';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import type { ThemeActionId } from '@happier-dev/protocol/actions/themeActionFamily';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ThemeLibraryEntry, ThemeProfileDocument, ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
 import { usePreparedThemeCss } from '@/theme/css/usePreparedThemeCss';
@@ -37,7 +38,7 @@ export type ThemeLibraryModelInput = Readonly<{
     onImport: () => void;
     onOpenStore?: () => void;
     onUseOtherDevices?: (theme: Readonly<{ reference: ThemeReference | null; mode: ThemeProfileMode; name: string }>) => void;
-    onFailure?: (error: unknown) => void;
+    onFailure?: (error: unknown, actionId?: ThemeActionId) => void;
 }>;
 
 /** Reads header facts only; selection effects and their admission remain with the theme Action owner. */
@@ -48,7 +49,7 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
     const preparedLight = lightCss.prepared;
     const preparedDark = darkCss.prepared;
     const [mode, setMode] = React.useState(input.showing);
-    const [failure, setFailure] = React.useState<Readonly<{ key: string; error: unknown }> | null>(null);
+    const [failure, setFailure] = React.useState<Readonly<{ key: string; error: unknown; retry?: () => void }> | null>(null);
     const title = React.useCallback((option: ThemeLibrarySourceOption) => option.kind === 'base'
         ? t('settingsAppearance.themeProfiles.defaultTheme') : option.title, []);
     const sourceLabel = React.useCallback((option: ThemeLibrarySourceOption) => {
@@ -75,6 +76,13 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
             setFailure({ key, error }); input.onFailure?.(error);
         });
     }, [input.options, input.onFailure, activeOption, mode, execute]);
+    const deleteTheme = React.useCallback((key: string, reference: ThemeReference) => {
+        setFailure(null);
+        void execute(THEME_ACTION_IDS.delete, { ref: reference }).catch((error: unknown) => {
+            setFailure({ key, error, retry: () => deleteTheme(key, reference) });
+            input.onFailure?.(error, THEME_ACTION_IDS.delete);
+        });
+    }, [execute, input.onFailure]);
     const openCreate = React.useCallback(() => input.onCreate(), [input.onCreate]);
     const addMenu = React.useMemo((): readonly ThemeLibraryMenuItem[] => [
         { id: 'create', title: t('settingsAppearance.themeProfiles.newTheme'),
@@ -90,8 +98,9 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
         const reference = option.reference;
         const share = input.onShare;
         return { key: option.id, name: title(option), sourceLabel: sourceLabel(option), preview: previewFor(option, mode), menu,
+            ...(option.entry?.editable && reference ? { onDelete: () => deleteTheme(option.id, reference) } : {}),
             ...(option.entry?.editable && reference && share ? { onShare: () => share(reference) } : {}) };
-    }), [input.options, input.onEdit, input.onCreate, input.onExport, input.onShare, input.labels, mode, title, sourceLabel, previewFor]);
+    }), [input.options, input.onEdit, input.onCreate, input.onExport, input.onShare, input.labels, mode, title, sourceLabel, previewFor, deleteTheme]);
     const slots = React.useMemo((): Record<ThemeProfileMode, ThemeLibrarySlot> => {
         const slot = (slotMode: ThemeProfileMode): ThemeLibrarySlot => {
             const option = activeOption(slotMode);
@@ -130,11 +139,11 @@ export function useThemeLibraryModel(input: ThemeLibraryModelInput, execute: The
     }, [activeOption, title, input.selectedDocuments, input.showing, input.native, input.onUpdate, input.onFailure, execute, preparedLight, preparedDark]);
     return { slots, mode, selectedKey: activeOption(mode).id, tiles, hasOwnThemes: input.options.some(option => option.entry?.source.kind === 'yours'),
         facts,
-        addMenu, onNewTheme: openCreate, onChooseMode: setMode, onChooseTheme: chooseTheme, onOpenStore: input.onOpenStore,
+        addMenu, onChooseMode: setMode, onChooseTheme: chooseTheme, onOpenStore: input.onOpenStore,
         ...(preparationError ? { notice: { text: resolveActionExecutionErrorMessage(preparationError, t('common.unavailable')),
             action: { title: t('common.retry'), onPress: () => { lightCss.retry(); darkCss.retry(); } } } }
             : failure ? { notice: { text: resolveActionExecutionErrorMessage(failure.error, t('common.unavailable')),
-            action: { title: t('common.retry'), onPress: () => chooseTheme(failure.key) } } }
+            action: { title: t('common.retry'), onPress: failure.retry ?? (() => chooseTheme(failure.key)) } } }
             : input.failed ? { notice: { text: t('artifacts.browser.loadFailedBody'), action: { title: t('common.retry'), onPress: input.retry } } } : {}),
     };
 }

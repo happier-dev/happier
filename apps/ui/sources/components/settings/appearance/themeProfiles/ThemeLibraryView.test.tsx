@@ -52,7 +52,7 @@ it('windows a 200-theme library through the visual picker page window', async ()
             dark: { mode: 'dark', name: 'Dark', sourceLabel: 'Built-in', preview, showing: false } }}
         tiles={Array.from({ length: 200 }, (_, index) => ({ key: `theme-${index}`, name: `Theme ${index}`,
             sourceLabel: 'Made by you', preview, menu: [] }))}
-        hasOwnThemes addMenu={[]} onNewTheme={() => {}} onChooseMode={() => {}} onChooseTheme={() => {}} />);
+        hasOwnThemes addMenu={[]} onChooseMode={() => {}} onChooseTheme={() => {}} />);
     await act(async () => {
         for (const node of screen.tree.root.findAll(node => typeof node.type === 'string'
             && (node.props.testID === 'settings-theme-profiles-screen' || node.props.testID === 'settings-theme-light-library' || node.props.testID === 'settings-theme-light-library:stage')
@@ -74,7 +74,7 @@ it('shows omitted theme parts and phone CSS coverage beside the update repair', 
     const screen = await renderSettingsView(<ThemeLibraryView mode="light" selectedKey="light"
         slots={{ light: { mode: 'light', name: 'Light', sourceLabel: 'Built-in', preview, showing: true },
             dark: { mode: 'dark', name: 'Dark', sourceLabel: 'Built-in', preview, showing: false } }}
-        tiles={[]} hasOwnThemes addMenu={[]} onNewTheme={() => {}} onChooseMode={() => {}} onChooseTheme={() => {}}
+        tiles={[]} hasOwnThemes addMenu={[]} onChooseMode={() => {}} onChooseTheme={() => {}}
         facts={[{ kind: 'partial', name: 'Future', unsupportedPaths: ['style.futurePresentation'], webOnlyRules: 2, onUpdate: update }]} />);
     const notice = screen.findByTestId('settings-theme-notice');
     expect(notice).not.toBeNull();

@@ -35,6 +35,9 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { ThemeProfileEditorView } from './ThemeProfileEditorView';
 import type { ThemeProfileEditorViewProps } from './themeProfileEditorViewTypes';
 
+import { AppShellPluginUiProjectionValueProvider, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
+
 const testGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean };
 testGlobal.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -444,17 +447,58 @@ describe('Theme profile settings screen', () => {
         expect(getThemeProfiles().activeProfileIds).toEqual({ light: null, dark: null });
     });
 
-    it('offers a new theme when you have none of your own', async () => {
+    it('keeps the empty invitation and creates only through the header Add menu', async () => {
         const screen = await renderProfilesScreen();
 
         expect(screen.findByTestId('settings-theme-profile-custom-empty')).not.toBeNull();
-        await screen.pressByTestIdAsync('settings-theme-profile-create-empty');
+        // Approved E1: the header Add menu is the single creation entry point.
+        expect(screen.findByTestId('settings-theme-profile-create-empty')).toBeNull();
+        const addMenu = await findAddThemeMenu(screen);
+        await act(async () => { addMenu!.props.onSelect('create'); });
 
         expect(getThemeProfiles().profiles).toEqual([]);
         expect(shared.routerPush).toHaveBeenCalledWith({
             pathname: '/settings/appearance/themes/[profileId]',
             params: { profileId: 'new' },
         });
+    });
+
+    it('deletes an owned theme through its tile Action and preserves immutable themes', async () => {
+        setThemeProfiles({ activeProfileIds: { light: 'ocean', dark: null }, profiles: [baseProfile('ocean')] });
+        const screen = await renderProfilesScreen();
+        const tileId = getThemePresetSourceReferenceId({ kind: 'artifact', id: 'ocean' });
+        const remove = findTileMenuAction(screen, tileId, 'delete');
+        expect(remove).toBeDefined();
+        expect(findTileMenuAction(screen, 'premiumLight', 'delete')).toBeUndefined();
+        await act(async () => { await remove!.onSelect(); });
+        await vi.waitFor(() => expect(getThemeProfiles().profiles).toEqual([]));
+        expect(getThemeProfiles().activeProfileIds.light).toBeNull();
+    });
+
+    it('names the contributing plugin in the library and in-use slot', async () => {
+        const pluginId = 'sample.palette';
+        const contributionId = 'paper';
+        const reference = { kind: 'plugin', pluginId, contributionId } as const;
+        storage.getState().applyLocalSettings({ themeProfileSelection: { light: reference, dark: null } });
+        const value: AppShellPluginUiProjectionValue = {
+            pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, themesById: { [`${pluginId}/${contributionId}`]: {
+                id: `${pluginId}/${contributionId}`, pluginId, pluginVersion: '1.0.0', pluginName: 'Studio Palette',
+                definition: { id: contributionId, theme: baseProfile('paper') },
+            } } },
+            pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, machineId: null, serverId: null,
+            platform: 'web', accountLifetime: null, clientExecutableActivation: { status: 'ready' },
+            reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
+        };
+        const screen = await renderSettingsView(<AppShellPluginUiProjectionValueProvider value={value}>
+            <ThemeProfilesSettingsScreen />
+        </AppShellPluginUiProjectionValueProvider>);
+        await measureMountedCollections(screen, { width: 1200, height: 6000 });
+        for (const id of ['settings-theme-slot:light', `settings-theme-light:${getThemePresetSourceReferenceId(reference)}`]) {
+            const tile = screen.findByTestId(id);
+            expect(tile).not.toBeNull();
+            const text = tile!.findAll(node => typeof node.type === 'string').flatMap(node => node.children).join(' ');
+            expect(text).toContain('Studio Palette');
+        }
     });
 
     it('adds a theme from the section menu: a new one or an import', async () => {

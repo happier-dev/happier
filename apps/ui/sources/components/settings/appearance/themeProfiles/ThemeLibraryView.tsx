@@ -162,11 +162,6 @@ export const ThemeLibraryView = React.memo(function ThemeLibraryView(
                 subtitle={t(
                   'settingsAppearance.themeProfiles.emptyDescription',
                 )}
-                primaryAction={{
-                  label: t('settingsAppearance.themeProfiles.newTheme'),
-                  onPress: props.onNewTheme,
-                  testID: 'settings-theme-profile-create-empty',
-                }}
               />
             )}
             <SelectionTiles
@@ -312,7 +307,7 @@ function TileMenu(props: Readonly<{ tile: ThemeLibraryTile }>) {
     [props.tile.menu],
   );
   const { onShare, onDelete } = props.tile;
-  // Share as plugin after the file export; Delete last, in the danger tone (its Action asks first).
+  // Share as plugin after the file export; Delete last, in the danger tone.
   const verbs = React.useMemo(() => [
     ...actions,
     ...(onShare ? [{ id: 'share-plugin', title: t('settingsAppearance.themeProfiles.shareAsPlugin'), onSelect: onShare }] : []),

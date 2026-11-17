@@ -46,7 +46,7 @@ export type ThemeLibraryTile = Readonly<{
   menu: readonly ThemeLibraryMenuItem[];
   /** Share as plugin (the selected Machine's scaffold and pack), when this theme can be shared. */
   onShare?: () => void;
-  /** Delete this theme (your own themes only; the Action asks first). */
+  /** Delete this theme through its Action (your own themes only). */
   onDelete?: () => void;
 }>;
 
@@ -108,7 +108,6 @@ export type ThemeLibraryViewProps = Readonly<{
   facts?: readonly ThemeLibraryFact[];
   /** The Add theme menu: New theme · Import theme. */
   addMenu: readonly ThemeLibraryMenuItem[];
-  onNewTheme: () => void;
   onChooseMode: (mode: ThemeProfileMode) => void;
   onChooseTheme: (key: string) => void;
   /** Present when the Store lists themes. */

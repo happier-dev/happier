@@ -3,6 +3,7 @@ import { Platform, useColorScheme } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import type { ThemeActionId } from '@happier-dev/protocol/actions/themeActionFamily';
 
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useLocalSetting } from '@/sync/domains/state/storage';
@@ -11,6 +12,7 @@ import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurn
 import { t } from '@/text';
 import { resolveThemeRuntimeVisualTheme } from '@/theme/profiles/themeProfileRuntime';
 import type { ThemeProfileMode, ThemeReference } from '@/theme/profiles/themeProfileTypes';
+import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
 import { buildThemePresetSourceOptions } from './themeProfilePresetOptions';
 import { ThemeLibraryView } from './ThemeLibraryView';
 import { useThemeActionExecution } from './useThemeActionExecution';
@@ -29,8 +31,8 @@ const profileExportRoute = (profileId: string) => ({
     params: { profileId },
 });
 
-function presentThemeSelectionFailure(error: unknown): void {
-    presentActionTurnedOffNoticeIfOff({ errorCode: readActionErrorCodeV1(error) }, THEME_ACTION_IDS.apply);
+function presentThemeSelectionFailure(error: unknown, actionId: ThemeActionId = THEME_ACTION_IDS.apply): void {
+    presentActionTurnedOffNoticeIfOff({ errorCode: readActionErrorCodeV1(error) }, actionId);
 }
 
 /**
@@ -48,6 +50,8 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
     const darkDocument = useThemeProfileDocument(selection.dark, presented).document;
     const selectedDocuments = React.useMemo(() => ({ light: lightDocument, dark: darkDocument }), [lightDocument, darkDocument]);
     const inventory = useThemeLibraryInventory(presented);
+    const pluginThemes = usePluginThemeList(presented);
+    const pluginNames = React.useMemo(() => new Map(pluginThemes.map(theme => [theme.pluginId, theme.pluginName])), [pluginThemes]);
     const options = React.useMemo(() => buildThemePresetSourceOptions(inventory.entries), [inventory.entries]);
     const execute = useThemeActionExecution();
     const [deviceTarget, setDeviceTarget] = React.useState<ThemeDevicePickerInput['theme'] | null>(null);
@@ -73,6 +77,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
     }), [router, share]);
     const input: ThemeLibraryModelInput = {
         options,
+        pluginNames,
         labels,
         selection,
         selectedDocuments,
