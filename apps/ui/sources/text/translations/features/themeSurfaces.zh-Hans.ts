@@ -103,6 +103,7 @@ export const themeSurfaces = {
     includesCount: ({ count }: { count: number }) => `${count} 个主题`,
     factChanges: "更改",
     colorsOnly: "仅颜色",
+    reshapesLayout: "改变布局",
     colors: "颜色",
     factWorksOn: "适用于",
     everywhere: "所有设备",

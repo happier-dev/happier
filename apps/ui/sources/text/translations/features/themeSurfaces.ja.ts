@@ -103,6 +103,7 @@ export const themeSurfaces = {
     includesCount: ({ count }: { count: number }) => `${count}件のテーマ`,
     factChanges: "変更点",
     colorsOnly: "色のみ",
+    reshapesLayout: "レイアウトを変更",
     colors: "色",
     factWorksOn: "対応環境",
     everywhere: "すべての環境",

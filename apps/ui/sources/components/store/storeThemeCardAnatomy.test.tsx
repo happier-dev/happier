@@ -83,6 +83,13 @@ it('acquires only measured near-viewport packages and reuses them across scroll-
     expect(liveRows.getCurrent().rows.some(row => row.card.listing?.itemId === 'icons')).toBe(false);
     await vi.waitFor(() => expect(reads.sort()).toEqual(['icons', 'near-a', 'near-b']));
     await vi.waitFor(() => expect(surfaces[0]!.screen.findAllByType(ThemeMiniaturePreview)).toHaveLength(1));
+    // The foot says modes · what it changes once the card's own acquisition settles, and starts no read of its own.
+    const { Text } = await import('@/components/ui/text/Text');
+    const foot = async (card: StoreThemeCardView) => (await renderScreen(<>{anatomy.getCurrent().reason?.(card)}</>))
+        .findAllByType(Text)[0]?.props.children;
+    await vi.waitFor(async () => expect(await foot(cards[0]!)).toBe('Dark · Colors only'));
+    expect(await foot(cards[2]!), 'a card off screen has nothing settled to say yet').toBe('');
+    expect(reads.sort()).toEqual(['icons', 'near-a', 'near-b']);
     const pendingShell = surfaces[1]!.screen.findAll(node => node.type === 'View')[0]!;
     expect(surfaces[1]!.screen.findAllByType(HappierBrandMark)).toHaveLength(1);
     await act(async () => { releaseNearB(); });

@@ -465,6 +465,7 @@ function ThemeDirectory(props: Readonly<{ list: StoreKindList<'theme'>; query: s
     where: row => cardAnatomy.where?.(row.card),
     reason: row => cardAnatomy.reason?.(row.card),
     preview: row => cardAnatomy.preview?.(row.card),
+    ...(cardAnatomy.previewAspectRatio ? { previewAspectRatio: cardAnatomy.previewAspectRatio } : {}),
     accessibilityLabel: row => cardAnatomy.accessibilityLabel?.(row.card) ?? row.title,
     testID: row => cardAnatomy.testID?.(row.card) ?? row.key,
     columnTitles: cardAnatomy.columnTitles,

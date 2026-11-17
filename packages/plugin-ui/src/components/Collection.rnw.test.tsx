@@ -5760,6 +5760,24 @@ describe('grid', () => {
     phone.unmount();
   });
 
+  it('keeps a picture preview at its own proportions on wide and phone cards (lab themes C1)', () => {
+    const previewed: CollectionAnatomy<Entry> = {
+      ...anatomy,
+      preview: (entry) => <Text>{`Preview of ${entry.id}`}</Text>,
+      previewAspectRatio: 1.6,
+    };
+    const ratio = (view: ReturnType<typeof mount>) => Number.parseFloat(view.query('row:a:card')!.style.width)
+      / Number.parseFloat(view.query('row:a:preview')!.style.height);
+    const wide = mount({ presentation: 'grid', grouped: false, anatomy: previewed });
+    wide.measure(1440);
+    const phone = mount({ presentation: 'grid', grouped: false, anatomy: previewed, minCardWidth: 160 });
+    phone.measure(390);
+    expect(ratio(wide)).toBeCloseTo(1.6, 1);
+    expect(ratio(phone)).toBeCloseTo(1.6, 1);
+    wide.unmount();
+    phone.unmount();
+  });
+
   it('stands a preview card on its band: mark beside the title, where under it, kind and age at the foot (lab artifacts A1)', () => {
     const previewed: CollectionAnatomy<Entry> = {
       ...anatomy,

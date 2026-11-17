@@ -285,6 +285,11 @@ export type CollectionAnatomy<Item> = Readonly<{
    */
   preview?: (item: Item) => ReactNode;
   /**
+   * The preview band's width ÷ height, for a preview that is a picture with its own proportions (a theme's window).
+   * Without it the band keeps a default-width card's height and a narrower card shows a shorter band.
+   */
+  previewAspectRatio?: number;
+  /**
    * What the item is for, in a sentence. Its declaration selects catalog rows unless `rowRole` opts out;
    * catalog line 2 leads with `reason`, then this description. Narrow catalog rows pass their layout;
    * other presentations omit it. Facts and the full description remain available to cards and detail.

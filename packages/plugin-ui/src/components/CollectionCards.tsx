@@ -611,15 +611,16 @@ function readGridSlots<Item>(items: readonly Item[], anatomy: CollectionAnatomy<
  * columns come from its whole-grid bands; each shelf sizes its cards from its own (a shelf where no card
  * has a description or a footer drops that band), so heights stay equal within a shelf.
  */
-function useGridGeometryResolver(width: number | null, minCardWidth: number, contentHeightAtNormalText: number | null): (slots: GridSlots) => GridGeometry {
+function useGridGeometryResolver(width: number | null, minCardWidth: number, contentHeightAtNormalText: number | null,
+  previewAspectRatio?: number): (slots: GridSlots) => GridGeometry {
   const card = useCardLayout();
   const text = useCardText();
   const { textScale } = useHappierUiAccessibility();
   return useCallback((slots: GridSlots): GridGeometry => {
     const inner = Math.max(0, (width ?? 0) - 2 * GUTTER);
     const { columns, cardWidth } = resolveHappierCollectionGridGeometry({ width: inner, minCardWidth: minCardWidth * textScale, gap: CARD_GAP });
-    const previewHeight = slots.preview
-      ? Math.min(CARD.previewHeight, Math.round(cardWidth * CARD.previewHeight / (CARD.gridMinCardWidth * textScale))) : 0;
+    const previewHeight = !slots.preview ? 0 : previewAspectRatio ? Math.round(cardWidth / previewAspectRatio)
+      : Math.min(CARD.previewHeight, Math.round(cardWidth * CARD.previewHeight / (CARD.gridMinCardWidth * textScale)));
     // The arithmetic of what the one frame draws (WidgetFrame card): its border, insets, identity row and gaps.
     const F = HAPPIER_WIDGET_FRAME_METRICS;
     if (!slots.description && !slots.facts && !slots.body && !slots.headerRight && previewHeight === 0) {
@@ -640,7 +641,7 @@ function useGridGeometryResolver(width: number | null, minCardWidth: number, con
       + (slots.facts ? (slots.body ? 0 : F.cardFactsGapPx) + text.meta + card.padding : slots.body ? 0 : card.padding);
     return { compact: false, columns, cardWidth, cardHeight, previewHeight,
       fitContent: columns === 1 };
-  }, [card, contentHeightAtNormalText, minCardWidth, text, textScale, width]);
+  }, [card, contentHeightAtNormalText, minCardWidth, previewAspectRatio, text, textScale, width]);
 }
 
 function GridCardView<Item>(props: Readonly<{
@@ -784,7 +785,7 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
   const { theme, palette } = useCardColors();
   const { viewport, scrollRequest } = useHappierCollectionViewport(model, 'grid');
   const resolveGeometry = useGridGeometryResolver(props.width, props.minCardWidth ?? CARD.gridMinCardWidth,
-    anatomy.card?.body?.heightAtNormalText ?? null);
+    anatomy.card?.body?.heightAtNormalText ?? null, anatomy.previewAspectRatio);
   const gridSlots = useGridSlots(model, anatomy);
   const { textScale } = useHappierUiAccessibility();
   const inner = props.width === null ? null : props.width - 2 * GUTTER;

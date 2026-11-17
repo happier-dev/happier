@@ -103,6 +103,7 @@ export const themeSurfaces = {
     includesCount: ({ count }: { count: number }) => count === 1 ? '1 tema' : `${count} temes`,
     factChanges: "Canvia",
     colorsOnly: "Només colors",
+    reshapesLayout: "Canvia el disseny",
     colors: "Colors",
     factWorksOn: "Funciona a",
     everywhere: "Arreu",

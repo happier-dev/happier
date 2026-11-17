@@ -11,7 +11,7 @@ export type { ThemeInstallFaceOutcome, ThemeInstallResult, ThemeRegistryItemKey 
 
 export type AcquiredRegistryTheme = RegistryThemeAcquisitionV1;
 export type ThemeRegistryOperationOptions = Readonly<{ expectedScope: AccountSettingsScope | null; signal?: AbortSignal }>;
-type CachedRegistryThemeAcquisition = { promise: Promise<AcquiredRegistryTheme>; failed: boolean; excluded: boolean };
+type CachedRegistryThemeAcquisition = { promise: Promise<AcquiredRegistryTheme>; failed: boolean; excluded: boolean; value: AcquiredRegistryTheme | null };
 
 /** Registry admission/acquisition and MODEL persistence retain their own authorities. */
 export function createThemeRegistryLifecycle(deps: Readonly<{
@@ -27,6 +27,9 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         serverAccountScopedResourceKey(scope, listing.sourceId, listing.itemId, listing.version);
     const isPreviewExcluded = (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, scope: AccountSettingsScope | null) =>
         scope ? previewAcquisitions.get(previewKey(listing, scope))?.excluded === true : false;
+    /** The settled preview acquisition, if one already ran: readers (a card's foot) never start a read of their own. */
+    const readPreview = (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, scope: AccountSettingsScope | null) =>
+        scope ? previewAcquisitions.get(previewKey(listing, scope))?.value ?? null : null;
     const subscribePreview = (listing: ThemeRegistryItemKey & Pick<RegistryItemPointerV1, 'version'>, scope: AccountSettingsScope | null, notify: () => void) => {
         if (!scope) return () => {};
         const key = previewKey(listing, scope);
@@ -53,11 +56,12 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         const retained = previewAcquisitions.get(key);
         if (retained) return retained.promise;
         // One finite acquisition serves cards and opened listings; a card unmount only ends its publication.
-        const pending = { promise: acquire(listing, { expectedScope: options.expectedScope }), failed: false, excluded: false };
+        const pending: CachedRegistryThemeAcquisition = { promise: acquire(listing, { expectedScope: options.expectedScope }), failed: false, excluded: false, value: null };
         pending.promise = pending.promise.then(acquired => {
             // Absence is a settled manifest fact, not an upstream/network failure.
             pending.excluded = acquired.item.payload.themes.length === 0;
-            if (pending.excluded) for (const notify of previewListeners.get(key) ?? []) notify();
+            pending.value = acquired;
+            for (const notify of previewListeners.get(key) ?? []) notify();
             return acquired;
         }).catch(error => {
             pending.failed = true;
@@ -149,11 +153,11 @@ export function createThemeRegistryLifecycle(deps: Readonly<{
         }
         return { removedFaces };
     }, options);
-    return { acquirePreview, isPreviewExcluded, subscribePreview, get, releaseOpened, prepareStorePreview, install, uninstall, keepStore };
+    return { acquirePreview, isPreviewExcluded, readPreview, subscribePreview, get, releaseOpened, prepareStorePreview, install, uninstall, keepStore };
 }
 
 export type ThemeRegistryLifecycle = ReturnType<typeof createThemeRegistryLifecycle>;
 /** The runtime binds one operation's scope and signal without another lifecycle instance. */
 export type BoundThemeRegistryLifecycle = {
-    [Method in Exclude<keyof ThemeRegistryLifecycle, 'isPreviewExcluded' | 'subscribePreview'>]: (input: Parameters<ThemeRegistryLifecycle[Method]>[0]) => ReturnType<ThemeRegistryLifecycle[Method]>;
+    [Method in Exclude<keyof ThemeRegistryLifecycle, 'isPreviewExcluded' | 'readPreview' | 'subscribePreview'>]: (input: Parameters<ThemeRegistryLifecycle[Method]>[0]) => ReturnType<ThemeRegistryLifecycle[Method]>;
 };

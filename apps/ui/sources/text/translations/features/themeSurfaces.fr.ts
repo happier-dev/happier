@@ -103,6 +103,7 @@ export const themeSurfaces = {
     includesCount: ({ count }: { count: number }) => count === 1 ? '1 thème' : `${count} thèmes`,
     factChanges: "Modifie",
     colorsOnly: "Couleurs uniquement",
+    reshapesLayout: "Remodèle la mise en page",
     colors: "Couleurs",
     factWorksOn: "Fonctionne sur",
     everywhere: "Partout",
