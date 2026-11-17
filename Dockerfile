@@ -280,7 +280,7 @@ const path = require('path');
 
 const repoRootDir = process.cwd();
 const nodeModulesDir = path.join(repoRootDir, 'node_modules');
-const keepEntries = new Set(['.bin', '.prisma']);
+const keepEntries = new Set(['.bin']);
 const visitedPackageJsonPaths = new Set();
 const workspacePackageJsonPaths = new Map([
   ['@happier-dev/server', path.join(repoRootDir, 'apps/server/package.json')],
@@ -485,13 +485,9 @@ RUN set -eux; \
     rm -rf /opt/happier/server/generated/mysql-client; \
     case "$TARGETARCH" in \
       amd64) \
-        find /opt/happier/server/generated/sqlite-client -name '*.node' \
-            ! -name "libquery_engine-debian-openssl-3.0.x.so.node" -delete; \
         rm -rf /opt/happier/server/node_modules/@img/sharp-libvips-linuxmusl-x64 \
                /opt/happier/server/node_modules/@img/sharp-linuxmusl-x64 ;; \
       arm64) \
-        find /opt/happier/server/generated/sqlite-client -name '*.node' \
-            ! -name "libquery_engine-linux-arm64-openssl-3.0.x.so.node" -delete; \
         rm -rf /opt/happier/server/node_modules/@img/sharp-libvips-linuxmusl-arm64 \
                /opt/happier/server/node_modules/@img/sharp-linuxmusl-arm64 ;; \
     esac

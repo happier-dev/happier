@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import type { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { PluginCollectionMutationOperationV1, PluginCollectionPutMutationV1 } from "@happier-dev/protocol/plugins/data/collectionsV1";
@@ -24,6 +23,7 @@ import { backfillPluginCollectionUsageTotalsInTx } from "./usageTotals";
 import { assertPluginCollectionUsageTotalsMatchRows } from "./usageTotals.testkit";
 import { runPostgresMigrationDeploy } from '../../../../../scripts/migrate.full.deploy';
 import { PLUGIN_COLLECTION_USAGE_BACKFILLED_MIGRATION } from '../../../../../scripts/pluginCollectionUsageBackfill';
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 
 const authentication = createPresentUserSessionAccessAuthentication();
 
@@ -285,18 +285,10 @@ describe("Collection mutation quota cost and accounting contract", () => {
         };
         const canonicalIndex = await createIndexFromMigration("20261030193000_plugin_collection_usage_totals");
         const legacyIndex = await createIndexFromMigration("20260809170000_add_plugin_data_and_message_admission");
-        const loaded: unknown = createRequire(import.meta.url)(provider === "sqlite"
-            ? "../../../../../generated/sqlite-client/index.js" : "@prisma/client");
-        if (!loaded || typeof loaded !== "object" || !("PrismaClient" in loaded) || typeof loaded.PrismaClient !== "function") {
-            throw new Error("Expected the provider-generated Prisma transport");
-        }
-        // Generated provider modules are a genuine untyped module boundary; their clients share this API.
-        const PrismaClient = loaded.PrismaClient as typeof import("@prisma/client").PrismaClient;
-        const client = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } },
-            log: [{ emit: "event", level: "query" }] });
+        const client = await createDbMaintenanceClient(provider, process.env.DATABASE_URL, { log: [{ emit: "event", level: "query" }] });
         const statements: Prisma.QueryEvent[] = [];
         let finishBarrier: (() => void) | undefined;
-        client.$on("query", event => {
+        onDbClientQuery(client, event => {
             if (event.query.includes("readiness_cost_barrier")) finishBarrier?.();
             else statements.push(event);
         });
@@ -352,7 +344,8 @@ describe("Collection mutation quota cost and accounting contract", () => {
                         if (!limit) throw new Error("Expected the bounded readiness lookup");
                         const limitPosition = limit[1] === "?"
                             ? (query.query.slice(0, limit.index).match(/\?/g)?.length ?? 0) : Number(limit[1]!.slice(1)) - 1;
-                        expect(parameters[limitPosition]).toBe(1);
+                        // Prisma 7 query events serialize numeric parameters as strings.
+                        expect(Number(parameters[limitPosition])).toBe(1);
                         expect(await db.pluginCollectionIndexState.findUniqueOrThrow({ where: { id: indexStates[0]!.id },
                             select: { indexedThroughRevision: true } })).toEqual({ indexedThroughRevision: rows });
                         if (provider === "postgres") {

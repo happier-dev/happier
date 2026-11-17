@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
-import { PrismaClient, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityCollectionWritersClaimActionOutputV1Schema, PluginAccountCollectionContributionV1Schema, PluginManifestV2Schema, normalizePluginAccountCollectionContractsV1 } from "@happier-dev/protocol";
@@ -18,6 +18,7 @@ import { createPluginAvailabilityOperations } from "./operations";
 import { createReleaseLessDeclarationV1 } from "./currentDeclaration";
 import { acquireAccountSessionOwnerMetadataFenceInTx, acquireAccountSessionOwnerMetadataFencesInTx } from "@/app/encryption/accountSessionOwnerMetadataFence";
 import { pagePluginCollectionCandidatePreparationSource, stagePluginCollectionCandidatePreparation } from "@/app/plugins/data/collections/candidatePreparation";
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 
 const route = PluginAvailabilityActionHttpPathsV1["account.plugins.availability.collectionWriters.claim"];
 const withAuthenticatedTestApp: (
@@ -110,7 +111,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
         })), legacyDeclaration: null };
         await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id,
             enabled: true, writableCollections: [ref], releaseLessDeclaration: stored } });
-        const client = new PrismaClient({ errorFormat: "minimal", log: [{ emit: "event", level: "query" }] });
+        const client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
         const transaction = db.$transaction;
         const statements: Array<{ label: string; held: boolean; appBeforeMs: number; wallMs: number; sqlMs: number; result: unknown }> = [];
         let physicalMs = 0;
@@ -119,7 +120,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("C
         let last = 0;
         let lockedAt = 0;
         let lockedMs = 0;
-        client.$on("query", (event: Prisma.QueryEvent) => { physicalMs += event.duration; physicalCount++; });
+        onDbClientQuery(client, (event: Prisma.QueryEvent) => { physicalMs += event.duration; physicalCount++; });
         await client.$connect();
         // Genuine database adapter observation: internal claim, merge and promotion stay real.
         db.$transaction = new Proxy(transaction, { apply(_target, _receiver, args: unknown[]) {

@@ -17,7 +17,7 @@ import {
 } from "@happier-dev/protocol";
 import type { ProviderConnectionId } from "@happier-dev/protocol/providers/ids";
 import tweetnacl from "tweetnacl";
-import { PrismaClient } from '../../../../generated/sqlite-client';
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 
 const TEST_CONTRIBUTION_CONTRACT_VERSION = "artifact-example-1";
 const TEST_DIRECT_CONTRIBUTION_CONTRACT_VERSION = computeCanonicalDomainSeparatedDigest(
@@ -82,14 +82,14 @@ function createE2eeAccountMaterial(
 
 describe("Team credential recipient material", () => {
     let harness: LightSqliteHarness;
-    let queryClient: ReturnType<typeof createQueryClient>;
+    let queryClient: Awaited<ReturnType<typeof createQueryClient>>;
     let originalTransaction: typeof db.$transaction;
     const queries: string[] = [];
     const entitlementReads = () => queries.filter(query => /\bSELECT\b/i.test(query)
         && query.includes('TeamCredentialResource') && query.includes('disclosureCeiling')
         && query.includes('allMembersDeliveryMode')).length;
-    function createQueryClient() {
-        return new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    async function createQueryClient() {
+        return await createDbMaintenanceClient("sqlite", undefined, { log: [{ emit: 'event', level: 'query' }] });
     }
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
@@ -99,8 +99,8 @@ describe("Team credential recipient material", () => {
                 HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: "1",
             },
         });
-        queryClient = createQueryClient();
-        queryClient.$on('query', event => queries.push(event.query));
+        queryClient = await createQueryClient();
+        onDbClientQuery(queryClient, event => queries.push(event.query));
         await queryClient.$connect();
         originalTransaction = db.$transaction;
         // Trace only the real database transport; all admission and material logic stays real.

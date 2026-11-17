@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { getMachinePoolCandidateSnapshots } from './machinePoolService';
 import { serializePrivateLabelStoredV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 function storedPlainPoolLabel(value: string): string {
     return serializePrivateLabelStoredV1({ content: { t: 'plain', v: value }, recipients: [] });
@@ -11,7 +12,7 @@ function storedPlainPoolLabel(value: string): string {
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Bulk Pool snapshot native SQL (PostgreSQL)', () => {
     const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>;
+    let client: PrismaClientType;
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
@@ -19,8 +20,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('B
         }
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
     });
     afterAll(async () => { await client?.$disconnect(); await shutdownDbClient(); });

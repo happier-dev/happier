@@ -109,7 +109,7 @@ describe('web latency request correlation', () => {
         vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
         const sink = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
         const requestId = '23b2ed82-2ef7-4e4e-af0f-f64d599a08c6';
-        const failure = Object.assign(new Error('private database input'), { code: 'P2010', meta: { code: '40P01' } });
+        const failure = Object.assign(new Error('private database input'), { code: 'P2010', meta: { driverAdapterError: { cause: { kind: 'TransactionWriteConflict', originalCode: '40P01' } } } });
         await expect(withWebLatencyTrace(requestId, () => timeWebLatencyPhase('db.transaction.attempt',
             () => timeWebLatencyPhase('db.raw.$queryRawUnsafe', () => { throw failure; }))))
             .rejects.toBe(failure);

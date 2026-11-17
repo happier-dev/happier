@@ -1,4 +1,3 @@
-import { PrismaClient } from '@prisma/client';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -11,6 +10,7 @@ import { inTx, readPostgresTransactionSqlState, type Tx } from '@/storage/inTx';
 import { deleteOwnedSession } from '@/app/session/delete/deleteOwnedSession';
 import { restoreTeamInTx } from './lifecycle';
 import { registerTeamRoutes } from './registerTeamRoutes';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 function deferred<T>() {
     let resolve!: (value: T) => void;
@@ -20,7 +20,7 @@ function deferred<T>() {
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Team restore busy Account admission (PostgreSQL)', () => {
     let app: ReturnType<typeof createAuthenticatedTestApp>;
-    let observer: PrismaClient;
+    let observer: PrismaClientType;
     let transaction: typeof db.$transaction;
     let connected = false;
     const previousEnv = new Map<string, string | undefined>();
@@ -48,9 +48,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             update: { teamCreationPolicy: 'self_service' } });
         // Count actual SQL at the genuine Prisma transport, without retaining
         // parameters or replacing any route, admission, or domain decision.
-        const observed = new PrismaClient({ datasources: { db: { url } }, errorFormat: 'minimal',
-            log: [{ emit: 'event', level: 'query' }] });
-        observed.$on('query', event => { queries.push({ statement: event.query, duration: event.duration }); });
+        const observed = await createDbMaintenanceClient('postgres', url, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(observed, event => { queries.push({ statement: event.query, duration: event.duration }); });
         observer = observed;
         db.$transaction = observer.$transaction.bind(observer);
         app = createAuthenticatedTestApp();

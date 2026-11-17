@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as privacyKit from "privacy-kit";
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
@@ -24,6 +24,7 @@ import { materializePluginCollectionContractsFromManifestTx, preparePluginCollec
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 interface PlanNode {
     "Node Type": string;
@@ -96,7 +97,7 @@ const scale = {
  */
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("hot route cost at scale (PostgreSQL)", () => {
     const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, "query">;
+    let client: PrismaClientType;
     let app: ReturnType<typeof createAuthenticatedTestApp>;
     let originalTransaction: typeof db.$transaction;
     let originalAccountRead: typeof db.account.findUnique;
@@ -125,8 +126,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("h
         initDbPostgres();
         await db.$connect();
         await auth.init();
-        client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-        client.$on("query", event => {
+        client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(client, event => {
             if (event.query.includes('"hot_scale_cost_barrier"')) resolveQueryBarrier?.();
             else statements.push(event);
         });
@@ -382,7 +383,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("h
             }
             const row = { name: request.name, warm: warm.statusCode, status: response.statusCode, elapsedMs, prismaOps,
                 ...(response.statusCode === 200 ? {} : { error: response.body.slice(0, 300) }),
-                statements: captured.length, transactions: captured.filter(({ query }) => /^BEGIN\b/.test(query)).length,
+                // Report-only: Prisma 7's query log omits BEGIN; each interactive transaction ends in one logged COMMIT/ROLLBACK.
+                statements: captured.length, transactions: captured.filter(({ query }) => /^(?:COMMIT|ROLLBACK)\b/.test(query)).length,
                 selects: selects.length, unexplained, plans };
             return { row, body: response.body };
         };

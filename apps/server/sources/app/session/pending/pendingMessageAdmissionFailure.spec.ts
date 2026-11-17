@@ -94,7 +94,8 @@ describe('Machine input admission transaction failures', () => {
         vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres');
         vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', '0');
         database.transaction.mockRejectedValue(Object.assign(new Error(failure.message), {
-            code: failure.code, meta: { error: failure.message, ...(failure.code === 'P2010' ? { code: '40001' } : {}) },
+            code: failure.code, meta: { error: failure.message, ...(failure.code === 'P2010'
+                ? { driverAdapterError: { cause: { kind: 'TransactionWriteConflict', originalCode: '40001' } } } : {}) },
         }));
         const result = await enqueuePendingMessageByAuthenticatedMachine({
             accountId: 'account', sourceMachineId: 'machine', targetMachineId: 'machine',
@@ -212,7 +213,7 @@ describe('Machine input admission transaction failures', () => {
         vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', '0');
         database.transaction.mockRejectedValue(Object.assign(new Error(failure.message), {
             code: failure.code,
-            ...(failure.code === 'P2010' ? { meta: { code: '40001' } } : {}),
+            ...(failure.code === 'P2010' ? { meta: { driverAdapterError: { cause: { kind: 'TransactionWriteConflict', originalCode: '40001' } } } } : {}),
         }));
         await expect(enqueuePendingMessage({
             actorUserId: 'account', sessionId: 'session', localId: 'retained-input',

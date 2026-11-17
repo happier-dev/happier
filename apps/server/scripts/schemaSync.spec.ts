@@ -492,7 +492,7 @@ model Account { id String @id }
         expect(mysql).toContain('provider = "mysql"');
     });
 
-    it("includes release binaryTargets in sqlite/mysql generator blocks (cross-compiled server binaries)", () => {
+    it("emits no engine binaryTargets: Prisma 7 runs its query compiler as WASM on every target", () => {
         const master = `
 generator client {
     provider        = "prisma-client-js"
@@ -508,14 +508,8 @@ model Account { id String @id }
 `;
 
         const sqlite = generateSqliteSchemaFromPostgres(master);
-        expect(sqlite).toMatch(
-            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x",\s*"darwin",\s*"darwin-arm64",\s*"windows"\]/,
-        );
-
-        const mysql = generateMySqlSchemaFromPostgres(master);
-        expect(mysql).toMatch(
-            /binaryTargets\s*=\s*\["native",\s*"debian-openssl-3\.0\.x",\s*"linux-arm64-openssl-3\.0\.x",\s*"darwin",\s*"darwin-arm64",\s*"windows"\]/,
-        );
+        expect(sqlite).not.toMatch(/binaryTargets/);
+        expect(generateMySqlSchemaFromPostgres(master)).not.toMatch(/binaryTargets/);
     });
 
     it("pins all MySQL tokenHash unique fields to VARBINARY(32)", () => {

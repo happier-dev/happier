@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PGlite } from "@electric-sql/pglite";
 import { describe, expect, it } from "vitest";
-import { PrismaClient as SqlitePrismaClient } from "../../generated/sqlite-client/index.js";
 
 import { applyPostgresMigrations, applySqliteMigrations } from "../prismaMigrations";
+import { createDbMaintenanceClient } from "../../sources/storage/prisma";
 
 const migrationName = "20260905220000_add_team_home_governance";
 const machinePoolMigrationName = "20260905233000_add_machine_pools";
@@ -47,7 +47,7 @@ describe("Team/Home governance and Machine Pool persistence", () => {
             const future = sqlite ? "4102444800000" : "'2100-01-01T00:00:00Z'";
             const past = sqlite ? "946684800000" : "'2000-01-01T00:00:00Z'";
             if (sqlite) {
-                const client = new SqlitePrismaClient({ datasourceUrl: `file:${databasePath}` });
+                const client = await createDbMaintenanceClient("sqlite", `file:${databasePath}`);
                 try {
                     // Characterize the real Prisma writer rather than guessing SQLite DateTime storage.
                     await client.repeatKey.create({ data: {

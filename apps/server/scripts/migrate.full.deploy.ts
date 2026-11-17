@@ -1,4 +1,5 @@
-import { runPrismaCli, resolveServerWorkspaceRoot } from "./prismaCli";
+import { resolveServerWorkspaceRoot } from "./prismaCli";
+import { runPrismaMigrateCli } from "./prismaMigrateCli";
 import {
     hasSessionSystemRecordContractMigration,
     runSessionSystemRecordFinalContractBackfill,
@@ -24,7 +25,7 @@ export async function runPostgresMigrationDeploy(environment: NodeJS.ProcessEnv 
         deploy: async (stage) => {
             await runPluginCollectionUsageMigrationDeployment({
                 ...stage, provider: 'postgres', databaseUrl: String(env.DATABASE_URL ?? '').trim(), env,
-                deploy: async target => await runPrismaCli({ serverRoot, args: ['migrate', 'deploy', '--schema', target.schemaPath!], env }),
+                deploy: async target => await runPrismaMigrateCli({ serverRoot, schemaPath: target.schemaPath!, args: ['deploy'], env }),
             });
         },
         runFinalContractBackfill: async () => {

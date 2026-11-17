@@ -4,6 +4,7 @@ import { DEFAULT_BUN_COMPILE_OPTIONS, resolveBunCompilerCommand } from '../src/c
 
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 function readOption(name) {
   const index = process.argv.indexOf(name);
@@ -16,9 +17,17 @@ const repoRoot = resolve(readOption('--repo-root'));
 resolveBunCompilerCommand({ repoRoot, bunCommand: process.execPath });
 const target = readOption('--target');
 const outfile = resolve(readOption('--outfile'));
-const prismaPackageJsonPath = join(repoRoot, 'node_modules', 'prisma', 'package.json');
-const prismaEntrypoint = join(repoRoot, 'node_modules', 'prisma', 'build', 'index.js');
-const proxyStubPath = join(repoRoot, 'node_modules', 'node-fetch-native', 'dist', 'proxy-stub.mjs');
+// The packaged migration tool stays on the Prisma 6.19.2 CLI and its schema engine: the 7.x schema
+// engine runs a PostgreSQL migration.sql statement by statement, which breaks migrations that rely on
+// one implicit transaction (ON COMMIT DROP temp tables) and loses whole-file atomicity. The server
+// owns where that CLI is installed (apps/server/scripts/prismaInstallLayout.mjs).
+const { resolveServerPrismaMigrationToolLayout } = await import(
+  pathToFileURL(join(repoRoot, 'apps', 'server', 'scripts', 'prismaInstallLayout.mjs')).href
+);
+const migrationTool = resolveServerPrismaMigrationToolLayout({ serverRoot: join(repoRoot, 'apps', 'server') });
+const prismaPackageJsonPath = migrationTool.cliPackageJsonPath;
+const prismaEntrypoint = migrationTool.cliEntrypoint;
+const proxyStubPath = migrationTool.proxyStubPath;
 const prismaPackageJson = JSON.parse(await readFile(prismaPackageJsonPath, 'utf8'));
 
 if (prismaPackageJson.version !== '6.19.2') {
@@ -52,10 +61,9 @@ const result = await Bun.build({
     name: 'happier-prisma-runtime-bundle',
     setup(build) {
       build.onResolve({ filter: /^node-fetch-native\/proxy$/ }, () => ({ path: proxyStubPath }));
-      build.onLoad({ filter: /node_modules\/prisma\/build\/index\.js$/ }, () => ({
-        contents: transformedPrismaSource,
-        loader: 'js',
-      }));
+      build.onLoad({ filter: /[/\\]build[/\\]index\.js$/ }, (args) => (
+        args.path === prismaEntrypoint ? { contents: transformedPrismaSource, loader: 'js' } : undefined
+      ));
     },
   }],
 });

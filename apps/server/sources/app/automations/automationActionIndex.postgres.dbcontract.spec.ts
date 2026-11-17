@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent,
     computeContentPublicKeyFingerprint, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
@@ -8,6 +8,7 @@ import * as privacyKit from 'privacy-kit';
 import tweetnacl from 'tweetnacl';
 import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { db, initDbPostgres } from '@/storage/db';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 import { initEncrypt } from '@/modules/encrypt';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerAutomationActionIndexRoutes } from '@/app/api/routes/automations/registerAutomationActionIndexRoutes';
@@ -302,9 +303,9 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Action index se
         const consent = await db.automation.findFirstOrThrow({ where: { accountId: actorId,
             triggers: { some: { consentForAutomationId: { not: null } } } }, select: { id: true } });
         const statements: Prisma.QueryEvent[] = [];
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+        const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
         let resolveBarrier: (() => void) | undefined;
-        client.$on('query', event => {
+        onDbClientQuery(client, event => {
             if (event.query.includes('action_index_cost_barrier')) resolveBarrier?.();
             else statements.push(event);
         });

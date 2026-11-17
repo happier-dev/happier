@@ -1,7 +1,7 @@
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
 import { decodeBase64 } from "privacy-kit";
-import { PrismaClient, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from "@/storage/db";
@@ -15,6 +15,7 @@ import { SessionFollowRuleStoredRowV1Schema, buildSessionFollowRulePhysicalKeyV1
 import { normalizeSessionListFilterV1 } from "@happier-dev/protocol/sessions/listFilter/sessionListFilterV1";
 import { encodeAccountScopedKvJson } from "@/app/kv/accountScopedKv";
 import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 interface PlanNode {
     "Node Type": string;
@@ -30,7 +31,7 @@ function relationLoops(plan: PlanNode, relation: string): number {
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("Session listing PostgreSQL query work", () => {
     const queries: Prisma.QueryEvent[] = [];
-    const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+    let client: PrismaClientType;
     let resolveQueryBarrier: (() => void) | undefined;
 
     async function drainQueryEvents() {
@@ -43,11 +44,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
     }
 
     beforeAll(async () => {
+        client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error("Use the disposable PostgreSQL DB-contract harness");
         }
-        client.$on("query", query => {
+        onDbClientQuery(client, query => {
             if (query.query.includes('"session_list_cost_barrier"')) resolveQueryBarrier?.();
             else queries.push(query);
         });

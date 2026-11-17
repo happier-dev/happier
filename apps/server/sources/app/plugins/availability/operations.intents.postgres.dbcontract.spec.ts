@@ -1,4 +1,4 @@
-import { PrismaClient, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE } from "@happier-dev/protocol/plugins/availability/v1";
@@ -10,6 +10,7 @@ import { createReleaseLessDeclarationV1, mergeReleaseLessDeclarationV2 } from ".
 import { PluginManifestV2Schema } from "@happier-dev/protocol/plugins/manifest/v2";
 import historicalUiGraphPublication from "./historicalUiGraphPublication.fixture.json";
 import { acquireAccountChangePublicationLocksInTx } from "@/app/changes/markAccountChanged";
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 
 const operations = createPluginAvailabilityOperations({ resolveHostingCapability: () => ({ enabled: false }) });
 
@@ -212,10 +213,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         } });
         const transaction = db.$transaction;
         const captured: unknown[] = [];
-        const client = new PrismaClient({ errorFormat: "minimal", log: [{ emit: "event", level: "query" }] });
+        const client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
         let physicalStatements = 0;
         let declarationStatements = 0;
-        client.$on("query", (event: Prisma.QueryEvent) => {
+        onDbClientQuery(client, (event: Prisma.QueryEvent) => {
             if (/^\s*SELECT\b/i.test(event.query)) physicalStatements++;
             if (/\bi\."releaseLessDeclaration"/.test(event.query)) declarationStatements++;
         });
@@ -380,9 +381,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
     it("keeps physical Account and intent/release SELECTs constant for 1 versus 88 plugins while fresh changes remain visible", async () => {
         const small = await fixture(1);
         const large = await fixture(88);
-        const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+        const client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
         let counts = { selects: 0, account: 0, intent: 0, release: 0 };
-        client.$on("query", (event: Prisma.QueryEvent) => {
+        onDbClientQuery(client, (event: Prisma.QueryEvent) => {
             if (!/^\s*SELECT\b/i.test(event.query)) return;
             counts.selects++;
             // Part E reads Account and intents in one joined statement.
@@ -561,9 +562,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
             machineId: machine.id, materializationId: target.materializationId, ...ref, sourceClass: "registryPackage",
             portableRelease: true, archiveDigestSha256: `sha256:${"a".repeat(64)}`, uiArtifacts: [slot],
             enabled: true, trustState: "trusted", observedAt: new Date() } });
-        const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+        const client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
         const releaseSelects: string[] = [];
-        client.$on("query", (event: Prisma.QueryEvent) => {
+        onDbClientQuery(client, (event: Prisma.QueryEvent) => {
             if (/^\s*SELECT\b/i.test(event.query) && event.query.includes('"AccountPluginRelease"')) {
                 releaseSelects.push(event.query);
             }

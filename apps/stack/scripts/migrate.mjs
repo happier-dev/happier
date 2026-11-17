@@ -1,7 +1,6 @@
 import './utils/env/env.mjs';
 import { cp, mkdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
@@ -13,7 +12,7 @@ import { ensureHappyServerManagedInfra, applyHappyServerMigrations } from './uti
 import { runCapture } from './utils/proc/proc.mjs';
 import { pickNextFreeTcpPort } from './utils/net/ports.mjs';
 import { getEnvValue } from './utils/env/values.mjs';
-import { importPrismaClientFromNodeModules } from './utils/server/prisma_import.mjs';
+import { runServerDatabaseTask } from './utils/server/server_database_task.mjs';
 import { resolveEffectiveDbProvider } from './utils/server/effective_db_provider.mjs';
 
 function usage() {
@@ -29,21 +28,6 @@ function usage() {
 }
 
 const readEnvObject = readEnvObjectFromFile;
-
-function normalizePgliteServerConnToDatabaseUrl(rawConn) {
-  const raw = String(rawConn ?? '').trim();
-  if (!raw) throw new Error('[migrate] invalid PGlite server connection string (empty)');
-  const url = (() => {
-    try {
-      return new URL(raw);
-    } catch {
-      // pglite-socket can return "127.0.0.1:NNNN" (host:port). Convert to a postgres URL.
-      return new URL(`postgresql://postgres@${raw}/postgres?sslmode=disable`);
-    }
-  })();
-  url.searchParams.set('connection_limit', '1');
-  return url.toString();
-}
 
 async function ensureTargetSecretMatchesSource({ sourceSecretPath, targetSecretPath }) {
   try {
@@ -163,146 +147,62 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
     quiet: true,
   });
 
-  // Read from the snapshot via a temporary pglite socket and the standard Prisma client.
-  const { PGlite } = await import('@electric-sql/pglite');
-  const { FramedPgliteSocketServer } = await import(pathToFileURL(join(lightDir, 'sources/storage/pgliteFramedSocketServer.mjs')).href);
-  const pglite = new PGlite(snapshotDbDir);
-  await pglite.waitReady;
-  const pgliteServer = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
-  await pgliteServer.start();
-  const snapshotDbUrl = normalizePgliteServerConnToDatabaseUrl(pgliteServer.getServerConn());
+  // The target server's database owner reads the snapshot and writes the target.
+  const migratedCounts = await runServerDatabaseTask({
+    serverDir: fullDir,
+    provider: toProvider.provider,
+    task: 'copy-light-to-server',
+    source: { provider: 'pglite', pgliteDbDir: snapshotDbDir },
+    target: { provider: toProvider.provider, databaseUrl: infra.env.DATABASE_URL },
+    force,
+    ...(json ? {} : { streamLabel: 'migrate' }),
+  });
 
-  const SourcePrismaClient = await importPrismaClientFromNodeModules({ dir: lightDir });
-  const TargetPrismaClient = await importPrismaClientFromNodeModules({ dir: fullDir });
-
-  const sourceDb = new SourcePrismaClient({ datasources: { db: { url: snapshotDbUrl } } });
-  const targetDb = new TargetPrismaClient({ datasources: { db: { url: infra.env.DATABASE_URL } } });
-
-  try {
-    // Fail-fast unless target is empty (keeps this safe).
-    const existingSessions = await targetDb.session.count();
-    const existingMessages = await targetDb.sessionMessage.count();
-    if (!force && (existingSessions > 0 || existingMessages > 0)) {
-      throw new Error(
-        `[migrate] target database is not empty (sessions=${existingSessions}, messages=${existingMessages}).\n` +
-          `Pass --force to attempt a merge (skipDuplicates), or migrate into a fresh stack.`
-      );
-    }
-
-    // Core entities
-    const accounts = await sourceDb.account.findMany();
-    if (accounts.length) {
-      await targetDb.account.createMany({ data: accounts, skipDuplicates: true });
-    }
-
-    const machines = await sourceDb.machine.findMany();
-    if (machines.length) {
-      await targetDb.machine.createMany({ data: machines, skipDuplicates: true });
-    }
-
-    const accessKeys = await sourceDb.accessKey.findMany();
-    if (accessKeys.length) {
-      await targetDb.accessKey.createMany({ data: accessKeys, skipDuplicates: true });
-    }
-
-    const sessions = await sourceDb.session.findMany();
-    if (sessions.length) {
-      await targetDb.session.createMany({ data: sessions, skipDuplicates: true });
-    }
-
-    // Messages: stream in batches to avoid high memory.
-    let migrated = 0;
-    const batchSize = 1000;
-    let cursor = null;
-    while (true) {
-      // eslint-disable-next-line no-await-in-loop
-      const page = await sourceDb.sessionMessage.findMany({
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-        orderBy: { id: 'asc' },
-        take: batchSize,
-      });
-      if (!page.length) break;
-      cursor = page[page.length - 1].id;
-      // eslint-disable-next-line no-await-in-loop
-      await targetDb.sessionMessage.createMany({ data: page, skipDuplicates: true });
-      migrated += page.length;
-      // eslint-disable-next-line no-console
-      if (!json && migrated % (batchSize * 20) === 0) console.log(`[migrate] migrated ${migrated} messages...`);
-    }
-
-    // Pending queue (small)
-    const pending = await sourceDb.sessionPendingMessage.findMany();
-    if (pending.length) {
-      await targetDb.sessionPendingMessage.createMany({ data: pending, skipDuplicates: true });
-    }
-
-    if (includeFiles) {
-      // Mirror server-light local files (public/*) into Minio bucket root.
-      // This assumes server-light stored public files under HAPPIER_SERVER_LIGHT_FILES_DIR/public/...
-      // (Matches happier-server Minio object keys).
-      const { composePath, projectName } = infra;
-      await runCapture('docker', [
-        'compose',
-        '-f',
-        composePath,
-        '-p',
-        projectName,
-        'run',
-        '--rm',
-        '-T',
-        '-v',
-        `${fromFilesDir}:/src:ro`,
-        'minio-init',
-        'sh',
-        '-lc',
-        [
-          `mc alias set local http://minio:9000 ${infra.env.S3_ACCESS_KEY} ${infra.env.S3_SECRET_KEY}`,
-          `mc mirror --overwrite /src local/${infra.env.S3_BUCKET}`,
-        ].join(' && '),
-      ]);
-    }
-
-    printResult({
-      json,
-      data: {
-        ok: true,
-        fromStack,
-        toStack,
-        snapshotDbDir,
-        migrated: { accounts: accounts.length, sessions: sessions.length, messages: migrated, machines: machines.length, accessKeys: accessKeys.length },
-        filesMirrored: Boolean(includeFiles),
-      },
-      text: [
-        `[migrate] ok`,
-        `[migrate] from: ${fromStack} (${fromFlavor})`,
-        `[migrate] to:   ${toStack} (${toFlavor})`,
-        `[migrate] pglite snapshot dir: ${snapshotDbDir}`,
-        `[migrate] messages: ${migrated}`,
-        includeFiles ? `[migrate] files: mirrored from ${fromFilesDir} -> minio bucket ${infra.env.S3_BUCKET}` : `[migrate] files: skipped`,
-      ].join('\n'),
-    });
-  } finally {
-    try {
-      await sourceDb.$disconnect();
-    } catch {
-      // ignore
-    }
-    try {
-      await targetDb.$disconnect();
-    } catch {
-      // ignore
-    }
-    try {
-      await pgliteServer.stop();
-    } catch {
-      // ignore
-    }
-    try {
-      await pglite.close();
-    } catch {
-      // ignore
-    }
+  if (includeFiles) {
+    // Mirror server-light local files (public/*) into Minio bucket root.
+    // This assumes server-light stored public files under HAPPIER_SERVER_LIGHT_FILES_DIR/public/...
+    // (Matches happier-server Minio object keys).
+    const { composePath, projectName } = infra;
+    await runCapture('docker', [
+      'compose',
+      '-f',
+      composePath,
+      '-p',
+      projectName,
+      'run',
+      '--rm',
+      '-T',
+      '-v',
+      `${fromFilesDir}:/src:ro`,
+      'minio-init',
+      'sh',
+      '-lc',
+      [
+        `mc alias set local http://minio:9000 ${infra.env.S3_ACCESS_KEY} ${infra.env.S3_SECRET_KEY}`,
+        `mc mirror --overwrite /src local/${infra.env.S3_BUCKET}`,
+      ].join(' && '),
+    ]);
   }
+
+  printResult({
+    json,
+    data: {
+      ok: true,
+      fromStack,
+      toStack,
+      snapshotDbDir,
+      migrated: migratedCounts,
+      filesMirrored: Boolean(includeFiles),
+    },
+    text: [
+      `[migrate] ok`,
+      `[migrate] from: ${fromStack} (${fromFlavor})`,
+      `[migrate] to:   ${toStack} (${toFlavor})`,
+      `[migrate] pglite snapshot dir: ${snapshotDbDir}`,
+      `[migrate] messages: ${migratedCounts.messages}`,
+      includeFiles ? `[migrate] files: mirrored from ${fromFilesDir} -> minio bucket ${infra.env.S3_BUCKET}` : `[migrate] files: skipped`,
+    ].join('\n'),
+  });
 }
 
 async function main() {

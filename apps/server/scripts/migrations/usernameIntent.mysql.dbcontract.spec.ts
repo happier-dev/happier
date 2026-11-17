@@ -3,8 +3,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { PrismaClient } from '../../generated/mysql-client/index.js';
 import { splitMigrationStatements } from '../../sources/migrations/missingMigrationReconciliation';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 const databaseUrl = process.env.HAPPIER_TEST_MYSQL_DATABASE_URL;
 
@@ -13,8 +13,8 @@ describe('Account username intent MySQL upgrade', () => {
         const databaseName = `username_intent_${randomUUID().replaceAll('-', '')}`;
         const isolatedUrl = new URL(databaseUrl!);
         isolatedUrl.pathname = `/${databaseName}`;
-        const admin = new PrismaClient({ datasourceUrl: databaseUrl });
-        const database = new PrismaClient({ datasourceUrl: isolatedUrl.toString() });
+        const admin = await createDbMaintenanceClient('mysql', databaseUrl);
+        const database = await createDbMaintenanceClient('mysql', isolatedUrl.toString());
         let created = false;
         try {
             await admin.$executeRawUnsafe(`CREATE DATABASE \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);

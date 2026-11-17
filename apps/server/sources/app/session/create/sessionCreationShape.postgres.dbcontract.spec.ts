@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { inTx, type Tx } from "@/storage/inTx";
@@ -11,13 +10,15 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { acquireMachineAccessPublicationLocksInTx } from "@/app/machines/machineAccess";
 import { prepareLayout1SessionCreate } from "./prepareLayout1SessionCreate";
 import { createOrRejoinLayout1SessionByTag } from "./createOrRejoinLayout1SessionByTag";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 // Observe the real SQL boundary, including terminal publication, without replacing
 // any admission, projection or transaction owner.
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("Session creation transaction shape", () => {
-    const measured = new PrismaClient({ log: [{ emit: "event", level: "query" }], errorFormat: "minimal" });
+    let measured: PrismaClientType;
     const authentication = createPresentUserSessionAccessAuthentication({ env: {} });
     beforeAll(async () => {
+        measured = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error("Run with the disposable PostgreSQL DB-contract harness");
@@ -48,7 +49,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             if (active) publicationsInTransaction.push("emitUpdate");
             return emit.apply(eventRouter, args);
         });
-        measured.$on("query", event => {
+        onDbClientQuery(measured, event => {
             if (capture) statements.push({ query: event.query, durationMs: event.duration });
         });
         const runs: Array<{ inventory: number; elapsedMs: number; statements: typeof statements }> = [];
@@ -118,7 +119,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: "{}" } });
         const statements: string[] = [];
         let capture = true;
-        measured.$on("query", event => { if (capture) statements.push(event.query); });
+        onDbClientQuery(measured, event => { if (capture) statements.push(event.query); });
         const transaction = db.$transaction;
         db.$transaction = new Proxy(transaction, { apply(target, receiver, args: unknown[]) {
             if (typeof args[0] !== "function") return Reflect.apply(target, receiver, args);

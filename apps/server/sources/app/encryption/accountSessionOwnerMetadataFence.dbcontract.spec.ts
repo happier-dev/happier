@@ -116,7 +116,7 @@ describe("Account Session owner-metadata fence database contract", () => {
             for (const mode of ["NO KEY UPDATE", "UPDATE"]) {
                 await expect(db.$transaction(peer => peer.$queryRawUnsafe(
                     `SELECT "id" FROM "Account" WHERE "id" = $1 FOR ${mode} NOWAIT`, account.id,
-                ))).rejects.toMatchObject({ meta: { code: "55P03" } });
+                ))).rejects.toMatchObject({ meta: { driverAdapterError: { cause: { originalCode: "55P03" } } } });
             }
         });
     });
@@ -294,7 +294,7 @@ describe("Account Session owner-metadata fence database contract", () => {
         const rejected = outcomes.filter(outcome => outcome.status === "rejected");
         expect(rejected).toHaveLength(1);
         expect(rejected[0].reason).toMatchObject({
-            code: "database_transaction_conflict_exhausted", cause: { meta: { code: "40P01" } },
+            code: "database_transaction_conflict_exhausted", cause: { meta: { driverAdapterError: { cause: { originalCode: "40P01" } } } },
         });
         expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } }))
             .toEqual({ seq: 1 });
@@ -325,7 +325,7 @@ describe("Account Session owner-metadata fence database contract", () => {
                 .toEqual({ encryptionMode: "plain" });
             await expect(db.$transaction(tx => tx.$queryRawUnsafe(
                 'SELECT "id" FROM "Account" WHERE "id" = $1 FOR UPDATE NOWAIT', account.id,
-            ))).rejects.toMatchObject({ meta: { code: "55P03" } });
+            ))).rejects.toMatchObject({ meta: { driverAdapterError: { cause: { originalCode: "55P03" } } } });
         } finally {
             release.resolve();
             for (const outcome of await holderOutcome) if (outcome.status === "rejected") throw outcome.reason;
@@ -346,7 +346,7 @@ describe("Account Session owner-metadata fence database contract", () => {
         const rejected = outcomes.filter(outcome => outcome.status === "rejected");
         expect(rejected).toHaveLength(1);
         expect(rejected[0].reason).toMatchObject({
-            code: "database_transaction_conflict_exhausted", cause: { meta: { code: "40P01" } },
+            code: "database_transaction_conflict_exhausted", cause: { meta: { driverAdapterError: { cause: { originalCode: "40P01" } } } },
         });
     });
 

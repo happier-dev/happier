@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { PrismaClient } from "../../generated/mysql-client/index.js";
 import { splitMigrationStatements } from "../../sources/migrations/missingMigrationReconciliation";
+import { createDbMaintenanceClient } from "../../sources/storage/prisma";
 
 // Never use DATABASE_URL: only the dedicated test boundary permits creating
 // and removing the isolated database used by this real-provider contract.
@@ -15,10 +15,10 @@ const migrations = join(import.meta.dirname, "../../prisma/mysql/migrations");
 describe("requester Machine AccessKey MySQL migration", () => {
     mysqlTest("preserves predecessor rows, tuple uniqueness and independent Account/Machine/Session references", async () => {
         const databaseName = `requester_access_key_${randomUUID().replaceAll("-", "")}`;
-        const admin = new PrismaClient({ datasourceUrl: testDatabaseUrl });
+        const admin = await createDbMaintenanceClient("mysql", testDatabaseUrl);
         const targetUrl = new URL(testDatabaseUrl!);
         targetUrl.pathname = `/${databaseName}`;
-        const database = new PrismaClient({ datasourceUrl: targetUrl.toString() });
+        const database = await createDbMaintenanceClient("mysql", targetUrl.toString());
         const execute = async (sql: string) => {
             for (const statement of splitMigrationStatements(sql)) await database.$executeRawUnsafe(statement);
         };

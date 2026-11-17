@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { Context } from '@/context';
@@ -8,6 +8,7 @@ import { acrossAccountCursorCommit } from '@/testkit/postgresAccountCursorConten
 import { eventRouter } from '@/app/events/connectionEventRouter';
 
 import { usernameRelease, usernameUpdate, UsernameTakenError } from './usernameUpdate';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 const provider = getDbProviderFromEnv(process.env, 'postgres');
 
@@ -48,8 +49,8 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Username claim
         const holder = await account(username);
         const statements: Prisma.QueryEvent[] = [];
         let releaseBarrier: (() => void) | undefined;
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => {
+        const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => {
             if (event.query.includes('"username_cost_barrier"')) releaseBarrier?.();
             else statements.push(event);
         });

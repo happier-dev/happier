@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient, type Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from "@happier-dev/protocol";
 import { encodePlainMachineStoredContent } from "@happier-dev/protocol/machines/machineStoredContent";
@@ -18,10 +17,12 @@ import { inTx, type Tx } from "@/storage/inTx";
 import { readCurrentSessionInputMachineTargetInTx } from "@/app/session/messages/sessionInputAdmission";
 import { SESSION_LIST_PAGE_MAX_LIMIT } from '@happier-dev/protocol/sessions/listing/query';
 import { PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, PLUGIN_COLLECTION_MUTATION_BATCH_MAX_ROWS_V1 } from '@happier-dev/protocol/plugins/data/collectionLimitsV1';
+import { createDbMaintenanceClient, type PrismaClientType } from "@/storage/prisma";
+import { recordDriverStatements, type DriverStatementEvent } from "@/testkit/driverStatements";
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("authenticated hot-read SQL costs", () => {
-    const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, "query">;
+    const statements: DriverStatementEvent[] = [];
+    let client: PrismaClientType;
     let app: ReturnType<typeof createAuthenticatedTestApp>;
     let originalTransaction: typeof db.$transaction;
     let originalAccountRead: typeof db.account.findUnique;
@@ -84,11 +85,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("a
         await db.accountPluginIntent.create({ data: { accountId, pluginId: ref.pluginId,
             desiredVersion: null, enabled: true, offlineUiHosting: "disabled", writableCollections: [ref], revision: 1,
         } });
-        client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-        client.$on("query", event => {
+        client = await createDbMaintenanceClient("postgres", undefined, { onDriverStatement: recordDriverStatements(event => {
             if (event.query.includes('"hot_read_cost_barrier"')) resolveQueryBarrier?.();
             else statements.push(event);
-        });
+        }) });
         await client.$connect();
         // Rebind only the real database transport, including Collection's final
         // root-client mode read. All authentication/admission/SQL stays real.

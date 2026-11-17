@@ -1,7 +1,7 @@
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { decodeBase64 } from 'privacy-kit';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { parseMachinePublishedMetadataV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
@@ -17,10 +17,11 @@ import {
     resolveMachineAccessInTx,
     resolveMachineAdmissionInTx,
 } from './machineAccess';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Machine bulk permission SQL (PostgreSQL)', () => {
     const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>;
+    let client: PrismaClientType;
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
@@ -28,8 +29,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         }
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
     });
     afterAll(async () => { await client?.$disconnect(); await db.$disconnect(); });

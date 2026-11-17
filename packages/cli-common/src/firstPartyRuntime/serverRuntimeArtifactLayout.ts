@@ -20,29 +20,8 @@ export function resolveServerRuntimeExecutableNames(platform: NodeJS.Platform = 
     };
 }
 
-export function resolveServerRuntimePrismaEngineFileName(params: Readonly<{
-    platform?: NodeJS.Platform | 'windows' | string;
-    arch?: string;
-}> = {}): string {
-    const platformRaw = String(params.platform ?? process.platform).trim().toLowerCase();
-    const platform = platformRaw === 'win32' ? 'windows' : platformRaw;
-    const arch = String(params.arch ?? process.arch).trim().toLowerCase();
-    const target = `${platform}-${arch}`;
-    switch (target) {
-        case 'darwin-arm64':
-            return 'libquery_engine-darwin-arm64.dylib.node';
-        case 'darwin-x64':
-            return 'libquery_engine-darwin.dylib.node';
-        case 'linux-arm64':
-            return 'libquery_engine-linux-arm64-openssl-3.0.x.so.node';
-        case 'linux-x64':
-            return 'libquery_engine-debian-openssl-3.0.x.so.node';
-        case 'windows-x64':
-            return 'query_engine-windows.dll.node';
-        default:
-            throw new Error(`[server-runtime] unsupported Prisma binary target: ${target}`);
-    }
-}
+/** The embedded WASM query compiler every generated Prisma 7 client loads beside its `index.js`. */
+export const SERVER_PRISMA_CLIENT_QUERY_COMPILER_FILE = 'query_compiler_fast_bg.wasm-base64.js';
 
 export function resolveServerRuntimePayloadRootFromBinaryPath(serverBinaryPath: string): string {
     const binaryPath = String(serverBinaryPath ?? '').trim();

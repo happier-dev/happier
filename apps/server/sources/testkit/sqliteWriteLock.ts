@@ -1,21 +1,24 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { fileURLToPath } from "node:url";
 
-/** A separate Prisma process holds SQLite's real cross-process writer lock. */
+import { parseSqliteDatabaseUrl } from "@/storage/sqliteDriverAdapter";
+
+/** A separate process holds SQLite's real cross-process writer lock on the DATABASE_URL file. */
 export async function holdSqliteWriteLock(): Promise<Readonly<{ release: () => Promise<void> }>> {
-    const clientPath = fileURLToPath(new URL("../../generated/sqlite-client/index.js", import.meta.url));
+    const databaseUrl = process.env.DATABASE_URL;
+    if (!databaseUrl) throw new Error("DATABASE_URL is required to hold the SQLite write lock.");
+    const { path } = parseSqliteDatabaseUrl(databaseUrl);
     const child = spawn(process.execPath, ["--input-type=commonjs", "-e", `
-        const { PrismaClient } = require(process.argv[1]);
-        const client = new PrismaClient();
+        const { DatabaseSync } = require("node:sqlite");
+        const database = new DatabaseSync(process.argv[1]);
         (async () => {
-            await client.$executeRawUnsafe("BEGIN IMMEDIATE;");
+            database.exec("BEGIN IMMEDIATE;");
             process.send("locked");
             await new Promise(resolve => process.once("message", resolve));
-            await client.$executeRawUnsafe("ROLLBACK;");
+            database.exec("ROLLBACK;");
         })().catch(error => { console.error(error); process.exitCode = 1; })
-          .finally(async () => { await client.$disconnect(); process.disconnect(); });
-    `, clientPath], { env: process.env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+          .finally(() => { database.close(); process.disconnect(); });
+    `, path], { env: process.env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
     let stderr = "";
     // stderr is always piped by the explicit stdio configuration above.
     child.stderr!.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });

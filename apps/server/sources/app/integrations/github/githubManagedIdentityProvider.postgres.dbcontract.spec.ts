@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { IdentityProviderInstanceView } from "@/app/auth/providers/managed/identityProviderInstanceLifecycle";
@@ -17,10 +17,11 @@ import {
     resolveManagedGitHubIdentityProviderRuntimeMetadataBatchInTx,
 } from "./githubManagedIdentityProvider";
 import { resolveStoredGitHubDirectoryReadinessBatch } from "./githubManagedDirectory";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("managed GitHub batch runtime PostgreSQL", () => {
     const statements: Prisma.QueryEvent[] = [];
-    let measuredClient: PrismaClient<Prisma.PrismaClientOptions, "query">;
+    let measuredClient: PrismaClientType;
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
@@ -31,8 +32,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("m
         vi.stubEnv("HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED", "1");
         initDbPostgres();
         await db.$connect();
-        measuredClient = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-        measuredClient.$on("query", event => statements.push(event));
+        measuredClient = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(measuredClient, event => statements.push(event));
         await measuredClient.$connect();
         await encryption.initEncrypt();
     });

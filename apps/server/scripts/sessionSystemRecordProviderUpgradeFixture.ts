@@ -11,7 +11,8 @@ import {
 import { deriveSessionSystemRecordAddressKeys } from "../sources/app/session/systemRecords/sessionSystemRecordAddressKeys";
 import { initializeSessionSystemRecordsProtocolV1Activation } from "../sources/app/session/systemRecords/sessionSystemRecordProtocolContract";
 import { createDbMaintenanceClient, type PrismaClientType } from "../sources/storage/db";
-import { resolveServerWorkspaceRoot, runPrismaCli } from "./prismaCli";
+import { resolveServerWorkspaceRoot } from "./prismaCli";
+import { runPrismaMigrateCli } from "./prismaMigrateCli";
 import { SESSION_SYSTEM_RECORD_PREVIEW_PROVENANCE } from "./sessionSystemRecordPreviewProvenance";
 
 type Provider = "postgres" | "mysql";
@@ -245,9 +246,9 @@ async function seed(params: Readonly<{ provider: Provider; databaseUrl: string; 
         await database.$connect();
         await assertEmptyFixtureDatabase(database, params.provider);
         await database.$disconnect();
-        await runPrismaCli({
+        await runPrismaMigrateCli({
             serverRoot: params.serverRoot,
-            args: ["migrate", "deploy", "--schema", staged.schemaPath],
+            schemaPath: staged.schemaPath, args: ['deploy'],
             env: {
                 ...process.env,
                 DATABASE_URL: params.databaseUrl,

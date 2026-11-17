@@ -1,14 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-const mockPrismaMetrics = vi.fn();
 const mockQueryRaw = vi.fn();
 const mockRegisterMetrics = vi.fn();
 const mockDbReadinessChecksInc = vi.fn();
 
 vi.mock("@/storage/db", () => ({
-    db: {
-        $metrics: { prometheus: mockPrismaMetrics },
-    },
     probeDbReadiness: () => mockQueryRaw(),
 }));
 

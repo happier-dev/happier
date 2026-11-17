@@ -4,8 +4,8 @@ import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { PrismaClient } from '../../generated/mysql-client/index.js';
 import { splitMigrationStatements } from '../../sources/migrations/missingMigrationReconciliation';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 // A dedicated contract runner owns this boundary; never select retained data
 // from the ordinary DATABASE_URL as a fallback.
@@ -14,12 +14,12 @@ const testDatabaseUrl = process.env.HAPPIER_TEST_MYSQL_DATABASE_URL?.trim();
 describe('Discussion MySQL migration', () => {
     (testDatabaseUrl ? it : it.skip)('preserves plain and encrypted history without inventing legacy keys', async () => {
         const name = `discussion_${randomUUID().replaceAll('-', '')}`;
-        const admin = new PrismaClient({ datasourceUrl: testDatabaseUrl });
+        const admin = await createDbMaintenanceClient('mysql', testDatabaseUrl);
         const target = new URL(testDatabaseUrl!);
         target.pathname = `/${name}`;
         // Match the migration executor's single connection at this real boundary.
         target.searchParams.set('connection_limit', '1');
-        const database = new PrismaClient({ datasourceUrl: target.toString() });
+        const database = await createDbMaintenanceClient('mysql', target.toString());
         const execute = async (sql: string) => {
             for (const statement of splitMigrationStatements(sql)) await database.$executeRawUnsafe(statement);
         };

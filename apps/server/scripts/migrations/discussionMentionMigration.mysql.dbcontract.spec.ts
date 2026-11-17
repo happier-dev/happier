@@ -2,19 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { PrismaClient } from '../../generated/mysql-client/index.js';
 import { splitMigrationStatements } from '../../sources/migrations/missingMigrationReconciliation';
 import { mentionMigrationId, mentionMigrationFixtures, migratedMentionParts } from './discussionMentionMigration.testkit';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 // The disposable fixture runner is the only database authority; no retained URL fallback.
 const testDatabaseUrl = process.env.HAPPIER_TEST_MYSQL_DATABASE_URL?.trim();
 describe('Plain Discussion Account mention forward migration on MySQL', () => {
     (testDatabaseUrl ? it : it.skip)('preserves ordered content, opaque neighbors and retry identity', async () => {
         const name = `discussion_mentions_${randomUUID().replaceAll('-', '')}`;
-        const admin = new PrismaClient({ datasourceUrl: testDatabaseUrl });
+        const admin = await createDbMaintenanceClient('mysql', testDatabaseUrl);
         const target = new URL(testDatabaseUrl!);
         target.pathname = `/${name}`;
-        const database = new PrismaClient({ datasourceUrl: target.toString() });
+        const database = await createDbMaintenanceClient('mysql', target.toString());
         let created = false;
         try {
             await admin.$executeRawUnsafe(`CREATE DATABASE \`${name}\``);

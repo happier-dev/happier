@@ -1,23 +1,23 @@
 import { afterAll, beforeAll, describe } from 'vitest';
 import type { Prisma } from '@prisma/client';
-import { PrismaClient } from '../../../../generated/sqlite-client';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { defineResourceUsagePerformanceContract } from './resourceUsage.performance.testkit';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
-function createQueryClient() {
-    return new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+async function createQueryClient() {
+    return await createDbMaintenanceClient('sqlite', undefined, { log: [{ emit: 'event', level: 'query' }] });
 }
 
 describe('Team usage page cost (SQLite)', () => {
     const queries: Prisma.QueryEvent[] = [];
     let harness: LightSqliteHarness;
-    let client: ReturnType<typeof createQueryClient>;
+    let client: Awaited<ReturnType<typeof createQueryClient>>;
     let originalTransaction: typeof db.$transaction;
     beforeAll(async () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: 'teamperf-usage-' });
-        client = createQueryClient();
-        client.$on('query', event => queries.push(event));
+        client = await createQueryClient();
+        onDbClientQuery(client, event => queries.push(event));
         await client.$connect();
         originalTransaction = db.$transaction;
         const traced = client;

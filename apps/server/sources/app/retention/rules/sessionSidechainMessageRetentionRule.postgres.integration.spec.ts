@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import type { SidechainRetentionCursor } from './sessionSidechainMessageRetentionRule';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 // Replace only the persistence boundary with a real, isolated PostgreSQL client.
-const boundary = vi.hoisted(() => ({ client: null as PrismaClient | null }));
+const boundary = vi.hoisted(() => ({ client: null as PrismaClientType | null }));
 vi.mock('@/storage/db', () => ({ db: new Proxy({}, {
     get: (_target, key) => {
         const client = boundary.client!;
@@ -19,13 +19,11 @@ describe.skipIf(!databaseUrl)('sidechain retention PostgreSQL walk cost', () => 
     const queries: Array<{ query: string; params: string }> = [];
     const url = new URL(databaseUrl ?? 'postgresql://localhost/unused');
     url.searchParams.set('schema', schema);
-    const client = new PrismaClient({
-        datasources: { db: { url: url.toString() } },
-        log: [{ emit: 'event', level: 'query' }],
-    });
-    client.$on('query', event => queries.push(event));
+    let client: PrismaClientType;
 
     beforeAll(async () => {
+        client = await createDbMaintenanceClient('postgres', url.toString(), { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => queries.push(event));
         boundary.client = client;
         await client.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
         await client.$executeRawUnsafe(`CREATE TABLE "${schema}"."Session" (id text PRIMARY KEY)`);

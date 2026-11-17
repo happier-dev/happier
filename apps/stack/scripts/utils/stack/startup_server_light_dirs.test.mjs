@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 
+import { writeFakeServerDatabaseOwner } from '../../testkit/core/server_database_fixture.mjs';
 import { ensureServerLightSchemaReady } from './startup.mjs';
 
 async function writeJson(path, obj) {
@@ -41,28 +42,15 @@ export class PGLiteSocketServer {
 }
 `,
     },
-    {
-      path: join(serverDir, 'node_modules', '@prisma', 'client'),
-      name: '@prisma/client',
-      body: `
-export class PrismaClient {
-  constructor() { this.account = { count: async () => 0 }; }
-  async $disconnect() {}
-}
-`,
-    },
   ];
 
   for (const pkg of packages) {
     await writeEsmPkg({ dir: pkg.path, name: pkg.name, body: pkg.body });
   }
-  const sqliteClientDir = join(serverDir, 'generated', 'sqlite-client');
-  await mkdir(sqliteClientDir, { recursive: true });
-  await writeFile(
-    join(sqliteClientDir, 'index.js'),
-    'export class PrismaClient { constructor() { this.account = { count: async () => 0 }; } async $disconnect() {} }\n',
-    'utf-8',
-  );
+  await writeFakeServerDatabaseOwner({
+    serverDir,
+    createClientSource: '  return { account: { count: async () => 0 }, async $disconnect() {} };',
+  });
 }
 
 async function writePnpmVersionShim(binDir) {

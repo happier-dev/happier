@@ -4,12 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { PrismaClient as PostgresPrismaClient } from "@prisma/client";
 import { describe, expect, it } from "vitest";
 
-import { PrismaClient as MysqlPrismaClient } from "../../generated/mysql-client/index.js";
 import { applySqliteMigrations } from "../prismaMigrations";
-import { runPrismaCli } from "../prismaCli";
+import { runPrismaMigrateCli } from "../prismaMigrateCli";
+import { createDbMaintenanceClient } from "../../sources/storage/prisma";
 
 type Provider = "sqlite" | "postgres" | "mysql";
 type Row = Record<string, unknown>;
@@ -147,14 +146,13 @@ describe("Managed Machine nullable controller pair FINAL migration", () => {
         (url ? it : it.skip)(`preserves retained rows and enforces the pair through real ${provider} deploys`, async () => {
             const stage = await mkdtemp(join(tmpdir(), `happier-managed-controller-${provider}-`));
             const id = `controller_${randomUUID().replaceAll("-", "")}`;
-            const Client = provider === "postgres" ? PostgresPrismaClient : MysqlPrismaClient;
-            const admin = new Client({ datasourceUrl: url });
+            const admin = await createDbMaintenanceClient(provider, url);
             const scoped = new URL(url!);
             if (provider === "postgres") scoped.searchParams.set("schema", id);
             else scoped.pathname = `/${id}`;
-            const client = new Client({ datasourceUrl: scoped.toString() });
+            const client = await createDbMaintenanceClient(provider, scoped.toString());
             const db: Database = { execute: (sql) => client.$executeRawUnsafe(sql), query: (sql) => client.$queryRawUnsafe<Row[]>(sql) };
-            const deploy = () => runPrismaCli({ serverRoot, args: ["migrate", "deploy", "--schema", join(stage, "schema.prisma")],
+            const deploy = () => runPrismaMigrateCli({ serverRoot, schemaPath: join(stage, "schema.prisma"), args: ['deploy'],
                 env: { ...process.env, DATABASE_URL: scoped.toString(), HAPPIER_DB_PROVIDER: provider }, quiet: true });
             let created = false;
             try {

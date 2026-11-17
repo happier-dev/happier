@@ -4,8 +4,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { PrismaClient } from '../../generated/mysql-client/index.js';
 import { splitMigrationStatements } from '../../sources/migrations/missingMigrationReconciliation';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 // Only a dedicated test boundary may create this isolated database. Never fall
 // back to DATABASE_URL, which can identify retained development/user data.
@@ -29,10 +29,10 @@ const migrationSql = (phase: 'expand' | 'contract') => readFile(
 describe('canonical Session envelope MySQL migration', () => {
     mysqlTest('preserves binary legacy data and fails closed on conflicting owner/self-share bytes', async () => {
         const databaseName = `session_envelope_${randomUUID().replaceAll('-', '')}`;
-        const admin = new PrismaClient({ datasourceUrl: testDatabaseUrl });
+        const admin = await createDbMaintenanceClient('mysql', testDatabaseUrl);
         const targetUrl = new URL(testDatabaseUrl!);
         targetUrl.pathname = `/${databaseName}`;
-        const database = new PrismaClient({ datasourceUrl: targetUrl.toString() });
+        const database = await createDbMaintenanceClient('mysql', targetUrl.toString());
         const execute = async (sql: string) => {
             for (const statement of splitMigrationStatements(sql)) {
                 await database.$executeRawUnsafe(statement);

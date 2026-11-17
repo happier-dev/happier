@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { RunnerCredentialSelectionBindingV1 } from "@happier-dev/protocol/ephemeralRunner/review";
 
 import { createQualifiedConnectedAccountGroupDigest, createQualifiedConnectedAccountServiceDigest } from "@/app/api/routes/connect/qualifiedConnectedAccounts/identity";
 import { readRunnerBrokerReadinessProjectionInTx } from "./runnerBrokerReadinessAuthorization";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Runner broker admitted Machine read cost (PostgreSQL)", () => {
-    const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+    let client: PrismaClientType;
     let machineSelects = 0;
-    client.$on("query", event => { if (/^\s*SELECT\b/i.test(event.query) && /FROM "public"\."Machine"(?:\s|$)/.test(event.query)) machineSelects++; });
     beforeAll(async () => {
+        client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(client, event => { if (/^\s*SELECT\b/i.test(event.query) && /FROM "public"\."Machine"(?:\s|$)/.test(event.query)) machineSelects++; });
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error("Run only through the disposable PostgreSQL DB-contract harness");
         }

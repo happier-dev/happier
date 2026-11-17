@@ -202,7 +202,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                                         for (const intent of ['NO KEY UPDATE', 'UPDATE']) {
                                             await expect(db.$queryRawUnsafe(
                                                 `SELECT "id" FROM "Account" WHERE "id" = $1 FOR ${intent} NOWAIT`, custodian.id,
-                                            )).rejects.toMatchObject({ code: 'P2010', meta: { code: '55P03' } });
+                                            )).rejects.toMatchObject({ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '55P03' } } } });
                                         }
                                         checked = true;
                                     }
@@ -372,7 +372,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                         if (admission && typeof admission === 'object' && 'ok' in admission && admission.ok === true) {
                             await expect(db.$queryRawUnsafe(
                                 'SELECT "id" FROM "Account" WHERE "id" = $1 FOR NO KEY UPDATE NOWAIT', requester.id,
-                            )).rejects.toMatchObject({ code: 'P2010', meta: { code: '55P03' } });
+                            )).rejects.toMatchObject({ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '55P03' } } } });
                             fencedFinalAdmissions += 1;
                         }
                     }
@@ -463,7 +463,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Granted broker 
                                                 for (const intent of ['NO KEY UPDATE', 'UPDATE']) {
                                                     await expect(db.$queryRawUnsafe(
                                                         `SELECT "id" FROM "Account" WHERE "id" = $1 FOR ${intent} NOWAIT`, custodian.id,
-                                                    )).rejects.toMatchObject({ code: 'P2010', meta: { code: '55P03' } });
+                                                    )).rejects.toMatchObject({ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '55P03' } } } });
                                                 }
                                                 checked = true;
                                                 custodianFences += 1;

@@ -8,6 +8,7 @@ export * from "./rpcMetrics";
 export * from "./presenceMetrics";
 export * from "./runtimeMetrics";
 export * from "./databaseMetrics";
+export * from "./databaseDriverMetrics";
 export * from "./sessionWriteMetrics";
 export * from "./sessionBindingMetrics";
 export * from "./usageMetrics";

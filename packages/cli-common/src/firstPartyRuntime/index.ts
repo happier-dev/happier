@@ -204,7 +204,7 @@ export {
   relocateServerRuntimeArtifactClosure,
   resolveManagedServerRuntimePaths,
   resolveServerRuntimeExecutableNames,
-  resolveServerRuntimePrismaEngineFileName,
+  SERVER_PRISMA_CLIENT_QUERY_COMPILER_FILE,
   resolveServerRuntimePayloadRootFromBinaryPath,
 } from './serverRuntimeArtifactLayout.js';
 export { readSqliteMigrationCatalog } from './sqliteMigrationCatalog.js';

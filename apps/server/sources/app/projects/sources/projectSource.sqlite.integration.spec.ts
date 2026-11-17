@@ -10,12 +10,11 @@ import tweetnacl from 'tweetnacl';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { renderPrismaCompatibleSqliteDatabaseUrl } from '@happier-dev/cli-common/firstPartyRuntime/server';
-import { PrismaClient as SqlitePrismaClient } from '../../../../generated/sqlite-client/index.js';
 import { applySqliteMigrations } from '../../../../scripts/prismaMigrations';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
-import { db } from '@/storage/db';
+import { createDbMaintenanceClient, db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -42,7 +41,7 @@ describe('Source catalog real SQLite owner', () => {
         for (const entry of await readdir(migrationsDir, { withFileTypes: true })) {
             if (entry.isDirectory() && entry.name !== migrationName && entry.name !== tombstoneMigration) await cp(join(migrationsDir, entry.name), join(previousMigrations, entry.name), { recursive: true });
         }
-        const client = new SqlitePrismaClient({ datasources: { db: { url: renderPrismaCompatibleSqliteDatabaseUrl({ dbPath: databasePath, platform: process.platform }) } } });
+        const client = await createDbMaintenanceClient('sqlite', renderPrismaCompatibleSqliteDatabaseUrl({ dbPath: databasePath, platform: process.platform }));
         try {
             await applySqliteMigrations({ databasePath, migrationsDir: previousMigrations });
             const creator = await client.account.create({ data: { encryptionMode: 'plain' } });

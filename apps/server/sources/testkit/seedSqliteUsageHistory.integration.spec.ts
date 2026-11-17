@@ -1,22 +1,17 @@
-import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 import { renderPrismaCompatibleSqliteDatabaseUrl } from '@happier-dev/cli-common/firstPartyRuntime/server';
 import { createUsageSnapshot } from '@/app/api/routes/connect/providerAccountUsageTestkit';
 import { createLightSqliteHarness } from './lightSqliteHarness';
 import { seedSqliteUsageHistory, type SqliteUsageHistoryRow } from './seedSqliteUsageHistory';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
-const require = createRequire(import.meta.url);
-// Generated SQLite is the real database boundary and shares the schema/client contract.
-const { PrismaClient } = require('../../generated/sqlite-client/index.js') as typeof import('@prisma/client');
 
 describe('SQLite retained usage fixtures', () => {
     it('batches at the SQLite bind boundary and preserves every retained fact', async () => {
         const harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-usage-fixture-batches-' });
-        const client = new PrismaClient({
-            errorFormat: 'minimal',
-            datasources: { db: { url: renderPrismaCompatibleSqliteDatabaseUrl({ dbPath: harness.dbPath, platform: process.platform }) } },
-            log: [{ emit: 'event', level: 'query' }],
-        });
+        const client = await createDbMaintenanceClient('sqlite',
+            renderPrismaCompatibleSqliteDatabaseUrl({ dbPath: harness.dbPath, platform: process.platform }),
+            { log: [{ emit: 'event', level: 'query' }] });
         try {
             const options = await client.$queryRaw<Array<{ compile_options: string }>>`PRAGMA compile_options`;
             const limit = Number(options.find(row => row.compile_options.startsWith('MAX_VARIABLE_NUMBER='))?.compile_options.split('=')[1]);
@@ -32,7 +27,7 @@ describe('SQLite retained usage fixtures', () => {
             } });
             let inserts = 0;
             let bindings = 0;
-            client.$on('query', event => {
+            onDbClientQuery(client, event => {
                 const query = event.query.trimStart();
                 if (!query.startsWith('INSERT') || !query.includes('ProviderAccountUsageHistory')) return;
                 inserts++;

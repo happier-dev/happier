@@ -25,6 +25,7 @@ import { observeCreateSessionMessageStage } from "@/app/monitoring/metrics/sessi
 import { db } from "@/storage/db";
 import { afterTx, inReadSnapshot, inTx, transactionResult, type TransactionResult, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv, isPrismaErrorCode, prismaRuntime } from "@/storage/prisma";
+import { readPrismaUniqueConstraint } from "@/storage/prismaErrors";
 import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import type { SessionTranscriptSurfaceItemReferenceInputV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { log, warn } from "@/utils/logging/log";
@@ -901,45 +902,23 @@ export async function loadSessionOwnerMutationContextInTx(tx: Tx, params: { acto
     return loadSessionMutationContextInTx(tx, { actorUserId: params.actorUserId, sessionId: params.sessionId, kind: "owner" });
 }
 
-function isSessionMessageLocalIdConstraintTarget(target: unknown): boolean {
-    if (Array.isArray(target)) {
-        return target.includes("localId") && target.includes("sessionId");
-    }
-    if (typeof target === "string") {
-        return target.includes("localId") && target.includes("sessionId");
-    }
-    return true;
+/** The violated unique constraint as names: its fields (SQLite) or its index name (PostgreSQL, MySQL). */
+function readUniqueConstraintNames(error: unknown): string[] {
+    const constraint = readPrismaUniqueConstraint(error);
+    return constraint?.index !== undefined ? [constraint.index] : [...(constraint?.fields ?? [])];
 }
 
-function readUnknownProperty(value: unknown, key: string): unknown {
-    if (value === null || (typeof value !== "object" && typeof value !== "function")) {
-        return undefined;
-    }
-    return (value as Record<string, unknown>)[key];
-}
-
-function readPrismaErrorMetadata(error: unknown): { target?: unknown; message?: unknown } {
-    const meta = readUnknownProperty(error, "meta");
-    return {
-        target: readUnknownProperty(meta, "target"),
-        message: readUnknownProperty(meta, "message"),
-    };
-}
-
+/** A P2002 naming SessionMessage (sessionId, localId). A violation that names no constraint
+ * stays a candidate; the create path's winner comparison adjudicates it from current rows. */
 function isSessionMessageLocalIdConflict(error: unknown): boolean {
-    const { target } = readPrismaErrorMetadata(error);
-    return isPrismaErrorCode(error, "P2002")
-        && isSessionMessageLocalIdConstraintTarget(target);
+    if (!isPrismaErrorCode(error, "P2002")) return false;
+    const names = readUniqueConstraintNames(error).join(",");
+    return names === "" || (names.includes("localId") && names.includes("sessionId"));
 }
 
 function isDuplicateSessionTurnMutationRace(error: unknown): boolean {
     if (!isPrismaErrorCode(error, "P2002")) return false;
-    const { target } = readPrismaErrorMetadata(error);
-    const targetFields = Array.isArray(target)
-        ? target.filter((value): value is string => typeof value === "string")
-        : typeof target === "string"
-            ? [target]
-            : [];
+    const targetFields = readUniqueConstraintNames(error);
     if (targetFields.length === 0) return true;
     const joined = targetFields.join(",");
     return (
@@ -1656,17 +1635,6 @@ async function createSessionMessageAttempt(
             return await createSessionMessageAttempt(params, false);
         }
         if (localId && isSessionMessageLocalIdConflict(e)) {
-            const metadata = readPrismaErrorMetadata(e);
-            const target = metadata.target ?? metadata.message;
-            if (!isSessionMessageLocalIdConstraintTarget(metadata.target) && !String(target ?? "").includes("SessionMessage_sessionId_localId_key")) {
-                log({ module: "session-write", level: "error", sessionId, target }, "Unexpected P2002 while creating session message");
-                observeCreateSessionMessageStage({
-                    stage: "total",
-                    durationMs: Date.now() - totalStartedAt,
-                    result: "error",
-                });
-                return { ok: false, error: "internal" };
-            }
             if (hasTrustedProvenance) {
                 try {
                     return await inTx(async (tx): Promise<SessionWriteInTxResult<CreateSessionMessageResult>> => {

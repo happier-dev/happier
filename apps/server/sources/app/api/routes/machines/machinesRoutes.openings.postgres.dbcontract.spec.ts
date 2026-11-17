@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
@@ -15,11 +15,12 @@ import { inReadSnapshot } from '@/storage/inTx';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { machinesRoutes } from './machinesRoutes';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Machine opening acquisition SQL (PostgreSQL)', () => {
     const statements: Prisma.QueryEvent[] = [];
     const selectedContent: { rows: number; bytes: number }[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>;
+    let client: PrismaClientType;
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
@@ -27,8 +28,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         }
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
     });
     afterAll(async () => { await client?.$disconnect(); await shutdownDbClient(); });

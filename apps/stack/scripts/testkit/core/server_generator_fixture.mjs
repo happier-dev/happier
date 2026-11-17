@@ -16,7 +16,7 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const server = join(dirname(fileURLToPath(import.meta.url)), '..');
-for (const [schema, client] of [['prisma/schema.prisma', '../../node_modules/.prisma/client'],
+for (const [schema, client] of [['prisma/schema.prisma', 'node_modules/.prisma/client'],
   ['prisma/sqlite/schema.prisma', 'generated/sqlite-client'], ['prisma/mysql/schema.prisma', 'generated/mysql-client']]) {
   const source = await readFile(join(server, schema));
   const fields = [...source.toString().matchAll(/^\\s+(\\w+)\\s+\\w+/gm)].map(match => match[1]);
@@ -57,7 +57,7 @@ export async function generateServerClients(repoDir) {
 /** Field names each generated client was generated with. */
 export async function readGeneratedClientFields(repoDir) {
   const fields = {};
-  for (const [name, client] of [['default', 'node_modules/.prisma/client'], ['sqlite', 'apps/server/generated/sqlite-client'],
+  for (const [name, client] of [['default', 'apps/server/node_modules/.prisma/client'], ['sqlite', 'apps/server/generated/sqlite-client'],
     ['mysql', 'apps/server/generated/mysql-client']]) {
     const text = await readFile(join(repoDir, client, 'index.js'), 'utf8');
     fields[name] = JSON.parse(text.slice(text.indexOf('=') + 1, text.lastIndexOf(';')));

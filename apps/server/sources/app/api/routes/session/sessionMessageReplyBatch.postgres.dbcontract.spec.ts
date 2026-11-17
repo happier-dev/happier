@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerSessionMessageRoutes } from './registerSessionMessageRoutes';
-import { PrismaClient } from '@prisma/client';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { readSessionMessageRepliesInTx, readSessionMessageReplyInTx,
     listSessionMessageRepliesPendingForMachineInTx, listSessionMessageRepliesPendingInTx } from '@/app/session/messages/sessionMessageReply';
@@ -11,6 +10,7 @@ import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { decodeBase64 } from 'privacy-kit';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('exact reply demand on disposable PostgreSQL', () => {
     beforeAll(async () => {
@@ -22,9 +22,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('e
     it.each(['session', 'machine'] as const)('%s recovery acquires a whole page once and preserves denial, revocation and exact cursors', async kind => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const reader = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+        const reader = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
         const queries: string[] = [];
-        reader.$on('query', event => { if (/^SELECT\b/.test(event.query)) queries.push(event.query); });
+        onDbClientQuery(reader, event => { if (/^SELECT\b/.test(event.query)) queries.push(event.query); });
         try {
             const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
                 installationId: crypto.randomUUID(), metadata: encodePlainMachineStoredContent({}),
@@ -116,9 +116,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('e
 
     it('keeps original acquisition SQL proportional to bound chunks rather than a thousand keys', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const reader = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+        const reader = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
         const originalReads: string[] = [];
-        reader.$on('query', event => {
+        onDbClientQuery(reader, event => {
             if (/^SELECT\b/.test(event.query) && /FROM "public"\."Session(?:Pending)?Message"/.test(event.query)) originalReads.push(event.query);
         });
         try {

@@ -1,14 +1,15 @@
-import { PrismaClient, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { listHomeManagedIdentityProviders } from "@/app/home/governance/homeManagedIdentityProviders";
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from "@/storage/db";
 import { listExternalGroupBindingsForActor } from "../directory/externalGroupBindingAdministration";
 import { preflightTeamIdentityConnectionRemovalForActor } from "./teamIdentityConnectionAdministration";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("Team identity administration admission SQL cost (PostgreSQL)", () => {
     const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, "query"> | undefined;
+    let client: PrismaClientType | undefined;
 
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
@@ -20,8 +21,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
         const version = await db.$queryRaw<Array<{ server_version: string }>>`SHOW server_version`;
         expect(version[0]?.server_version).toMatch(/^17\./);
         console.info("TEAM_IDENTITY_ADMISSION_POSTGRES_VERSION", version[0]?.server_version);
-        client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-        client.$on("query", event => statements.push(event));
+        client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
         vi.stubEnv("HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__ENABLED", "1");
         await db.homeGovernancePolicy.create({ data: {

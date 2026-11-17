@@ -116,18 +116,6 @@ export async function isFullRuntimeMigrationApplied({
     }
 }
 
-function resolveQueryEngineFileName(platform: NodeJS.Platform, arch: string): string {
-    const targetKey = `${platform}-${arch}`;
-    switch (targetKey) {
-        case 'linux-x64': return 'libquery_engine-debian-openssl-3.0.x.so.node';
-        case 'linux-arm64': return 'libquery_engine-linux-arm64-openssl-3.0.x.so.node';
-        case 'darwin-x64': return 'libquery_engine-darwin.dylib.node';
-        case 'darwin-arm64': return 'libquery_engine-darwin-arm64.dylib.node';
-        case 'win32-x64': return 'query_engine-windows.dll.node';
-        default: throw new Error(`[happier-server-migrate] unsupported runtime target: ${targetKey}`);
-    }
-}
-
 async function requirePath(path: string, kind: 'file' | 'directory'): Promise<void> {
     const info = await stat(path).catch(() => null);
     const valid = kind === 'file' ? info?.isFile() : info?.isDirectory();
@@ -174,10 +162,6 @@ export async function runFullRuntimeMigration({
     const runnerPath = join(artifactRoot, 'runtime', isWindowsArtifact ? 'prisma-migrate.exe' : 'prisma-migrate');
     const schemaEnginePath = join(artifactRoot, 'runtime', isWindowsArtifact ? 'schema-engine.exe' : 'schema-engine');
     const schemaWasmPath = join(artifactRoot, 'runtime', 'prisma_schema_build_bg.wasm');
-    const queryEngineFileName = resolveQueryEngineFileName(process.platform, process.arch);
-    const queryEnginePath = provider === 'mysql'
-        ? join(artifactRoot, 'generated', 'mysql-client', queryEngineFileName)
-        : join(artifactRoot, 'node_modules', '.prisma', 'client', queryEngineFileName);
     const schemaPath = provider === 'mysql'
         ? join(artifactRoot, 'prisma', 'mysql', 'schema.prisma')
         : join(artifactRoot, 'prisma', 'schema.prisma');
@@ -195,7 +179,6 @@ export async function runFullRuntimeMigration({
         requirePath(runnerPath, 'file'),
         requirePath(schemaEnginePath, 'file'),
         requirePath(schemaWasmPath, 'file'),
-        requirePath(queryEnginePath, 'file'),
     ]);
     const irreversibleMigrationPresence = await Promise.all(RELAY_RUNTIME_IRREVERSIBLE_MIGRATIONS.map(
         ({ name }) => stat(join(migrationRoot, name)).then((value) => value.isDirectory()).catch(() => false),
@@ -212,7 +195,6 @@ export async function runFullRuntimeMigration({
                 DATABASE_URL: databaseUrl,
                 HAPPIER_DB_PROVIDER: provider,
                 PRISMA_SCHEMA_ENGINE_BINARY: schemaEnginePath,
-                PRISMA_QUERY_ENGINE_LIBRARY: queryEnginePath,
             },
             stdio: 'inherit',
         });

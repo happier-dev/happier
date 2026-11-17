@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PrismaClient } from '../../../generated/sqlite-client';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import type { StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { decodeBase64 } from 'privacy-kit';
@@ -22,6 +21,7 @@ import { encodeDiscussionListCursorV1 } from './pagination';
 import { setDiscussionReadCursor } from './readState';
 import type { DiscussionDocSource } from './docPassages';
 import { discussionFollowPublicationCostContracts } from './discussionFollowCosts.testkit';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 const authentication = createPresentUserSessionAccessAuthentication();
 const body = (text: string) => ({ t: 'plain', v: { v: 1, parts: [{ t: 'text', text }] } } satisfies StrictSessionStoredMessageContentEnvelope);
@@ -45,8 +45,8 @@ describe('Discussion owner cost contracts (SQLite; not PostgreSQL lock evidence)
         const input = { authentication, actorAccountId: owner.id, discussionId: created.value.discussion.id };
         const request = { localId: randomUUID(), content: body('Second'), mentionedAccountIds: [] };
         const statements: string[] = [];
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event.query));
+        const client = await createDbMaintenanceClient('sqlite', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event.query));
         await client.$connect();
         const original = db.$transaction;
         // Observe the native DB transport; every domain/transaction/publication owner stays real.

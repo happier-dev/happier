@@ -67,12 +67,15 @@ async function validateRuntimeServerMigration(serverLaunchSpec) {
 
 export async function runServerRuntimeMigration({
   serverLaunchSpec,
+  /** The server source checkout: it opens a shared Postgres source's ledger, which the payload cannot. */
+  sourceServerDir,
   env,
   children,
   isCancellationRequested,
   spawnProcImpl = spawnProc,
 }) {
-  const shared = await assertSharedDatabaseMigrationsApplied({ serverDir: serverLaunchSpec?.serverDir, env });
+  const shared = await assertSharedDatabaseMigrationsApplied({ serverDir: serverLaunchSpec?.serverDir,
+    databaseOwnerDir: sourceServerDir, env });
   // Shared consumers can only inspect the ledger, regardless of a stale launch spec.
   if (shared) return;
   if (serverLaunchSpec?.migration?.mode === 'disabled' || serverLaunchSpec?.migration?.mode === 'in-process') {
@@ -134,12 +137,13 @@ export async function runServerRuntimeMigration({
 
 export async function spawnRuntimeServerAfterMigration({
   serverLaunchSpec,
+  sourceServerDir,
   env,
   children,
   isCancellationRequested,
   spawnProcImpl = spawnProc,
 }) {
-  await runServerRuntimeMigration({ serverLaunchSpec, env, children, isCancellationRequested, spawnProcImpl });
+  await runServerRuntimeMigration({ serverLaunchSpec, sourceServerDir, env, children, isCancellationRequested, spawnProcImpl });
   throwIfStartupCancelled(isCancellationRequested, serverLaunchSpec.migration);
   const server = spawnProcImpl('server', serverLaunchSpec.command, serverLaunchSpec.args, env, { cwd: serverLaunchSpec.serverDir });
   children?.push(server);

@@ -2,9 +2,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
 
 const boundary = await vi.hoisted(async () => {
-    const { PrismaClient } = await import('@prisma/client');
-    // Prisma field references do not open a connection.
-    return { tx: {}, fields: new PrismaClient().automationRun.fields };
+    const { createDbMaintenanceClient } = await import('@/storage/prisma');
+    // Prisma field references do not open a connection; the unreachable URL is never used.
+    const client = await createDbMaintenanceClient('postgres', 'postgresql://fields:fields@127.0.0.1:1/fields');
+    return { tx: {}, fields: client.automationRun.fields };
 });
 const transactions = await vi.hoisted(async () => {
     const { createDbTransactionMock, inTxPostgresControlStatementMock } = await import('@/app/api/testkit/dbMocks');

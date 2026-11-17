@@ -4,7 +4,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
-import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -27,6 +26,7 @@ import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import type { Tx } from '@/storage/inTx';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 describe('Artifact inventory through PostgreSQL wire protocol', () => {
     const originalEnv = snapshotEnv();
@@ -123,9 +123,8 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
         expect(await capturedReaders()).toEqual(readers);
         const pageEnv = snapshotEnv();
         const statements: string[] = [];
-        const client = new PrismaClient({ datasources: { db: { url: session!.databaseUrl } },
-            log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event.query));
+        const client = await createDbMaintenanceClient('pglite', session!.databaseUrl, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event.query));
         // The framed PGlite harness holds runExclusive for a connection's lifetime.
         await db.$disconnect();
         try {

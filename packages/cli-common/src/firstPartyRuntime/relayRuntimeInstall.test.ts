@@ -650,8 +650,8 @@ describe('installOrUpdateRelayRuntimeLocal', () => {
       await mkdir(prismaClientDir, { recursive: true });
       await mkdir(generatedSqliteClientDir, { recursive: true });
       await writeFile(join(migrationsSourceDir, 'migration.sql'), '-- init\n', 'utf8');
-      await writeFile(join(prismaClientDir, 'libquery_engine-darwin-arm64.dylib.node'), 'engine\n', 'utf8');
-      await writeFile(join(generatedSqliteClientDir, 'libquery_engine-darwin-arm64.dylib.node'), 'generated-engine\n', 'utf8');
+      await writeFile(join(prismaClientDir, 'query_compiler_fast_bg.wasm-base64.js'), 'compiler\n', 'utf8');
+      await writeFile(join(generatedSqliteClientDir, 'query_compiler_fast_bg.wasm-base64.js'), 'generated-compiler\n', 'utf8');
 
       const serverBinaryPath = join(payloadRoot, 'happier-server');
       await writeFile(serverBinaryPath, '#!/bin/sh\necho ok\n', 'utf8');
@@ -675,19 +675,19 @@ describe('installOrUpdateRelayRuntimeLocal', () => {
       });
       const installedBinaryPath = join(defaults.installRoot, 'bin', 'happier-server');
       const envPath = join(defaults.configDir, 'server.env');
-      const installedPrismaEnginePath = join(defaults.installRoot, 'bin', 'node_modules', '.prisma', 'client', 'libquery_engine-darwin-arm64.dylib.node');
-      const installedGeneratedEnginePath = join(defaults.installRoot, 'bin', 'generated', 'sqlite-client', 'libquery_engine-darwin-arm64.dylib.node');
+      const installedPrismaClientPath = join(defaults.installRoot, 'bin', 'node_modules', '.prisma', 'client', 'query_compiler_fast_bg.wasm-base64.js');
+      const installedGeneratedClientPath = join(defaults.installRoot, 'bin', 'generated', 'sqlite-client', 'query_compiler_fast_bg.wasm-base64.js');
 
       await rm(payloadRoot, { recursive: true, force: true });
 
       await expect(access(installedBinaryPath, constants.X_OK)).resolves.toBeUndefined();
-      await expect(readFileText(installedPrismaEnginePath)).resolves.toBe('engine\n');
-      await expect(readFileText(installedGeneratedEnginePath)).resolves.toBe('generated-engine\n');
+      await expect(readFileText(installedPrismaClientPath)).resolves.toBe('compiler\n');
+      await expect(readFileText(installedGeneratedClientPath)).resolves.toBe('generated-compiler\n');
       await expect(lstat(installedBinaryPath)).resolves.toSatisfy((stats) => stats.isSymbolicLink() === false);
       const envText = await readFileText(envPath);
       expect(envText).toContain('HAPPIER_SQLITE_AUTO_MIGRATE=1');
       expect(envText).toContain(`NODE_PATH=${join(defaults.installRoot, 'bin', 'node_modules')}`);
-      expect(envText).toContain(`PRISMA_QUERY_ENGINE_LIBRARY=${installedPrismaEnginePath}`);
+      expect(envText).not.toMatch(/^PRISMA_/m);
     } finally {
       await rm(payloadRoot, { recursive: true, force: true });
       await rm(homeDir, { recursive: true, force: true });

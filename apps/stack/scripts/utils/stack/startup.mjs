@@ -1,11 +1,9 @@
 import { runCapture } from '../proc/proc.mjs';
 import { ensureDepsInstalled, ensureWorkspacePackagesBuiltForComponent } from '../proc/pm.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from '../env/sandbox.mjs';
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { mkdir } from 'node:fs/promises';
-import { resolvePrismaClientImportForDbProvider } from '../server/prisma_client_import.mjs';
+import { runServerDatabaseTask } from '../server/server_database_task.mjs';
 import { findAnyCredentialPathInCliHome } from '../auth/credentials_paths.mjs';
 import { applyEffectiveDbProviderEnv } from '../server/effective_db_provider.mjs';
 import { applyHappyServerMigrations } from '../server/infra/happy_server_infra.mjs';
@@ -45,7 +43,6 @@ function resolveSqliteDatabaseUrlForDataDir({ dataDir, env }) {
 }
 
 async function probeAccountCount({ serverDir, env, dbProvider = 'sqlite' }) {
-  const framedSocketModuleUrl = pathToFileURL(join(serverDir, 'sources/storage/pgliteFramedSocketServer.mjs')).href;
   const runEnv = dbProvider === 'sqlite' && !(env?.DATABASE_URL ?? '').toString().trim()
     ? (() => {
         const dataDir = firstNonEmptyEnv(env?.HAPPIER_SERVER_LIGHT_DATA_DIR, env?.HAPPY_SERVER_LIGHT_DATA_DIR);
@@ -54,132 +51,28 @@ async function probeAccountCount({ serverDir, env, dbProvider = 'sqlite' }) {
           : env;
       })()
     : env;
-  const probe =
-    dbProvider === 'pglite'
-      ? `
-		let db;
-	  let pglite;
-	  let server;
-		try {
-	    const { PGlite } = await import('@electric-sql/pglite');
-	    const { FramedPgliteSocketServer } = await import(${JSON.stringify(framedSocketModuleUrl)});
-	    const { PrismaClient } = await import('@prisma/client');
-	    const dbDirPrimary = (process.env.HAPPIER_SERVER_LIGHT_DB_DIR ?? '').toString().trim();
-	    const dbDirLegacy = (process.env.HAPPY_SERVER_LIGHT_DB_DIR ?? '').toString().trim();
-	    const dbDir = dbDirPrimary || dbDirLegacy;
-	    if (!dbDir) throw new Error('Missing HAPPIER_SERVER_LIGHT_DB_DIR or HAPPY_SERVER_LIGHT_DB_DIR for pglite probe');
-	    pglite = new PGlite(dbDir);
-	    await pglite.waitReady;
-	    server = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
-	    await server.start();
-	    const raw = server.getServerConn();
-	    const url = (() => {
-	      try {
-	        return new URL(raw);
-	      } catch {
-	        return new URL(\`postgresql://postgres@\${raw}/postgres?sslmode=disable\`);
-	      }
-	    })();
-	    url.searchParams.set('connection_limit', '1');
-	    process.env.DATABASE_URL = url.toString();
-		  db = new PrismaClient();
-		  const accountCount = await db.account.count();
-		  console.log(JSON.stringify({ accountCount }));
-		} catch (e) {
-		  console.log(
-		    JSON.stringify({
-		      error: {
-		        name: e?.name,
-		        message: e?.message,
-		        code: e?.code,
-		      },
-		    })
-		  );
-		} finally {
-		  try {
-		    await db?.$disconnect();
-		  } catch {
-		    // ignore
-		  }
-	    try {
-	      await server?.stop();
-	    } catch {}
-	    try {
-	      await pglite?.close();
-	    } catch {}
-		}
-		`.trim()
-      : dbProvider === 'sqlite'
-      ? `
-	 	let db;
-		try {
-		  const { PrismaClient } = await import(${JSON.stringify(
-        resolvePrismaClientImportForDbProvider({ serverDir, provider: 'sqlite' })
-      )});
-      const dataDirPrimary = (process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
-      const dataDirLegacy = (process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
-      const dataDir = dataDirPrimary || dataDirLegacy;
-      const url = (process.env.DATABASE_URL ?? '').toString().trim();
-      if (!url) throw new Error('Missing DATABASE_URL and HAPPIER_SERVER_LIGHT_DATA_DIR or HAPPY_SERVER_LIGHT_DATA_DIR for sqlite probe');
-      process.env.DATABASE_URL = url;
-		  db = new PrismaClient();
-		  const accountCount = await db.account.count();
-		  console.log(JSON.stringify({ accountCount }));
-		} catch (e) {
-		  console.log(
-		    JSON.stringify({
-		      error: {
-		        name: e?.name,
-		        message: e?.message,
-		        code: e?.code,
-		      },
-		    })
-		  );
-		} finally {
-		  try {
-		    await db?.$disconnect();
-		  } catch {
-		    // ignore
-		  }
-		}
-		`.trim()
-      : `
-	 	let db;
-		try {
-		  const { PrismaClient } = await import(${JSON.stringify(
-	      resolvePrismaClientImportForDbProvider({ serverDir, provider: dbProvider })
-	    )});
-		  db = new PrismaClient();
-		  const accountCount = await db.account.count();
-		  console.log(JSON.stringify({ accountCount }));
-		} catch (e) {
-		  console.log(
-		    JSON.stringify({
-		      error: {
-		        name: e?.name,
-		        message: e?.message,
-		        code: e?.code,
-		      },
-		    })
-		  );
-		} finally {
-		  try {
-		    await db?.$disconnect();
-		  } catch {
-		    // ignore
-		  }
-		}
-		`.trim();
-
-  const out = await runCapture(process.execPath, ['--input-type=module', '-e', probe], { cwd: serverDir, env: runEnv, timeoutMs: 15_000 });
-  const parsed = out.trim() ? JSON.parse(out.trim()) : {};
-  if (parsed?.error) {
-    const e = new Error(parsed.error.message || 'unknown prisma probe error');
-    if (typeof parsed.error.name === 'string' && parsed.error.name) e.name = parsed.error.name;
-    if (typeof parsed.error.code === 'string' && parsed.error.code) e.code = parsed.error.code;
-    throw e;
+  const pgliteDbDir = dbProvider === 'pglite'
+    ? firstNonEmptyEnv(runEnv?.HAPPIER_SERVER_LIGHT_DB_DIR, runEnv?.HAPPY_SERVER_LIGHT_DB_DIR)
+    : undefined;
+  if (dbProvider === 'pglite' && !pgliteDbDir) {
+    throw new Error('Missing HAPPIER_SERVER_LIGHT_DB_DIR or HAPPY_SERVER_LIGHT_DB_DIR for pglite probe');
   }
-  return Number(parsed.accountCount ?? 0);
+  const databaseUrl = dbProvider === 'pglite' ? undefined : (runEnv?.DATABASE_URL ?? '').toString().trim();
+  if (dbProvider !== 'pglite' && !databaseUrl) {
+    throw new Error(`Missing DATABASE_URL for ${dbProvider} account probe`);
+  }
+  const { accountCount } = await runServerDatabaseTask({
+    serverDir,
+    provider: dbProvider,
+    task: 'account-count',
+    databaseUrl,
+    pgliteDbDir,
+    env: runEnv,
+    // Bounds an unreachable database. The task child loads only the server's client
+    // construction module: ~4 s wall (3.0 s CPU) at load average ~300 (2026-11-17).
+    timeoutMs: 15_000,
+  });
+  return Number(accountCount ?? 0);
 }
 
 export async function probeExistingAccountCountForServerComponent({

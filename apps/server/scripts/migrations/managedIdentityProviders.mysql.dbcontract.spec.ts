@@ -5,8 +5,8 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { PrismaClient } from "../../generated/mysql-client/index.js";
-import { runPrismaCli } from "../prismaCli";
+import { runPrismaMigrateCli } from "../prismaMigrateCli";
+import { createDbMaintenanceClient } from "../../sources/storage/prisma";
 
 const databaseUrl = process.env.HAPPIER_TEST_MYSQL_DATABASE_URL;
 const serverRoot = join(import.meta.dirname, "../..");
@@ -21,13 +21,13 @@ describe("managed identity provider MySQL exact identity", () => {
         const databaseName = `managed_identity_${randomUUID().replaceAll("-", "")}`;
         const isolatedUrl = new URL(databaseUrl!);
         isolatedUrl.pathname = `/${databaseName}`;
-        const admin = new PrismaClient({ datasourceUrl: databaseUrl });
-        const db = new PrismaClient({ datasourceUrl: isolatedUrl.toString() });
+        const admin = await createDbMaintenanceClient("mysql", databaseUrl);
+        const db = await createDbMaintenanceClient("mysql", isolatedUrl.toString());
         const stage = await mkdtemp(join(tmpdir(), "happier-managed-identity-mysql-"));
         const sourceRoot = join(serverRoot, "prisma/mysql");
-        const deploy = () => runPrismaCli({
+        const deploy = () => runPrismaMigrateCli({
             serverRoot,
-            args: ["migrate", "deploy", "--schema", join(stage, "schema.prisma")],
+            schemaPath: join(stage, "schema.prisma"), args: ['deploy'],
             env: { ...process.env, DATABASE_URL: isolatedUrl.toString() },
             quiet: true,
         });

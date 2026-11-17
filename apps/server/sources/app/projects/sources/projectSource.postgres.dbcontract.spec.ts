@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1, type ProjectSourceGrantV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
@@ -21,6 +21,7 @@ import { readDeploymentEnvironmentInTx, listDeploymentEnvironmentsInTx, readDepl
 import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRoutes';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 const repository = { provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
     repository: { nameWithOwner: 'acme/repo', cloneUrl: 'https://github.com/acme/repo.git', visibility: 'private' }, protocol: 'https' };
@@ -49,8 +50,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             owner: { kind: 'account', accountId: owner.id },
             audience: [{ principal: { kind: 'group', teamId: team.id, groupId: group.id }, level: 'view' }], attachments: [] } });
         const statements: Prisma.QueryEvent[] = [];
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
         try {
             for (const suspended of [false, true]) {
@@ -103,8 +104,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             runtimeFingerprint: descriptor.descriptor.reference.runtimeFingerprint,
         }] };
         const statements: Prisma.QueryEvent[] = [];
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
         try {
             for (const state of ['current', 'absent_evidence', 'ineligible_identity', 'restored_identity', 'disabled_connection'] as const) {
@@ -251,8 +252,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         const prior = new Map((await db.accountChange.findMany({ where: { entityId: PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } }))
             .map(row => [row.accountId, row.cursor]));
         const statements: Prisma.QueryEvent[] = [];
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
         const transaction = db.$transaction;
         // Instrument only the SQL transport; all audience decisions and publications remain real.

@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { resolvePnpmCommandInvocation } from '../../../scripts/workspaces/execPnpmCommand.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 import { runNodeCapture } from './testkit/auth_testkit.mjs';
+import { runServerOwnerDatabaseScript } from './testkit/core/server_database_fixture.mjs';
 
 function jwtForAccount(accountId) {
   const base64url = (value) =>
@@ -83,25 +84,7 @@ async function createSqliteCopyFixture(t, prefix) {
   };
 
   const runSqliteClient = async ({ databaseUrl, code }) => {
-    const result = await runNodeCapture(
-      [
-        '--input-type=module',
-        '-e',
-        `
-const { PrismaClient } = await import(${JSON.stringify(join(serverDir, 'generated', 'sqlite-client', 'index.js'))});
-const db = new PrismaClient();
-try {
-${code}
-} finally {
-  await db.$disconnect();
-}
-        `.trim(),
-      ],
-      {
-        cwd: serverDir,
-        env: { ...process.env, DATABASE_URL: databaseUrl },
-      }
-    );
+    const result = await runServerOwnerDatabaseScript({ serverDir, provider: 'sqlite', databaseUrl, code });
     assert.equal(result.code, 0, `sqlite client failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
     return result.stdout.trim();
   };

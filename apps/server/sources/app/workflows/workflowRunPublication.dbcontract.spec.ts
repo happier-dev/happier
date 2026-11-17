@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readPrismaDriverErrorCause } from "@/storage/prismaErrors";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as workflowStorage from "./workflowRunService";
 import * as privacyKit from "privacy-kit";
@@ -29,10 +30,7 @@ import { prismaRuntime } from '@/storage/prisma';
 const provider = process.env.HAPPIER_DB_PROVIDER ?? process.env.HAPPY_DB_PROVIDER ?? "postgres";
 
 function sqlState(error: unknown): string | null {
-    if (error === null || typeof error !== "object" || !("meta" in error)) return null;
-    const meta = error.meta;
-    return meta !== null && typeof meta === "object" && "code" in meta && typeof meta.code === "string"
-        ? meta.code : null;
+    return readPrismaDriverErrorCause(error)?.code ?? null;
 }
 
 function accountLockRows(query: string, result: unknown): string[] {

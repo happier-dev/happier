@@ -9,7 +9,8 @@ import {
 import {
     runSessionSystemRecordMigrationDeployment,
 } from "../sources/app/session/systemRecords/sessionSystemRecordMigrationDeployment";
-import { resolveServerWorkspaceRoot, runPrismaCli } from "./prismaCli";
+import { resolveServerWorkspaceRoot } from "./prismaCli";
+import { runPrismaMigrateCli } from "./prismaMigrateCli";
 import { join } from "node:path";
 import { runPluginCollectionUsageMigrationDeployment } from '../sources/app/plugins/data/collections/usageTotalsBackfill';
 
@@ -399,7 +400,7 @@ export async function runMysqlMigrationDeployMain(): Promise<void> {
                     }),
                     deploy: async (stage) => {
                         await runPluginCollectionUsageMigrationDeployment({ ...stage, provider: 'mysql', databaseUrl: String(env.DATABASE_URL ?? '').trim(), env,
-                            deploy: async target => await runPrismaCli({ serverRoot, args: ['migrate', 'deploy', '--schema', target.schemaPath!], env }),
+                            deploy: async target => await runPrismaMigrateCli({ serverRoot, schemaPath: target.schemaPath!, args: ['deploy'], env }),
                         });
                     },
                     runFinalContractBackfill: async () => {

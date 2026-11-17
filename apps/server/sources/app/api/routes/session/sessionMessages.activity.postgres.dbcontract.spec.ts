@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { PENDING_DELIVERY_BLOCKED_REASONS } from '@happier-dev/protocol/sessions/messages/pendingDeliveryBlockedReason';
@@ -10,6 +10,8 @@ import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { registerSessionMessageRoutes } from './registerSessionMessageRoutes';
 import { SessionTranscriptMessagePageResponseSchema } from './sessionMessagePageProjection';
+import { createDbMaintenanceClient, type PrismaClientType } from '@/storage/prisma';
+import { recordDriverStatements, type DriverStatementEvent } from '@/testkit/driverStatements';
 
 interface PlanNode {
     'Node Type': string;
@@ -27,8 +29,8 @@ interface PlanNode {
 const planNodes = (node: PlanNode): PlanNode[] => [node, ...(node.Plans ?? []).flatMap(planNodes)];
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Session activity pending idle proof (PostgreSQL)', () => {
-    const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'> | undefined;
+    const statements: DriverStatementEvent[] = [];
+    let client: PrismaClientType | undefined;
     let barrier: (() => void) | undefined;
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
@@ -38,11 +40,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         vi.stubEnv('HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY', 'optional');
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => {
+        client = await createDbMaintenanceClient('postgres', undefined, { onDriverStatement: recordDriverStatements(event => {
             statements.push(event);
             if (event.query === 'SELECT 1 /* pending-idle-barrier */') barrier?.();
-        });
+        }) });
         await client.$connect();
     });
     afterAll(async () => { await client?.$disconnect(); await shutdownDbClient(); vi.unstubAllEnvs(); });
@@ -55,7 +56,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         } finally { barrier = undefined; }
     };
 
-    const assertPendingPlan = async (statement: Prisma.QueryEvent, sessionId: string, maxRows: number) => {
+    const assertPendingPlan = async (statement: DriverStatementEvent, sessionId: string, maxRows: number) => {
         // Only fixture IDs, reasons and scalar flags may be replayed; never
         // replay lossy Date/binary query-event parameters.
         const values: unknown = JSON.parse(statement.params);
@@ -142,7 +143,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                 expect(twinParams).toEqual(expect.arrayContaining([session.id, runLocalId, safeLocalId]));
                 expect(twinParams).not.toContain(oldLocalId);
                 const pageRead = captured.find(({ query }) => /^SELECT\b/.test(query) && query.includes('FROM "public"."SessionMessage"'))!;
-                const enclosingBegin = (statement: Prisma.QueryEvent) => {
+                const enclosingBegin = (statement: DriverStatementEvent) => {
                     for (let index = captured.indexOf(statement) - 1; index >= 0; index -= 1) {
                         if (/^BEGIN\b/.test(captured[index]!.query)) return index;
                     }

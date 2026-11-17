@@ -785,7 +785,7 @@ export async function startDevServer({
   killProcessGroupOwnedByStackImpl = killProcessGroupOwnedByStack,
   killSpawnedChildImpl = killProcessTree,
   spawnPriorRuntimeServerImpl = async ({ launchSpec, env, options }) => {
-    await runServerRuntimeMigration({ serverLaunchSpec: launchSpec, env, children,
+    await runServerRuntimeMigration({ serverLaunchSpec: launchSpec, sourceServerDir: serverDir, env, children,
       isCancellationRequested: () => sourceRuntimeOptions?.signal?.aborted === true });
     return spawnProc('server', launchSpec.command, Array.isArray(launchSpec.args) ? launchSpec.args : [],
       env, { ...options, cwd: launchSpec.serverDir });
@@ -1160,7 +1160,7 @@ export function createDevServerReloadExecutor({
   pickNextFreeTcpPortImpl = pickNextFreeTcpPort,
   pmSpawnScriptImpl = pmSpawnScript,
   spawnPriorRuntimeServerImpl = async ({ launchSpec, env, options }) => {
-    await runServerRuntimeMigration({ serverLaunchSpec: launchSpec, env, children, isCancellationRequested: isShuttingDown });
+    await runServerRuntimeMigration({ serverLaunchSpec: launchSpec, sourceServerDir: serverDir, env, children, isCancellationRequested: isShuttingDown });
     return spawnProc('server', launchSpec.command, Array.isArray(launchSpec.args) ? launchSpec.args : [],
       env, { ...options, cwd: launchSpec.serverDir });
   },

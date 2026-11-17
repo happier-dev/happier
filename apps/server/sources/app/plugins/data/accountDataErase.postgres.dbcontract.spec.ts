@@ -404,7 +404,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
             // author specifically, not an incidental surviving-owner fence.
             if (shape === 'received-session') await expect(db.$transaction(tx => tx.$queryRawUnsafe(
                 'SELECT "id" FROM "Account" WHERE "id" = $1 FOR UPDATE NOWAIT', erasedAccountId,
-            ))).rejects.toMatchObject({ meta: { code: '55P03' } });
+            ))).rejects.toMatchObject({ meta: { driverAdapterError: { cause: { originalCode: '55P03' } } } });
 
             erasureOutcomes = Promise.allSettled([deleteAccountForErasure({ accountId: erasedAccountId })])
                 .then(outcomes => { erasureFinished = true; return outcomes; });

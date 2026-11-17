@@ -94,7 +94,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 return await tx.account.update({ where: { id: account.id }, data: { seq: { increment: 1 } }, select: { seq: true } });
             }, { maxWaitMs: 200, timeoutMs: 300, ...(callerDeadline ? { deadlineAtMs: Date.now() + 5_000 } : {}) });
             await expect(result).rejects.toBeInstanceOf(TransactionDeadlineExceededError);
-            expect(nativeFailure).toMatchObject({ code: "P2028", meta: { error: expect.stringContaining("expired transaction") } });
+            // Prisma 7 reports the expiry as structured metadata; the message keeps the diagnostic phrase.
+            expect(nativeFailure).toMatchObject({ code: "P2028", message: expect.stringContaining("expired transaction"),
+                meta: { operation: "query", timeout: 300, timeTaken: expect.any(Number) } });
             expect(attempts).toBe(1);
             expect(published).toEqual([]);
             expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).toEqual({ seq: 0 });

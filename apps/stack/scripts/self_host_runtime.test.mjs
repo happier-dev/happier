@@ -177,7 +177,7 @@ async function createLocalSelfHostRuntimePayloadRoot({ rootDir, binaryName, bina
   await mkdir(join(rootDir, 'node_modules', '.prisma', 'client'), { recursive: true });
   await mkdir(join(rootDir, 'node_modules', '@prisma', 'client'), { recursive: true });
   await writeFile(join(rootDir, 'generated', 'dummy.txt'), 'ok', 'utf-8');
-  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'query_engine.so'), 'engine', 'utf-8');
+  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'index.js'), 'client', 'utf-8');
   await writeFile(join(rootDir, 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = {};\n', 'utf-8');
   const binaryPath = join(rootDir, binaryName);
   await writeFile(binaryPath, binaryText, 'utf-8');
@@ -585,7 +585,7 @@ test('self-host release installer reports archive source url', async (t) => {
   await mkdir(join(rootDir, 'node_modules', '.prisma', 'client'), { recursive: true });
   await mkdir(join(rootDir, 'node_modules', '@prisma', 'client'), { recursive: true });
   await writeFile(join(rootDir, 'generated', 'dummy.txt'), 'ok', 'utf-8');
-  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'query_engine.so'), 'engine', 'utf-8');
+  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'index.js'), 'client', 'utf-8');
   await writeFile(join(rootDir, 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = {};\n', 'utf-8');
 
   const binaryName = 'happier-server';
@@ -640,13 +640,13 @@ test('self-host release installer reports archive source url', async (t) => {
 
   assert.equal(result.version, '1.2.3-preview.1');
   assert.equal(result.source, archiveUrl);
-  const packagedPrismaEngine = join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so');
+  const packagedGeneratedPrismaClient = join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'index.js');
   const packagedPrismaClient = join(dirname(config.serverBinaryPath), 'node_modules', '@prisma', 'client', 'index.js');
   const packagedPrismaCheck = spawnSync(
     'bash',
     [
       '-lc',
-      `test -f "${packagedPrismaEngine.replaceAll('"', '\\"')}" && test -f "${packagedPrismaClient.replaceAll('"', '\\"')}"`,
+      `test -f "${packagedGeneratedPrismaClient.replaceAll('"', '\\"')}" && test -f "${packagedPrismaClient.replaceAll('"', '\\"')}"`,
     ],
     { encoding: 'utf-8' }
   );
@@ -743,7 +743,7 @@ test('self-host release installer fails closed when packaged Prisma sidecar set 
       name: 'only packaged .prisma sidecar is present',
       setup: async (rootDir) => {
         await mkdir(join(rootDir, 'node_modules', '.prisma', 'client'), { recursive: true });
-        await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'query_engine.so'), 'engine', 'utf-8');
+        await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'index.js'), 'client', 'utf-8');
       },
     },
     {
@@ -850,7 +850,7 @@ test('self-host release update preserves the last known-good runtime when bundle
   await writeFile(config.serverBinaryPath, '#!/bin/sh\necho old-runtime\n', 'utf-8');
   spawnSync('bash', ['-lc', `chmod +x "${config.serverBinaryPath.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
   await writeFile(join(dirname(config.serverBinaryPath), 'generated', 'dummy.txt'), 'old-generated', 'utf-8');
-  await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so'), 'old-engine', 'utf-8');
+  await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'index.js'), 'old-client', 'utf-8');
   await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = { old: true };\n', 'utf-8');
   await mkdir(config.versionsDir, { recursive: true });
   await writeFile(join(config.versionsDir, `${binaryName}-last-known-good`), 'old-version', 'utf-8');
@@ -902,8 +902,8 @@ test('self-host release update preserves the last known-good runtime when bundle
   assert.equal(String(installedBinary.stdout ?? '').trim(), 'old-runtime');
   assert.equal(await readFile(join(dirname(config.serverBinaryPath), 'generated', 'dummy.txt'), 'utf-8'), 'old-generated');
   assert.equal(
-    await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so'), 'utf-8'),
-    'old-engine'
+    await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'index.js'), 'utf-8'),
+    'old-client'
   );
   assert.equal(
     await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '@prisma', 'client', 'index.js'), 'utf-8'),
@@ -948,7 +948,7 @@ test('self-host release update rolls back promoted sidecars when binary install 
   await writeFile(config.serverBinaryPath, '#!/bin/sh\necho old-runtime\n', 'utf-8');
   spawnSync('bash', ['-lc', `chmod +x "${config.serverBinaryPath.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
   await writeFile(join(dirname(config.serverBinaryPath), 'generated', 'dummy.txt'), 'old-generated', 'utf-8');
-  await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so'), 'old-engine', 'utf-8');
+  await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'index.js'), 'old-client', 'utf-8');
   await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = { old: true };\n', 'utf-8');
 
   await mkdir(dirname(config.versionsDir), { recursive: true });
@@ -961,7 +961,7 @@ test('self-host release update rolls back promoted sidecars when binary install 
   await mkdir(join(rootDir, 'node_modules', '.prisma', 'client'), { recursive: true });
   await mkdir(join(rootDir, 'node_modules', '@prisma', 'client'), { recursive: true });
   await writeFile(join(rootDir, 'generated', 'dummy.txt'), 'new-generated', 'utf-8');
-  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'query_engine.so'), 'new-engine', 'utf-8');
+  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'index.js'), 'new-engine', 'utf-8');
   await writeFile(join(rootDir, 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = { new: true };\n', 'utf-8');
   const binaryPath = join(rootDir, binaryName);
   await writeFile(binaryPath, '#!/bin/sh\necho new-runtime\n', 'utf-8');
@@ -1005,8 +1005,8 @@ test('self-host release update rolls back promoted sidecars when binary install 
   assert.equal(String(installedBinary.stdout ?? '').trim(), 'old-runtime');
   assert.equal(await readFile(join(dirname(config.serverBinaryPath), 'generated', 'dummy.txt'), 'utf-8'), 'old-generated');
   assert.equal(
-    await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so'), 'utf-8'),
-    'old-engine'
+    await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'index.js'), 'utf-8'),
+    'old-client'
   );
   assert.equal(
     await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '@prisma', 'client', 'index.js'), 'utf-8'),
@@ -1045,7 +1045,7 @@ test('self-host release update fails closed if the process dies after sidecar pr
   await writeFile(config.serverBinaryPath, '#!/bin/sh\necho old-runtime\n', 'utf-8');
   spawnSync('bash', ['-lc', `chmod +x "${config.serverBinaryPath.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
   await writeFile(join(dirname(config.serverBinaryPath), 'generated', 'dummy.txt'), 'old-generated', 'utf-8');
-  await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so'), 'old-engine', 'utf-8');
+  await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'index.js'), 'old-client', 'utf-8');
   await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = { old: true };\n', 'utf-8');
 
   const staging = join(tmp, 'staging');
@@ -1055,7 +1055,7 @@ test('self-host release update fails closed if the process dies after sidecar pr
   await mkdir(join(rootDir, 'node_modules', '.prisma', 'client'), { recursive: true });
   await mkdir(join(rootDir, 'node_modules', '@prisma', 'client'), { recursive: true });
   await writeFile(join(rootDir, 'generated', 'dummy.txt'), 'new-generated', 'utf-8');
-  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'query_engine.so'), 'new-engine', 'utf-8');
+  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'index.js'), 'new-engine', 'utf-8');
   await writeFile(join(rootDir, 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = { new: true };\n', 'utf-8');
   const binaryPath = join(rootDir, binaryName);
   await writeFile(binaryPath, '#!/bin/sh\necho new-runtime\n', 'utf-8');
@@ -1114,7 +1114,7 @@ test('self-host release update fails closed if the process dies after sidecar pr
   assert.equal(existsSync(config.serverBinaryPath), false);
   assert.equal(await readFile(join(dirname(config.serverBinaryPath), 'generated', 'dummy.txt'), 'utf-8'), 'new-generated');
   assert.equal(
-    await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so'), 'utf-8'),
+    await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'index.js'), 'utf-8'),
     'new-engine'
   );
   assert.equal(
@@ -1149,7 +1149,7 @@ test('self-host release installer ignores extra root entries when extracting bun
   await mkdir(join(rootDir, 'node_modules', '.prisma', 'client'), { recursive: true });
   await mkdir(join(rootDir, 'node_modules', '@prisma', 'client'), { recursive: true });
   await writeFile(join(rootDir, 'generated', 'dummy.txt'), 'ok', 'utf-8');
-  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'query_engine.so'), 'engine', 'utf-8');
+  await writeFile(join(rootDir, 'node_modules', '.prisma', 'client', 'index.js'), 'client', 'utf-8');
   await writeFile(join(rootDir, 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = {};\n', 'utf-8');
 
   // Simulate archives that include extra top-level entries (e.g. AppleDouble `._*` files, stray metadata files).
@@ -1333,7 +1333,7 @@ test('runSelfHostRuntimeMutationWithServiceRecovery restores promoted runtime, u
   await writeFile(config.serverBinaryPath, '#!/bin/sh\necho old-runtime\n', 'utf8');
   await chmod(config.serverBinaryPath, 0o755);
   await writeFile(join(dirname(config.serverBinaryPath), 'generated', 'dummy.txt'), 'old-generated', 'utf8');
-  await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so'), 'old-engine', 'utf8');
+  await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'index.js'), 'old-client', 'utf8');
   await writeFile(join(dirname(config.serverBinaryPath), 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = { old: true };\n', 'utf8');
 
   await mkdir(dirname(config.configEnvPath), { recursive: true });
@@ -1405,8 +1405,8 @@ test('runSelfHostRuntimeMutationWithServiceRecovery restores promoted runtime, u
   assert.equal(await readFile(config.serverBinaryPath, 'utf8'), '#!/bin/sh\necho old-runtime\n');
   assert.equal(await readFile(join(dirname(config.serverBinaryPath), 'generated', 'dummy.txt'), 'utf8'), 'old-generated');
   assert.equal(
-    await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so'), 'utf8'),
-    'old-engine'
+    await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '.prisma', 'client', 'index.js'), 'utf8'),
+    'old-client'
   );
   assert.equal(
     await readFile(join(dirname(config.serverBinaryPath), 'node_modules', '@prisma', 'client', 'index.js'), 'utf8'),
@@ -1608,45 +1608,22 @@ test('renderServerEnvFile includes ui bundle directory when provided', () => {
   assert.match(envText, /HAPPIER_SERVER_UI_DIR=\/var\/lib\/happier\/ui-web\/current/);
 });
 
-test('renderServerEnvFile includes PRISMA_QUERY_ENGINE_LIBRARY when a packaged sqlite engine is present', async () => {
-  const serverBinDir = await mkdtemp(join(tmpdir(), 'happier-self-host-bin-'));
-  await mkdir(join(serverBinDir, 'generated', 'sqlite-client'), { recursive: true });
-  const enginePath = join(serverBinDir, 'generated', 'sqlite-client', 'libquery_engine-darwin-arm64.dylib.node');
-  await writeFile(enginePath, 'stub', 'utf-8');
-
-  const envText = renderServerEnvFile({
-    port: 3005,
-    host: '127.0.0.1',
-    platform: 'darwin',
-    arch: 'arm64',
-    serverBinDir,
-    dataDir: '/var/lib/happier',
-    filesDir: '/var/lib/happier/files',
-    dbDir: '/var/lib/happier/pglite',
-  });
-  assert.match(envText, /PRISMA_CLIENT_ENGINE_TYPE=library/);
-  assert.match(envText, new RegExp(`PRISMA_QUERY_ENGINE_LIBRARY=${enginePath.replaceAll('\\\\', '\\\\\\\\')}`));
-});
-
-test('renderServerEnvFile includes PRISMA_QUERY_ENGINE_LIBRARY for packaged postgres prisma engine on linux arm64', async () => {
+test('renderServerEnvFile renders no Prisma engine settings beside a packaged runtime', async () => {
   const serverBinDir = await mkdtemp(join(tmpdir(), 'happier-self-host-bin-postgres-'));
   await mkdir(join(serverBinDir, 'node_modules', '.prisma', 'client'), { recursive: true });
   await mkdir(join(serverBinDir, 'node_modules', '@prisma', 'client'), { recursive: true });
-  const enginePath = join(serverBinDir, 'node_modules', '.prisma', 'client', 'libquery_engine-linux-arm64-openssl-3.0.x.so.node');
-  await writeFile(enginePath, 'stub', 'utf-8');
+  await writeFile(join(serverBinDir, 'node_modules', '.prisma', 'client', 'query_compiler_fast_bg.wasm-base64.js'), 'stub', 'utf-8');
 
   const envText = renderServerEnvFile({
     port: 3005,
     host: '127.0.0.1',
     platform: 'linux',
-    arch: 'arm64',
     serverBinDir,
     dataDir: '/var/lib/happier',
     filesDir: '/var/lib/happier/files',
     dbDir: '/var/lib/happier/pglite',
   });
-  assert.match(envText, /PRISMA_CLIENT_ENGINE_TYPE=library/);
-  assert.match(envText, new RegExp(`PRISMA_QUERY_ENGINE_LIBRARY=${enginePath.replaceAll('\\\\', '\\\\\\\\')}`));
+  assert.doesNotMatch(envText, /^PRISMA_/m);
   assert.match(envText, new RegExp(`NODE_PATH=${join(serverBinDir, 'node_modules').replaceAll('\\\\', '\\\\\\\\')}`));
 });
 

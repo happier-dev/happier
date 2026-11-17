@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { recordUsageEvent } from './usageWriteService';
 import { UsageEventIngestRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { createUsageSnapshot } from '@/app/api/routes/connect/providerAccountUsageTestkit';
 import { writeProviderAccountUsageRecordWithPolicy } from '@/app/api/routes/connect/providerAccountUsage/routeWritePolicy';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Usage native-history write cost on PostgreSQL', () => {
     const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>;
+    let client: PrismaClientType;
     let originalTransaction: typeof db.$transaction;
     let accountId: string;
 
@@ -18,8 +19,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Usage native-hi
             throw new Error('Requires the disposable PostgreSQL DB-contract owner');
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
         originalTransaction = db.$transaction;
         db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {

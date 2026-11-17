@@ -245,41 +245,62 @@ function materializeProcessCustodyRuntimeFromGoBuild(cmd, args) {
   writeFileSync(executablePath, 'signed process custody runtime\n', 'utf8');
 }
 
-function prismaEngineFileNameForFixture({ platform = 'linux', arch = 'x64' } = {}) {
-  const key = `${platform}-${arch}`;
-  switch (key) {
-    case 'linux-x64':
-      return 'libquery_engine-debian-openssl-3.0.x.so.node';
-    case 'linux-arm64':
-      return 'libquery_engine-linux-arm64-openssl-3.0.x.so.node';
-    case 'darwin-x64':
-      return 'libquery_engine-darwin.dylib.node';
-    case 'darwin-arm64':
-      return 'libquery_engine-darwin-arm64.dylib.node';
-    case 'windows-x64':
-      return 'query_engine-windows.dll.node';
-    default:
-      throw new Error(`unsupported fixture platform: ${key}`);
-  }
-}
+const SERVER_PRISMA_QUERY_COMPILER_FIXTURE = 'query_compiler_fast_bg.wasm-base64.js';
 
-function writeServerPrismaEngineFixtures({
+/** Prisma 7 generated clients: the embedded query compiler a staged client must carry. */
+function writeServerPrismaClientFixtures({
   sqliteClientDir,
   mysqlClientDir,
   postgresClientDir,
   providers = ['sqlite'],
-  platform = 'linux',
-  arch = 'x64',
 }) {
-  const engineFileName = prismaEngineFileNameForFixture({ platform, arch });
   if (providers.includes('sqlite') && sqliteClientDir) {
-    writeFileSync(join(sqliteClientDir, engineFileName), 'sqlite-engine\n', 'utf8');
+    writeFileSync(join(sqliteClientDir, SERVER_PRISMA_QUERY_COMPILER_FIXTURE), 'sqlite-compiler\n', 'utf8');
   }
   if (providers.includes('mysql') && mysqlClientDir) {
-    writeFileSync(join(mysqlClientDir, engineFileName), 'mysql-engine\n', 'utf8');
+    writeFileSync(join(mysqlClientDir, SERVER_PRISMA_QUERY_COMPILER_FIXTURE), 'mysql-compiler\n', 'utf8');
   }
   if (postgresClientDir) {
-    writeFileSync(join(postgresClientDir, engineFileName), 'postgres-engine\n', 'utf8');
+    writeFileSync(join(postgresClientDir, SERVER_PRISMA_QUERY_COMPILER_FIXTURE), 'postgres-compiler\n', 'utf8');
+  }
+}
+
+/**
+ * The server's real Prisma install-layout and migration-schema owners, an installed
+ * `@prisma/client` (with its runtime-utils dependency), the 6.19.2 migration CLI alias and
+ * provider-only datasource blocks for any migration schema the fixture declared.
+ */
+function writeServerPrismaInstallFixture(repoRoot) {
+  const realServerScripts = join(import.meta.dirname, '..', '..', '..', 'apps', 'server', 'scripts');
+  const serverScripts = join(repoRoot, 'apps', 'server', 'scripts');
+  mkdirSync(join(serverScripts, 'runtime'), { recursive: true });
+  writeFileSync(join(serverScripts, 'prismaInstallLayout.mjs'), readFileSync(join(realServerScripts, 'prismaInstallLayout.mjs')));
+  writeFileSync(
+    join(serverScripts, 'runtime', 'prepareFullRuntimeMigrationSchema.mjs'),
+    readFileSync(join(realServerScripts, 'runtime', 'prepareFullRuntimeMigrationSchema.mjs')),
+  );
+  const serverPackageJson = join(repoRoot, 'apps', 'server', 'package.json');
+  if (!existsSync(serverPackageJson)) writeFileSync(serverPackageJson, '{"name":"@happier-dev/server"}\n', 'utf8');
+  const clientDir = join(repoRoot, 'node_modules', '@prisma', 'client');
+  mkdirSync(clientDir, { recursive: true });
+  writeFileSync(join(clientDir, 'package.json'), JSON.stringify({
+    name: '@prisma/client',
+    dependencies: { '@prisma/client-runtime-utils': '7.10.1' },
+  }), 'utf8');
+  const runtimeUtilsDir = join(repoRoot, 'node_modules', '@prisma', 'client-runtime-utils');
+  mkdirSync(runtimeUtilsDir, { recursive: true });
+  writeFileSync(join(runtimeUtilsDir, 'package.json'), '{"name":"@prisma/client-runtime-utils"}\n', 'utf8');
+  const migrationCliBuild = join(repoRoot, 'node_modules', 'prisma-migrate-cli', 'build');
+  mkdirSync(migrationCliBuild, { recursive: true });
+  writeFileSync(join(migrationCliBuild, '..', 'package.json'), '{"name":"prisma","version":"6.19.2"}\n', 'utf8');
+  writeFileSync(join(migrationCliBuild, 'prisma_schema_build_bg.wasm'), 'schema wasm\n', 'utf8');
+  mkdirSync(join(repoRoot, 'node_modules', 'node-fetch-native', 'dist'), { recursive: true });
+  writeFileSync(join(repoRoot, 'node_modules', 'node-fetch-native', 'dist', 'proxy-stub.mjs'), 'export {};\n', 'utf8');
+  for (const [path, provider] of [
+    [join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma'), 'postgresql'],
+    [join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'), 'mysql'],
+  ]) {
+    if (existsSync(path)) writeFileSync(path, `datasource db {\n    provider = "${provider}"\n}\n`, 'utf8');
   }
 }
 
@@ -1264,7 +1285,7 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
     writeFileSync(join(mysqlMigrationsDir, 'migration_lock.toml'), 'provider = "mysql"\n', 'utf8');
     writeFileSync(join(runtimeMigrationEngineDir, 'schema-engine-debian-openssl-3.0.x'), 'schema engine\n', 'utf8');
     writeFileSync(join(prismaBuildDir, 'prisma_schema_build_bg.wasm'), 'schema wasm\n', 'utf8');
-    writeServerPrismaEngineFixtures({
+    writeServerPrismaClientFixtures({
       sqliteClientDir,
       mysqlClientDir,
       postgresClientDir,
@@ -1286,6 +1307,7 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
     );
     writeFileSync(join(sharpLibvipsLinuxX64Dir, 'libvips.so'), 'libvips\n', 'utf8');
     writeIrohNativeRuntimeFixture(repoRoot);
+    writeServerPrismaInstallFixture(repoRoot);
     if (process.platform !== 'win32') {
       const externalBinTarget = join(tempRoot, 'external-server-bin-target.js');
       const nestedBinDir = join(prismaClientPackageDir, 'node_modules', '.bin');
@@ -1362,8 +1384,8 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
     assert.equal(existsSync(join(payloadDir, 'prisma', 'schema.prisma')), true);
     assert.equal(readFileSync(join(payloadDir, 'ui-web', 'current', 'index.html'), 'utf8'), '<html>ui</html>\n');
     assert.equal(
-      readFileSync(join(payloadDir, 'node_modules', '.prisma', 'client', 'libquery_engine-debian-openssl-3.0.x.so.node'), 'utf8'),
-      'postgres-engine\n',
+      readFileSync(join(payloadDir, 'node_modules', '.prisma', 'client', SERVER_PRISMA_QUERY_COMPILER_FIXTURE), 'utf8'),
+      'postgres-compiler\n',
     );
     assert.equal(
       readFileSync(join(payloadDir, 'node_modules', '@prisma', 'client', 'index.js'), 'utf8'),
@@ -1471,9 +1493,8 @@ test('buildServerRuntimeSupportPayload keeps provider migration runtime in suppo
     for (const dir of [postgresClientDir, mysqlClientDir, runtimeDir]) {
       mkdirSync(dir, { recursive: true });
     }
-    const engineFileName = 'libquery_engine-debian-openssl-3.0.x.so.node';
-    writeFileSync(join(postgresClientDir, engineFileName), 'postgres engine\n', 'utf8');
-    writeFileSync(join(mysqlClientDir, engineFileName), 'mysql engine\n', 'utf8');
+    writeFileSync(join(postgresClientDir, SERVER_PRISMA_QUERY_COMPILER_FIXTURE), 'postgres compiler\n', 'utf8');
+    writeFileSync(join(mysqlClientDir, SERVER_PRISMA_QUERY_COMPILER_FIXTURE), 'mysql compiler\n', 'utf8');
     writeFileSync(join(runtimeDir, 'schema-engine'), 'schema engine\n', 'utf8');
     writeFileSync(join(runtimeDir, 'prisma_schema_build_bg.wasm'), 'schema wasm\n', 'utf8');
 
@@ -1512,7 +1533,7 @@ test('buildServerBinaryArtifactPayload packages PostgreSQL and MySQL migration c
     const repoRoot = join(tempRoot, 'repo');
     const payloadDir = join(tempRoot, 'payload');
     const serverRoot = join(repoRoot, 'apps', 'server');
-    const targetEngine = 'libquery_engine-debian-openssl-3.0.x.so.node';
+    const targetEngine = SERVER_PRISMA_QUERY_COMPILER_FIXTURE;
     for (const dir of [
       join(serverRoot, 'sources'),
       join(serverRoot, 'scripts', 'runtime'),
@@ -1542,6 +1563,7 @@ test('buildServerBinaryArtifactPayload packages PostgreSQL and MySQL migration c
     writeFileSync(join(repoRoot, 'node_modules', 'prisma', 'build', 'prisma_schema_build_bg.wasm'), 'schema wasm\n');
     writeServerSharpRuntimeFixture({ repoRoot });
     writeIrohNativeRuntimeFixture(repoRoot);
+    writeServerPrismaInstallFixture(repoRoot);
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const result = await artifacts.buildServerBinaryArtifactPayload({
@@ -1566,6 +1588,16 @@ test('buildServerBinaryArtifactPayload packages PostgreSQL and MySQL migration c
     assert.equal(readFileSync(join(payloadDir, 'runtime', 'schema-engine'), 'utf8'), 'schema engine\n');
     assert.equal(readFileSync(join(payloadDir, 'runtime', 'prisma_schema_build_bg.wasm'), 'utf8'), 'schema wasm\n');
     assert.equal(readFileSync(join(payloadDir, 'runtime', 'prisma-migrate'), 'utf8'), 'prisma runner\n');
+    // The packaged Prisma 6 migration CLI reads the URL from the schema; the server's source
+    // schemas stay URL-less for Prisma 7.
+    for (const [schema, provider] of [[join('prisma', 'schema.prisma'), 'postgresql'], [join('prisma', 'mysql', 'schema.prisma'), 'mysql']]) {
+      assert.equal(
+        readFileSync(join(payloadDir, schema), 'utf8'),
+        `datasource db {\n    provider = "${provider}"\n    url      = env("DATABASE_URL")\n}\n`,
+      );
+      assert.doesNotMatch(readFileSync(join(serverRoot, schema), 'utf8'), /url/);
+    }
+    assert.equal(readFileSync(join(payloadDir, 'node_modules', '@prisma', 'client-runtime-utils', 'package.json'), 'utf8'), '{"name":"@prisma/client-runtime-utils"}\n');
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
@@ -1602,7 +1634,7 @@ test('buildServerBinaryArtifactPayload stages sharp runtime sidecars for the ser
     writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
     writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
     writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
-    writeServerPrismaEngineFixtures({ sqliteClientDir, postgresClientDir });
+    writeServerPrismaClientFixtures({ sqliteClientDir, postgresClientDir });
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
     writeFileSync(
       join(sharpDir, 'package.json'),
@@ -1639,6 +1671,7 @@ test('buildServerBinaryArtifactPayload stages sharp runtime sidecars for the ser
     );
     writeFileSync(join(sharpDarwinArm64Dir, 'binding.node'), 'darwin sharp binding\n', 'utf8');
     writeIrohNativeRuntimeFixture(repoRoot);
+    writeServerPrismaInstallFixture(repoRoot);
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const compileCalls = [];
@@ -1735,7 +1768,7 @@ test('buildServerBinaryArtifactPayload delegates provider freshness to generate:
     writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// stale sqlite schema\n', 'utf8');
     writeFileSync(join(mysqlClientDir, 'index.js'), 'module.exports = {};\n', 'utf8');
     writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
-    writeServerPrismaEngineFixtures({
+    writeServerPrismaClientFixtures({
       sqliteClientDir,
       mysqlClientDir,
       postgresClientDir,
@@ -1747,6 +1780,7 @@ test('buildServerBinaryArtifactPayload delegates provider freshness to generate:
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
     writeServerSharpRuntimeFixture({ repoRoot });
     writeIrohNativeRuntimeFixture(repoRoot);
+    writeServerPrismaInstallFixture(repoRoot);
     writeServerPackagedMigrationFixtures({ repoRoot });
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
@@ -1813,7 +1847,7 @@ test('buildServerBinaryArtifactPayload delegates provider freshness to generate:
   }
 });
 
-test('buildServerBinaryArtifactPayload fails darwin artifacts without the darwin Prisma engine', async () => {
+test('buildServerBinaryArtifactPayload fails an artifact whose generated Prisma client lacks its query compiler', async () => {
   const tempRoot = mkdtempSync(join(tmpdir(), 'component-artifacts-server-darwin-engine-'));
   try {
     const repoRoot = join(tempRoot, 'repo');
@@ -1835,19 +1869,18 @@ test('buildServerBinaryArtifactPayload fails darwin artifacts without the darwin
     writeFileSync(join(serverSourcesDir, 'main.light.ts'), 'export {};\n', 'utf8');
     writeFileSync(join(uiDistDir, 'index.html'), '<html>ui</html>\n', 'utf8');
     writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
-    writeFileSync(join(sqliteClientDir, 'libquery_engine-linux-arm64-openssl-3.0.x.so.node'), 'wrong-platform\n', 'utf8');
+    writeFileSync(join(sqliteClientDir, 'index.js'), 'module.exports = {};\n', 'utf8');
     writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
-    writeServerPrismaEngineFixtures({
+    writeServerPrismaClientFixtures({
       sqliteClientDir: null,
       mysqlClientDir: null,
       postgresClientDir,
       providers: [],
-      platform: 'darwin',
-      arch: 'arm64',
     });
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = { PrismaClient: class PrismaClient {} };\n', 'utf8');
     writeServerSharpRuntimeFixture({ repoRoot, platform: 'darwin', arch: 'arm64' });
     writeIrohNativeRuntimeFixture(repoRoot);
+    writeServerPrismaInstallFixture(repoRoot);
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     await assert.rejects(
@@ -1870,7 +1903,7 @@ test('buildServerBinaryArtifactPayload fails darwin artifacts without the darwin
           writeFileSync(outfile, '#!/bin/sh\necho happier-server\n', 'utf8');
         },
       }),
-      /missing sqlite Prisma query engine for darwin-arm64/i,
+      /missing sqlite Prisma query compiler: generated\/sqlite-client\/query_compiler_fast_bg\.wasm-base64\.js/i,
     );
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
@@ -1901,10 +1934,11 @@ test('buildServerBinaryArtifactPayload retries transient ENOENT failures while c
     writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
     writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
     writeFileSync(join(postgresClientDir, 'client.d.ts'), 'export {};\n', 'utf8');
-    writeServerPrismaEngineFixtures({ sqliteClientDir, postgresClientDir });
+    writeServerPrismaClientFixtures({ sqliteClientDir, postgresClientDir });
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = {};\n', 'utf8');
     writeServerSharpRuntimeFixture({ repoRoot });
     writeIrohNativeRuntimeFixture(repoRoot);
+    writeServerPrismaInstallFixture(repoRoot);
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     let copyAttempts = 0;
@@ -1968,10 +2002,11 @@ test('prepareUiWebDist refreshes an existing ui-web dist before server sidecars 
     writeFileSync(join(sqliteClientDir, 'schema.prisma'), '// sqlite\n', 'utf8');
     writeFileSync(join(sqliteMigrationsDir, 'migration.sql'), '-- sql\n', 'utf8');
     writeFileSync(join(postgresClientDir, 'client.d.ts'), 'export {};\n', 'utf8');
-    writeServerPrismaEngineFixtures({ sqliteClientDir, postgresClientDir });
+    writeServerPrismaClientFixtures({ sqliteClientDir, postgresClientDir });
     writeFileSync(join(prismaClientPackageDir, 'index.js'), 'module.exports = {};\n', 'utf8');
     writeServerSharpRuntimeFixture({ repoRoot });
     writeIrohNativeRuntimeFixture(repoRoot);
+    writeServerPrismaInstallFixture(repoRoot);
 
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const runCalls = [];

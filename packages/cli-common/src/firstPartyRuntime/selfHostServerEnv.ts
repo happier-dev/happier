@@ -1,9 +1,7 @@
 import { parseEnvText } from './parseEnvText.js';
 export { parseEnvText } from './parseEnvText.js';
-import { existsSync } from 'node:fs';
 import { dirname, join, win32 as win32Path } from 'node:path';
 
-import { resolveServerRuntimePrismaEngineFileName } from './serverRuntimeArtifactLayout.js';
 
 export const DEFAULT_PRISMA_SQLITE_BUSY_TIMEOUT_MS = 30_000;
 // SQLite has one writer. One connection keeps server-light writes queued in order instead of
@@ -59,7 +57,9 @@ export function resolveSelfHostServerMigrationPlan(params: Readonly<{
 
 // Entries here are regenerated (or intentionally removed) on every managed
 // relay update. Operator-owned configuration must remain outside this set so a
-// bare `relay host install` is an idempotent update.
+// bare `relay host install` is an idempotent update. PRISMA_CLIENT_ENGINE_TYPE and
+// PRISMA_QUERY_ENGINE_LIBRARY are no longer rendered (Prisma 7 has no query-engine
+// library); keeping them here removes the stale values 0.2 installs wrote.
 const SELF_HOST_SERVER_ENV_REGENERATED_KEYS = new Set<string>([
     'HAPPIER_SERVER_UI_DIR',
     'HAPPIER_SERVER_UI_DEPLOYMENT_ID',
@@ -91,14 +91,10 @@ export function renderSelfHostServerEnvTextFromResolvedValues(params: Readonly<{
     uiDir?: string;
     uiDeploymentId?: string;
     nodeModulesPath?: string;
-    prismaEnginePath?: string;
 }>): string {
     const uiDir = typeof params.uiDir === 'string' && params.uiDir.trim() ? params.uiDir.trim() : '';
     const nodeModulesPath = typeof params.nodeModulesPath === 'string' && params.nodeModulesPath.trim()
         ? params.nodeModulesPath.trim()
-        : '';
-    const prismaEnginePath = typeof params.prismaEnginePath === 'string' && params.prismaEnginePath.trim()
-        ? params.prismaEnginePath.trim()
         : '';
 
     return [
@@ -111,12 +107,6 @@ export function renderSelfHostServerEnvTextFromResolvedValues(params: Readonly<{
         `DATABASE_URL=${params.databaseUrl}`,
         'HAPPIER_FILES_BACKEND=local',
         ...(nodeModulesPath ? [`NODE_PATH=${nodeModulesPath}`] : []),
-        ...(prismaEnginePath
-            ? [
-                'PRISMA_CLIENT_ENGINE_TYPE=library',
-                `PRISMA_QUERY_ENGINE_LIBRARY=${prismaEnginePath}`,
-            ]
-            : []),
         `HAPPIER_SQLITE_AUTO_MIGRATE=${params.sqliteAutoMigrate}`,
         `HAPPIER_SQLITE_MIGRATIONS_DIR=${params.sqliteMigrationsDir}`,
         `HAPPIER_SERVER_LIGHT_DATA_DIR=${params.dataDir}`,
@@ -135,13 +125,10 @@ export function renderSelfHostServerEnvText(params: Readonly<{
     uiDir?: string;
     uiDeploymentId?: string;
     serverBinDir?: string;
-    arch?: string;
     platform?: NodeJS.Platform;
-    prismaEnginePath?: string;
 }>): string {
     const normalizedDataDir = String(params.dataDir ?? '').replace(/\/+$/, '') || String(params.dataDir ?? '');
     const platform = String(params.platform ?? '').trim() || process.platform;
-    const arch = String(params.arch ?? '').trim() || process.arch;
     const uiDir = typeof params.uiDir === 'string' && params.uiDir.trim() ? params.uiDir.trim() : '';
     const serverBinDir = typeof params.serverBinDir === 'string' && params.serverBinDir.trim()
         ? params.serverBinDir.trim()
@@ -159,18 +146,6 @@ export function renderSelfHostServerEnvText(params: Readonly<{
         sqlite: resolveServerLightSqliteDatabaseUrlOptionsFromEnv(process.env),
     });
 
-    const prismaEngineFileName = serverBinDir
-        ? resolveServerRuntimePrismaEngineFileName({ platform, arch })
-        : '';
-    const prismaEngineCandidates = prismaEngineFileName
-        ? [
-            join(serverBinDir, 'node_modules', '.prisma', 'client', prismaEngineFileName),
-            join(serverBinDir, 'generated', 'sqlite-client', prismaEngineFileName),
-        ]
-        : [];
-    const prismaEnginePath = String(params.prismaEnginePath ?? '').trim()
-        || prismaEngineCandidates.find((candidate) => existsSync(candidate))
-        || '';
     const nodeModulesPath = serverBinDir ? join(serverBinDir, 'node_modules') : '';
 
     return renderSelfHostServerEnvTextFromResolvedValues({
@@ -185,7 +160,6 @@ export function renderSelfHostServerEnvText(params: Readonly<{
         uiDir,
         uiDeploymentId: params.uiDeploymentId,
         nodeModulesPath,
-        prismaEnginePath,
     });
 }
 

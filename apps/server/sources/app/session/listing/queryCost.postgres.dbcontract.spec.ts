@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerSessionFilteredListingRoute } from '@/app/api/routes/session/registerSessionFilteredListingRoute';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 interface PlanNode {
     'Node Type': string;
@@ -71,13 +72,14 @@ function inlineParams(sql: string, params: unknown[]): string {
  */
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Session list query cost (PostgreSQL)', () => {
     const logged: Prisma.QueryEvent[] = [];
-    const replay = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    let replay: PrismaClientType;
     beforeAll(async () => {
+        replay = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error('Run with the disposable PostgreSQL DB-contract harness');
         }
-        replay.$on('query', event => { logged.push(event); });
+        onDbClientQuery(replay, event => { logged.push(event); });
         initDbPostgres();
         await db.$connect();
         await replay.$connect();

@@ -56,20 +56,20 @@ echo Linux
   const artifactDir = join(fixtureDir, artifactStem);
 
   await mkdir(join(artifactDir, 'generated', 'sqlite-client'), { recursive: true });
-  const engineMarker = join(artifactDir, 'generated', 'sqlite-client', 'libquery_engine-linux-x64-openssl-3.0.x.so.node');
-  await writeFile(engineMarker, 'engine\n', 'utf8');
+  const clientMarker = join(artifactDir, 'generated', 'sqlite-client', 'query_compiler_fast_bg.wasm-base64.js');
+  await writeFile(clientMarker, 'compiler\n', 'utf8');
 
   const serverBin = join(artifactDir, 'happier-server');
   await writeFile(
     serverBin,
     `#!/usr/bin/env bash
 set -euo pipefail
-# Mimic a Prisma engine lookup that expects engines alongside the payload root.
-if [[ ! -f "generated/sqlite-client/libquery_engine-linux-x64-openssl-3.0.x.so.node" ]]; then
-  echo "missing prisma engine marker in cwd=$PWD" >&2
+# Mimic a generated Prisma client lookup that expects clients alongside the payload root.
+if [[ ! -f "generated/sqlite-client/query_compiler_fast_bg.wasm-base64.js" ]]; then
+  echo "missing prisma client marker in cwd=$PWD" >&2
   exit 2
 fi
-echo "ok: prisma engine marker found"
+echo "ok: prisma client marker found"
 exit 0
 `,
     'utf8',
@@ -149,7 +149,7 @@ printf '%s' '${releaseJson}'
   const shimPath = join(outBinDir, 'happier-server-dev');
   const execRes = spawnSync('bash', ['-lc', `${JSON.stringify(shimPath)} 2>/dev/null`], { env, encoding: 'utf8' });
   assert.equal(execRes.status, 0, `expected shim to execute the payload binary successfully:\n--- stdout ---\n${String(execRes.stdout ?? '')}\n--- stderr ---\n${String(execRes.stderr ?? '')}\n`);
-  assert.match(String(execRes.stdout ?? ''), /prisma engine marker found/);
+  assert.match(String(execRes.stdout ?? ''), /prisma client marker found/);
 
   await rm(root, { recursive: true, force: true });
 });

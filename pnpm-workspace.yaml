@@ -100,7 +100,7 @@ overrides:
   react-native-worklets: 0.8.1
   vitest@3.2.4>vite: 7.3.1
   vite-node@3.2.4>vite: 7.3.1
-  "@prisma/client": 6.19.2
+  "@prisma/client": 7.10.1
 packageExtensions:
   "@pierre/theming@1.0.1":
     dependencies:
@@ -143,7 +143,6 @@ patchedDependencies:
   "@legendapp/list@3.3.3": patches/@legendapp__list@3.3.3.patch
   "@tauri-apps/plugin-http@2.5.2": patches/@tauri-apps__plugin-http@2.5.2.patch
   "@pierre/diffs@1.5.2": patches/@pierre__diffs@1.5.2.patch
-  "@prisma/client@6.19.2": patches/@prisma__client@6.19.2.patch
   "@react-native/gradle-plugin@0.83.5": patches/@react-native__gradle-plugin@0.83.5.patch
   "@react-navigation/core@7.21.5": patches/@react-navigation__core@7.21.5.patch
   "@react-navigation/elements@2.9.17": patches/@react-navigation__elements@2.9.17.patch

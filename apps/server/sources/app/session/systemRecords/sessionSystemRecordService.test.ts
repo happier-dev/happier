@@ -92,9 +92,9 @@ const testState = vi.hoisted(() => ({
 
 // Prisma reads are the external boundary; the canonical access projector remains real.
 vi.mock("@/storage/db", async () => {
-    const { PrismaClient } = await import("@prisma/client");
+    const { createDbMaintenanceClient } = await import("@/storage/prisma");
     // Real field references are query descriptors; reading them opens no database connection.
-    const client = new PrismaClient();
+    const client = await createDbMaintenanceClient("postgres", "postgresql://fields:fields@127.0.0.1:1/fields");
     return {
         db: {
             // PostgreSQL captures empty Home settings and governance in one joined statement.

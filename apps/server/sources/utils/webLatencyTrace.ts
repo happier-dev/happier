@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { log, logger } from '@/utils/logging/log';
+import { readPrismaDriverErrorCause } from '@/storage/prismaErrors';
 
 const context = new AsyncLocalStorage<Readonly<{
     requestId?: string;
@@ -45,6 +46,12 @@ export function createWebLatencyTransactionAttempt(input: Pick<WebLatencyTransac
         nativeCallbackEndedAtMs: null, publicationCompletedAtMs: null, boundedMaxWaitMs: null, boundedTimeoutMs: null };
 }
 
+/** A PostgreSQL SQLSTATE from the driver cause; never its message. */
+function readSqlState(error: unknown): string | undefined {
+    const code = readPrismaDriverErrorCause(error)?.code;
+    return code !== undefined && /^[0-9A-Z]{5}$/u.test(code) ? code : undefined;
+}
+
 /** One content-free settlement record, using inTx's existing outcome certainty. */
 export function settleWebLatencyTransactionAttempt(attempt: WebLatencyTransactionAttempt,
     settlement: 'committed' | 'rolled-back' | 'not-started' | 'unknown', error?: unknown, sqlState?: string): void {
@@ -60,8 +67,7 @@ export function settleWebLatencyTransactionAttempt(attempt: WebLatencyTransactio
         const discovery = code === 'P2028' ? /\b(query|batch query|commit) cannot be executed on an expired transaction/iu.exec(message) : null;
         const timing = discovery ? /The timeout for this transaction was (\d+) ms, however (\d+) ms passed/iu.exec(message) : null;
         const settledAtMs = Date.now();
-        const nativeSqlState = sqlState ?? (meta && typeof meta === 'object' && 'code' in meta
-            && typeof meta.code === 'string' && /^[0-9A-Z]{5}$/u.test(meta.code) ? meta.code : undefined);
+        const nativeSqlState = sqlState ?? readSqlState(error);
         log({ level: 'trace', module: 'web-latency', phase: 'db.transaction.phases', ...attempt,
             settledAtMs, elapsedMs: settledAtMs - attempt.entryAtMs, settlement,
             ...(code ? { code } : {}), ...(nativeSqlState ? { sqlState: nativeSqlState } : {}),
@@ -129,10 +135,8 @@ export async function timeWebLatencyPhase<T>(phase: string, operation: () => T |
         try {
             if (typeof error === 'object' && error !== null) {
                 if ('code' in error && typeof error.code === 'string' && /^P\d{4}$/u.test(error.code)) outcome.code = error.code;
-                if ('meta' in error && typeof error.meta === 'object' && error.meta !== null
-                    && 'code' in error.meta && typeof error.meta.code === 'string' && /^[0-9A-Z]{5}$/u.test(error.meta.code)) {
-                    outcome.sqlState = error.meta.code;
-                }
+                const sqlState = readSqlState(error);
+                if (sqlState) outcome.sqlState = sqlState;
             }
         } catch { /* Diagnostics cannot replace the operation's failure. */ }
         throw error;

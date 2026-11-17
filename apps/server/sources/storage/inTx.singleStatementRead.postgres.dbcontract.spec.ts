@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient, type Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { auth } from "@/app/auth/auth";
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { readDatabaseErrorCode } from "@/storage/transactionErrors";
+import { createDbMaintenanceClient, type PrismaClientType } from "@/storage/prisma";
+import { recordDriverStatements, type DriverStatementEvent } from "@/testkit/driverStatements";
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("single-statement reads", () => {
-    const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, "query">;
+    const statements: DriverStatementEvent[] = [];
+    let client: PrismaClientType;
     let originalTransaction: typeof db.$transaction;
 
     beforeAll(async () => {
@@ -17,8 +18,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("s
         initDbPostgres();
         await db.$connect();
         await auth.init();
-        client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-        client.$on("query", event => statements.push(event));
+        client = await createDbMaintenanceClient("postgres", undefined, { onDriverStatement: recordDriverStatements(event => statements.push(event)) });
         await client.$connect();
         originalTransaction = db.$transaction;
         // Real Postgres through a query-observing twin of the transaction transport.

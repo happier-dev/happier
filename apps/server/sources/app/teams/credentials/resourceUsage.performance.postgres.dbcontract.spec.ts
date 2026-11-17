@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { defineResourceUsagePerformanceContract } from './resourceUsage.performance.testkit';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Team usage page cost (PostgreSQL)', () => {
     const queries: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>;
+    let client: PrismaClientType;
     let originalTransaction: typeof db.$transaction;
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
@@ -14,8 +15,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
         }
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => queries.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => queries.push(event));
         await client.$connect();
         originalTransaction = db.$transaction;
         const traced = client;

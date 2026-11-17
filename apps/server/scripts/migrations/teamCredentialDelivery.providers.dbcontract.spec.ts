@@ -3,14 +3,13 @@ import { copyFile, cp, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { PrismaClient as PostgresClient } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import { encodeSessionTeamCredentialSlotKeyV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
-import { PrismaClient as MysqlClient } from '../../generated/mysql-client/index.js';
 import { readTeamCredentialAllowedRoutes, readTeamCredentialDeliveryConfiguration } from '../../sources/app/teams/credentials/resourceDeliveryRead';
 import { applySqliteMigrations } from '../prismaMigrations';
-import { runPrismaCli } from '../prismaCli';
+import { runPrismaMigrateCli } from '../prismaMigrateCli';
 import { readTeamCredentialDeliveryMigrationSql, teamCredentialDeliveryMigrationId, type TeamCredentialMigrationProvider } from './teamCredentialDeliveryMigration.testkit';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 const serverRoot = join(import.meta.dirname, '../..');
 interface Database {
@@ -133,17 +132,16 @@ describe('Team credential normalized delivery canonical migration', () => {
         (databaseUrl ? it : it.skip)(`preserves legacy rows and deploy replay on real ${provider}`, async () => {
             const stage = await mkdtemp(join(tmpdir(), `happier-team-delivery-${provider}-`));
             const name = `team_delivery_${randomUUID().replaceAll('-', '')}`;
-            const Client = provider === 'postgres' ? PostgresClient : MysqlClient;
-            const admin = new Client({ datasourceUrl: databaseUrl });
+            const admin = await createDbMaintenanceClient(provider, databaseUrl);
             const scoped = new URL(databaseUrl!);
             if (provider === 'postgres') scoped.searchParams.set('schema', name); else scoped.pathname = `/${name}`;
-            const client = new Client({ datasourceUrl: scoped.toString() });
+            const client = await createDbMaintenanceClient(provider, scoped.toString());
             const db: Database = { execute: sql => client.$executeRawUnsafe(sql), query: sql => client.$queryRawUnsafe<Record<string, unknown>[]>(sql) };
             let created = false;
             try {
                 await admin.$executeRawUnsafe(provider === 'postgres' ? `CREATE SCHEMA "${name}"` : `CREATE DATABASE \`${name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
                 created = true;
-                await proveMigration(provider, stage, db, () => runPrismaCli({ serverRoot, args: ['migrate','deploy','--schema',join(stage,'schema.prisma')], env: { ...process.env, DATABASE_URL: scoped.toString(), HAPPIER_DB_PROVIDER: provider }, quiet: true }));
+                await proveMigration(provider, stage, db, () => runPrismaMigrateCli({ serverRoot, schemaPath: join(stage,'schema.prisma'), args: ['deploy'], env: { ...process.env, DATABASE_URL: scoped.toString(), HAPPIER_DB_PROVIDER: provider }, quiet: true }));
             } finally {
                 await client.$disconnect();
                 if (created) await admin.$executeRawUnsafe(provider === 'postgres' ? `DROP SCHEMA "${name}" CASCADE` : `DROP DATABASE \`${name}\``);

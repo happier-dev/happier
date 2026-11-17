@@ -216,7 +216,8 @@ test('a successful migration followed by setup failure never labels that migrati
 test('the real Prisma deploy failure diagnostic names its failed SQL migration', async t => {
   const { spec, serverDir } = await fixture(t);
   const requireServer = createRequire(new URL('../../../../server/package.json', import.meta.url));
-  const prismaCli = requireServer.resolve('prisma/build/index.js');
+  // The packaged migrator is the Prisma 6.19.2 CLI (apps/server/scripts/prismaMigrateCli.ts).
+  const prismaCli = requireServer.resolve('prisma-migrate-cli/build/index.js');
   const failedMigration = '20260102000000_invalid';
   const migrationsDir = join(serverDir, 'migrations');
   await mkdir(join(migrationsDir, failedMigration), { recursive: true });

@@ -1,7 +1,3 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -245,34 +241,29 @@ describe('mergeSelfHostServerEnvText', () => {
 });
 
 describe('renderSelfHostServerEnvText', () => {
-    it('pins the packaged Windows sqlite query engine for the managed server runtime', async () => {
-        const serverBinDir = await mkdtemp(join(tmpdir(), 'happier-self-host-windows-engine-'));
-        try {
-            const enginePath = join(
-                serverBinDir,
-                'node_modules',
-                '.prisma',
-                'client',
-                'query_engine-windows.dll.node',
-            );
-            await mkdir(join(enginePath, '..'), { recursive: true });
-            await writeFile(enginePath, 'engine\n');
+    it('renders no Prisma engine settings and drops the ones a 0.2 install wrote on update', () => {
+        const rendered = renderSelfHostServerEnvText({
+            port: 3005,
+            host: '127.0.0.1',
+            dataDir: 'C:\\Users\\me\\Happier QA\\self-host\\data',
+            filesDir: 'C:\\Users\\me\\Happier QA\\self-host\\data\\files',
+            dbDir: 'C:\\Users\\me\\Happier QA\\self-host\\data\\pglite',
+            serverBinDir: 'C:\\Happier\\server\\bin',
+            platform: 'win32',
+        });
+        expect(rendered).not.toMatch(/^PRISMA_/m);
 
-            const rendered = renderSelfHostServerEnvText({
-                port: 3005,
-                host: '127.0.0.1',
-                dataDir: 'C:\\Users\\me\\Happier QA\\self-host\\data',
-                filesDir: 'C:\\Users\\me\\Happier QA\\self-host\\data\\files',
-                dbDir: 'C:\\Users\\me\\Happier QA\\self-host\\data\\pglite',
-                serverBinDir,
-                platform: 'win32',
-                arch: 'x64',
-            });
-
-            expect(rendered).toContain(`PRISMA_QUERY_ENGINE_LIBRARY=${enginePath}`);
-        } finally {
-            await rm(serverBinDir, { recursive: true, force: true });
-        }
+        const merged = mergeSelfHostServerEnvText({
+            baseEnvText: rendered,
+            existingEnvText: [
+                'PORT=3005',
+                'PRISMA_CLIENT_ENGINE_TYPE=library',
+                'PRISMA_QUERY_ENGINE_LIBRARY=C:\\Happier\\server\\bin\\node_modules\\.prisma\\client\\query_engine-windows.dll.node',
+                '',
+            ].join('\n'),
+            overrides: {},
+        });
+        expect(merged).not.toMatch(/^PRISMA_/m);
     });
 
     it('keeps sqlite auto-migrate enabled for darwin self-host runtimes even when the CLI runs under Bun', () => {
@@ -288,7 +279,6 @@ describe('renderSelfHostServerEnvText', () => {
                 dbDir: '/tmp/happier-data/pglite',
                 serverBinDir: '/tmp/happier-server',
                 platform: 'darwin',
-                arch: 'arm64',
             });
 
             expect(rendered).toContain('HAPPIER_SQLITE_AUTO_MIGRATE=1');

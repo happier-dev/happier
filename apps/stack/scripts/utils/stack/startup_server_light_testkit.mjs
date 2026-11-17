@@ -2,6 +2,8 @@ import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { writeFakeServerDatabaseOwner } from '../../testkit/core/server_database_fixture.mjs';
+
 async function writeJson(path, obj) {
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
 }
@@ -48,23 +50,10 @@ export class PGLiteSocketServer {
 }\n`,
     'utf-8',
   );
-  await writeEsmPkg({
-    dir: join(serverDir, 'node_modules', '@prisma', 'client'),
-    name: '@prisma/client',
-    body: `
-export class PrismaClient {
-  constructor() { this.account = { count: async () => 0 }; }
-  async $disconnect() {}
-}
-`,
+  await writeFakeServerDatabaseOwner({
+    serverDir,
+    createClientSource: '  return { account: { count: async () => 0 }, async $disconnect() {} };',
   });
-  const sqliteClientDir = join(serverDir, 'generated', 'sqlite-client');
-  await mkdir(sqliteClientDir, { recursive: true });
-  await writeFile(
-    join(sqliteClientDir, 'index.js'),
-    'export class PrismaClient { constructor() { this.account = { count: async () => 0 }; } async $disconnect() {} }\n',
-    'utf-8',
-  );
 }
 
 async function writePnpmShim({ root, markerPath }) {

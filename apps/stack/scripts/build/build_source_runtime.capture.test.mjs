@@ -81,8 +81,8 @@ test('server source capture retains matching default and generated provider clie
     process.platform === 'win32' ? 'junction' : 'dir');
   // Generated third-party artifacts are the boundary: keep their real CommonJS
   // package lookup and runtime file lifetimes, without recreating Prisma logic.
-  const wrapper = join(repoDir, 'node_modules/@prisma/client');
-  const generated = join(repoDir, 'node_modules/.prisma/client');
+  const wrapper = join(repoDir, 'apps/server/node_modules/@prisma/client');
+  const generated = join(repoDir, 'apps/server/node_modules/.prisma/client');
   await mkdir(wrapper, { recursive: true });
   await mkdir(generated, { recursive: true });
   await writeFile(join(wrapper, 'package.json'), JSON.stringify({ name: '@prisma/client', main: './index.cjs' }));
@@ -408,7 +408,7 @@ test('revision capture drops stray ignored files and keeps declared generated in
   await writeFile(join(repoDir, strays[1]), '{}');
   const after = await capture('after');
   assert.deepEqual(strays.filter(path => after.files.includes(path)), [], 'stray ignored files are not captured');
-  assert.ok(after.files.includes('node_modules/.prisma/client/index.js'), 'declared generated inputs stay');
+  assert.ok(after.files.includes('apps/server/node_modules/.prisma/client/index.js'), 'declared generated inputs stay');
   assert.ok(after.files.includes('apps/server/generated/sqlite-client/index.js'));
   assert.equal(after.inputIdentity, before.inputIdentity, 'stray ignored files do not change the build identity');
 });

@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { encodeSessionTeamCredentialSlotKeyV1 } from '@happier-dev/protocol';
-import { PrismaClient } from '../../generated/mysql-client/index.js';
-import { runPrismaCli } from '../prismaCli';
+import { runPrismaMigrateCli } from '../prismaMigrateCli';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 const databaseUrl = process.env.HAPPIER_TEST_MYSQL_DATABASE_URL
     ?? (process.env.HAPPIER_DB_PROVIDER === 'mysql' ? process.env.DATABASE_URL : undefined);
@@ -17,13 +17,13 @@ describe('Team credential MySQL migration', () => {
         const databaseName = `team_credentials_${randomUUID().replaceAll('-', '')}`;
         const isolatedUrl = new URL(databaseUrl!);
         isolatedUrl.pathname = `/${databaseName}`;
-        const admin = new PrismaClient({ datasourceUrl: databaseUrl });
-        const db = new PrismaClient({ datasourceUrl: isolatedUrl.toString() });
+        const admin = await createDbMaintenanceClient('mysql', databaseUrl);
+        const db = await createDbMaintenanceClient('mysql', isolatedUrl.toString());
         const stage = await mkdtemp(join(tmpdir(), 'happier-team-credentials-mysql-'));
         let created = false;
-        const deploy = () => runPrismaCli({
+        const deploy = () => runPrismaMigrateCli({
             serverRoot,
-            args: ['migrate', 'deploy', '--schema', join(stage, 'schema.prisma')],
+            schemaPath: join(stage, 'schema.prisma'), args: ['deploy'],
             env: { ...process.env, DATABASE_URL: isolatedUrl.toString() },
             quiet: true,
         });

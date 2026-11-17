@@ -1,13 +1,21 @@
 #!/usr/bin/env node
 
 import { mkdir, stat } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import fetchEngine from '@prisma/fetch-engine';
-import enginesVersionPackage from '@prisma/engines-version';
+import { resolveServerPrismaMigrationToolLayout } from '../prismaInstallLayout.mjs';
 
-const { BinaryType, download } = fetchEngine;
-const { enginesVersion } = enginesVersionPackage;
+// The schema engine must be the one the packaged migration CLI was released with, so it is
+// resolved through that CLI's own `@prisma/engines` dependency rather than pinned separately.
+const migrationTool = resolveServerPrismaMigrationToolLayout({
+    serverRoot: resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'),
+});
+const requireFromCli = createRequire(migrationTool.cliPackageJsonPath);
+const requireFromEngines = createRequire(requireFromCli.resolve('@prisma/engines/package.json'));
+const { BinaryType, download } = requireFromEngines('@prisma/fetch-engine');
+const { enginesVersion } = requireFromEngines('@prisma/engines-version');
 
 function readOption(name) {
     const index = process.argv.indexOf(name);

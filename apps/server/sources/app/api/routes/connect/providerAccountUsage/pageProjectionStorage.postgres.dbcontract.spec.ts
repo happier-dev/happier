@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
@@ -9,6 +8,7 @@ import { createUsageSnapshot } from '../providerAccountUsageTestkit';
 import { hasProviderAccountUsageHistory, upsertProviderAccountUsageRecord } from './recordStorage';
 import { readProviderAccountUsagePageProjection } from './pageProjectionStorage';
 import { PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 interface SqlPlan {
     'Relation Name'?: string;
@@ -63,10 +63,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('u
             demand, frontier, observationCount: 68000, content: { t: 'encrypted' as const, c: 'synthetic-planner-fixture' } };
         await db.providerAccountUsageRecord.update({ where: { accountId_recordId: { accountId, recordId: snapshot.recordId } },
             data: { metadata: { pageProjection: projection } } });
-        const client = new PrismaClient({ datasources: { db: { url: databaseUrl } }, log: [{ emit: 'event', level: 'query' }] });
+        const client = await createDbMaintenanceClient('postgres', databaseUrl, { log: [{ emit: 'event', level: 'query' }] });
         const queries: Array<{ label: string; query: string; params: unknown[]; actorId: string; recordId: string }> = [];
         let label = 'current-read';
-        client.$on('query', event => {
+        onDbClientQuery(client, event => {
             if (label && event.query.includes('ProviderAccountUsageHistory')) queries.push({ label, query: event.query,
                 params: JSON.parse(event.params), actorId: accountId, recordId: snapshot.recordId });
         });

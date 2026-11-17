@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
 import { decodeBase64 } from 'privacy-kit';
@@ -14,10 +14,11 @@ import {
     resolveWorkflowRunAdmissionRecipientAccountIdsInTx,
     resolveWorkflowRunVisibilityScopesInTx,
 } from './workflowRunAccess';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow live membership set-read costs (PostgreSQL)', () => {
     const queries: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>;
+    let client: PrismaClientType;
     let originalTransaction: typeof db.$transaction;
 
     beforeAll(async () => {
@@ -27,8 +28,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow live m
         }
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => queries.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => queries.push(event));
         await client.$connect();
         originalTransaction = db.$transaction;
         // Observe the real SQL boundary; membership, access and route logic remain real.

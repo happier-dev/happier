@@ -1,6 +1,6 @@
 import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, DeploymentTargetLinkInputV1Schema,
@@ -27,6 +27,7 @@ import { projectDeploymentNativeAdmissionV1, type ExternalActionExecutionAuthori
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { readAdmittedDeploymentScopeInTx } from './deploymentPreparationAuthorization';
 import { sealDeploymentReadCursor } from './deploymentReadCursor';
+import { onDbClientQuery } from '@/storage/prisma';
 
 const provider = getDbProviderFromEnv(process.env, 'postgres');
 describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine deployment list on native providers', () => {
@@ -399,8 +400,8 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         await db.$executeRawUnsafe('INSERT INTO "DeploymentDomain" ("id","environmentId","targetLinkId","state","contentArtifactId","contentHeaderVersion","contentBodyVersion","createdByAccountId","updatedAt") VALUES ($1,$2,$3,\'removing\',$4,1,1,$5,CURRENT_TIMESTAMP)',
             id, environment.id, link.id, artifact.id, owner.id);
         const statements: Prisma.QueryEvent[] = [];
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
         const input = { serverId, environmentId: environment.id, expectedRevision: environment.revision };
         try {
             const result = await client.$transaction(tx => readDeploymentDomainInventoryInTx(tx, owner.id, input),
@@ -465,8 +466,8 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
             const reads = new Map<string, number>();
             const statements: Prisma.QueryEvent[] = [];
             // Instrument the real SQL transport; Source and Team admission run unchanged.
-            const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-            client.$on('query', event => statements.push(event));
+            const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+            onDbClientQuery(client, event => statements.push(event));
             try {
                 const result = await client.$transaction(tx => readDeploymentEnvironmentAccessInTx(tx, actor.id, { serverId, environmentIds: [...ids] }),
                     { isolationLevel: 'RepeatableRead' });
@@ -867,8 +868,8 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
         expect(JSON.stringify(exact)).not.toContain(hiddenSource.source.id);
         if (provider === 'postgres') {
             const statements: Prisma.QueryEvent[] = [];
-            const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-            client.$on('query', event => statements.push(event));
+            const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+            onDbClientQuery(client, event => statements.push(event));
             try {
                 await client.$transaction(tx => listDeploymentEnvironmentsInTx(tx, owner.id, exactInput));
                 const environmentQuery = statements.filter(event => /\bFROM\s+"public"\."DeploymentEnvironment"/.test(event.query));

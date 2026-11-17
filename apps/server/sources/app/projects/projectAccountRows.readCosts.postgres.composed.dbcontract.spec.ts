@@ -1,7 +1,7 @@
 // Cross-package composition runs in the DB harness, outside the server-only compiler roots.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { createDbMaintenanceClient, db, initDbPostgres } from '@/storage/db';
 import type { Tx } from '@/storage/inTx';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -13,13 +13,14 @@ import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { listProjectAccountRowsInTx } from './projectAccountRowService';
 import { runWithServerHttpBaseUrl } from '../../../../cli/src/api/client/serverHttpBaseUrl';
+import { onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 function sqlBindCount(statement: string) {
     return [...statement.matchAll(/\$(\d+)/g)].reduce((count, match) => Math.max(count, Number(match[1])), 0);
 }
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Project row narrow read costs (PostgreSQL)', () => {
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>;
+    let client: PrismaClientType;
     let originalTransaction: typeof db.$transaction;
     const statements: Prisma.QueryEvent[] = [];
     let loadedRows = 0;
@@ -30,8 +31,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Project row nar
         }
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
         originalTransaction = db.$transaction;
         // Instrument the genuine SQL boundary without substituting queries or admission.

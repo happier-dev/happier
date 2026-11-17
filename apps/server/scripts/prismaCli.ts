@@ -23,7 +23,9 @@ type EnsurePrismaCliReadyParams = Readonly<{
 
 type RunPrismaCliParams = Readonly<{
     serverRoot: string;
-    args: string[];
+    args: readonly string[];
+    /** A Prisma CLI other than the server's `prisma` package (the migrator, see prismaMigrateCli.ts). */
+    entryPath?: string;
     env?: NodeJS.ProcessEnv;
     quiet?: boolean;
 }>;
@@ -135,7 +137,7 @@ function runInvocation(
     });
 }
 
-function run(command: string, args: string[], options: Readonly<{ cwd: string; env: NodeJS.ProcessEnv; quiet: boolean }>): Promise<void> {
+function run(command: string, args: readonly string[], options: Readonly<{ cwd: string; env: NodeJS.ProcessEnv; quiet: boolean }>): Promise<void> {
     const invocation = resolveServerScriptCommandInvocation(command, args, options.env);
     return runInvocation(invocation, { ...options, errorCommand: command });
 }
@@ -184,6 +186,7 @@ export async function runPrismaCli(params: RunPrismaCliParams): Promise<void> {
     const env = buildPrismaCliEnv({ serverRoot: params.serverRoot, env: params.env });
     const { entryPath } = await ensurePrismaCliReady({
         serverRoot: params.serverRoot,
+        entryPath: params.entryPath,
         env,
         quiet: params.quiet,
     });

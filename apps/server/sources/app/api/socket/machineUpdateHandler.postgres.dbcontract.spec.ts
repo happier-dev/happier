@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 import type { Socket } from "socket.io";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -33,6 +33,7 @@ import { currentAccountStoredContentCompatibilityHeaders } from "../testkit/acco
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 import { machinesRoutes } from "../routes/machines/machinesRoutes";
 import { MachinePublishedRowV1Schema } from "@happier-dev/protocol/machines/machineContentKeyTransitionV1";
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 const HANDLER_OPTIONS = {
     operationSocketBatchLimits: {
@@ -152,10 +153,10 @@ async function withNonUtcPresenceTx<T>(run: (tx: Tx) => Promise<T>): Promise<Res
 }
 
 async function observeDaemonStateSql(run: () => Promise<void>) {
-    const observer = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    const observer = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
     const measured = { statements: 0, contentWrites: 0, publications: 0, lockStatements: 0, lockDurationMs: 0,
         machineAcquisitions: 0, presenceAcquisitions: 0, admissionReads: 0, contentReads: 0 };
-    observer.$on('query', (event: Prisma.QueryEvent) => {
+    onDbClientQuery(observer, (event: Prisma.QueryEvent) => {
         const query = event.query.trimStart();
         measured.statements++;
         if (/^SELECT\b/i.test(query) && /FROM "(?:public"\.")?Machine"/.test(query)) {
@@ -391,11 +392,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
             const fixture = await createMachineFixture();
             const base = Date.now();
             await db.machine.update({ where: { id: fixture.machineId }, data: { active: true, lastActiveAt: new Date(base) } });
-            const observer = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+            const observer = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
             let statements = 0;
             let transactions = 0;
             let settledDatabaseOperations = 0;
-            observer.$on('query', () => { statements++; });
+            onDbClientQuery(observer, () => { statements++; });
             await observer.$connect();
             const transaction = db.$transaction;
             const findUnique = db.machine.findUnique;
@@ -450,12 +451,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
             await db.machineGrant.create({ data: { principalKind: 'team', machineId: fixture.machineId, teamId: team.id,
                 accessLevel: 'view', createdByAccountId: fixture.accountId } });
 
-            const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+            const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
             let selects = 0;
             let statements = 0;
             let graphReads = 0;
             let publicationStatements = 0;
-            client.$on('query', (event: Prisma.QueryEvent) => {
+            onDbClientQuery(client, (event: Prisma.QueryEvent) => {
                 statements++;
                 if (/INSERT INTO "(?:public"\.")?AccountChange"/.test(event.query)) publicationStatements++;
                 if (!/^SELECT\b/i.test(event.query)) return;

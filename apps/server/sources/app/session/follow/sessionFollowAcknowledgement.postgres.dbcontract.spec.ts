@@ -5,7 +5,6 @@ import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/disc
 import { buildTrustedHostSessionInputAdmissionV1, SessionInputRequestV1Schema, withSessionInputRequestV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, TranscriptRawAgentEventV1Schema } from '@happier-dev/protocol';
 import { decodeBase64 } from 'privacy-kit';
-import { PrismaClient } from '@prisma/client';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 
@@ -28,6 +27,7 @@ import { readStalledSessionFollowRulesInTx } from './sessionFollowStalledRule';
 import { retainSuppressedFollowInputInTx } from './sessionFollowSuppression';
 import { hasPendingRunFollowOccurrenceInTx } from './sessionFollowSourceProjection';
 import { buildSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Follow accepted-prefix ACK on PostgreSQL', () => {
     beforeAll(async () => {
@@ -91,8 +91,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('F
             destinationSessionId, relation: 'follower' as const, policyJson: '{"preset":"everything"}' });
         await db.sessionFollowEdge.create({ data: edge(destinationIds[0]!) });
         const statements: string[] = [];
-        const traced = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        traced.$on('query', event => statements.push(event.query));
+        const traced = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(traced, event => statements.push(event.query));
         await traced.$connect();
         const originalTransaction = db.$transaction;
         // Observe real PostgreSQL queries beneath the complete admission owner.
@@ -413,8 +413,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('F
             { kind: 'sender_session', sessionId: sourceIds[0] },
         ]) } });
         const statements: string[] = [];
-        const traced = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        traced.$on('query', event => statements.push(event.query));
+        const traced = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(traced, event => statements.push(event.query));
         await traced.$connect();
         const originalTransaction = db.$transaction;
         // Observe engine-emitted SQL; all observation/access/reply decisions stay real.

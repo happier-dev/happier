@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
+import { writeFakeServerDatabaseOwner } from '../../testkit/core/server_database_fixture.mjs';
 import { spawnRuntimeServerAfterMigration } from './runServerRuntimeMigration.mjs';
 import { preflightSourceRuntimeMigrations } from './preflightSourceRuntimeMigrations.mjs';
 
@@ -73,6 +74,29 @@ test('unfinished and rolled-back ledger records do not satisfy a shared consumer
   await assert.rejects(f.start(), error => error.code === 'ESHAREDDBMIGRATIONSMISSING'
     && JSON.stringify(error.missingMigrations) === JSON.stringify([base, pending]));
   assert.deepEqual(f.launches, []);
+});
+
+test('a runtime-backed Postgres consumer reads the source ledger through the source checkout', async t => {
+  const files = await createTempFixture(t, { prefix: 'hstack-shared-db-pg-' });
+  // A runtime payload carries the migration catalog it requires, not the server's database owner.
+  const payloadDir = files.path('payload');
+  await mkdir(join(payloadDir, 'prisma/migrations', base), { recursive: true });
+  await writeFile(join(payloadDir, 'prisma/migrations', base, 'migration.sql'), 'SELECT 1;\n');
+  const sourceServerDir = files.path('source');
+  await writeFakeServerDatabaseOwner({ serverDir: sourceServerDir, createClientSource: `return {
+    $queryRawUnsafe: async () => [{ migration_name: '${base}', checksum: '', finished_at: 'done', rolled_back_at: null }],
+    $disconnect: async () => {},
+  };` });
+  const launches = [];
+  const server = await spawnRuntimeServerAfterMigration({
+    serverLaunchSpec: { serverDir: payloadDir, command: process.execPath, args: [], migration: { mode: 'disabled' } },
+    sourceServerDir,
+    env: { HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'source-owner', HAPPIER_DB_PROVIDER: 'postgres',
+      DATABASE_URL: 'postgresql://consumer@127.0.0.1:1/source', RUN_MIGRATIONS: '0', HAPPIER_STACK_PRISMA_MIGRATE: '0' },
+    children: [], spawnProcImpl: label => { launches.push(label); return { pid: 321 }; },
+  });
+  assert.equal(server.pid, 321);
+  assert.deepEqual(launches, ['server']);
 });
 
 test('own-database starts perform no shared migration admission', async () => {

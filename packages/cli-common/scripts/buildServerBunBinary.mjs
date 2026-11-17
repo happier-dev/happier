@@ -54,6 +54,10 @@ const result = await Bun.build({
   external,
   compile: {
     ...DEFAULT_BUN_COMPILE_OPTIONS,
+    // The server loads its generated Prisma clients from the payload beside the executable, and
+    // their runtime requires the exports-only `@prisma/client-runtime-utils`; standalone Bun
+    // resolves package entry points only with package.json autoload (as the CLI binary does).
+    autoloadPackageJson: true,
     target,
     outfile,
     ...(process.argv.includes('--no-compile-autoload-bunfig') ? { autoloadBunfig: false }

@@ -1,9 +1,3 @@
-import { createRequire } from 'node:module';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-
-import { repoRootDir } from '../paths';
-
 export type ServerLightQueryableDbProvider = 'sqlite' | 'postgres' | 'mysql';
 
 type ServerLightDatabaseTransaction = Readonly<{
@@ -42,37 +36,20 @@ type ServerLightDatabaseClient = Readonly<{
   $disconnect(): Promise<void>;
 }>;
 
-type ServerLightDatabaseClientConstructor = new (options: Readonly<{
-  datasources: Readonly<{ db: Readonly<{ url: string }> }>;
-}>) => ServerLightDatabaseClient;
+type ServerLightDatabaseStorage = Readonly<{
+  createDbMaintenanceClient(provider: ServerLightQueryableDbProvider, databaseUrl: string): Promise<unknown>;
+}>;
 
-async function loadServerLightDatabaseClientConstructor(
+// The server keeps its own compiler alias program; only this structural port crosses it.
+const serverStoragePath = '../../../../../apps/server/sources/storage/prisma';
+
+async function createServerLightDatabaseClient(
   provider: ServerLightQueryableDbProvider,
-): Promise<ServerLightDatabaseClientConstructor> {
-  if (provider === 'postgres') {
-    const requireFromServer = createRequire(resolve(repoRootDir(), 'apps', 'server', 'package.json'));
-    const module = requireFromServer('@prisma/client') as { PrismaClient?: unknown };
-    if (typeof module.PrismaClient !== 'function') {
-      throw new Error('Invalid generated PostgreSQL Prisma client for server-light inspection.');
-    }
-    // Prisma is a genuine database boundary; generated constructors share this structural test contract.
-    return module.PrismaClient as ServerLightDatabaseClientConstructor;
-  }
-
-  const entrypoint = resolve(
-    repoRootDir(),
-    'apps',
-    'server',
-    'generated',
-    `${provider}-client`,
-    'index.js',
-  );
-  const module = await import(pathToFileURL(entrypoint).href) as { PrismaClient?: unknown };
-  if (typeof module.PrismaClient !== 'function') {
-    throw new Error(`Invalid generated ${provider} Prisma client for server-light inspection.`);
-  }
-  // Prisma is a genuine database boundary; generated constructors share this structural test contract.
-  return module.PrismaClient as ServerLightDatabaseClientConstructor;
+  databaseUrl: string,
+): Promise<ServerLightDatabaseClient> {
+  const storage = await import(serverStoragePath) as ServerLightDatabaseStorage;
+  // Prisma is a genuine database boundary; the server's canonical client owner builds it.
+  return await storage.createDbMaintenanceClient(provider, databaseUrl) as ServerLightDatabaseClient;
 }
 
 export async function readServerLightMaterializationRows(params: Readonly<{
@@ -86,10 +63,7 @@ export async function readServerLightMaterializationRows(params: Readonly<{
   turnCount: number;
   historicalRows: unknown[];
 }>> {
-  const PrismaClient = await loadServerLightDatabaseClientConstructor(params.provider);
-  const database = new PrismaClient({
-    datasources: { db: { url: params.databaseUrl } },
-  });
+  const database = await createServerLightDatabaseClient(params.provider, params.databaseUrl);
 
   try {
     const [session, pendingMessageCount, turnCount, historicalRows] = await Promise.all([
@@ -134,10 +108,7 @@ export async function resolveServerLightAccountId(params: Readonly<{
   databaseUrl: string;
   publicKey: string;
 }>): Promise<string> {
-  const PrismaClient = await loadServerLightDatabaseClientConstructor(params.provider);
-  const database = new PrismaClient({
-    datasources: { db: { url: params.databaseUrl } },
-  });
+  const database = await createServerLightDatabaseClient(params.provider, params.databaseUrl);
 
   try {
     const account = await database.account.findUnique({
@@ -166,10 +137,7 @@ export async function readServerLightVoiceLeaseRows(params: Readonly<{
   lease: unknown;
   accountLeaseCount: number;
 }>> {
-  const PrismaClient = await loadServerLightDatabaseClientConstructor(params.provider);
-  const database = new PrismaClient({
-    datasources: { db: { url: params.databaseUrl } },
-  });
+  const database = await createServerLightDatabaseClient(params.provider, params.databaseUrl);
 
   try {
     const lease = await database.voiceSessionLease.findUnique({
@@ -210,10 +178,7 @@ export async function countServerLightPostgresVoiceMintLockWaiters(params: Reado
   databaseUrl: string;
   accountId: string;
 }>): Promise<number> {
-  const PrismaClient = await loadServerLightDatabaseClientConstructor('postgres');
-  const database = new PrismaClient({
-    datasources: { db: { url: params.databaseUrl } },
-  });
+  const database = await createServerLightDatabaseClient('postgres', params.databaseUrl);
 
   try {
     const rows = await database.$queryRawUnsafe(
@@ -245,10 +210,7 @@ export async function acquireServerLightPostgresVoiceMintLock(params: Readonly<{
   databaseUrl: string;
   accountId: string;
 }>): Promise<HeldServerLightPostgresVoiceMintLock> {
-  const PrismaClient = await loadServerLightDatabaseClientConstructor('postgres');
-  const database = new PrismaClient({
-    datasources: { db: { url: params.databaseUrl } },
-  });
+  const database = await createServerLightDatabaseClient('postgres', params.databaseUrl);
   let releaseHold: (() => void) | null = null;
   let acquiredResolve: (() => void) | null = null;
   let acquiredReject: ((error: unknown) => void) | null = null;

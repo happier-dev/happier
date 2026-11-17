@@ -4,16 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { PrismaClient as PostgresPrismaClient } from "@prisma/client";
+import type { PrismaClient as PostgresPrismaClient } from "@prisma/client";
 import { ManagedMachineSetupV1Schema } from "@happier-dev/protocol/machines/managed/managedMachineV1";
 import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSchema";
 import { describe, expect, it } from "vitest";
 
-import { PrismaClient as MysqlPrismaClient } from "../../generated/mysql-client/index.js";
-import { PrismaClient as SqlitePrismaClient } from "../../generated/sqlite-client/index.js";
-import { runPrismaCli } from "../prismaCli";
+import type { PrismaClient as MysqlPrismaClient } from "../../generated/mysql-client/index.js";
+import { runPrismaMigrateCli } from "../prismaMigrateCli";
 import { applySqliteMigrations } from "../prismaMigrations";
 import { readPostgresSemanticSchema } from './postgresSchema.testkit';
+import { createDbMaintenanceClient } from "../../sources/storage/prisma";
 
 type Provider = "postgres" | "mysql" | "sqlite";
 type Row = Record<string, unknown>;
@@ -263,7 +263,7 @@ describe("Machine setup rename and optional Preset creation", () => {
         const freshPath = join(stage, "fresh.sqlite");
         const upgradedSqlite = new DatabaseSync(upgradedPath);
         const freshSqlite = new DatabaseSync(freshPath);
-        const upgradedClient = new SqlitePrismaClient({ datasourceUrl: `file:${upgradedPath}` });
+        const upgradedClient = await createDbMaintenanceClient("sqlite", `file:${upgradedPath}`);
         const adapt = (db: DatabaseSync): Database => ({
             execute: async (sql) => db.exec(sql), query: async (sql) => db.prepare(sql).all(),
         });
@@ -299,21 +299,20 @@ describe("Machine setup rename and optional Preset creation", () => {
             const stage = await mkdtemp(join(tmpdir(), `happier-machine-setup-${provider}-`));
             const id = `setup_${randomUUID().replaceAll("-", "")}`;
             const freshId = `${id}_fresh`;
-            const Client = provider === "postgres" ? PostgresPrismaClient : MysqlPrismaClient;
-            const admin = new Client({ datasourceUrl: url });
+            const admin = await createDbMaintenanceClient(provider, url);
             const scopedUrl = (name: string) => {
                 const scoped = new URL(url!);
                 if (provider === "postgres") scoped.searchParams.set("schema", name);
                 else scoped.pathname = `/${name}`;
                 return scoped.toString();
             };
-            const upgradedClient = new Client({ datasourceUrl: scopedUrl(id) });
-            const freshClient = new Client({ datasourceUrl: scopedUrl(freshId) });
+            const upgradedClient = await createDbMaintenanceClient(provider, scopedUrl(id));
+            const freshClient = await createDbMaintenanceClient(provider, scopedUrl(freshId));
             const adapt = (db: PostgresPrismaClient | MysqlPrismaClient): Database => ({
                 execute: (sql) => db.$executeRawUnsafe(sql), query: (sql) => db.$queryRawUnsafe<Row[]>(sql),
             });
-            const deploy = async (isFresh: boolean) => runPrismaCli({
-                serverRoot, args: ["migrate", "deploy", "--schema", join(stage, "schema.prisma")],
+            const deploy = async (isFresh: boolean) => runPrismaMigrateCli({
+                serverRoot, schemaPath: join(stage, "schema.prisma"), args: ['deploy'],
                 env: { ...process.env, DATABASE_URL: scopedUrl(isFresh ? freshId : id), HAPPIER_DB_PROVIDER: provider }, quiet: true,
             });
             const created: string[] = [];

@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { PrismaClient } from "../../generated/mysql-client/index.js";
 import { splitMigrationStatements } from "../../sources/migrations/missingMigrationReconciliation";
+import { createDbMaintenanceClient } from "../../sources/storage/prisma";
 
 const url = process.env.HAPPIER_TEST_MYSQL_DATABASE_URL
     ?? (process.env.HAPPIER_DB_PROVIDER === "mysql" ? process.env.DATABASE_URL : undefined);
@@ -17,11 +17,11 @@ const migrationNames = [
 
 describe("ephemeral Runner MySQL persistence", () => {
     (url ? it : it.skip)("preserves reservations, defaults, JSON materialization, and explicit creator cleanup", async () => {
-        const admin = new PrismaClient({ datasourceUrl: url });
+        const admin = await createDbMaintenanceClient("mysql", url);
         const databaseName = `runner_${randomUUID().replace(/-/gu, "")}`;
         const isolatedUrl = new URL(url!);
         isolatedUrl.pathname = `/${databaseName}`;
-        const db = new PrismaClient({ datasourceUrl: isolatedUrl.toString() });
+        const db = await createDbMaintenanceClient("mysql", isolatedUrl.toString());
 
         try {
             await admin.$executeRawUnsafe(`CREATE DATABASE \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
@@ -78,7 +78,7 @@ describe("ephemeral Runner MySQL persistence", () => {
                     \`homeServerIdentityId\`,\`activationSigningPublicKey\`,\`authoringCommitment\`,\`artifact\`,
                     \`endpointFactsRecipient\`,\`workspacePolicy\`,\`updatedAt\`
                 ) VALUES ('duplicate','activation-account',7,'draft-2','reserved-session','other-machine','pending','home','key','commitment',JSON_OBJECT(),JSON_OBJECT(),'choose_on_endpoint',CURRENT_TIMESTAMP(3))
-            `)).rejects.toMatchObject({ code: "P2010", meta: { code: "1062" } });
+            `)).rejects.toMatchObject({ code: "P2010", meta: { driverAdapterError: { cause: { originalCode: "1062" } } } });
 
             const jsonColumns = await db.$queryRawUnsafe<Array<{ COLUMN_NAME: string; IS_NULLABLE: string; DATA_TYPE: string }>>(`
                 SELECT COLUMN_NAME, IS_NULLABLE, DATA_TYPE

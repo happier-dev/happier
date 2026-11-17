@@ -84,11 +84,8 @@ describe('shared QA schema errors at the Prisma and socket boundaries', () => {
         } })).resolves.toBeNull();
     });
 
-    it('preserves root metrics beside diagnostic snapshot queries', async () => {
+    it('serves read snapshots beside diagnostic snapshot queries', async () => {
         harness.resetEnv({ HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'dev-test' });
-        expect(await db.$metrics.json()).toMatchObject({
-            counters: expect.any(Array), gauges: expect.any(Array), histograms: expect.any(Array),
-        });
         const account = await db.account.create({ data: { publicKey: 'diagnostic-snapshot-fixture' } });
         expect(await withSqliteReadSnapshot(tx => tx.account.findUnique({
             where: { id: account.id }, select: { id: true },
@@ -101,7 +98,6 @@ describe('shared QA schema errors at the Prisma and socket boundaries', () => {
     ])('preserves $code while making query, transaction and handshake errors actionable', async ({ code, change, restore }) => {
         harness.resetEnv({ HAPPIER_STACK_SHARED_DB_SOURCE_STACK: 'dev-test', AUTH_REQUIRED_LOGIN_PROVIDERS: undefined });
         const account = await db.account.create({ data: { publicKey: `schema-${code}` } });
-        expect(await db.$metrics.prometheus()).toEqual(expect.any(String));
         const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
         const app = Fastify({ logger: false }) as unknown as AppFastify;
         startSocket(app);

@@ -40,6 +40,20 @@ function intervalTrigger(everyMs: number, enabled = true) {
     };
 }
 
+/**
+ * Delays of the timers the schedule worker arms. Prisma 7 runs its transaction timers in
+ * JavaScript, so a bare setTimeout spy under fake timers also sees database timeouts.
+ */
+function spyScheduleWorkerTimers(): Readonly<{ delays: number[]; restore: () => void }> {
+    const delays: number[] = [];
+    const armed = globalThis.setTimeout;
+    const spy = vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: Parameters<typeof setTimeout>[0], delay?: number, ...args: unknown[]) => {
+        if (new Error().stack?.includes("automationScheduleWorker")) delays.push(Number(delay));
+        return armed(handler, delay, ...args);
+    }) as typeof setTimeout);
+    return { delays, restore: () => spy.mockRestore() };
+}
+
 describe("Automation schedule trigger firing (integration)", () => {
     let harness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>>;
     let accountId: string;
@@ -416,7 +430,7 @@ describe("Automation schedule trigger firing (integration)", () => {
                 evidence: { v: 1, kind: "schedule", scheduledFor: failedDueAt.getTime() } }),
         })) });
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-        const timers = vi.spyOn(globalThis, "setTimeout");
+        const timers = spyScheduleWorkerTimers();
         let failed = false;
         const release = observePrismaRequests(db, { before: request => {
             const where = (request.args as { where?: { id?: string } }).where;
@@ -426,11 +440,11 @@ describe("Automation schedule trigger firing (integration)", () => {
         } });
         const worker = startAutomationScheduleWorker();
         try {
-            await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => delay === 10_000)).toBe(true));
+            await vi.waitFor(() => expect(timers.delays.some((delay) => delay === 10_000)).toBe(true));
             expect(failed).toBe(true);
             await vi.advanceTimersByTimeAsync(10_000);
             await vi.waitFor(async () => expect(await db.automationRun.count({ where: { triggerId: fastTriggerId } })).toBe(1));
-        } finally { await worker.stop(); release(); timers.mockRestore(); vi.useRealTimers(); }
+        } finally { await worker.stop(); release(); timers.restore(); vi.useRealTimers(); }
     });
 
     it("retries a failed database scan once, then leaves a healthy future schedule idle", async () => {
@@ -438,7 +452,7 @@ describe("Automation schedule trigger firing (integration)", () => {
         await db.automationTrigger.updateMany({ where: { automationId },
             data: { nextRunAt: new Date(Date.now() + 600_000) } });
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-        const timers = vi.spyOn(globalThis, "setTimeout");
+        const timers = spyScheduleWorkerTimers();
         let reads = 0;
         let failNextScan = true;
         const release = observePrismaRequests(db, { before: request => {
@@ -448,15 +462,15 @@ describe("Automation schedule trigger firing (integration)", () => {
         } });
         const worker = startAutomationScheduleWorker();
         try {
-            await vi.waitFor(() => expect(timers.mock.calls.filter(([, delay]) => typeof delay === "number" && (delay === 10_000 || delay > 500_000))).toHaveLength(1));
+            await vi.waitFor(() => expect(timers.delays.filter((delay) => typeof delay === "number" && (delay === 10_000 || delay > 500_000))).toHaveLength(1));
             expect(reads).toBe(1);
             await vi.advanceTimersByTimeAsync(10_000);
-            await vi.waitFor(() => expect(timers.mock.calls.filter(([, delay]) => typeof delay === "number" && (delay === 10_000 || delay > 500_000))).toHaveLength(2));
+            await vi.waitFor(() => expect(timers.delays.filter((delay) => typeof delay === "number" && (delay === 10_000 || delay > 500_000))).toHaveLength(2));
             const recoveredReads = reads;
             expect(recoveredReads).toBeGreaterThan(1);
             await vi.advanceTimersByTimeAsync(60_000);
             expect(reads).toBe(recoveredReads);
-        } finally { await worker.stop(); release(); timers.mockRestore(); vi.useRealTimers(); }
+        } finally { await worker.stop(); release(); timers.restore(); vi.useRealTimers(); }
     });
 
     it("does no idle scans and wakes for a committed schedule change before its old deadline", async () => {
@@ -464,14 +478,14 @@ describe("Automation schedule trigger firing (integration)", () => {
         const futureAt = new Date(Date.now() + 600_000);
         await db.automationTrigger.updateMany({ where: { automationId }, data: { nextRunAt: futureAt } });
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-        const timers = vi.spyOn(globalThis, "setTimeout");
+        const timers = spyScheduleWorkerTimers();
         let reads = 0;
         const release = observePrismaRequests(db, { before: request => {
             if (request.model === "AutomationTrigger" && request.action.startsWith("find")) reads += 1;
         } });
         const worker = startAutomationScheduleWorker();
         try {
-            await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => typeof delay === "number" && (delay === 10_000 || delay > 500_000))).toBe(true));
+            await vi.waitFor(() => expect(timers.delays.some((delay) => typeof delay === "number" && (delay === 10_000 || delay > 500_000))).toBe(true));
             const startupReads = reads;
             await vi.advanceTimersByTimeAsync(60_000);
             expect(reads - startupReads).toBe(0);
@@ -480,7 +494,7 @@ describe("Automation schedule trigger firing (integration)", () => {
             await updateAutomationTrigger({ accountId, automationId, triggerId: fastTriggerId,
                 expectedRevision: trigger.revision,
                 trigger: { kind: "schedule", schedule: { kind: "once", scheduledAt } } });
-            await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => typeof delay === "number" && delay > 1_000 && delay <= 60_000)).toBe(true));
+            await vi.waitFor(() => expect(timers.delays.some((delay) => typeof delay === "number" && delay > 1_000 && delay <= 60_000)).toBe(true));
             await vi.advanceTimersByTimeAsync(Math.max(0, scheduledAt - Date.now()));
             await vi.waitFor(async () => expect(await readRuns()).toMatchObject([{ triggerId: fastTriggerId, causeScheduledFor: new Date(scheduledAt) }]));
             await worker.stop();
@@ -489,7 +503,7 @@ describe("Automation schedule trigger firing (integration)", () => {
             await vi.advanceTimersByTimeAsync(600_000);
             expect(reads).toBe(stoppedReads);
         } finally {
-            await worker.stop(); release(); timers.mockRestore(); vi.useRealTimers();
+            await worker.stop(); release(); timers.restore(); vi.useRealTimers();
         }
     });
 

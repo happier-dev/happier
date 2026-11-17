@@ -10,11 +10,11 @@ import { readSessionFollowReceiverChangeV1 } from '@happier-dev/protocol/session
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { markSessionProjectionRecipientsChanged } from "./markSessionProjectionRecipientsChanged";
 import { eventRouter } from "@/app/events/eventRouter";
-import { PrismaClient } from "../../../../generated/sqlite-client";
 import { sourceKeyForSessionFollowSourceV1 } from "@/app/session/follow/sessionFollowSourceIdentity";
 import { mutateSessionBoard } from '@/app/session/board/service';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { initializeSessionSystemRecordsProtocolV1Activation, resetSessionSystemRecordsProtocolV1ActivationForTests } from '@/app/session/systemRecords/sessionSystemRecordProtocolContract';
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 
 describe("markSessionProjectionRecipientsChanged publication privacy (SQLite integration)", () => {
     let harness: LightSqliteHarness;
@@ -92,9 +92,9 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
     it("keeps relation fanout set-oriented while preserving hints, complete audiences and committed wakes", async () => {
         // Trace real SQL from the disposable harness database. Rebind only the
         // transaction transport; all production owners and database operations run.
-        const tracedClient = new PrismaClient({ log: [{ level: "query", emit: "event" }] });
+        const tracedClient = await createDbMaintenanceClient("sqlite", undefined, { log: [{ level: "query", emit: "event" }] });
         const statements: string[] = [];
-        tracedClient.$on("query", event => statements.push(event.query));
+        onDbClientQuery(tracedClient, event => statements.push(event.query));
         const originalTransaction = db.$transaction;
         // Provider-generated clients implement the same transaction boundary.
         db.$transaction = new Proxy(originalTransaction, {

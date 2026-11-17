@@ -1652,22 +1652,20 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
   }
   const installedProjectDir = join(sourceRepoDir, 'apps', component === 'daemon' ? 'cli' : 'server');
   if (component === 'server') {
-    // Keep the generated client, its wrapper/runtime, and provider-specific
-    // support with this graph after the temporary input capture is retired.
+    // Keep the generated clients and the @prisma/client wrapper that loads the
+    // default one with this graph after the temporary input capture is retired.
+    // They sit where the server's install layout has them (apps/server).
     for (const path of capturedFiles.filter(isSourceServerGeneratedInput)) {
-      const target = path.startsWith('apps/server/generated/')
-        ? join(runtimeDir, path.slice('apps/server/'.length)) : join(outputDir, path);
+      const target = join(runtimeDir, path.slice('apps/server/'.length));
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, await readSourceInput(join(repoDir, path)));
       await chmod(target, (await lstat(join(repoDir, path))).mode & 0o777);
       retainedCodeFiles.push(target);
     }
     await mountInstalledNodeModules({ sourceModules: join(sourceRepoDir, 'node_modules'), targetModules: join(outputDir, 'node_modules') });
+    // The captured clients stay physical; the mount fills the rest of each scope.
     await mountInstalledNodeModules({ sourceModules: join(installedProjectDir, 'node_modules'),
-      targetModules: join(runtimeDir, 'node_modules'), excludedNames: ['.prisma', '@prisma'] });
-    for (const scope of ['.prisma', '@prisma']) {
-      await linkInstalledDirectory(join(outputDir, 'node_modules', scope), join(runtimeDir, 'node_modules', scope));
-    }
+      targetModules: join(runtimeDir, 'node_modules') });
   } else if (!captureDependencies) {
     await linkInstalledDirectory(join(sourceRepoDir, 'node_modules'), join(outputDir, 'node_modules'));
     await linkInstalledDirectory(join(installedProjectDir, 'node_modules'), join(runtimeDir, 'node_modules'));

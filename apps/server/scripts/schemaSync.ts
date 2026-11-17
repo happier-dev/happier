@@ -67,7 +67,7 @@ export function generateSqliteSchemaFromPostgres(postgresSchema: string): string
     return generateProviderSchemaFromPostgres(postgresSchema, {
         provider: "sqlite",
         output: "../../generated/sqlite-client",
-        previewFeatures: ["metrics"],
+        previewFeatures: [],
     });
 }
 
@@ -75,7 +75,7 @@ export function generateMySqlSchemaFromPostgres(postgresSchema: string): string 
     return generateProviderSchemaFromPostgres(postgresSchema, {
         provider: "mysql",
         output: "../../generated/mysql-client",
-        previewFeatures: ["metrics", "relationJoins"],
+        previewFeatures: ["relationJoins"],
     });
 }
 
@@ -210,9 +210,9 @@ function generateProviderSchemaFromPostgres(
     const generatorClient = [
         'generator client {',
         '    provider        = "prisma-client-js"',
-        '    // Include cross-compiled query engines so release artifacts can run on all published server targets.',
-        '    binaryTargets   = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]',
-        `    previewFeatures = [${opts.previewFeatures.map((v) => JSON.stringify(v)).join(", ")}]`,
+        ...(opts.previewFeatures.length > 0
+            ? [`    previewFeatures = [${opts.previewFeatures.map((v) => JSON.stringify(v)).join(", ")}]`]
+            : []),
         `    output          = "${opts.output}"`,
         '}',
     ].join('\n');
@@ -220,7 +220,6 @@ function generateProviderSchemaFromPostgres(
     const datasourceDb = [
         'datasource db {',
         `    provider = "${opts.provider}"`,
-        '    url      = env("DATABASE_URL")',
         '}',
     ].join('\n');
 

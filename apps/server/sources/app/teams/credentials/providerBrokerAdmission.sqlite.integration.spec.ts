@@ -36,7 +36,6 @@ import { archiveTeamInTx } from '../lifecycle';
 import { setTeamMembershipStatusInTx } from '../memberships/membershipService';
 import { deleteTeamCredentialResourceInTx } from './resourceDelete';
 import { upsertTeamCredentialUsageLimitInTx } from './resourceLimits';
-import { PrismaClient } from '../../../../generated/sqlite-client';
 import { readTeamCredentialCatalogInTx, readTeamCredentialResourceAdministrationInTx } from './resourceRead';
 import { hashPasswordMaterial } from '@/app/auth/password/passwordMaterialVerifier';
 import { deleteMachinePool } from '@/app/machines/pools/machinePoolService';
@@ -76,6 +75,7 @@ import {
     createQualifiedConnectedAccountServiceDigest,
     createQualifiedConnectedAccountIdentityDigest,
 } from '@/app/api/routes/connect/qualifiedConnectedAccounts/identity';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 // Observe the real database boundary: each invocation traverses signed
 // Account and Session authority once, in its deciding transaction.
@@ -3729,8 +3729,8 @@ describe('Team credential Provider broker admission', () => {
         const session = await fixture.createSession();
         await fixture.selectForSession(session.id, resource, TEST_AUTHENTICATION);
         const statements: string[] = [];
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event.query));
+        const client = await createDbMaintenanceClient('sqlite', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event.query));
         await client.$connect();
         const original = db.$transaction;
         // Observe the native DB transport; every admission owner and query stays real.
@@ -4016,8 +4016,8 @@ describe('Team credential Provider broker admission', () => {
         if (!opened.ok) throw new Error(`expected the broker open to succeed: ${opened.reasonCode}`);
 
         const statements: string[] = [];
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event.query));
+        const client = await createDbMaintenanceClient('sqlite', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event.query));
         await client.$connect();
         const original = db.$transaction;
         // Observe the native DB transport; every admission owner and query stays real.

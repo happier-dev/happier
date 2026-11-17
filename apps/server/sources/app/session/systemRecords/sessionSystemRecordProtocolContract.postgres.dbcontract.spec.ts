@@ -1,4 +1,3 @@
-import { PrismaClient, type Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -9,10 +8,11 @@ import {
     initializeSessionSystemRecordsProtocolV1Activation,
     resetSessionSystemRecordsProtocolV1ActivationForTests,
 } from "./sessionSystemRecordProtocolContract";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("System Records activation SQL cost", () => {
     const statements: string[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, "query">;
+    let client: PrismaClientType;
     let resolveBarrier: (() => void) | undefined;
 
     async function drainQueryEvents(): Promise<void> {
@@ -29,8 +29,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             throw new Error("Run with the disposable PostgreSQL DB-contract harness");
         }
         initDbPostgres();
-        client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-        client.$on("query", event => {
+        client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(client, event => {
             if (event.query.includes('"activation_cost_barrier"')) resolveBarrier?.();
             else statements.push(event.query);
         });

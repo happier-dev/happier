@@ -9,34 +9,10 @@ import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs'
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
 import { authScriptPath, runNodeCapture, terminateChildProcess } from './testkit/auth_testkit.mjs';
 import { spawnTestProcess } from './testkit/core/spawn_test_process.mjs';
+import { createSqliteAccountTable, runServerOwnerDatabaseScript } from './testkit/core/server_database_fixture.mjs';
 
-async function createReadableSourceSqliteAccountDb({ rootDir, dataDir }) {
-  const serverDir = join(dirname(rootDir), 'server');
-  const databaseUrl = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
-  const result = await runNodeCapture(
-    [
-      '--input-type=module',
-      '-e',
-      `
-const { PrismaClient } = await import(${JSON.stringify(join(serverDir, 'generated', 'sqlite-client', 'index.js'))});
-const db = new PrismaClient();
-try {
-  await db.$executeRawUnsafe('CREATE TABLE IF NOT EXISTS "Account" ("id" TEXT NOT NULL PRIMARY KEY, "publicKey" TEXT)');
-} finally {
-  await db.$disconnect();
-}
-      `.trim(),
-    ],
-    {
-      cwd: serverDir,
-      env: { ...process.env, DATABASE_URL: databaseUrl },
-    }
-  );
-  assert.equal(
-    result.code,
-    0,
-    `expected readable source SQLite Account DB\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
-  );
+async function createReadableSourceSqliteAccountDb({ dataDir }) {
+  await createSqliteAccountTable(join(dataDir, 'happier-server-light.sqlite'));
 }
 
 test('hstack stack auth copy-from fails closed when the source stack has no reusable auth material', async (t) => {
@@ -807,28 +783,7 @@ test('hstack stack auth copy-from reads source light sqlite db from the source s
   };
 
   const runSqliteClient = async ({ databaseUrl, code }) => {
-    const result = await runNodeCapture(
-      [
-        '--input-type=module',
-        '-e',
-        `
-const { PrismaClient } = await import(${JSON.stringify(join(serverDir, 'generated', 'sqlite-client', 'index.js'))});
-const db = new PrismaClient();
-try {
-${code}
-} finally {
-  await db.$disconnect();
-}
-        `.trim(),
-      ],
-      {
-        cwd: serverDir,
-        env: {
-          ...process.env,
-          DATABASE_URL: databaseUrl,
-        },
-      }
-    );
+    const result = await runServerOwnerDatabaseScript({ serverDir, provider: 'sqlite', databaseUrl, code });
     return result.stdout.trim();
   };
 
@@ -983,28 +938,7 @@ test('hstack stack auth copy-from reads a checksum-mismatched source sqlite data
   };
 
   const runSqliteClient = async ({ databaseUrl, code }) => {
-    const result = await runNodeCapture(
-      [
-        '--input-type=module',
-        '-e',
-        `
-const { PrismaClient } = await import(${JSON.stringify(join(serverDir, 'generated', 'sqlite-client', 'index.js'))});
-const db = new PrismaClient();
-try {
-${code}
-} finally {
-  await db.$disconnect();
-}
-        `.trim(),
-      ],
-      {
-        cwd: serverDir,
-        env: {
-          ...process.env,
-          DATABASE_URL: databaseUrl,
-        },
-      }
-    );
+    const result = await runServerOwnerDatabaseScript({ serverDir, provider: 'sqlite', databaseUrl, code });
     return result.stdout.trim();
   };
 

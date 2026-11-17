@@ -4,11 +4,11 @@ import { db, initDbPostgres, shutdownDbClient } from "@/storage/db";
 import { createLightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerTeamRoutes } from "./registerTeamRoutes";
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 
 const require = createRequire(import.meta.url);
 // Generated SQLite is the real database boundary with the shared Prisma contract.
 const postgres = Boolean(process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL);
-const { PrismaClient } = require(postgres ? "@prisma/client" : "../../../generated/sqlite-client/index.js") as typeof import("@prisma/client");
 
 describe("Team archive resource census cost", () => {
     it("archives one member without scanning unrelated Home resources", async () => {
@@ -18,9 +18,9 @@ describe("Team archive resource census cost", () => {
         }
         const harness = postgres ? { close: shutdownDbClient } : await createLightSqliteHarness({ tempDirPrefix: "team-archive-cost-", initAuth: false,
             env: { HAPPIER_FEATURE_TEAMS__ENABLED: "1" } });
-        const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+        const client = await createDbMaintenanceClient(postgres ? "postgres" : "sqlite", undefined, { log: [{ emit: "event", level: "query" }] });
         const statements: Array<{ query: string; params: string }> = [];
-        client.$on("query", event => statements.push(event));
+        onDbClientQuery(client, event => statements.push(event));
         const originalTransaction = db.$transaction;
         const app = createAuthenticatedTestApp();
         process.env.HAPPIER_FEATURE_TEAMS__ENABLED = "1";

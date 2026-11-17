@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient, type Prisma } from "@prisma/client";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Socket } from "socket.io";
 
@@ -11,11 +10,13 @@ import { encryptString, initEncrypt } from "@/modules/encrypt";
 import { eventRouter } from "./connectionEventRouter";
 import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
 import type { LocalSocketRoomEmitter } from "./socketRoomEmitter";
+import { createDbMaintenanceClient, type PrismaClientType } from "@/storage/prisma";
+import { recordDriverStatements, type DriverStatementEvent } from "@/testkit/driverStatements";
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("Session delivery fresh-admission SQL cost (PostgreSQL)", () => {
-    const statements: Prisma.QueryEvent[] = [];
+    const statements: DriverStatementEvent[] = [];
     const accountIds: string[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, "query">;
+    let client: PrismaClientType;
     let originalTransaction: typeof db.$transaction;
     let completedSnapshots = 0;
 
@@ -29,8 +30,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
         await initEncrypt();
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-        client.$on("query", event => statements.push(event));
+        client = await createDbMaintenanceClient("postgres", undefined, { onDriverStatement: recordDriverStatements(event => statements.push(event)) });
         await client.$connect();
         originalTransaction = db.$transaction;
         // Observe the real database transport. No Session read, operation

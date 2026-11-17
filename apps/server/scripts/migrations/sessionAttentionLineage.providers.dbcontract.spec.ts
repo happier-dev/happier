@@ -3,11 +3,10 @@ import { cp, copyFile, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/pro
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { PrismaClient as PostgresPrismaClient } from "@prisma/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PrismaClient as MysqlPrismaClient } from "../../generated/mysql-client/index.js";
-import { runPrismaCli } from "../prismaCli";
+import { runPrismaMigrateCli } from "../prismaMigrateCli";
+import { createDbMaintenanceClient, type PrismaClientType } from "../../sources/storage/prisma";
 
 type Provider = "postgres" | "mysql";
 type PredecessorFrontier = "released-v0.2.1" | "released-v0.2.12" | "current-0.2";
@@ -157,9 +156,9 @@ async function replacePredecessorWithCurrentMigrations(
 }
 
 async function deploy(provider: Provider, stageDir: string, databaseUrl: string): Promise<void> {
-    await runPrismaCli({
+    await runPrismaMigrateCli({
         serverRoot,
-        args: ["migrate", "deploy", "--schema", join(stageDir, "schema.prisma")],
+        schemaPath: join(stageDir, "schema.prisma"), args: ['deploy'],
         env: {
             ...process.env,
             DATABASE_URL: databaseUrl,
@@ -205,7 +204,7 @@ const workflowEnvelopeFixture = JSON.stringify({
 
 async function seedReleasedAutomation(
     provider: Provider,
-    database: PostgresPrismaClient | MysqlPrismaClient,
+    database: PrismaClientType,
 ): Promise<void> {
     const quote = provider === "postgres" ? '"' : "`";
     const now = provider === "postgres" ? "CURRENT_TIMESTAMP" : "CURRENT_TIMESTAMP(3)";
@@ -222,7 +221,7 @@ async function seedReleasedAutomation(
 
 async function expectWorkflowUpgradeStorage(
     provider: Provider,
-    database: PostgresPrismaClient | MysqlPrismaClient,
+    database: PrismaClientType,
 ): Promise<void> {
     if (provider === "postgres") {
         await database.$executeRawUnsafe(
@@ -296,7 +295,7 @@ async function expectWorkflowUpgradeStorage(
     expect(Number(invocation?.contentLength)).toBe(workflowEnvelopeFixture.length);
 }
 
-async function expectPostgresMachinePoolContract(database: PostgresPrismaClient): Promise<void> {
+async function expectPostgresMachinePoolContract(database: PrismaClientType): Promise<void> {
     const longPoolName = `Unicode 池 🚀 ${"n".repeat(512)}`;
     await expect(database.$queryRawUnsafe<Array<{ indexname: string }>>(
         `SELECT indexname FROM pg_indexes
@@ -359,7 +358,7 @@ async function expectPostgresMachinePoolContract(database: PostgresPrismaClient)
     expect(await database.$queryRawUnsafe(`SELECT "id" FROM "MachinePool" WHERE "id"='pool-account-delete'`)).toEqual([]);
 }
 
-async function expectMysqlMachinePoolContract(database: MysqlPrismaClient): Promise<void> {
+async function expectMysqlMachinePoolContract(database: PrismaClientType): Promise<void> {
     const longPoolName = `Unicode 池 🚀 ${"n".repeat(512)}`;
     await expect(database.$queryRawUnsafe<Array<{ INDEX_NAME: string }>>(
         `SELECT INDEX_NAME FROM information_schema.STATISTICS
@@ -458,9 +457,9 @@ describe.each(predecessorCases)("$frontier migration lineage before Account Dire
         async () => {
             if (!postgresUrl) return;
             const schema = `lane02_lineage_${randomUUID().replace(/-/gu, "")}`;
-            const admin = new PostgresPrismaClient({ datasourceUrl: postgresUrl });
+            const admin = await createDbMaintenanceClient("postgres", postgresUrl);
             const databaseUrl = postgresSchemaUrl(postgresUrl, schema);
-            const database = new PostgresPrismaClient({ datasourceUrl: databaseUrl });
+            const database = await createDbMaintenanceClient("postgres", databaseUrl);
             const staged = await createStagedPredecessor("postgres", frontier);
             temporaryPaths.push(staged.stageDir);
             try {
@@ -566,9 +565,9 @@ describe.each(predecessorCases)("$frontier migration lineage before Account Dire
         async () => {
             if (!mysqlUrl) return;
             const databaseName = `lane02_lineage_${randomUUID().replace(/-/gu, "")}`;
-            const admin = new MysqlPrismaClient({ datasourceUrl: mysqlUrl });
+            const admin = await createDbMaintenanceClient("mysql", mysqlUrl);
             const databaseUrl = mysqlDatabaseUrl(mysqlUrl, databaseName);
-            const database = new MysqlPrismaClient({ datasourceUrl: databaseUrl });
+            const database = await createDbMaintenanceClient("mysql", databaseUrl);
             const staged = await createStagedPredecessor("mysql", frontier);
             temporaryPaths.push(staged.stageDir);
             try {

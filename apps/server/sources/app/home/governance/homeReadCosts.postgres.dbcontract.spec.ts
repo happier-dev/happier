@@ -1,4 +1,3 @@
-import { PrismaClient, type Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { HOME_ACCOUNT_PAGE_LIMIT_DEFAULT_V1, HomeAccountListResultV1Schema } from '@happier-dev/protocol/home/governance';
 
@@ -12,10 +11,12 @@ import { auth } from '@/app/auth/auth';
 import { resolveEffectiveHomeAuthMethodsInTx } from '@/app/auth/methods/effectiveHomeAuthMethods';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { readHomeGovernanceProjectionInTx } from './homeGovernanceService';
+import { createDbMaintenanceClient, type PrismaClientType } from '@/storage/prisma';
+import { recordDriverStatements, type DriverStatementEvent } from '@/testkit/driverStatements';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Home administration read SQL cost (PostgreSQL)', () => {
-    const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'> | undefined;
+    const statements: DriverStatementEvent[] = [];
+    let client: PrismaClientType | undefined;
 
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
@@ -24,8 +25,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
         }
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { onDriverStatement: recordDriverStatements(event => statements.push(event)) });
         await client.$connect();
         vi.stubEnv('HAPPIER_PUBLIC_SERVER_URL', 'https://home-cost.example.test');
         vi.stubEnv('HANDY_MASTER_SECRET', 'home-read-cost-disposable-contract');

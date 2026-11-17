@@ -1322,13 +1322,42 @@ Native server construction resolves `main.light.ts`, `main.ts`, and the packaged
 migration entry through that same source export owner. Bun bundles the authored
 graph directly, including the Iroh JavaScript loader; binary construction and
 support discovery do not prepare workspace dist. Server support owns generated
-Prisma clients, query and migration engines, Sharp assets, and the exact-target
-Iroh addon with its package metadata. The server Sharp projection resolves each
+Prisma clients, the migration tool, Sharp assets, and the exact-target Iroh addon
+with its package metadata.
+The server runs Prisma 7: each generated client carries its query compiler as
+embedded WASM and reaches the database through a JavaScript driver adapter, so
+there is no per-target query-engine library, `binaryTargets` list, or
+`PRISMA_QUERY_ENGINE_LIBRARY`/`TOKIO_WORKER_THREADS` setting. Support stages the
+default client from `.prisma/client` beside the server's resolved `@prisma/client`
+(`apps/server/scripts/prismaInstallLayout.mjs`), that package's dependency
+closure (`@prisma/client-runtime-utils`), and the generated SQLite/MySQL clients;
+each payload client must contain `query_compiler_fast_bg.wasm-base64.js`.
+`happier-server-migrate` (PostgreSQL, PGlite, MySQL) runs a Bun-compiled Prisma
+6.19.2 CLI with its schema engine (`c2990dca`), declared by the server as the
+`prisma-migrate-cli` alias: the Prisma 7 schema engine applies a PostgreSQL
+`migration.sql` statement by statement rather than as one implicit transaction,
+which breaks migrations using `ON COMMIT DROP` temporary tables and loses
+whole-file atomicity. That CLI reads the URL from the schema, so support stages
+the migration schemas with `url = env("DATABASE_URL")`
+(`prepareFullRuntimeMigrationSchema.mjs`); the server's own schemas stay URL-less.
+Source tooling uses the same migrator through one owner,
+`apps/server/scripts/prismaMigrateCli.ts`: `migrate:deploy` (the Docker image's
+`RUN_MIGRATIONS` entrypoint and hstack), the DB-contract templates, and the
+`migrate`/`migrate:reset` authoring scripts. It migrates an OS-temp copy of the
+schema with the URL line and points the CLI at the real migrations directory, so
+nothing is written into the source tree. This is a transition (owner decision
+2026-11-17): it ends, together with the alias and the URL staging, once Prisma's
+own migrator applies a migration file as one transaction again, which
+`prismaMigrateCli.postgres.dbcontract.spec.ts` checks.
+The server Sharp projection resolves each
 package from its actual consumer, including the server's installed Sharp version
 for foreign-target acquisition, then stages one adjacent native/libvips cohort.
 The Bun server builder selects Sharp's public CJS entry and redirects only its
 actual native addon import to that staged file. Sharp retains its own platform
-selection, CPU checks, and error reporting; package-JSON autoload stays disabled.
+selection, CPU checks, and error reporting. Package-JSON autoload is enabled for
+the server executables, as for the CLI binary: the Prisma 7 runtime loaded from
+the payload requires the exports-only `@prisma/client-runtime-utils`, which a
+standalone Bun executable resolves only with package metadata.
 Optional foreign-platform native imports stay virtual until selected at runtime;
 guarded libvips resolution hints remain external so unselected platform libraries
 are not embedded in the server executable.

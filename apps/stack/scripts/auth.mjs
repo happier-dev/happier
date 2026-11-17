@@ -13,13 +13,13 @@ import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { applyStackCacheEnv, ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
-import { resolvePrismaClientImportForDbProvider } from './utils/server/prisma_client_import.mjs';
+import { runServerDatabaseTask } from './utils/server/server_database_task.mjs';
 import { applyEffectiveDbProviderEnv, resolveEffectiveDbProviderTransition } from './utils/server/effective_db_provider.mjs';
 import { clearDevAuthKey, readDevAuthKey, writeDevAuthKey } from './utils/auth/dev_key.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
@@ -663,235 +663,23 @@ async function ensurePresetMigrationsApplied({ serverDir, baseDir, envIn, quiet 
 }
 
 async function listAccountsFromPglite({ cwd, dbDir }) {
-  const lockModuleUrl = new URL('./utils/pglite_lock.mjs', import.meta.url).toString();
-  const socketModuleUrl = pathToFileURL(join(cwd, 'sources/storage/pgliteFramedSocketServer.mjs')).href;
-  const script = `
-process.on('uncaughtException', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-process.on('unhandledRejection', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-const DB_DIR = ${JSON.stringify(dbDir)};
-const { acquirePgliteDirLock } = await import(${JSON.stringify(lockModuleUrl)});
-const releaseLock = await acquirePgliteDirLock(DB_DIR, { purpose: 'auth:listAccountsFromPglite' });
-const { PGlite } = await import('@electric-sql/pglite');
-const { FramedPgliteSocketServer } = await import(${JSON.stringify(socketModuleUrl)});
-const { PrismaClient } = await import('@prisma/client');
-const pglite = new PGlite(DB_DIR);
-try {
-  await pglite.waitReady;
-  const server = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
-  await server.start();
-  try {
-    const raw = server.getServerConn();
-    const url = (() => {
-      try { return new URL(raw); } catch { return new URL(\`postgresql://postgres@\${raw}/postgres?sslmode=disable\`); }
-    })();
-    url.searchParams.set('connection_limit', '1');
-    process.env.DATABASE_URL = url.toString();
-    const db = new PrismaClient();
-    try {
-      const accounts = await db.account.findMany({ select: { id: true, publicKey: true }, orderBy: { id: 'asc' } });
-      console.log(JSON.stringify(accounts));
-    } finally {
-      await db.$disconnect();
-    }
-  } finally {
-    await server.stop();
-  }
-} finally {
-  await pglite.close();
-  await releaseLock().catch(() => {});
-}
-`.trim();
-
-  const { stdout } = await runNodeCapture({
-    cwd,
-    env: process.env,
-    args: ['--input-type=module', '-e', script],
-  });
-  return stdout.trim() ? JSON.parse(stdout.trim()) : [];
+  return await runServerDatabaseTask({ serverDir: cwd, provider: 'pglite', task: 'list-accounts',
+    pgliteDbDir: dbDir, pgliteLockPurpose: 'auth:listAccountsFromPglite' });
 }
 
 async function insertAccountsIntoPglite({ cwd, dbDir, accounts }) {
-  const lockModuleUrl = new URL('./utils/pglite_lock.mjs', import.meta.url).toString();
-  const socketModuleUrl = pathToFileURL(join(cwd, 'sources/storage/pgliteFramedSocketServer.mjs')).href;
-  const script = `
-process.on('uncaughtException', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-process.on('unhandledRejection', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-const { PGlite } = await import('@electric-sql/pglite');
-const { FramedPgliteSocketServer } = await import(${JSON.stringify(socketModuleUrl)});
-const { PrismaClient } = await import('@prisma/client');
-import fs from 'node:fs';
-const DB_DIR = ${JSON.stringify(dbDir)};
-const { acquirePgliteDirLock } = await import(${JSON.stringify(lockModuleUrl)});
-const releaseLock = await acquirePgliteDirLock(DB_DIR, { purpose: 'auth:insertAccountsIntoPglite' });
-const raw = fs.readFileSync(0, 'utf8').trim();
-const accounts = raw ? JSON.parse(raw) : [];
-const pglite = new PGlite(DB_DIR);
-try {
-  await pglite.waitReady;
-  const server = new FramedPgliteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
-  await server.start();
-  try {
-    const rawConn = server.getServerConn();
-    const url = (() => {
-      try { return new URL(rawConn); } catch { return new URL(\`postgresql://postgres@\${rawConn}/postgres?sslmode=disable\`); }
-    })();
-    url.searchParams.set('connection_limit', '1');
-    process.env.DATABASE_URL = url.toString();
-	  const db = new PrismaClient();
-	  try {
-	    const result = await db.$transaction(async (tx) => {
-	      let insertedCount = 0;
-	      for (const a of accounts) {
-	        // eslint-disable-next-line no-await-in-loop
-	        const existingById = await tx.account.findUnique({ where: { id: a.id }, select: { id: true, publicKey: true } });
-	        if (existingById) {
-	          if (existingById.publicKey !== a.publicKey) {
-	            throw new Error('account conflict: target Account id has a different public key');
-	          }
-	          continue;
-	        }
-	        if (a.publicKey != null) {
-	          // eslint-disable-next-line no-await-in-loop
-	          const existingByPublicKey = await tx.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
-	          if (existingByPublicKey) {
-	            throw new Error('account conflict: target public key belongs to a different Account');
-	          }
-	        }
-	        // eslint-disable-next-line no-await-in-loop
-	        await tx.account.create({ data: { id: a.id, publicKey: a.publicKey } });
-	        insertedCount += 1;
-	      }
-	      return { sourceCount: accounts.length, insertedCount };
-	    });
-	    console.log(JSON.stringify(result));
-	  } finally {
-	    await db.$disconnect();
-	  }
-  } finally {
-    await server.stop();
-  }
-} finally {
-  await pglite.close();
-  await releaseLock().catch(() => {});
-}
-`.trim();
-
-  const { stdout } = await runNodeCapture({
-    cwd,
-    env: process.env,
-    args: ['--input-type=module', '-e', script],
-    stdin: JSON.stringify(accounts),
-  });
-  const res = stdout.trim() ? JSON.parse(stdout.trim()) : { sourceCount: accounts.length, insertedCount: 0 };
-  return {
-    ok: true,
-    sourceCount: Number(res.sourceCount ?? accounts.length) || 0,
-    insertedCount: Number(res.insertedCount ?? 0) || 0,
-  };
+  const res = await runServerDatabaseTask({ serverDir: cwd, provider: 'pglite', task: 'insert-accounts',
+    pgliteDbDir: dbDir, pgliteLockPurpose: 'auth:insertAccountsIntoPglite', accounts });
+  return { ok: true, sourceCount: Number(res?.sourceCount ?? accounts.length) || 0, insertedCount: Number(res?.insertedCount ?? 0) || 0 };
 }
 
-async function listAccountsFromPostgres({ cwd, clientImport, databaseUrl }) {
-  const script = `
-process.on('uncaughtException', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-process.on('unhandledRejection', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-const mod = await import(${JSON.stringify(clientImport)});
-const PrismaClient = mod?.PrismaClient ?? mod?.default?.PrismaClient;
-if (!PrismaClient) throw new Error('Failed to load PrismaClient for DB seed (source).');
-const db = new PrismaClient();
-try {
-  const accounts = await db.account.findMany({ select: { id: true, publicKey: true }, orderBy: { id: 'asc' } });
-  console.log(JSON.stringify(accounts));
-} finally {
-  await db.$disconnect();
-}
-`.trim();
-
-  const { stdout } = await runNodeCapture({
-    cwd,
-    env: { ...process.env, DATABASE_URL: databaseUrl },
-    args: ['--input-type=module', '-e', script],
-  });
-  return stdout.trim() ? JSON.parse(stdout.trim()) : [];
+async function listAccountsFromDatabaseUrl({ cwd, provider, databaseUrl }) {
+  return await runServerDatabaseTask({ serverDir: cwd, provider, task: 'list-accounts', databaseUrl });
 }
 
-async function insertAccountsIntoPostgres({ cwd, clientImport, databaseUrl, accounts }) {
-  const script = `
-process.on('uncaughtException', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-process.on('unhandledRejection', (e) => {
-  console.error(e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
-const mod = await import(${JSON.stringify(clientImport)});
-const PrismaClient = mod?.PrismaClient ?? mod?.default?.PrismaClient;
-if (!PrismaClient) throw new Error('Failed to load PrismaClient for DB seed (target).');
-import fs from 'node:fs';
-const raw = fs.readFileSync(0, 'utf8').trim();
-const accounts = raw ? JSON.parse(raw) : [];
-const db = new PrismaClient();
-try {
-  const result = await db.$transaction(async (tx) => {
-    let insertedCount = 0;
-    for (const a of accounts) {
-      // eslint-disable-next-line no-await-in-loop
-      const existingById = await tx.account.findUnique({ where: { id: a.id }, select: { id: true, publicKey: true } });
-      if (existingById) {
-        if (existingById.publicKey !== a.publicKey) {
-          throw new Error('account conflict: target Account id has a different public key');
-        }
-        continue;
-      }
-      if (a.publicKey != null) {
-        // eslint-disable-next-line no-await-in-loop
-        const existingByPublicKey = await tx.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
-        if (existingByPublicKey) {
-          throw new Error('account conflict: target public key belongs to a different Account');
-        }
-      }
-      // eslint-disable-next-line no-await-in-loop
-      await tx.account.create({ data: { id: a.id, publicKey: a.publicKey } });
-      insertedCount += 1;
-    }
-    return { sourceCount: accounts.length, insertedCount };
-  });
-  console.log(JSON.stringify(result));
-} finally {
-  await db.$disconnect();
-}
-`.trim();
-
-  const { stdout } = await runNodeCapture({
-    cwd,
-    env: { ...process.env, DATABASE_URL: databaseUrl },
-    args: ['--input-type=module', '-e', script],
-    stdin: JSON.stringify(accounts),
-  });
-  const res = stdout.trim() ? JSON.parse(stdout.trim()) : { sourceCount: accounts.length, insertedCount: 0 };
-  return {
-    ok: true,
-    sourceCount: Number(res.sourceCount ?? accounts.length) || 0,
-    insertedCount: Number(res.insertedCount ?? 0) || 0,
-  };
+async function insertAccountsIntoDatabaseUrl({ cwd, provider, databaseUrl, accounts }) {
+  const res = await runServerDatabaseTask({ serverDir: cwd, provider, task: 'insert-accounts', databaseUrl, accounts });
+  return { ok: true, sourceCount: Number(res?.sourceCount ?? accounts.length) || 0, insertedCount: Number(res?.insertedCount ?? 0) || 0 };
 }
 
 function resolveServerComponentDir({ rootDir, serverComponent }) {
@@ -1123,9 +911,6 @@ async function cmdCopyFrom({ argv, json }) {
       ? resolveDbProviderForLightFromEnv(targetEnv)
       : resolveDbProviderForFullFromEnv(targetEnv);
 
-  const sourceClientImport = resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: sourceDbProvider });
-  const targetClientImport = resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: targetDbProvider });
-
   const readSourceAccounts = async () => {
     if (sourceDbProvider === 'sqlite') {
       // The source database is evidence for auth seeding, not a migration target. Its
@@ -1136,7 +921,7 @@ async function cmdCopyFrom({ argv, json }) {
         throw new Error(`[auth] source stack "${fromStackName}" is missing its SQLite database at ${sourceSqlitePath}`);
       }
       const url = String(sourceEnv.DATABASE_URL ?? '').trim() || resolveSqliteDatabaseUrlForLight({ dataDir, env: sourceEnv });
-      return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: url });
+      return await listAccountsFromDatabaseUrl({ cwd: sourceCwd, provider: sourceDbProvider, databaseUrl: url });
     }
     if (sourceDbProvider === 'pglite') {
       const { dbDir } = await ensurePresetMigrationsApplied({
@@ -1153,7 +938,7 @@ async function cmdCopyFrom({ argv, json }) {
       label: `source stack "${fromStackName}"`,
       provider: sourceDbProvider,
     });
-    return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: fromDatabaseUrl });
+    return await listAccountsFromDatabaseUrl({ cwd: sourceCwd, provider: sourceDbProvider, databaseUrl: fromDatabaseUrl });
   };
 
 	  let sourceAccounts = null;
@@ -1234,9 +1019,9 @@ async function cmdCopyFrom({ argv, json }) {
       });
       if (targetDbProvider === 'sqlite') {
         const url = String(targetEnv.DATABASE_URL ?? '').trim() || resolveSqliteDatabaseUrlForLight({ dataDir, env: targetEnv });
-        return await insertAccountsIntoPostgres({
+        return await insertAccountsIntoDatabaseUrl({
           cwd: targetCwd,
-          clientImport: targetClientImport,
+          provider: targetDbProvider,
           databaseUrl: url,
           accounts,
         });
@@ -1284,9 +1069,9 @@ async function cmdCopyFrom({ argv, json }) {
       );
     }
 
-    return await insertAccountsIntoPostgres({
+    return await insertAccountsIntoDatabaseUrl({
       cwd: targetCwd,
-      clientImport: targetClientImport,
+      provider: targetDbProvider,
       databaseUrl: targetDatabaseUrl,
       accounts,
     });

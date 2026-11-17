@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { PrincipalRefV1 } from "@happier-dev/protocol/teams/principal";
@@ -9,19 +8,21 @@ import { classifySubjectsExternalToTeamInTx } from "./sessionAccessExternalShari
 import { teamsPolicyStillRequireGrants } from "./sessionAccessGrantService";
 import { listSessionTeamCredentialBindingConsequencesInTx } from "@/app/teams/credentials/sessionBinding";
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Selected Session principals query cost (PostgreSQL)", () => {
-    const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+    let client: PrismaClientType;
     let selects = 0;
     let selectStatements: string[] = [];
-    client.$on("query", (event) => {
-        if (/^\s*SELECT\b/i.test(event.query)) {
-            selects++;
-            selectStatements.push(JSON.stringify([event.query, event.params]));
-        }
-    });
 
     beforeAll(async () => {
+        client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(client, (event) => {
+            if (/^\s*SELECT\b/i.test(event.query)) {
+                selects++;
+                selectStatements.push(JSON.stringify([event.query, event.params]));
+            }
+        });
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error("Run only through the disposable PostgreSQL DB-contract harness");

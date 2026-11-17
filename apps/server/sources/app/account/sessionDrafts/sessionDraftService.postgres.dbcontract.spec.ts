@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
     SESSION_DRAFT_ROUTE_MUTATE, SESSION_DRAFT_ROUTE_READ,
@@ -16,6 +16,7 @@ import { sessionDraftPhysicalKey } from './sessionDraftPhysicalKey';
 import { canonicalSessionDraftAddressV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
 import { registerSessionDraftRoutes } from './registerSessionDraftRoutes';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('draft mutation PostgreSQL contention', () => {
     let connected = false;
@@ -45,8 +46,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('d
             createdAt: before, updatedAt: before,
         })) });
         const statements: Prisma.QueryEvent[] = [];
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
         const transaction = db.$transaction;
         // Observe real SQL; no internal admission, mutation or publication is replaced.

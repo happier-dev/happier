@@ -1,4 +1,3 @@
-import { PrismaClient, type Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ManagedIdentityProvidersListResultV1Schema } from '@happier-dev/protocol/identity/providers';
 
@@ -9,6 +8,8 @@ import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/st
 import { initEncrypt } from '@/modules/encrypt';
 import { encryptIdentityProviderSecrets } from './managed/identityProviderSecretCipher';
 import { listTeamIdentityConnectionsForActor } from '@/app/teams/identity/teamIdentityConnectionAdministration';
+import { createDbMaintenanceClient, type PrismaClientType } from '@/storage/prisma';
+import { recordDriverStatements, type DriverStatementEvent } from '@/testkit/driverStatements';
 
 const config = {
     v: 1, kind: 'oidc', issuer: 'https://identity-cost.example.test', clientId: 'happier',
@@ -19,8 +20,8 @@ const config = {
 } as const;
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Identity administration acquisition cost (PostgreSQL)', () => {
-    const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>;
+    const statements: DriverStatementEvent[] = [];
+    let client: PrismaClientType;
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
@@ -28,8 +29,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('I
         }
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { onDriverStatement: recordDriverStatements(event => statements.push(event)) });
         await client.$connect();
         vi.stubEnv('HANDY_MASTER_SECRET', 'identity-cost-disposable-contract');
         vi.stubEnv('HAPPIER_PUBLIC_SERVER_URL', 'https://home-cost.example.test');

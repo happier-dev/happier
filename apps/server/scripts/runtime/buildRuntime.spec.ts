@@ -92,7 +92,7 @@ describe('buildServerRuntime', () => {
       await Promise.all(bundleFiles.map(async (entry) => await readFile(join(outDir, entry), 'utf-8')))
     ).join('\n');
 
-    expect(bundleText).not.toContain('../../node_modules/@prisma/client/runtime/library.js');
+    expect(bundleText).not.toContain('@prisma/client/runtime/client.js');
     expect(bundleText).not.toContain('from "@prisma/client"');
     expect(bundleText).not.toMatch(/import\s*\{[^}]+\}\s*from\s*"@prisma\/client"/);
   });

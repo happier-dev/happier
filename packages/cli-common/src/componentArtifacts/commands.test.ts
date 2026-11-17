@@ -20,7 +20,7 @@ import { compileBunBinary, execOrThrow, resolveBunCommand, resolveBunCompilerCom
 import { compilePrismaMigrateBinary } from './compilePrismaMigrateBinary.js';
 import { SERVER_BINARY_TARGETS } from './targets.js';
 import { buildServerRuntimeSupportPayload } from './buildServerBinaryArtifactPayload.js';
-import { resolveServerRuntimePrismaEngineFileName } from '../firstPartyRuntime/serverRuntimeArtifactLayout.js';
+import { SERVER_PRISMA_CLIENT_QUERY_COMPILER_FILE } from '../firstPartyRuntime/serverRuntimeArtifactLayout.js';
 
 describe('resolvePnpmCommand', () => {
     it('uses pnpm directly when its executable is available', () => {
@@ -95,7 +95,7 @@ describe('repository compiler admission', () => {
             } else {
                 const client = join(repoRoot, 'client');
                 mkdirSync(client);
-                writeFileSync(join(client, resolveServerRuntimePrismaEngineFileName({ platform: target.os, arch: target.arch })), 'engine');
+                writeFileSync(join(client, SERVER_PRISMA_CLIENT_QUERY_COMPILER_FILE), 'compiler');
                 await expect(buildServerRuntimeSupportPayload({
                     repoRoot, target, payloadDir: join(repoRoot, 'payload'), buildDbProviders: 'postgresql',
                     entries: [

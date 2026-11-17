@@ -53,7 +53,7 @@ describe.skipIf(!postgres)("PostgreSQL read-only transactions", () => {
             attempts += 1;
             await tx.$executeRaw`UPDATE "Account" SET seq = seq + 1 WHERE id = ${accountId}`;
         }, { readOnly: true, isolationLevel: "Serializable" })).rejects.toMatchObject({
-            code: "P2010", meta: { code: "25006" },
+            code: "P2010", meta: { driverAdapterError: { cause: { originalCode: "25006" } } },
         });
         expect(attempts).toBe(1);
         expect(await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { seq: true } }))

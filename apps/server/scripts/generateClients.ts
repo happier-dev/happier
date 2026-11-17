@@ -1,13 +1,11 @@
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
-import { readFile, rm, stat, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 
 import { resolveServerWorkspaceRoot, runPrismaCli } from "./prismaCli";
+import { resolveServerPrismaInstallLayout } from "./prismaInstallLayout.mjs";
 import { runCommand } from "./runCommand";
-
-const requireFromHere = createRequire(import.meta.url);
 
 export type BuildDbProvider = "postgres" | "mysql" | "sqlite";
 
@@ -92,6 +90,7 @@ type OutputStatusParams = Readonly<{
     providers: ReadonlySet<BuildDbProvider>;
     fileExists?: (path: string) => Promise<boolean>;
     readText?: (path: string) => Promise<string>;
+    resolveInstalledPath?: ResolveInstalledPath;
 }>;
 
 function defaultFileExists(path: string): Promise<boolean> {
@@ -102,13 +101,19 @@ function normalizePrismaSchemaText(text: string): string {
     return String(text ?? "").replace(/\s+/g, " ").trim();
 }
 
-const PRISMA_BINARY_TARGET_ENGINE_FILES = new Map<string, string>([
-    ["debian-openssl-3.0.x", "libquery_engine-debian-openssl-3.0.x.so.node"],
-    ["linux-arm64-openssl-3.0.x", "libquery_engine-linux-arm64-openssl-3.0.x.so.node"],
-    ["darwin", "libquery_engine-darwin.dylib.node"],
-    ["darwin-arm64", "libquery_engine-darwin-arm64.dylib.node"],
-    ["windows", "query_engine-windows.dll.node"],
+/**
+ * Prisma 7 `prisma-client-js` output that a runtime load needs. The client runs a WASM query
+ * compiler embedded as base64 beside `index.js`; there is no per-target query-engine library.
+ */
+const REQUIRED_GENERATED_CLIENT_FILES = Object.freeze([
+    "index.js",
+    "default.js",
+    "package.json",
+    "query_compiler_fast_bg.js",
+    "query_compiler_fast_bg.wasm-base64.js",
 ]);
+
+type ResolveInstalledPath = (specifier: string) => string;
 
 const PRISMA_SOURCE_SCHEMA_STAMP = ".happier-source-schema.sha256";
 
@@ -128,38 +133,19 @@ async function writePrismaSourceSchemaStamp(params: Readonly<{
     );
 }
 
-function resolveRequiredGeneratedClientFiles(sourceSchema: string): string[] | null {
-    const binaryTargetsMatch = sourceSchema.match(/binaryTargets\s*=\s*\[([\s\S]*?)\]/m);
-    if (!binaryTargetsMatch) {
-        return null;
-    }
-
-    const requiredFiles = new Set(["index.js", "default.js", "package.json"]);
-    const binaryTargets = Array.from(binaryTargetsMatch[1]!.matchAll(/"([^"]+)"/g)).map((match) => normalizeToken(match[1] ?? ""));
-    for (const binaryTarget of binaryTargets) {
-        if (!binaryTarget || binaryTarget === "native") {
-            continue;
-        }
-        const engineFile = PRISMA_BINARY_TARGET_ENGINE_FILES.get(binaryTarget);
-        if (!engineFile) {
-            return null;
-        }
-        requiredFiles.add(engineFile);
-    }
-
-    return [...requiredFiles];
-}
-
 export async function areRequestedPrismaOutputsCurrent(params: OutputStatusParams): Promise<boolean> {
     const serverRoot = params.serverRoot;
-    const repoRoot = join(serverRoot, "..", "..");
     const fileExists = params.fileExists ?? defaultFileExists;
     const readText = params.readText ?? ((path: string) => readFile(path, "utf8"));
+    const prismaLayout = resolveServerPrismaInstallLayout({
+        serverRoot,
+        resolveInstalledPath: params.resolveInstalledPath,
+    });
 
     const checks: Array<Readonly<{ sourcePath: string; generatedClientDir: string; copiesRuntime?: boolean }>> = [
         {
             sourcePath: join(serverRoot, "prisma", "schema.prisma"),
-            generatedClientDir: join(repoRoot, "node_modules", ".prisma", "client"),
+            generatedClientDir: prismaLayout.defaultClientDir,
         },
     ];
     if (params.providers.has("sqlite")) {
@@ -186,11 +172,7 @@ export async function areRequestedPrismaOutputsCurrent(params: OutputStatusParam
             readText(check.sourcePath),
             readText(generatedSchemaPath),
         ]);
-        const requiredFiles = resolveRequiredGeneratedClientFiles(sourceSchema);
-        if (requiredFiles == null) {
-            return false;
-        }
-        for (const requiredFile of requiredFiles) {
+        for (const requiredFile of REQUIRED_GENERATED_CLIENT_FILES) {
             if (!(await fileExists(join(check.generatedClientDir, requiredFile)))) {
                 return false;
             }
@@ -205,10 +187,10 @@ export async function areRequestedPrismaOutputsCurrent(params: OutputStatusParam
             return false;
         }
         if (check.copiesRuntime) {
-            const copiedRuntimePath = join(check.generatedClientDir, "runtime", "library.js");
+            const copiedRuntimePath = join(check.generatedClientDir, "runtime", "client.js");
             if (!(await fileExists(copiedRuntimePath))) return false;
             const [sourceRuntime, copiedRuntime] = await Promise.all([
-                readText(requireFromHere.resolve("@prisma/client/runtime/library.js")),
+                readText(prismaLayout.clientRuntimePath),
                 readText(copiedRuntimePath),
             ]);
             // Prisma prepends its generated-file notice to the copied runtime.
@@ -218,6 +200,42 @@ export async function areRequestedPrismaOutputsCurrent(params: OutputStatusParam
     }
 
     return true;
+}
+
+const CLIENT_GENERATOR_BLOCK = /^(generator client \{\n)/m;
+
+/** The default-client schema with its `client` generator writing to `output` (a run-local client). */
+export function withDefaultClientOutput(schema: string, output: string): string {
+    if (!CLIENT_GENERATOR_BLOCK.test(schema) || /^generator client \{[^}]*^\s*output\s*=/m.test(schema)) {
+        throw new Error("[prisma-generate] the default schema needs a `generator client` block without an output");
+    }
+    return schema.replace(CLIENT_GENERATOR_BLOCK, `$1    output = ${JSON.stringify(output)}\n`);
+}
+
+/**
+ * Generates the default client into this checkout's `defaultClientDir`. When the installed
+ * `@prisma/client` belongs to another checkout, that is the run-local client, generated from an
+ * staged copy of the schema (under the ignored `generated/`) with the output set; the installed client is never written.
+ */
+async function generateDefaultClient(serverRoot: string, env: NodeJS.ProcessEnv): Promise<void> {
+    const layout = resolveServerPrismaInstallLayout({ serverRoot });
+    const schemaPath = join(serverRoot, "prisma", "schema.prisma");
+    const generateEnv = { ...env, DATABASE_URL: prismaGenerateDatabaseUrlForProvider("postgres") };
+    if (layout.ownsInstalledClient) {
+        await runPrismaCli({ serverRoot, args: ["generate"], env: generateEnv });
+    } else {
+        // Prisma resolves @prisma/client from the schema's directory, so the copy stays in this server package.
+        await mkdir(join(serverRoot, "generated"), { recursive: true });
+        const stage = await mkdtemp(join(serverRoot, "generated", ".default-client-schema-"));
+        try {
+            const stagedSchemaPath = join(stage, "schema.prisma");
+            await writeFile(stagedSchemaPath, withDefaultClientOutput(await readFile(schemaPath, "utf8"), layout.defaultClientDir));
+            await runPrismaCli({ serverRoot, args: ["generate", "--schema", stagedSchemaPath], env: generateEnv });
+        } finally {
+            await rm(stage, { recursive: true, force: true });
+        }
+    }
+    await writePrismaSourceSchemaStamp({ sourcePath: schemaPath, generatedClientDir: layout.defaultClientDir });
 }
 
 export function resolveSchemaSyncInvocation(params: Readonly<{
@@ -243,6 +261,7 @@ export async function invalidateServerTypeScriptBuildInfo(params: Readonly<{
     serverRoot: string;
     statFile?: (path: string) => Promise<Readonly<{ mtimeMs: number }>>;
     rmFile?: (path: string, options: Readonly<{ force: boolean }>) => Promise<void>;
+    resolveInstalledPath?: ResolveInstalledPath;
 }>): Promise<void> {
     const statFile = params.statFile ?? stat;
     const buildInfoPath = join(
@@ -254,9 +273,8 @@ export async function invalidateServerTypeScriptBuildInfo(params: Readonly<{
     );
     const buildInfo = await statFile(buildInfoPath).catch(() => null);
     if (!buildInfo) return;
-    const repoRoot = join(params.serverRoot, "..", "..");
     const declarationPaths = [
-        join(repoRoot, "node_modules", ".prisma", "client", "index.d.ts"),
+        join(resolveServerPrismaInstallLayout(params).defaultClientDir, "index.d.ts"),
         join(params.serverRoot, "generated", "sqlite-client", "index.d.ts"),
         join(params.serverRoot, "generated", "mysql-client", "index.d.ts"),
     ];
@@ -276,6 +294,10 @@ async function main(): Promise<void> {
     const schemaSyncInvocation = resolveSchemaSyncInvocation({ env, checkOnly });
     await runCommand(schemaSyncInvocation.command, schemaSyncInvocation.args, env, { cwd: serverRoot });
     await invalidateServerTypeScriptBuildInfo({ serverRoot });
+    if (resolveServerPrismaInstallLayout({ serverRoot }).ownsInstalledClient && !checkOnly) {
+        // A run-local default client exists only while node_modules belonged to another checkout.
+        await rm(join(serverRoot, "generated", "default-client"), { recursive: true, force: true });
+    }
     if (await areRequestedPrismaOutputsCurrent({ serverRoot, providers })) {
         return;
     }
@@ -286,18 +308,7 @@ async function main(): Promise<void> {
     }
 
     // Always generate the default client (postgres schema).
-    await runPrismaCli({
-        serverRoot,
-        args: ["generate"],
-        env: {
-            ...env,
-            DATABASE_URL: prismaGenerateDatabaseUrlForProvider("postgres"),
-        },
-    });
-    await writePrismaSourceSchemaStamp({
-        sourcePath: join(serverRoot, "prisma", "schema.prisma"),
-        generatedClientDir: join(serverRoot, "..", "..", "node_modules", ".prisma", "client"),
-    });
+    await generateDefaultClient(serverRoot, env);
 
     if (providers.has("sqlite")) {
         await runPrismaCli({

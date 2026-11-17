@@ -1,7 +1,7 @@
 // Cross-owner CLI/HTTP composition uses the DB-contract harness's per-importer aliases.
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/client';
 import { createActionExecutor } from '@happier-dev/protocol';
 
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';

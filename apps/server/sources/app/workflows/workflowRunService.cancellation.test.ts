@@ -2,9 +2,10 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { matchesDbMockWhere as matches } from "@/app/api/testkit/dbMocks";
 
 const boundary = await vi.hoisted(async () => {
-    const { PrismaClient } = await import("@prisma/client");
-    // Construct field references from Prisma without opening a database connection.
-    return { tx: {}, runFields: new PrismaClient().automationRun.fields };
+    const { createDbMaintenanceClient } = await import("@/storage/prisma");
+    // Field references come from a real client; the unreachable URL is never connected.
+    const client = await createDbMaintenanceClient("postgres", "postgresql://fields:fields@127.0.0.1:1/fields");
+    return { tx: {}, runFields: client.automationRun.fields };
 });
 const transactions = await vi.hoisted(async () => {
     const { createDbTransactionMock, inTxPostgresControlStatementMock } = await import("@/app/api/testkit/dbMocks");
@@ -13,7 +14,10 @@ const transactions = await vi.hoisted(async () => {
 
 // Only database transports are replaced. inTx, cancellation, claim, access,
 // Account encryption fences and recovery selection use their real owners.
-vi.mock("@/storage/db", () => ({ db: transactions.wrapDb({ automationRun: { fields: boundary.runFields } }) }));
+vi.mock("@/storage/db", async importOriginal => ({
+    ...await importOriginal<typeof import("@/storage/db")>(),
+    db: transactions.wrapDb({ automationRun: { fields: boundary.runFields } }),
+}));
 vi.mock("@/storage/prisma", async importOriginal => ({
     ...await importOriginal<typeof import("@/storage/prisma")>(),
     withSqliteReadSnapshot: transactions.readSnapshot,

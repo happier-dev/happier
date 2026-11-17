@@ -2,6 +2,75 @@ export function isPrismaErrorCode(error: unknown, code: string): boolean {
     return typeof error === 'object' && error !== null && 'code' in error && error.code === code;
 }
 
+export interface PrismaDriverErrorCause {
+    /** Driver adapter error kind (`UniqueConstraintViolation`, `postgres`, `sqlite`, ...). */
+    readonly kind: string;
+    /** The database's own code: PostgreSQL SQLSTATE, MySQL errno, SQLite extended result code. */
+    readonly code: string | undefined;
+    /** The database's own message. It may contain values; log it only through a fixed-text filter. */
+    readonly message: string | undefined;
+    /** The violated constraint, for constraint violations. */
+    readonly constraint?: Readonly<{ fields?: readonly string[]; index?: string }>;
+}
+
+/**
+ * The driver failure under a Prisma 7 error. Driver adapters attach it as
+ * `meta.driverAdapterError.cause` (raw queries: P2010; model queries: the mapped P-code, or
+ * P2039 for database errors Prisma does not classify). A failure Prisma does not wrap (an
+ * interactive transaction's COMMIT, e.g. a serialization conflict) arrives as the adapter's own
+ * `DriverAdapterError`, with the same cause directly on it.
+ */
+function readConstraint(value: unknown): PrismaDriverErrorCause['constraint'] | undefined {
+    if (typeof value !== 'object' || value === null) return undefined;
+    const fields = 'fields' in value && Array.isArray(value.fields) && value.fields.every(field => typeof field === 'string')
+        ? value.fields as string[] : undefined;
+    const index = 'index' in value && typeof value.index === 'string' ? value.index : undefined;
+    return fields || index ? { ...(fields ? { fields } : {}), ...(index ? { index } : {}) } : undefined;
+}
+
+export function readPrismaDriverErrorCause(error: unknown): PrismaDriverErrorCause | null {
+    if (typeof error !== 'object' || error === null) return null;
+    const adapterError = 'meta' in error
+        ? (typeof error.meta === 'object' && error.meta !== null && 'driverAdapterError' in error.meta ? error.meta.driverAdapterError : null)
+        : ('name' in error && error.name === 'DriverAdapterError' ? error : null);
+    if (typeof adapterError !== 'object' || adapterError === null || !('cause' in adapterError)) return null;
+    const cause = adapterError.cause;
+    if (typeof cause !== 'object' || cause === null || !('kind' in cause) || typeof cause.kind !== 'string') return null;
+    const record = cause as { kind: string; originalCode?: unknown; code?: unknown; originalMessage?: unknown; message?: unknown; constraint?: unknown };
+    const code = record.originalCode ?? record.code;
+    const message = record.originalMessage ?? record.message;
+    const constraint = readConstraint(record.constraint);
+    return {
+        kind: record.kind,
+        code: typeof code === 'string' || typeof code === 'number' ? String(code) : undefined,
+        message: typeof message === 'string' ? message : undefined,
+        ...(constraint ? { constraint } : {}),
+    };
+}
+
+/** The unique constraint a violation names: column `fields` (SQLite) or its `index` name (PostgreSQL, MySQL). */
+export interface PrismaUniqueConstraint {
+    readonly modelName: string | undefined;
+    readonly fields: readonly string[] | undefined;
+    readonly index: string | undefined;
+}
+
+/**
+ * The constraint behind a P2002 (or a raw-query unique violation). Prisma 7 no longer sets
+ * `meta.target`; the driver cause carries `constraint`. Null when the error is not a unique
+ * violation or names no constraint.
+ */
+export function readPrismaUniqueConstraint(error: unknown): PrismaUniqueConstraint | null {
+    const cause = readPrismaDriverErrorCause(error);
+    if (!isPrismaErrorCode(error, 'P2002') && cause?.kind !== 'UniqueConstraintViolation') return null;
+    const constraint = cause?.constraint;
+    if (!constraint) return null;
+    const meta = typeof error === 'object' && error !== null && 'meta' in error ? error.meta : undefined;
+    const modelName = typeof meta === 'object' && meta !== null && 'modelName' in meta && typeof meta.modelName === 'string'
+        ? meta.modelName : undefined;
+    return { modelName, fields: constraint.fields, index: constraint.index };
+}
+
 interface PrismaQueryValidationDiagnostic {
     readonly errorCode: 'database_query_validation_failed';
     readonly httpStatus: 500;

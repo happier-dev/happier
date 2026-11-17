@@ -190,8 +190,7 @@ async function executeMysqlDdl(sql: string): Promise<void> {
                 "db",
                 "execute",
                 "--stdin",
-                "--url",
-                databaseUrl,
+                // Prisma 7 reads the URL from prisma.config.ts (DATABASE_URL), never a flag.
             ],
             {
                 cwd: process.cwd(),

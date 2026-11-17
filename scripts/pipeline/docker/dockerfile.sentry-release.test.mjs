@@ -49,8 +49,8 @@ test("relay-server target is artifact based and keeps the self-host runtime cont
   assert.doesNotMatch(artifactSection, /happier-ui-web/);
   assert.doesNotMatch(artifactSection, /rm -rf \/opt\/happier\/server\/ui-web/);
   assert.match(artifactSection, /rm -rf \/opt\/happier\/server\/generated\/mysql-client/);
-  assert.match(artifactSection, /libquery_engine-debian-openssl-3\.0\.x\.so\.node/);
-  assert.match(artifactSection, /libquery_engine-linux-arm64-openssl-3\.0\.x\.so\.node/);
+  // Prisma 7 clients embed their query compiler; there are no per-target engine files to prune.
+  assert.doesNotMatch(artifactSection, /query_engine/);
   assert.match(artifactSection, /sharp-libvips-linuxmusl-x64/);
   assert.match(artifactSection, /sharp-linuxmusl-x64/);
   assert.match(artifactSection, /sharp-libvips-linuxmusl-arm64/);

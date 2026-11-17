@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PrismaClient, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
 import type { Tx } from "@/storage/inTx";
 import { inTx } from "@/storage/inTx";
 import { applyUserKvMutationsInTx, kvMutate } from "./kvMutate";
 import { kvBulkGet } from "./kvBulkGet";
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 
 function waitForDatabasePause<T>(operation: Promise<T>, paused: Promise<void>): Promise<void> {
     return Promise.race([paused, operation.then(() => { throw new Error("KV operation finished before its database interleaving boundary"); })]);
@@ -32,8 +33,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("U
             accountId: owner.id, key, version: 3, value: Buffer.from(owner.id === account.id ? "before" : "foreign"),
         }))) });
         const queries: Prisma.QueryEvent[] = [];
-        const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-        client.$on("query", event => queries.push(event));
+        const client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(client, event => queries.push(event));
         await client.$connect();
         const transaction = db.$transaction;
         // Observe SQL at the actual database boundary; CAS, validation and publication stay real.

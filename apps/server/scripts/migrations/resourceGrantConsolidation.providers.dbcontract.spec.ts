@@ -2,10 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { executeMysqlDdl } from '@/testkit/mysqlDdl';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { PrismaClient as PostgresClient } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
-import { PrismaClient as MysqlClient } from '../../generated/mysql-client/index.js';
 import { isLegacyTransactionWrapperStatement, splitMigrationStatements } from '../../sources/migrations/missingMigrationReconciliation';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 // Temporary test payload from approved B6 migration drafts; FINAL reads the published migration.
 const draftConsolidationSql = {
@@ -29,13 +28,12 @@ describe('resource grant consolidation migration', () => {
             if (!process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID) throw new Error('Use the canonical disposable DB-contract runner');
             const name = `grant_consolidation_${randomUUID().replaceAll('-', '')}`;
             const root = join(import.meta.dirname, '../../prisma', ...(provider === 'mysql' ? ['mysql'] : []));
-            const Client = provider === 'postgres' ? PostgresClient : MysqlClient;
-            const admin = new Client({ datasourceUrl: databaseUrl });
+            const admin = await createDbMaintenanceClient(provider, databaseUrl);
             const scoped = new URL(databaseUrl!);
             if (provider === 'postgres') scoped.searchParams.set('schema', name);
             else scoped.pathname = `/${name}`;
-            const postgresClient = provider === 'postgres' ? new PostgresClient({ datasourceUrl: scoped.toString() }) : null;
-            const db = postgresClient ?? new MysqlClient({ datasourceUrl: scoped.toString() });
+            const postgresClient = provider === 'postgres' ? await createDbMaintenanceClient('postgres', scoped.toString()) : null;
+            const db = postgresClient ?? await createDbMaintenanceClient('mysql', scoped.toString());
             const q = (value: string) => provider === 'postgres' ? `"${value}"` : `\`${value}\``;
             const execute = (sql: string) => db.$executeRawUnsafe(sql);
             const query = (sql: string) => db.$queryRawUnsafe<Record<string, unknown>[]>(sql);

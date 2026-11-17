@@ -1,3 +1,4 @@
+import { readPrismaDriverErrorCause } from "@/storage/prismaErrors";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCounter } from "@/app/monitoring/metrics/index";
 import {
@@ -370,11 +371,11 @@ function sessionFollowAckErrorCauses(error: unknown) {
             && (/^P\d{4}$/.test(record.code) || record.code === 'SQLITE_BUSY'
                 || record.code === 'database_transaction_conflict_exhausted')
             ? record.code : undefined;
-        const meta = record && 'meta' in record && typeof record.meta === 'object' && record.meta !== null ? record.meta : null;
+        const driverCode = readPrismaDriverErrorCause(cause)?.code;
         const sqlState = code === undefined && record && 'code' in record
             && typeof record.code === 'string' && /^[0-9A-Z]{5}$/.test(record.code)
-            ? record.code : meta && 'code' in meta && typeof meta.code === 'string' && /^[0-9A-Z]{5}$/.test(meta.code)
-                ? meta.code : undefined;
+            ? record.code : driverCode !== undefined && /^[0-9A-Z]{5}$/.test(driverCode)
+                ? driverCode : undefined;
         causes.push({ name, ...(code ? { code } : {}), ...(sqlState ? { sqlState } : {}) });
         cause = record && 'cause' in record ? record.cause : undefined;
     }

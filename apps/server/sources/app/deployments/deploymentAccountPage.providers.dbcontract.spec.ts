@@ -14,6 +14,7 @@ import { inTx } from '@/storage/inTx';
 import { initEncrypt } from '@/modules/encrypt';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { listDeploymentDomainPageInTx, listDeploymentDataPageInTx } from './deploymentAccountPageReadService';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('account deployment pages on PostgreSQL', () => {
     const serverId = `srv_${'e'.repeat(32)}`;
@@ -90,8 +91,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('a
             domains.push(domain);
         }
         const statements: string[] = [];
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => statements.push(event.query));
+        const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => statements.push(event.query));
         await client.$connect();
         const dataStatements = () => statements.filter(sql => !/^(BEGIN|COMMIT|ROLLBACK|SET TRANSACTION)/i.test(sql.trim()));
         try {

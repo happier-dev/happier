@@ -6,8 +6,8 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PrismaClient } from "../../generated/sqlite-client/index.js";
 import { applySqliteMigrations } from "../prismaMigrations";
+import { createDbMaintenanceClient } from "../../sources/storage/prisma";
 
 const serverRoot = join(import.meta.dirname, "..", "..");
 const sqliteMigrationsRoot = join(serverRoot, "prisma", "sqlite", "migrations");
@@ -330,7 +330,7 @@ describe("SQLite 0.2 migration lineage before Account Directory", () => {
             deployed.close();
         }
 
-        const prisma = new PrismaClient({ datasourceUrl: `file:${databasePath}` });
+        const prisma = await createDbMaintenanceClient("sqlite", `file:${databasePath}`);
         try {
             const account = await prisma.account.create({
                 data: { publicKey: "quota-compatibility-query-account" },
@@ -501,7 +501,7 @@ describe("SQLite 0.2 migration lineage before Account Directory", () => {
         await applySqliteMigrations({ databasePath, migrationsDir });
         await expect(applySqliteMigrations({ databasePath, migrationsDir })).resolves.toEqual({ applied: [] });
 
-        const prisma = new PrismaClient({ datasourceUrl: `file:${databasePath}` });
+        const prisma = await createDbMaintenanceClient("sqlite", `file:${databasePath}`);
         try {
             await expect(prisma.serviceAccountQuotaSnapshot.findUnique({
                 where: {

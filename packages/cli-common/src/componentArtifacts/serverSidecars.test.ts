@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { expect, test } from 'vitest';
 import { buildServerBinaryArtifactPayload, buildServerRuntimeSupportPayload } from './buildServerBinaryArtifactPayload.js';
@@ -58,6 +59,7 @@ test.each(['linux', 'darwin'])('cross-target %s server support acquires target S
     for (const path of ['apps/server/generated/sqlite-client/index.js', 'apps/server/prisma/sqlite/migrations/fixture.sql', 'node_modules/.prisma/client/index.js', 'node_modules/@prisma/client/package.json', 'packages/iroh-native/package.json', 'packages/iroh-native/dist/index.js', 'packages/iroh-native/scripts/load.mjs']) {
       await write(join(root, path), '{}');
     }
+    await writeServerPrismaMigrationToolFixture(root);
     await write(join(root, 'node_modules/sharp/package.json'), JSON.stringify({ name: 'sharp', version: '0.34.3' }));
     await write(join(root, 'apps/server/node_modules/sharp/package.json'), JSON.stringify({ name: 'sharp', version: '0.35.5' }));
     const hostAddon = join(root, 'node_modules', '@img', `sharp-linux-${process.arch}`, 'lib', 'sharp.node');
@@ -180,7 +182,7 @@ test('server support ignores workspace JavaScript and build evidence while stagi
 
     const client = join(root, 'client');
     await mkdir(client);
-    await writeFile(join(client, 'libquery_engine-debian-openssl-3.0.x.so.node'), 'engine');
+    await writeFile(join(client, 'query_compiler_fast_bg.wasm-base64.js'), 'compiler');
     const payloadDir = join(root, 'payload');
     await buildServerRuntimeSupportPayload({
       payloadDir, target, buildDbProviders: 'sqlite',
@@ -197,12 +199,24 @@ test('server support ignores workspace JavaScript and build evidence while stagi
   }
 });
 
+/** A fixture repository with the server's real Prisma install-layout owner and a 6.19.2 migration CLI install. */
+async function writeServerPrismaMigrationToolFixture(root: string): Promise<void> {
+  const owner = fileURLToPath(new URL('../../../../apps/server/scripts/prismaInstallLayout.mjs', import.meta.url));
+  await mkdir(join(root, 'apps', 'server', 'scripts'), { recursive: true });
+  await writeFile(join(root, 'apps', 'server', 'scripts', 'prismaInstallLayout.mjs'), await readFile(owner));
+  await writeFile(join(root, 'apps', 'server', 'package.json'), '{"name":"@happier-dev/server"}\n');
+  await mkdir(join(root, 'node_modules', 'prisma-migrate-cli', 'build'), { recursive: true });
+  await writeFile(join(root, 'node_modules', 'prisma-migrate-cli', 'package.json'), '{"name":"prisma","version":"6.19.2"}\n');
+  await mkdir(join(root, 'node_modules', 'node-fetch-native', 'dist'), { recursive: true });
+  await writeFile(join(root, 'node_modules', 'node-fetch-native', 'dist', 'proxy-stub.mjs'), 'export {};\n');
+}
+
 test('server runtime support identity changes for Prisma/native contents and target inputs', async () => {
   const root = await mkdtemp(join(tmpdir(), 'server-runtime-support-identity-'));
   const prismaClientDir = join(root, 'generated', 'sqlite-client');
   try {
     await mkdir(prismaClientDir, { recursive: true });
-    const enginePath = join(prismaClientDir, 'libquery_engine-debian-openssl-3.0.x.so.node');
+    const enginePath = join(prismaClientDir, 'query_compiler_fast_bg.wasm-base64.js');
     const prismaToolPath = join(root, 'packages/cli-common/scripts/buildPrismaMigrateBinary.mjs');
     const compilePolicyPath = join(root, 'packages/cli-common/src/componentArtifacts/commands.ts');
     await writeFile(enginePath, 'engine-one', 'utf8');
@@ -210,10 +224,7 @@ test('server runtime support identity changes for Prisma/native contents and tar
     await writeFile(prismaToolPath, 'tool-one', 'utf8');
     await mkdir(join(compilePolicyPath, '..'), { recursive: true });
     await writeFile(compilePolicyPath, 'policy-one', 'utf8');
-    for (const path of ['node_modules/prisma/index.js', 'node_modules/node-fetch-native/index.js']) {
-      await mkdir(join(root, path, '..'), { recursive: true });
-      await writeFile(join(root, path), 'dependency');
-    }
+    await writeServerPrismaMigrationToolFixture(root);
     const toolIdentityEntries = await resolveServerRuntimeSupportToolIdentityEntries({ repoRoot: root, serverComponent: 'happier-server-light', buildDbProviders: 'mysql' });
 
     const entries = [{

@@ -12,7 +12,8 @@ import {
 import { deriveVoiceProviderConversationKey } from "../sources/app/api/routes/voice/voiceProviderConversationIdentity";
 import { db, initDbMysql } from "../sources/storage/db";
 
-import { resolveServerWorkspaceRoot, runPrismaCli } from "./prismaCli";
+import { resolveServerWorkspaceRoot } from "./prismaCli";
+import { runPrismaMigrateCli } from "./prismaMigrateCli";
 
 export const MYSQL_VOICE_IDENTITY_TARGET_MIGRATION = "20260710170000_add_voice_provider_conversation_keys";
 
@@ -80,9 +81,9 @@ async function deployStagedMigrations(params: Readonly<{
     stageDir: string;
     databaseUrl: string;
 }>): Promise<void> {
-    await runPrismaCli({
+    await runPrismaMigrateCli({
         serverRoot: params.serverRoot,
-        args: ["migrate", "deploy", "--schema", join(params.stageDir, "schema.prisma")],
+        schemaPath: join(params.stageDir, "schema.prisma"), args: ['deploy'],
         env: { ...process.env, DATABASE_URL: params.databaseUrl },
     });
 }

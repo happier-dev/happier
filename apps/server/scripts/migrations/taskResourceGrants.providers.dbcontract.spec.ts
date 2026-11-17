@@ -2,10 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PrismaClient as PostgresClient } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
-import { PrismaClient as MysqlClient } from '../../generated/mysql-client/index.js';
-import { runPrismaCli } from '../prismaCli';
+import { runPrismaMigrateCli } from '../prismaMigrateCli';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 const serverRoot = join(import.meta.dirname, '../..');
 const taskMigration = '20261031120000_add_task_resource_grants';
@@ -20,12 +19,11 @@ describe('Task grants additive migration upgrade', () => {
             const stage = await mkdtemp(join(tmpdir(), `happier-task-grants-${provider}-`));
             const name = `task_upgrade_${randomUUID().replaceAll('-', '')}`;
             const root = join(serverRoot, 'prisma', ...(provider === 'postgres' ? [] : [provider]));
-            const Client = provider === 'postgres' ? PostgresClient : MysqlClient;
-            const admin = new Client({ datasourceUrl: databaseUrl });
+            const admin = await createDbMaintenanceClient(provider, databaseUrl);
             const scoped = new URL(databaseUrl!);
             if (provider === 'postgres') scoped.searchParams.set('schema', name);
             else scoped.pathname = `/${name}`;
-            const client = new Client({ datasourceUrl: scoped.toString() });
+            const client = await createDbMaintenanceClient(provider, scoped.toString());
             const q = (value: string) => provider === 'mysql' ? `\`${value}\`` : `"${value}"`;
             const query = (sql: string) => client.$queryRawUnsafe<Record<string, unknown>[]>(sql);
             const ledger = () => query('SELECT * FROM _prisma_migrations ORDER BY migration_name');
@@ -39,8 +37,8 @@ describe('Task grants additive migration upgrade', () => {
                 await copyFile(join(root, 'migrations/migration_lock.toml'), join(stage, 'migrations/migration_lock.toml'));
                 for (const migration of names) await cp(join(root, 'migrations', migration), join(stage, 'migrations', migration), { recursive: true });
             };
-            const deploy = (quiet = true) => runPrismaCli({ serverRoot,
-                args: ['migrate', 'deploy', '--schema', join(stage, 'schema.prisma')],
+            const deploy = (quiet = true) => runPrismaMigrateCli({ serverRoot,
+                schemaPath: join(stage, 'schema.prisma'), args: ['deploy'],
                 env: { ...process.env, DATABASE_URL: scoped.toString(), HAPPIER_DB_PROVIDER: provider }, quiet });
             let created = false;
             try {

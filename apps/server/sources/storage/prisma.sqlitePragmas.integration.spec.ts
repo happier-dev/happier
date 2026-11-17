@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { renderPrismaCompatibleSqliteDatabaseUrl } from "@happier-dev/cli-common/firstPartyRuntime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createDbSqliteMaintenanceClient, db, getPrismaConnectionLimit, resolveSqliteRuntimePragmasFromEnv, resolveSqliteStartupDiagnosticsFromEnv, withSqliteReadSnapshot } from "@/storage/db";
+import { createDbMaintenanceClient, createDbSqliteMaintenanceClient, db, getPrismaConnectionLimit, resolveSqliteRuntimePragmasFromEnv, resolveSqliteStartupDiagnosticsFromEnv, withSqliteReadSnapshot } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 describe("storage/prisma sqlite pragmas", () => {
@@ -19,27 +19,23 @@ describe("storage/prisma sqlite pragmas", () => {
         vi.unstubAllEnvs();
     });
 
-    it("keeps the main pool's native worker budget when maintenance and snapshot clients open", async () => {
-        vi.stubEnv("TOKIO_WORKER_THREADS", undefined);
+    it("keeps the main pool's connection limit when maintenance and snapshot clients open", async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-sqlite-runtime-budget-",
             env: { HAPPIER_DB_CONNECTION_LIMIT: "3", HAPPY_DB_CONNECTION_LIMIT: "" },
         });
         expect(getPrismaConnectionLimit()).toBe(3);
-        // Three pooled connections plus SQLite's read-snapshot, maintenance and readiness clients.
-        expect(process.env.TOKIO_WORKER_THREADS).toBe("6");
         const maintenance = await createDbSqliteMaintenanceClient();
         try {
             expect(await maintenance.$queryRawUnsafe("SELECT 1 AS value")).toEqual([{ value: 1n }]);
             expect(await withSqliteReadSnapshot(reader => reader.$queryRawUnsafe("SELECT 1 AS value"))).toEqual([{ value: 1n }]);
             expect(getPrismaConnectionLimit()).toBe(3);
-            expect(process.env.TOKIO_WORKER_THREADS).toBe("6");
         } finally {
             await maintenance.$disconnect();
         }
     });
 
-    it("configures WAL and URL busy_timeout for sqlite connections (stack stability)", async () => {
+    it("configures WAL and leaves busy waiting to the adapter for sqlite connections (stack stability)", async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-sqlite-pragmas-",
             initAuth: false,
@@ -67,9 +63,12 @@ describe("storage/prisma sqlite pragmas", () => {
 
         expect(journalMode.toLowerCase()).toBe("wal");
         expect(Number(synchronous)).toBe(1); // NORMAL
-        expect(Number(timeout)).toBe(30000);
+        // SQLite's own busy handler would block the JS thread; the adapter waits asynchronously
+        // up to the configured budget instead (sqliteDriverAdapter.spec.ts covers the wait).
+        expect(Number(timeout)).toBe(0);
+        expect(resolveSqliteRuntimePragmasFromEnv(process.env).busyTimeoutMs).toBe(30000);
         expect(Number(journalSizeLimit)).toBe(64 * 1024 * 1024);
-        expect(timeoutRows.flat().map((row) => Number(row.timeout))).toEqual(Array.from({ length: 16 }, () => 30000));
+        expect(timeoutRows.flat().map((row) => Number(row.timeout))).toEqual(Array.from({ length: 16 }, () => 0));
     });
 
     it("accepts negative journal_size_limit values as SQLite no-limit opt-out", () => {
@@ -111,16 +110,13 @@ describe("storage/prisma sqlite pragmas", () => {
         const parentDir = await mkdtemp(join(tmpdir(), "happier-sqlite-pragmas-"));
         const baseDir = join(parentDir, "single connection");
         await mkdir(baseDir);
-        const originalDatabaseUrl = process.env.DATABASE_URL;
         const databaseUrl = renderPrismaCompatibleSqliteDatabaseUrl({
             dbPath: join(baseDir, "test.sqlite"),
             platform: process.platform,
             sqlite: { connectionLimit: 1 },
         });
 
-        process.env.DATABASE_URL = databaseUrl;
-        const { PrismaClient } = await import("../../generated/sqlite-client/index.js");
-        const client = new PrismaClient();
+        const client = await createDbMaintenanceClient("sqlite", databaseUrl);
         try {
             await client.$queryRawUnsafe("PRAGMA synchronous=NORMAL;");
             const synchronousRows = await Promise.all(
@@ -132,11 +128,6 @@ describe("storage/prisma sqlite pragmas", () => {
             expect(synchronousRows.flat().map((row) => Number(row.synchronous))).toEqual(Array.from({ length: 16 }, () => 1));
         } finally {
             await client.$disconnect();
-            if (typeof originalDatabaseUrl === "string") {
-                process.env.DATABASE_URL = originalDatabaseUrl;
-            } else {
-                delete process.env.DATABASE_URL;
-            }
             await rm(parentDir, { recursive: true, force: true });
         }
     });

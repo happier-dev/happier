@@ -1,30 +1,33 @@
 import { randomUUID } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Tx } from "@/storage/inTx";
 import * as catalog from "./resourceRead";
 import { readTeamCredentialCustodianResourcePageInTx } from './resourceCustodianRead';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Account credential discovery (PostgreSQL)", () => {
-    const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+    let client: PrismaClientType;
     let selects = 0;
     let maxBindings = 0;
     let projectedMembershipRows = 0;
-    const observedClient = client.$extends({ query: { teamMembership: {
+    const observeMembershipRows = (base: PrismaClientType) => base.$extends({ query: { teamMembership: {
         async findMany({ args, query }) {
             const rows = await query(args);
             if (args.select?.groupMemberships) projectedMembershipRows += rows.length;
             return rows;
         },
     } } });
-    client.$on("query", event => {
-        if (/^SELECT\b/i.test(event.query)) selects++;
-        // Prisma's parameter display is not JSON for quoted stored-source data.
-        // This PostgreSQL suite counts the actual numbered SQL bind positions.
-        const bindings = [...event.query.matchAll(/\$(\d+)\b/g)].reduce((maximum, match) => Math.max(maximum, Number(match[1])), 0);
-        maxBindings = Math.max(maxBindings, bindings);
-    });
+    let observedClient: ReturnType<typeof observeMembershipRows>;
     beforeAll(async () => {
+        client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(client, event => {
+            if (/^SELECT\b/i.test(event.query)) selects++;
+            // Prisma's parameter display is not JSON for quoted stored-source data.
+            // This PostgreSQL suite counts the actual numbered SQL bind positions.
+            const bindings = [...event.query.matchAll(/\$(\d+)\b/g)].reduce((maximum, match) => Math.max(maximum, Number(match[1])), 0);
+            maxBindings = Math.max(maxBindings, bindings);
+        });
+        observedClient = observeMembershipRows(client);
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error("Run only through the disposable PostgreSQL DB-contract harness");
@@ -189,7 +192,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Account credent
                 selects = 0;
                 maxBindings = 0;
                 projectedMembershipRows = 0;
-                // Prisma's query-extension transaction type omits the unused $metrics client member.
+                // Prisma's query-extension transaction type differs from the client transaction type.
                 const result = await observedClient.$transaction(tx => catalog.readTeamCredentialDiscoveryInTx(tx as unknown as Tx, {
                     teamIds: ids, actorAccountId: actor.id, authentication, limit: 100, ...(cursor ? { cursor } : {}),
                 }), { isolationLevel: "RepeatableRead" });

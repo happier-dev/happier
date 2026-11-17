@@ -11,6 +11,7 @@ import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
 import { listArtifactHeadersForCallerInTx } from './artifactAccessService';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Template audience inspection (PostgreSQL)', () => {
     beforeAll(async () => {
@@ -48,10 +49,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             updatedAt: new Date(Date.now() + index + 1),
         })) });
         // A real provider client emits its actual statements; no domain owner is mocked.
-        const { PrismaClient } = createRequire(import.meta.url)('@prisma/client') as typeof import('@prisma/client');
-        const measuredClient = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+        const measuredClient = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
         const statements: Prisma.QueryEvent[] = [];
-        measuredClient.$on('query', event => { statements.push(event); });
+        onDbClientQuery(measuredClient, event => { statements.push(event); });
         const observed = await (async () => {
             try {
                 const captured = await measuredClient.$transaction(async tx => {

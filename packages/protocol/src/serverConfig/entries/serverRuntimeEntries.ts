@@ -82,16 +82,6 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         readOnlyReason: 'per_process_identity',
         reason: PER_PROCESS_IDENTITY,
     },
-    TOKIO_WORKER_THREADS: {
-        type: 'int',
-        bounds: { min: 1 },
-        sensitivity: 'plain',
-        apply: 'restart',
-        editable: 'home',
-        section: 'server',
-        group: 'process',
-        description: 'Prisma native scheduler worker override. When unset, the server derives it from its connection pool and SQLite side connections before loading the engine.',
-    },
     HAPPIER_SOCKET_ADAPTER_SCOPE: {
         type: 'string',
         sensitivity: 'plain',

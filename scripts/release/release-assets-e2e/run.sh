@@ -452,15 +452,12 @@ if [[ "$mode" == "local" ]]; then
   if [[ "$with_remote_server" == "1" ]]; then
     host_arch="$(uname -m | tr '[:upper:]' '[:lower:]')"
     server_target="linux-x64"
-    prisma_engine_name="libquery_engine-debian-openssl-3.0.x.so.node"
     case "$host_arch" in
       arm64|aarch64)
         server_target="linux-arm64"
-        prisma_engine_name="libquery_engine-linux-arm64-openssl-3.0.x.so.node"
         ;;
       x86_64|amd64)
         server_target="linux-x64"
-        prisma_engine_name="libquery_engine-debian-openssl-3.0.x.so.node"
         ;;
       *)
         echo "[npm-e2e-smoke] unsupported host arch for local remote-server self-host binary: $host_arch" >&2
@@ -501,16 +498,15 @@ if [[ "$mode" == "local" ]]; then
     fi
     chmod 755 "$staged_runtime_dir/happier-server"
 
-    prisma_engine_source="$staged_runtime_dir/node_modules/.prisma/client/${prisma_engine_name}"
-    if [[ ! -f "$prisma_engine_source" ]]; then
-      echo "[npm-e2e-smoke] extracted server runtime is missing Prisma engine for ${server_target}: $prisma_engine_source" >&2
+    prisma_query_compiler="$staged_runtime_dir/node_modules/.prisma/client/query_compiler_fast_bg.wasm-base64.js"
+    if [[ ! -f "$prisma_query_compiler" ]]; then
+      echo "[npm-e2e-smoke] extracted server runtime is missing its Prisma client: $prisma_query_compiler" >&2
       exit 1
     fi
 
     rm -rf "$extract_dir"
 
     echo "REMOTE_SELF_HOST_SERVER_BINARY=/packs/happier-server-${server_target}-runtime/happier-server" >> "$env_file"
-    echo "REMOTE_SELF_HOST_PRISMA_ENGINE_PATH=/packs/happier-server-${server_target}-runtime/node_modules/.prisma/client/${prisma_engine_name}" >> "$env_file"
   fi
 fi
 

@@ -1,6 +1,6 @@
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64, encodeBase64 } from 'privacy-kit';
@@ -17,11 +17,12 @@ import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { buildSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
 import { observePostgresSessionRows } from './sessionDetailSql.postgres.testkit';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Session detail physical SQL work (PostgreSQL)', () => {
     const statements: Prisma.QueryEvent[] = [];
     let barrier: (() => void) | undefined;
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'> | undefined;
+    let client: PrismaClientType | undefined;
     let physicalSql: Awaited<ReturnType<typeof observePostgresSessionRows>> | undefined;
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
@@ -31,8 +32,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         initDbPostgres();
         await db.$connect();
         physicalSql = await observePostgresSessionRows(process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL);
-        client = new PrismaClient({ datasources: { db: { url: physicalSql.databaseUrl } }, log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => {
+        client = await createDbMaintenanceClient('postgres', physicalSql.databaseUrl, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => {
             statements.push(event);
             if (event.query === 'SELECT 1 /* detail-count-barrier */') barrier?.();
         });

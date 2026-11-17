@@ -1,18 +1,19 @@
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { markSessionProjectionRecipientsChanged } from '@/app/session/changeTracking/markSessionProjectionRecipientsChanged';
 import { readSessionAccountCursorAudienceInTx } from '@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx';
 import { resolveCurrentSessionRecipientAccountIdsBySessionInTx } from './sessionRecipients';
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Session audience inventory bind bounds (PostgreSQL)', () => {
     const queries: Prisma.QueryEvent[] = [];
     const membershipResults: Array<{ model: string; rows: number; bytes: number }> = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'> | undefined;
+    let client: PrismaClientType | undefined;
     let originalTransaction: typeof db.$transaction;
     let resolveQueryBarrier: (() => void) | undefined;
     async function drainQueryEvents() {
@@ -30,8 +31,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         initDbPostgres();
         await db.$connect();
         originalTransaction = db.$transaction;
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => {
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => {
             if (event.query.includes('"session_publication_cost_barrier"')) resolveQueryBarrier?.();
             else queries.push(event);
         });

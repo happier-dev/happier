@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-import { PrismaClient } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import { FollowPolicyV1Schema, resolveFollowDeliveryV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 
 import { splitMigrationStatements } from '../../sources/migrations/missingMigrationReconciliation';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 // Never fall back to a retained application database.
 const testDatabaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL?.trim();
@@ -14,10 +14,10 @@ const testDatabaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL?.trim();
 describe('Follow policy PostgreSQL migration', () => {
     (testDatabaseUrl ? it : it.skip)('preserves original route custody and converts old delivery intent once', async () => {
         const schema = `follow_policy_${randomUUID().replaceAll('-', '')}`;
-        const admin = new PrismaClient({ datasourceUrl: testDatabaseUrl });
+        const admin = await createDbMaintenanceClient('postgres', testDatabaseUrl);
         const target = new URL(testDatabaseUrl!);
         target.searchParams.set('schema', schema);
-        const database = new PrismaClient({ datasourceUrl: target.toString() });
+        const database = await createDbMaintenanceClient('postgres', target.toString());
         const execute = async (sql: string) => {
             // Match the migration owner's per-file transaction, including
             // transaction-scoped locks in the retained merge migration.

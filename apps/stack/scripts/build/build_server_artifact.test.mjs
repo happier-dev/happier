@@ -3,6 +3,7 @@ import test from 'node:test';
 import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { buildServerArtifact, linkServerRuntimeSupportPayload, resolveServerSupportArtifactFingerprint } from './build_server_artifact.mjs';
 import { writeArtifactManifest } from '../runtime/shared/artifact_manifest.mjs';
@@ -28,6 +29,9 @@ test('cold server support identity consumes native assets without workspace dist
     }));
   }
   await write(join(root, 'apps/server/generate.mjs'), '');
+  // Support staging locates the generated clients through the server's real install-layout owner.
+  await write(join(root, 'apps/server/scripts/prismaInstallLayout.mjs'),
+    await readFile(fileURLToPath(new URL('../../../server/scripts/prismaInstallLayout.mjs', import.meta.url)), 'utf8'));
   const packageDir = join(root, 'packages/iroh-native');
   const sourcePath = join(packageDir, 'src/index.ts');
   await write(sourcePath, 'export const value: string = "green";\n');
@@ -43,8 +47,8 @@ test('cold server support identity consumes native assets without workspace dist
   const addonPath = join(packageDir, 'native', `happier-iroh-native-lifecycle.${process.platform}-${process.arch}.node`);
   await write(addonPath, 'native first');
   for (const path of ['packages/iroh-native/scripts/load.mjs', 'apps/server/generated/sqlite-client/index.js',
-    'apps/server/prisma/sqlite/migrations/fixture.sql', 'node_modules/.prisma/client/index.js',
-    'node_modules/@prisma/client/package.json']) await write(join(root, path), '{}');
+    'apps/server/prisma/sqlite/migrations/fixture.sql', 'apps/server/node_modules/.prisma/client/index.js',
+    'apps/server/node_modules/@prisma/client/package.json']) await write(join(root, path), '{}');
   for (const name of ['sharp', `@img/sharp-${process.platform}-${process.arch}`, `@img/sharp-libvips-${process.platform}-${process.arch}`]) {
     await write(join(root, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '0.34.5' }));
   }

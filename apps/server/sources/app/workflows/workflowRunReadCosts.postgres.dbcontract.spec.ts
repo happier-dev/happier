@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { PrismaClient, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { measureExternalActionResultResponseEnvelopeUtf8BytesV1, serializeAutomationStoredDefinitionExecutionRecipeV1, serializeAutomationStoredWorkflowDefinitionRecipeV2 } from "@happier-dev/protocol";
 import { WorkflowRunInvocationIndexV1Schema } from "@happier-dev/protocol/workflows/workflowProgressV1";
 import { openWorkflowProgressStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from "@happier-dev/protocol/workflows";
@@ -23,10 +23,11 @@ import { replayWorkflowRunMachineWakes } from './workflowRunMachineRouting';
 import { inTx } from '@/storage/inTx';
 import { tryClaimAutomationRunInTx } from '@/app/automations/automationRunClaim';
 import { admitWorkflowInvocations, commitWorkflowInvocationFact, completeWorkflowInvocationReview, listWorkflowRunInvocations, listWorkflowRuns, listWorkflowRunsForRecovery, recordWorkflowRequesterCustodyUnavailable, summarizeWorkflowRuns } from "./workflowRunService";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Workflow narrow reads and publication costs (PostgreSQL)", () => {
     const statements: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, "query">;
+    let client: PrismaClientType;
     let originalTransaction: typeof db.$transaction;
     let ownerId: string;
     let machineId: string;
@@ -43,8 +44,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Workflow narrow
         }
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-        client.$on("query", event => statements.push(event));
+        client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(client, event => statements.push(event));
         await client.$connect();
         originalTransaction = db.$transaction;
         // Observe the real native SQL boundary; storage, policy, envelopes and

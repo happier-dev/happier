@@ -8,6 +8,7 @@ import { db } from "@/storage/db";
 import { getDbProviderFromEnv, getPooledTransactionAdmission, isPrismaErrorCode, prismaRuntime, withSqliteReadSnapshot, type TransactionClient } from "@/storage/prisma";
 import { isLockAdmissionDeadlineExceededError, LockAdmissionDeadlineExceededError } from "@/utils/runtime/lock";
 import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
+import { readPrismaDriverErrorCause } from "@/storage/prismaErrors";
 import { log } from "@/utils/logging/log";
 import { createWebLatencyTransactionAttempt, readWebLatencyRequestId, settleWebLatencyTransactionAttempt,
     timeWebLatencyPhase, type WebLatencyTransactionAttempt } from '@/utils/webLatencyTrace';
@@ -142,26 +143,15 @@ export function readPostgresTransactionSqlState(error: unknown): "40001" | "40P0
     if (isPrismaErrorCode(error, "40P01")) return "40P01";
     if (isPrismaErrorCode(error, "55P03")) return "55P03";
     if (isPrismaErrorCode(error, "57014")) return "57014";
-    // Raw queries preserve the server SQLSTATE in Prisma P2010 metadata.
-    if (isPrismaErrorCode(error, "P2010") && typeof error === "object" && error !== null && "meta" in error) {
-        const meta = error.meta;
-        if (meta && typeof meta === "object" && "code" in meta
-            && (meta.code === "40001" || meta.code === "40P01" || meta.code === "55P03" || meta.code === "57014")) return meta.code;
-    }
-    // Prisma's unknown-request wrapper exposes the native PostgresError code
-    // in its driver diagnostic. Arbitrary application messages are not proof.
-    if (error instanceof prismaRuntime.PrismaClientUnknownRequestError) {
-        const code = /\bPostgresError\s*\{\s*code:\s*"(40001|40P01|55P03|57014)"/.exec(error.message)?.[1];
-        if (code === "40001" || code === "40P01" || code === "55P03" || code === "57014") return code;
-    }
+    // Prisma errors carry the server SQLSTATE in their driver adapter cause.
+    const code = readPrismaDriverErrorCause(error)?.code;
+    if (code === "40001" || code === "40P01" || code === "55P03" || code === "57014") return code;
     return undefined;
 }
 
 /** Emit only fixed driver failure text: wrappers and DETAIL may contain SQL or values. */
 function readContentFreeDriverErrorMessage(error: unknown): string | undefined {
-    const meta = typeof error === 'object' && error !== null && 'meta' in error ? error.meta : undefined;
-    const message = typeof meta === 'object' && meta !== null && 'message' in meta && typeof meta.message === 'string'
-        ? meta.message : errorMessage(error);
+    const message = readPrismaDriverErrorCause(error)?.message ?? errorMessage(error);
     return [
         'could not serialize access due to read/write dependencies among transactions',
         'could not serialize access due to concurrent update',

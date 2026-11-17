@@ -1,52 +1,43 @@
 import type { Prisma as PrismaNamespace, PrismaClient as PrismaClientInstance } from "@prisma/client";
 import { PGlite } from "@electric-sql/pglite";
 import { FramedPgliteSocketServer } from "./pgliteFramedSocketServer.mjs";
-import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { dirname, isAbsolute, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join } from "node:path";
 import { acquirePgliteDirLock } from "./locks/pgliteLock";
 import { resolveLightSqliteBusyTimeoutMsFromEnv } from "@/flavors/light/sqliteConnectionConfig";
 import { log, warn } from "@/utils/logging/log";
 import { AsyncLock } from "@/utils/runtime/lock";
-import { setNativeEnvironmentVariable } from "@/utils/runtime/nativeEnvironment";
-import { isPrismaErrorCode, readSharedQaSchemaMismatchDiagnostic, withPrismaQueryValidationDiagnostic } from './prismaErrors';
+import { databaseQueryDurationHistogram, registerDatabasePoolStatsReader } from "@/app/monitoring/metrics/databaseDriverMetrics";
+import { readMetricsServerConfigFromEnv } from "@/config/monitoring";
+import {
+    createDefaultPrismaClient,
+    createGeneratedPrismaClient,
+    loadDefaultPrismaClientModule,
+    withConnectionLimit,
+} from "./prismaClientConstruction";
+import { isPrismaErrorCode, readPrismaDriverErrorCause, readSharedQaSchemaMismatchDiagnostic, withPrismaQueryValidationDiagnostic } from './prismaErrors';
 import { annotateWebLatencyQuery, timeWebLatencyPhase } from '@/utils/webLatencyTrace';
 import { notifySqliteCommittedWrite } from './sqliteCommittedWrites';
 export { isPrismaErrorCode } from './prismaErrors';
 export type TransactionClient = PrismaNamespace.TransactionClient;
 export type PrismaClientType = PrismaClientInstance;
+export {
+    applyConfiguredDatabaseConnectionLimit,
+    createDbMaintenanceClient,
+    createDbSqliteMaintenanceClient,
+    loadPackagedPrismaClientModule,
+    onDbClientQuery,
+    resolveGeneratedClientEntrypoint,
+    resolvePackagedDefaultPrismaClientEntrypoint,
+    resolvePackagedGeneratedClientEntrypoint,
+    resolvePreferredGeneratedClientEntrypoint,
+    type DbClientLog,
+} from "./prismaClientConstruction";
 
 export * from "./enums.generated";
 
 import type { DbProvider } from '@/config/databaseProvider';
 export { parseDbProvider, getDbProviderFromEnv, requireDbProviderFromEnv, type DbProvider } from '@/config/databaseProvider';
-
-const requireFromHere = createRequire(import.meta.url);
-
-export function resolvePackagedDefaultPrismaClientEntrypoint(executablePath: string = process.execPath): string {
-    return join(dirname(executablePath), "node_modules", ".prisma", "client", "index.js");
-}
-
-export function loadPackagedPrismaClientModule(
-    executablePath: string = process.execPath,
-): typeof import("@prisma/client") | null {
-    const packagedEntrypoint = resolvePackagedDefaultPrismaClientEntrypoint(executablePath);
-    if (!existsSync(packagedEntrypoint)) {
-        return null;
-    }
-    const requireFromPackagedEntrypoint = createRequire(pathToFileURL(packagedEntrypoint).href);
-    return requireFromPackagedEntrypoint(packagedEntrypoint) as typeof import("@prisma/client");
-}
-
-function loadDefaultPrismaClientModule(): typeof import("@prisma/client") {
-    const packaged = loadPackagedPrismaClientModule();
-    if (packaged) {
-        return packaged;
-    }
-    return requireFromHere("@prisma/client") as typeof import("@prisma/client");
-}
 
 /**
  * Canonical provider-matched runtime Prisma namespace.
@@ -72,97 +63,6 @@ export function getActivePrismaRuntime(): typeof import("@prisma/client").Prisma
         throw new Error("Database client is not initialized. Prisma runtime sentinel is unavailable.");
     }
     return activePrismaRuntime;
-}
-
-function createDefaultPrismaClient(databaseUrl?: string, provider: 'postgres' | 'pglite' = 'postgres'): PrismaClientType {
-    preparePrismaEngineRuntime(provider, databaseUrl);
-    const { PrismaClient } = loadDefaultPrismaClientModule();
-    // Server diagnostics consume Prisma codes/messages, never source snippets.
-    // Prisma 6 otherwise allocates a call-site Error for every development query.
-    return new PrismaClient({
-        errorFormat: "minimal",
-        ...(databaseUrl ? { datasources: { db: { url: databaseUrl } } } : {}),
-    });
-}
-
-export function applyConfiguredDatabaseConnectionLimit(rawUrl: string, env: NodeJS.ProcessEnv): string {
-    const rawLimit = env.HAPPIER_DB_CONNECTION_LIMIT?.trim() || env.HAPPY_DB_CONNECTION_LIMIT?.trim();
-    if (!rawLimit) {
-        return rawUrl;
-    }
-
-    const parsed = Number.parseInt(rawLimit, 10);
-    if (!Number.isFinite(parsed) || parsed < 1) {
-        return rawUrl;
-    }
-
-    return withConnectionLimit(rawUrl, parsed);
-}
-
-let prismaEngineRuntimePrepared = false;
-// Prisma's SQLite engine runs each query synchronously on a Tokio worker, so a busy connection
-// holds one worker for the whole query. Besides the app pool, a SQLite server opens three
-// single-connection clients: the read snapshot (`withSqliteReadSnapshot`, read-only
-// transactions such as Session listing pages), the WAL checkpoint / incremental-vacuum
-// maintenance client (`startServer.ts`), and the readiness probe client (`initDbSqlite`).
-// With one worker per connection, `/ready` keeps a free worker while every other connection
-// runs a long query (#832). Other providers' engines do async I/O and open no side clients.
-const SQLITE_SERVER_SIDE_CONNECTIONS = 3;
-function preparePrismaEngineRuntime(provider: DbProvider, databaseUrl?: string): void {
-    // PGlite's resolved socket URL is a fixed single-connection resource, not an operator-sized pool.
-    if (provider !== 'pglite' && process.env.DATABASE_URL) {
-        process.env.DATABASE_URL = applyConfiguredDatabaseConnectionLimit(process.env.DATABASE_URL, process.env);
-    }
-    // Tokio is process-wide: honor its operator override, otherwise fix the server-pool budget before first engine load.
-    if (prismaEngineRuntimePrepared) return;
-    prismaEngineRuntimePrepared = true;
-    if (process.env.TOKIO_WORKER_THREADS !== undefined) return;
-    const connectionLimit = parsePositiveInteger(readDatabaseUrlSearchParam({
-        DATABASE_URL: provider === 'pglite' ? databaseUrl ?? process.env.DATABASE_URL : process.env.DATABASE_URL || databaseUrl,
-    }, "connection_limit"));
-    if (connectionLimit !== null) {
-        // Size Prisma's native scheduler from the connections the server opens instead of Tokio's
-        // one-thread-per-CPU default. Worker threads are not database connections, so the extra
-        // SQLite workers add no write concurrency. Idle RSS at 1 vs 2 workers measured equal
-        // within noise (~100 MB, +1 OS thread).
-        const sideConnections = provider === 'sqlite' ? SQLITE_SERVER_SIDE_CONNECTIONS : 0;
-        const workers = String(connectionLimit + sideConnections);
-        try {
-            // The engine reads the native environment; under Bun process.env alone never reaches it.
-            setNativeEnvironmentVariable("TOKIO_WORKER_THREADS", workers);
-        } catch (error) {
-            warn({ module: "storage", event: "prisma-engine-worker-budget-unapplied", workers, error: String(error) },
-                "Prisma engine worker budget could not be applied; the engine uses one worker per CPU");
-        }
-    }
-}
-
-export function resolveGeneratedClientEntrypoint(modulePath: string): string {
-    const trimmed = modulePath.trim();
-    if (/\.(?:mjs|cjs|js)$/.test(trimmed)) return trimmed;
-    return trimmed.endsWith("/") ? `${trimmed}index.js` : `${trimmed}/index.js`;
-}
-
-export function resolvePackagedGeneratedClientEntrypoint(
-    provider: "mysql" | "sqlite",
-    executablePath: string = process.execPath,
-): string {
-    return join(dirname(executablePath), "generated", `${provider}-client`, "index.js");
-}
-
-export function resolvePreferredGeneratedClientEntrypoint(
-    provider: "mysql" | "sqlite",
-    executablePath: string = process.execPath,
-): string {
-    const packaged = resolvePackagedGeneratedClientEntrypoint(provider, executablePath);
-    // Compiled binaries (e.g. Bun --compile) may embed workspace paths into generated Prisma clients
-    // (import.meta.url / __dirname). Prefer the on-disk packaged client next to the executable when present.
-    if (existsSync(packaged)) {
-        return packaged;
-    }
-    return provider === "mysql"
-        ? resolveGeneratedClientEntrypoint("../../generated/mysql-client")
-        : resolveGeneratedClientEntrypoint("../../generated/sqlite-client");
 }
 
 function withSharedQaSchemaDiagnostics(client: PrismaClientType): PrismaClientType {
@@ -233,6 +133,13 @@ function withSqliteCommittedWriteSignal(client: PrismaClientType): PrismaClientT
     });
 }
 
+/** Clients that serve requests feed the statement-duration histogram when the metrics server is on. */
+function runtimeClientOptions(): Readonly<{ observeStatementDurationMs?: (durationMs: number) => void }> {
+    return readMetricsServerConfigFromEnv(process.env).enabled
+        ? { observeStatementDurationMs: (durationMs) => databaseQueryDurationHistogram.observe(durationMs) }
+        : {};
+}
+
 let _db: ReturnType<typeof withSharedQaSchemaDiagnostics> | null = null;
 let _pglite: PGlite | null = null;
 let _pgliteServer: FramedPgliteSocketServer | null = null;
@@ -280,33 +187,11 @@ export function initDbPostgres(): void {
         throw new Error("Database client is already initialized.");
     }
     _provider = "postgres";
-    _db = withSharedQaSchemaDiagnostics(createDefaultPrismaClient());
+    const { client, poolStats } = createDefaultPrismaClient(undefined, "postgres", runtimeClientOptions());
+    _db = withSharedQaSchemaDiagnostics(client);
+    registerDatabasePoolStatsReader(poolStats);
     activePrismaRuntime = defaultPrismaRuntime;
     initializeConnectionPool("postgres");
-}
-
-async function importGeneratedClient(provider: "mysql" | "sqlite"): Promise<any> {
-    const preferred = resolvePreferredGeneratedClientEntrypoint(provider);
-    if (isAbsolute(preferred)) {
-        try {
-            return await import(pathToFileURL(preferred).href);
-        } catch {
-            // Fall back to workspace path below.
-        }
-    }
-    try {
-        if (provider === "mysql") {
-            return await import("../../generated/mysql-client/index.js");
-        }
-        return await import("../../generated/sqlite-client/index.js");
-    } catch (error) {
-        const packagedEntrypoint = resolvePackagedGeneratedClientEntrypoint(provider);
-        try {
-            return await import(pathToFileURL(packagedEntrypoint).href);
-        } catch {
-            throw error;
-        }
-    }
 }
 
 async function initDbFromGeneratedClient(provider: "mysql" | "sqlite"): Promise<void> {
@@ -314,73 +199,13 @@ async function initDbFromGeneratedClient(provider: "mysql" | "sqlite"): Promise<
         throw new Error("Database client is already initialized.");
     }
     _provider = provider;
-    const generated = await createGeneratedPrismaClient(provider);
+    const generated = await createGeneratedPrismaClient(provider, undefined, runtimeClientOptions());
     _db = withSharedQaSchemaDiagnostics(
         provider === "sqlite" ? withSqliteCommittedWriteSignal(generated.client) : generated.client,
     );
+    registerDatabasePoolStatsReader(generated.poolStats);
     activePrismaRuntime = generated.prisma;
     initializeConnectionPool(provider);
-}
-
-async function createGeneratedPrismaClient(
-    provider: "mysql" | "sqlite",
-    databaseUrl?: string,
-): Promise<Readonly<{
-    client: PrismaClientType;
-    prisma: typeof import("@prisma/client").Prisma;
-}>> {
-    preparePrismaEngineRuntime(provider, databaseUrl);
-    const entrypoint =
-        provider === "mysql"
-            ? resolveGeneratedClientEntrypoint("../../generated/mysql-client")
-            : resolveGeneratedClientEntrypoint("../../generated/sqlite-client");
-    let mod: any;
-    try {
-        mod = await importGeneratedClient(provider);
-    } catch (err: any) {
-        const code = err?.code ? String(err.code) : "";
-        const hint =
-            `This usually means the server was built without the ${provider} Prisma client. Rebuild with HAPPIER_BUILD_DB_PROVIDERS including ${provider} (or leave it unset to build all providers).`;
-        if (code === "ERR_MODULE_NOT_FOUND" || /Cannot find module/i.test(String(err?.message ?? ""))) {
-            throw new Error(
-                `Missing generated Prisma client for provider ${provider} (${entrypoint}). ${hint}`.trim(),
-            );
-        }
-        throw err;
-    }
-    if (!mod?.PrismaClient) {
-        throw new Error(`Invalid generated Prisma client module: ${entrypoint}`);
-    }
-    if (!mod?.Prisma) {
-        throw new Error(`Invalid generated Prisma runtime module: ${entrypoint}`);
-    }
-    return {
-        // Generated provider clients share the repository's Prisma client contract.
-        client: new mod.PrismaClient({
-            errorFormat: "minimal",
-            ...(databaseUrl ? { datasources: { db: { url: databaseUrl } } } : {}),
-        }) as PrismaClientType,
-        prisma: mod.Prisma as typeof import("@prisma/client").Prisma,
-    };
-}
-
-/**
- * Creates an isolated migration/maintenance client without changing the
- * process-wide runtime DB owner. Deployment maintenance must release this
- * client before normal server initialization starts.
- */
-export async function createDbMaintenanceClient(
-    provider: DbProvider,
-    databaseUrl?: string,
-): Promise<PrismaClientType> {
-    if (provider === "postgres" || provider === "pglite") {
-        return createDefaultPrismaClient(databaseUrl, provider);
-    }
-    return (await createGeneratedPrismaClient(provider, databaseUrl)).client;
-}
-
-export async function createDbSqliteMaintenanceClient(): Promise<PrismaClientType> {
-    return (await createGeneratedPrismaClient("sqlite")).client;
 }
 
 export async function initDbMysql(): Promise<void> {
@@ -441,10 +266,9 @@ export async function withSqliteReadSnapshot<T>(
     return await state.lock.inLock(async () => {
         if (sqliteReadSnapshot !== state) throw new Error("SQLite database client is shutting down.");
         if (!state.client) {
-            const { client } = await createGeneratedPrismaClient("sqlite", state.databaseUrl);
+            const { client } = await createGeneratedPrismaClient("sqlite", state.databaseUrl, runtimeClientOptions());
             try {
-                const pragmas = resolveSqliteRuntimePragmasFromEnv(state.env);
-                await client.$queryRawUnsafe(`PRAGMA busy_timeout=${pragmas.busyTimeoutMs};`);
+                // The adapter owns the busy wait (resolveSqliteRuntimePragmasFromEnv busy timeout).
                 await client.$queryRawUnsafe("PRAGMA query_only=ON;");
                 state.client = withSharedQaSchemaDiagnostics(client);
             } catch (error) {
@@ -486,25 +310,6 @@ function resolveLightPgliteDirFromEnv(env: NodeJS.ProcessEnv): string {
     return join(dataDir, "pglite");
 }
 
-function withConnectionLimit(rawUrl: string, limit: number): string {
-    const url = (() => {
-        try {
-            return new URL(rawUrl);
-        } catch {
-            // `PGLiteSocketServer#getServerConn()` returns `host:port` (no scheme). Prisma expects a full Postgres URL.
-            // Disable SSL: pglite-socket does not support TLS negotiation.
-            return new URL(`postgresql://postgres@${rawUrl}/postgres?sslmode=disable`);
-        }
-    })();
-    url.searchParams.set("connection_limit", String(limit));
-    if (url.protocol === "file:") {
-        // Prisma accepts relative and Windows file paths that URL serialization would relocate.
-        const suffixAt = rawUrl.search(/[?#]/u);
-        const filePath = suffixAt < 0 ? rawUrl : rawUrl.slice(0, suffixAt);
-        return `${filePath}${url.search}${url.hash}`;
-    }
-    return url.toString();
-}
 
 export async function initDbPglite(): Promise<void> {
     if (_db || _pglite || _pgliteServer) {
@@ -537,11 +342,12 @@ export async function initDbPglite(): Promise<void> {
             // because pglite is single-connection.
             process.env.DATABASE_URL = withConnectionLimit(server.getServerConn(), 1);
 
-            const prismaClient = createDefaultPrismaClient(process.env.DATABASE_URL, 'pglite');
+            const { client: prismaClient, poolStats } = createDefaultPrismaClient(process.env.DATABASE_URL, 'pglite', runtimeClientOptions());
             _pglite = pglite;
             _pgliteServer = server;
             _provider = "pglite";
             _db = withSharedQaSchemaDiagnostics(prismaClient);
+            registerDatabasePoolStatsReader(poolStats);
             activePrismaRuntime = defaultPrismaRuntime;
             initializeConnectionPool("pglite");
             _releasePgliteDirLock = releaseLock;
@@ -565,44 +371,14 @@ export async function initDbPglite(): Promise<void> {
     }
 }
 
-function readErrorMessageParts(err: unknown): string {
-    const parts: string[] = [];
-    if (err instanceof Error && typeof err.message === "string") {
-        parts.push(err.message);
-    } else if (err && typeof err === "object" && "message" in err) {
-        const value = (err as { message?: unknown }).message;
-        if (typeof value === "string") parts.push(value);
-    }
-    if (err && typeof err === "object" && "meta" in err) {
-        const metaMessage = (err as { meta?: { message?: unknown } }).meta?.message;
-        if (typeof metaMessage === "string") parts.push(metaMessage);
-    }
-    return parts.join("\n").toLowerCase();
-}
-
 export function isPrismaUniqueConstraintError(err: unknown): boolean {
     if (isPrismaErrorCode(err, "P2002")) {
         return true;
     }
-    if (isPrismaErrorCode(err, "P2010")) {
-        const rawCode = (err as { meta?: { code?: unknown } }).meta?.code;
-        if (
-            rawCode === 1062
-            || rawCode === 2067
-            || rawCode === "1062"
-            || rawCode === "2067"
-            || rawCode === "23505"
-        ) {
-            return true;
-        }
-    }
-    // Raw writes may omit a driver code from Prisma's `meta`. Match only the
-    // native provider signatures so application text mentioning uniqueness is
-    // never treated as a database constraint violation.
-    const message = readErrorMessageParts(err);
-    return /\bunique constraint failed:/.test(message)
-        || /\bduplicate key value violates unique constraint\b/.test(message)
-        || /\bduplicate entry\b[^\n]*\bfor key\b/.test(message);
+    const cause = readPrismaDriverErrorCause(err);
+    if (cause?.kind === "UniqueConstraintViolation") return true;
+    // SQLITE_CONSTRAINT_UNIQUE / _PRIMARYKEY, MySQL ER_DUP_ENTRY, PostgreSQL unique_violation.
+    return cause !== null && (cause.code === "2067" || cause.code === "1555" || cause.code === "1062" || cause.code === "23505");
 }
 
 type SqliteJournalMode = "WAL" | "DELETE";
@@ -758,7 +534,6 @@ export async function applySqliteRuntimePragmas(client: Pick<PrismaClientType, "
     // Keep the resolution step as the SQL safety boundary for these raw statements.
     await client.$queryRawUnsafe(`PRAGMA journal_mode=${pragmas.journalMode};`);
     await client.$queryRawUnsafe(`PRAGMA synchronous=${pragmas.synchronous};`);
-    await client.$queryRawUnsafe(`PRAGMA busy_timeout=${pragmas.busyTimeoutMs};`);
     await client.$queryRawUnsafe(`PRAGMA journal_size_limit=${pragmas.journalSizeLimitBytes};`);
 }
 
@@ -796,6 +571,7 @@ export async function shutdownDbClient(): Promise<void> {
     _provider = null;
     _connectionPool = null;
     activePrismaRuntime = null;
+    registerDatabasePoolStatsReader(null);
     if (client) {
         await client.$disconnect();
     }
@@ -810,6 +586,7 @@ export async function shutdownDbPglite(): Promise<void> {
     _provider = null;
     _connectionPool = null;
     activePrismaRuntime = null;
+    registerDatabasePoolStatsReader(null);
     if (client) {
         await client.$disconnect();
     }

@@ -542,7 +542,7 @@ describe("AccountChange coalescing database contract", () => {
             await expect(inTx(tx => tx.$queryRawUnsafe(
                 'SELECT "id" FROM "Account" WHERE "id" = $1 FOR UPDATE NOWAIT', reader.id,
             ), { isolationLevel: "ReadCommitted" })).rejects.toMatchObject({ code: "database_transaction_conflict_exhausted",
-                cause: { code: "P2010", meta: { code: "55P03" } } });
+                cause: { code: "P2010", meta: { driverAdapterError: { cause: { originalCode: "55P03" } } } } });
         } finally {
             release();
             vi.unstubAllEnvs();

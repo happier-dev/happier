@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { decodeBase64 } from 'privacy-kit';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
@@ -11,18 +11,20 @@ import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { observePendingSessionFollowForDestinationInTx, observePendingSessionFollowForInactiveDestinationInTx } from './sessionFollowEdgeService';
 import { sourceKeyForSessionFollowSourceV1 } from './sessionFollowSourceIdentity';
 import { readPendingFollowReceiversInTx } from './pendingFollowReceivers';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Follow observation SQL demand (PostgreSQL)', () => {
     const queries: Prisma.QueryEvent[] = [];
-    const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    let client: PrismaClientType;
     const authentication = createPresentUserSessionAccessAuthentication({ env: {} });
     beforeAll(async () => {
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error('Use the disposable PostgreSQL DB-contract harness');
         }
         initDbPostgres();
-        client.$on('query', event => queries.push(event));
+        onDbClientQuery(client, event => queries.push(event));
         await client.$connect();
     });
     afterAll(async () => { await client.$disconnect(); await shutdownDbClient(); });

@@ -7,11 +7,17 @@ import {
     resolveBuildDbProvidersFromEnv,
     resolveSchemaSyncInvocation,
 } from "./generateClients";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { resolveServerPrismaInstallLayout } from "./prismaInstallLayout.mjs";
+
+/** Installed-package layout the hoisted pnpm linker produces for apps/server. */
+function installedFromServer(specifier: string): string {
+    return join("/repo/apps/server/node_modules", specifier);
+}
 
 function extractPrismaModelBlock(schema: string, modelName: string): string {
     const modelStart = schema.indexOf(`model ${modelName} {`);
@@ -124,13 +130,14 @@ describe("invalidateServerTypeScriptBuildInfo", () => {
         const removed: Array<Readonly<{ path: string; options: Readonly<{ force: boolean }> }>> = [];
         const mtimes = new Map([
             ["/repo/apps/server/node_modules/.cache/tsc/server.typecheck.tsbuildinfo", 10],
-            ["/repo/node_modules/.prisma/client/index.d.ts", 20],
+            ["/repo/apps/server/node_modules/.prisma/client/index.d.ts", 20],
             ["/repo/apps/server/generated/sqlite-client/index.d.ts", 5],
             ["/repo/apps/server/generated/mysql-client/index.d.ts", 5],
         ]);
 
         await invalidateServerTypeScriptBuildInfo({
             serverRoot: "/repo/apps/server",
+            resolveInstalledPath: installedFromServer,
             statFile: async (path) => ({ mtimeMs: mtimes.get(path) ?? 0 }),
             rmFile: async (path, options) => {
                 removed.push({ path, options });
@@ -145,6 +152,7 @@ describe("invalidateServerTypeScriptBuildInfo", () => {
         mtimes.set("/repo/apps/server/node_modules/.cache/tsc/server.typecheck.tsbuildinfo", 30);
         await invalidateServerTypeScriptBuildInfo({
             serverRoot: "/repo/apps/server",
+            resolveInstalledPath: installedFromServer,
             statFile: async (path) => ({ mtimeMs: mtimes.get(path) ?? 0 }),
             rmFile: async (path, options) => {
                 removed.push({ path, options });
@@ -156,6 +164,33 @@ describe("invalidateServerTypeScriptBuildInfo", () => {
 
 describe("areRequestedPrismaOutputsCurrent", () => {
     const sourceDigest = (schema: string): string => createHash("sha256").update(schema).digest("hex");
+    const serverRoot = "/repo/apps/server";
+    const defaultClientDir = "/repo/apps/server/node_modules/.prisma/client";
+    const runtimeSourcePath = "/repo/apps/server/node_modules/@prisma/client/runtime/client.js";
+    const sharedSchema = `
+        generator client {
+            provider = "prisma-client-js"
+        }
+    `;
+    const generatedClientFiles = (dir: string): Array<[string, string]> => [
+        [`${dir}/index.js`, "module.exports = {}\n"],
+        [`${dir}/default.js`, "module.exports = {}\n"],
+        [`${dir}/package.json`, "{\n}\n"],
+        [`${dir}/query_compiler_fast_bg.js`, "module.exports = {}\n"],
+        [`${dir}/query_compiler_fast_bg.wasm-base64.js`, "module.exports = {}\n"],
+    ];
+    const checkWith = (files: Map<string, string>, providers: ReadonlySet<"postgres" | "sqlite" | "mysql">) =>
+        areRequestedPrismaOutputsCurrent({
+            serverRoot,
+            providers,
+            resolveInstalledPath: installedFromServer,
+            fileExists: async (path) => files.has(path),
+            readText: async (path) => {
+                const value = files.get(path);
+                if (typeof value !== "string") throw new Error(`Unexpected file read: ${path}`);
+                return value;
+            },
+        });
 
     it("keeps the checked-in MySQL generated client synchronized with the MySQL schema", async () => {
         const serverRoot = process.cwd();
@@ -172,90 +207,63 @@ describe("areRequestedPrismaOutputsCurrent", () => {
         expect(generatedTypes).not.toContain("VoiceSessionLeaseProviderIdProviderConversationIdCompoundUniqueInput");
     });
 
-    it("checks custom runtime copies as well as schemas against the installed client", async () => {
-        const serverRoot = "/repo/apps/server";
-        const runtimeSourcePath = createRequire(import.meta.url).resolve("@prisma/client/runtime/library.js");
-        const sharedSchema = `
-            generator client {
-                provider = "prisma-client-js"
-                binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
-            }
-        `;
+    it("locates the default client beside the @prisma/client the server resolves", () => {
+        expect(resolveServerPrismaInstallLayout({ serverRoot, resolveInstalledPath: installedFromServer }).defaultClientDir)
+            .toBe(defaultClientDir);
+        const installedClientPackage = createRequire(join(process.cwd(), "package.json"))
+            .resolve("@prisma/client/package.json");
+        const installed = resolveServerPrismaInstallLayout({ serverRoot: process.cwd() });
+        expect(installed.defaultClientDir)
+            .toBe(join(dirname(installedClientPackage), "..", "..", ".prisma", "client"));
+        expect(installed.clientRuntimePath)
+            .toBe(createRequire(join(process.cwd(), "package.json")).resolve("@prisma/client/runtime/client.js"));
+    });
+
+    it("never targets another checkout's installed client: a linked node_modules gets a run-local default client", () => {
+        // A snapshot or worktree whose node_modules links into the live checkout must not
+        // regenerate the live checkout's .prisma/client from its own schema.
+        const snapshotServerRoot = "/snapshots/one/apps/server";
+        const layout = resolveServerPrismaInstallLayout({
+            serverRoot: snapshotServerRoot,
+            resolveInstalledPath: (specifier) => join("/live/apps/server/node_modules", specifier),
+        });
+        expect(layout.defaultClientDir).toBe(join(snapshotServerRoot, "generated", "default-client"));
+        expect(layout.ownsInstalledClient).toBe(false);
+        expect(resolveServerPrismaInstallLayout({ serverRoot, resolveInstalledPath: installedFromServer }).ownsInstalledClient)
+            .toBe(true);
+    });
+
+    it("checks copied query-compiler runtimes as well as schemas against the installed client", async () => {
         const files = new Map<string, string>([
             [runtimeSourcePath, "pristine-runtime"],
-            ["/repo/apps/server/generated/sqlite-client/runtime/library.js", "/* Prisma generated notice */\npristine-runtime"],
-            ["/repo/apps/server/generated/mysql-client/runtime/library.js", "/* Prisma generated notice */\npristine-runtime"],
+            ["/repo/apps/server/generated/sqlite-client/runtime/client.js", "/* Prisma generated notice */\npristine-runtime"],
+            ["/repo/apps/server/generated/mysql-client/runtime/client.js", "/* Prisma generated notice */\npristine-runtime"],
             ["/repo/apps/server/prisma/schema.prisma", sharedSchema],
-            ["/repo/node_modules/.prisma/client/schema.prisma", sharedSchema],
-            ["/repo/node_modules/.prisma/client/index.js", "module.exports = {}\n"],
-            ["/repo/node_modules/.prisma/client/default.js", "module.exports = {}\n"],
-            ["/repo/node_modules/.prisma/client/package.json", "{\n}\n"],
-            ["/repo/node_modules/.prisma/client/libquery_engine-debian-openssl-3.0.x.so.node", ""],
-            ["/repo/node_modules/.prisma/client/libquery_engine-linux-arm64-openssl-3.0.x.so.node", ""],
-            ["/repo/node_modules/.prisma/client/libquery_engine-darwin.dylib.node", ""],
-            ["/repo/node_modules/.prisma/client/libquery_engine-darwin-arm64.dylib.node", ""],
-            ["/repo/node_modules/.prisma/client/query_engine-windows.dll.node", ""],
+            [`${defaultClientDir}/schema.prisma`, sharedSchema],
+            ...generatedClientFiles(defaultClientDir),
             ["/repo/apps/server/prisma/sqlite/schema.prisma", sharedSchema],
             ["/repo/apps/server/generated/sqlite-client/schema.prisma", sharedSchema],
-            ["/repo/apps/server/generated/sqlite-client/index.js", "module.exports = {}\n"],
-            ["/repo/apps/server/generated/sqlite-client/default.js", "module.exports = {}\n"],
-            ["/repo/apps/server/generated/sqlite-client/package.json", "{\n}\n"],
-            ["/repo/apps/server/generated/sqlite-client/libquery_engine-debian-openssl-3.0.x.so.node", ""],
-            ["/repo/apps/server/generated/sqlite-client/libquery_engine-linux-arm64-openssl-3.0.x.so.node", ""],
-            ["/repo/apps/server/generated/sqlite-client/libquery_engine-darwin.dylib.node", ""],
-            ["/repo/apps/server/generated/sqlite-client/libquery_engine-darwin-arm64.dylib.node", ""],
-            ["/repo/apps/server/generated/sqlite-client/query_engine-windows.dll.node", ""],
+            ...generatedClientFiles("/repo/apps/server/generated/sqlite-client"),
             ["/repo/apps/server/prisma/mysql/schema.prisma", sharedSchema],
             ["/repo/apps/server/generated/mysql-client/schema.prisma", sharedSchema],
-            ["/repo/apps/server/generated/mysql-client/index.js", "module.exports = {}\n"],
-            ["/repo/apps/server/generated/mysql-client/default.js", "module.exports = {}\n"],
-            ["/repo/apps/server/generated/mysql-client/package.json", "{\n}\n"],
-            ["/repo/apps/server/generated/mysql-client/libquery_engine-debian-openssl-3.0.x.so.node", ""],
-            ["/repo/apps/server/generated/mysql-client/libquery_engine-linux-arm64-openssl-3.0.x.so.node", ""],
-            ["/repo/apps/server/generated/mysql-client/libquery_engine-darwin.dylib.node", ""],
-            ["/repo/apps/server/generated/mysql-client/libquery_engine-darwin-arm64.dylib.node", ""],
-            ["/repo/apps/server/generated/mysql-client/query_engine-windows.dll.node", ""],
+            ...generatedClientFiles("/repo/apps/server/generated/mysql-client"),
         ]);
+        const all = new Set(["postgres", "sqlite", "mysql"] as const);
 
-        const current = await areRequestedPrismaOutputsCurrent({
-            serverRoot,
-            providers: new Set(["postgres", "sqlite", "mysql"]),
-            fileExists: async (path) => files.has(path),
-            readText: async (path) => {
-                const value = files.get(path);
-                if (typeof value !== "string") {
-                    throw new Error(`Unexpected file read: ${path}`);
-                }
-                return value;
-            },
-        });
-
-        expect(current).toBe(true);
+        expect(await checkWith(files, all)).toBe(true);
 
         files.set(runtimeSourcePath, "patched-runtime");
-        const check = () => areRequestedPrismaOutputsCurrent({
-            serverRoot,
-            providers: new Set(["postgres", "sqlite", "mysql"]),
-            fileExists: async path => files.has(path),
-            readText: async path => {
-                const value = files.get(path);
-                if (typeof value !== "string") throw new Error(`Unexpected file read: ${path}`);
-                return value;
-            },
-        });
-        expect(await check()).toBe(false);
-        files.set("/repo/apps/server/generated/sqlite-client/runtime/library.js", "/* Prisma generated notice */\npatched-runtime");
-        expect(await check()).toBe(false);
-        files.set("/repo/apps/server/generated/mysql-client/runtime/library.js", "/* Prisma generated notice */\npatched-runtime");
-        expect(await check()).toBe(true);
+        expect(await checkWith(files, all)).toBe(false);
+        files.set("/repo/apps/server/generated/sqlite-client/runtime/client.js", "/* Prisma generated notice */\npatched-runtime");
+        expect(await checkWith(files, all)).toBe(false);
+        files.set("/repo/apps/server/generated/mysql-client/runtime/client.js", "/* Prisma generated notice */\npatched-runtime");
+        expect(await checkWith(files, all)).toBe(true);
     });
 
     it("uses the source-schema generation stamp instead of Prisma's reordered generated schema text", async () => {
-        const serverRoot = "/repo/apps/server";
         const sourceSchema = `
             generator client {
                 provider = "prisma-client-js"
-                binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
             }
 
             model Run {
@@ -267,7 +275,6 @@ describe("areRequestedPrismaOutputsCurrent", () => {
         const prismaGeneratedSchema = `
             generator client {
                 provider = "prisma-client-js"
-                binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
             }
 
             model Run {
@@ -276,103 +283,35 @@ describe("areRequestedPrismaOutputsCurrent", () => {
                 @@index([id])
             }
         `;
-        const generatedDir = "/repo/node_modules/.prisma/client";
         const files = new Map<string, string>([
             ["/repo/apps/server/prisma/schema.prisma", sourceSchema],
-            [`${generatedDir}/schema.prisma`, prismaGeneratedSchema],
-            [`${generatedDir}/.happier-source-schema.sha256`, `${sourceDigest(sourceSchema)}\n`],
-            [`${generatedDir}/index.js`, "module.exports = {}\n"],
-            [`${generatedDir}/default.js`, "module.exports = {}\n"],
-            [`${generatedDir}/package.json`, "{\n}\n"],
-            [`${generatedDir}/libquery_engine-debian-openssl-3.0.x.so.node`, ""],
-            [`${generatedDir}/libquery_engine-linux-arm64-openssl-3.0.x.so.node`, ""],
-            [`${generatedDir}/libquery_engine-darwin.dylib.node`, ""],
-            [`${generatedDir}/libquery_engine-darwin-arm64.dylib.node`, ""],
-            [`${generatedDir}/query_engine-windows.dll.node`, ""],
+            [`${defaultClientDir}/schema.prisma`, prismaGeneratedSchema],
+            [`${defaultClientDir}/.happier-source-schema.sha256`, `${sourceDigest(sourceSchema)}\n`],
+            ...generatedClientFiles(defaultClientDir),
         ]);
 
-        await expect(areRequestedPrismaOutputsCurrent({
-            serverRoot,
-            providers: new Set(["postgres"]),
-            fileExists: async (path) => files.has(path),
-            readText: async (path) => {
-                const value = files.get(path);
-                if (typeof value !== "string") throw new Error(`Unexpected file read: ${path}`);
-                return value;
-            },
-        })).resolves.toBe(true);
+        await expect(checkWith(files, new Set(["postgres"]))).resolves.toBe(true);
     });
 
     it("returns false when a requested generated schema drifts from the source schema", async () => {
-        const serverRoot = "/repo/apps/server";
-        const sharedSchema = `
-            generator client {
-                provider = "prisma-client-js"
-                binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
-            }
-        `;
         const files = new Map<string, string>([
             ["/repo/apps/server/prisma/schema.prisma", sharedSchema],
-            ["/repo/node_modules/.prisma/client/schema.prisma", `${sharedSchema}\n// drifted`],
-            ["/repo/node_modules/.prisma/client/index.js", "module.exports = {}\n"],
-            ["/repo/node_modules/.prisma/client/default.js", "module.exports = {}\n"],
-            ["/repo/node_modules/.prisma/client/package.json", "{\n}\n"],
-            ["/repo/node_modules/.prisma/client/libquery_engine-debian-openssl-3.0.x.so.node", ""],
-            ["/repo/node_modules/.prisma/client/libquery_engine-linux-arm64-openssl-3.0.x.so.node", ""],
-            ["/repo/node_modules/.prisma/client/libquery_engine-darwin.dylib.node", ""],
-            ["/repo/node_modules/.prisma/client/libquery_engine-darwin-arm64.dylib.node", ""],
-            ["/repo/node_modules/.prisma/client/query_engine-windows.dll.node", ""],
+            [`${defaultClientDir}/schema.prisma`, `${sharedSchema}\n// drifted`],
+            ...generatedClientFiles(defaultClientDir),
         ]);
 
-        const current = await areRequestedPrismaOutputsCurrent({
-            serverRoot,
-            providers: new Set(["postgres"]),
-            fileExists: async (path) => files.has(path),
-            readText: async (path) => {
-                const value = files.get(path);
-                if (typeof value !== "string") {
-                    throw new Error(`Unexpected file read: ${path}`);
-                }
-                return value;
-            },
-        });
-
-        expect(current).toBe(false);
+        expect(await checkWith(files, new Set(["postgres"]))).toBe(false);
     });
 
-    it("returns false when a requested generated client is missing a declared Prisma engine binary", async () => {
-        const serverRoot = "/repo/apps/server";
-        const sharedSchema = `
-            generator client {
-                provider = "prisma-client-js"
-                binaryTargets = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
-            }
-        `;
+    it("returns false when a requested generated client is missing its embedded query compiler", async () => {
         const files = new Map<string, string>([
             ["/repo/apps/server/prisma/schema.prisma", sharedSchema],
-            ["/repo/node_modules/.prisma/client/schema.prisma", sharedSchema],
-            ["/repo/node_modules/.prisma/client/index.js", "module.exports = {}\n"],
-            ["/repo/node_modules/.prisma/client/default.js", "module.exports = {}\n"],
-            ["/repo/node_modules/.prisma/client/package.json", "{\n}\n"],
-            ["/repo/node_modules/.prisma/client/libquery_engine-debian-openssl-3.0.x.so.node", ""],
-            ["/repo/node_modules/.prisma/client/libquery_engine-linux-arm64-openssl-3.0.x.so.node", ""],
-            ["/repo/node_modules/.prisma/client/libquery_engine-darwin.dylib.node", ""],
-            ["/repo/node_modules/.prisma/client/query_engine-windows.dll.node", ""],
+            [`${defaultClientDir}/schema.prisma`, sharedSchema],
+            ...generatedClientFiles(defaultClientDir),
         ]);
+        expect(await checkWith(files, new Set(["postgres"]))).toBe(true);
 
-        const current = await areRequestedPrismaOutputsCurrent({
-            serverRoot,
-            providers: new Set(["postgres"]),
-            fileExists: async (path) => files.has(path),
-            readText: async (path) => {
-                const value = files.get(path);
-                if (typeof value !== "string") {
-                    throw new Error(`Unexpected file read: ${path}`);
-                }
-                return value;
-            },
-        });
-
-        expect(current).toBe(false);
+        files.delete(`${defaultClientDir}/query_compiler_fast_bg.wasm-base64.js`);
+        expect(await checkWith(files, new Set(["postgres"]))).toBe(false);
     });
 });

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { readPrismaDriverErrorCause } from '@/storage/prismaErrors';
 import { acquireAccountSessionOwnerMetadataFenceInTx } from '@/app/encryption/accountSessionOwnerMetadataFence';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
@@ -128,9 +129,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('G
                             measurement.fenceMs = performance.now() - fenceStarted;
                             if ('error' in outcome) {
                                 const error = outcome.error;
-                                if (error && typeof error === 'object' && 'meta' in error
-                                    && error.meta && typeof error.meta === 'object' && 'code' in error.meta
-                                    && typeof error.meta.code === 'string') measurement.sqlState = error.meta.code;
+                                const sqlState = readPrismaDriverErrorCause(error)?.code;
+                                if (sqlState) measurement.sqlState = sqlState;
                                 throw error;
                             }
                             return outcome.result;

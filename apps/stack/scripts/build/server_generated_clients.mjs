@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 /** The server's Prisma generator (apps/server/scripts/generateClients.ts) writes
  * each client from one schema and stamps it with the sha256 of that schema. */
 export const SERVER_GENERATED_CLIENTS = Object.freeze([
-  { schema: 'apps/server/prisma/schema.prisma', client: 'node_modules/.prisma/client' },
+  { schema: 'apps/server/prisma/schema.prisma', client: 'apps/server/node_modules/.prisma/client' },
   { schema: 'apps/server/prisma/sqlite/schema.prisma', client: 'apps/server/generated/sqlite-client' },
   { schema: 'apps/server/prisma/mysql/schema.prisma', client: 'apps/server/generated/mysql-client' },
 ]);

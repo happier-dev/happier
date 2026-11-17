@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -14,10 +14,11 @@ import { registerWorkflowRunStorageRoutes } from '@/app/api/routes/automations/r
 import { materializeWorkflowAcceptedSnapshotFixture } from '@/testkit/workflowAcceptedSnapshot';
 import { listWorkflowRuns } from './workflowRunService';
 import { resolveWorkflowRunVisibilityScopesInTx } from './workflowRunAccess';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audience demand costs (PostgreSQL)', () => {
     const queries: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>;
+    let client: PrismaClientType;
     let originalTransaction: typeof db.$transaction;
 
     beforeAll(async () => {
@@ -27,8 +28,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audien
         }
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => queries.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => queries.push(event));
         await client.$connect();
         originalTransaction = db.$transaction;
         // Observe actual SQL; the transaction, authority owners and publication locks stay real.

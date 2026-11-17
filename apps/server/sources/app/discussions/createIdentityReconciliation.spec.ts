@@ -9,10 +9,15 @@ import {
     reconcileDiscussionCreationIdentityRace,
 } from "./createIdentityReconciliation";
 
-const createIdentityFieldsError = () => ({
+// Prisma 7 names the violated constraint in the driver cause: SQLite lists its fields,
+// PostgreSQL (and MySQL) name its index.
+const uniqueViolation = (constraint: { fields: string[] } | { index: string }) => ({
     code: "P2002",
-    meta: { modelName: "Discussion", target: ["createdByAccountId", "creationLocalId"] },
+    meta: { modelName: "Discussion", driverAdapterError: { name: "DriverAdapterError", cause: {
+        kind: "UniqueConstraintViolation", originalCode: "fields" in constraint ? "2067" : "23505", constraint,
+    } } },
 });
+const createIdentityFieldsError = () => uniqueViolation({ fields: ["createdByAccountId", "creationLocalId"] });
 
 describe('Home Discussion creation identity', () => {
     let harness: LightSqliteHarness;
@@ -52,19 +57,19 @@ describe("Discussion create identity reconciliation", () => {
     });
 
     it("recognizes the creation identity's constraint-name P2002 target", () => {
-        expect(isDiscussionCreationIdentityConflict({
-            code: "P2002",
-            meta: { modelName: "Discussion", target: "Discussion_createdByAccountId_creationLocalId_key" },
-        })).toBe(true);
+        expect(isDiscussionCreationIdentityConflict(uniqueViolation({ index: "Discussion_createdByAccountId_creationLocalId_key" })))
+            .toBe(true);
     });
 
     it("does not retry unrelated or ambiguous unique failures", async () => {
         const errors = [
-            { code: "P2002", meta: { target: ["discussionId", "localId"] } },
-            { code: "P2002", meta: { target: ["discussionId", "seq"] } },
+            uniqueViolation({ fields: ["discussionId", "localId"] }),
+            uniqueViolation({ fields: ["discussionId", "seq"] }),
+            uniqueViolation({ index: "DiscussionMessage_discussionId_seq_key" }),
             { code: "P2002", meta: {} },
-            { code: "P2002", meta: { modelName: "OtherModel", target: ["createdByAccountId", "creationLocalId"] } },
-            { code: "P2003", meta: { target: ["createdByAccountId", "creationLocalId"] } },
+            { ...uniqueViolation({ fields: ["createdByAccountId", "creationLocalId"] }), meta: {
+                ...uniqueViolation({ fields: ["createdByAccountId", "creationLocalId"] }).meta, modelName: "OtherModel" } },
+            { ...uniqueViolation({ fields: ["createdByAccountId", "creationLocalId"] }), code: "P2003" },
         ];
 
         for (const error of errors) {

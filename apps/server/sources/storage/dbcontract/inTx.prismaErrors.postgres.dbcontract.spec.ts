@@ -36,7 +36,7 @@ describe("PostgreSQL minimal Prisma error formatting", () => {
         const error: unknown = await inTx(tx => tx.$queryRawUnsafe("SELECT * FROM happier_absent_call_site_table"))
             .then(() => null, error => error);
         expect(isPrismaErrorCode(error, "P2010")).toBe(true);
-        expect(error).toMatchObject({ code: "P2010", meta: { code: "42P01" } });
+        expect(error).toMatchObject({ code: "P2010", meta: { driverAdapterError: { cause: { originalCode: "42P01" } } } });
         // A failed transaction must release its connection for the next query.
         expect(await inTx(tx => tx.$queryRaw`SELECT 1::int AS value`)).toEqual([{ value: 1 }]);
     });

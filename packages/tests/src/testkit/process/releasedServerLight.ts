@@ -3,10 +3,7 @@ import { createReadStream, existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, open, readFile, readdir, rename, rm } from 'node:fs/promises';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 
-import {
-  extractReleasePayloadRootFromArchive,
-  resolveServerRuntimePrismaEngineFileName,
-} from '@happier-dev/cli-common/firstPartyRuntime';
+import { extractReleasePayloadRootFromArchive } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { waitForOkHealth } from '../http';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
@@ -343,8 +340,16 @@ function renderSqliteDatabaseUrl(databasePath: string, platform: NodeJS.Platform
   return `file:${normalized}`;
 }
 
+/**
+ * The v0.2.1 server ran Prisma 6's native query-engine library from its archive. Current
+ * servers have no engine library, so this released layout fact lives with the v0.2.1 harness.
+ */
 function resolvePrismaEnginePath(runtimeRoot: string, platform: NodeJS.Platform | string, arch: string): string {
-  const engineName = resolveServerRuntimePrismaEngineFileName({ platform, arch });
+  const target = resolveReleasedServerV021ArtifactTarget(platform, arch);
+  if (!target) throw new Error(`Released server v0.2.1 has no ${String(platform)}-${arch} archive`);
+  const engineName = target.releaseOs === 'darwin'
+    ? 'libquery_engine-darwin-arm64.dylib.node'
+    : 'libquery_engine-debian-openssl-3.0.x.so.node';
   return resolve(runtimeRoot, 'generated', 'sqlite-client', engineName);
 }
 

@@ -5,8 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PrismaClient } from "../../generated/sqlite-client/index.js";
 import { applySqliteMigrations } from "../prismaMigrations";
+import { createDbMaintenanceClient } from "../../sources/storage/prisma";
 
 const removedMigrationName = "20260814160000_add_session_message_attention_impact";
 // Exact checksum recorded by the retained development SQLite database before source contraction.
@@ -58,7 +58,7 @@ describe("removed SessionMessage attention-impact migration compatibility", () =
 
         await expect(applySqliteMigrations({ databasePath, migrationsDir })).resolves.toEqual({ applied: [] });
 
-        const prisma = new PrismaClient({ datasourceUrl: `file:${databasePath}` });
+        const prisma = await createDbMaintenanceClient("sqlite", `file:${databasePath}`);
         try {
             const account = await prisma.account.create({
                 data: { publicKey: "removed-attention-migration-account" },

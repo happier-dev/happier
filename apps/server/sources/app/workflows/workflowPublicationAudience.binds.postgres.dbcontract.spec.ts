@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { AutomationTriggerIdSchema, deriveAutomationOccurrenceKeyV1, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { decodeBase64 } from 'privacy-kit';
 import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/storage/db';
@@ -10,10 +10,11 @@ import { encodeAutomationSessionLifecycleConfiguration } from '@/app/automations
 import { readManagedWakePublicationAccountIdsInTx } from '@/app/machines/managed/managedWake';
 import { readCurrentSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 import { getSessionLifecycleAutomationPublicationAudienceInTx, getWorkflowPublicationAudienceInTx } from './workflowPublicationAudience';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Lifecycle publication inventory bind bounds (PostgreSQL)', () => {
     const queries: Prisma.QueryEvent[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'> | undefined;
+    let client: PrismaClientType | undefined;
     let originalTransaction: typeof db.$transaction;
     let fixture: Awaited<ReturnType<typeof createFixture>>;
 
@@ -81,8 +82,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('L
         await db.$connect();
         fixture = await createFixture();
         originalTransaction = db.$transaction;
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => queries.push(event));
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => queries.push(event));
         await client.$connect();
         const traced = client;
         // Observe the actual persistent boundary; every domain reader and SQL result stays real.

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { lstat, mkdir, readFile, readdir, readlink, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { WORKSPACE_PACKAGE_BUILD_INPUT_RECORD } from '../../packageBuildOutputTargets.mjs';
 import { resolveInstalledRuntimePackage } from '../../workspaceRuntimeDependencies.mjs';
 
@@ -57,6 +58,21 @@ type PackageJson = {
   os?: string[];
   cpu?: string[];
 };
+
+type ServerPrismaInstallLayoutOwner = {
+  resolveServerPrismaInstallLayout: (input: { serverRoot: string }) => Readonly<{ defaultClientDir: string }>;
+  resolveServerPrismaMigrationToolLayout: (input: { serverRoot: string }) => Readonly<{
+    cliPackageDir: string;
+    schemaWasmPath: string;
+    nodeFetchNativeDir: string;
+  }>;
+};
+
+/** The server owns where its Prisma packages are installed (apps/server/scripts/prismaInstallLayout.mjs). */
+async function importServerPrismaInstallLayout(repoRoot: string): Promise<ServerPrismaInstallLayoutOwner> {
+  const owner = pathToFileURL(join(repoRoot, 'apps', 'server', 'scripts', 'prismaInstallLayout.mjs')).href;
+  return await import(owner) as ServerPrismaInstallLayoutOwner;
+}
 
 export function resolveRequestedServerDbProviders(buildDbProviders: string): ServerDbProvider[] {
   const tokens = String(buildDbProviders ?? '')
@@ -326,7 +342,8 @@ async function collectInstalledPackageSidecars({
 }: {
   resolveFromPackageJsonPath: string;
   packageName: string;
-  target: BinaryTarget;
+  /** Omitted for platform-neutral closures; native packages are filtered by it. */
+  target?: BinaryTarget;
   optional: boolean;
   visited: Set<string>;
 }): Promise<StageEntry[]> {
@@ -340,7 +357,7 @@ async function collectInstalledPackageSidecars({
   }
   const { packageDir, packageJsonPath } = installed;
   const packageJson = await readPackageJson(packageJsonPath);
-  if (!packageSupportsTarget(packageJson, target)) {
+  if (target && !packageSupportsTarget(packageJson, target)) {
     if (optional) return [];
     throw new Error(`[component-artifacts] runtime package ${packageName} is incompatible with ${target.os}-${target.arch}`);
   }
@@ -460,7 +477,8 @@ export async function resolveServerRuntimeSupportEntries({
 
   const dedupedProviders = resolveRequestedServerDbProviders(effectiveBuildDbProviders);
 
-  const postgresClientPath = join(repoRoot, 'node_modules', '.prisma', 'client');
+  const serverRoot = join(repoRoot, 'apps', 'server');
+  const prismaLayouts = await importServerPrismaInstallLayout(repoRoot);
   const entries: StageEntry[] = [];
   for (const provider of dedupedProviders) {
     const sourcePath = join(repoRoot, 'apps', 'server', 'generated', `${provider}-client`);
@@ -490,13 +508,37 @@ export async function resolveServerRuntimeSupportEntries({
   const includesAllProviders = providerTokens.length === 0 || providerTokens.includes('all');
   const includesPostgres = includesAllProviders || providerTokens.some((token) => ['postgres', 'postgresql', 'pglite'].includes(token));
   const includesMysql = includesAllProviders || providerTokens.includes('mysql');
+  // The packaged Prisma 6 migration CLI reads the URL from the schema; the server stages its
+  // URL-less Prisma 7 schemas with `url = env("DATABASE_URL")` for that tool only.
+  const migrationSchemaRoot = join(repoRoot, 'apps', 'server', 'generated', 'runtime-migration-schemas');
+  const prepareMigrationSchema = async (sourceSchemaPath: string, preparedSchemaPath: string): Promise<string> => {
+    const owner = pathToFileURL(join(serverRoot, 'scripts', 'runtime', 'prepareFullRuntimeMigrationSchema.mjs')).href;
+    const { withPackagedMigrationDatasourceUrl } = await import(owner) as {
+      withPackagedMigrationDatasourceUrl: (schema: string) => string;
+    };
+    await mkdir(dirname(preparedSchemaPath), { recursive: true });
+    await writeFile(preparedSchemaPath, withPackagedMigrationDatasourceUrl(await readFile(sourceSchemaPath, 'utf8')), 'utf8');
+    return preparedSchemaPath;
+  };
   const requiredMigrationEntries: StageEntry[] = [
     ...(includesPostgres ? [
-      { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma'), targetPath: join('prisma', 'schema.prisma') },
+      {
+        sourcePath: await prepareMigrationSchema(
+          join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma'),
+          join(migrationSchemaRoot, 'postgres', 'schema.prisma'),
+        ),
+        targetPath: join('prisma', 'schema.prisma'),
+      },
       { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'migrations'), targetPath: join('prisma', 'migrations') },
     ] : []),
     ...(includesMysql ? [
-      { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'), targetPath: join('prisma', 'mysql', 'schema.prisma') },
+      {
+        sourcePath: await prepareMigrationSchema(
+          join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'),
+          join(migrationSchemaRoot, 'mysql', 'schema.prisma'),
+        ),
+        targetPath: join('prisma', 'mysql', 'schema.prisma'),
+      },
       { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'migrations'), targetPath: join('prisma', 'mysql', 'migrations') },
     ] : []),
   ];
@@ -527,7 +569,7 @@ export async function resolveServerRuntimeSupportEntries({
       sourcePath: schemaEnginePath,
       targetPath: join('runtime', target.os === 'windows' ? 'schema-engine.exe' : 'schema-engine'),
     });
-    const schemaWasmPath = join(repoRoot, 'node_modules', 'prisma', 'build', 'prisma_schema_build_bg.wasm');
+    const schemaWasmPath = prismaLayouts.resolveServerPrismaMigrationToolLayout({ serverRoot }).schemaWasmPath;
     const schemaWasmInfo = await stat(schemaWasmPath).catch(() => null);
     if (!schemaWasmInfo?.isFile()) {
       throw new Error(`[component-artifacts] missing server Prisma schema WASM: ${schemaWasmPath}`);
@@ -538,6 +580,7 @@ export async function resolveServerRuntimeSupportEntries({
     });
   }
 
+  const postgresClientPath = prismaLayouts.resolveServerPrismaInstallLayout({ serverRoot }).defaultClientDir;
   const postgresClientInfo = await stat(postgresClientPath).catch(() => null);
   if (!postgresClientInfo?.isDirectory()) {
     throw new Error(`[component-artifacts] missing generated postgres Prisma client directory: ${postgresClientPath}`);
@@ -547,15 +590,15 @@ export async function resolveServerRuntimeSupportEntries({
     targetPath: join('node_modules', '.prisma', 'client'),
   });
 
-  const prismaClientPackagePath = join(repoRoot, 'node_modules', '@prisma', 'client');
-  const prismaClientPackageInfo = await stat(prismaClientPackagePath).catch(() => null);
-  if (!prismaClientPackageInfo?.isDirectory()) {
-    throw new Error(`[component-artifacts] missing @prisma/client package directory: ${prismaClientPackagePath}`);
-  }
-  entries.push({
-    sourcePath: prismaClientPackagePath,
-    targetPath: join('node_modules', '@prisma', 'client'),
-  });
+  // Every generated client loads `@prisma/client/runtime/client.js` (the default client) or its
+  // copied runtime, and both require `@prisma/client-runtime-utils` from the payload's node_modules.
+  entries.push(...await collectInstalledPackageSidecars({
+    resolveFromPackageJsonPath: join(repoRoot, 'apps', 'server', 'package.json'),
+    packageName: '@prisma/client',
+    target,
+    optional: false,
+    visited: new Set(),
+  }));
 
   if (target) {
     entries.push(...await resolveIrohNativeServerSidecarEntries({
@@ -586,6 +629,8 @@ export async function resolveServerRuntimeSupportToolIdentityEntries({
 }): Promise<StageEntry[]> {
   void serverComponent;
   if (!serverRuntimeSupportNeedsPackagedMigration(buildDbProviders)) return [];
+  const migrationTool = (await importServerPrismaInstallLayout(repoRoot))
+    .resolveServerPrismaMigrationToolLayout({ serverRoot: join(repoRoot, 'apps', 'server') });
   const entries: StageEntry[] = [
     {
       sourcePath: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildPrismaMigrateBinary.mjs'),
@@ -596,11 +641,11 @@ export async function resolveServerRuntimeSupportToolIdentityEntries({
       targetPath: join('tool-inputs', 'commands.ts'),
     },
     {
-      sourcePath: join(repoRoot, 'node_modules', 'prisma'),
+      sourcePath: migrationTool.cliPackageDir,
       targetPath: join('tool-inputs', 'prisma'),
     },
     {
-      sourcePath: join(repoRoot, 'node_modules', 'node-fetch-native'),
+      sourcePath: migrationTool.nodeFetchNativeDir,
       targetPath: join('tool-inputs', 'node-fetch-native'),
     },
   ];

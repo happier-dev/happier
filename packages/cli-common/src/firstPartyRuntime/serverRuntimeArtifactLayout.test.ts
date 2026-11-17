@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
     relocateServerRuntimeArtifactClosure,
     resolveManagedServerRuntimePaths,
-    resolveServerRuntimePrismaEngineFileName,
 } from './serverRuntimeArtifactLayout.js';
 
 const tempRoots: string[] = [];
@@ -17,21 +16,6 @@ afterEach(async () => {
 });
 
 describe('server runtime artifact layout', () => {
-    it('owns the Prisma query-engine filename for every packaged server target', () => {
-        expect(resolveServerRuntimePrismaEngineFileName({ platform: 'darwin', arch: 'arm64' }))
-            .toBe('libquery_engine-darwin-arm64.dylib.node');
-        expect(resolveServerRuntimePrismaEngineFileName({ platform: 'darwin', arch: 'x64' }))
-            .toBe('libquery_engine-darwin.dylib.node');
-        expect(resolveServerRuntimePrismaEngineFileName({ platform: 'linux', arch: 'arm64' }))
-            .toBe('libquery_engine-linux-arm64-openssl-3.0.x.so.node');
-        expect(resolveServerRuntimePrismaEngineFileName({ platform: 'linux', arch: 'x64' }))
-            .toBe('libquery_engine-debian-openssl-3.0.x.so.node');
-        expect(resolveServerRuntimePrismaEngineFileName({ platform: 'win32', arch: 'x64' }))
-            .toBe('query_engine-windows.dll.node');
-        expect(resolveServerRuntimePrismaEngineFileName({ platform: 'windows', arch: 'x64' }))
-            .toBe('query_engine-windows.dll.node');
-    });
-
     it('relocates the complete executable-relative closure together', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-server-runtime-layout-'));
         tempRoots.push(root);

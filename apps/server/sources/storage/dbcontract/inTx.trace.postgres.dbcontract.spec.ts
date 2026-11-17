@@ -18,6 +18,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             throw new Error("Use the disposable PostgreSQL DB-contract harness");
         }
         vi.stubEnv("HAPPIER_WEB_LATENCY_TRACE", "1");
+        // The metrics owner times statements on the runtime client when its server is on; this
+        // spec isolates the trace owner's clock use.
+        vi.stubEnv("METRICS_ENABLED", "false");
         initDbPostgres();
         await db.$connect();
         connected = true;

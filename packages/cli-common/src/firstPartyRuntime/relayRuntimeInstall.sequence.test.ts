@@ -13,7 +13,7 @@ const serviceEvents = vi.hoisted(() => [] as string[]);
 const serviceSnapshots = vi.hoisted(() => [] as Array<{
   binary: string;
   generated: string;
-  prismaEngine: string;
+  prismaClient: string;
 }>);
 const serviceSpecs = vi.hoisted(() => [] as Array<{
   env: Readonly<Record<string, string>>;
@@ -239,7 +239,7 @@ describe('installOrUpdateRelayRuntimeLocal sequencing', () => {
       await mkdir(join(dirname(installServerBinaryPath), 'node_modules', '@prisma', 'client'), { recursive: true });
       await writeFile(installServerBinaryPath, '#!/bin/sh\necho old-runtime\n', 'utf8');
       await writeFile(join(dirname(installServerBinaryPath), 'generated', 'dummy.txt'), 'old-generated', 'utf8');
-      await writeFile(join(dirname(installServerBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so'), 'old-engine', 'utf8');
+      await writeFile(join(dirname(installServerBinaryPath), 'node_modules', '.prisma', 'client', 'index.js'), 'old-client', 'utf8');
       await writeFile(join(dirname(installServerBinaryPath), 'node_modules', '@prisma', 'client', 'index.js'), 'module.exports = { old: true };\n', 'utf8');
 
       const serviceModule = await import('../service/index.js');
@@ -250,7 +250,7 @@ describe('installOrUpdateRelayRuntimeLocal sequencing', () => {
         serviceSnapshots.push({
           binary: await readOrMissing(installServerBinaryPath),
           generated: await readOrMissing(join(dirname(installServerBinaryPath), 'generated', 'dummy.txt')),
-          prismaEngine: await readOrMissing(join(dirname(installServerBinaryPath), 'node_modules', '.prisma', 'client', 'query_engine.so')),
+          prismaClient: await readOrMissing(join(dirname(installServerBinaryPath), 'node_modules', '.prisma', 'client', 'index.js')),
         });
       });
 
@@ -270,7 +270,7 @@ describe('installOrUpdateRelayRuntimeLocal sequencing', () => {
       expect(serviceSnapshots).toEqual([{
         binary: '#!/bin/sh\necho old-runtime\n',
         generated: 'old-generated',
-        prismaEngine: 'old-engine',
+        prismaClient: 'old-client',
       }]);
     } finally {
       await rm(homeDir, { recursive: true, force: true });

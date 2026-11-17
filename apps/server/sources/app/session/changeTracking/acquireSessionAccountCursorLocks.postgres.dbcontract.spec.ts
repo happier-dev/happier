@@ -1,6 +1,6 @@
 import { buildSessionFollowReceiverChangeEntityIdV1 } from '@happier-dev/protocol/sessions/follow/changes';
 import { randomUUID } from "node:crypto";
-import { PrismaClient, type Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db, getDbProviderFromEnv, initDbPostgres } from "@/storage/db";
@@ -17,6 +17,7 @@ import { removeTeamMemberForActorInTx } from "@/app/teams/memberships/memberAdmi
 import { acquireTeamMutationAccountAdmissionInTx } from "@/app/teams/memberships/sessionAccessEffects";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
 import { deleteOwnedSession } from "@/app/session/delete/deleteOwnedSession";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("Prepared Session cursor audience", () => {
     let connected = false;
@@ -201,7 +202,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 expect(audienceReads).toBe(1);
                 await expect(db.$queryRaw`
                     SELECT id FROM "Session" WHERE id = ${session.id} FOR NO KEY UPDATE NOWAIT
-                `).rejects.toMatchObject({ code: "P2010", meta: { code: "55P03" } });
+                `).rejects.toMatchObject({ code: "P2010", meta: { driverAdapterError: { cause: { originalCode: "55P03" } } } });
                 // The same scope is held: no reread, same admitted audience.
                 expect(await acquireSessionAccountCursorLocksInTx(observed, [session.id], [], { reuseHeldAudience: true })).toEqual([owner.id]);
                 expect(audienceReads).toBe(1);
@@ -262,7 +263,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 // Both resources really remain locked, including the newly discovered destination.
                 for (const session of sessions) await expect(db.$queryRaw`
                     SELECT id FROM "Session" WHERE id = ${session.id} FOR NO KEY UPDATE NOWAIT
-                `).rejects.toMatchObject({ code: "P2010", meta: { code: "55P03" } });
+                `).rejects.toMatchObject({ code: "P2010", meta: { driverAdapterError: { cause: { originalCode: "55P03" } } } });
             }, { isolationLevel: "ReadCommitted" });
             expect(attempts).toBe(1);
         } finally {
@@ -335,11 +336,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
 
     describe("audience reads per Session write", () => {
         const statements: Prisma.QueryEvent[] = [];
-        let client: PrismaClient<Prisma.PrismaClientOptions, "query">;
+        let client: PrismaClientType;
         let originalTransaction: typeof db.$transaction;
         beforeAll(async () => {
-            client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
-            client.$on("query", event => statements.push(event));
+            client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+            onDbClientQuery(client, event => statements.push(event));
             await client.$connect();
             originalTransaction = db.$transaction;
             // Real Postgres through a query-observing twin of the transaction transport.
@@ -486,7 +487,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 for (const account of preparations === 2 ? accounts : []) {
                     await expect(db.$queryRaw`
                         SELECT id FROM "Account" WHERE id = ${account.id} FOR UPDATE NOWAIT
-                    `).rejects.toMatchObject({ code: "P2010", meta: { code: "55P03" } });
+                    `).rejects.toMatchObject({ code: "P2010", meta: { driverAdapterError: { cause: { originalCode: "55P03" } } } });
                     await expect(db.$queryRaw`
                         SELECT id FROM "Account" WHERE id = ${account.id} FOR NO KEY UPDATE NOWAIT
                     `).resolves.toEqual([{ id: account.id }]);

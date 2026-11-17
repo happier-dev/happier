@@ -3,12 +3,12 @@ import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { PrismaClient } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import { applyPostgresMigrations, applySqliteMigrations } from '../prismaMigrations';
-import { runPrismaCli } from '../prismaCli';
+import { runPrismaMigrateCli } from '../prismaMigrateCli';
 import { readPostgresSemanticSchema } from './postgresSchema.testkit';
 import { createPluginWebhookCheckIdDigestV1 } from '../../sources/app/plugins/webhooks/checkIdDigest';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 const serverRoot = join(import.meta.dirname, '../..');
 const heartbeatMigration = '20261031131500_plugin_webhook_heartbeat_ingress';
@@ -133,24 +133,24 @@ describe('Plugin webhook heartbeat additive upgrade', () => {
     (databaseUrl ? it : it.skip)('rejects applied-byte drift at the SQL migration owner and upgrades the committed August ledger on real PostgreSQL', async () => {
         const stage = await mkdtemp(join(tmpdir(), 'happier-webhook-heartbeat-postgres-'));
         const schema = `webhook_heartbeat_${randomUUID().replaceAll('-', '')}`;
-        const admin = new PrismaClient({ datasourceUrl: databaseUrl });
+        const admin = await createDbMaintenanceClient('postgres', databaseUrl);
         const scoped = new URL(databaseUrl!);
         scoped.searchParams.set('schema', schema);
-        const client = new PrismaClient({ datasourceUrl: scoped.toString() });
+        const client = await createDbMaintenanceClient('postgres', scoped.toString());
         const db: Database = { execute: sql => client.$executeRawUnsafe(sql), query: sql => client.$queryRawUnsafe<Record<string, unknown>[]>(sql) };
         let created = false;
         try {
             await admin.$executeRawUnsafe(`CREATE SCHEMA "${schema}"`);
             created = true;
             await proveUpgrade('postgres', stage, db,
-                () => runPrismaCli({ serverRoot, args: ['migrate', 'deploy', '--schema', join(stage, 'schema.prisma')], env: { ...process.env, DATABASE_URL: scoped.toString(), HAPPIER_DB_PROVIDER: 'postgres' }, quiet: true }),
+                () => runPrismaMigrateCli({ serverRoot, schemaPath: join(stage, 'schema.prisma'), args: ['deploy'], env: { ...process.env, DATABASE_URL: scoped.toString(), HAPPIER_DB_PROVIDER: 'postgres' }, quiet: true }),
                 // This is the light/embedded SQL migration owner, exercised against
                 // real PostgreSQL. Full-server Prisma CLI checksum policy is separate.
                 () => applyPostgresMigrations({ migrationsDir: join(stage, 'migrations'), db: {
                     exec: sql => client.$executeRawUnsafe(sql),
                     query: async sql => ({ rows: await client.$queryRawUnsafe<Record<string, unknown>[]>(sql) }),
                 } }));
-            const fresh = new PrismaClient({ datasourceUrl: databaseUrl });
+            const fresh = await createDbMaintenanceClient('postgres', databaseUrl);
             try {
                 const canonical = await readPostgresSemanticSchema({ query: sql => fresh.$queryRawUnsafe<Record<string, unknown>[]>(sql) });
                 expect(await readPostgresSemanticSchema(db)).toEqual(canonical);

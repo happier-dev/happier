@@ -371,11 +371,6 @@ test('npm-e2e-smoke local mode prepares a local linux server binary for remote s
   );
   assert.match(
     runnerRaw,
-    /REMOTE_SELF_HOST_PRISMA_ENGINE_PATH=/,
-    'expected runner to export REMOTE_SELF_HOST_PRISMA_ENGINE_PATH for local binary runtime Prisma loading'
-  );
-  assert.match(
-    runnerRaw,
     /server_runtime_root="\$\(dirname "\$server_binary"\)"/,
     'expected runner to stage the extracted server runtime root, not only the bare binary'
   );
@@ -522,10 +517,10 @@ test('npm-e2e-smoke remote server smoke forwards canonical server binary overrid
     /--self-host-server-binary/,
     'expected remote server smoke to avoid the legacy self-host server binary override flag'
   );
-  assert.match(
+  assert.doesNotMatch(
     raw,
     /PRISMA_QUERY_ENGINE_LIBRARY/,
-    'expected remote server smoke to pass Prisma engine env overrides for local binary runs'
+    'expected remote server smoke to run the binary without Prisma query-engine overrides (Prisma 7 has none)'
   );
 });
 
@@ -629,11 +624,6 @@ test('npm-e2e-smoke compose remote server smoke forwards local self-host env ove
     /REMOTE_SELF_HOST_SERVER_BINARY:\s*\$\{REMOTE_SELF_HOST_SERVER_BINARY:-\}/,
     'expected compose remote server smoke env to include REMOTE_SELF_HOST_SERVER_BINARY'
   );
-  assert.match(
-    raw,
-    /REMOTE_SELF_HOST_PRISMA_ENGINE_PATH:\s*\$\{REMOTE_SELF_HOST_PRISMA_ENGINE_PATH:-\}/,
-    'expected compose remote server smoke env to include REMOTE_SELF_HOST_PRISMA_ENGINE_PATH'
-  );
 });
 
 test('hstack remote server setup supports self-host server binary override flag', async () => {
@@ -659,12 +649,12 @@ test('build-server-binaries stages Prisma postgres engine files for packaged ser
   assert.match(
     sharedRaw,
     /node_modules['"],\s*['"]\.prisma['"],\s*['"]client['"]/,
-    'expected shared server binary staging to include node_modules/.prisma/client for postgres Prisma runtime engines'
+    'expected shared server binary staging to include node_modules/.prisma/client for the postgres Prisma client'
   );
   assert.match(
     sharedRaw,
-    /node_modules['"],\s*['"]@prisma['"],\s*['"]client['"]/,
-    'expected shared server binary staging to include node_modules/@prisma/client for postgres Prisma runtime imports'
+    /packageName:\s*['"]@prisma\/client['"]/,
+    'expected shared server binary staging to include the @prisma/client package closure for Prisma runtime imports'
   );
 });
 

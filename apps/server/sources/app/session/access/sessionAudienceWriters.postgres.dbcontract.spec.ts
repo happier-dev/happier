@@ -341,14 +341,14 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session audienc
                     // retries 55P03, which would outwait this test's held writer.
                     await expect(db.$queryRawUnsafe(
                         'SELECT "id" FROM "Account" WHERE "id" = $1 FOR UPDATE NOWAIT', owner.id,
-                    )).rejects.toMatchObject({ meta: { code: '55P03' } });
+                    )).rejects.toMatchObject({ meta: { driverAdapterError: { cause: { originalCode: '55P03' } } } });
                     const cursorWriter = db.$queryRawUnsafe(
                         'SELECT "id" FROM "Account" WHERE "id" = $1 FOR NO KEY UPDATE NOWAIT', owner.id,
                     );
                     if (transition === "direct_grant") {
                         // Grant admission excludes cursor writers before it reads
                         // authority; native membership paths retain content admission.
-                        await expect(cursorWriter).rejects.toMatchObject({ meta: { code: '55P03' } });
+                        await expect(cursorWriter).rejects.toMatchObject({ meta: { driverAdapterError: { cause: { originalCode: '55P03' } } } });
                     } else {
                         await expect(cursorWriter).resolves.toEqual([{ id: owner.id }]);
                     }

@@ -767,9 +767,11 @@ async function main() {
       });
       serverLightAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
     } else if (serverComponentName === 'happier-server-light') {
+      // A runtime payload carries no database client owner; the checkout's server
+      // opens the same database (serverEnv) through it.
       const acct = await probeExistingAccountCountForServerComponent({
         serverComponentName,
-        serverDir,
+        serverDir: sourceServerDir,
         env: serverEnv,
       });
       serverLightAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
@@ -822,6 +824,7 @@ async function main() {
         const backend = serverLaunchSpec
           ? await spawnRuntimeServerAfterMigration({
               serverLaunchSpec,
+              sourceServerDir,
               env: backendEnv,
               children,
               isCancellationRequested: () => pendingShutdownSignal !== null,
@@ -879,6 +882,7 @@ async function main() {
       const server = serverLaunchSpec
         ? await spawnRuntimeServerAfterMigration({
             serverLaunchSpec,
+            sourceServerDir,
             env: serverEnv,
             children,
             isCancellationRequested: () => pendingShutdownSignal !== null,

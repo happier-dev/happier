@@ -7,6 +7,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import * as privacyKit from 'privacy-kit';
 import { db, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
 import { listArtifactAccessGrantsInTx } from './artifactAccessService';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Template accepted-version query (PostgreSQL)', () => {
     beforeAll(async () => {
@@ -37,10 +38,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             ...Array.from({ length: 1000 }, (_, index) => ({ artifactId: unrelated.id,
                 recipientAccountId: recipient.id, copyId: `unrelated-${index}`, acceptedVersion: '9.0.0' })),
         ] });
-        const { PrismaClient } = createRequire(import.meta.url)('@prisma/client') as typeof import('@prisma/client');
-        const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+        const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
         const statements: Prisma.QueryEvent[] = [];
-        client.$on('query', event => { statements.push(event); });
+        onDbClientQuery(client, event => { statements.push(event); });
         try {
             const ownerView = await client.$transaction(tx => listArtifactAccessGrantsInTx(tx, {
                 actorAccountId: owner.id, artifactId: source.id,

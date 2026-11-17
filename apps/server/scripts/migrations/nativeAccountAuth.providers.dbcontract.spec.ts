@@ -2,20 +2,20 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PrismaClient } from "../../generated/mysql-client/index.js";
 import { splitMigrationStatements } from "../../sources/migrations/missingMigrationReconciliation";
 import { normalizeVerifiedEmail } from "../../../../packages/protocol/src/auth/verifiedEmail";
+import { createDbMaintenanceClient } from "../../sources/storage/prisma";
 
 const url = process.env.HAPPIER_TEST_MYSQL_DATABASE_URL
     ?? (process.env.HAPPIER_DB_PROVIDER === "mysql" ? process.env.DATABASE_URL : undefined);
 
 describe("native Account auth MySQL migration", () => {
     (url ? it : it.skip)("widens released subjects without losing uniqueness and stores full-length mailbox keys", async () => {
-        const admin = new PrismaClient({ datasourceUrl: url });
+        const admin = await createDbMaintenanceClient("mysql", url);
         const databaseName = `native_auth_${randomUUID().replace(/-/gu, "")}`;
         const isolatedUrl = new URL(url!);
         isolatedUrl.pathname = `/${databaseName}`;
-        const db = new PrismaClient({ datasourceUrl: isolatedUrl.toString() });
+        const db = await createDbMaintenanceClient("mysql", isolatedUrl.toString());
         try {
             await admin.$executeRawUnsafe(`CREATE DATABASE \`${databaseName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
             await db.$executeRawUnsafe("CREATE TABLE `Account` (`id` VARCHAR(191) NOT NULL PRIMARY KEY) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");

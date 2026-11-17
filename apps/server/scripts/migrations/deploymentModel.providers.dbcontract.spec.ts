@@ -3,17 +3,16 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { PrismaClient as PostgresClient } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
-import { PrismaClient as MysqlClient } from '../../generated/mysql-client/index.js';
 import { applySqliteMigrations } from '../prismaMigrations';
-import { runPrismaCli } from '../prismaCli';
+import { runPrismaMigrateCli } from '../prismaMigrateCli';
 import { assertDeploymentPendingContent, deploymentPendingContentMigration } from './deploymentPendingMigration.testkit';
 import { assertDeploymentAcceptedExecutionUpgrade, deploymentAcceptedExecutionMigration } from './deploymentAcceptedExecutionMigration.testkit';
 import { assertDeploymentDomainStorage, deploymentDomainMigration } from './deploymentDomainMigration.testkit';
 import { deploymentParentIdentitySql, deploymentS0Migrations, deploymentTargetLinkIdentityMigration,
     seedDeploymentS0Rows, readDeploymentS0Custody, assertDeploymentTargetIdentityArms,
     type DeploymentMigrationDatabase, type DeploymentMigrationProvider } from './deploymentTargetLinkMigration.testkit';
+import { createDbMaintenanceClient } from '../../sources/storage/prisma';
 
 const serverRoot = join(import.meta.dirname, '../..');
 const root = (provider: DeploymentMigrationProvider) => join(serverRoot, 'prisma', ...(provider === 'postgres' ? [] : [provider]));
@@ -167,11 +166,10 @@ describe('deployment target identity canonical migration deployment', () => {
         (databaseUrl ? it : it.skip)(`upgrades S0 rows and preserves constraints through native ${provider} deploys`, async () => {
             const stage = await mkdtemp(join(tmpdir(), `happier-deployment-identity-${provider}-`));
             const name = `deployment_identity_${randomUUID().replaceAll('-', '')}`;
-            const Client = provider === 'postgres' ? PostgresClient : MysqlClient;
-            const admin = new Client({ datasourceUrl: databaseUrl });
+            const admin = await createDbMaintenanceClient(provider, databaseUrl);
             const scoped = new URL(databaseUrl!);
             if (provider === 'postgres') scoped.searchParams.set('schema', name); else scoped.pathname = `/${name}`;
-            const client = new Client({ datasourceUrl: scoped.toString() });
+            const client = await createDbMaintenanceClient(provider, scoped.toString());
             const db: DeploymentMigrationDatabase = { execute: sql => client.$executeRawUnsafe(sql),
                 query: sql => client.$queryRawUnsafe<Record<string, unknown>[]>(sql) };
             let created = false;
@@ -180,8 +178,8 @@ describe('deployment target identity canonical migration deployment', () => {
                     : `CREATE DATABASE \`${name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
                 created = true;
                 await stageS0(provider, stage);
-                await proveWidening(provider, stage, db, () => runPrismaCli({ serverRoot,
-                    args: ['migrate', 'deploy', '--schema', join(stage, 'schema.prisma')],
+                await proveWidening(provider, stage, db, () => runPrismaMigrateCli({ serverRoot,
+                    schemaPath: join(stage, 'schema.prisma'), args: ['deploy'],
                     env: { ...process.env, DATABASE_URL: scoped.toString(), HAPPIER_DB_PROVIDER: provider }, quiet: true }));
             } finally {
                 await client.$disconnect();

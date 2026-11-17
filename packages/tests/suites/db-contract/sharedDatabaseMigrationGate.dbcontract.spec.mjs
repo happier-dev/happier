@@ -79,16 +79,17 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('shared DB launc
 
       // Only the runner-owned ephemeral worker DB is mutated. A separate empty
       // schema represents a fresh source without touching its migrated ledger.
-      const { PrismaClient } = requireServer('@prisma/client');
-      client = new PrismaClient({ datasources: { db: { url: env.DATABASE_URL } } });
-      await client.$executeRawUnsafe('CREATE SCHEMA shared_db_gate_fresh');
+      const { Client } = requireServer('pg');
+      client = new Client({ connectionString: env.DATABASE_URL });
+      await client.connect();
+      await client.query('CREATE SCHEMA shared_db_gate_fresh');
       const freshUrl = new URL(env.DATABASE_URL);
       freshUrl.searchParams.set('schema', 'shared_db_gate_fresh');
       const freshEnv = { ...env, DATABASE_URL: freshUrl.href };
       await assert.rejects(assertSharedDatabaseMigrationsApplied({ serverDir, env: freshEnv }), error =>
         error.code === 'ESHAREDDBMIGRATIONSTATUSUNAVAILABLE' && error.cause === undefined
           && !error.message.includes(freshEnv.DATABASE_URL));
-      await client.$executeRawUnsafe('CREATE TABLE shared_db_gate_fresh._prisma_migrations '
+      await client.query('CREATE TABLE shared_db_gate_fresh._prisma_migrations '
         + '(migration_name TEXT, checksum TEXT, finished_at TIMESTAMP, rolled_back_at TIMESTAMP)');
       await assert.rejects(assertSharedDatabaseMigrationsApplied({ serverDir, env: freshEnv }), error =>
         error.code === 'ESHAREDDBMIGRATIONSMISSING'
@@ -96,8 +97,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('shared DB launc
           && !error.message.includes(freshEnv.DATABASE_URL));
     } finally {
       if (client) {
-        try { await client.$executeRawUnsafe('DROP SCHEMA IF EXISTS shared_db_gate_fresh CASCADE'); }
-        finally { await client.$disconnect(); }
+        try { await client.query('DROP SCHEMA IF EXISTS shared_db_gate_fresh CASCADE'); }
+        finally { await client.end(); }
       }
       await rm(scratch, { recursive: true, force: true });
     }

@@ -1,4 +1,5 @@
 import { isPrismaErrorCode } from "@/storage/prisma";
+import { readPrismaUniqueConstraint } from "@/storage/prismaErrors";
 import { discussionFailure, type DiscussionFailureCode, type DiscussionResult } from './serviceTypes';
 
 /** A declined initial invitation must unwind the entire create transaction before returning its refusal. */
@@ -11,16 +12,6 @@ export class DiscussionCreationRejectedError extends Error {
 
 const DISCUSSION_CREATION_IDENTITY_CONSTRAINT = "Discussion_createdByAccountId_creationLocalId_key";
 
-function readPrismaUniqueMetadata(
-    error: unknown,
-): Readonly<{ modelName: unknown; target: unknown }> | undefined {
-    if (error === null || typeof error !== "object" || !("meta" in error)) return undefined;
-    const meta = (error as { meta?: unknown }).meta;
-    if (meta === null || typeof meta !== "object") return { modelName: undefined, target: undefined };
-    const record = meta as { modelName?: unknown; target?: unknown };
-    return { modelName: record.modelName, target: record.target };
-}
-
 /**
  * Identifies only the database identity used to adjudicate Discussion-create
  * replay. Other unique failures are defects and must remain visible rather than
@@ -28,17 +19,12 @@ function readPrismaUniqueMetadata(
  */
 export function isDiscussionCreationIdentityConflict(error: unknown): boolean {
     if (!isPrismaErrorCode(error, "P2002")) return false;
-    const metadata = readPrismaUniqueMetadata(error);
-    if (metadata === undefined) return false;
-    if (typeof metadata.modelName === "string" && metadata.modelName !== "Discussion") return false;
-    const { target } = metadata;
-    if (typeof target === "string") {
-        return target === DISCUSSION_CREATION_IDENTITY_CONSTRAINT;
-    }
-    return Array.isArray(target)
-        && target.length === 2
-        && target.includes("createdByAccountId")
-        && target.includes("creationLocalId");
+    const constraint = readPrismaUniqueConstraint(error);
+    if (constraint === null) return false;
+    if (constraint.modelName !== undefined && constraint.modelName !== "Discussion") return false;
+    if (constraint.index !== undefined) return constraint.index === DISCUSSION_CREATION_IDENTITY_CONSTRAINT;
+    const fields = constraint.fields ?? [];
+    return fields.length === 2 && fields.includes("createdByAccountId") && fields.includes("creationLocalId");
 }
 
 /**

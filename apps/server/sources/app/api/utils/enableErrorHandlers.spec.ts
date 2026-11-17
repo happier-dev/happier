@@ -117,7 +117,7 @@ describe('enableErrorHandlers', () => {
             const failure = Object.assign('acquisitionCause' in diagnostic
                 ? new TransactionAcquisitionUnavailableError(Object.assign(new Error('private-driver-message'), { code: 'P2024' }))
                 : new Error('private-driver-message'), { name: diagnostic.name, code: diagnostic.code, message: 'private-driver-message',
-                ...('sqlState' in diagnostic ? { meta: { code: diagnostic.sqlState, message: 'private-driver-message' } } : {}),
+                ...('sqlState' in diagnostic ? { meta: { driverAdapterError: { cause: { kind: 'postgres', originalCode: diagnostic.sqlState, originalMessage: 'private-driver-message' } } } } : {}),
                 stack: `${diagnostic.name}: private-driver-message\nSQL private-query\n    at privateFunction (${diagnostic.file}:250:18)\n    at privateFunction (https://private-host/source.js?private-token:1:2)` });
             if ('serialization' in diagnostic) return reply.serializer(() => { throw failure; }).send({ secret: 'private-response' });
             throw failure;

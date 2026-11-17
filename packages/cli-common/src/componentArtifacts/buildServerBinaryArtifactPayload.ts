@@ -11,7 +11,7 @@ import { finalizeRuntimeArtifactPayload } from './finalizeRuntimeArtifactPayload
 import { compilePrismaMigrateBinary } from './compilePrismaMigrateBinary.js';
 import { stageIrohNativeReleaseEvidence } from './stageIrohNativeReleaseEvidence.js';
 import { writePersonalHomeServerArtifactCapability } from '../firstPartyRuntime/personalHome/artifactContract.js';
-import { resolveServerRuntimePrismaEngineFileName } from '../firstPartyRuntime/serverRuntimeArtifactLayout.js';
+import { SERVER_PRISMA_CLIENT_QUERY_COMPILER_FILE } from '../firstPartyRuntime/serverRuntimeArtifactLayout.js';
 import {
   isServerRuntimeSupportPayloadPath,
   resolveRequestedServerDbProviders,
@@ -42,29 +42,25 @@ async function ensureFile(path: string, message: string): Promise<void> {
   }
 }
 
-async function validateServerPrismaEnginesForTarget({
+/**
+ * Prisma 7 clients carry their query compiler as embedded WASM (no per-target engine
+ * library), so a staged client is complete when that compiler is present beside it.
+ */
+async function validateServerPrismaClients({
   payloadDir,
-  target,
   buildDbProviders,
 }: {
   payloadDir: string;
-  target: BinaryTarget;
   buildDbProviders: string;
 }): Promise<void> {
-  const targetKey = `${target.os}-${target.arch}`;
-  const engineFileName = resolveServerRuntimePrismaEngineFileName({
-    platform: target.os,
-    arch: target.arch,
-  });
   await ensureFile(
-    join(payloadDir, 'node_modules', '.prisma', 'client', engineFileName),
-    `[component-artifacts] missing postgres Prisma query engine for ${targetKey}: node_modules/.prisma/client/${engineFileName}`,
+    join(payloadDir, 'node_modules', '.prisma', 'client', SERVER_PRISMA_CLIENT_QUERY_COMPILER_FILE),
+    `[component-artifacts] missing postgres Prisma query compiler: node_modules/.prisma/client/${SERVER_PRISMA_CLIENT_QUERY_COMPILER_FILE}`,
   );
-
   for (const provider of resolveRequestedServerDbProviders(buildDbProviders)) {
     await ensureFile(
-      join(payloadDir, 'generated', `${provider}-client`, engineFileName),
-      `[component-artifacts] missing ${provider} Prisma query engine for ${targetKey}: generated/${provider}-client/${engineFileName}`,
+      join(payloadDir, 'generated', `${provider}-client`, SERVER_PRISMA_CLIENT_QUERY_COMPILER_FILE),
+      `[component-artifacts] missing ${provider} Prisma query compiler: generated/${provider}-client/${SERVER_PRISMA_CLIENT_QUERY_COMPILER_FILE}`,
     );
   }
 }
@@ -72,13 +68,11 @@ async function validateServerPrismaEnginesForTarget({
 export async function copyServerRuntimeSupportEntries({
   payloadDir,
   entries,
-  target,
   buildDbProviders,
   copyPath = defaultCopyPath,
 }: {
   payloadDir: string;
   entries: readonly StageEntry[];
-  target: BinaryTarget;
   buildDbProviders: string;
   copyPath?: (entry: { sourcePath: string; destPath: string; recursive: boolean }, fallbackCopyPath: typeof defaultCopyPath) => Promise<void>;
 }): Promise<void> {
@@ -91,11 +85,7 @@ export async function copyServerRuntimeSupportEntries({
       copyPath,
     });
   }
-  await validateServerPrismaEnginesForTarget({
-    payloadDir,
-    target,
-    buildDbProviders,
-  });
+  await validateServerPrismaClients({ payloadDir, buildDbProviders });
 }
 
 export async function buildServerRuntimeSupportPayload({
@@ -128,7 +118,6 @@ export async function buildServerRuntimeSupportPayload({
   await copyServerRuntimeSupportEntries({
     payloadDir,
     entries,
-    target,
     buildDbProviders,
     copyPath,
   });
@@ -276,7 +265,6 @@ export async function buildServerBinaryArtifactPayload({
     await copyServerRuntimeSupportEntries({
       payloadDir,
       entries: sidecarEntries,
-      target,
       buildDbProviders: effectiveBuildDbProviders,
       copyPath,
     });

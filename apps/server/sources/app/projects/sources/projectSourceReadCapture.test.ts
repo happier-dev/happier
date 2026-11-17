@@ -1,6 +1,6 @@
-import { PrismaClient } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import type { Tx } from '@/storage/inTx';
+import { createDbMaintenanceClient } from '@/storage/prisma';
 import { resolveProjectSourcesAccessInTx, type ProjectSourceRow } from './projectSourceService';
 import type { ProjectSourceAccessCapture } from './projectSourceReadCapture';
 
@@ -23,7 +23,7 @@ describe('Source page capture cost', () => {
             ownerCounts: [], groups: [{ teamId: 'team', teamGroupId: 'group', groupArchivedAt: null }],
             home: null, providers: [], connections: [], installations: [], hasPasswordCredential: false, identities: [],
         };
-        const boundary = new PrismaClient({ datasources: { db: { url: 'postgresql://test:test@127.0.0.1:1/test' } } });
+        const boundary = await createDbMaintenanceClient('postgres', 'postgresql://test:test@127.0.0.1:1/test');
         // Persistent storage is the system boundary; all domain evaluators run unchanged.
         const captured = boundary.$extends({ query: { $allOperations: async ({ model }) => {
             reads += 1;

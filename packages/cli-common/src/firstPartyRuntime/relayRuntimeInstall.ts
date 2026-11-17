@@ -28,7 +28,6 @@ import {
 } from './selfHostServerEnv.js';
 import {
     relocateServerRuntimeArtifactClosure,
-    resolveServerRuntimePrismaEngineFileName,
     resolveServerRuntimePayloadRootFromBinaryPath,
 } from './serverRuntimeArtifactLayout.js';
 import { copyDirectoryTreePreservingSymlinks } from './copyDirectoryTreePreservingSymlinks.js';
@@ -1358,7 +1357,6 @@ async function installOrUpdateRelayRuntimeLocalUnderMutationLocks(params: Readon
 }>, rootMigrationSource: RelayRuntimeInstallRootMigrationSource | null): Promise<Readonly<{ baseUrl: string; version: string | null }>> {
     const platform = (String(params.platform ?? '').trim() || process.platform) as NodeJS.Platform;
     const homeDir = String(params.homeDir ?? '').trim() || homedir();
-    const arch = String(params.arch ?? '').trim() || process.arch;
     const mode = params.mode === 'system' ? 'system' : 'user';
     const serverBinaryName = platform === 'win32' ? 'happier-server.exe' : 'happier-server';
 
@@ -1699,11 +1697,6 @@ async function installOrUpdateRelayRuntimeLocalUnderMutationLocks(params: Readon
                 || join(renderedDataDir, 'pglite')
             : dbDir;
         startupReceiptPath = join(renderedDataDir, 'startup-receipt.json');
-        const prismaEngineFileName = resolveServerRuntimePrismaEngineFileName({ platform, arch });
-        const candidatePrismaEngineRelativePath = [
-            join('bin', 'node_modules', '.prisma', 'client', prismaEngineFileName),
-            join('bin', 'generated', 'sqlite-client', prismaEngineFileName),
-        ].find((relativePath) => existsSync(join(payloadRoot, relativePath)));
         const baseEnvText = renderSelfHostServerEnvText({
             port: resolvedPort,
             host: defaults.serverHost,
@@ -1713,10 +1706,6 @@ async function installOrUpdateRelayRuntimeLocalUnderMutationLocks(params: Readon
             uiDir,
             uiDeploymentId: uiDeployment?.deploymentId,
             serverBinDir: dirname(installServerBinaryPath),
-            ...(candidatePrismaEngineRelativePath
-                ? { prismaEnginePath: join(defaults.installRoot, candidatePrismaEngineRelativePath) }
-                : {}),
-            arch,
             platform,
         });
         const preservedClosedSignup = params.purpose?.kind === 'personal-home'

@@ -1,16 +1,17 @@
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { validateTeamCredentialAudienceDraftInTx } from "./resourceAudience";
 import { resolveTeamMembershipContextInTx } from "../memberships/effectiveMembership";
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Team credential member audience validation (PostgreSQL)", () => {
-    const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+    let client: PrismaClientType;
     let selects = 0;
-    client.$on("query", event => { if (/^SELECT\b/i.test(event.query.trimStart())) selects++; });
     beforeAll(async () => {
+        client = await createDbMaintenanceClient("postgres", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(client, event => { if (/^SELECT\b/i.test(event.query.trimStart())) selects++; });
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error("Run only through the disposable PostgreSQL DB-contract harness");

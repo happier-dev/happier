@@ -2,13 +2,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-import { PrismaClient } from "../generated/mysql-client/index.js";
 
 import {
     MYSQL_TRIGGER_MIGRATIONS,
     MYSQL_VOICE_GRANT_PROVENANCE_MIGRATION,
     runMysqlMigrationDeploy,
-    runMysqlMigrationDeployMain,
     type MysqlMigrationAdmissionDatabase,
 } from "./migrate.mysql.deploy";
 
@@ -59,29 +57,6 @@ function triggerRows(names = MYSQL_TRIGGER_MIGRATIONS.flatMap(({ triggers }) => 
 }
 
 describe("MySQL migration deploy admission", () => {
-    it("prepares the native runtime before the command's first ledger query", async () => {
-        vi.stubEnv("DATABASE_URL", "mysql://fixture:fixture@localhost/fixture?connection_limit=2");
-        vi.stubEnv("HAPPIER_DB_CONNECTION_LIMIT", "3");
-        vi.stubEnv("TOKIO_WORKER_THREADS", undefined);
-        const limitsAtLoad: Array<string | undefined> = [];
-        const dlopen = process.dlopen;
-        const loader = vi.spyOn(process, "dlopen").mockImplementation((module, filename, flags) => {
-            if (filename.includes("query_engine")) limitsAtLoad.push(process.env.TOKIO_WORKER_THREADS);
-            return dlopen(module, filename, flags);
-        });
-        // Stop at the actual persistent-database boundary; keep entry composition and native construction real.
-        const query = vi.spyOn(PrismaClient.prototype, "$queryRawUnsafe").mockRejectedValue(new Error("database-boundary-stop"));
-        try {
-            await expect(runMysqlMigrationDeployMain()).rejects.toThrow("database-boundary-stop");
-            expect(limitsAtLoad.length).toBeGreaterThan(0);
-            expect(new Set(limitsAtLoad)).toEqual(new Set(["3"]));
-        } finally {
-            query.mockRestore();
-            loader.mockRestore();
-            vi.unstubAllEnvs();
-        }
-    });
-
     it("catalogs every MySQL trigger migration with only its surviving trigger definitions", () => {
         const migrationsRoot = join(import.meta.dirname, "../prisma/mysql/migrations");
         const currentDefinitions = new Map<string, string>();

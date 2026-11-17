@@ -5,23 +5,23 @@ import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { resolveTeamCredentialEntitlementInTx } from "./resourceAccess";
 import { countTeamCredentialResourcesInTx, readTeamCredentialCatalogInTx } from './resourceRead';
-import { PrismaClient } from '../../../../generated/sqlite-client';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 import { readTeamCredentialResourceCandidatesInTx } from './resourceCandidateRead';
 
-function createQueryClient() {
-    return new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+function createQueryClient(): Promise<PrismaClientType> {
+    return createDbMaintenanceClient('sqlite', undefined, { log: [{ emit: 'event', level: 'query' }] });
 }
 
 describe("Team credential transactional entitlement", () => {
     let harness: LightSqliteHarness;
-    let queryClient: ReturnType<typeof createQueryClient>;
+    let queryClient: PrismaClientType;
     let originalTransaction: typeof db.$transaction;
     const queries: string[] = [];
     beforeAll(async () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: "happier-resource-access-", initAuth: false,
             env: { HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1' } });
-        queryClient = createQueryClient();
-        queryClient.$on('query', event => queries.push(event.query));
+        queryClient = await createQueryClient();
+        onDbClientQuery(queryClient, event => queries.push(event.query));
         await queryClient.$connect();
         originalTransaction = db.$transaction;
         // Trace the real persistent boundary; entitlement, feature and catalog owners remain real.

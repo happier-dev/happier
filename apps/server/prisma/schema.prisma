@@ -3,9 +3,7 @@
 
 generator client {
     provider        = "prisma-client-js"
-    // Include cross-compiled query engines so release artifacts can run on all published server targets.
-    binaryTargets   = ["native", "debian-openssl-3.0.x", "linux-arm64-openssl-3.0.x", "darwin", "darwin-arm64", "windows"]
-    previewFeatures = ["metrics", "relationJoins"]
+    previewFeatures = ["relationJoins"]
 }
 
 generator json {
@@ -14,7 +12,6 @@ generator json {
 
 datasource db {
     provider = "postgresql"
-    url      = env("DATABASE_URL")
 }
 
 //

@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PrismaClient } from '@prisma/client';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
 import { PendingResetStartsReadResultV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { db, getActivePrismaRuntime, getDbProviderFromEnv, initDbPostgres } from '@/storage/db';
+import { createDbMaintenanceClient, db, getActivePrismaRuntime, getDbProviderFromEnv, initDbPostgres, type PrismaClientType } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createSessionMachineAccessKeyInTx } from '@/app/accessKeys/sessionMachineAccessKeyMutations';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
@@ -49,7 +48,7 @@ async function explainCandidates(query: string, accountId: string) {
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('reset read set-oriented snapshot (real PostgreSQL)', () => {
     let originalUrl: string;
     let connected = false;
-    let peerClient: PrismaClient | undefined;
+    let peerClient: PrismaClientType | undefined;
     const phases: { phase: string; elapsedMs: number }[] = [];
     let collecting = false;
     let restoreLogger: (() => void) | undefined;
@@ -74,7 +73,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('r
         initDbPostgres();
         await db.$connect();
         connected = true;
-        peerClient = new PrismaClient();
+        peerClient = await createDbMaintenanceClient('postgres', supplied);
         await peerClient.$connect();
         if (measureSql) await db.$executeRawUnsafe('CREATE EXTENSION IF NOT EXISTS pg_stat_statements');
     });

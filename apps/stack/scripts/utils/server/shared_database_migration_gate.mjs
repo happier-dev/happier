@@ -1,11 +1,10 @@
 import { readdir, stat } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 import * as serverRuntime from '@happier-dev/cli-common/firstPartyRuntime/server';
 import { assertCanonicalManagedStackName } from '../stack/names.mjs';
 import { resolveSharedDatabaseSource } from './effective_db_provider.mjs';
-import { resolvePrismaClientImportForDbProvider } from './prisma_client_import.mjs';
+import { runServerDatabaseTask } from './server_database_task.mjs';
 
 export class SharedDatabaseMigrationError extends Error {
   constructor({ code, sourceStack, missingMigrations = [] }) {
@@ -25,24 +24,21 @@ export class SharedDatabaseMigrationError extends Error {
   }
 }
 
-async function readSourceLedger({ serverDir, env, provider }) {
+async function readSourceLedger({ databaseOwnerDir, env, provider }) {
   if (provider === 'sqlite') {
     const { databasePath } = serverRuntime.resolvePersonalHomeRuntimeLayout({ env });
     return await serverRuntime.readSqlitePrismaMigrationLedger(databasePath);
   }
-  const requireServer = createRequire(join(serverDir, 'package.json'));
-  const { PrismaClient } = requireServer(resolvePrismaClientImportForDbProvider({ serverDir, provider }));
-  const client = new PrismaClient({ datasourceUrl: env.DATABASE_URL, log: [] });
-  try {
-    return await serverRuntime.readPrismaMigrationLedger(sql => client.$queryRawUnsafe(sql));
-  } finally {
-    await client.$disconnect();
-  }
+  return await runServerDatabaseTask({ serverDir: databaseOwnerDir, provider, task: 'migration-ledger', databaseUrl: env.DATABASE_URL,
+    env: { ...process.env, ...env } });
 }
 
 /** Called on the server host after canonical shared-source environment projection.
- * One read-only ledger SELECT per launch; no migration, repair, cache or poll. */
-export async function assertSharedDatabaseMigrationsApplied({ serverDir, env = {} }) {
+ * One read-only ledger SELECT per launch; no migration, repair, cache or poll.
+ * `serverDir` supplies the required migration catalog (the payload being launched);
+ * `databaseOwnerDir` is the server source checkout that opens a Postgres ledger. A runtime
+ * payload carries no database owner, so runtime launches pass their source checkout. */
+export async function assertSharedDatabaseMigrationsApplied({ serverDir, databaseOwnerDir = serverDir, env = {} }) {
   const configuredSource = String(env.HAPPIER_STACK_SHARED_DB_SOURCE_STACK ?? '').trim();
   if (!configuredSource) return;
   let sourceStack = '<configured source>';
@@ -62,7 +58,7 @@ export async function assertSharedDatabaseMigrationsApplied({ serverDir, env = {
     for (const name of expectedMigrations) {
       if (!(await stat(join(catalogDir, name, 'migration.sql'))).isFile()) throw new Error('Missing migration SQL');
     }
-    rows = await readSourceLedger({ serverDir, env, provider });
+    rows = await readSourceLedger({ databaseOwnerDir, env, provider });
   } catch {
     // Driver/configuration errors can contain connection values. Never retain or print them.
     throw new SharedDatabaseMigrationError({ code: 'ESHAREDDBMIGRATIONSTATUSUNAVAILABLE', sourceStack });

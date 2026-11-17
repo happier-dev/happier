@@ -1,7 +1,7 @@
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { randomUUID } from 'node:crypto';
 import type { Server, Socket } from 'socket.io';
-import { PrismaClient, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { decodeBase64 } from 'privacy-kit';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -18,6 +18,7 @@ import { inTx } from '@/storage/inTx';
 import { retireSessionConsumptionAfterAccessChange } from './sessionConsumption';
 import { resolveSessionScopedSocketBinding } from './sessionScopedBinding';
 import { sessionUpdateHandler } from './sessionUpdateHandler';
+import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from '@/storage/prisma';
 
 const events = ['transcript-stream-segment-delta', 'transcript-stream-segment', 'execution-run-updated'] as const;
 type PublicationEvent = typeof events[number];
@@ -34,7 +35,7 @@ vi.mock('@/storage/db', async importOriginal => {
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Current Session publication admission (PostgreSQL)', () => {
     const statements: Prisma.QueryEvent[] = [];
     const operations: string[] = [];
-    let client: PrismaClient<Prisma.PrismaClientOptions, 'query'>;
+    let client: PrismaClientType;
     let barrier: (() => void) | undefined;
     let presence: ReturnType<typeof createSessionHumanPresenceService>;
     const liveSockets = new Set<Socket>();
@@ -49,8 +50,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('C
         vi.stubEnv('HAPPIER_FEATURE_SHARING_SESSION__ENABLED', '1');
         initDbPostgres();
         await db.$connect();
-        client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
-        client.$on('query', event => {
+        client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(client, event => {
             if (event.query.includes('streamadmit_barrier')) barrier?.();
             else statements.push(event);
         });

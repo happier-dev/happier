@@ -44,7 +44,7 @@ export async function preflightSourceRuntimeMigrations({ server, env, stackBaseD
       const shared = await assertSharedDatabaseMigrationsApplied({ serverDir: currentServerDir, env: serverEnv });
       if (!shared) await applyHappyServerMigrations({ serverDir: currentServerDir, env: serverEnv });
     } else {
-      await runServerRuntimeMigration({ serverLaunchSpec, env: serverEnv, children,
+      await runServerRuntimeMigration({ serverLaunchSpec, sourceServerDir: currentServerDir, env: serverEnv, children,
         isCancellationRequested: () => signal?.aborted === true });
     }
     signal?.throwIfAborted();

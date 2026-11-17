@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/client";
+import { DriverAdapterError } from "@prisma/driver-adapter-utils";
 
 import { applyEnvValues, restoreEnv, snapshotEnv } from "@/testkit/env";
 import { installDbModuleMock, inTxPostgresControlStatementMock } from "../app/api/testkit/dbMocks";
@@ -19,6 +20,14 @@ installDbModuleMock({
     },
 });
 
+/** Prisma 7 driver-failure metadata exactly as @prisma/adapter-pg attaches it to raw-query errors. */
+function pgDriverMeta(sqlState: string, message?: string) {
+    return { driverAdapterError: { cause: {
+        kind: sqlState === "40001" || sqlState === "40P01" ? "TransactionWriteConflict" : "postgres",
+        originalCode: sqlState,
+        ...(message === undefined ? {} : { originalMessage: message }),
+    } } };
+}
 const logMock = vi.fn();
 
 vi.mock("@/utils/runtime/delay", () => ({ delay: delayMock }));
@@ -218,7 +227,7 @@ describe("inTx", () => {
         { message: "canceling statement due to user request", expected: "database_transaction_conflict_exhausted" },
     ])("projects a cancelled single-statement read ($message) as the transaction owner does", async ({ message, expected }) => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres" });
-        const cancelled = Object.assign(new Error("private SQL contents"), { code: "P2010", meta: { code: "57014", message } });
+        const cancelled = Object.assign(new Error("private SQL contents"), { code: "P2010", meta: pgDriverMeta("57014", message) });
         const failure = await inTx(async () => { throw cancelled; }, { readOnly: true, singleStatementRead: true }).catch(error => error);
         const { readDatabaseErrorCode } = await import("./transactionErrors");
         expect(readDatabaseErrorCode(failure)).toBe(expected);
@@ -538,16 +547,15 @@ describe("inTx", () => {
     it.each([
         new PrismaClientKnownRequestError(
             'Raw query failed. Code: `40001`. Message: `could not serialize access due to read/write dependencies among transactions`',
-            { code: "P2010", clientVersion: "6.19.2", meta: { code: "40001", message: "could not serialize access due to read/write dependencies among transactions" } },
-        ),
-        new prismaRuntime.PrismaClientUnknownRequestError(
-            'Invalid `prisma.session.update()` invocation: PostgresError { code: "40P01", message: "deadlock detected" }',
-            { clientVersion: "6.19.2" },
+            { code: "P2010", clientVersion: "6.19.2", meta: pgDriverMeta("40001", "could not serialize access due to read/write dependencies among transactions") },
         ),
         ...["40001", "40P01"].map(code => new PrismaClientKnownRequestError(
             `Raw query failed. Code: \`${code}\`. Message: \`transaction conflict\``,
-            { code: "P2010", clientVersion: "6.19.2", meta: { code, message: "transaction conflict" } },
+            { code: "P2010", clientVersion: "6.19.2", meta: pgDriverMeta(code, "transaction conflict") },
         )),
+        // A conflict detected at COMMIT reaches the caller as the adapter's own error, unwrapped.
+        new DriverAdapterError({ kind: "TransactionWriteConflict", originalCode: "40001",
+            originalMessage: "could not serialize access due to read/write dependencies among transactions" }),
     ])("replays PostgreSQL conflicts without publishing rolled-back afterTx effects: %s", async (failure) => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
         let attempts = 0;
@@ -568,7 +576,7 @@ describe("inTx", () => {
     it("preserves the retry budget and exposes one typed PostgreSQL conflict after exhaustion", async () => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
         const failure = new PrismaClientKnownRequestError("Raw query failed", {
-            code: "P2010", clientVersion: "6.19.2", meta: { code: "40001" },
+            code: "P2010", clientVersion: "7.10.1", meta: pgDriverMeta("40001"),
         });
         let attempts = 0;
         const published = vi.fn();
@@ -617,11 +625,11 @@ describe("inTx", () => {
     });
 
     it.each([
-        { meta: { code: "40001", modelName: "Session", message: "ERROR: could not serialize access due to read/write dependencies among transactions\nDETAIL: private query contents" },
+        { meta: { ...pgDriverMeta("40001", "ERROR: could not serialize access due to read/write dependencies among transactions\nDETAIL: private query contents"), modelName: "Session" },
             failedStatementRelation: "Session", driverMessage: "could not serialize access due to read/write dependencies among transactions" },
-        { meta: { code: "40001", message: "ERROR: could not serialize access due to concurrent update" },
+        { meta: pgDriverMeta("40001", "ERROR: could not serialize access due to concurrent update"),
             failedStatementRelation: undefined, driverMessage: "could not serialize access due to concurrent update" },
-        { meta: { code: "40001", message: "private query contents" }, failedStatementRelation: undefined, driverMessage: undefined },
+        { meta: pgDriverMeta("40001", "private query contents"), failedStatementRelation: undefined, driverMessage: undefined },
     ])("reports rollback transaction class and content-free last driver diagnostics (%j)", async ({ meta, failedStatementRelation, driverMessage }) => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
         const failure = new PrismaClientKnownRequestError("private query contents", {
@@ -630,7 +638,7 @@ describe("inTx", () => {
         let attempts = 0;
         await expect(inTx(async () => {
             if (++attempts === 1) throw new PrismaClientKnownRequestError("earlier deadlock", {
-                code: "P2010", clientVersion: "6.19.2", meta: { code: "40P01", message: "deadlock detected" },
+                code: "P2010", clientVersion: "6.19.2", meta: pgDriverMeta("40P01", "deadlock detected"),
             });
             throw failure;
         }, { transactionClass: "pending-input-admission" }))
@@ -674,7 +682,7 @@ describe("inTx", () => {
     ])("does not retry unrelated raw-query failures on $provider ($code)", async ({ provider, code }) => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: provider });
         const failure = new PrismaClientKnownRequestError("Raw query failed", {
-            code: "P2010", clientVersion: "6.19.2", meta: { code },
+            code: "P2010", clientVersion: "7.10.1", meta: pgDriverMeta(code),
         });
         const published = vi.fn();
         await expect(inTx(async tx => {
@@ -719,7 +727,7 @@ describe("inTx", () => {
     ])("settles PostgreSQL $sqlState ($message) without generic in-place replay", async ({ sqlState, message, timeout }) => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres", HAPPIER_DB_TX_MAX_RETRIES: "1" });
         const cancelled = new PrismaClientKnownRequestError("Raw query failed", {
-            code: "P2010", clientVersion: "6.19.2", meta: { code: sqlState, ...(message ? { message } : {}) },
+            code: "P2010", clientVersion: "6.19.2", meta: pgDriverMeta(sqlState, message),
         });
         let attempts = 0;
         const published: number[] = [];
@@ -1004,7 +1012,7 @@ describe("inTx", () => {
     it("preserves confirmed SQL rollback even when the caller supplied a longer deadline", async () => {
         applyEnvValues({ HAPPIER_DB_PROVIDER: "postgres" });
         const failure = new PrismaClientKnownRequestError("Raw query failed", {
-            code: "P2010", clientVersion: "6.19.2", meta: { code: "57014" },
+            code: "P2010", clientVersion: "7.10.1", meta: pgDriverMeta("57014"),
         });
         await expect(inTx(async () => { throw failure; }, { deadlineAtMs: Date.now() + 60_000 }))
             .rejects.toMatchObject({ name: "TransactionConflictExhaustedError", cause: failure });

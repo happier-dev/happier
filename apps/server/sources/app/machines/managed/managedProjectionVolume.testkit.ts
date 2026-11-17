@@ -16,7 +16,7 @@ import { createPluginAvailabilityOperations } from '@/app/plugins/availability/o
 import { registerManagedMachineRoutes } from './managedRoutes';
 import { resolveManagedDeclarationInTx, type StoredManagedMachine } from './managedRows';
 import { admitManagedAcquire } from './managedAcquire';
-import { PrismaClient } from '@prisma/client';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 
 interface QueryMeasurement {
     model: string;
@@ -98,11 +98,11 @@ export async function measure<T>(phase: string, operation: () => Promise<T>) {
 
 /** Use Prisma's ordered SQL event stream, including the transaction owner's raw publication work. */
 export async function measurePostgresCreate<T>(operation: () => Promise<T>) {
-    const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
+    const client = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
     const statements: string[] = [];
     const transactionDurationsMs: number[] = [];
     let finishBarrier: (() => void) | undefined;
-    client.$on('query', event => {
+    onDbClientQuery(client, event => {
         if (event.query.includes('managed_create_cost_barrier')) finishBarrier?.();
         else statements.push(event.query);
     });
