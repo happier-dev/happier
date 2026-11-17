@@ -293,6 +293,7 @@ describe('requester native subscription hot apply', () => {
       await nativeHome.replaceFiles(createClaudeConnectedAccountNativeAuthCodec().materialize({
         credential: initialCredential, selection: initialSelection, files: {},
       }).files);
+      expect((await readFile(join(root, '.credentials.json'))).toString()).toContain('bob-primary');
       const createSwitcher = async (captured: NonNullable<typeof requester>) => {
       const apply = createSessionConnectedServiceAuthHotApply({ runtimeRegistry,
         validateGroupMutationCurrentness: input => validateConnectedServiceGroupMutationCurrentness({ input,
@@ -364,6 +365,10 @@ describe('requester native subscription hot apply', () => {
       expect(providerBodies.some(body => body.includes('alice'))).toBe(false);
       const nativeBytes = await readFile(join(root, '.credentials.json'));
       expect(nativeBytes.toString()).toContain('bob-refreshed-backup');
+      expect(nativeBytes.toString()).not.toContain('bob-primary');
+      await expect(nativeHome.readFiles(['.credentials.json'])).resolves.toEqual({
+        '.credentials.json': new Uint8Array(nativeBytes),
+      });
       expect(tracked.spawnOptions.identity).toEqual(identity);
       expect(tracked.happySessionId).toBe('bob-bot');
       const session = await fetchSessionById({ reason: 'session-query', token: credentials.token, serverUrl: homeUrl, sessionId: 'bob-bot' });
