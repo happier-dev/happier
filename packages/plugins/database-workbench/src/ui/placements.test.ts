@@ -1,0 +1,28 @@
+import { expect, it } from 'vitest';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createDatabaseWorkbenchPlacements } from './placements.js';
+
+it('admits project and Session rail tabs and details destinations with the same renderer', () => {
+    const plugin = definePlugin({
+        id: 'happier.database', version: '0.0.0',
+        ui: {
+            views: createDatabaseWorkbenchPlacements({ databaseRenderer: 'database', insightsRenderer: 'insights' }),
+            renderers: [
+                { id: 'database', kind: 'declarative', root: { kind: 'text', text: 'Database fixture' } },
+                { id: 'insights', kind: 'declarative', root: { kind: 'text', text: 'Insights fixture' } },
+            ],
+        },
+    });
+    const views = plugin.manifest.contributes.ui?.views ?? [];
+    expect(views).toHaveLength(8);
+    expect(new Set(views.map(view => view.id)).size).toBe(8);
+    for (const target of ['session', 'project']) {
+        const scoped = views.filter(view => view.target.kind === target);
+        expect(scoped).toHaveLength(4);
+        for (const renderer of ['database', 'insights']) {
+            const pair = scoped.filter(view => view.renderer === renderer);
+            expect(pair.map(view => view.container).sort()).toEqual(['detailsPane', 'rightSidebarTab']);
+            expect(pair.find(view => view.container === 'rightSidebarTab')).toMatchObject({ defaultPlacement: 'overflow' });
+        }
+    }
+});

@@ -130,7 +130,11 @@ export const DatabaseInsightSourceDescriptorV1Schema = z.strictObject({
     changeResourceRef: asProtocolZod(PluginContributionIdentityV1Schema),
 });
 export type DatabaseInsightSourceDescriptorV1 = z.infer<typeof DatabaseInsightSourceDescriptorV1Schema>;
-export const DatabaseInsightSourceDescriptorV1ProtocolSchema = projectZodProtocolSchema(DatabaseInsightSourceDescriptorV1Schema);
+// Contribution descriptors/results are parsed at JSON ingress; retain the
+// owner's exact output and parser without requiring its authored input shape.
+export const DatabaseInsightSourceDescriptorV1ProtocolSchema = projectZodProtocolSchema<
+    z.core.$ZodType<DatabaseInsightSourceDescriptorV1, unknown>
+>(DatabaseInsightSourceDescriptorV1Schema);
 export const DatabaseFindingsListInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseFindingsListInputV1Schema);
 export const DatabaseFindingReadInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseFindingReadInputV1Schema);
 export const DatabaseFindingBaselineV1ProtocolSchema = projectZodProtocolSchema(DatabaseFindingBaselineV1Schema);
@@ -138,6 +142,10 @@ export const DatabaseFindingBriefBuildInputV1ProtocolSchema = projectZodProtocol
 export const DatabaseTaskEvidenceV1ProtocolSchema = projectZodProtocolSchema(DatabaseTaskEvidenceV1Schema);
 export const DatabaseTaskBriefBuildInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseTaskBriefBuildInputV1Schema);
 export const DatabaseInsightBriefBuildInputV1ProtocolSchema = projectZodProtocolSchema(DatabaseInsightBriefBuildInputV1Schema);
-export const DatabaseFindingsListResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseFindingsListResultV1Schema);
-export const DatabaseFindingReadResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseFindingReadResultV1Schema);
+export const DatabaseFindingsListResultV1ProtocolSchema = projectZodProtocolSchema<
+    z.core.$ZodType<DatabaseFindingsListResultV1, unknown>
+>(DatabaseFindingsListResultV1Schema);
+export const DatabaseFindingReadResultV1ProtocolSchema = projectZodProtocolSchema<
+    z.core.$ZodType<DatabaseFindingReadResultV1, unknown>
+>(DatabaseFindingReadResultV1Schema);
 export const DatabaseFindingBriefBuildResultV1ProtocolSchema = projectZodProtocolSchema(DatabaseFindingBriefBuildResultV1Schema);
