@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
 import tweetnacl from 'tweetnacl';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -15,7 +14,7 @@ import { startTestDaemon, type StartedDaemon } from './daemon/daemon';
 import { fakeClaudeFixturePath } from './fakeClaude';
 import { fetchJson } from './http';
 import { reserveAvailablePort } from './network/reserveAvailablePort';
-import { repoRootDir } from './paths';
+import { withCliWorkspaceSourceRuntime } from './process/cliLaunchSpec';
 import { startServerLight, resolveServerStartLaunchSpec, renderServerLightSqliteDatabaseUrl } from './process/serverLight';
 import { runLoggedCommand } from './process/spawnProcess';
 
@@ -24,8 +23,7 @@ import { runLoggedCommand } from './process/spawnProcess';
  * second Account; no shared QA data or foreign in-flight fixture is consumed. */
 export async function startFinJourneyFixture(params: Readonly<{ testDir: string; serverEnv?: NodeJS.ProcessEnv }>) {
   const port = await reserveAvailablePort();
-  const sourceOptions = [process.env.NODE_OPTIONS, '--import', pathToFileURL(resolve(repoRootDir(),
-    'packages/cli-common/registerSourceRuntime.mjs')).href].filter(Boolean).join(' ');
+  const sourceOptions = withCliWorkspaceSourceRuntime(process.env).NODE_OPTIONS;
   // Native requester custody resolves this Home through its published descriptor.
   const serverEnv = { ...process.env, NODE_OPTIONS: sourceOptions, HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: '1',
     HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1', ...params.serverEnv,

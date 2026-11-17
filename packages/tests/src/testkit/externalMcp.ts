@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { repoRootDir } from './paths';
+import type { CliTestLaunchSpec } from './process/cliLaunchSpec';
 
 export type McpToolCallResult = Readonly<{
   content?: readonly Readonly<{ text?: unknown }>[];
@@ -24,24 +25,26 @@ export type ExternalMcpClient = Readonly<{
 }>;
 
 export async function connectExternalMcp(params: Readonly<{
-  cliEntrypoint: string;
   sessionId: string;
   cliHome: string;
   serverBaseUrl: string;
-}>): Promise<Readonly<{
+} & ({ cliEntrypoint: string; cliLaunch?: never } | { cliLaunch: CliTestLaunchSpec; cliEntrypoint?: never })>): Promise<Readonly<{
   client: ExternalMcpClient;
   transport: ExternalMcpTransport;
   stderrLines: string[];
 }>> {
-  return connectStdioMcp({ command: process.execPath,
-    args: [params.cliEntrypoint, 'mcp', 'serve', '--session', params.sessionId],
-    env: { ...process.env, CI: '1', HAPPIER_HOME_DIR: params.cliHome, HAPPIER_SERVER_URL: params.serverBaseUrl } });
+  const launch: CliTestLaunchSpec = params.cliLaunch ?? { command: process.execPath, args: [params.cliEntrypoint!] };
+  return connectStdioMcp({ command: launch.command,
+    args: [...launch.args, 'mcp', 'serve', '--session', params.sessionId],
+    ...(launch.cwd ? { cwd: launch.cwd } : {}),
+    env: { ...process.env, ...launch.env, CI: '1', HAPPIER_HOME_DIR: params.cliHome, HAPPIER_SERVER_URL: params.serverBaseUrl } });
 }
 
 /** Connect through the exact MCP launch advertised to the external Agent. */
 export async function connectStdioMcp(params: Readonly<{
   command: string;
   args: string[];
+  cwd?: string;
   env: Record<string, string | undefined>;
 }>): Promise<Readonly<{
   client: ExternalMcpClient;
@@ -58,6 +61,7 @@ export async function connectStdioMcp(params: Readonly<{
     StdioClientTransport: new (params: {
       command: string;
       args: string[];
+      cwd?: string;
       env: Record<string, string | undefined>;
       stderr: 'pipe';
     }) => ExternalMcpTransport;
@@ -74,7 +78,15 @@ export async function connectStdioMcp(params: Readonly<{
   });
 
   const client = new Client({ name: 'happier-e2e', version: '0.0.0' });
-  await client.connect(transport);
+  try {
+    await client.connect(transport);
+  } catch (cause) {
+    await transport.close().catch(() => {});
+    const stderr = stderrLines.join('');
+    const codes = [...new Set(stderr.match(/\b(?:ERR_|HSTACK_|HAPPIER_)[A-Z_]+\b/g) ?? [])];
+    const packages = [...stderr.matchAll(/Cannot find package '(@?[a-z0-9][a-z0-9/._-]*)'/g)].map(match => match[1]);
+    throw new Error(`External MCP initialization failed (stderrBytes=${Buffer.byteLength(stderr)}, codes=${codes.join(',')}, missingPackages=${packages.join(',')})`, { cause });
+  }
   return { client, transport, stderrLines };
 }
 

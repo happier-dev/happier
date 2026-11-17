@@ -8,7 +8,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { connectExternalMcp, parseToolJson } from '../../src/testkit/externalMcp';
 import { fetchJson } from '../../src/testkit/http';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
+import { resolveCliTestLaunchSpec, shouldUseCliSourceEntrypoint, withCliWorkspaceSourceRuntime } from '../../src/testkit/process/cliLaunchSpec';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createRunDirs } from '../../src/testkit/runDir';
 
@@ -222,13 +222,13 @@ describe('core e2e: session transcript/events action role stamping', () => {
       auth,
       mode: 'tokenOnly',
     });
-    const cliEntrypoint = await ensureCliDistBuilt(
-      { testDir, env: process.env },
-      { lockPath: resolve(testDir, 'cli-dist-build.lock') },
+    const cliLaunch = await resolveCliTestLaunchSpec(
+      { testDir, env: shouldUseCliSourceEntrypoint(process.env) ? withCliWorkspaceSourceRuntime(process.env) : process.env },
+      { snapshotDir: resolve(testDir, 'cli-runtime'), lockPath: resolve(testDir, 'cli-dist-build.lock') },
     );
 
     const { client, transport, stderrLines } = await connectExternalMcp({
-      cliEntrypoint,
+      cliLaunch,
       sessionId,
       cliHome,
       serverBaseUrl: server.baseUrl,
@@ -296,6 +296,7 @@ describe('core e2e: session transcript/events action role stamping', () => {
     } finally {
       await transport.close().catch(() => {});
       await client.close().catch(() => {});
+      await cliLaunch.cleanup?.();
     }
   }, 240_000);
 });

@@ -12,7 +12,7 @@ import { connectExternalMcp, parseToolJson, type ExternalMcpClient, type Externa
 import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { seedCliAuthForTestAccount } from '../../src/testkit/cliAuth';
 import { upsertEncryptedAccountSettingsV2 } from '../../src/testkit/accountSettings';
-import { ensureCliDistBuilt } from '../../src/testkit/process/cliDist';
+import { resolveCliTestLaunchSpec, shouldUseCliSourceEntrypoint, withCliWorkspaceSourceRuntime, type CliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -20,6 +20,7 @@ async function createScenario(): Promise<{
   authToken: string;
   client: ExternalMcpClient;
   cliHome: string;
+  cliLaunch: CliTestLaunchSpec;
   secret: Uint8Array;
   person: Awaited<ReturnType<typeof connectUiPersonActionClient>>;
   server: StartedServer;
@@ -74,13 +75,13 @@ async function createScenario(): Promise<{
     agentStateCiphertextBase64: null,
   });
 
-  const cliEntrypoint = await ensureCliDistBuilt(
-    { testDir, env: process.env },
-    { lockPath: resolve(testDir, 'cli-dist-build.lock') },
+  const cliLaunch = await resolveCliTestLaunchSpec(
+    { testDir, env: shouldUseCliSourceEntrypoint(process.env) ? withCliWorkspaceSourceRuntime(process.env) : process.env },
+    { snapshotDir: resolve(testDir, 'cli-runtime'), lockPath: resolve(testDir, 'cli-dist-build.lock') },
   );
 
   const { client, transport, stderrLines } = await connectExternalMcp({
-    cliEntrypoint,
+    cliLaunch,
     sessionId,
     cliHome,
     serverBaseUrl,
@@ -93,6 +94,7 @@ async function createScenario(): Promise<{
     authToken: auth.token,
     client,
     cliHome,
+    cliLaunch,
     secret,
     server,
     serverBaseUrl,
@@ -162,6 +164,7 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
       await scenario.person.close();
       await scenario.transport.close().catch(() => {});
       await scenario.client.close().catch(() => {});
+      await scenario.cliLaunch.cleanup?.();
     }
   }, 240_000);
 
@@ -217,6 +220,7 @@ describe('core e2e: external MCP approvals for session.title.set', () => {
       await scenario.person.close();
       await scenario.transport.close().catch(() => {});
       await scenario.client.close().catch(() => {});
+      await scenario.cliLaunch.cleanup?.();
     }
   }, 240_000);
 });

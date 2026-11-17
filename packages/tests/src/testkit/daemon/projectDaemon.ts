@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { networkInterfaces } from 'node:os';
 import { getCACertificates, setDefaultCACertificates } from 'node:tls';
-import { pathToFileURL } from 'node:url';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
@@ -22,13 +21,12 @@ import { buildTestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
 import type { EnvOverrides } from '../env';
 import { startHttpRequestRecordingProxy, type HttpRequestRecordingProxy, type RecordedHttpProxyRequest } from '../httpRequestRecordingProxy';
-import { repoRootDir } from '../paths';
 import { startServerLight, type TestDbProvider } from '../process/serverLight';
 import { claimTestHomeOwner } from '../homeOwner';
 import { fetchSessionMetadataV2 } from '../sessionHandoffMetadata';
 import { startTestDaemon, type StartedDaemon } from './daemon';
 import { resolveMachineIdForServerFromSettings } from '../../../../../apps/cli/src/daemon/resolveMachineIdForServerFromSettings';
-import type { CliTestLaunchSpec } from '../process/cliLaunchSpec';
+import { withCliWorkspaceSourceRuntime, type CliTestLaunchSpec } from '../process/cliLaunchSpec';
 import type { TestAccountCliAuthCredentials } from '../cliAuth';
 import { startCliAuthLoginForTerminalConnect } from '../uiE2e/cliTerminalConnect';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
@@ -49,8 +47,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
   observeActionRequests?: boolean;
   beforeHttpRequest?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
 }>) {
-  const sourceOptions = [process.env.NODE_OPTIONS, '--import',
-    pathToFileURL(resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs')).href].filter(Boolean).join(' ');
+  const sourceOptions = withCliWorkspaceSourceRuntime(process.env).NODE_OPTIONS;
   const serverSourceOptions = [sourceOptions, ...(params.serverPreloadModules ?? []).flatMap(module => ['--import', module])].join(' ');
   const port = await reserveAvailablePort();
   let ingress: HttpRequestRecordingProxy | undefined;
