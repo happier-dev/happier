@@ -5,7 +5,7 @@ import { EmbedConfigV1Schema } from '../embed/embedConfigV1.js';
 import { decodeBase64, encodeBase64, type Base64Variant } from '../crypto/base64.js';
 import { SERVER_IDENTITY_ID_PATTERN } from '../features/payload/capabilities/serverIdentityCapabilities.js';
 import { DeploymentDeploySemanticInputV1Schema } from '../deployments/deploymentDeployIntentV1.js';
-import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema } from '../crypto/privateLabelV1.js';
+import { PrivateLabelReadV1Schema, PrivateLabelStoredV1Schema, parsePrivateLabelStoredV1 } from '../crypto/privateLabelV1.js';
 
 const AccountApiTokenIdV1Schema = lazyZodSchema(() => z.string().check(z.uuid()));
 const AccountApiTokenInstantV1Schema = lazyZodSchema(() => z.string().check(z.iso.datetime({ offset: true }), z.maxLength(64)));
@@ -152,6 +152,20 @@ export type AccountApiTokensCreateActionOutputV1 = z.infer<typeof AccountApiToke
 
 /** Observers receive the existing non-secret summary, never the one-time bearer. */
 export function projectAccountApiTokenCreationObservation(value: unknown): Readonly<{ apiToken: AccountApiTokenSummaryV1 }> {
+  // Pre-envelope terminal Approval rows contain the old string label. The
+  // storage owner opts into its existing legacy read policy; current HTTP
+  // schemas below still validate every other field and the one-time bearer.
+  if (typeof value === 'object' && value !== null && 'apiToken' in value
+    && typeof value.apiToken === 'object' && value.apiToken !== null && 'label' in value.apiToken) {
+    const legacyLabel = AccountApiTokenLabelV1Schema.safeParse(value.apiToken.label);
+    const parsedLabel = legacyLabel.success
+      ? parsePrivateLabelStoredV1(legacyLabel.data, { allowLegacyPlaintext: true }) : null;
+    if (parsedLabel?.kind === 'legacy_plain') {
+      value = { ...value, apiToken: { ...value.apiToken, label: PrivateLabelReadV1Schema.parse({
+        content: parsedLabel.stored.content, recipientEnvelope: null, legacyPlaintext: true,
+      }) } };
+    }
+  }
   const output = AccountApiTokensCreateActionOutputV1Schema.safeParse(value);
   // Approval history already holds the safe summary. Re-observing it must not
   // require (or recover) the one-shot bearer that was deliberately discarded.

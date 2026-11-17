@@ -180,6 +180,18 @@ describe('API token encryption credentials', () => {
     expect(tokens.AccountApiTokensListActionInputV1Schema.parse({})).toEqual({});
     const observation = tokens.projectAccountApiTokenCreationObservation({ apiToken: summary, token: PAT });
     expect(tokens.projectAccountApiTokenCreationObservation(observation)).toEqual({ apiToken: summary });
+    const legacy = { ...summary, label: 'SDK' };
+    const legacyRead = { apiToken: { ...summary, label: { ...plainReadLabel('SDK'), legacyPlaintext: true } } };
+    expect(tokens.projectAccountApiTokenCreationObservation({ apiToken: legacy })).toEqual(legacyRead);
+    expect(tokens.projectAccountApiTokenCreationObservation(legacyRead)).toEqual(legacyRead);
+    expect(tokens.projectAccountApiTokenCreationObservation({ apiToken: legacy, token: PAT })).toEqual(legacyRead);
+    expect(() => tokens.projectAccountApiTokenCreationObservation({ apiToken: legacy, privateVendorField: true })).toThrow();
+    expect(() => tokens.projectAccountApiTokenCreationObservation({ apiToken: { ...legacy, privateVendorField: true } })).toThrow();
+    expect(() => tokens.projectAccountApiTokenCreationObservation({ apiToken: legacy, token: 'invalid' })).toThrow();
+    expect(() => tokens.projectAccountApiTokenCreationObservation({ apiToken: legacy,
+      token: PAT.replace(CREDENTIAL_ID, '11111111-1111-4111-8111-111111111111') })).toThrow();
+    expect(() => tokens.projectAccountApiTokenCreationObservation({ apiToken: { ...legacy,
+      label: '{"content":{"t":"encrypted","c":"not-base64"},"recipients":[]}' } })).toThrow();
     expect(tokens.AccountApiTokensListActionInputV1Schema.safeParse({ includeEncryptionAccess: true }).success).toBe(false);
     expect(tokens.AccountApiTokensListActionOutputV1Schema.parse({ tokens: [summary] })).toEqual({ tokens: [summary] });
     expect(tokens.AccountApiTokensListActionOutputV1Schema.safeParse({ tokens: [{ ...summary, hasEncryptionAccess: undefined }] }).success).toBe(false);

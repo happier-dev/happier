@@ -2608,26 +2608,42 @@ describe('createActionExecutor (approvals)', () => {
     expect(request).toHaveProperty('retainedCredential', 'synthetic-legacy-private-authority');
   });
 
-  it('reads released V1 approval history through the current token observation policy', async () => {
-    const request = ApprovalRequestV1Schema.parse({
+  it.each([1, 2] as const)('reads retained V%s predecessor approval history through the current token observation policy', async (version) => {
+    const legacySummary = securityTokenSummary;
+    const publicSummary = { ...legacySummary, label: {
+      content: { t: 'plain', v: legacySummary.label }, recipientEnvelope: null, legacyPlaintext: true,
+    } };
+    const historicalV1 = ApprovalRequestV1Schema.parse({
       v: 1, status: 'executed', createdAtMs: 1, updatedAtMs: 3, createdBy: { surface: 'cli' },
       actionId: 'account.apiTokens.create', actionArgs: { tokenId: securityTokenSummary.tokenId, label: 'Requested embed' },
       summary: 'Create token', decision: { kind: 'approve', decidedAtMs: 2 },
       execution: { executedAtMs: 3, ok: true, result: { apiToken: securityTokenSummary, token: securityToken } },
     });
+    // This is the terminal V2 safe-summary shape emitted by the pre-label
+    // projectSettledApprovalExecution writer. It never persisted the bearer.
+    const historicalV2: ApprovalRequest = {
+      ...createApprovalRequest('executed', {
+        createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'account.apiTokens.create',
+        actionArgs: { tokenId: legacySummary.tokenId, label: legacySummary.label },
+      }),
+      execution: { executedAtMs: 3, ok: true, result: { apiToken: legacySummary } },
+    };
+    const request = version === 1 ? historicalV1 : historicalV2;
     const executor = createExecutor({ approvalsGet: async () => request });
     const response = await executor.execute('approval.request.get', { artifactId: 'legacy-token' }, { surface: 'mcp' });
     expect(response).toMatchObject({ ok: true, result: { request: {
-      execution: { result: { apiToken: securityTokenSummary } },
+      execution: { result: { apiToken: publicSummary } },
     } } });
     expect(JSON.stringify(response).includes(securityToken)).toBe(false);
     if (!response.ok || typeof response.result !== 'object' || response.result === null) throw new Error('Expected approval read');
     const publicRequest = Reflect.get(response.result, 'request');
     expect(ApprovalRequestPublicSettlementSchema.parse(publicRequest)).toMatchObject({ actionId: request.actionId,
-      status: 'executed', execution: { ok: true, result: { apiToken: securityTokenSummary } } });
+      status: 'executed', execution: { ok: true, result: { apiToken: publicSummary } } });
     expect(ApprovalRequestPublicSettlementSchema.safeParse({ ...publicRequest, status: 'open' }).success).toBe(false);
     expect(ApprovalRequestPublicSettlementSchema.safeParse({ ...publicRequest, status: 'failed' }).success).toBe(false);
-    expect(request.execution?.result).toHaveProperty('token', securityToken);
+    expect(request.execution?.result).toMatchObject({ apiToken: { label: legacySummary.label } });
+    if (request.v === 1) expect(request.execution?.result).toHaveProperty('token', securityToken);
+    else expect(request.execution?.result).not.toHaveProperty('token');
   });
 
   it('reads released V1 approval history through the current credential input observation policy', async () => {
