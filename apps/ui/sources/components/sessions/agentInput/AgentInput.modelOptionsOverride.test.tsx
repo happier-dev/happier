@@ -5,6 +5,7 @@ import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScr
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { createReducer } from '@/sync/reducer/reducer';
 import { settingsDefaults, type Settings } from '@/sync/domains/settings/settings';
+import { measureNativeLayout } from '@/dev/testkit/render/measureNativeLayout';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -13,7 +14,8 @@ let lastModelPickerOverlayProps: any = null;
 const modalShowMock = vi.fn();
 const modalPromptMock = vi.fn();
 let lastPopoverProps: any = null;
-let mockAgentInputActionBarLayout: 'wrap' | 'collapsed' = 'wrap';
+let mockAgentInputActionBarLayout: 'auto' | 'wrap' | 'collapsed' = 'wrap';
+let mockAgentInputChipDensity: 'auto' | 'labels' = 'labels';
 let mockWindowWidth = 800;
 const supportsFreeformModelSelectionState = vi.hoisted(() => ({ value: false }));
 const storageSettings: Settings = {
@@ -77,12 +79,14 @@ installAgentInputCommonModuleMocks({
                 useSetting: createUseSettingMock({
                     fallback: (key) => {
                         if (key === 'agentInputActionBarLayout') return mockAgentInputActionBarLayout;
+                        if (key === 'agentInputChipDensity') return mockAgentInputChipDensity;
                         return storageSettings[key];
                     },
                 }),
                 useSettings: () => ({
                     ...storageSettings,
                     agentInputActionBarLayout: mockAgentInputActionBarLayout,
+                    agentInputChipDensity: mockAgentInputChipDensity,
                 }),
                 useSessionMessages: () => ({ messages: [], isLoaded: true }),
                 useSessionTranscriptIds: () => ({ ids: [], isLoaded: true, hasRetainedContent: false }),
@@ -324,6 +328,7 @@ describe('AgentInput (modelOptionsOverride)', () => {
             metadata,
             modelMode: 'openai/new',
             modelOptionsOverride: [{ value: 'openai/new', label: 'New Model', description: '' }],
+            sendMenuModes: ['agent_queue', 'server_pending', 'interrupt'],
             autocompleteKinds: [],
             autocompleteSuggestions: async () => [],
         };
@@ -338,8 +343,22 @@ describe('AgentInput (modelOptionsOverride)', () => {
         await act(async () => {
             screen.tree.update(<AgentInput {...props} value="Keep my draft" />);
         });
+        expect(screen.findByTestId('session-composer-send')?.props.accessibilityLabel).toBe('common.send');
         await screen.pressByTestIdAsync('session-composer-send');
         expect(onSend).toHaveBeenCalledWith(undefined);
+
+        for (const content of [{ value: 'Keep my draft' }, { value: '', hasSendableAttachments: true }]) {
+            await act(async () => { screen.tree.update(<AgentInput {...props} {...content} />); });
+            for (const mode of ['agent_queue', 'server_pending', 'interrupt']) {
+                onSend.mockClear();
+                const ordinarySend = screen.findByTestId('session-composer-send');
+                expect(ordinarySend?.props.accessibilityLabel).toBe('common.send');
+                expect(ordinarySend?.props.onLongPress).toBeTypeOf('function');
+                await act(async () => { ordinarySend?.props.onLongPress(); });
+                await screen.pressByTestIdAsync(`agent-input-send-option-${mode}`);
+                expect(onSend).toHaveBeenCalledExactlyOnceWith({ deliveryIntent: mode });
+            }
+        }
 
         await act(async () => {
             screen.tree.update(<AgentInput {...props} modelMode="anthropic/old" />);
@@ -357,12 +376,72 @@ describe('AgentInput (modelOptionsOverride)', () => {
             .not.toBe('Continue with New Model');
     });
 
+    it.each([288, 320])('keeps a long model continuation and engine control inside a %spx row at large text size', async (width) => {
+        mockWindowWidth = 320;
+        mockAgentInputActionBarLayout = 'auto';
+        mockAgentInputChipDensity = 'auto';
+        const modelLabel = 'custom-provider/' + 'very-long-model-identifier-'.repeat(12);
+        const renderComposer = (label: string) => <AgentInput
+                sessionId="session-1" value="" placeholder="Type" onChangeText={() => {}} onSend={() => {}}
+                agentType="opencode"
+                metadata={{ path: '/tmp', host: 'host', flavor: 'opencode',
+                    sessionAppliedModelV1: { v: 1, provider: 'opencode', modelId: 'old', updatedAt: 1 } }}
+                modelMode="new"
+                modelOptionsOverride={[{ value: 'new', label, description: '' }]}
+                onModelModeChange={() => {}}
+                autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+            />;
+        const screen = await renderScreen(renderComposer('New Model'));
+        const measureComposer = () => {
+            const send = screen.findByTestId('session-composer-send');
+            const engine = screen.findByTestId('agent-input-agent-chip');
+            if (!send || !engine) throw new Error('Expected composer controls');
+            let row = send.parent;
+            while (row && (typeof row.type !== 'string' || !row.findAll((node) => node === engine).length)) {
+                row = row.parent;
+            }
+            if (!row) throw new Error('Expected shared action row');
+            let viewport = engine.parent;
+            while (viewport && String(viewport.type) !== 'ScrollView') viewport = viewport.parent;
+            if (!viewport) throw new Error('Expected phone action scroll viewport');
+            const layout = measureNativeLayout(row, width, 2);
+            const engineBounds = layout.rect(engine);
+            const viewportBounds = layout.rect(viewport);
+            const visibleEngineWidth = Math.max(0, Math.min(
+                engineBounds.left + engineBounds.width, viewportBounds.left + viewportBounds.width,
+            ) - Math.max(engineBounds.left, viewportBounds.left));
+            return { send, engine, viewport, layout, visibleEngineWidth };
+        };
+        const baseline = measureComposer();
+        const baselineEngineWidth = baseline.visibleEngineWidth;
+        baseline.layout.free();
+        expect(baselineEngineWidth).toBeGreaterThan(0);
+        await act(async () => { screen.tree.update(renderComposer(modelLabel)); });
+        const { send, viewport, layout, visibleEngineWidth } = measureComposer();
+        try {
+            const sendBounds = layout.rect(send);
+            const viewportBounds = layout.rect(viewport);
+            expect(send.props.accessibilityLabel).toBe(`Continue with ${modelLabel}`);
+            expect(sendBounds.width).toBeGreaterThan(0);
+            expect(sendBounds.left + sendBounds.width).toBeLessThanOrEqual(width);
+            expect(visibleEngineWidth).toBeGreaterThanOrEqual(baselineEngineWidth);
+            expect(viewportBounds.left + viewportBounds.width).toBeLessThanOrEqual(sendBounds.left);
+            for (const label of send.findAll((node) => typeof node.type === 'string' && String(node.type) === 'Text')) {
+                const bounds = layout.rect(label);
+                expect(bounds.left + bounds.width).toBeLessThanOrEqual(sendBounds.left + sendBounds.width);
+            }
+        } finally {
+            layout.free();
+        }
+    });
+
     beforeEach(() => {
         supportsFreeformModelSelectionState.value = false;
         modalPromptMock.mockReset();
         modalShowMock.mockReset();
         mockAgentInputActionBarLayout = 'wrap';
         mockWindowWidth = 800;
+        mockAgentInputChipDensity = 'labels';
         lastModelPickerOverlayProps = null;
         lastPopoverProps = null;
     });

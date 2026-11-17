@@ -45,6 +45,21 @@ const stylesheet = StyleSheet.create(() => ({
         paddingTop: SUBMIT_HIT_SLOP.top,
         paddingBottom: SUBMIT_HIT_SLOP.bottom,
     },
+    modelContinuationClip: {
+        // Reserve room for the composer's engine/settings controls beside the action.
+        maxWidth: '50%',
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    modelContinuationButton: {
+        maxWidth: '100%',
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    modelContinuationText: {
+        maxWidth: '100%',
+        flexShrink: 1,
+    },
 }));
 
 /**
@@ -84,7 +99,7 @@ const stylesheet = StyleSheet.create(() => ({
  * the library must not second-guess that answer by reading the device setting a
  * second time, exactly as the spring resolver does.
  */
-function AgentInputSubmitShape(props: Readonly<{ children: React.ReactNode }>) {
+function AgentInputSubmitShape(props: Readonly<{ children: React.ReactNode; modelContinuation?: boolean }>) {
     const styles = stylesheet;
     const reducedMotion = useReducedMotionPreference();
     const layout = React.useMemo(() => {
@@ -102,7 +117,7 @@ function AgentInputSubmitShape(props: Readonly<{ children: React.ReactNode }>) {
     }, [reducedMotion]);
 
     return (
-        <Animated.View layout={layout} style={styles.shapeClip}>
+        <Animated.View layout={layout} style={[styles.shapeClip, props.modelContinuation ? styles.modelContinuationClip : null]}>
             {props.children}
         </Animated.View>
     );
@@ -136,9 +151,10 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     const sendMenuAnchorRef = React.useRef<View>(null);
     const [sendMenuOpen, setSendMenuOpen] = React.useState(false);
     const [sendTooltipOpen, setSendTooltipOpen] = React.useState(false);
-    const hasSendIntent = props.hasSendableContent || props.armedContinuationTarget != null || props.modelContinuationLabel != null;
+    const pendingModelLabel = props.hasSendableContent ? null : props.modelContinuationLabel;
+    const hasSendIntent = props.hasSendableContent || props.armedContinuationTarget != null || pendingModelLabel != null;
     const sendMenuEnabled = props.hasSendableContent && !props.disabled && !props.isSending
-        && !props.armedContinuationTarget && !props.modelContinuationLabel && Boolean(props.sendMenuItems?.length);
+        && !props.armedContinuationTarget && Boolean(props.sendMenuItems?.length);
     const openSendMenu = () => {
         if (!sendMenuEnabled) return;
         hapticsLight();
@@ -184,8 +200,8 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         }
     }, [hasSendIntent, props.micPressHandler, props.onSend, props.onStop, showStopWhenEmpty]);
 
-    const modelContinuationLabel = !armedContinuation && props.modelContinuationLabel
-        ? t('session.agentContinuation.sendLabel', { agent: props.modelContinuationLabel })
+    const modelContinuationLabel = !armedContinuation && pendingModelLabel
+        ? t('session.agentContinuation.sendLabel', { agent: pendingModelLabel })
         : null;
     const continuationLabel = armedContinuation?.label ?? modelContinuationLabel;
     if (continuationLabel) {
@@ -200,10 +216,12 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
             />
         ) : undefined;
         return (
-            <AgentInputSubmitShape>
+            <AgentInputSubmitShape modelContinuation={modelContinuationLabel !== null}>
                 <RoundButton
                     testID={props.testID}
                     size="small"
+                    style={modelContinuationLabel ? stylesheet.modelContinuationButton : undefined}
+                    textStyle={modelContinuationLabel ? stylesheet.modelContinuationText : undefined}
                     // "Continue with [mark]". Pressing this does not only send — it
                     // continues the Session with another Agent — so the control says
                     // so on its face rather than only in a popover the reader has
