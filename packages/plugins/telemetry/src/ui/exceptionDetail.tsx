@@ -39,6 +39,7 @@ import {
   TriageDetailSpread,
   TriageDetailStory,
   TriageSourceWrites,
+  type TriageDetailTrendV1,
   useTriageDetailPanelOpener,
   type TriageDetailSpreadTileV1,
   type TriageSourceWriteSettlementV1,
@@ -50,17 +51,17 @@ import {
   formatTriageTimestampV1 as formatTimestamp,
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
-import {
-  TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1,
-  databaseActionLocalIdV1,
-} from '@happier-dev/database-protocol';
+import { TELEMETRY_EXCEPTION_ISSUE_TRANSITION_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 
 import {
   exceptionDetailDataSchema,
   exceptionIssueTransitionResultSchema,
   type ExceptionDetailDataV1,
 } from '../exceptions/contracts.js';
+import { OccurrenceRequest } from './occurrenceRequest.js';
 import {
+  EXCEPTION_TREND_BUCKET_MS,
   TELEMETRY_PLUGIN_ID,
   useExceptionOccurrences,
   type ExceptionOccurrenceAddressV1,
@@ -139,6 +140,7 @@ function lifecycleSentence(
 
 function spreadTiles(
   data: ExceptionDetailDataV1,
+  requestsAffected: number | null,
   text: Translate,
   locale: string,
   nowMs: number,
@@ -150,6 +152,19 @@ function spreadTiles(
       label: text('plugins.telemetry.exceptions.events', 'Events'),
       value: `~${formatCount(locale, data.count, 'compact')}`,
     },
+    // Distinct traces the group reached in the trend's window; occurrences without trace context aren't counted.
+    ...(requestsAffected === null
+      ? []
+      : [
+          {
+            id: 'requests-affected',
+            label: text(
+              'plugins.telemetry.exceptions.requestsAffected',
+              'Requests affected',
+            ),
+            value: formatCount(locale, requestsAffected, 'compact'),
+          },
+        ]),
     {
       id: 'first-seen',
       label: text('plugins.telemetry.exceptions.firstSeen', 'First seen'),
@@ -175,18 +190,57 @@ function spreadTiles(
   ];
 }
 
+/** The collector's per-bucket counts as the shared Spread trend; absent until the window was read. */
+function trendOf(
+  controller: ExceptionOccurrencesControllerV1 | null,
+  text: Translate,
+): Readonly<{ trend: TriageDetailTrendV1 | null; requestsAffected: number | null }> {
+  const state = controller?.state;
+  if (state === undefined || state.kind !== 'ready')
+    return { trend: null, requestsAffected: null };
+  return {
+    requestsAffected: state.requestsAffected,
+    trend:
+      state.trend === null
+        ? null
+        : {
+            label: text(
+              'plugins.telemetry.exceptions.trendLabel',
+              'Events every {hours} hours',
+            ).replace('{hours}', String(EXCEPTION_TREND_BUCKET_MS / 3_600_000)),
+            windowLabel: text(
+              'plugins.telemetry.exceptions.trendWindow',
+              'Last 7 days',
+            ),
+            points: state.trend.map((bucket) => ({
+              atMs: bucket.since,
+              count: bucket.count,
+            })),
+          },
+  };
+}
+
 function OverviewPanel({
   data,
   shared,
+  controller,
   locale,
   nowMs,
 }: Readonly<{
   data: ExceptionDetailDataV1;
   shared: boolean;
+  /** Null for a Team-shared issue: its trend lives on the owner's collector. */
+  controller: ExceptionOccurrencesControllerV1 | null;
   locale: string;
   nowMs: number;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  const { active } = useTabPanelActivity();
+  const demand = controller?.demand;
+  React.useEffect(() => {
+    if (active) demand?.();
+  }, [active, demand]);
+  const { trend, requestsAffected } = trendOf(controller, text);
   const sentence = lifecycleSentence(data, text, locale, nowMs);
   const entries: MetadataEntry[] = [
     ...(data.serviceName
@@ -223,8 +277,8 @@ function OverviewPanel({
   ];
   const spread = (
     <TriageDetailSpread
-      tiles={spreadTiles(data, text, locale, nowMs)}
-      trend={null}
+      tiles={spreadTiles(data, requestsAffected, text, locale, nowMs)}
+      trend={trend}
       locale={locale}
       nowMs={nowMs}
     />
@@ -390,14 +444,18 @@ function OccurrencesPanel({
 
 function StackTracePanel({
   controller,
+  address,
   data,
   locale,
   nowMs,
+  signal,
 }: Readonly<{
   controller: ExceptionOccurrencesControllerV1;
+  address: ExceptionOccurrenceAddressV1;
   data: ExceptionDetailDataV1;
   locale: string;
   nowMs: number;
+  signal: AbortSignal;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const { active } = useTabPanelActivity();
@@ -487,6 +545,16 @@ function StackTracePanel({
       ) : (
         <CodeBlock code={stack.stacktrace} selectable />
       )}
+      <OccurrenceRequest
+        source={{
+          kind: 'environment',
+          serverId: address.serverId,
+          environmentId: address.environmentId,
+        }}
+        occurrence={selected}
+        locale={locale}
+        signal={signal}
+      />
     </Stack>
   );
 }
@@ -574,6 +642,7 @@ function ExceptionDetailBody({
       <OverviewPanel
         data={data}
         shared={shared}
+        controller={address === null ? null : controller}
         locale={locale}
         nowMs={nowMs}
       />
@@ -584,9 +653,11 @@ function ExceptionDetailBody({
       ) : (
         <StackTracePanel
           controller={controller}
+          address={address}
           data={data}
           locale={locale}
           nowMs={nowMs}
+          signal={signal}
         />
       ),
     occurrences:

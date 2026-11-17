@@ -111,6 +111,8 @@ const OCCURRENCES = [
     type: 'TypeError',
     message: 'Cannot read properties of undefined',
     topFrame: record.topFrame,
+    traceId: 'trace-7f2c',
+    spanId: 'span-receipt',
   },
   {
     id: 'occ-2',
@@ -132,7 +134,7 @@ afterEach(async () => {
 
 async function mount(
   input: JsonValue,
-  read: (input: Record<string, unknown>) => Promise<JsonValue>,
+  read: (input: Record<string, unknown>, localId: string) => Promise<JsonValue>,
 ) {
   const calls: Call[] = [];
   let fixture!: PluginUiTestkit;
@@ -154,7 +156,7 @@ async function mount(
         executeAction: async ({ action, input: actionInput }) => {
           const localId = typeof action === 'string' ? action : action.localId;
           calls.push({ localId, input: actionInput as JsonValue });
-          return await read(actionInput as Record<string, unknown>);
+          return await read(actionInput as Record<string, unknown>, localId);
         },
       },
     });
@@ -163,14 +165,58 @@ async function mount(
   return { page: fixture, calls };
 }
 
-const okRead = async (input: Record<string, unknown>): Promise<JsonValue> => ({
-  status: 'ok',
-  items: OCCURRENCES,
-  ...(input.occurrenceId === undefined ? {} : { stacktrace: STACK }),
+const HOUR = 3_600_000;
+/** The trend the collector answers for whatever window the surface authored: one count per bucket. */
+function trendFor(window: { since: number; until: number; bucketMs: number }) {
+  const buckets = [];
+  for (let since = window.since; since < window.until; since += window.bucketMs)
+    buckets.push({ since, until: Math.min(since + window.bucketMs, window.until), count: since >= window.until - 6 * window.bucketMs ? 40 : 0 });
+  return buckets;
+}
+
+const okRead = async (input: Record<string, unknown>): Promise<JsonValue> => {
+  const window = input.window as { since: number; until: number; bucketMs: number } | undefined;
+  return {
+    status: 'ok',
+    items: OCCURRENCES,
+    ...(input.occurrenceId === undefined ? {} : { stacktrace: STACK }),
+    ...(window === undefined ? {} : { trend: trendFor(window), requestsAffected: 287 }),
+  };
+};
+
+/** The occurrence's request as the existing capture trace read returns it (summaries carry no bodies). */
+const span = (id: string, at: number, durationMs: number, extra: Record<string, unknown>) => ({
+  id, worktree: 'env', kind: 'span', source: 'otlp', at, durationMs, traceId: 'trace-7f2c', ...extra,
 });
+const TRACE = {
+  ok: true,
+  source: { kind: 'environment', serverId: 'home-1', environmentId: 'env-production' },
+  traceId: 'trace-7f2c',
+  summaries: [
+    span('root', 1_000, 412, { spanId: 'span-root', spanKind: 2, endpointMethod: 'POST', endpointRoute: '/checkout', httpStatusCode: 500, outcome: 'error' }),
+    span('stripe', 1_040, 318, { spanId: 'span-stripe', parentSpanId: 'span-root', shape: 'stripe.paymentIntents.create' }),
+    span('receipt', 1_360, 58, { spanId: 'span-receipt', parentSpanId: 'span-root', shape: 'buildReceipt', outcome: 'error' }),
+    { id: 'log-1', worktree: 'env', kind: 'log', source: 'otlp', at: 1_004, traceId: 'trace-7f2c', spanId: 'span-root', severityNumber: 9 },
+    { id: 'log-2', worktree: 'env', kind: 'log', source: 'otlp', at: 1_400, traceId: 'trace-7f2c', spanId: 'span-receipt', severityNumber: 17 },
+  ],
+  repeatedQueries: [],
+  slowChildSpans: [],
+  logCorrelations: [
+    { logId: 'log-1', traceId: 'trace-7f2c', spanId: 'span-root', spanObservationId: 'root' },
+    { logId: 'log-2', traceId: 'trace-7f2c', spanId: 'span-receipt', spanObservationId: 'receipt' },
+  ],
+};
+
+/** The collector answers each read by the Action it went through. */
+const collectorRead = (input: Record<string, unknown>, localId: string): Promise<JsonValue> => {
+  if (localId === 'capture/trace/get') return Promise.resolve(TRACE as unknown as JsonValue);
+  if (localId === 'capture/query/get')
+    return Promise.resolve({ ok: true, source: TRACE.source, detail: { body: `body of ${String(input.id)}` } } as JsonValue);
+  return okRead(input);
+};
 
 describe('the Happier exception detail', () => {
-  it('states the regression and the spread from the exact read without reading the collector', async () => {
+  it('states the spread from the exact read and reads the trend and Requests affected once from the collector', async () => {
     const { page, calls } = await mount(
       (await detailInput(false, 'overview')) as unknown as JsonValue,
       okRead,
@@ -180,6 +226,27 @@ describe('the Happier exception detail', () => {
     });
     await expect(page.getByText('v1.42')).resolves.toBeDefined();
     await expect(page.getByText('~312')).resolves.toBeDefined();
+    await vi.waitFor(async () => {
+      await expect(page.getByText('287')).resolves.toBeDefined();
+    });
+    await expect(page.getByText('Requests affected')).resolves.toBeDefined();
+    await expect(page.getByText('Last 7 days')).resolves.toBeDefined();
+    // One read serves the trend and the first occurrence page; the window is whole hours over seven days.
+    expect(calls).toHaveLength(1);
+    const window = (calls[0]!.input as { window: { since: number; until: number; bucketMs: number } }).window;
+    expect(window.until - window.since).toBe(7 * 24 * HOUR);
+    expect(window.until % window.bucketMs).toBe(0);
+    expect(window.bucketMs % HOUR).toBe(0);
+  });
+
+  it('reads nothing for a Team-shared issue’s overview', async () => {
+    const { page, calls } = await mount(
+      (await detailInput(true, 'overview')) as unknown as JsonValue,
+      okRead,
+    );
+    await vi.waitFor(async () => {
+      await expect(page.getByText('~312')).resolves.toBeDefined();
+    });
     expect(calls).toEqual([]);
   });
 
@@ -199,6 +266,7 @@ describe('the Happier exception detail', () => {
           environmentId: 'env-production',
           fingerprint: 'fp-currency',
           page: { limit: 25 },
+          window: expect.objectContaining({ bucketMs: expect.any(Number) }),
         },
       },
     ]);
@@ -207,10 +275,10 @@ describe('the Happier exception detail', () => {
   it('reads the newest occurrence’s stack on demand and says how the issue is grouped', async () => {
     const { page, calls } = await mount(
       (await detailInput(false, 'stack-trace')) as unknown as JsonValue,
-      okRead,
+      collectorRead,
     );
     await vi.waitFor(() => {
-      expect(calls).toHaveLength(2);
+      expect(calls.filter((call) => call.localId === 'capture/exceptions/occurrences/read')).toHaveLength(2);
     });
     await vi.waitFor(async () => {
       await expect(page.getByText(STACK)).resolves.toBeDefined();
@@ -221,10 +289,47 @@ describe('the Happier exception detail', () => {
       ),
     ).resolves.toBeDefined();
     expect(
-      calls.map(
-        (call) => (call.input as { occurrenceId?: string }).occurrenceId,
-      ),
+      calls
+        .filter((call) => call.localId === 'capture/exceptions/occurrences/read')
+        .map((call) => (call.input as { occurrenceId?: string }).occurrenceId),
     ).toEqual([undefined, 'occ-3']);
+  });
+
+  it('draws the occurrence’s request from the capture trace read and reads a log body only when opened', async () => {
+    const { page, calls } = await mount(
+      (await detailInput(false, 'stack-trace')) as unknown as JsonValue,
+      collectorRead,
+    );
+    await vi.waitFor(async () => {
+      await expect(page.getByText('The request')).resolves.toBeDefined();
+    });
+    expect(calls.filter((call) => call.localId === 'capture/trace/get')).toEqual([
+      {
+        localId: 'capture/trace/get',
+        input: {
+          source: { kind: 'environment', serverId: 'home-1', environmentId: 'env-production' },
+          traceId: 'trace-7f2c',
+          page: { limit: expect.any(Number) },
+        },
+      },
+    ]);
+    // The span this occurrence threw in says so; the request line names its route and time.
+    await vi.waitFor(async () => {
+      await expect(page.getByText('POST /checkout · 412 ms · v1.43')).resolves.toBeDefined();
+    });
+    await expect(page.getByText('Logs from this request')).resolves.toBeDefined();
+    expect(calls.some((call) => call.localId === 'capture/query/get')).toBe(false);
+    const errorLine = (await page.getAllByRole('button')).find((target) => target.name?.includes('error'));
+    expect(errorLine).toBeDefined();
+    await act(async () => {
+      await page.press(errorLine!);
+    });
+    await vi.waitFor(async () => {
+      await expect(page.getByText('body of log-2')).resolves.toBeDefined();
+    });
+    expect(calls.filter((call) => call.localId === 'capture/query/get').map((call) => call.input)).toEqual([
+      { source: TRACE.source, id: 'log-2' },
+    ]);
   });
 
   it('sends a Team-shared issue to its owner’s collector instead of reading', async () => {

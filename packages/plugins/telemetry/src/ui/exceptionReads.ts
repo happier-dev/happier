@@ -12,10 +12,8 @@ import {
   useExecutePluginAction,
   type PluginActionExecution,
 } from '@happier-dev/plugin-ui';
-import {
-  TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1,
-  databaseActionLocalIdV1,
-} from '@happier-dev/database-protocol';
+import { TELEMETRY_EXCEPTION_OCCURRENCES_READ_ACTION_ID_V1 } from '@happier-dev/database-protocol';
+import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 
 import { exceptionOccurrencesReadResultSchema } from '../exceptions/contracts.js';
 
@@ -30,6 +28,19 @@ const OCCURRENCES_ACTION = Object.freeze({
 
 /** One page of the walk, newest first; the collector caps each read at its own row limit. */
 const PAGE_LIMIT = 25;
+
+/**
+ * The Overview trend's window: the last seven days in two-hour steps, ending at the next whole
+ * step so the buckets stay put between reads. Within the host's one-read bucket bound (84 of 100).
+ */
+export const EXCEPTION_TREND_SPAN_MS = 7 * 24 * 3_600_000;
+export const EXCEPTION_TREND_BUCKET_MS = 2 * 3_600_000;
+export type ExceptionTrendBucketV1 = Readonly<{ since: number; until: number; count: number }>;
+
+function trendWindow(nowMs: number) {
+  const until = Math.ceil(nowMs / EXCEPTION_TREND_BUCKET_MS) * EXCEPTION_TREND_BUCKET_MS;
+  return { since: until - EXCEPTION_TREND_SPAN_MS, until, bucketMs: EXCEPTION_TREND_BUCKET_MS };
+}
 
 type OccurrencesResult = ReturnType<
   typeof exceptionOccurrencesReadResultSchema.parse
@@ -64,6 +75,9 @@ export type ExceptionOccurrencesStateV1 =
       kind: 'ready';
       items: readonly ExceptionOccurrenceV1[];
       readAtMs: number;
+      /** The group's counts per bucket and the distinct requests it reached, from the first page's window. */
+      trend: readonly ExceptionTrendBucketV1[] | null;
+      requestsAffected: number | null;
       hasMore: boolean;
       loadingMore: boolean;
       /** A later page or a re-read failed; the rows above stay at full strength. */
@@ -104,6 +118,8 @@ type Read =
       items: readonly ExceptionOccurrenceV1[];
       nextCursor?: Cursor;
       stacktrace?: string | null;
+      trend?: readonly ExceptionTrendBucketV1[];
+      requestsAffected?: number;
     }>
   | Readonly<{ kind: 'disabled' }>
   | Readonly<{ kind: 'failed'; failure: ExceptionReadFailureV1 }>;
@@ -125,6 +141,10 @@ function readOf(execution: PluginActionExecution<unknown>): Read | null {
     ...(parsed.data.stacktrace === undefined
       ? {}
       : { stacktrace: parsed.data.stacktrace }),
+    ...(parsed.data.trend === undefined ? {} : { trend: parsed.data.trend }),
+    ...(parsed.data.requestsAffected === undefined
+      ? {}
+      : { requestsAffected: parsed.data.requestsAffected }),
   };
 }
 
@@ -154,6 +174,8 @@ export function useExceptionOccurrences(
         {
           ...address,
           page: { limit: PAGE_LIMIT, ...(before ? { before } : {}) },
+          // The first page also carries the Overview's trend and Requests affected: one read serves both.
+          ...(mode === 'first' ? { window: trendWindow(Date.now()) } : {}),
         },
         { signal },
       );
@@ -177,6 +199,12 @@ export function useExceptionOccurrences(
           kind: 'ready',
           items,
           readAtMs: Date.now(),
+          trend:
+            mode === 'first' ? (read.trend ?? null) : (retained?.trend ?? null),
+          requestsAffected:
+            mode === 'first'
+              ? (read.requestsAffected ?? null)
+              : (retained?.requestsAffected ?? null),
           hasMore: read.nextCursor !== undefined,
           loadingMore: false,
           failure: null,
