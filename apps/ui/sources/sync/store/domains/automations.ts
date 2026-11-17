@@ -136,7 +136,7 @@ export function createWorkflowTriggerChangeSelector(sessionId: string | null, wo
     let observed = new Map<string, AutomationDefinition>();
     let signal = EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL;
     const queryKey = workflowTriggerQueryKey(managedTarget ? { managedTarget }
-        : sessionId !== null ? { sessionId } : workflow !== null ? { workflow } : { scope });
+        : sessionId !== null ? { lifetimeSession: { sessionId } } : workflow !== null ? { workflow } : { scope });
     return (state: Pick<AutomationsDomain, 'automations' | 'workflowTriggerSetsById' | 'workflowTriggerSetIdsByQuery'>) => {
         if (previous === state.automations) return signal;
         const relevant = Object.values(state.automations)
