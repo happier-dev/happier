@@ -1887,9 +1887,9 @@ export async function ensureWorkspacePackagesBuiltByName(monorepoPath, packageNa
   const batchOptions = { quiet, force, timeoutMs, includeDevDependencies, publicationMode: resolvedPublicationMode,
     buildMode: resolvedBuildMode, maxConcurrentBuilds, isolatePluginFailures, visitedNames };
   if (!inheritedAdmission && workspaceBuildBoundary.workerModule && requiresTypeScriptAdmission({ env })) {
-    const batch = await buildWorkspacePackageNamesInOneAdmission(monorepoRoot, normalizedPackageNames, {
+    const batch = await withSingleTrailingBuildPass({ run: () => buildWorkspacePackageNamesInOneAdmission(monorepoRoot, normalizedPackageNames, {
       ...batchOptions, env: { ...env, [WORKSPACE_BUILD_MODE_ENV]: resolvedBuildMode }, workspaceBuildBoundary,
-      onPackageBuildStart, onPackageBuildDone, onPackageBuildResult, signal });
+      onPackageBuildStart, onPackageBuildDone, onPackageBuildResult, signal }) });
     if (batch) return { ok: true, ...batch, skipped: [] };
   }
   const result = await ensureWorkspacePackageNamesBuilt(monorepoRoot, normalizedPackageNames, {

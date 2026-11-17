@@ -319,6 +319,79 @@ mkdirSync(output,{recursive:true});writeFileSync(join(output,'index.js'),'export
   assert.equal(idle.waitingCount, 0);
 });
 
+for (const continuedDrift of [false, true]) test(`queued named package admission ${continuedDrift ? 'exhausts the existing trailing pass' : 'recalculates changed demand after releasing capacity'}`, { skip: process.platform !== 'linux' }, async t => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-named-admission-drift-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const native = await installWorkspaceAdmissionProcessFixture(t, root);
+  const repoRoot = join(root, 'native-owner');
+  writePnpmWorkspaceFixture(repoRoot, { private: true, workspaces: ['apps/*', 'packages/*'] });
+  for (const app of ['cli', 'server', 'ui']) {
+    mkdirSync(join(repoRoot, 'apps', app), { recursive: true });
+    writeFileSync(join(repoRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  for (const name of ['requested', 'added']) {
+    const dir = join(repoRoot, 'packages', name);
+    mkdirSync(join(dir, 'src'), { recursive: true });
+    writeFileSync(join(dir, 'src/index.ts'), 'export const ready = true;\n');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: `@happier-dev/${name}`, type: 'module',
+      main: './dist/index.js', scripts: { build: 'fixture-build' } }));
+  }
+  const packageDir = join(repoRoot, 'packages/requested');
+  const manifestPath = join(packageDir, 'package.json');
+  const pnpm = join(root, 'pnpm.mjs');
+  writeFileSync(pnpm, `import {mkdirSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+const output=process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
+mkdirSync(output,{recursive:true});writeFileSync(join(output,'index.js'),'export const ready = true;\\n');
+`);
+  const admissions = join(root, 'admissions.log');
+  const keepChanging = join(root, 'keep-changing');
+  const mutation = join(root, 'mutate.mjs');
+  writeFileSync(mutation, `import {readFileSync,writeFileSync} from 'node:fs';
+const path=${JSON.stringify(manifestPath)};
+const value=JSON.parse(readFileSync(path,'utf8'));value.description=(value.description ?? '')+'changed';
+writeFileSync(path,JSON.stringify(value));
+`);
+  const launcher = join(root, 'counting-launcher.sh');
+  writeFileSync(launcher, `#!/bin/sh\ncase "$1" in --heavyweight-admission) echo admission >> '${admissions}'
+if [ -f '${keepChanging}' ]; then '${process.execPath}' '${mutation}'; fi
+;; esac\nexec /bin/sh '${native.launcher}' "$@"\n`);
+  chmodSync(launcher, 0o755);
+  const env = { ...native.env, npm_execpath: pnpm, CI: '', HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_HSTACK_EXECUTION: '' };
+  const build = () => ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/requested'], {
+    env, quiet: true, signal: t.signal,
+    workspaceBuildBoundary: { ...defaultWorkspaceBuildBoundary, workerLauncherPath: launcher },
+  });
+  const admissionCount = () => readFileSync(admissions, 'utf8').trim().split('\n').length;
+  assert.deepEqual((await build()).built, ['@happier-dev/requested']);
+  assert.deepEqual((await build()).built, []);
+  assert.equal(admissionCount(), 1, 'stable current demand does not acquire another admission');
+  writeFileSync(join(packageDir, 'src/index.ts'), 'export const ready = false;\n');
+  const pressure = await holdNativeAdmissionFixtureMemory(t, native, { totalKiB: 73400320, availableKiB: 1 });
+  const pending = build();
+  void pending.catch(() => {});
+  try {
+    while ((await native.brokerStatus()).waitingCount !== 1) {
+      t.signal.throwIfAborted();
+      await new Promise(resolveWait => setTimeout(resolveWait, 10));
+    }
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    writeFileSync(manifestPath, JSON.stringify({ ...manifest, dependencies: { '@happier-dev/added': 'workspace:*' } }));
+    if (continuedDrift) writeFileSync(keepChanging, 'continue');
+  } finally {
+    await pressure.release();
+  }
+  if (continuedDrift) await assert.rejects(pending, { code: 'BUILD_INPUTS_CHANGED', trailingPassExhausted: true });
+  else {
+    assert.deepEqual((await pending).built, ['@happier-dev/added', '@happier-dev/requested']);
+    assert.equal(isWorkspacePackageOutputCurrent(packageDir, { dependencyDirs: [join(repoRoot, 'packages/added')] }), true);
+  }
+  assert.equal(admissionCount(), 3, 'changed resources release the first admission before the single existing trailing pass');
+  const idle = await native.brokerStatus();
+  assert.equal(idle.activeCount, 0);
+  assert.equal(idle.waitingCount, 0);
+});
+
 test('captured public package builds keep their manifest identity through native self-dispatch', { skip: process.platform !== 'linux', timeout: 30_000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'happier-captured-public-build-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
