@@ -200,13 +200,16 @@ describe("Automation reply handoff worker", () => {
         const warnings = vi.spyOn(logging, "warn").mockImplementation(() => {});
         let unavailable = true;
         const release = observePrismaRequests(db, { before: request => {
-            if (unavailable && request.model === "AutomationRun" && request.action.startsWith("find")) throw new Error(privateDetails);
+            if (unavailable && request.model === "AutomationRun" && request.action.startsWith("find")) {
+                throw Object.assign(new Error(privateDetails), { code: "P1001" });
+            }
         } });
         const worker = startAutomationReplyHandoffWorker({ dispatch: async () => ({ kind: "settled",
             settlement: { kind: "accepted" }, accountCurrentness: await readCurrentness() }) });
         try {
             await vi.waitFor(() => expect(warnings).toHaveBeenCalledWith(
-                { module: "automation-reply-handoff-worker", operation: "pass" }, expect.any(String)));
+                { module: "automation-reply-handoff-worker", operation: "pass",
+                    failureCause: { phase: "automation.reply_handoff.pass", errorClass: "Error", errorCode: "P1001", httpStatus: null } }, expect.any(String)));
             await clock.waitForArm(1);
             unavailable = false;
             await db.automationRun.update({ where: { id: RUN_ID }, data: { replyHandoffState: "ready" } });
@@ -215,6 +218,32 @@ describe("Automation reply handoff worker", () => {
                 select: { replyHandoffState: true } })).toEqual({ replyHandoffState: "accepted" }));
             expect(JSON.stringify(warnings.mock.calls)).not.toContain(privateDetails);
         } finally { await worker.stop(); release(); warnings.mockRestore(); clock.close(); }
+    });
+
+    it.each(["throw", "unavailable", "malformed"] as const)("retains a private-safe %s cause beside the durable settlement", async (failure) => {
+        await seedReadyHandoff();
+        const privateDetails = "private reply envelope credential";
+        const warnings = vi.spyOn(logging, "warn").mockImplementation(() => {});
+        let dispatches = 0;
+        try {
+            await runAutomationReplyHandoffWorkerPass({ now: () => NOW, dispatch: async () => {
+                dispatches += 1;
+                if (failure === "throw") throw Object.assign(new Error(privateDetails), { code: "ECONNRESET" });
+                if (failure === "unavailable") return { kind: "unavailable", code: "actionUnavailable" };
+                return { kind: "settled", settlement: { kind: "accepted" }, privateDetails } as never;
+            } });
+            const code = failure === "throw" ? "targetUnavailable" : failure === "unavailable" ? "actionUnavailable" : "contractInvalid";
+            expect(warnings).toHaveBeenCalledWith(expect.objectContaining({
+                module: "automation-reply-handoff-worker", runId: RUN_ID, handoffId: HANDOFF_ID, code,
+                ...(failure === "throw" ? { failureCause: { phase: "automation.reply_handoff.dispatch", errorClass: "Error", errorCode: "ECONNRESET", httpStatus: null } } : {}),
+            }), expect.any(String));
+            expect(JSON.stringify(warnings.mock.calls)).not.toContain(privateDetails);
+            expect(dispatches).toBe(1);
+            await expect(db.automationRun.findUniqueOrThrow({ where: { id: RUN_ID },
+                select: { replyHandoffId: true, replyHandoffState: true } })).resolves.toEqual({
+                replyHandoffId: HANDOFF_ID, replyHandoffState: failure === "unavailable" ? "blocked" : "ready",
+            });
+        } finally { warnings.mockRestore(); }
     });
 
     it.each([0, 1_234])("settles a late RPC retry hint %i at the response clock while retaining the same high-attempt handoff", async (retryAfterMs) => {

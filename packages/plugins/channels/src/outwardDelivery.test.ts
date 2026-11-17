@@ -3948,12 +3948,13 @@ describe('Channels control-response outward custody', () => {
     ]))?.custody.state).toBe('outcomeUnknown');
   });
 
-  it('reports a post-provider CAS conflict as pending settlement, never as no attempt', async () => {
+  it.each(['conflict', 'failure'] as const)('reports a post-provider CAS %s as pending settlement with its cause, never as no attempt', async (outcome) => {
     const store = new MemoryDeliveryStore();
     const compareAndSwap = store.compareAndSwap.bind(store);
     let casCalls = 0;
     store.compareAndSwap = async (input) => {
       casCalls += 1;
+      if (casCalls > 1 && outcome === 'failure') throw new PluginError({ code: 'service_unavailable', retryable: true, message: 'private settlement transport failure' });
       return casCalls === 1 ? compareAndSwap(input) : { kind: 'conflict' };
     };
     const providerResult = { kind: 'delivered', providerMessageIds: ['provider-message-1'] } as const;
@@ -3973,7 +3974,8 @@ describe('Channels control-response outward custody', () => {
       },
       providerResult,
       attemptSettlement: { custodyId: JSON.stringify(['connection-1', 'binding-1', obligation().source]),
-        operation: 'deliver', providerResult },
+        operation: 'deliver', providerResult,
+        ...(outcome === 'failure' ? { failureCause: { code: 'service_unavailable', retryable: true } } : {}) },
     });
   });
 

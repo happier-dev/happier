@@ -4555,10 +4555,13 @@ describe('Channels outward-delivery supervisor', () => {
     { state: 'notSent', result: { kind: 'notDelivered', retry: 'never' } },
     { state: 'retryDue', result: { kind: 'notDelivered', retry: 'after', retryAfterMs: 5_000 } },
     { state: 'outcomeUnknown', result: { kind: 'outcomeUnknown', providerMessageIds: ['private-receipt'] } },
+    { state: 'outcomeUnknown', result: { kind: 'outcomeUnknown' }, throws: true },
     { state: 'partial', result: { kind: 'partial', providerMessageIds: ['private-receipt'], failedChunk: 1 } },
     { state: 'retryDue', result: { kind: 'notReady', reason: 'network', diagnostic: 'private provider error and address' } },
-  ] satisfies readonly { state: string; result: ConversationDeliveryResultV1 }[])(
-    'records a $state attempt settlement once with content-free provider evidence', async ({ state: settledState, result }) => {
+  ] satisfies readonly { state: string; result: ConversationDeliveryResultV1; throws?: boolean }[])(
+    'records a $state attempt settlement once with content-free provider evidence', async (scenario) => {
+    const { state: settledState, result } = scenario;
+    const throws = 'throws' in scenario && scenario.throws;
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await seedProjectionState(state);
@@ -4569,7 +4572,10 @@ describe('Channels outward-delivery supervisor', () => {
         items: [{ kind: 'assistantText', sessionId: 'session-1', seq: 5, itemId: 'final-5',
           turnId: 'turn-5', final: 'completed', text: 'private answer', consumedInputs: [] }],
         scannedThroughSeq: 5, nextCursor: '5', hasMore: false });
-    const deliver = vi.fn(async () => ({ result, executionOrigin: providerTransportOrigin }));
+    const deliver = vi.fn(async () => {
+      if (throws) throw new PluginError({ code: 'service_unavailable', retryable: true, message: 'private provider exception', details: { token: 'private credential' } });
+      return { result, executionOrigin: providerTransportOrigin };
+    });
     const context = backgroundContext({ state, deliveries, execute, logger,
       executeAdmittedTargetedOperationWithExecutionOrigin: deliver });
     await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
@@ -4581,6 +4587,7 @@ describe('Channels outward-delivery supervisor', () => {
       code: `channels_projection_${settledState}`, retryable: settledState === 'retryDue',
       custodyId: row?.rowId, attemptCount: 1, settledState,
       settlementStatus: 'settled', providerOperation: 'deliver', providerResultKind: result.kind,
+      ...(throws ? { failureCause: { code: 'service_unavailable', retryable: true } } : {}),
       ...('retry' in result ? { providerRetry: result.retry } : {}),
       ...('reason' in result ? { providerResultCode: result.reason } : {}),
       ...(settledState === 'retryDue' ? { retryNotBefore: result.kind === 'notReady' ? 1_100 : 5_100 } : {}),
@@ -4768,7 +4775,7 @@ describe('Channels outward-delivery supervisor', () => {
       executionOrigin: providerTransportOrigin }));
     const getDelivery = deliveries.get.bind(deliveries);
     vi.spyOn(deliveries, 'get').mockImplementation(async (id) => {
-      if (!available && boundary === 'custody') throw new Error('secret custody read detail');
+      if (!available && boundary === 'custody') throw new PluginError({ code: 'service_unavailable', retryable: true, message: 'secret custody read detail' });
       return await getDelivery(id);
     });
     const context = backgroundContext({ state, deliveries, execute,
@@ -4779,6 +4786,7 @@ describe('Channels outward-delivery supervisor', () => {
     expect(logger.warn).toHaveBeenCalledWith('[Channels] outward delivery supervisor work failed', {
       boundary: 'transcript-projection', bindingId: 'binding-1',
       code: boundary === 'transcript' ? 'service_unavailable' : 'channels_projection_custodyUnavailable', retryable: true,
+      ...(boundary === 'custody' ? { failureCause: { code: 'service_unavailable', retryable: true } } : {}),
     });
     expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('secret');
     expect(deliveries.rows.size).toBe(0);
@@ -5672,7 +5680,7 @@ describe('Channels outward-delivery supervisor', () => {
     expect(provider.mock.calls.filter(([operation]) => operation === providerDeliveryReconcileAction)).toHaveLength(1);
   });
 
-  it('reconciles a stale retained attempt through the optional provider Action instead of re-sending it after restart', async () => {
+  it.each([false, true])('reconciles a stale retained attempt without re-sending and retains a thrown cause (%s)', async (throws) => {
     const state = new MemoryCollection();
     const deliveries = new MemoryCollection();
     await seedProjectionState(state);
@@ -5685,10 +5693,10 @@ describe('Channels outward-delivery supervisor', () => {
       hasMore: false,
       items: [],
     }));
-    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => ({
-      result: { kind: 'notDelivered', retry: 'safe' },
-      executionOrigin: providerTransportOrigin,
-    }));
+    const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async () => {
+      if (throws) throw new PluginError({ code: 'service_unavailable', retryable: true, message: 'private reconciliation exception' });
+      return { result: { kind: 'notDelivered', retry: 'safe' }, executionOrigin: providerTransportOrigin };
+    });
     const logger = { warn: vi.fn() };
     const context = backgroundContext({ state, deliveries, execute, executeAdmittedTargetedOperationWithExecutionOrigin, logger });
     const store = createConversationOutwardDeliveryCollectionStore({
@@ -5724,16 +5732,17 @@ describe('Channels outward-delivery supervisor', () => {
       expect.objectContaining({ expectedExecutionRouting: getPluginMachineExecutionRouting(providerTransportOrigin) }),
     );
     expect([...deliveries.rows.values()][0]?.value.payload).toMatchObject({
-      state: 'retryDue',
+      state: throws ? 'outcomeUnknown' : 'retryDue',
       attemptCount: 1,
     });
     expect(logger.warn.mock.calls.map(call => call[1]).filter(detail => detail.custodyId !== undefined)).toEqual([{
       boundary: 'delivery-operation', connectionId: 'connection-1', bindingId: 'binding-1',
-      code: 'channels_delivery_retryDue', retryable: true,
-      custodyId: admitted.record.custodyId, attemptCount: 1, settledState: 'retryDue',
-      settlementStatus: 'settled', providerOperation: 'reconcile', providerResultKind: 'notDelivered', providerRetry: 'safe',
-      retryNotBefore: 1_100,
+      code: throws ? 'channels_delivery_outcomeUnknown' : 'channels_delivery_retryDue', retryable: !throws,
+      custodyId: admitted.record.custodyId, attemptCount: 1, settledState: throws ? 'outcomeUnknown' : 'retryDue',
+      settlementStatus: 'settled', providerOperation: 'reconcile', providerResultKind: throws ? 'outcomeUnknown' : 'notDelivered',
+      ...(throws ? { failureCause: { code: 'service_unavailable', retryable: true } } : { providerRetry: 'safe', retryNotBefore: 1_100 }),
     }]);
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('private');
   });
 
   it('redrives retained Automation result custody through the same generic provider path', async () => {

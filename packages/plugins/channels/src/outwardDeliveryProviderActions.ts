@@ -22,6 +22,7 @@ import {
   type PluginMachineExecutionRoutingV1,
 } from '@happier-dev/plugin-sdk/actions';
 import { isConversationDeliveryAutomaticTerminal } from './deliveryCustody.js';
+import { classifySupervisorFailure, type SupervisorFailureClassification } from './supervisorFailure.js';
 import { encodeUnpaddedBase64Url } from './privateRowIdentity.js';
 import { ConversationProviderContributionNotCurrentError, readCurrentProviderContributionForPersistedSelection } from './providerContributions.js';
 import { getConversationConnectionExecutionRouting } from './connectionLifecycle.js';
@@ -256,7 +257,7 @@ function createConversationOutwardDeliveryProviderActionBoundary(input: Readonly
       const invoke = async (
         target: ConversationOutwardDeliveryProviderActionInvocation,
         actionInput: typeof target.input,
-      ): Promise<ConversationDeliveryResultV1> => {
+      ): Promise<ConversationDeliveryResultV1 & Readonly<{ failureCause?: SupervisorFailureClassification }>> => {
         try {
           const execution = await input.actions.executeAdmittedTargetedOperationWithExecutionOrigin(
             target.action, actionInput, { signal, expectedExecutionRouting: target.expectedExecutionRouting },
@@ -267,9 +268,10 @@ function createConversationOutwardDeliveryProviderActionBoundary(input: Readonly
         } catch (error) {
           // A missing delivery handler proves no send started. A missing
           // reconciliation handler says nothing about the earlier send.
-          return input.operation === 'deliver' && isPluginActionHandlerInvocationNotStartedAdvisory(error)
+          const result: ConversationDeliveryResultV1 = input.operation === 'deliver' && isPluginActionHandlerInvocationNotStartedAdvisory(error)
             ? { kind: 'notDelivered', retry: 'safe' }
             : { kind: 'outcomeUnknown' };
+          return { ...result, failureCause: classifySupervisorFailure(error) };
         }
       };
       const limit = current.outboundTextLimit;
@@ -283,12 +285,15 @@ function createConversationOutwardDeliveryProviderActionBoundary(input: Readonly
       const providerMessageIds: string[] = [];
       const startsThread = current.input.newThread !== undefined;
       let createdEndpoint: ConversationResolvedEndpointV1 | undefined;
+      let failureCause: SupervisorFailureClassification | undefined;
       // Partial starts already created an external conversation. Preserve that
       // endpoint in the existing resolve flow, without recreating it on retry.
-      const incomplete = (failedChunk: number): ConversationDeliveryResultV1 => startsThread
-        ? { kind: 'outcomeUnknown', providerMessageIds,
-          ...(createdEndpoint === undefined ? {} : { endpoint: createdEndpoint }) }
-        : { kind: 'partial', providerMessageIds, failedChunk };
+      const incomplete = (failedChunk: number): ConversationDeliveryResultV1 & Readonly<{ failureCause?: SupervisorFailureClassification }> => ({
+        ...(startsThread ? { kind: 'outcomeUnknown', providerMessageIds,
+          ...(createdEndpoint === undefined ? {} : { endpoint: createdEndpoint }) } as const
+          : { kind: 'partial', providerMessageIds, failedChunk } as const),
+        ...(failureCause === undefined ? {} : { failureCause }),
+      });
       for (const [index, text] of chunks.entries()) {
         if (signal.aborted) return index === 0
           ? { kind: 'suppressedBeforeProviderEffect', reason: 'cancelled' }
@@ -302,11 +307,14 @@ function createConversationOutwardDeliveryProviderActionBoundary(input: Readonly
         )))}`;
         if (!('content' in current.input)) return incomplete(index);
         const { newThread, ...continuation } = current.input;
-        const result = normalizeConversationStartedThreadResult(currentRecord.obligation, await invoke(current, {
+        const invocation = await invoke(current, {
           ...continuation, ...(index === 0 && newThread !== undefined ? { newThread } : {}),
           ...(createdEndpoint === undefined ? {} : { endpoint: createdEndpoint }),
           content: { ...content, text }, deliveryKey, chunkIndex: index,
-        }));
+        });
+        failureCause = invocation.failureCause;
+        const result = { ...normalizeConversationStartedThreadResult(currentRecord.obligation, invocation),
+          ...(failureCause === undefined ? {} : { failureCause }) };
         if (result.kind === 'delivered') {
           providerMessageIds.push(...result.providerMessageIds);
           if (startsThread && index === 0) {
@@ -425,18 +433,19 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
   let accountLocalBindingPolicy: ConversationAccountLocalBindingPolicyModule;
   try {
     accountLocalBindingPolicy = await loadConversationAccountLocalBindingPolicyModule();
-  } catch {
-    return { kind: 'notAttempted', reason: 'custodyUnavailable' };
+  } catch (error) {
+    return { kind: 'notAttempted', reason: 'custodyUnavailable', failureCause: classifySupervisorFailure(error) };
   }
   let bindingRow: StoredCollectionRow | null;
   try {
     bindingRow = await input.stateCollection.get(input.binding.bindingId, {
       signal: input.signal,
     }) as unknown as StoredCollectionRow | null;
-  } catch {
+  } catch (error) {
     return {
       kind: 'notAttempted',
       reason: input.signal.aborted ? 'cancelled' : 'custodyUnavailable',
+      failureCause: classifySupervisorFailure(error),
     };
   }
   if (bindingRow === null) return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt' };
@@ -445,7 +454,7 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
     binding = readBindingFacts({ accountLocalBindingPolicy, row: bindingRow, bindingId: input.binding.bindingId });
   } catch (error) {
     if (isPluginError(error) && error.code === 'channels_binding_target_unavailable') {
-      return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt' };
+      return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt', failureCause: classifySupervisorFailure(error) };
     }
     throw error;
   }
@@ -474,10 +483,11 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
     connectionRow = await input.stateCollection.get(binding.connectionId, {
       signal: input.signal,
     }) as unknown as StoredCollectionRow | null;
-  } catch {
+  } catch (error) {
     return {
       kind: 'notAttempted',
       reason: input.signal.aborted ? 'cancelled' : 'custodyUnavailable',
+      failureCause: classifySupervisorFailure(error),
     };
   }
   if (connectionRow === null) return { kind: 'notAttempted', reason: 'connectionUnavailable' };
@@ -499,8 +509,8 @@ export async function deliverConversationSessionProjectionOutwardDelivery(input:
     if (frontier === null || frontier.revision !== input.frontierRowRevision) {
       return { kind: 'notAttempted', reason: 'custodyChangedBeforeAttempt' };
     }
-  } catch {
-    return { kind: 'notAttempted', reason: input.signal.aborted ? 'cancelled' : 'custodyUnavailable' };
+  } catch (error) {
+    return { kind: 'notAttempted', reason: input.signal.aborted ? 'cancelled' : 'custodyUnavailable', failureCause: classifySupervisorFailure(error) };
   }
   const provisional: ConversationOutwardDeliveryObligation = {
     connectionId: binding.connectionId,

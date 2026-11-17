@@ -1,4 +1,5 @@
 import { matchesConversationBindingEndpoint } from './bindingEndpoints.js';
+import { classifySupervisorFailure, type SupervisorFailureClassification } from './supervisorFailure.js';
 import type {
   ConversationDeliveryLinkPreviewPolicyV1,
 
@@ -1263,7 +1264,8 @@ export function createConversationOutwardDeliveryCollectionStore(
       return record === null || !isNonNegativeSafeInteger(updatedAt)
         ? { kind: 'invalid' }
         : { kind: 'found', record, updatedAt };
-    } catch {
+    } catch (error) {
+      if (isPluginError(error) && !isPluginCollectionConflict(error)) throw error;
       return {
         kind: 'unavailable',
         reason: readInput.signal?.aborted ? 'cancelled' : 'storageUnavailable',
@@ -1306,7 +1308,8 @@ export function createConversationOutwardDeliveryCollectionStore(
           limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1,
           ...(cursor === undefined ? {} : { cursor }),
         }, { signal: input.signal });
-      } catch {
+      } catch (error) {
+        if (isPluginError(error) && !isPluginCollectionConflict(error)) throw error;
         return {
           kind: 'unavailable',
           reason: input.signal.aborted ? 'cancelled' : 'storageUnavailable',
@@ -1350,13 +1353,15 @@ export function createConversationOutwardDeliveryCollectionStore(
     let collections: ConversationCollectionsModule;
     try {
       collections = await loadConversationCollectionsModule();
-    } catch {
+    } catch (error) {
+      if (isPluginError(error) && !isPluginCollectionConflict(error)) throw error;
       return { kind: 'unavailable', reason: 'storageUnavailable' };
     }
     let accountLocalBindingPolicy: ConversationAccountLocalBindingPolicyModule;
     try {
       accountLocalBindingPolicy = await loadConversationAccountLocalBindingPolicyModule();
-    } catch {
+    } catch (error) {
+      if (isPluginError(error) && !isPluginCollectionConflict(error)) throw error;
       return { kind: 'unavailable', reason: 'storageUnavailable' };
     }
     if (!isConversationOutwardSourceV1(obligation.source)
@@ -1375,7 +1380,8 @@ export function createConversationOutwardDeliveryCollectionStore(
         obligation.connectionId,
         { signal: input.signal },
       ) as unknown as StoredCollectionRow | null;
-    } catch {
+    } catch (error) {
+      if (isPluginError(error) && !isPluginCollectionConflict(error)) throw error;
       return {
         kind: 'unavailable',
         reason: input.signal.aborted ? 'cancelled' : 'storageUnavailable',
@@ -1464,6 +1470,7 @@ export function createConversationOutwardDeliveryCollectionStore(
         if (rejoined.kind === 'invalid') return { kind: 'invalid', reason: 'invalidRow' };
         if (rejoined.kind === 'missing') {
           if (conflicted && !input.signal.aborted) return { kind: 'retired' };
+          if (isPluginError(error)) throw error;
           return {
             kind: 'unavailable',
             reason: input.signal.aborted ? 'cancelled' : 'storageUnavailable',
@@ -1482,7 +1489,8 @@ export function createConversationOutwardDeliveryCollectionStore(
       let collections: ConversationCollectionsModule;
       try {
         collections = await loadConversationCollectionsModule();
-      } catch {
+      } catch (error) {
+        if (isPluginError(error) && !isPluginCollectionConflict(error)) throw error;
         return { kind: 'unavailable', reason: 'storageUnavailable' };
       }
       // Local provider cancellation must not strand claim release/settlement.
@@ -1519,7 +1527,8 @@ export function createConversationOutwardDeliveryCollectionStore(
         return record === null
           ? { kind: 'invalid', reason: 'invalidRow' }
           : { kind: 'updated', record };
-      } catch {
+      } catch (error) {
+        if (isPluginError(error) && !isPluginCollectionConflict(error)) throw error;
         return { kind: 'conflict' };
       }
     },
@@ -2414,7 +2423,8 @@ export async function checkConversationOutwardDeliveryRouteCurrentness(input: Re
   let accountLocalBindingPolicy: ConversationAccountLocalBindingPolicyModule;
   try {
     accountLocalBindingPolicy = await loadConversationAccountLocalBindingPolicyModule();
-  } catch {
+  } catch (error) {
+    if (isPluginError(error)) throw error;
     return { kind: 'unavailable', reason: 'stateUnavailable' };
   }
   let connectionRow: StoredCollectionRow | null;
@@ -2423,7 +2433,8 @@ export async function checkConversationOutwardDeliveryRouteCurrentness(input: Re
       input.obligation.connectionId,
       { signal: input.signal },
     ) as unknown as StoredCollectionRow | null;
-  } catch {
+  } catch (error) {
+    if (isPluginError(error)) throw error;
     return {
       kind: 'unavailable',
       reason: input.signal.aborted ? 'cancelled' : 'stateUnavailable',
@@ -2455,7 +2466,8 @@ export async function checkConversationOutwardDeliveryRouteCurrentness(input: Re
       input.obligation.bindingId,
       { signal: input.signal },
     ) as unknown as StoredCollectionRow | null;
-  } catch {
+  } catch (error) {
+    if (isPluginError(error)) throw error;
     return {
       kind: 'unavailable',
       reason: input.signal.aborted ? 'cancelled' : 'stateUnavailable',
@@ -3026,7 +3038,7 @@ const CONVERSATION_OUTWARD_DELIVERY_SUPPRESSION_REASON_SET =
 
 export type ConversationOutwardDeliveryCurrentnessResult =
   | Readonly<{ kind: 'current' }>
-  | Readonly<{ kind: 'unavailable'; reason: 'stateUnavailable' }>
+  | Readonly<{ kind: 'unavailable'; reason: 'stateUnavailable'; failureCause?: SupervisorFailureClassification }>
   | Readonly<{
     kind: 'suppressed';
     reason: ConversationOutwardDeliverySuppressionReason;
@@ -3099,8 +3111,8 @@ async function readConversationOutwardDeliveryCurrentness(input: Readonly<{
       record: input.record,
       signal: input.signal,
     }));
-  } catch {
-    currentness = { kind: 'unavailable', reason: 'stateUnavailable' };
+  } catch (error) {
+    currentness = { kind: 'unavailable', reason: 'stateUnavailable', failureCause: classifySupervisorFailure(error) };
   }
   return currentness;
 }
@@ -3121,6 +3133,7 @@ type ConversationOutwardDeliveryAttemptSettlement = Readonly<{
   custodyId: string;
   operation: 'deliver' | 'reconcile';
   providerResult: ConversationDeliveryResultV1;
+  failureCause?: SupervisorFailureClassification;
 }>;
 
 export type ConversationOutwardDeliveryResult =
@@ -3133,6 +3146,7 @@ export type ConversationOutwardDeliveryResult =
   }>
   | Readonly<{
     kind: 'settlementPending';
+    failureCause?: SupervisorFailureClassification;
     custody: ConversationDeliveryCustody;
     providerResult: ConversationDeliveryResultV1;
     attemptSettlement?: ConversationOutwardDeliveryAttemptSettlement;
@@ -3140,6 +3154,7 @@ export type ConversationOutwardDeliveryResult =
   }>
   | Readonly<{
     kind: 'notAttempted';
+    failureCause?: SupervisorFailureClassification;
     reason:
       | 'obligationConflict'
       | 'attemptInProgress'
@@ -3168,7 +3183,7 @@ type ConversationOutwardDeliveryPreEffectSuppression = Readonly<{
 }>;
 
 export type ConversationOutwardDeliveryProviderInvocationResult =
-  | ConversationDeliveryResultV1
+  | (ConversationDeliveryResultV1 & Readonly<{ failureCause?: SupervisorFailureClassification }>)
   | ConversationOutwardDeliveryPreEffectSuppression;
 
 export function isConversationOutwardDeliveryPreEffectSuppression(
@@ -3197,13 +3212,15 @@ async function persistConversationOutwardDeliveryBeforeProviderEffect(input: Rea
     };
   }
   let persisted: Awaited<ReturnType<ConversationOutwardDeliveryStore['compareAndSwap']>>;
+  let failureCause: SupervisorFailureClassification | undefined;
   try {
     persisted = await input.store.compareAndSwap({
       custodyId: input.record.custodyId,
       expectedRevision: input.record.revision,
       custody: suppressed.custody,
     });
-  } catch {
+  } catch (error) {
+    failureCause = classifySupervisorFailure(error);
     persisted = { kind: 'unavailable', reason: 'storageUnavailable' };
   }
   if (persisted.kind === 'conflict' || persisted.kind === 'invalid' || persisted.kind === 'unavailable') {
@@ -3212,6 +3229,7 @@ async function persistConversationOutwardDeliveryBeforeProviderEffect(input: Rea
       custody: suppressed.custody,
       providerResult: { kind: 'notDelivered', retry: 'never' },
       suppressionReason: input.reason,
+      ...(failureCause === undefined ? {} : { failureCause }),
     };
   }
   if (input.reason === 'cancelled') return { kind: 'notAttempted', reason: 'cancelled' };
@@ -3252,10 +3270,11 @@ export async function deliverConversationOutwardDelivery(input: Readonly<{
     if (preCustodyRejection !== null) return { kind: 'notAttempted', reason: preCustodyRejection };
     try {
       ensured = await input.store.ensure(input.obligation);
-    } catch {
+    } catch (error) {
       return {
         kind: 'notAttempted',
         reason: input.signal.aborted ? 'cancelled' : 'custodyUnavailable',
+        failureCause: classifySupervisorFailure(error),
       };
     }
     if (ensured.kind === 'unavailable') {
@@ -3297,10 +3316,11 @@ export async function deliverConversationOutwardDelivery(input: Readonly<{
       expectedRevision: ensured.record.revision,
       custody: started.custody,
     });
-  } catch {
+  } catch (error) {
     return {
       kind: 'notAttempted',
       reason: input.signal.aborted ? 'cancelled' : 'custodyUnavailable',
+      failureCause: classifySupervisorFailure(error),
     };
   }
   if (claimed.kind === 'unavailable') {
@@ -3335,6 +3355,7 @@ export async function deliverConversationOutwardDelivery(input: Readonly<{
   }
 
   let providerResult: ConversationDeliveryResultV1;
+  let failureCause = currentness.kind === 'unavailable' ? currentness.failureCause : undefined;
   if (currentness.kind === 'unavailable') {
     // Nothing crossed the provider boundary. The existing custody owner retains
     // content and schedules growing backoff, then rechecks authority next time.
@@ -3353,12 +3374,14 @@ export async function deliverConversationOutwardDelivery(input: Readonly<{
           reason: invocation.reason,
         });
       }
-      providerResult = invocation;
-    } catch {
+      ({ failureCause, ...providerResult } = invocation);
+    } catch (error) {
+      failureCause = classifySupervisorFailure(error);
       providerResult = { kind: 'outcomeUnknown' };
     }
   }
-  const attemptSettlement = { custodyId: claimed.record.custodyId, operation: 'deliver', providerResult } as const;
+  const attemptSettlement = { custodyId: claimed.record.custodyId, operation: 'deliver', providerResult,
+    ...(failureCause === undefined ? {} : { failureCause }) } satisfies ConversationOutwardDeliveryAttemptSettlement;
   const settled = settleConversationDeliveryAttempt({
     custody: claimed.record.custody,
     attemptId: input.attemptId,
@@ -3380,7 +3403,8 @@ export async function deliverConversationOutwardDelivery(input: Readonly<{
       expectedRevision: claimed.record.revision,
       custody: settled.custody,
     });
-  } catch {
+  } catch (error) {
+    attemptSettlement.failureCause ??= classifySupervisorFailure(error);
     persisted = { kind: 'unavailable', reason: 'storageUnavailable' };
   }
   if (persisted.kind === 'conflict' || persisted.kind === 'invalid' || persisted.kind === 'unavailable') {
@@ -3443,7 +3467,7 @@ export async function reconcileConversationOutwardDeliveryAttempt(input: Readonl
   reconcile?: (input: Readonly<{
     obligation: ConversationOutwardDeliveryObligation;
     signal: AbortSignal;
-  }>) => Promise<ConversationDeliveryResultV1>;
+  }>) => Promise<ConversationDeliveryResultV1 & Readonly<{ failureCause?: SupervisorFailureClassification }>>;
 }>): Promise<ConversationOutwardDeliveryRecoveryResult> {
   if (input.signal.aborted) return { kind: 'notAttempted', reason: 'cancelled' };
   if (input.record.custody.state !== 'attempting' || input.record.custody.attemptId === undefined) {
@@ -3459,17 +3483,21 @@ export async function reconcileConversationOutwardDeliveryAttempt(input: Readonl
   if (input.signal.aborted) currentness = { kind: 'suppressed', reason: 'cancelled' };
 
   let providerResult: ConversationDeliveryResultV1 = { kind: 'outcomeUnknown' };
+  let failureCause = currentness.kind === 'unavailable' ? currentness.failureCause : undefined;
   if (currentness.kind === 'current' && input.reconcile !== undefined) {
     try {
-      providerResult = await input.reconcile({
+      const invocation = await input.reconcile({
         obligation: input.record.obligation,
         signal: input.signal,
       });
-    } catch {
+      ({ failureCause, ...providerResult } = invocation);
+    } catch (error) {
+      failureCause = classifySupervisorFailure(error);
       providerResult = { kind: 'outcomeUnknown' };
     }
   }
-  const attemptSettlement = { custodyId: input.record.custodyId, operation: 'reconcile', providerResult } as const;
+  const attemptSettlement = { custodyId: input.record.custodyId, operation: 'reconcile', providerResult,
+    ...(failureCause === undefined ? {} : { failureCause }) } satisfies ConversationOutwardDeliveryAttemptSettlement;
   const settled = settleConversationDeliveryAttempt({
     custody: input.record.custody,
     attemptId: input.record.custody.attemptId,
@@ -3486,7 +3514,8 @@ export async function reconcileConversationOutwardDeliveryAttempt(input: Readonl
       expectedRevision: input.record.revision,
       custody: settled.custody,
     });
-  } catch {
+  } catch (error) {
+    attemptSettlement.failureCause ??= classifySupervisorFailure(error);
     persisted = { kind: 'unavailable', reason: 'storageUnavailable' };
   }
   if (persisted.kind === 'conflict' || persisted.kind === 'invalid' || persisted.kind === 'unavailable') {

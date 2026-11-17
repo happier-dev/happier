@@ -209,6 +209,7 @@ function logOutwardDeliverySupervisorWorkFailure(
     outcome?: Readonly<{ code: string; retryable: boolean; informational: boolean }>;
     attemptSettlement?: JsonRecord;
     skippedAssistantItem?: ConversationSessionProjectionSkippedAssistantItem;
+    failureCause?: ReturnType<typeof classifySupervisorFailure>;
   }>,
 ): void {
   // Cancellation cannot erase a provider result that already crossed the boundary.
@@ -228,6 +229,7 @@ function logOutwardDeliverySupervisorWorkFailure(
       ...(identifiers?.bindingId === undefined ? {} : { bindingId: identifiers.bindingId }),
       ...identifiers?.skippedAssistantItem,
       ...identifiers?.attemptSettlement,
+      ...(identifiers?.failureCause === undefined ? {} : { failureCause: identifiers.failureCause }),
     },
   );
 }
@@ -247,6 +249,7 @@ function logOutwardDeliverySupervisorDeliveryOutcome(
     : 'custody' in result ? result.custody.state : result.kind}`;
   logOutwardDeliverySupervisorWorkFailure(context, boundary, {
     ...identifiers,
+    failureCause: 'failureCause' in result ? result.failureCause : settlement?.failureCause,
     outcome: { code, retryable, informational: result.kind === 'retired'
       || (result.kind === 'notAttempted' && result.reason === 'notDue')
       || (result.kind === 'settled' && result.custody.state === 'delivered') },

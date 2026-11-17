@@ -1,4 +1,5 @@
 import { AutomationReplyHandoffDispatchRequestV1Schema, AutomationReplyHandoffDispatchResultV1Schema, type AutomationReplyHandoffDispatchResultV1 } from '@happier-dev/protocol/automations/event';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { warn } from "@/utils/logging/log";
 import { withWebLatencyProducerTrace } from "@/utils/webLatencyTrace";
 import { armDeadlineTimer } from "@happier-dev/protocol/common/deadlineTimer";
@@ -23,13 +24,15 @@ export type AutomationReplyHandoffWorkerPassResult = Readonly<{
     nextDueAt: Date | null;
 }>;
 
-function warnWorkerFailure(operation: "due-scan" | "pass"): void {
+function warnWorkerFailure(operation: "due-scan" | "pass", error: unknown): void {
     // Keep worker diagnostics bounded and privacy-safe: operation is a fixed
     // cardinality label and no stored envelopes or raw error details are logged.
     warn(
         {
             module: "automation-reply-handoff-worker",
             operation,
+            failureCause: projectActionFailureCauseV1(error, operation === "pass"
+                ? "automation.reply_handoff.pass" : "automation.reply_handoff.due_scan", { allowUnknownErrorCode: false }),
         },
         operation === "due-scan"
             ? "Automation reply handoff worker due scan failed"
@@ -104,7 +107,15 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
     }
 
     const request = buildDispatchRequest(claim);
+    const warnDispatchFailure = (
+        code: Extract<AutomationReplyHandoffDispatchResultV1, { kind: "unavailable" }>["code"],
+        failureCause?: ActionFailureCauseV1,
+    ): void => warn({ module: "automation-reply-handoff-worker", operation: "dispatch",
+        runId: claim.runId, handoffId: claim.handoffId, code,
+        ...(failureCause === undefined ? {} : { failureCause }),
+    }, "Automation reply handoff dispatch failed");
     if (!request) {
+        warnDispatchFailure("invalidRequest");
         const settlement = await settleAutomationReplyHandoff({
             claim,
             now: params.now(),
@@ -114,13 +125,16 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
     }
 
     let rawResult: unknown;
+    let dispatchFailureCause: ActionFailureCauseV1 | undefined;
     try {
         rawResult = await params.dispatch(request);
-    } catch {
+    } catch (error) {
+        dispatchFailureCause = projectActionFailureCauseV1(error, "automation.reply_handoff.dispatch", { allowUnknownErrorCode: false });
         rawResult = { kind: "unavailable", code: "targetUnavailable" };
     }
     const result = AutomationReplyHandoffDispatchResultV1Schema.safeParse(rawResult);
     if (!result.success) {
+        warnDispatchFailure("contractInvalid");
         // The daemon may have committed custody before returning a malformed
         // or truncated response. Rejoin the same handoff id instead of
         // terminalizing an outcome whose effect truth is ambiguous.
@@ -132,6 +146,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
         return { claimed: true, settled: settlement.applied, nextDueAt: await findNextAutomationReplyHandoffDueAt() };
     }
 
+    if (result.data.kind === "unavailable") warnDispatchFailure(result.data.code, dispatchFailureCause);
     const settlement = result.data.kind === "unavailable"
         ? await settleAutomationReplyHandoff({
             claim,
@@ -172,8 +187,8 @@ export function startAutomationReplyHandoffWorker(params: Readonly<{
             if (!failed && knownNextDueAt === undefined) {
                 nextDueAt = await findNextAutomationReplyHandoffDueAt();
             }
-        } catch {
-            warnWorkerFailure("due-scan");
+        } catch (error) {
+            warnWorkerFailure("due-scan", error);
             failed = true;
         }
         if (stopped) return;
@@ -213,9 +228,9 @@ export function startAutomationReplyHandoffWorker(params: Readonly<{
                         if (!pass.claimed) break;
                     }
                 }
-            } catch {
+            } catch (error) {
                 failed = true;
-                warnWorkerFailure("pass");
+                warnWorkerFailure("pass", error);
                 // The durable claim remains recoverable when dispatch or DB work fails.
             } finally {
                 await schedule(knownNextDueAt, failed);
