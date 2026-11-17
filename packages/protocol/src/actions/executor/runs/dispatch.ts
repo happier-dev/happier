@@ -19,6 +19,7 @@ import type { DispatchFacts } from '../coreInvocation.js';
 import type { CoreInvocation, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionId } from '../../actionIds.js';
 import { readOfferedPermissionFollowUp, completeOfferedPermissionChoice } from '../session/controls.js';
+import { projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
 
 
 
@@ -237,6 +238,10 @@ export async function dispatchRunsDispatch1(inv: Pick<CoreInvocation, 'actionId'
               result: ExecutionRunStartResponseSchema.parse({ ...parsedStartResponse.data, wait: wait.data }),
             };
           } catch (error) {
+            try {
+              deps.recordActionOutputDiagnostic?.({ source: 'action.execution_run.start.wait', phase: 'action.execution_run.start.wait', issues: [],
+                failureCause: projectActionFailureCauseV1(error, 'action.execution_run.start.wait', { allowUnknownErrorCode: false }) });
+            } catch { /* Diagnostics cannot replace the accepted Run result. */ }
             return {
               ok: true,
               result: ExecutionRunStartResponseSchema.parse({

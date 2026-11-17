@@ -1,6 +1,6 @@
 import type { ActionId } from '../actionIds.js';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '../actionExecutionResult.js';
-import { parseSessionFollowActionResponse } from '../../sessions/follow/actionTransport.js';
+import type { FollowRuleSetActionOutputV1 } from '../../sessions/follow/actions.js';
 import { SessionCoordinatorEnableInputV1Schema, type SessionCoordinatorEnableInputV1,
   type SessionCoordinatorEnableResultV1, type SessionCoordinatorEffectV1 } from '../../sessions/follow/sessionCoordinatorActionsV1.js';
 
@@ -25,11 +25,9 @@ export async function executeSessionCoordinatorEnableV1(
           const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
           if (approval.success) effect = { ...identity, status: 'approval_required', approval: approval.data };
           else if (operation === 'rule') {
-            try {
-              const output = parseSessionFollowActionResponse('follow.set', value, result.result);
-              effect = 'rule' in output ? { ...identity, status: 'accepted', version: output.rule.version }
-                : { ...identity, status: 'failed', errorCode: 'invalid_action_output' };
-            } catch { effect = { ...identity, status: 'failed', errorCode: 'invalid_action_output' }; }
+            // The child executor already validates the rule response and its target.
+            const output = result.result as FollowRuleSetActionOutputV1;
+            effect = { ...identity, status: 'accepted', version: output.rule.version };
           } else effect = { ...identity, status: 'accepted' };
         }
       } catch (error) {

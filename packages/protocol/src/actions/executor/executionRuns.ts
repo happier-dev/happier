@@ -14,7 +14,7 @@ import { readExecutionRunStartRunCreation, ExecutionRunStartResponseSchema, Exec
 import { readFailureEnvelopeDetails } from './actionFailureEnvelope.js';
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
 import type { ActionExecuteFailure } from './types.js';
-import { readUnexpectedActionErrorDiagnosticV1 } from '../actionExecutionResult.js';
+import { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from '../actionExecutionResult.js';
 import { type ActionId } from '../actionIds.js';
 import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
 
@@ -278,6 +278,7 @@ export function readFanoutStartError(result: unknown): Readonly<{
 export async function fanoutStarts(params: Readonly<{
   keys: readonly string[];
   startOne: (key: string) => Promise<unknown>;
+  recordActionOutputDiagnostic?: ActionExecutorDeps['recordActionOutputDiagnostic'];
 }>): Promise<readonly FanoutResultItem[]> {
   const results = await Promise.all(
     params.keys.map(async (key): Promise<FanoutResultItem> => {
@@ -313,6 +314,10 @@ export async function fanoutStarts(params: Readonly<{
         }
         return { key, ok: true, result };
       } catch (error) {
+        try {
+          params.recordActionOutputDiagnostic?.({ source: 'action.execution_run.fanout.start', phase: 'action.execution_run.fanout.start', issues: [],
+            failureCause: projectActionFailureCauseV1(error, 'action.execution_run.fanout.start', { allowUnknownErrorCode: false }) });
+        } catch { /* Diagnostics cannot replace the fanout start outcome. */ }
         const failure = normalizeActionExecutorThrownError(error);
         const details = readFailureEnvelopeDetails(readRecord(error));
         return {

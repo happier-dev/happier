@@ -18,7 +18,7 @@ import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { withActionFailureCauseDiagnostic } from '../actionFailureDiagnostic.js';
 import { readSessionManagerSessionIdV1 } from '../../../sessions/follow/sessionManagerV1.js';
 import type { ActionExecuteResult, ActionExecutorContext } from '../types.js';
-import { ActionApprovalRequestCreatedResultSchema } from '../../actionExecutionResult.js';
+import { ActionApprovalRequestCreatedResultSchema, projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
 import { isSessionFollowActionIdV1 } from '../../../sessions/follow/actions.js';
 import { parseSessionFollowActionResponse } from '../../../sessions/follow/actionTransport.js';
 import { isSessionReadStateActionIdV1 } from '../../../sessions/readState/actions.js';
@@ -258,6 +258,10 @@ export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actio
               if (failure) { reportsError = { errorCode: failure.errorCode, error: failure.error }; break; }
               page = parseSessionListQueryActionResultV1(rawPage);
             } catch (error) {
+              try {
+                deps.recordActionOutputDiagnostic?.({ source: 'action.session_archive.reports', phase: 'action.session_archive.reports', issues: [],
+                  failureCause: projectActionFailureCauseV1(error, 'action.session_archive.reports', { allowUnknownErrorCode: false }) });
+              } catch { /* Diagnostics cannot replace the successful archive result. */ }
               const failure = normalizeActionExecutorThrownError(error);
               reportsError = { errorCode: failure.errorCode, error: failure.error };
               break;

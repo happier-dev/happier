@@ -21,6 +21,7 @@ import { withExecutionRunStartFailureDetails } from '../../../execution/runs/res
 import { type ActionId } from '../../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
+import { projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
 
 export function reviewScopeForInput(input: unknown): 'paths' | undefined {
   const record = readRecord(input);
@@ -326,6 +327,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const reviewGroupId = `review_${bytesToHex(randomBytes(16))}`;
         const results = await fanoutStarts({
           keys: engineIds,
+          recordActionOutputDiagnostic: deps.recordActionOutputDiagnostic,
           startOne: async (engineId) => {
             const normalizedBackendTargetKey = normalizeExecutionBackendOptionValue(engineId);
             const rawEngineId = normalizeId(engineId);
@@ -435,6 +437,10 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           const actionRecord = readRecord(payload);
           narration = actionRecord.ok === false ? { state: 'failed', ...actionRecord } : payload;
         } catch (error) {
+          try {
+            deps.recordActionOutputDiagnostic?.({ source: 'action.review.narration', phase: 'action.review.narration', issues: [],
+              failureCause: projectActionFailureCauseV1(error, 'action.review.narration', { allowUnknownErrorCode: false }) });
+          } catch { /* Diagnostics cannot replace the accepted review result. */ }
           narration = { state: 'failed', ...readFanoutStartError(error) };
         }
         return { ok: true, result: { intent: 'review', sessionId, results, narration } };

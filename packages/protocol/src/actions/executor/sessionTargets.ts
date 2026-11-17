@@ -4,7 +4,7 @@ import { parseSessionFollowActionResponse } from '../../sessions/follow/actionTr
 import { OpenedSessionFollowRuleV1Schema, type OpenedSessionFollowRuleV1 } from '../../sessions/follow/actions.js';
 import { DiscussionParticipantsListResponseV1Schema } from '../../discussions/participants.js';
 import type { ActionId } from '../actionIds.js';
-import type { ActionExecuteFailure } from '../actionExecutionResult.js';
+import { projectActionFailureCauseV1, type ActionExecuteFailure } from '../actionExecutionResult.js';
 import type { ActionExecutorContext, ActionExecutorDeps, ActionSessionAddress, ActionSessionReferenceResolution } from './types.js';
 import { readActionCallerLedSubtreeSessions } from './sessionLedSubtree.js';
 import { readSessionManagerSessionIdV1 } from '../../sessions/follow/sessionManagerV1.js';
@@ -43,6 +43,13 @@ export async function resolveActionSessionAddress(
 
 function unavailable(cause: string): ActionExecuteFailure {
   return { ok: false, errorCode: 'session_target_unavailable', error: 'session_target_unavailable', details: { cause } };
+}
+
+function recordSessionTargetCause(deps: ActionExecutorDeps, error: unknown, phase: string): void {
+  try {
+    deps.recordActionOutputDiagnostic?.({ source: phase, phase, issues: [],
+      failureCause: projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: false }) });
+  } catch { /* Diagnostics cannot replace the original target refusal. */ }
 }
 
 async function workers(
@@ -213,7 +220,8 @@ export async function previewActionSessionTargets(deps: ActionExecutorDeps, args
       if (address.kind === 'unique') return { coverage: 'complete', addresses: [address.address], error: null };
       return { coverage: 'unavailable', addresses: [], error: 'session_target_unavailable',
         cause: address.kind === 'ambiguous' ? 'session_id_ambiguous' : 'session_context_unavailable' };
-    } catch {
+    } catch (error) {
+      recordSessionTargetCause(deps, error, 'action.session_targets.preview');
       return { coverage: 'unavailable', addresses: [], error: args.context.signal?.aborted ? 'cancelled' : 'session_target_unavailable',
         ...(args.context.signal?.aborted ? {} : { cause: 'target_read_failed' }) };
     }
@@ -365,7 +373,10 @@ async function readActionSessionTargets(
   if (raw === undefined) return null; // Existing omitted/current-Session semantics stay with each Action.
   let target;
   try { target = normalizeSessionTargetV1(raw); }
-  catch { return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' }; }
+  catch (error) {
+    recordSessionTargetCause(deps, error, 'action.session_targets.normalize');
+    return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+  }
   if (typeof target === 'string') {
     // Omitted routing options retain host Actions' existing exact-ID fast path.
     // Exact routing and contributed operands need the canonical resolved tuple.
@@ -470,7 +481,8 @@ export async function resolveActionSessionTargets(
       return operands.length ? { actionId: args.actionId, field: args.declaration.field, targets: [...targets.values()], selector: false, operands } : null;
     }
     return await readActionSessionTargets(deps, args);
-  } catch {
+  } catch (error) {
+    recordSessionTargetCause(deps, error, 'action.session_targets.resolve');
     return args.context.signal?.aborted
       ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
       : unavailable('target_read_failed');

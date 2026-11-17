@@ -116,6 +116,7 @@ export async function dispatchAgentsSubagents1(inv: Pick<CoreInvocation, 'action
           } = data;
           const results = await fanoutStarts({
             keys: backendTargetKeys,
+            recordActionOutputDiagnostic: deps.recordActionOutputDiagnostic,
             startOne: async (backendTargetKey) => {
               const targetSelection = connectedSelections.selections.get(backendTargetKey)!;
               const connectedServices = targetSelection.bindings;
