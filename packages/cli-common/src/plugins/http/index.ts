@@ -4,7 +4,7 @@ export { createConnectedAccountHttpPurposeHost, hasExactPluginHttpCredentialScop
 export { createFetchPluginHttpRuntime } from './fetchTransport.js';
 export { readBoundedPluginHttpResponseBody, readDecodedFetchResponseHeaders } from './responseBody.js';
 export { acceptsRecipientOperationResponseContentType, projectRecipientOperationResponseBody } from './recipientOperationResponse.js';
-export { createProviderRedactionLease, redactPluginHttpResponse } from './redaction.js';
+export { createProviderRedactionLease, redactPluginHttpResponse, PROVIDER_REDACTION_REPLACEMENT } from './redaction.js';
 export type { ProviderRedactionLease, ProviderStreamingSanitizer } from './redaction.js';
 export { readCredentialRedactionValues } from './credentialRedactionValues.js';
 export { snapshotPluginHttpRequest } from './request.js';

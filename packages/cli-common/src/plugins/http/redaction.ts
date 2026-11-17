@@ -1,6 +1,8 @@
 import { containsProviderRegisteredSensitiveValue } from '@happier-dev/protocol/providers/sensitive-value-redaction';
 import type { HttpResponse } from './contracts.js';
 
+export const PROVIDER_REDACTION_REPLACEMENT = '[REDACTED]';
+
 export type ProviderRedactionLease = Readonly<{
   /** Current custody, including an active lease with no selected secrets. */
   isActive: () => boolean;
@@ -10,7 +12,8 @@ export type ProviderRedactionLease = Readonly<{
   values: () => readonly string[];
   add: (values: readonly string[]) => void;
   snapshotRedactor: () => (value: string) => string;
-  createStreamingSanitizer: () => ProviderStreamingSanitizer;
+  /** Host-private decisions over original input bytes, before replacement changes length. */
+  createStreamingSanitizer: (onSpan?: (byteLength: number, redacted: boolean) => void) => ProviderStreamingSanitizer;
   close: () => void;
 }>;
 
@@ -45,13 +48,14 @@ function buildProviderRedactor(values: readonly string[]): (value: string) => st
   const ordered = [...new Set(values)].sort((left, right) => right.length - left.length);
   return (value: string) => {
     let result = value;
-    for (const secret of ordered) result = result.split(secret).join('[REDACTED]');
+    for (const secret of ordered) result = result.split(secret).join(PROVIDER_REDACTION_REPLACEMENT);
     return result;
   };
 }
 
 function buildProviderStreamingSanitizer(
   readValues: () => readonly string[],
+  onSpan?: (byteLength: number, redacted: boolean) => void,
 ): ProviderStreamingSanitizer {
   const knownValues = new Set<string>();
   const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
@@ -65,24 +69,29 @@ function buildProviderStreamingSanitizer(
     return [...knownValues].sort((left, right) => right.length - left.length);
   };
 
-  const emitSafePrefix = (): string => {
+  const emitSafePrefix = (final = false): string => {
     const ordered = readOrderedValues();
     let cursor = 0;
     let output = '';
+    let safeStart = 0;
     while (cursor < pending.length) {
       // Only a suffix that could still become a registered value needs more
       // bytes. Safe bytes must not wait for another chunk or EOF.
-      if (ordered.some(value => value.length > pending.length - cursor
+      if (!final && ordered.some(value => value.length > pending.length - cursor
         && value.startsWith(pending.slice(cursor)))) break;
       const match = ordered.find((value) => pending.startsWith(value, cursor));
       if (match) {
-        output += '[REDACTED]';
+        if (cursor > safeStart) onSpan?.(cursor - safeStart, false);
+        onSpan?.(match.length, true);
+        output += PROVIDER_REDACTION_REPLACEMENT;
         cursor += match.length;
+        safeStart = cursor;
       } else {
         output += pending[cursor];
         cursor += 1;
       }
     }
+    if (cursor > safeStart) onSpan?.(cursor - safeStart, false);
     pending = pending.slice(cursor);
     return output;
   };
@@ -95,7 +104,7 @@ function buildProviderStreamingSanitizer(
   const flushBytes = (): Uint8Array => {
     if (flushed) return new Uint8Array();
     flushed = true;
-    const output = buildProviderRedactor(readOrderedValues())(pending);
+    const output = emitSafePrefix(true);
     pending = '';
     return latin1ToBytes(output);
   };
@@ -136,7 +145,7 @@ export function createProviderRedactionLease(input: Readonly<{
       activeRedactor = buildProviderRedactor(active);
     },
     snapshotRedactor: () => buildProviderRedactor(active),
-    createStreamingSanitizer: () => buildProviderStreamingSanitizer(() => active),
+    createStreamingSanitizer: onSpan => buildProviderStreamingSanitizer(() => active, onSpan),
     close: () => {
       if (closed) return;
       closed = true;

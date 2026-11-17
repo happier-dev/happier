@@ -60,6 +60,7 @@ import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/art
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { artifactReadResponse } from '@/testkit/http/artifactHome';
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 
 it('serves Machine service Actions and accepted Project Starts through the installed Api lifecycle and existing RPC registration', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-api-machine-services-'));
@@ -508,11 +509,10 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
             } finally { reconstructed.close(); reopened.dispose(); }
         }
         const artifact = { contentArtifactId: 'original-receipt', contentHeaderVersion: 1, contentBodyVersion: 1 };
-        const environment: DeploymentEnvironmentDetailV1['environment'] = { v: 1, id: environmentId, serverId: target.serverId,
+        const environment = createDeploymentEnvironmentHeaderV1({ v: 1, id: environmentId, serverId: target.serverId,
             projectSourceId: 'source', revision: 7, owner: { kind: 'account', accountId: 'owner' }, protection: 'nonProduction',
             purpose: 'standard', deployerMode: 'managers', controllerMachineId: target.machineId, buildMachineId: target.machineId,
-            runtimeTargetLinkId: 'runtime-link', ...artifact, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1,
-            capabilities: { role: 'manager', read: true, deploy: true, manage: true, manageBindings: true, manageTargets: true, delete: true } };
+            runtimeTargetLinkId: 'runtime-link', ...artifact, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 });
         const link: DeploymentEnvironmentDetailV1['targetLinks'][number]['targetLink'] = { v: 1, id: 'runtime-link',
             environmentId, revision: 2, role: 'runtime', source: { kind: 'host', id: 'own-server' }, targetKind: 'ownServer',
             state: 'deployed', activeDeploymentId: 'newer-B', machines: [target.machineId],

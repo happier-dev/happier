@@ -3,6 +3,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { createProviderRedactionLease } from './redaction';
 
 describe('provider redaction lease', () => {
+  it('reports original byte spans for masking before stream projections change their length', () => {
+    const lease = createProviderRedactionLease({ values: ['sëcret', 'sëcret-value'] });
+    const spans: { byteLength: number; redacted: boolean }[] = [];
+    const stream = lease.createStreamingSanitizer((byteLength: number, redacted: boolean) => {
+      spans.push({ byteLength, redacted });
+    });
+    const safe = Buffer.from('ok 猫 ');
+    expect(Buffer.from(stream.pushBytes(Buffer.concat([safe, Buffer.from('së')])))).toEqual(safe);
+    expect(spans).toEqual([{ byteLength: safe.byteLength, redacted: false }]);
+    expect(stream.push('cret')).toBe('');
+    expect(stream.flush()).toBe('[REDACTED]');
+    expect(spans).toEqual([{ byteLength: safe.byteLength, redacted: false },
+      { byteLength: Buffer.byteLength('sëcret'), redacted: true }]);
+    lease.close();
+  });
+
   it('delivers safe bytes immediately while retaining only a possible split secret', () => {
     const lease = createProviderRedactionLease({ values: ['selected-vercel-token'] });
     const stream = lease.createStreamingSanitizer();

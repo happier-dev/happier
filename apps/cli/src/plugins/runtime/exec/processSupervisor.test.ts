@@ -17,8 +17,82 @@ import { logger } from '@/ui/logger';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createDaemonizingProcessFixture } from '@/testkit/process/daemonizingProcess';
 import { waitForProcessExit } from '@/testkit/process/spawn';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 
 describe('spawnSupervisedPluginProcess', () => {
+    it.each([
+        { endpoint: 'merged output', values: ['ab'], firstStderr: 'x', lastStderr: 'b', safeBytes: 'x' },
+        { endpoint: 'each pipe', values: ['ab', 'cd', 'be'], firstStderr: 'cb', lastStderr: 'd', safeBytes: 'cd' },
+    ])('masks a registered value formed by final cross-pipe emission order after stdout ends ($endpoint)', async ({ values, firstStderr, lastStderr, safeBytes }) => {
+        const redaction = createProviderRedactionLease({ values });
+        const supervised = spawnSupervisedPluginProcess({ command: process.execPath,
+            args: ['-e', 'let step=0;process.stdin.on("data",()=>{step++;if(step===1)process.stderr.write(' + JSON.stringify(firstStderr)
+                + ');else if(step===2)process.stdout.end();else{process.stderr.end(' + JSON.stringify(lastStderr)
+                + ');process.stdin.pause();}});process.stdout.write("a");'],
+            env: {}, secretRedactionLease: redaction,
+        });
+        redaction.close();
+        const prefixArrived = once(supervised.child.stdout, 'data');
+        const stderrArrived = once(supervised.child.stderr, 'data');
+        const stdoutEnded = once(supervised.child.stdout, 'end');
+        const chunks: Uint8Array[] = [];
+        const subscription = supervised.handle.onOutput(chunk => {
+            chunks.push(chunk.data);
+        });
+        try {
+            // Raw OS observations drive the child even when a possible secret
+            // prefix must remain withheld from sanitized output after EOF.
+            await prefixArrived;
+            await supervised.handle.write(Uint8Array.of(1));
+            await stderrArrived;
+            await supervised.handle.write(Uint8Array.of(2));
+            await stdoutEnded;
+            await supervised.handle.write(Uint8Array.of(3));
+            await supervised.handle.closeStdin();
+            const result = await supervised.handle.wait();
+            const merged = Buffer.concat(chunks).toString();
+            const stdout = Buffer.from(result.stdout).toString();
+            const stderr = Buffer.from(result.stderr).toString();
+            const plain = (value: string) => value.split('[REDACTED]').join('');
+            expect({ exposed: values.some(value => [merged, stdout, stderr].some(text => text.includes(value))),
+                masked: merged.includes('[REDACTED]'), mergedSafeBytes: plain(merged) === safeBytes,
+                stdoutSafeBytes: plain(stdout) === '', stderrSafeBytes: plain(stderr) === safeBytes,
+            }).toEqual({ exposed: false, masked: true, mergedSafeBytes: true, stdoutSafeBytes: true, stderrSafeBytes: true });
+        } finally { subscription.dispose(); await supervised.dispose(); redaction.close(); }
+    });
+
+    it('preserves nonsecret binary bytes and stdout masking across an independently observed stderr arrival', async () => {
+        const redaction = createProviderRedactionLease({ values: ['native-secret'] });
+        const supervised = spawnSupervisedPluginProcess({ command: process.execPath,
+            args: ['-e', 'process.stdin.once("data", () => { process.stdout.write("secret"); process.stdin.pause(); }); process.stdout.write(Buffer.from([255,0,128,65])); process.stdout.write("native-"); process.stderr.write(Buffer.from([254,0,66]));'],
+            env: {}, secretRedactionLease: redaction,
+        });
+        // The admitted process captures its values before the shared launch
+        // lease settles, including when the first pipe byte arrives later.
+        redaction.close();
+        const stdout: Uint8Array[] = [];
+        const stderr: Uint8Array[] = [];
+        let acknowledgeStderr!: () => void;
+        const stderrObserved = new Promise<void>(resolve => { acknowledgeStderr = resolve; });
+        const unsubscribe = supervised.handle.onOutput(chunk => {
+            (chunk.stream === 'stdout' ? stdout : stderr).push(chunk.data);
+            if (chunk.stream === 'stderr') acknowledgeStderr();
+        });
+        try {
+            // The remaining stdout secret cannot arrive until stderr was
+            // delivered through the real supervisor, so interleaving is proven.
+            await stderrObserved;
+            await supervised.handle.write(Uint8Array.of(1));
+            await supervised.handle.closeStdin();
+            const result = await supervised.handle.wait();
+            const expectedStdout = Buffer.concat([Buffer.from([255, 0, 128, 65]), Buffer.from('[REDACTED]')]);
+            const expectedStderr = Buffer.from([254, 0, 66]);
+            expect({ stdout: Buffer.from(result.stdout).equals(expectedStdout), stderr: Buffer.from(result.stderr).equals(expectedStderr),
+                streamedStdout: Buffer.concat(stdout).equals(expectedStdout), streamedStderr: Buffer.concat(stderr).equals(expectedStderr),
+            }).toEqual({ stdout: true, stderr: true, streamedStdout: true, streamedStderr: true });
+        } finally { unsubscribe.dispose(); await supervised.dispose(); redaction.close(); }
+    });
+
     it.each([0, 17])('drains finite stdout and stderr delivered after exit %s before returning the result', async exitCode => {
         const stdout = Buffer.from([0x00, 0xff, 0x41, 0x0a]);
         const stderr = Buffer.from([0x80, 0x42, 0x00, 0x0a]);

@@ -27,6 +27,7 @@ import { adoptSessionHolderChild, resolveSessionProcessHolderLaunch, SessionHold
 import { logger } from '@/ui/logger';
 import { PROCESS_TERMINATION_GRACE_MS } from '@/subprocess/supervision/terminationPolicy';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
+import { createProcessOutputRedaction } from './processOutputRedaction';
 
 /** Keep the pipe's error event handled while each write returns its own failure. */
 export function createProcessStdinWriter(stdin: Writable): (data: Uint8Array) => Promise<void> {
@@ -303,13 +304,6 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             stderrBytes: 0,
         }
         : undefined;
-    const sanitizers = input.secretRedactionLease ? {
-        stdout: input.secretRedactionLease.createStreamingSanitizer(),
-        stderr: input.secretRedactionLease.createStreamingSanitizer(),
-    } : undefined;
-    // Capture this process's exact values before its launch lease can settle.
-    sanitizers?.stdout.push('');
-    sanitizers?.stderr.push('');
     let sequence = 0;
     let requestedBy: PluginProcessTerminationRequest | null = null;
     let observed: PluginProcessObservedTermination | null = null;
@@ -391,7 +385,14 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
             }));
         }
     };
+    const outputRedaction = input.secretRedactionLease
+        ? createProcessOutputRedaction(input.secretRedactionLease, (stream, bytes) => {
+            (stream === 'stdout' ? captureStdout : captureStderr)(Buffer.from(bytes));
+        })
+        : undefined;
     if (input.pipeStdout) {
+        // Piped stdout belongs to its binary consumer and never enters this projection.
+        outputRedaction?.flush('stdout');
         // The caller owns piped stdout: observing it here must not start the flow before the
         // caller reads, or output already delivered (an adopted Agent's replay) would reach
         // no consumer, and the holder client would acknowledge it as taken.
@@ -400,16 +401,18 @@ export function spawnSupervisedPluginProcess(input: SpawnSupervisedPluginProcess
         child.stdout.on('data', (value: Buffer | Uint8Array | string) => {
             refreshRootExitCapture();
             const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-            captureStdout(sanitizers ? Buffer.from(sanitizers.stdout.push(chunk), 'utf8') : chunk);
+            if (outputRedaction) outputRedaction.push('stdout', chunk);
+            else captureStdout(chunk);
         });
     }
     child.stderr.on('data', (value: Buffer | Uint8Array | string) => {
         refreshRootExitCapture();
         const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-        captureStderr(sanitizers ? Buffer.from(sanitizers.stderr.push(chunk), 'utf8') : chunk);
+        if (outputRedaction) outputRedaction.push('stderr', chunk);
+        else captureStderr(chunk);
     });
-    child.stdout.once('end', () => { if (sanitizers && !input.pipeStdout) captureStdout(Buffer.from(sanitizers.stdout.flush(), 'utf8')); });
-    child.stderr.once('end', () => { if (sanitizers) captureStderr(Buffer.from(sanitizers.stderr.flush(), 'utf8')); });
+    child.stdout.once('end', () => { if (!input.pipeStdout) outputRedaction?.flush('stdout'); });
+    child.stderr.once('end', () => { outputRedaction?.flush('stderr'); });
     const writeStdin = createProcessStdinWriter(child.stdin);
 
     const freezeObserved = (next: PluginProcessObservedTermination): void => {
