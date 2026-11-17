@@ -30,7 +30,8 @@ import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt, type PermissionModeQueuedPromptMode } from '@/agent/runtime/permissions/queuedPrompt';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { resolveCausalPermissionMode } from '@/agent/permissions/causalPermissionMode';
+import { SessionInputCausalPermissionAuthorityV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/createHandler';
 import { createRunnerDaemonPluginServicesPreparationError } from '@/daemon/agentRuntime/runnerDaemonPluginServicesHost';
 import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
@@ -1022,14 +1023,16 @@ describe('native Codex attachment preparation', () => {
   it.each([undefined, 'off'] as const)('dispatches causal read-only ceilings without reopening Codex with native sandbox %s', async (nativeSandbox) => {
     await withFixture(async ({ openConfiguredSession, requests, directory }) => {
       const native = await openConfiguredSession();
-      const session = createMutableApiSessionClientFixture({ sessionId: 'actual-happier-session' });
+      const session = createMutableApiSessionClientFixture({ sessionId: 'actual-happier-session', overrides: {
+        async reconcileSessionInputForProviderDispatch() { return 'admitted'; },
+      } });
       const host = createNativeAgentSessionInteractionOperations({
         session: native, sessionId: session.sessionId, cwd: directory,
         capabilities: { open: ['create'], delivery: ['newTurn'], cancel: true, configuration: true },
         context: { agent: { id: 'codex' } } as AgentSessionRuntimeContext,
         initialConfiguration: {
           mode: { value: null, updatedAtMs: 0 }, model: { value: 'fixture-model', updatedAtMs: 0 },
-          permissionIntent: { value: 'read-only', updatedAtMs: 0 }, options: {},
+          permissionIntent: { value: 'default', updatedAtMs: 0 }, options: {},
           ...(nativeSandbox ? { nativeSandbox } : {}),
         },
       });
@@ -1037,23 +1040,23 @@ describe('native Codex attachment preparation', () => {
       const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(JSON.stringify, {
         batcher: combinePermissionModeQueuedPrompts,
       });
-      const constrained = resolveCausalPermissionMode({
-        currentPermissionMode: 'yolo',
-        context: { causalPermissionAuthority: {
-          kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only',
-        } },
-      });
-      if (!constrained.ok) throw new Error(`Causal read-only ceiling refused: ${constrained.reason}`);
-      for (const [index, permissionMode] of ([constrained.effectiveMode, 'yolo', constrained.effectiveMode] as const).entries()) {
-        queue.push({ text: 'Reply OK.', localId: `policy-${index}` }, { permissionMode });
+      for (const [index, entry] of ([
+        { permissionMode: 'default' }, { permissionMode: 'default', ceiling: 'read-only' },
+        { permissionMode: 'yolo' }, { permissionMode: 'yolo', ceiling: 'read-only' },
+      ] as const).entries()) {
+        const causalPermissionAuthority = 'ceiling' in entry ? SessionInputCausalPermissionAuthorityV1Schema.parse({
+          kind: 'admittedSessionInputV1', admittedPermissionCeiling: entry.ceiling,
+        }) : undefined;
+        queue.push({ text: 'Reply OK.', localId: `policy-${index}`, ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}) },
+          { permissionMode: entry.permissionMode, ...(causalPermissionAuthority ? { causalPermissionAuthority } : {}) });
       }
       let completed = 0;
       await runPermissionModePromptLoop({
         providerName: 'Codex', agentMessageType: 'codex', explicitPermissionMode: undefined,
         session, messageQueue: queue, runtime: host,
-        permissionHandler: { setPermissionMode() {}, reset() {} }, messageBuffer: new MessageBuffer(),
+        permissionHandler: createProviderEnforcedPermissionHandler({ session, logPrefix: '[Causal policy]' }), messageBuffer: new MessageBuffer(),
         createOverrideSynchronizer: () => ({ syncFromMetadata() {}, async flushPendingAfterStart() {} }),
-        shouldExit: () => completed === 3, getAbortSignal: () => new AbortController().signal,
+        shouldExit: () => completed === 4, getAbortSignal: () => new AbortController().signal,
         keepAlive() {}, setThinking() {}, sendReady: () => { completed += 1; },
         currentPermissionModeUpdatedAt: 0, setCurrentPermissionMode() {}, setCurrentPermissionModeUpdatedAt() {},
         formatPromptErrorMessage: String, registerProviderAcceptedEffect: () => undefined,
@@ -1063,12 +1066,15 @@ describe('native Codex attachment preparation', () => {
       const readOnlyPolicy = nativeSandbox === 'off'
         ? { approvalPolicy: 'untrusted', sandboxPolicy: { type: 'dangerFullAccess' } }
         : { approvalPolicy: 'never', permissions: ':read-only' };
-      expect(requests.filter(request => request.method === 'turn/start').map(request => request.params)).toMatchObject([
+      const turns = requests.filter(request => request.method === 'turn/start').map(request => request.params);
+      expect(turns[0]).toMatchObject({ approvalPolicy: 'untrusted' });
+      expect(turns).toMatchObject([
+        { approvalPolicy: 'untrusted' },
         readOnlyPolicy,
         { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } },
         readOnlyPolicy,
       ]);
-    }, { ...(nativeSandbox ? { configuration: { nativeSandbox } } : {}), onTurnStart: ({ socket, params, turnId }) => {
+    }, { permissionMode: 'default', ...(nativeSandbox ? { configuration: { nativeSandbox } } : {}), onTurnStart: ({ socket, params, turnId }) => {
       socket.send(JSON.stringify({ method: 'turn/completed', params: {
         threadId: params.threadId, turn: { id: turnId, status: 'completed' },
       } }));

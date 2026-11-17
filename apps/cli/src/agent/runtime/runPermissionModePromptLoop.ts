@@ -1066,17 +1066,18 @@ export async function runPermissionModePromptLoop(opts: {
       continue;
     }
 
+    const causalAuthority = message.mode.causalPermissionAuthority;
+    const causalPermission = causalAuthority ? resolveEffectivePermissionMode({
+      currentMode: message.mode.permissionMode,
+      admittedPermissionCeiling: causalAuthority.admittedPermissionCeiling,
+    }) : null;
+    if (causalPermission?.ok) {
+      message.mode = { ...message.mode, permissionMode: causalPermission.effectiveMode };
+    }
     const readRequestedModelSelection = () => message.mode.modelSelection ?? opts.readArmedModelSelection?.() ?? null;
     const readCallerInputFailure = (): PreTurnFailure | null => {
-      // Native policies may never ask the host for permission. Refuse before
-      // dispatch when this process's mode exceeds the input's admitted ceiling.
-      const causalAuthority = message.mode.causalPermissionAuthority;
-      if (causalAuthority) {
-        const effective = resolveEffectivePermissionMode({ currentMode: message.mode.permissionMode,
-          admittedPermissionCeiling: causalAuthority.admittedPermissionCeiling });
-        if (!effective.ok || effective.effectiveMode !== effective.currentMode) {
-          return { code: 'permission_mode_not_granted', message: 'permission_mode_not_granted', retryable: false };
-        }
+      if (causalPermission && !causalPermission.ok) {
+        return { code: 'permission_mode_not_granted', message: 'permission_mode_not_granted', retryable: false };
       }
       const constraints = message.mode.callerInputConstraints;
       if (!constraints) return null;
@@ -1102,17 +1103,21 @@ export async function runPermissionModePromptLoop(opts: {
     const restartSettingsChanged = currentRuntimeRestartModeHash !== null
       && runtimeRestartModeHash !== currentRuntimeRestartModeHash;
     let permissionModeRequiresRestart = false;
-    if (wasStarted && currentRuntimeRestartModeHash !== null && !restartSettingsChanged
+    // A native process may already exist before its first prompt. A causal ceiling
+    // must reach that process through the same configuration/replacement owner.
+    const prepareInitialCausalPolicy = causalAuthority && currentRuntimeRestartModeHash === null;
+    if (((wasStarted && currentRuntimeRestartModeHash !== null) || prepareInitialCausalPolicy) && !restartSettingsChanged
       && runtimePermissionModeApplied !== message.mode.permissionMode) {
       const outcome = await opts.runtime.updateSessionRuntimeConfig({ permissionMode: message.mode.permissionMode });
-      // Legacy runtimes return void; only an affirmative outcome proves that reopening is unnecessary.
-      if (outcome && isRuntimeConfigUpdateOutcomeApplied(outcome)) {
+      // Preserve the legacy initial configuration contract (void means applied).
+      // A hot legacy runtime still follows its existing reopen path.
+      if ((outcome || prepareInitialCausalPolicy) && isRuntimeConfigUpdateOutcomeApplied(outcome)) {
         runtimePermissionModeApplied = message.mode.permissionMode;
       } else {
         permissionModeRequiresRestart = true;
       }
     }
-    const runtimeRestartRequired = wasStarted && (restartSettingsChanged || permissionModeRequiresRestart);
+    const runtimeRestartRequired = (wasStarted && restartSettingsChanged) || permissionModeRequiresRestart;
     // A selected model and permission/settings change share one admitted
     // replacement, after the model owner has admitted the requested target.
     if (runtimeRestartRequired && !readRequestedModelSelection()) {
@@ -1299,8 +1304,16 @@ export async function runPermissionModePromptLoop(opts: {
         const dispatchGrantedInput = async (): Promise<void> => {
           const failure = readCallerInputFailure();
           if (failure) throw new PreTurnPromptFailure(failure);
+          opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
           if (runtimePermissionModeApplied !== message.mode.permissionMode) {
-            await opts.runtime.updateSessionRuntimeConfig({ permissionMode: message.mode.permissionMode });
+            const outcome = await opts.runtime.updateSessionRuntimeConfig({ permissionMode: message.mode.permissionMode });
+            if (causalAuthority && !isRuntimeConfigUpdateOutcomeApplied(outcome)) {
+              throw new PreTurnPromptFailure({
+                code: 'permission_mode_not_granted', message: 'permission_mode_not_granted', retryable: false,
+                reason: 'runtime_config_blocked',
+                ...(outcome?.diagnostic ? { diagnostic: outcome.diagnostic } : {}),
+              });
+            }
             runtimePermissionModeApplied = message.mode.permissionMode;
           }
           await dispatch();

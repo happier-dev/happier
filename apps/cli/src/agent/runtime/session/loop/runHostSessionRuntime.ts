@@ -3220,7 +3220,7 @@ async function runHostedSessionRuntime(
     ...(isTrackedNativeReturn ? { strictNativeResumeIdentity: true } : {}),
     pendingQueueDeliveryTiming,
     permissionHandler,
-    getPermissionMode: () => permissionModeState.getCurrentPermissionMode() ?? 'default',
+    getPermissionMode: () => permissionHandler.getPermissionMode(),
     getWorkspaceWrites: sessionRoleContext.readWorkspaceWrites,
     resolveFreshSessionSystemPrompt,
     memoryRecallGuidanceEnabled,
