@@ -343,15 +343,15 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
           />
         </ItemGroup>
       ) : null}
-      {filtering && shownItems.length === 0 && items.length > 0 ? (
-        // Nothing known uncovered: "all backed up" only when every shown Environment answered.
-        unresolved > 0 ? null : <ItemGroup surface="none">
-          <EmptyState testID="all-deployments.allBackedUp" layout="line" title={t('projects.deployments.allBackedUp')} />
-        </ItemGroup>
-      ) : shownItems.length === 0 && items.length > 0 && (needle !== '' || servicesView.narrowing) ? (
+      {shownItems.length === 0 && items.length > 0 && (needle !== '' || servicesView.narrowing) ? (
         // The search or the view's conditions keep none of the rows read: say so, the header's tokens clear them.
         <ItemGroup surface="none">
           <EmptyState testID="all-deployments.noMatches" layout="line" title={t('projects.deployments.services.noMatches')} />
+        </ItemGroup>
+      ) : filtering && shownItems.length === 0 && items.length > 0 ? (
+        // Nothing known uncovered: "all backed up" only when every shown Environment answered.
+        unresolved > 0 ? null : <ItemGroup surface="none">
+          <EmptyState testID="all-deployments.allBackedUp" layout="line" title={t('projects.deployments.allBackedUp')} />
         </ItemGroup>
       ) : items.length === 0 ? (
         // A page whose rows all belong to Projects this Account can't open still leads on to the next one.

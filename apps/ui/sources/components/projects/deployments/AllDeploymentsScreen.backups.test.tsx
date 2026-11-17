@@ -307,6 +307,26 @@ describe('All deployments → Not backed up', () => {
     }
   });
 
+  it('does not call hidden uncovered Environments all backed up when search keeps no matches', async () => {
+    const { screen, dispose } = await mount({ presented: true });
+    try {
+      await act(async () => {
+        await vi.waitFor(() => expect(screen.findByTestId('all-deployments.notBackedUp')).not.toBeNull());
+        await screen.pressByTestIdAsync('all-deployments.notBackedUp');
+      });
+      expect(rowIds(screen)).toHaveLength(2);
+      const header = () => screen.root.findAll((node) => node.props.testID === 'all-deployments.header' && 'search' in node.props)[0]!;
+      await act(async () => { header().props.search.onChangeText('no-such-environment'); });
+      expect(rowIds(screen)).toHaveLength(0);
+      expect(screen.findByTestId('all-deployments.noMatches')).not.toBeNull();
+      expect(screen.findByTestId('all-deployments.allBackedUp')).toBeNull();
+      await act(async () => { header().props.search.onChangeText(''); });
+      expect(rowIds(screen)).toHaveLength(2);
+    } finally {
+      dispose();
+    }
+  });
+
   it('reads nothing while the page is not on screen', async () => {
     const { screen, reads, dispose } = await mount({ presented: false });
     try {
