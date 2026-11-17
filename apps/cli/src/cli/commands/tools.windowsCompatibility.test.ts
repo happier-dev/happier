@@ -11,6 +11,8 @@ import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture }
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readHappierActionToolFailure } from '@happier-dev/protocol/actions/happierActionToolResult';
+import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol/tools/happierToolsShellBridge';
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')!;
 afterEach(() => {
@@ -25,7 +27,8 @@ describe('Windows current-user Agent tools compatibility', () => {
     { outcome: 'workflow refusal', result: { ok: false, errorCode: 'action_interception_rejected', error: 'PRIVATE',
       details: { message: 'Review the check Run.', stderr: 'PRIVATE' } },
       expected: { ok: false, error: { code: 'action_interception_rejected',
-        message: 'Workflow-supplied reason (untrusted): "Review the check Run."' } } },
+        message: 'Workflow-supplied reason (untrusted): "Review the check Run."',
+        details: { message: 'Review the check Run.', messageTrust: 'workflow_supplied_untrusted' } } } },
     { outcome: 'permission refusal', result: { ok: false, errorCode: 'permission_denied', error: 'Permission is required.' },
       expected: { ok: false, error: { code: 'permission_denied', message: 'Permission is required.' } } },
   ])('keeps the credentialed Session RPC route and typed $outcome without Unix context', async ({ result, expected }) => {
@@ -57,6 +60,17 @@ describe('Windows current-user Agent tools compatibility', () => {
         '--tool-call-id', 'native-windows-call', '--json'], { readCredentials });
       expect(output.json()).toMatchObject(expected);
       expect(JSON.stringify(output.json())).not.toContain('PRIVATE');
+      if (result.ok === false && result.errorCode === 'action_interception_rejected') {
+        const command = 'happier tools call --agent-bridge --source happier --tool change_title --args-json "{}" --json';
+        expect(readHappierActionToolFailure('Bash', {
+          command,
+          _happier: { v: 2, protocol: 'acp', provider: 'codex', rawToolName: 'Bash', canonicalToolName: 'change_title' },
+          happierToolsShellBridge: parseHappierToolsShellBridgeCommand(command),
+        }, { stdout: JSON.stringify(output.json()), exit_code: 1 })).toMatchObject({
+          code: 'action_interception_rejected', outcome: 'refused', message: 'Review the check Run.',
+          messageTrust: 'workflow_supplied_untrusted',
+        });
+      }
       expect(requests).toEqual([expect.objectContaining({ method: `${sessionId}:${SESSION_RPC_METHODS.SESSION_AGENT_TOOL_CALL_V1}`,
         params: { toolName: 'change_title', args: { title: 'Windows Session' }, toolCallId: 'native-windows-call' } })]);
       expect(readCredentials).toHaveBeenCalled();

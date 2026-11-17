@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readHappierActionToolFailure, readHappierActionToolName, readHappierActionToolPayload } from './happierActionToolResult.js';
+import { parseHappierToolsShellBridgeCommand } from '../tools/happierToolsShellBridge.js';
 
 /** The MCP text envelope an Agent's transcript stores for a first-party Action call. */
 function mcpTextResult(payload: unknown) {
@@ -15,6 +16,28 @@ function mcpTextResult(payload: unknown) {
 const input = { actionId: 'session.stop', input: { sessionId: 's1' } };
 
 describe('readHappierActionToolFailure', () => {
+  it('reads a safe refusal from the first-party shell bridge receipt only', () => {
+    const command = 'happier tools call --agent-bridge --source happier --tool action_execute --args-json "{}" --json';
+    const bridge = parseHappierToolsShellBridgeCommand(command);
+    if (bridge?.kind !== 'call') throw new Error('Expected a shell bridge call');
+    const bridgeInput = {
+      command,
+      _happier: { v: 2, protocol: 'acp', provider: 'codex', rawToolName: 'Bash', canonicalToolName: 'action_execute' },
+      happierToolsShellBridge: bridge,
+    };
+    const result = { stdout: JSON.stringify({ v: 1, ok: false, kind: 'tools_call', error: {
+      code: 'action_interception_rejected', message: 'Workflow-supplied reason (untrusted): "Check the Run."',
+      details: { message: 'Check the Run.', messageTrust: 'workflow_supplied_untrusted' },
+    } }), exit_code: 1 };
+    expect(readHappierActionToolFailure('Bash', bridgeInput, result)).toEqual({
+      code: 'action_interception_rejected', outcome: 'refused', cause: null,
+      message: 'Check the Run.', messageTrust: 'workflow_supplied_untrusted',
+    });
+    expect(readHappierActionToolFailure('Bash', { ...bridgeInput,
+      happierToolsShellBridge: { ...bridgeInput.happierToolsShellBridge, source: 'other' } }, result)).toBeNull();
+    expect(readHappierActionToolFailure('Bash', { command: bridgeInput.command }, result)).toBeNull();
+  });
+
   it.each([{ message: '  Check failed; review the Run.  ', stderr: 'PRIVATE' }, { message: { secret: 'PRIVATE' }, stderr: 'PRIVATE' }, ['PRIVATE'], null].map(details => ({ details })))('projects only the safe workflow refusal reason ($details)', ({ details }) => {
     const result = mcpTextResult({ ok: false, errorCode: 'action_interception_rejected', error: 'PRIVATE', details });
     const failure = readHappierActionToolFailure('mcp__happier__action_execute', input, result);

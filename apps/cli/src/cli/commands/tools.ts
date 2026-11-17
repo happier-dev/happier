@@ -9,7 +9,7 @@ import { fail } from '@happier-dev/cli-common/output';
 import { resolveShellBridgeActionSurfaceV1 as resolveToolsCommandSurface } from '@/cli/actions/shellBridgeActionSurface';
 import { callSessionMcpTool, listSessionMcpTools } from './toolsSessionMcp';
 import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalContext';
-import { projectActionFailureForAgentV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureForAgentV1, readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 export type { ToolsCommandDeps } from './toolsAccount';
 
 type AccountToolsListing = Awaited<ReturnType<typeof listAccountTools>>;
@@ -183,12 +183,16 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           const candidates = 'candidates' in result && Array.isArray(result.candidates)
             ? result.candidates
             : undefined;
+          const presentation = source === 'happier'
+            ? readActionFailurePresentationV1(result.errorCode, 'details' in result ? result.details : undefined)
+            : null;
           await printJsonEnvelope({
             ok: false,
             kind,
             error: {
               code: result.errorCode,
               message: result.error,
+              ...(presentation ? { details: { message: presentation.message, messageTrust: presentation.messageTrust } } : {}),
               ...(candidates ? { candidates } : {}),
             },
           }, { exitCode: 1 });

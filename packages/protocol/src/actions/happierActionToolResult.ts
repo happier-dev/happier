@@ -102,8 +102,14 @@ export function readHappierActionToolResultCandidates(result: unknown, input?: u
     if (bridge?.json) {
         if (isRecord(parsed) && typeof parsed.stdout === 'string') candidates.push(maybeParseJson(parsed.stdout));
         for (const candidate of [...candidates]) {
-            if (!isRecord(candidate) || candidate.v !== 1 || candidate.ok !== true || candidate.kind !== 'tools_call'
-                || !isRecord(candidate.data)) continue;
+            if (!isRecord(candidate) || candidate.v !== 1 || candidate.kind !== 'tools_call') continue;
+            if (candidate.ok === false && isRecord(candidate.error)
+                && typeof candidate.error.code === 'string' && typeof candidate.error.message === 'string') {
+                candidates.push({ ok: false, errorCode: candidate.error.code, error: candidate.error.message,
+                    ...(candidate.error.details === undefined ? {} : { details: candidate.error.details }) });
+                continue;
+            }
+            if (candidate.ok !== true || !isRecord(candidate.data)) continue;
             const data = candidate.data;
             if (data.source === 'happier' && data.tool === bridge.tool && data.isError === false
                 && Object.hasOwn(data, 'output')) candidates.push(data.output);
