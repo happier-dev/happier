@@ -102,6 +102,7 @@ import {
 import {
     dropTargetedContributionAdmissionDiagnostics,
 } from '../projection/registry/targetedContributions';
+import { createTargetedAdmissionLifecycle } from './composition/targetedAdmissionLifecycle';
 import type {
     ResolvedCatalogEntry,
     ResolvedContributionRegistry,
@@ -1109,7 +1110,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 : lifecycle.retirementSignal,
         };
     };
-    const authoritativeContributes = mergeActivatedContributes(
+    const initialAuthoritativeContributes = mergeActivatedContributes(
         contributes,
         activatedRegistry,
         immutableGenerationIdsByPluginId,
@@ -1124,6 +1125,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
         resolveAgentPreflightLifecycle,
         params?.agentIsolation,
     );
+    const targetedAdmission = createTargetedAdmissionLifecycle(
+        initialAuthoritativeContributes, pluginId => consumerAssembly.isPluginCurrent(pluginId),
+    );
+    const authoritativeContributes = targetedAdmission.contributes;
     const resolveExactActivationTarget = (pluginId: string) => {
         const targets = authoritativeContributes.activationTargets.filter((target) => (
             target.pluginId === pluginId
@@ -2042,11 +2047,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
     ): Promise<PluginDaemonDatabaseQuiescence> => await daemonDatabaseHost.quiesce(pluginIds);
     const fencePluginConsumers = (pluginIds: readonly string[]): void => {
         consumerAssembly.fencePlugins(pluginIds);
+        targetedAdmission.refresh();
         uiResourceWatches?.retirePlugins(pluginIds);
     };
     const retirePluginConsumers = async (pluginIds: readonly string[]) => {
+        const retirement = consumerAssembly.retirePlugins(pluginIds);
+        targetedAdmission.refresh();
         await Promise.all([
-            consumerAssembly.retirePlugins(pluginIds),
+            retirement,
             projectManagedServicesOwner.retireSharedProviderServices(pluginIds),
         ]);
     };

@@ -17,6 +17,46 @@ import {
 } from './daemonContributionRegistryProjection';
 
 describe('targeted detail execution origins through admitted runtime publication', () => {
+    it('keeps a target and its other providers available when one contributor retires', async () => {
+        const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
+            pluginIds: ['happier.channels', 'happier.channel.email', 'happier.scm.forge.github'],
+            resolveCurrentMachineId: () => 'machine-targeted-retirement',
+        } });
+        try {
+            const handlers = new Map<string, RpcHandler>();
+            registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
+                resolveRuntimeRegistry: async () => fixture.registry,
+                resolveInstalledPackages: async () => [],
+                resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId: 'srv_retirement', machineId: 'machine-targeted-retirement' }),
+            });
+            const handler = handlers.get(RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ);
+            if (!handler) throw new Error('Expected targeted-contributions RPC');
+            const read = async () => {
+                invalidateDaemonContributionRegistryProjectionCache();
+                return DaemonPluginUiTargetedContributionsReadResponseSchema.parse(await handler({
+                    machineId: 'machine-targeted-retirement', pluginId: 'happier.channels',
+                }));
+            };
+            const before = await read();
+            expect(before.status).toBe('current');
+            if (before.status !== 'current') throw new Error('Expected current target');
+            const providerIds = (response: typeof before) => response.targetedContributions.points
+                .flatMap(point => point.protocols.flatMap(protocol => protocol.contributions.map(item => item.contributor.pluginId)));
+            expect(providerIds(before)).toEqual(expect.arrayContaining(['happier.scm.forge.github', 'happier.channel.email']));
+            await fixture.registry.retirePluginConsumers?.(['happier.scm.forge.github']);
+            const after = await read();
+            expect(after.status).toBe('current');
+            if (after.status !== 'current') throw new Error('Expected remaining providers');
+            expect(providerIds(after)).not.toContain('happier.scm.forge.github');
+            expect(providerIds(after)).toContain('happier.channel.email');
+            await fixture.registry.retirePluginConsumers?.(['happier.channels']);
+            expect(await read()).toEqual({ status: 'unavailable', code: 'plugin_targeted_contributions_unavailable' });
+        } finally {
+            invalidateDaemonContributionRegistryProjectionCache();
+            await fixture.dispose();
+        }
+    }, 120_000);
+
     it('sends each demanded Surface input contract and contributor snapshot once through the real UI reader', async () => {
         const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: {
             resolveCurrentMachineId: () => 'machine-targeted-cost',
