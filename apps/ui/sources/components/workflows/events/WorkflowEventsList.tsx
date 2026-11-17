@@ -27,8 +27,8 @@ import {
 import { t } from '@/text';
 
 import {
-  WORKFLOW_EVENT_FILTERS,
   matchesWorkflowEventFilter,
+  orderWorkflowEventFilters,
   type WorkflowEventFilter,
 } from './workflowEventFacts';
 import {
@@ -122,13 +122,14 @@ export const WorkflowEventsFilters = React.memo(function WorkflowEventsFilters(
   }, [keys, projection]);
   const tabs = React.useMemo(
     () =>
-      WORKFLOW_EVENT_FILTERS.map((id) => ({
-        id,
-        label: t(`workflows.events.filters.${id}`),
-        ...(id === 'all' || counts[id] === 0
-          ? {}
-          : { count: String(counts[id]) }),
-      })),
+      orderWorkflowEventFilters(counts)
+        .map((id) => ({
+          id,
+          label: t(`workflows.events.filters.${id}`),
+          ...(id === 'all' || counts[id] === 0
+            ? {}
+            : { count: String(counts[id]) }),
+        })),
     [counts],
   );
   return (
@@ -184,14 +185,19 @@ export const WorkflowEventsRows = React.memo(function WorkflowEventsRows(
     [feed.keys, feed.projection, filter],
   );
   if (keys.length === 0) {
+    // Listening with the retained page not read yet is still loading: "nothing yet" is said only once the
+    // feed has its first page (DESIGN-ACCEPT-1 D9: a remounted feed read as empty while its page was in flight).
     if (
       feed.status === 'connecting' ||
+      (feed.status === 'live' && feed.retained === null) ||
       (feed.listeningSince === null &&
         feed.status !== 'failed' &&
         feed.status !== 'offline')
     ) {
       return <CollectionSkeletonRows count={5} />;
     }
+    // A failed or paused feed with nothing held: the listening line already says why, with its Retry (one cause, one line).
+    if (feed.keys.length === 0 && (feed.status === 'failed' || feed.status === 'offline')) return null;
     return (
       <View style={collectionListStyles.stateLine}>
         <EmptyState

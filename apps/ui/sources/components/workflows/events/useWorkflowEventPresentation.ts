@@ -25,6 +25,7 @@ import { readWorkflowEventStartedRuns } from './workflowEventFacts';
 import { createMachineExecutionRunRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 
 export type WorkflowEventFactLine = Readonly<{
@@ -79,7 +80,9 @@ export function useWorkflowEventPresentation(
 ): WorkflowEventPresentation | null {
   const lifetime = useActiveServerAccountScopeLifetime();
   const serverId = scope?.serverId ?? null;
-  const sessionId = fact?.kind === 'session' ? fact.sessionId : '';
+  const executionSource = fact?.coverage === 'retained_cause' && fact.evidence.source.kind === 'execution_run' ? fact.evidence.source : null;
+  // A retained native cause is about its Session and Machine: the row names them, as a live Session event does.
+  const sessionId = fact?.kind === 'session' ? fact.sessionId : executionSource?.sessionId ?? '';
   const selectName = React.useCallback(
     (row: SessionListRenderableSession | null) =>
       row === null ? null : getSessionName(row, serverId),
@@ -102,9 +105,8 @@ export function useWorkflowEventPresentation(
   );
   const machineName = useServerScopedMachineLabel(
     serverId,
-    fact?.kind === 'machine' ? fact.machineId : sessionMachineId,
+    fact?.kind === 'machine' ? fact.machineId : executionSource?.machineId ?? sessionMachineId,
   );
-  const executionSource = fact?.coverage === 'retained_cause' && fact.evidence.source.kind === 'execution_run' ? fact.evidence.source : null;
   const executionReferences = React.useMemo(() => executionSource === null ? NO_EXECUTION_RUN_HEADERS : [{
     source: executionSource, demanded: active, refreshKey: String(fact?.sourceRevision),
   }], [executionSource, active, fact?.sourceRevision]);
@@ -199,9 +201,10 @@ export function useWorkflowEventPresentation(
         };
       }
       case 'run': {
-        const executionSource = fact.coverage === 'retained_cause' && fact.evidence.source.kind === 'execution_run' ? fact.evidence.source : null;
         const workflow = executionSource === null ? workflowName ?? t('workflows.events.someWorkflow') : executionTitle!;
         const result = fact.coverage === 'live' ? formatWorkflowRunStateLabel(fact.state) : null;
+        // What the row is about after the title: how the Run ended, else where a retained native cause ran.
+        const subtitle = result ?? (executionSource === null ? null : joinHappierFacts(sessionName, machineName) || null);
         const href = executionSource === null ? createWorkflowRunRoute(fact.runId, serverId)
           : createMachineExecutionRunRoute(serverId ?? '', executionSource.machineId, executionSource.runId);
         return {
@@ -209,7 +212,7 @@ export function useWorkflowEventPresentation(
           runsStarted,
           glyph: 'tree-structure',
           needsYou: fact.event === 'needs_attention',
-          subtitle: result ?? t('workflows.events.recordedCause'),
+          subtitle,
           title: t(
             fact.event === 'needs_attention'
               ? 'workflows.events.runNeedsYou'
@@ -232,7 +235,7 @@ export function useWorkflowEventPresentation(
         };
       }
     }
-  }, [fact, machineName, sessionName, sessionPath, workflowName, executionTitle, serverId, retainedRuns]);
+  }, [fact, executionSource, machineName, sessionName, sessionPath, workflowName, executionTitle, serverId, retainedRuns]);
 }
 
 function readSessionMachineId(

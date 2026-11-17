@@ -19,6 +19,7 @@ import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction'
 import type { WorkflowActivityFact } from '@/sync/domains/workflows/workflowActivityTypes';
 import { createMachineExecutionRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { notifyExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 import { useWorkflowEventPresentation } from './useWorkflowEventPresentation';
@@ -90,7 +91,11 @@ it('names a retained native cause through the exact Run header and preserves its
   reads.length = 0;
   const hook = await renderHook(() => useWorkflowEventPresentation(fact, lifetime.scope, undefined, true));
   await expect.poll(() => hook.getCurrent()?.lines[0]?.value).toBe(run.display!.title);
-  expect(hook.getCurrent()).toMatchObject({ fact, subtitle: t('workflows.events.recordedCause'),
+  // The row says where the retained cause ran, never a mechanism word.
+  const machine = await renderHook(() => useServerScopedMachineLabel(lifetime.scope.serverId, source.machineId));
+  await expect.poll(() => machine.getCurrent()).toEqual(expect.any(String));
+  expect(hook.getCurrent()?.subtitle).toBe(machine.getCurrent());
+  expect(hook.getCurrent()).toMatchObject({ fact,
     title: t('workflows.events.runFinished', { workflow: run.display!.title }),
     open: { href: createMachineExecutionRunRoute(lifetime.scope.serverId, source.machineId, source.runId) } });
   expect(reads).toEqual([{ runId: source.runId, includeStructured: false, includeLatestToolResult: false }]);

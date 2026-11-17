@@ -11,6 +11,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { WorkflowSentenceBuilder } from '@/components/workflows/sentence/WorkflowSentenceBuilder';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -110,6 +111,23 @@ export const WorkflowEventDetailPage = React.memo(
     const presentation = useWorkflowEventPresentation(fact, scope, feed.retained?.runs, presented);
     const router = useRouter();
     const automate = useWorkflowEventAutomate(presentation, presented);
+    // A picked row the feed hasn't settled is waiting or unreachable, not gone: say that, with the feed's Retry.
+    if (presentation === null && props.eventKey !== null && feed.status !== 'live') {
+      return (
+        <View style={styles.pick} testID="workflow-events:pick">
+          <SurfaceStateCard
+            testID="workflow-events:pick:feed"
+            size="pane"
+            {...(feed.status === 'failed'
+              ? { kind: 'error' as const, title: t('workflows.events.failed'),
+                  action: { label: t('workflows.retry'), onPress: () => { void feed.retry(); } } }
+              : feed.status === 'offline'
+                ? { kind: 'unavailable' as const, title: t('workflows.events.paused') }
+                : { kind: 'loading' as const, title: t('workflows.events.connecting') })}
+          />
+        </View>
+      );
+    }
     if (presentation === null) {
       return (
         <View style={styles.pick} testID="workflow-events:pick">
@@ -138,6 +156,8 @@ export const WorkflowEventDetailPage = React.memo(
         <PageHeader
           testID="workflow-events:detail:header"
           title={presentation.title}
+          // The event's sentence is its identity (lab events:A:selected 390): the mark keeps its title on phones.
+          alwaysShowTitle
           leading={<PageHeaderMarkIcon name={presentation.glyph} />}
           meta={meta}
           actionsPlacement="page"

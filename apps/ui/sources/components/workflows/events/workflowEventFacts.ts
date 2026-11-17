@@ -20,6 +20,18 @@ export const WORKFLOW_EVENT_FILTERS = [
 ] as const;
 export type WorkflowEventFilter = (typeof WORKFLOW_EVENT_FILTERS)[number];
 
+/**
+ * The chips in showing order: All, then the kinds that have events (in the fixed order), then the empty ones, so a
+ * narrow column's whole chips are the ones worth pressing and an empty kind waits behind More instead of the
+ * populated one.
+ */
+export function orderWorkflowEventFilters(
+  counts: Readonly<Record<WorkflowEventFilter, number>>,
+): readonly WorkflowEventFilter[] {
+  const empty = (filter: WorkflowEventFilter) => filter !== 'all' && counts[filter] === 0;
+  return [...WORKFLOW_EVENT_FILTERS.filter((filter) => !empty(filter)), ...WORKFLOW_EVENT_FILTERS.filter(empty)];
+}
+
 export function matchesWorkflowEventFilter(
   fact: WorkflowActivityFact,
   filter: WorkflowEventFilter,

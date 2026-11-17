@@ -14,6 +14,7 @@ vi.mock('@/text', async () => {
 
 const {
   matchesWorkflowEventFilter,
+  orderWorkflowEventFilters,
   readWorkflowEventTrigger,
   readWorkflowEventWhen,
   readWorkflowEventStartedRuns,
@@ -181,5 +182,13 @@ describe('workflowEventFacts', () => {
         matchesWorkflowEventFilter(fact, 'all'),
       ),
     ).toHaveLength(2);
+  });
+});
+
+describe('orderWorkflowEventFilters', () => {
+  it('puts the populated kinds first so an empty kind, not the only populated one, waits behind More', () => {
+    expect(orderWorkflowEventFilters({ all: 6, session: 0, machine: 0, run: 6 })).toEqual(['all', 'run', 'session', 'machine']);
+    expect(orderWorkflowEventFilters({ all: 0, session: 0, machine: 0, run: 0 })).toEqual(['all', 'session', 'machine', 'run']);
+    expect(orderWorkflowEventFilters({ all: 3, session: 1, machine: 0, run: 2 })).toEqual(['all', 'session', 'run', 'machine']);
   });
 });

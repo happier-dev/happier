@@ -19952,7 +19952,6 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         machineOffline: ({ machine }: { machine: string }) => `${machine} не в сети`,
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} завершён`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} ждёт вас`,
-        recordedCause: 'Сохранённая причина',
         carries: 'Что оно несёт',
         startedFromIt: 'Запущено отсюда',
         noTrigger: 'Процессы пока не могут запускаться от такого события.',

@@ -19858,7 +19858,6 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         machineOffline: ({ machine }: { machine: string }) => `${machine} がオフラインになりました`,
         runFinished: ({ workflow }: { workflow: string }) => `${workflow} が完了しました`,
         runNeedsYou: ({ workflow }: { workflow: string }) => `${workflow} があなたを待っています`,
-        recordedCause: '記録されたきっかけ',
         carries: '含まれる情報',
         startedFromIt: 'ここから開始',
         noTrigger: 'この種類のイベントからはまだワークフローを開始できません。',
