@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
+import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 
 vi.mock('@/text', () => createTextModuleMock());
@@ -6,6 +8,39 @@ vi.mock('@/text', () => createTextModuleMock());
 import { resolveSessionPermissionChoices, selectSessionPermissionChoiceForDecision } from './sessionPermissionChoices';
 import { answerSessionPermission, resolveSessionPermissionBehavior } from './sessionPermissionAnswers';
 import { createClaudePermissionEngine, type ClaudePermissionContext } from '../../../../../packages/plugins/claude/src/agent/permissions/createClaudePermissionEngine';
+import { buildCodexPermissionChoices } from '../../../../../packages/plugins/codex/src/agent/runtime/core/permissionChoices';
+import { buildOpenCodePermissionApprovalRequest } from '../../../../../packages/plugins/opencode/src/agent/runtime/server/permissionBridge';
+
+const mcpTool = { server: 'docs', tool: 'mutate', serverTitle: 'Docs', item: { serverId: 'docs-id' },
+    decision: { exposed: true, approval: 'ask' as const, effectClass: 'write' as const, source: 'server_default' as const } };
+const toolName = 'mcp__docs__mutate';
+type NativeChoice = NativePermissionChoicesV1['choices'][number];
+
+function withCatalogOffer(native: NativePermissionChoicesV1, grantId: string): NativePermissionChoicesV1 {
+    const grant = native.choices.find(choice => choice.id === grantId);
+    if (!grant) throw new Error(`Missing ${native.source} grant ${grantId}`);
+    const catalog = createMcpCatalogPermissionChoiceV1({ mcpTool, grant, existingChoices: native.choices });
+    if (!catalog) throw new Error('Missing MCP catalog offer');
+    return { ...native, choices: [...native.choices, catalog] };
+}
+
+// Pi RPC operations fixture and Muse's captured MCP approval (QA-R1112U),
+// with request identities and the MCP wire name replaced by the shared test subject.
+const piChoices = { requirementId: 'dialog/opaque', source: 'pi', choices: [
+    { id: 'allow', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+    { id: 'allow_session', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session',
+        response: { approved: true, decision: 'approved_for_session', allowedTools: [toolName] } },
+    { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false, decision: 'denied' } },
+    { id: 'stop', label: 'Stop', decision: 'abort', scope: 'once', response: { approved: false, decision: 'abort' } },
+] } satisfies NativePermissionChoicesV1;
+const museChoices = { requirementId: '{"approvalId":"muse-mcp","sourceIndex":0}', source: 'muse', choices: [
+    { id: 'allow_once', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true, decision: 'approved' } },
+    { id: 'allow_session', label: 'Allow for this session', decision: 'approved_for_session', scope: 'session', rulePreview: `tool ${toolName}`,
+        response: { approved: true, decision: 'approved_for_session' } },
+    { id: 'allow_local_mcp_tool', label: 'Always allow this MCP tool', decision: 'approved_execpolicy_amendment', scope: 'localPersistent',
+        rulePreview: `tool \`${toolName}\``, response: { approved: true, decision: 'approved_execpolicy_amendment' } },
+    { id: 'abort', label: 'Reject', decision: 'abort', scope: 'once', allowsFeedback: true, response: { approved: false, decision: 'abort' } },
+] } satisfies NativePermissionChoicesV1;
 
 describe('Session permission offered choices', () => {
     it('uses only native offers for Muse and never guesses a Claude grant for an offerless request', () => {
@@ -29,7 +64,7 @@ describe('Session permission offered choices', () => {
             { id: 'cmd', label: 'Always allow `npm test`', decision: 'approved' as const, scope: 'localPersistent' as const, response: { approved: true } },
         ] };
         expect(resolveSessionPermissionChoices({ toolName: 'Bash', nativeChoices }).map(choice => choice.label))
-            .toEqual(['Always allow', 'Allow once', 'Reject once', 'Always allow `npm test`']);
+            .toEqual(['Always allow', 'Allow once', 'Always allow `npm test`', 'Reject once']);
     });
     it('keeps the existing catalog consent reachable for a live external Claude MCP request', async () => {
         // The plugin's host permission service is the external SDK boundary.
@@ -39,18 +74,55 @@ describe('Session permission offered choices', () => {
         await createClaudePermissionEngine(context).canCallTool('mcp__docs__mutate', { page: 'draft' }, { requestId: 'live-mcp' });
         const request = requestDecision.mock.calls[0]![0];
         if (!request.toolName) throw new Error('Expected the requested tool name');
-        const mcpTool = { server: 'docs', tool: 'mutate', serverTitle: 'Docs', item: { serverId: 'docs-id' },
-            decision: { exposed: true, approval: 'ask' as const, effectClass: 'write' as const, source: 'server_default' as const } };
         const nativeChoices = requestDecision.mock.calls[0]![1]?.buildNativeChoices?.({ mcpTool });
         const choices = resolveSessionPermissionChoices({ toolName: request.toolName, toolInput: request.input,
             nativeChoices, canWriteCatalog: true,
             permissionBehavior: resolveSessionPermissionBehavior({ agentId: 'claude', metadata: { flavor: 'claude' }, accountScope: null }),
             mcpTool,
         });
-        expect(choices.some(choice => choice.id === 'mcp_always_allow')).toBe(true);
+        expect(choices.map(choice => choice.id)).toEqual(['allow', 'mcp_always_allow', 'always_allow', 'deny', 'stop']);
+        expect(choices.find(choice => choice.id === 'always_allow')?.label).toBe('capabilities.session.ask.allowSession');
         expect(choices.find(choice => choice.id === 'mcp_always_allow')?.followUp).toEqual({
             actionId: 'mcp.servers.tools.set', input: { serverId: 'docs-id', tools: { mutate: 'allow' } },
         });
+    });
+    it.each([
+        [buildCodexPermissionChoices('codex-approval'), 'acceptForSession', ['accept', 'acceptForSession', 'mcp_always_allow', 'decline', 'cancel']],
+        [buildOpenCodePermissionApprovalRequest({ requestId: 'native-permission/opaque', providerSessionId: null, permission: toolName,
+            patterns: ['*'] }).nativeChoices!, 'allow_session', ['allow', 'allow_session', 'mcp_always_allow', 'deny', 'stop']],
+        [piChoices, 'allow_session', ['allow', 'allow_session', 'mcp_always_allow', 'deny', 'stop']],
+        [museChoices, 'allow_once', ['allow_once', 'allow_session', 'mcp_always_allow', 'abort']],
+    ] satisfies [NativePermissionChoicesV1, string, string[]][])('keeps the session grant and puts refusals last (%#)', (native, grantId, expectedIds) => {
+        const choices = resolveSessionPermissionChoices({ toolName, mcpTool, canWriteCatalog: true,
+            nativeChoices: withCatalogOffer(native, grantId) });
+        expect(choices.map(choice => choice.id)).toEqual(expectedIds);
+        expect(choices.find(choice => choice.scope === 'session')?.label).toBe('capabilities.session.ask.allowSession');
+        expect(choices.find(choice => choice.scope === 'localPersistent')).toMatchObject({
+            label: 'capabilities.session.toolAsk.alwaysAllow',
+            response: { nativeChoice: { requirementId: native.requirementId, choiceId: 'mcp_always_allow' } },
+            followUp: { actionId: 'mcp.servers.tools.set', input: { serverId: 'docs-id', tools: { mutate: 'allow' } } },
+        });
+    });
+    it.each(['tool mcp__docs__mutate', 'tool `mcp__docs__mutate`'])('keeps the catalog grant for the exact MCP rule %s', rulePreview => {
+        const nativeChoices = withCatalogOffer({ ...museChoices, choices: museChoices.choices.map((choice): NativeChoice =>
+            choice.id === 'allow_local_mcp_tool' ? { ...choice, rulePreview } : choice) }, 'allow_once');
+        const choices = resolveSessionPermissionChoices({ toolName, mcpTool, canWriteCatalog: true, nativeChoices });
+        expect(choices.filter(choice => choice.scope === 'localPersistent').map(choice => choice.id)).toEqual(['mcp_always_allow']);
+    });
+    it('retains a native persistent rule when the catalog does not cover that rule', () => {
+        const nativeChoices = withCatalogOffer({ ...museChoices, choices: museChoices.choices.map((choice): NativeChoice =>
+            choice.id === 'allow_local_mcp_tool' ? { ...choice, rulePreview: 'tool mcp__docs__other' } : choice) }, 'allow_once');
+        const choices = resolveSessionPermissionChoices({ toolName, mcpTool, canWriteCatalog: true, nativeChoices });
+        expect(choices.map(choice => choice.id)).toContain('allow_local_mcp_tool');
+        expect(resolveSessionPermissionChoices({ toolName, nativeChoices: museChoices }).map(choice => choice.id))
+            .toContain('allow_local_mcp_tool');
+    });
+    it('keeps an available native MCP grant when the corresponding catalog offer is withheld', () => {
+        const choices = resolveSessionPermissionChoices({ toolName, mcpTool, canWriteCatalog: true,
+            nativeChoices: withCatalogOffer(museChoices, 'allow_once'),
+            nativeChoiceAvailability: [{ choiceId: 'mcp_always_allow', allowed: false, reason: 'owner_required' }],
+        });
+        expect(choices.filter(choice => choice.scope === 'localPersistent').map(choice => choice.id)).toEqual(['allow_local_mcp_tool']);
     });
     it.each([
         { label: 'available once', allowed: true, omitOnce: false, expected: 'opaque:once' },

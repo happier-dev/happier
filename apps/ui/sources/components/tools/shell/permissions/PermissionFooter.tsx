@@ -827,7 +827,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         );
     }
 
-    // Offered native choices (lab mb B): every choice the agent offered, in its words and its order.
+    // Offered native choices (lab mb B) use the shared resolver's presentation order.
     if (nativeChoices !== undefined) {
         const offeredChoices = choices.filter(isOfferedPermissionChoice);
         const loadingChoiceId = isCurrentRequestLoading ? storedLoadingChoiceId : null;
