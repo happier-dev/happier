@@ -149,15 +149,12 @@ export function resolveUiWebScriptFetchTotalTimeoutMs(env: NodeJS.ProcessEnv): n
   return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS, 420_000);
 }
 
-export function resolveUiWebMetroWorkspacePrebuildTimeoutMs(env: NodeJS.ProcessEnv): number {
-  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_METRO_WORKSPACE_PREBUILD_TIMEOUT_MS, 480_000);
-}
-
 export function resolveUiWebMetroBeforeAllTimeoutMs(env: NodeJS.ProcessEnv): number {
   const minTimeoutMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_MIN_TIMEOUT_MS, 900_000);
   const headroomMs = readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_BEFORE_ALL_HEADROOM_MS, 60_000);
   const requiredBudgetMs =
-    resolveUiWebMetroWorkspacePrebuildTimeoutMs(env)
+    // Retain the existing containing-test budget; prebuild itself has no timer.
+    readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_METRO_WORKSPACE_PREBUILD_TIMEOUT_MS, 480_000)
     + resolveUiWebBaseUrlTimeoutMs(env)
     + resolveUiWebMetroStatusTimeoutMs(env)
     + resolveUiWebScriptFetchTotalTimeoutMs(env)
@@ -880,7 +877,6 @@ async function startUiWebMetroSingleAttempt(params: UiWebMetroStartParams): Prom
       env: params.env,
       workspaceRootDir: uiWorkspaceDir,
       logPrefix: 'ui-web-metro',
-      timeoutMs: resolveUiWebMetroWorkspacePrebuildTimeoutMs(params.env),
       stdoutPath,
       stderrPath,
     });

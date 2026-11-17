@@ -25,7 +25,7 @@ type RunLoggedCommandMockParams = {
     stderrPath?: string;
     args?: string[];
     env?: NodeJS.ProcessEnv;
-    timeoutMs?: number;
+    timeoutMs?: number | null;
 };
 
 vi.mock('./spawnProcess', () => ({
@@ -193,15 +193,13 @@ describe('startUiWebMetro', () => {
 
             const started = await startUiWebMetro({
                 testDir,
-                env: {
-                    HAPPIER_E2E_UI_WEB_METRO_WORKSPACE_PREBUILD_TIMEOUT_MS: '1234',
-                },
+                env: {},
                 port: 19077,
             });
 
             expect(runLoggedCommandCalls).toHaveLength(1);
             expect(isWorkspacePrebuildInvocation(runLoggedCommandCalls[0])).toBe(true);
-            expect(runLoggedCommandCalls[0]?.timeoutMs).toBe(1234);
+            expect(runLoggedCommandCalls[0]?.timeoutMs).toBe(null);
             expect(startOrder).toEqual(['workspace-prebuild', 'spawn']);
 
             await started.stop();

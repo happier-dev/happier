@@ -37,7 +37,6 @@ test.describe('ui e2e: settings sidebar', () => {
             EXPO_PUBLIC_DEBUG: '1',
             EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-settings-sidebar-${run.runId}`,
             HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: '900000',
-            HAPPIER_E2E_UI_WEB_EXPORT_WORKSPACE_PREBUILD_TIMEOUT_MS: '900000',
             HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '300000',
         };
 

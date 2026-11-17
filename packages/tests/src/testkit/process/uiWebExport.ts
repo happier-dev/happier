@@ -21,7 +21,6 @@ import {
 import {
   ensureUiWebWorkspacePrebuild,
   isUiWebWorkspacePrebuildSharedCliDistBuildLockActiveError,
-  isUiWebWorkspacePrebuildTimeoutError,
 } from './uiWebWorkspacePrebuild';
 
 function resolveExpoCliEntrypoint(workspaceRootDir: string): string {
@@ -326,13 +325,6 @@ async function withUiWebExportLock<T>(
 
 export function resolveUiWebExportBuildTimeoutMs(env: NodeJS.ProcessEnv): number {
   return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS, 480_000);
-}
-
-export function resolveUiWebExportWorkspacePrebuildTimeoutMs(env: NodeJS.ProcessEnv): number {
-  return readPositiveEnvInt(
-    env.HAPPIER_E2E_UI_WEB_EXPORT_WORKSPACE_PREBUILD_TIMEOUT_MS,
-    resolveUiWebExportBuildTimeoutMs(env),
-  );
 }
 
 export function resolveUiWebExportHardTimeoutMs(env: NodeJS.ProcessEnv): number | null {
@@ -739,7 +731,6 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
       env: params.env,
       workspaceRootDir,
       logPrefix: 'ui-web-export',
-      timeoutMs: resolveUiWebExportWorkspacePrebuildTimeoutMs(params.env),
       stdoutPath: resolvePath(params.testDir, 'ui.web.export.stdout.log'),
       stderrPath: resolvePath(params.testDir, 'ui.web.export.stderr.log'),
     });
@@ -748,9 +739,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
     const stderrTail = await readFile(resolvePath(params.testDir, 'ui.web.export.stderr.log'), 'utf8').catch(() => '');
     const safeStdoutTail = redactHarnessLogText(stdoutTail);
     const safeStderrTail = redactHarnessLogText(stderrTail);
-    const classification = isUiWebWorkspacePrebuildTimeoutError(error)
-      ? 'workspace_preflight_timeout'
-      : isUiWebWorkspacePrebuildSharedCliDistBuildLockActiveError(error)
+    const classification = isUiWebWorkspacePrebuildSharedCliDistBuildLockActiveError(error)
         ? 'shared_cli_dist_build_lock_active'
         : null;
     const tailLimit = 8_000;
@@ -910,9 +899,7 @@ async function ensureUiWebExportBuilt(params: { testDir: string; env: NodeJS.Pro
         await removePathWithRetries(stagingDir).catch(() => {});
         continue;
       }
-      const classification = isUiWebWorkspacePrebuildTimeoutError(error)
-        ? 'workspace_preflight_timeout'
-        : await classifyUiWebExportFailure({
+      const classification = await classifyUiWebExportFailure({
           error,
           stdoutTail,
           stderrTail,

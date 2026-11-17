@@ -13,7 +13,7 @@ type RunLoggedCommandMockParams = {
     args?: string[];
     env?: NodeJS.ProcessEnv;
     abortSignal?: AbortSignal;
-    timeoutMs?: number;
+    timeoutMs?: number | null;
 };
 
 const { runLoggedCommandMock, testRepository } = vi.hoisted(() => {
@@ -234,7 +234,6 @@ describe('uiWebExport (cache clearing)', () => {
       ...process.env,
       EXPO_PUBLIC_DEBUG: '1',
       HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: `shared-cli-dist-lock-${Date.now()}`,
-      HAPPIER_E2E_UI_WEB_EXPORT_WORKSPACE_PREBUILD_TIMEOUT_MS: '50',
     };
     await writeFile(lockPath, JSON.stringify({
       pid: process.pid,
@@ -307,7 +306,7 @@ describe('uiWebExport (cache clearing)', () => {
     await expect(startPromise).rejects.toThrow(/RUN_LOGGED_COMMAND_CALLED/);
   });
 
-  it('times out workspace build preflight with an actionable export log before opening the export lock', async () => {
+  it('reports a workspace publisher failure before opening the export lock', async () => {
     runLoggedCommandMock.mockImplementation(async (params?: RunLoggedCommandMockParams) => {
       if (!params?.args) {
         throw new Error('missing runLoggedCommand args');
@@ -315,37 +314,26 @@ describe('uiWebExport (cache clearing)', () => {
       if (!params.args.includes('--input-type=module')) {
         throw new Error('RUN_LOGGED_COMMAND_CALLED');
       }
-      // Simulate a hung prebuild that times out.
-      expect(params.timeoutMs).toBe(50);
-      throw new Error(`node prebuild timed out after ${params.timeoutMs}ms`);
+      expect(params.timeoutMs).toBe(null);
+      throw new Error('workspace publisher failed');
     });
 
     const testDir = mkdtempSync(join(tmpdir(), 'happier-uiwebexport-test-'));
-    const namespace = `preflight-timeout-${Date.now()}`;
+    const namespace = `preflight-failure-${Date.now()}`;
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       EXPO_PUBLIC_DEBUG: '1',
       HAPPIER_E2E_UI_WEB_EXPORT_NAMESPACE: namespace,
-      HAPPIER_E2E_UI_WEB_EXPORT_WORKSPACE_PREBUILD_TIMEOUT_MS: '50',
     };
     const lockPath = resolve(resolveUiWebExportRootDir(env), 'build.lock');
     const stderrPath = resolve(testDir, 'ui.web.export.stderr.log');
 
-    const startPromise = startUiWebExport({
+    await expect(startUiWebExport({
       testDir,
       env,
-    });
-    const rejection = expect(Promise.race([
-      startPromise,
-      new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('startUiWebExport did not reject quickly for workspace preflight timeout')), 4_000);
-      }),
-    ])).rejects.toThrow(/classification=workspace_preflight_timeout/);
-
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    })).rejects.toThrow(/workspace publisher failed/);
     expect(existsSync(stderrPath)).toBe(true);
     await expect(readFile(stderrPath, 'utf8')).resolves.toContain('workspace build preflight started');
-    await rejection;
 
     expect(existsSync(lockPath)).toBe(false);
     await expect(readFile(stderrPath, 'utf8')).resolves.toContain('workspace build preflight');

@@ -10,7 +10,6 @@ export async function ensureUiWebWorkspacePrebuild(params: {
   env: NodeJS.ProcessEnv;
   workspaceRootDir: string;
   logPrefix: string;
-  timeoutMs: number;
   stdoutPath: string;
   stderrPath: string;
   prebuildStdoutPath?: string;
@@ -31,10 +30,6 @@ export async function ensureUiWebWorkspacePrebuild(params: {
     `[${params.logPrefix}] workspace build preflight started: ${params.workspaceRootDir}\n`,
   ).catch(() => {});
 
-  const timeoutError = new Error(
-    `workspace build preflight timed out after ${params.timeoutMs}ms while ensuring ${params.workspaceRootDir} workspace packages were built`,
-  );
-
   try {
     const uiWorkspaceBuildModuleUrl = pathToFileURL(
       resolvePath(repoRootDir(), 'apps', 'ui', 'scripts', 'ensureWorkspacePackagesBuilt.mjs'),
@@ -47,8 +42,8 @@ export async function ensureUiWebWorkspacePrebuild(params: {
       HAPPIER_WORKSPACE_BUILD_NOTICE_EVERY_MS: String(params.env.HAPPIER_WORKSPACE_BUILD_NOTICE_EVERY_MS ?? 10_000),
     };
 
-    // Run workspace prebuild in a subprocess so timeouts can kill the build process tree rather
-    // than leaving an in-process promise running and holding locks.
+    // Admission and build completion belong to the workspace publisher. A local
+    // phase deadline would kill healthy builds while they wait for admission.
     await runLoggedCommand({
       command: process.execPath,
       args: [
@@ -68,7 +63,7 @@ export async function ensureUiWebWorkspacePrebuild(params: {
       env: launchEnv,
       stdoutPath: prebuildStdoutPath,
       stderrPath: prebuildStderrPath,
-      timeoutMs: params.timeoutMs,
+      timeoutMs: null,
     });
     await appendFile(
       params.stderrPath,
@@ -76,7 +71,7 @@ export async function ensureUiWebWorkspacePrebuild(params: {
     ).catch(() => {});
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const normalizedError = message.includes('timed out after') ? timeoutError : (error instanceof Error ? error : new Error(message));
+    const normalizedError = error instanceof Error ? error : new Error(message);
     await appendFile(
       params.stderrPath,
       `[${params.logPrefix}] workspace build preflight failed: ${normalizedError.message}\n` +
@@ -84,10 +79,6 @@ export async function ensureUiWebWorkspacePrebuild(params: {
     ).catch(() => {});
     throw normalizedError;
   }
-}
-
-export function isUiWebWorkspacePrebuildTimeoutError(error: unknown): boolean {
-  return error instanceof Error && error.message.startsWith('workspace build preflight timed out after ');
 }
 
 export function isUiWebWorkspacePrebuildSharedCliDistBuildLockActiveError(error: unknown): boolean {

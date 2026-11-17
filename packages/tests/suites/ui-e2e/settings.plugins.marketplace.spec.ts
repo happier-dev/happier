@@ -75,7 +75,6 @@ test.describe('ui e2e: settings plugin marketplace', () => {
             HAPPIER_E2E_UI_WEB_MODE: 'export',
             HAPPIER_E2E_UI_WEB_EXPORT_FALLBACK_TO_METRO: '0',
             HAPPIER_E2E_UI_WEB_EXPORT_TIMEOUT_MS: '900000',
-            HAPPIER_E2E_UI_WEB_EXPORT_WORKSPACE_PREBUILD_TIMEOUT_MS: '900000',
             HAPPIER_E2E_UI_WEB_EXPORT_STARTUP_STALL_TIMEOUT_MS: '300000',
         };
 
