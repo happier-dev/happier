@@ -273,10 +273,15 @@ export function registerDaemonExternalActionRoute(
         } : {}),
         ...(verifyExecutionAuthorization ? {
           verifyExecutionAuthorization: async (verification) => {
+            // Publicly one generic refusal; privately the deciding branch is logged once.
+            const refuse = (branch: 'installation' | 'current' | 'installation_after') => {
+              recordFailureCause(undefined, `external_action.execution_authorization.${branch}`);
+              return false;
+            };
             const installationId = verification.authorization.binding.installationId;
-            if (input.resolveInstallationId?.() !== installationId) return false;
-            const current = await verifyExecutionAuthorization(verification);
-            return current && input.resolveInstallationId?.() === installationId;
+            if (input.resolveInstallationId?.() !== installationId) return refuse('installation');
+            if (!await verifyExecutionAuthorization(verification)) return refuse('current');
+            return input.resolveInstallationId?.() === installationId || refuse('installation_after');
           },
         } : {}),
         resolveEncryption: input.resolveEncryption,

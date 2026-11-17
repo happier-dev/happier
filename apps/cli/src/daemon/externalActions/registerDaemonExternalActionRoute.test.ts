@@ -4,6 +4,7 @@ import fastify from 'fastify';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { describe, expect, it, vi } from 'vitest';
+import { logger } from '@/ui/logger';
 import { API_TOKEN_FULL_GRANT_V1, ACCOUNT_API_TOKEN_ENCRYPTION_ACCESS_HTTP_PATH_V1 } from '@happier-dev/protocol';
 
 const protocolSerializerSpy = vi.hoisted(() => vi.fn());
@@ -274,8 +275,13 @@ describe('registerDaemonExternalActionRoute', () => {
     try {
       const dispatch = () => app.inject({ method: 'POST', url: '/v1/actions/session.spawn_new',
         headers: { authorization: `Bearer ${PAT}` }, payload: envelope });
+      const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
       expect((await dispatch()).json()).toMatchObject({ execution: { ok: false, errorCode: 'not_authenticated' } });
       expect(sessionSpawnNew).not.toHaveBeenCalled();
+      // The refusing branch is recorded once in the local log; the public result above is unchanged.
+      expect(log.mock.calls.filter(([, data]) => (data as { phase?: string } | undefined)?.phase
+        === 'external_action.execution_authorization.current')).toHaveLength(1);
+      log.mockRestore();
       current = true;
       expect((await dispatch()).json()).toMatchObject({ execution: { ok: true, result: SESSION_SPAWN_PENDING_RESULT } });
       expect(sessionSpawnNew).toHaveBeenCalledTimes(1);
