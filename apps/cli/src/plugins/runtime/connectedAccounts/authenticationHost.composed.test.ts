@@ -297,7 +297,7 @@ it('reports missing Account artifact availability on first and repeated lookup i
             { operation: 'beginConnect', service, modeId: 'setup-token' },
             { native: async () => { throw new Error('Account artifact failure must not replay on a Machine'); } }));
         expect(registry.pluginDiagnosticsByPluginId[service.pluginId]).toEqual(expect.arrayContaining([
-            expect.objectContaining({ code: 'plugin_daemon_module_load_failed', message: 'plugin_account_execution_artifact_unavailable' }),
+            expect.objectContaining({ code: 'plugin_account_execution_artifact_unavailable', message: 'plugin_account_execution_artifact_unavailable' }),
         ]));
         // The activation owner's cause reaches the caller instead of a bare code.
         const unavailable = { status: 'unavailable', code: 'connected_account_service_unavailable',

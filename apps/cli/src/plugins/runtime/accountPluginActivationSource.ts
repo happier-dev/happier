@@ -34,9 +34,15 @@ import type { createBundledActivationSourceResolver } from './bundledActivationS
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { resolveBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/enablement';
 import { resolveUnavailableAgentPluginsByBackendId } from '@/plugins/projection/registry/builtIn/snapshot';
+import { PluginDiagnosticError } from './moduleFailure';
 
 type AccountBundledSelection = Parameters<typeof resolvePluginAccountExecutionSelectionV1>[0]['bundled'];
 type AccountReadBinding = Readonly<{ credentials: StoredCredentials; serverUrl: string; signal?: AbortSignal }>;
+
+function accountArtifactUnavailable(): PluginDiagnosticError {
+    return new PluginDiagnosticError({ code: 'plugin_account_execution_artifact_unavailable',
+        message: 'plugin_account_execution_artifact_unavailable' });
+}
 
 async function postAvailability(input: AccountReadBinding, path: string, body: unknown): Promise<unknown> {
     input.signal?.throwIfAborted();
@@ -329,12 +335,12 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
             resolveRelativeModule: async artifactId => {
                 if (!isCurrent(pluginId)) throw new Error('plugin_account_execution_retired');
                 const graph = graphs.get(artifactId);
-                if (!graph || graph.tier !== 'reactNative') throw new Error('plugin_account_execution_artifact_unavailable');
+                if (!graph || graph.tier !== 'reactNative') throw accountArtifactUnavailable();
                 const release = selection.release;
                 const slot = release?.uiSlots.find(slot => slot.artifactId === artifactId && slot.platform === 'web' && slot.tier === 'reactNative');
                 const link = release && slot ? read.uiArtifacts.find(link => link.release.version === release.ref.version
                     && isPluginUiReleaseSlotCompatibleWithArtifactLinkV1(slot, link)) : null;
-                if (release && (!slot || !link)) throw new Error('plugin_account_execution_artifact_unavailable');
+                if (release && (!slot || !link)) throw accountArtifactUnavailable();
                 const artifactRoot = resolve(root, GENERATED_PLUGIN_UI_ARTIFACTS_ROOT_RELATIVE_PATH);
                 const entryPath = resolve(release ? root : artifactRoot, graph.entry);
                 const accountScopeKey = runWithServerHttpBaseUrl(input.serverUrl, () => resolveAccountSettingsScopeKey(input.credentials));
@@ -352,7 +358,7 @@ export async function resolveAccountPluginActivationSources(input: AccountPlugin
                     }
                     const artifact = await runWithServerHttpBaseUrl(input.serverUrl, () => createCredentialedAccountArtifactStore(input.credentials)
                         .openStoredEnvelope(response.artifact, { signal: input.signal }));
-                    if (typeof artifact.body !== 'string') throw new Error('plugin_account_execution_artifact_unavailable');
+                    if (typeof artifact.body !== 'string') throw accountArtifactUnavailable();
                     const opened = openPluginUiArtifactArchiveV1({ pluginId, expectedArtifactDigest: graph.digest,
                         header: artifact.header, body: decodePluginUiArtifactArchiveBodyV1(artifact.body) });
                     if (!opened || createCanonicalJsonSigningInput(opened.artifactGraph) !== createCanonicalJsonSigningInput(graph)) {

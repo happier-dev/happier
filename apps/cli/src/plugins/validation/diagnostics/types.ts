@@ -22,6 +22,7 @@ export const PluginDiagnosticCodeSchema = z.enum([
   'plugin_trust_approval_required',
   'plugin_untrusted',
   'plugin_daemon_module_load_failed',
+  'plugin_account_execution_artifact_unavailable',
   'plugin_activation_failed',
   'plugin_runtime_capability_missing',
   'plugin_permission_missing',

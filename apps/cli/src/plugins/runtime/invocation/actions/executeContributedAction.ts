@@ -683,10 +683,11 @@ export async function executeContributedAction(params: Readonly<{
         );
       }
       if (activationFailure || !targetActionInvocations.has(pluginId, action.definition.id)) {
-        // A retired handle reports retirement, not the activation it lost.
+        // Failed activation can retire its own occurrence. Preserve that cause;
+        // stale handles were already refused before demand activation.
         return {
           matched: true,
-          result: await checkAdmittedCurrentness() ?? activationFailure ?? actionHandlerNotStartedFailure(
+          result: activationFailure ?? await checkAdmittedCurrentness() ?? actionHandlerNotStartedFailure(
             'plugin_action_handler_missing',
             'Declared target action did not publish a committed generation handler',
           ),
