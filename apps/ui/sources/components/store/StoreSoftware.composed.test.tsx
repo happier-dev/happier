@@ -409,7 +409,11 @@ it('collects deliberate Docker settings through the mounted native Software list
     }
 });
 
-it.each([false, true])('collects deliberate inputs before preparing an Apps Machine host while retaining ready hosts (%s)', async alreadyReady => {
+it.each([
+    { alreadyReady: false, daemonConfig: {} },
+    { alreadyReady: false, daemonConfig: { icc: false, 'no-new-privileges': true } },
+    { alreadyReady: true, daemonConfig: {} },
+])('reviews saved inputs for a confirmed Apps Machine setup need while retaining ready hosts (%j)', async ({ alreadyReady, daemonConfig }) => {
     const { target, entries, homeId, machines } = await setup();
     const { PLUGIN_MANIFEST } = await import('../../../../../packages/plugins/machine-recipes/src/manifest');
     const { DOCKER_ENGINE_RECIPE_REF_V1: dockerRef } = await import('@happier-dev/protocol/machines/setup/machineRecipeReferenceV1');
@@ -444,8 +448,8 @@ it.each([false, true])('collects deliberate inputs before preparing an Apps Mach
     });
     const current = await getMachineSetupDesiredV1({
         read: async () => ({ status: 'ready', metadataVersion: 1, metadata: { setup: { version: 1, revision: 1,
-            sources: [{ kind: 'direct', setup: alreadyReady ? { items: [{ kind: 'setupRecipe',
-                selection: { ref: dockerRef, inputs: { daemonConfig: {} } } }] } : {} }], exclusions: [],
+            sources: [{ kind: 'direct', setup: { items: [{ kind: 'setupRecipe',
+                selection: { ref: dockerRef, inputs: { daemonConfig } } }] } }], exclusions: [],
         } } }), compareAndSwap: async () => { throw new Error('Draft cannot write desired setup'); },
     });
     const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
@@ -456,8 +460,8 @@ it.each([false, true])('collects deliberate inputs before preparing an Apps Mach
     const deps = createActionExecutorBoundaryFixture({ machineSetupPlan: async ({ input }) => {
         if ('targets' in input) throw new Error('The native leaf receives one exact target');
         return prepareMachineSetupPlanV1({ input, current, readRecipes: async () => entries,
-            observation: { version: 1, desiredRevision: 1, status: 'satisfied',
-                recipes: alreadyReady ? [{ ref: dockerRef, status: 'satisfied', steps: [] }] : [] },
+            observation: { version: 1, desiredRevision: 1, status: alreadyReady ? 'satisfied' : 'drifted',
+                recipes: [{ ref: dockerRef, status: alreadyReady ? 'satisfied' : 'drifted', steps: [] }] },
             readAdminAccessObservation: async () => ({ version: 1, observedAt: 0, daemonUid: 1000, daemonUsername: 'happier',
                 daemonPrimaryGroup: 'happier', daemonIdentity: 'nonRoot', rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed',
                 managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
@@ -500,20 +504,18 @@ it.each([false, true])('collects deliberate inputs before preparing an Apps Mach
     await waitForHomeGovernance(() => expect(screen.findAllByTestId(fieldId).length).toBeGreaterThan(0));
     expect(modes()).toEqual([undefined]);
     const { MachineSetupPlanReview } = await import('@/components/settings/machines/managed/MachineSetupPlanReview');
-    for (const daemonConfig of [{}, { icc: false, 'no-new-privileges': true }]) {
-        const beforeReview = modes();
-        await act(async () => { changeTextTestInstance(screen.findByTestId(fieldId), JSON.stringify(daemonConfig)); });
-        await flushHookEffects();
-        expect(modes()).toEqual(beforeReview);
-        await screen.pressByTestIdAsync('project-deployments.draft.hostSetup.prepare');
-        await waitForHomeGovernance(() => expect(screen.findAllByType(MachineSetupPlanReview)[0]?.props.prepared).toMatchObject({
-            ok: true, input: { targets: [{ sources: [{ kind: 'direct', setup: {
-                items: [{ selection: { ref: dockerRef, inputs: { daemonConfig } } }],
-            } }], recipePlans: [{ plan: { steps: expect.arrayContaining([expect.objectContaining({ kind: 'file',
-                content: { kind: 'jsonMerge', value: daemonConfig } })]) } }] }] },
-        }));
-    }
-    expect(modes()).toEqual([undefined, 'effects', 'effects']);
+    const beforeReview = modes();
+    await act(async () => { changeTextTestInstance(screen.findByTestId(fieldId), JSON.stringify(daemonConfig)); });
+    await flushHookEffects();
+    expect(modes()).toEqual(beforeReview);
+    await screen.pressByTestIdAsync('project-deployments.draft.hostSetup.prepare');
+    await waitForHomeGovernance(() => expect(screen.findAllByType(MachineSetupPlanReview)[0]?.props.prepared).toMatchObject({
+        ok: true, input: { targets: [{ sources: [{ kind: 'direct', setup: {
+            items: [{ selection: { ref: dockerRef, inputs: { daemonConfig } } }],
+        } }], recipePlans: [{ plan: { steps: expect.arrayContaining([expect.objectContaining({ kind: 'file',
+            content: { kind: 'jsonMerge', value: daemonConfig } })]) } }] }] },
+    }));
+    expect(modes()).toEqual([undefined, 'effects']);
     expect(homes.requests.some(request => request.path === '/v1/actions/machines.setup.apply')).toBe(false);
 });
 

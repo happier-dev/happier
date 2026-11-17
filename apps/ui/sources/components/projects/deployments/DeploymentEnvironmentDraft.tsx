@@ -61,6 +61,7 @@ import { DeploymentManagedDataProvisionEditor, type ManagedDataProvisionDraft } 
 import type { createDeploymentActions } from './deploymentActions';
 import { DeploymentDeployerFields } from './DeploymentDeployerFields';
 import { useDeployHostReadiness } from './EnvironmentMachineChoice';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { MachineSetupPlanReview, describeMachineSetupPlanFailure, describeMachineSetupReviewUnavailable } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
@@ -750,9 +751,8 @@ export const DeploymentEnvironmentDraft = React.memo(
               initialTargetKey={platformTarget.key} onPrepared={setPlatformProvider}
               onApproval={onApprovalRequested} onClose={props.onDiscard} />
           ) : null}
-          {/* An unready Machine says so once, with its one next step (lab d1d notready): review its setup. The recipe's
-              inputs follow the callout; the reviewed plan then replaces it with Set up and the plan itself. */}
-          {!onPlatform && chosen && host.setup && !host.prepared ? (
+          {/* Unknown readiness opens the Machine setup owner; a confirmed setup need can review its recipe here. */}
+          {!onPlatform && chosen && ((host.setup && !host.prepared) || (!host.setup && host.readiness === 'unknown')) ? (
             <AttentionBanner
               testID={host.readiness === 'needsSetup' ? 'project-deployments.draft.hostNeedsSetup' : 'project-deployments.draft.hostUnchecked'}
               tone="warning"
@@ -760,8 +760,13 @@ export const DeploymentEnvironmentDraft = React.memo(
                 : 'projects.deployments.platformLink.hostUnchecked', { machine: machineName(chosen.id) })}
               description={t('projects.deployments.platformLink.hostSetupBody')}
               action={{ label: t('projects.deployments.platformLink.hostReviewAction', { machine: machineName(chosen.id) }),
-                onPress: () => { void host.review(); }, loading: host.reviewing,
-                disabled: !host.canReview || hostApply.pending, display: 'default', testID: 'project-deployments.draft.hostSetup.prepare' }}
+                onPress: () => {
+                  if (host.setup) void host.review();
+                  else if (props.lifetime) router.push(machinePageHref({ door: 'rail',
+                    target: { machineId: chosen.id, serverId: props.lifetime.scope.serverId }, tab: { id: 'setup' } }));
+                }, loading: host.reviewing,
+                disabled: hostApply.pending || (host.setup ? !host.canReview : !props.lifetime),
+                display: 'default', testID: 'project-deployments.draft.hostSetup.prepare' }}
             />
           ) : null}
           {!onPlatform && host.setup ? <MachineSetupRecipeInputs setup={host.setup} projection={host.inputProjection}
@@ -780,14 +785,9 @@ export const DeploymentEnvironmentDraft = React.memo(
             />
             <MachineSetupPlanReview testID="project-deployments.draft.hostSetup.review" prepared={host.prepared}
               nameOf={machineName} disabled={hostApply.pending} />
-          </> : !onPlatform && host.prepared?.ok === false ? awayMachine ? null : (
+          </> : !onPlatform && host.setup && host.prepared?.ok === false ? awayMachine ? null : (
             <AttentionBanner testID="project-deployments.draft.hostSetup.failed" tone="warning" title={t('machinePresets.setup.title')}
               description={describeMachineSetupPlanFailure(host.prepared, machineName)} />
-          ) : !onPlatform && chosen && host.readiness === 'unknown' && !host.setup ? (
-            <ItemGroup>
-              <Item testID="project-deployments.draft.hostUnchecked" mode="info"
-                title={t('projects.deployments.platformLink.hostUnchecked', { machine: machineName(chosen.id) })} />
-            </ItemGroup>
           ) : null}
           <ItemGroup
             title={t('projects.deployments.whatRunsTitle')}

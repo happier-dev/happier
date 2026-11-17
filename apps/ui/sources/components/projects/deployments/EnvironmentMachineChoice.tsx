@@ -47,7 +47,7 @@ export function useDeployHostReadiness(lifetime: ServerAccountScopeLifetime | nu
   const activeReview = reviewState?.current === current ? reviewState : null;
   const prepared = activeReview?.prepared ?? (current?.result.ok === false ? current.result : null);
   const readiness = prepared && machineId ? readDeployHostReadiness(prepared, machineId) : currentReadiness;
-  const editable = current?.result.ok === true && readiness !== 'ready';
+  const editable = current?.result.ok === true && currentReadiness === 'needsSetup' && readiness !== 'ready';
   const projection = usePluginUiProjectionCurrentness({ machineId, serverId: lifetime?.scope.serverId,
     enabled: editable, sections: HOST_RECIPE_SECTIONS });
   const inputs = React.useMemo(() => current ? readMachineSetupRecipeInputState(current.setup, projection.pluginUiProjection) : null,
