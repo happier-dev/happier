@@ -19,10 +19,12 @@ export async function speakAssistantText(params: {
   networkTimeoutMs: number;
   registerPlaybackStopper: VoicePlaybackStopperRegistrar;
   onSpeaking: () => void;
+  /** The text is already speech-ready (cleaned up as a whole), so it is not cleaned up again. */
+  textIsSpeech?: boolean;
   /** Live voice replies take over from a message being read aloud; read-aloud itself opts out. */
   takeOverReadAloud?: boolean;
 }): Promise<boolean> {
-  const spoken = toSpeechText(params.text, params.speechTextContext);
+  const spoken = params.textIsSpeech ? params.text.trim() : toSpeechText(params.text, params.speechTextContext);
   if (!spoken) return true;
   if (params.takeOverReadAloud !== false) stopReadAloud();
 

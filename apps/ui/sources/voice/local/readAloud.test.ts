@@ -243,6 +243,17 @@ describe('toggleReadAloud', () => {
             expect(getReadAloudActiveKey()).toBeNull();
         });
 
+        it('keeps context across pieces: a long bare URL is dropped whole and a mid-line minus sign survives', async () => {
+            const url = `https://example.com/${'a'.repeat(400)}`;
+            const pending = toggleReadAloud({ key: 'm1', text: `Open ${url} now. The result: Here is the answer. - 5 is negative.`, settings });
+            for (let i = 0; i < 4 && utterances[i]; i += 1) await act(async () => { utterances[i].onDone?.(); });
+            await expect(pending).resolves.toBe(true);
+
+            const spoken = expoSpeech.speak.mock.calls.map(call => call[0]);
+            expect(spoken.join(' ')).not.toContain('aaaa');
+            expect(spoken).toContain('- 5 is negative.');
+        });
+
         it('reports a provider failure part-way through and skips the rest', async () => {
             const pending = toggleReadAloud({ key: 'm1', text: longText, settings });
             expoSpeech.speak.mockImplementationOnce(() => { throw new Error('no voice'); });

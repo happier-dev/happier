@@ -1,6 +1,6 @@
 import { speakAssistantText } from '@/voice/output/speakAssistantText';
-import { createSpeechTextContext } from '@/voice/output/speechText';
-import { createTtsChunker, resolveStreamingTtsChunkChars } from '@/voice/output/TtsChunker';
+import { toSpeechText } from '@/voice/output/speechText';
+import { resolveStreamingTtsChunkChars, splitSpeechSentences } from '@/voice/output/TtsChunker';
 import { resolveVoiceNetworkTimeoutMs } from '@/voice/runtime/fetchWithTimeout';
 import { localVoicePlaybackController } from '@/voice/runtime/VoicePlaybackController';
 import { storage } from '@/sync/domains/state/storage';
@@ -83,16 +83,18 @@ export async function toggleReadAloud(params: Readonly<{
     const { config } = resolveLocalVoiceAdapterSettings(settings);
     // Speak sentence-sized pieces, as live voice replies do: a provider that returns the whole
     // audio at once (OpenAI-compatible endpoints) otherwise delays the first sound by the time it
-    // takes to render the entire message.
-    const chunker = createTtsChunker(resolveStreamingTtsChunkChars(config?.streaming?.ttsChunkChars));
-    const pieces = [...chunker.push(params.text), ...chunker.flush()];
-    const speechTextContext = createSpeechTextContext();
+    // takes to render the entire message. The message is cleaned up once, as a whole, before it is
+    // split, so URLs and line-start markers keep their context across piece boundaries.
+    const pieces = splitSpeechSentences(
+      toSpeechText(params.text),
+      resolveStreamingTtsChunkChars(config?.streaming?.ttsChunkChars),
+    );
     const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
     for (const text of pieces) {
       if (!isReadAloudRunCurrent(run)) return true;
       const spoken = await speakAssistantText({
         text,
-        speechTextContext,
+        textIsSpeech: true,
         settings,
         networkTimeoutMs,
         // Registered with the shared controller (a live barge-in stops read-aloud) and tracked here
