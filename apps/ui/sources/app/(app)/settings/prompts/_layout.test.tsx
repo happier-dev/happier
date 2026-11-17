@@ -46,10 +46,12 @@ let disconnect: (() => Promise<void>) | undefined;
 let releaseRequest: (() => void) | undefined;
 let disposeScreen: (() => void) | undefined;
 afterEach(async () => {
-    await disposeScreen?.(); disposeScreen = undefined;
-    releaseRequest?.(); releaseRequest = undefined;
-    await disconnect?.(); disconnect = undefined;
-    await home?.dispose(); home = undefined;
+    const [dispose, release, close, served] = [disposeScreen, releaseRequest, disconnect, home];
+    disposeScreen = releaseRequest = disconnect = home = undefined;
+    // A failed release must not leave this Home connected under the next case.
+    try { await dispose?.(); release?.(); } finally {
+        try { await close?.(); } finally { await served?.dispose(); }
+    }
 });
 
 async function unknownPromptInventory(route: NonNullable<Parameters<typeof serveSessionActionHome>[0]>['route']) {
@@ -154,13 +156,20 @@ describe('PromptsLayoutRoute', () => {
             header: encodePlainArtifactStoredContent({ kind: 'prompt_doc.v2', title: 'Fresh membership' }),
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
         let query: URL | undefined;
+        let held = false;
         releaseRequest = () => refreshed.resolve(createArtifactListHttpResponse(query!, [row]));
         await unknownPromptInventory(request => {
+            if (!held) return createArtifactListHttpResponse(request.url, []);
             requests.push(request.url.search);
             query = request.url;
             return refreshed.promise;
         });
+        // The held Prompt census missed a whole-inventory refresh (snapshot repair) while no Prompt route
+        // was mounted; that is what makes admission re-read its kinds rather than reuse current rows.
+        await (sync as unknown as { snapshotRefreshOnResume(options: { mode: 'fallback'; reason: string }): Promise<unknown> })
+            .snapshotRefreshOnResume({ mode: 'fallback', reason: 'prompts-layout-missed-refresh' });
         storage.setState({ artifactsLoaded: false, artifactInventoryKindsLoaded: PROMPT_LIBRARY_ARTIFACT_KINDS });
+        held = true;
         const { default: PromptsLayoutRoute } = await import('./_layout');
         const screen = await renderScreen(<PromptsLayoutRoute />);
         disposeScreen = () => screen.unmount();
