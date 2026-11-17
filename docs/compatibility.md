@@ -8062,8 +8062,15 @@ operation with the exact row's `expectedContentRevision`, the observed parent
 instead of a fabricated worker `parentAttempt`. The server requires the exact
 assigned interrupted Run with pending custody and the current invocation; it
 permits only observed settlement, preserving the parent revision and claim.
-The incumbent claimed-worker fact shape remains unchanged. This observation
-arm is development-only and changes no persisted format or released contract.
+The incumbent claimed-worker fact shape remains unchanged. Observation leaves
+the parent interrupted. Once the current frontier is settled, the existing Run
+boundary control offers one explicit **Continue**; the person advances the same
+Run through its existing admission and consumed Resume marker. Completed input
+attempts remain retained. This does not extend their observation deadlines or
+automatically requeue the Run. The server derives eligibility from public
+invocation metadata using the canonical current-member selector, including
+inherited members after structural replacement; private content remains sealed.
+This development-only behavior changes no persisted format or released contract.
 
 In 0.3 development source, invocation replacement through `invocations.recover`
 is an Account Run control operation, shared by Retry and Resume recovery. It

@@ -22,6 +22,7 @@ import { applyManagedCreationScopeEndInTx, bindManagedCreationScopeRetentionInTx
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { buildMachineAdmissionFactsSelect, resolveMachineAdmissionFromFactsInTx } from '@/app/machines/machineAccess';
 import { publishWorkflowRunMachineWakeInTx } from './workflowRunMachineRouting';
+import { readWorkflowRunFrontierContinuationsInTx } from './workflowRunFrontierContinuation';
 
 import { markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import { acquireWorkflowPublicationLocksInTx } from "./acquireWorkflowPublicationLocksInTx";
@@ -148,22 +149,23 @@ type NarrowedWorkflowRunRow<S extends Prisma.AutomationRunSelect> = Omit<
     state: WorkflowRunState;
 };
 type WorkflowRunProjectionRow = NarrowedWorkflowRunRow<typeof workflowRunProjectionSelect>;
-type WorkflowRunRow = WorkflowRunProjectionRow & { invocationAttentionRequired: boolean };
+type WorkflowRunRow = WorkflowRunProjectionRow & { invocationAttentionRequired: boolean; frontierContinuationAvailable?: boolean };
 type WorkflowRunListRow = NarrowedWorkflowRunRow<typeof workflowRunListSelect>;
 type WorkflowRunListCapturedRow = Omit<WorkflowRunListRow, "workflowAcceptedSnapshotEnvelope">
-    & { workflowAcceptedSnapshotEnvelope?: string | null; workflowDisplaySummaryEnvelope?: string | null; invocationAttentionRequired: boolean };
+    & { workflowAcceptedSnapshotEnvelope?: string | null; workflowDisplaySummaryEnvelope?: string | null; invocationAttentionRequired: boolean; frontierContinuationAvailable?: boolean };
 type WorkflowRunFullRow = NarrowedWorkflowRunRow<typeof workflowRunSelect>;
 
 export function deriveWorkflowRunAvailability(input: Readonly<{
     state: WorkflowRunState;
     workflowCustodyState: WorkflowCustodyState | null;
     hasExecution: boolean;
+    frontierContinuationAvailable?: boolean;
 }>): WorkflowRunSummaryV1["availability"] {
     const { state, workflowCustodyState, hasExecution } = input;
     const terminal = AUTOMATION_RUN_TERMINAL_STATES.some((candidate) => candidate === state);
     const pause = workflowCustodyState === "pending"
         && (state === "queued" || state === "claimed" || state === "running" || state === "waiting_for_review");
-    const resumeBoundary = state === "paused";
+    const resumeBoundary = state === "paused" || state === "interrupted" && input.frontierContinuationAvailable === true;
     const restoreWorkspace = state === "interrupted" && hasExecution;
     const cancel = !terminal && workflowCustodyState === "pending";
     const disabledReasons: WorkflowRunSummaryV1["availability"]["disabledReasons"] = [];
@@ -187,6 +189,7 @@ function availability(row: WorkflowRunRow): WorkflowRunSummaryV1["availability"]
         state: row.state as WorkflowRunState,
         workflowCustodyState: row.workflowCustodyState,
         hasExecution: row.workflowInvocations.length > 0,
+        frontierContinuationAvailable: row.frontierContinuationAvailable,
     });
 }
 
@@ -231,7 +234,8 @@ function projectRun(row: WorkflowRunRow, viewerAccountId: string = row.accountId
 
 async function projectRunInTx(tx: Tx, row: NarrowedWorkflowRunRow<typeof workflowRunProjectionSelect>, viewerAccountId: string = row.accountId): Promise<WorkflowRunSummaryV1> {
     const attention = await readWorkflowRunInvocationAttentionInTx(tx, [row.id]);
-    return projectRun({ ...row, invocationAttentionRequired: attention.has(row.id) }, viewerAccountId);
+    const continuation = await readWorkflowRunFrontierContinuationsInTx(tx, [row]);
+    return projectRun({ ...row, invocationAttentionRequired: attention.has(row.id), frontierContinuationAvailable: continuation.has(row.id) }, viewerAccountId);
 }
 
 async function loadAccountModeTx(tx: Tx, accountId: string, runId?: string): Promise<"plain" | "e2ee"> {
@@ -992,7 +996,7 @@ export async function pullWorkflowRunOriginDelivery(params: PageOptions & Readon
     const afterDate = decoded?.status === "ok" ? readKeysetCursorTextV1(decoded.parts[0]) : null;
     const afterId = decoded?.status === "ok" ? readKeysetCursorIdV1(decoded.parts[1]) : null;
     if (params.cursor && (!afterDate || !afterId)) throw new WorkflowRunServiceError("invalid_input");
-    type RawDeliveryCandidate = Readonly<{ row: WorkflowRunFullRow; invocationAttentionRequired: boolean }>;
+    type RawDeliveryCandidate = Readonly<{ row: WorkflowRunFullRow; invocationAttentionRequired: boolean; frontierContinuationAvailable: boolean }>;
     const rawPage = await inReadSnapshot(async (tx) => {
         const session = await tx.session.findFirst({ where: { id: params.originSessionId, accountId: params.accountId }, select: { id: true } });
         if (!session) throw new WorkflowRunServiceError("run_not_found");
@@ -1020,8 +1024,9 @@ export async function pullWorkflowRunOriginDelivery(params: PageOptions & Readon
             }) as WorkflowRunFullRow[];
             const candidates = rows.slice(0, batchSize);
             const attentionIds = await readWorkflowRunInvocationAttentionInTx(tx, candidates.map(row => row.id));
+            const continuation = await readWorkflowRunFrontierContinuationsInTx(tx, candidates);
             const batchHasMore = rows.length > batchSize;
-            collected.push(...candidates.map(row => ({ row, invocationAttentionRequired: attentionIds.has(row.id) })));
+            collected.push(...candidates.map(row => ({ row, invocationAttentionRequired: attentionIds.has(row.id), frontierContinuationAvailable: continuation.has(row.id) })));
             if (collected.length >= wanted || !batchHasMore) return { mode, candidates: collected, hasMore: batchHasMore };
             const last = candidates.at(-1);
             if (!last) return { mode, candidates: collected, hasMore: false };
@@ -1030,7 +1035,7 @@ export async function pullWorkflowRunOriginDelivery(params: PageOptions & Readon
         }
     }, { transactionClass: "workflow-pull-run-origin-delivery" });
     type DeliverySnapshot = { run: WorkflowRunSummaryV1; acceptedEnvelope: string; checkpointEnvelope: string | null; resultEnvelope: string | null; invocations: never[]; hasOriginInputCandidates: boolean };
-    const snapshots: DeliverySnapshot[] = rawPage.candidates.map(({ row, invocationAttentionRequired }) => {
+    const snapshots: DeliverySnapshot[] = rawPage.candidates.map(({ row, invocationAttentionRequired, frontierContinuationAvailable }) => {
         const checkpointEnvelope = decodeStoredText(row.workflowCheckpointEnvelope, row.workflowCheckpointEnvelopeBytes);
         const resultEnvelope = decodeStoredText(row.resultEnvelope, row.resultEnvelopeBytes);
         assertWorkflowStoredEnvelopeOuterForMode({ raw: row.workflowAcceptedSnapshotEnvelope!, mode: rawPage.mode, binding: { v: 1, purpose: "accepted_snapshot", accountId: params.accountId, runId: row.id } });
@@ -1038,7 +1043,7 @@ export async function pullWorkflowRunOriginDelivery(params: PageOptions & Readon
         if (resultEnvelope !== null) assertWorkflowStoredEnvelopeOuterForMode({ raw: resultEnvelope, mode: rawPage.mode, binding: { v: 1, purpose: "final_result", accountId: params.accountId, runId: row.id } });
         // Candidate progress uses the existing byte-paged invocation owner, so even
         // a Run with many valid parallel inputs never exceeds a grouped snapshot page.
-        return { run: projectRun({ ...row, invocationAttentionRequired }, params.accountId), acceptedEnvelope: row.workflowAcceptedSnapshotEnvelope!, checkpointEnvelope, resultEnvelope, invocations: [], hasOriginInputCandidates: row.workflowInvocations.length > 0 };
+        return { run: projectRun({ ...row, invocationAttentionRequired, frontierContinuationAvailable }, params.accountId), acceptedEnvelope: row.workflowAcceptedSnapshotEnvelope!, checkpointEnvelope, resultEnvelope, invocations: [], hasOriginInputCandidates: row.workflowInvocations.length > 0 };
     });
     const cursorFor = (snapshot: DeliverySnapshot) => encodeKeysetCursorV1({ queryKey, parts: [snapshot.run.createdAt, snapshot.run.id] });
     const bounded = appendBoundedPage({ existing: [], existingBytes: 2, candidates: snapshots,
@@ -1241,9 +1246,10 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
         // The same page-sized invocation index supplies the independent hold
         // constituent even when failure alone admitted an attention member.
         const attentionIds = await readWorkflowRunInvocationAttentionInTx(tx, candidateRows.map(row => row.id));
+        const continuation = await readWorkflowRunFrontierContinuationsInTx(tx, candidateRows);
         const pageKeys = readPageKeys
             ? await withWorkflowRunAccess(() => readPageKeys(tx, candidateRows.map(candidate => candidate.id))) : null;
-        return { candidateRows, roots, heldRuns, selectedInvocations, attentionIds, pageKeys, batchHasMore: rows.length > batchSize };
+        return { candidateRows, roots, heldRuns, selectedInvocations, attentionIds, continuation, pageKeys, batchHasMore: rows.length > batchSize };
     };
     // Exact page bytes depend on validation. Capture request visibility once,
     // then acquire further SQL pages under the same admitted authority while
@@ -1267,12 +1273,12 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
             let collectedBytes = 2;
             let captured = firstBatch;
             for (;;) {
-                const { candidateRows, roots, heldRuns, selectedInvocations, attentionIds, pageKeys, batchHasMore } = captured;
+                const { candidateRows, roots, heldRuns, selectedInvocations, attentionIds, continuation, pageKeys, batchHasMore } = captured;
                 const { candidates, bounded } = await timeWebLatencyPhase('workflow.list.materialize', () => {
                     const rootsByRunId = new Map(roots.map(row => [row.runId, row]));
                     const heldByRunId = new Map(heldRuns.map(row => [row.id, row.workflowInvocations[0]]));
                     const candidates = candidateRows.map((candidate) => {
-                        if (membershipOnly) return { ...candidate, invocationAttentionRequired: attentionIds.has(candidate.id),
+                        if (membershipOnly) return { ...candidate, frontierContinuationAvailable: continuation.has(candidate.id), invocationAttentionRequired: attentionIds.has(candidate.id),
                             workflowAcceptedSnapshotEnvelope: null, workflowDisplaySummaryEnvelope: null, keyCensus: null, rootProgress: null, heldProgress: null, invocationProgress: [] };
                         const keyCensus = pageKeys?.get(candidate.id);
                         if (!keyCensus) throw new WorkflowRunServiceError("run_not_found");
@@ -1298,7 +1304,7 @@ export async function listWorkflowRuns(params: PageOptions & Readonly<{
                         const heldProgress = held ? projectPrivateInvocation(held) : null;
                         const row = { ...candidate, workflowAcceptedSnapshotEnvelope: candidate.workflowAcceptedSnapshotEnvelope ?? null,
                             workflowDisplaySummaryEnvelope: candidate.workflowDisplaySummaryEnvelope ?? null,
-                            invocationAttentionRequired: attentionIds.has(candidate.id), keyCensus, rootProgress, invocationProgress, heldProgress };
+                            invocationAttentionRequired: attentionIds.has(candidate.id), frontierContinuationAvailable: continuation.has(candidate.id), keyCensus, rootProgress, invocationProgress, heldProgress };
                         const readable = (raw: string | null, purpose: "accepted_snapshot" | "display_summary") => {
                             if (raw === null) return null;
                             try {
@@ -1643,7 +1649,8 @@ export async function listWorkflowRunsForRecovery(params: PageOptions & Readonly
                 select: workflowRunProjectionSelect,
             }) as WorkflowRunProjectionRow[];
             const invocationAttention = await readWorkflowRunInvocationAttentionInTx(tx, rows.slice(0, batchSize).map(row => row.id));
-            const candidates = rows.slice(0, batchSize).map(row => ({ ...row, invocationAttentionRequired: invocationAttention.has(row.id) }));
+            const continuation = await readWorkflowRunFrontierContinuationsInTx(tx, rows.slice(0, batchSize));
+            const candidates = rows.slice(0, batchSize).map(row => ({ ...row, invocationAttentionRequired: invocationAttention.has(row.id), frontierContinuationAvailable: continuation.has(row.id) }));
             const batchHasMore = rows.length > batchSize;
             const bounded = appendBoundedPage({
                 existing: collected,
@@ -2441,13 +2448,17 @@ async function controlWorkflowRun(params: Readonly<{
         const access = await resolveEditableWorkflowRunAccessTx(tx, { actorAccountId: params.accountId, runId: params.runId });
         const ownerAccountId = access.ownerAccountId;
         await loadAccountModeTx(tx, ownerAccountId, params.runId);
-        const current = await tx.automationRun.findFirst({ where: { id: params.runId, accountId: ownerAccountId }, select: { revision: true, state: true } });
+        const current = await tx.automationRun.findFirst({ where: { id: params.runId, accountId: ownerAccountId }, select: { id: true, revision: true, state: true, workflowCustodyState: true } });
         if (!current) throw new WorkflowRunServiceError("run_not_found");
         if (current.revision !== params.expectedRevision) throw new WorkflowRunServiceError("currentness_conflict");
-        if (!params.transitions.some((transition) => transition.eligibleStates.some((state) => state === current.state))) throw new WorkflowRunServiceError("ineligible_state");
+        const continuation = params.transitions.some(transition => transition.recordResume)
+            ? await readWorkflowRunFrontierContinuationsInTx(tx, [current]) : new Set<string>();
+        const transitions = params.transitions.filter(transition => transition.eligibleStates.some(state => state === current.state)
+            && (!transition.recordResume || current.state !== "interrupted" || continuation.has(current.id)));
+        if (transitions.length === 0) throw new WorkflowRunServiceError("ineligible_state");
         const deliveryBefore = await readOriginDeliverySignalTx(tx, ownerAccountId, params.runId);
         let matched = false;
-        for (const transition of params.transitions) {
+        for (const transition of transitions) {
             const changed = await tx.automationRun.updateMany({ where: {
                 id: params.runId,
                 accountId: ownerAccountId,
@@ -2489,7 +2500,7 @@ export async function pauseWorkflowRun(params: Readonly<{ accountId: string; run
 
 export async function resumeWorkflowRunBoundary(params: Readonly<{ accountId: string; runId: string; expectedRevision: number }>) {
     const run = await controlWorkflowRun({ ...params, transitions: [
-        { eligibleStates: ["paused"], state: "queued", clearClaim: true, recordResume: true },
+        { eligibleStates: ["paused", "interrupted"], state: "queued", clearClaim: true, recordResume: true },
     ] });
     return { run, intent: "resumed" as const };
 }

@@ -613,13 +613,14 @@ describe('WorkflowRunContent', () => {
     expect(screen.getTextContent()).toContain('workflows.run.pauseAtBoundary');
     expect(screen.getTextContent()).not.toMatch(/workflows\.run\.pause(?!AtBoundary)/);
   });
-  it('keeps one primary when a paused Run also has a hold: Resume leads and Review stays secondary', async () => {
+  it.each(['paused', 'interrupted'] as const)('keeps one primary boundary control for a $state Run without replaying its held work', async (state) => {
+    const onResume = vi.fn();
     const screen = await renderContent({
       run: createWorkflowRunSummaryFixture({
-        state: 'paused',
+        state,
         availability: { cancel: true, pause: false, resumeBoundary: true },
       }),
-      onResume: vi.fn(),
+      onResume,
       invocations: [
         createWorkflowInvocationIndexFixture({
           id: 'held',
@@ -633,6 +634,10 @@ describe('WorkflowRunContent', () => {
     expect(screen.findByTestId('workflow-run-needs-you')).not.toBeNull();
     expect(screen.findAllByType(ToolbarButton).filter((button) => button.props.tone === 'primary')
       .map((button) => button.props.testID)).toEqual(['workflow-run-resume']);
+    expect(screen.getTextContent())
+      .toContain(state === 'interrupted' ? 'common.continue' : 'workflows.run.resume');
+    await screen.pressByTestIdAsync('workflow-run-resume');
+    expect(onResume).toHaveBeenCalledOnce();
   });
   it('keeps the Paused mark calm while Needs you carries the hold (FIN-DESIGN-REVIEW L2)', async () => {
     const pausedRun = createWorkflowRunSummaryFixture({

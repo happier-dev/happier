@@ -144,7 +144,7 @@ function DiscussionWorkflowRunWithControls(props: DiscussionWorkflowRunProps & R
       onPress={() => void controls.submitControl('pause')}
     />
   ) : null;
-  const resumeLabel = t('workflows.run.resume');
+  const resumeLabel = props.run.state === 'interrupted' ? t('common.continue') : t('workflows.run.resume');
   const resume = controls.canResume ? phone ? (
     <IconButton
       testID={`discussion-workflow-run-resume:${runId}`}

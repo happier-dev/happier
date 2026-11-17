@@ -63,11 +63,13 @@ afterEach(async () => {
 it.each([
     { state: 'running' as const, availability: { pause: true, cancel: true }, shown: ['pause', 'stop'] as const },
     { state: 'paused' as const, availability: { pause: false, cancel: true, resumeBoundary: true }, shown: ['resume', 'stop'] as const },
+    { state: 'interrupted' as const, availability: { pause: false, cancel: true, resumeBoundary: true }, shown: ['resume', 'stop'] as const },
 ])('keeps a $state phone band to one line: its lifecycle controls are icons named for assistive technology (L2)', async ({ state, availability, shown }) => {
     viewport.width = 390;
     viewport.height = 844;
     const { t } = await import('@/text');
-    const labels = { pause: t('workflows.run.pauseAtBoundary'), resume: t('workflows.run.resume'), stop: t('workflows.run.stop') };
+    const labels = { pause: t('workflows.run.pauseAtBoundary'),
+        resume: state === 'interrupted' ? t('common.continue') : t('workflows.run.resume'), stop: t('workflows.run.stop') };
     const screen = await renderScreen(<DiscussionWorkflowRunRow
         run={createWorkflowRunSummaryFixture({ id: 'phone-run', state, attentionRequired: state === 'paused', availability })}
         metadata={null} supportsAnotherRound={false} canEdit={true}
@@ -116,12 +118,12 @@ it('pauses and stops the running inline Pattern through the scoped Run Actions',
         { workflowCustodyState: paused.workflowCustodyState, cancelRequested: true }).label);
 });
 
-it('resumes a paused band through the same boundary Resume Action as the Run page (RUN-BAND B2)', async () => {
+it.each(['paused', 'interrupted'] as const)('resumes a $state band through the same boundary Action as the Run page', async (state) => {
     const serverId = await homes.addHome({ name: 'Pattern Home', serverUrl: 'https://inline-resume.test', accountId: 'alice' });
     const accountLifetime = { scope: { serverId, accountId: 'alice' }, isCurrent: () => true,
         onRetire: () => ({ dispose: () => undefined }) };
     const run = createWorkflowRunSummaryFixture({ id: 'resume-run', ownerAccountId: 'alice', revision: 7,
-        state: 'paused', attentionRequired: true, availability: { pause: false, cancel: true, resumeBoundary: true } });
+        state, attentionRequired: true, availability: { pause: false, cancel: true, resumeBoundary: true } });
     const route = '/v3/automations/runs/workflow-storage';
     homes.answer(serverId, route, { select: input => {
         // The real Action consumes mode=boundary before forwarding the key-free storage control.
@@ -131,7 +133,9 @@ it('resumes a paused band through the same boundary Resume Action as the Run pag
     const screen = await renderScreen(<DiscussionWorkflowRunRow run={run} metadata={null}
         supportsAnotherRound={false} canEdit={true} accountLifetime={accountLifetime}
         onStarted={() => undefined} onSaveAsPattern={() => undefined} publishedMessageIds={[]} />);
-    expect(screen.getTextContent()).toContain(describeWorkflowRunState('paused').label);
+    const { t } = await import('@/text');
+    expect(screen.getTextContent()).toContain(describeWorkflowRunState(state).label);
+    expect(screen.getTextContent()).toContain(state === 'interrupted' ? t('common.continue') : t('workflows.run.resume'));
     expect(screen.findHostByTestId('discussion-workflow-run-pause:resume-run')).toBeNull();
     await screen.pressByTestIdAsync('discussion-workflow-run-resume:resume-run');
     await waitForHomeGovernance(() => expect(storage.getState().workflowRunsById[workflowRunStoreKey(run.id, accountLifetime.scope)]?.summary)

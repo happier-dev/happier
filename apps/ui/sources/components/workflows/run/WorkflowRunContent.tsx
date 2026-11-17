@@ -1135,7 +1135,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             disabled={operationPending}
             busy={operationPending}
             onPress={onResume}
-            label={t('workflows.run.resume')}
+            label={props.run.state === 'interrupted' ? t('common.continue') : t('workflows.run.resume')}
             {...(primaryAction === 'resume' ? { tone: 'primary' as const } : {})}
             size="md"
         />

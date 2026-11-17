@@ -1917,6 +1917,119 @@ describe("workflowRunService (integration)", () => {
             hasExecution: false })).toMatchObject({ resumeBoundary: true });
     });
 
+    it("offers explicit frontier Continue after native completion without requeueing its observation", async () => {
+        const seeded = await seed();
+        const runId = randomUUID();
+        const rootId = randomUUID();
+        const stableId = randomUUID();
+        const nativeId = randomUUID();
+        const authored: WorkflowDefinitionV1 = { ...definition, blocks: [{ kind: 'parallel', id: 'stable', failurePolicy: 'collect_outcomes',
+            branches: [{ id: 'settled', blocks: [{ ...definition.blocks[0]!, id: 'settled-leaf' }] }] },
+            ...['native', 'following'].map(id => ({ ...definition.blocks[0]!, id }))] };
+        await admitWorkflowRun({ ...seeded, runId, origin: { kind: "direct" },
+            acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId, definition: authored }) });
+        const nativeProgress = { kind: "happier.workflow-progress.v1" as const, blockKind: "step" as const,
+            invocationPath: { blockId: "native", scope: [] }, attempt: "0", logicalInvocationRecordId: nativeId,
+            execution: { kind: "session" as const, sessionId: seeded.sessionId, localInputId: "exact-native-input" },
+            reason: { code: "workflow_step_timeout" }, observationDeadline: { kind: "at" as const, expiresAt: "2026-01-01T00:00:00.000Z" } };
+        const nativeEnvelope = (completed: boolean) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+            mode: "plain", binding: { v: 1, purpose: "invocation_progress", accountId: seeded.accountId, runId,
+                recordId: nativeId, sequence: "2", parentRecordId: rootId, memberOrdinal: "1", attempt: "0" },
+            progress: { ...nativeProgress, ...(completed ? { result: "native result" } : {}) } }));
+        await db.workflowRunInvocation.createMany({ data: [
+            { id: rootId, runId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n, lifecycle: "running",
+                contentEnvelope: progressEnvelope({ ...seeded, runId, id: rootId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n }) },
+            { id: stableId, runId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n, lifecycle: "completed",
+                contentEnvelope: progressEnvelope({ ...seeded, runId, id: stableId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n, blockKind: "parallel", blockId: "stable", container: { kind: "parallel", nextBranchOrdinal: "1" }, result: "stable result" }) },
+            { id: nativeId, runId, sequence: 2n, parentRecordId: rootId, memberOrdinal: 1n, lifecycle: "needs_attention", contentEnvelope: nativeEnvelope(false) },
+            { id: randomUUID(), runId, sequence: 3n, parentRecordId: stableId, memberOrdinal: 0n, lifecycle: "cancelled", contentEnvelope: "settled-parallel-loser" },
+        ] });
+        await db.automationRun.update({ where: { id: runId }, data: { state: "interrupted", revision: 7, attempt: 1,
+            claimedByMachineId: seeded.machineId, workflowCheckpointEnvelope: checkpointEnvelope(seeded.accountId, runId, rootId, 4n) } });
+        expect((await getWorkflowRun({ ...seeded, runId })).run.availability.resumeBoundary).toBe(false);
+        const stable = await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: stableId } });
+        const observation = await commitWorkflowInvocationFactOwner({ ...seeded, runId, invocationId: nativeId, invocationAttempt: 0n,
+            expectedRevision: 7, expectedContentRevision: 0n, expectedLifecycle: "needs_attention", lifecycle: "completed",
+            resolution: "observed_terminal_execution", contentEnvelope: nativeEnvelope(true), accountCurrentness: await accountCurrentness(seeded.accountId) });
+        const completed = await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: nativeId } });
+        expect((await getWorkflowRun({ ...seeded, runId })).run).toMatchObject({ state: "interrupted", revision: observation.parentRevision,
+            availability: { resumeBoundary: true } });
+        const listed = await listWorkflowRuns({ accountId: seeded.accountId, pageByteLimit: 64_000 });
+        expect(listed.runs.find(run => run.id === runId)?.availability.resumeBoundary).toBe(true);
+        await expect(resumeWorkflowRunBoundary({ ...seeded, runId, expectedRevision: observation.parentRevision - 1 })).rejects.toMatchObject({ code: "currentness_conflict" });
+        await expect(resumeWorkflowRunBoundary({ ...seeded, runId, expectedRevision: observation.parentRevision })).resolves.toMatchObject({ run: { state: "queued", revision: observation.parentRevision + 1 } });
+        await expect(resumeWorkflowRunBoundary({ ...seeded, runId, expectedRevision: observation.parentRevision })).rejects.toMatchObject({ code: "currentness_conflict" });
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId } })).toMatchObject({ workflowResumeRequestedRevision: observation.parentRevision + 1 });
+        expect(await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: nativeId } })).toEqual(completed);
+        expect(await db.workflowRunInvocation.findUniqueOrThrow({ where: { id: stableId } })).toEqual(stable);
+        expect(await db.workflowRunInvocation.count({ where: { runId } })).toBe(4);
+    });
+
+    it("inherits settled native slots across recovered parents and refuses a newer unsettled slot", async () => {
+        const seeded = await seed();
+        const runId = randomUUID();
+        await admitWorkflowRun({ ...seeded, runId, origin: { kind: "direct" }, acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
+        const [root0, frame0, leaf0, root1, frame1, leaf1, root2, frame2] = Array.from({ length: 8 }, () => randomUUID()) as [string, string, string, string, string, string, string, string];
+        const indexed = [
+            { id: root0, parentRecordId: null, memberOrdinal: 0n, attempt: 0n, lifecycle: "superseded" },
+            { id: frame0, parentRecordId: root0, memberOrdinal: 0n, attempt: 0n, lifecycle: "superseded" },
+            { id: leaf0, parentRecordId: frame0, memberOrdinal: 0n, attempt: 0n, lifecycle: "completed" },
+            { id: root1, parentRecordId: null, memberOrdinal: 0n, attempt: 1n, lifecycle: "superseded" },
+            { id: frame1, parentRecordId: root1, memberOrdinal: 0n, attempt: 1n, lifecycle: "superseded" },
+            { id: leaf1, parentRecordId: frame1, memberOrdinal: 1n, attempt: 0n, lifecycle: "completed" },
+            { id: root2, parentRecordId: null, memberOrdinal: 0n, attempt: 2n, lifecycle: "running" },
+            { id: frame2, parentRecordId: root2, memberOrdinal: 0n, attempt: 2n, lifecycle: "running" },
+        ];
+        await db.workflowRunInvocation.createMany({ data: indexed.map((row, sequence) => ({ ...row, runId, sequence: BigInt(sequence), contentEnvelope: "private-progress-is-not-needed" })) });
+        await db.automationRun.update({ where: { id: runId }, data: { state: "interrupted", revision: 7 } });
+        expect((await getWorkflowRun({ ...seeded, runId })).run.availability.resumeBoundary).toBe(true);
+        const otherRunId = randomUUID();
+        const otherRootId = randomUUID();
+        await admitWorkflowRun({ ...seeded, runId: otherRunId, origin: { kind: "direct" }, acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId: otherRunId }) });
+        await db.workflowRunInvocation.createMany({ data: [
+            { id: otherRootId, runId: otherRunId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n, lifecycle: "running", contentEnvelope: "opaque-root" },
+            { id: randomUUID(), runId: otherRunId, sequence: 1n, parentRecordId: otherRootId, memberOrdinal: 0n, lifecycle: "completed", contentEnvelope: "opaque-leaf" },
+        ] });
+        await db.automationRun.update({ where: { id: otherRunId }, data: { state: "interrupted" } });
+        const metadataReads: unknown[] = [];
+        const stopObserving = observeSqliteRequests({ before(request) {
+            if (request.model !== "WorkflowRunInvocation" || request.action !== "findMany") return;
+            const args = request.args;
+            if (args && typeof args === "object" && "select" in args && args.select && typeof args.select === "object"
+                && "lifecycle" in args.select && !("contentEnvelope" in args.select)) metadataReads.push(args);
+        } });
+        try {
+            const listed = await listWorkflowRuns({ accountId: seeded.accountId, pageByteLimit: 64_000 });
+            expect(listed.runs.filter(run => run.id === runId || run.id === otherRunId).map(run => run.availability.resumeBoundary)).toEqual([true, true]);
+            expect(metadataReads).toHaveLength(1);
+            expect(metadataReads[0]).toMatchObject({ where: { runId: { in: expect.arrayContaining([runId, otherRunId]) } } });
+        } finally { stopObserving(); }
+        await db.workflowRunInvocation.update({ where: { id: leaf1 }, data: { lifecycle: "superseded" } });
+        await db.workflowRunInvocation.create({ data: { id: randomUUID(), runId, sequence: 8n,
+            parentRecordId: frame1, memberOrdinal: 1n, attempt: 1n, lifecycle: "pending", contentEnvelope: "newer-current-slot" } });
+        expect((await getWorkflowRun({ ...seeded, runId })).run.availability.resumeBoundary).toBe(false);
+        await expect(resumeWorkflowRunBoundary({ ...seeded, runId, expectedRevision: 7 })).rejects.toMatchObject({ code: "ineligible_state" });
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId } })).toMatchObject({ state: "interrupted", revision: 7, workflowResumeRequestedRevision: null });
+    });
+
+    it.each(['pending', 'running', 'failed', 'cancelled', 'needs_attention', 'outcome_uncertain', 'waiting_for_approval'] as const)(
+        "refuses frontier Continue while the current native slot is %s despite historical completion", async lifecycle => {
+        const seeded = await seed();
+        const runId = randomUUID();
+        const rootId = randomUUID();
+        await admitWorkflowRun({ ...seeded, runId, origin: { kind: "direct" }, acceptedEnvelope: await acceptedEnvelope({ ...seeded, runId }) });
+        await db.workflowRunInvocation.createMany({ data: [
+            { id: rootId, runId, sequence: 0n, parentRecordId: null, memberOrdinal: 0n, lifecycle: "running", contentEnvelope: "opaque-root" },
+            { id: randomUUID(), runId, sequence: 1n, parentRecordId: rootId, memberOrdinal: 0n, attempt: 0n, lifecycle: "superseded", contentEnvelope: "opaque-history" },
+            { id: randomUUID(), runId, sequence: 2n, parentRecordId: rootId, memberOrdinal: 0n, attempt: 1n, lifecycle, contentEnvelope: "opaque-current" },
+            { id: randomUUID(), runId, sequence: 3n, parentRecordId: rootId, memberOrdinal: 1n, attempt: 0n, lifecycle: "completed", contentEnvelope: "unrelated-completed-slot" },
+        ] });
+        await db.automationRun.update({ where: { id: runId }, data: { state: "interrupted", revision: 7 } });
+        expect((await getWorkflowRun({ ...seeded, runId })).run.availability.resumeBoundary).toBe(false);
+        await expect(resumeWorkflowRunBoundary({ ...seeded, runId, expectedRevision: 7 })).rejects.toMatchObject({ code: "ineligible_state" });
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: runId } })).toMatchObject({ state: "interrupted", revision: 7, workflowResumeRequestedRevision: null });
+    });
+
     it.each([
         { origin: "direct", mode: "plain" },
         { origin: "direct", mode: "e2ee" },

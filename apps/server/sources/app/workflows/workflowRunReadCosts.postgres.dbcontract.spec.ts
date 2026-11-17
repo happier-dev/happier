@@ -131,6 +131,31 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Workflow narrow
             returnedRows: first.invocations.length + second.invocations.length, ...readCosts }));
     });
 
+    it("reads an interrupted frontier through one bodyless PostgreSQL index batch", async () => {
+        await db.workflowRunInvocation.updateMany({ where: { runId, parentRecordId: { not: null } }, data: { lifecycle: "completed" } });
+        await db.workflowRunInvocation.update({ where: { id: children[7]! }, data: { lifecycle: "superseded" } });
+        await db.automationRun.update({ where: { id: runId }, data: { state: "interrupted" } });
+        try {
+            statements.length = 0;
+            const listed = await listWorkflowRuns({ accountId: ownerId, runId, projection: "membership", pageByteLimit: 1_000_000 });
+            expect(listed.runs).toHaveLength(1);
+            expect(listed.runs[0]?.availability.resumeBoundary).toBe(true);
+            const metadata = statements.filter(event => /^SELECT\b/i.test(event.query.trimStart())
+                && event.query.includes('"WorkflowRunInvocation"')
+                && event.query.includes('"parentRecordId"') && event.query.includes('"sequence"'));
+            expect(metadata).toHaveLength(1);
+            expect(metadata[0]!.query).not.toContain('"contentEnvelope"');
+            const explained = await client.$queryRawUnsafe<Array<{ 'QUERY PLAN': { Plan: { 'Actual Rows': number; 'Actual Loops': number } }[] }>>(
+                `EXPLAIN (ANALYZE, FORMAT JSON) ${metadata[0]!.query}`, ...JSON.parse(metadata[0]!.params));
+            expect(explained[0]!['QUERY PLAN'][0]!.Plan).toMatchObject({ 'Actual Rows': children.length + 2, 'Actual Loops': 1 });
+            console.info("WORKFLOW_FRONTIER_POSTGRES_COUNTS", JSON.stringify({ runs: 1, retained: children.length + 2,
+                metadataStatements: metadata.length, privateBodies: 0 }));
+        } finally {
+            await db.automationRun.update({ where: { id: runId }, data: { state: "running" } });
+            await db.workflowRunInvocation.updateMany({ where: { runId }, data: { lifecycle: "running" } });
+        }
+    });
+
     function costs() {
         const sql = statements.filter(event => !/^(BEGIN|COMMIT|ROLLBACK|SET|SHOW)\b/i.test(event.query.trimStart()));
         const invocationSelects = sql.filter(event => /^SELECT\b/i.test(event.query.trimStart()) && event.query.includes('"WorkflowRunInvocation"'));

@@ -569,6 +569,95 @@ describe('production workflow coordinator', () => {
     if (outcome === 'pause_after_first_input') expect(boundary.rowById(inputs[0])?.index.lifecycle).toBe('completed');
   });
 
+  it('continues the existing boundary past an observed completed native input without replaying it', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(now));
+    try {
+      const witness = { mode: 'plain' as const, version: 1, contentKeyFingerprint: null };
+      const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.test', localId: 'test' } },
+        conversation: { kind: 'existing_session', sessionId: 'session-1', machineId },
+      }, blocks: [{ ...onlyStep, id: 'sibling' }, { ...onlyStep, id: 'native', timeoutMs: 1_000 },
+        { ...onlyStep, id: 'next' }] };
+      const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition,
+        context: { source: { kind: 'inline' }, inputs: {}, machineId, executionTarget: { kind: 'session' },
+          workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
+          origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+        admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+      if (!accepted.ok) throw new Error(accepted.error.code);
+      const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted.snapshot,
+      }));
+      const boundary = createWorkflowRunStorageTestkit({ runId, accountId, machineId,
+        origin: { kind: 'direct' }, acceptedEnvelope });
+      const inputs: SessionInputWorkflowV2[] = [];
+      const observations: string[] = [];
+      const coordinate = createProductionWorkflowRunCoordinator({ token: 'token', accountId, machineId, storage: boundary,
+        resolveControllerContext: async () => ({ surface: 'cli', authority: 'present_user', callerPermissionMode: 'yolo' }),
+        resolveAccountEncryption: async () => ({ kind: 'available', witness }),
+        isAcceptedAuthorizationCurrent: async () => true,
+        workspaceScm: { inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
+        execution: productionExecution({ enqueue: async request => {
+          inputs.push(request.workflow);
+          return { status: 'accepted', localId: deriveWorkflowSessionInputLocalIdV2(request.workflow) };
+        }, observe: async ({ sessionId, localId, onInputMaterialized }) => {
+          observations.push(localId);
+          await onInputMaterialized?.(Date.now());
+          if (inputs.length === 2) {
+            vi.setSystemTime(Date.now() + 2_000);
+            return { ok: true, sessionId, localId, result: { kind: 'pending' } };
+          }
+          return { ok: true, sessionId, localId, result: { kind: 'final_text', text: 'done' } };
+        } }),
+      });
+      const claim = { runId, attempt: 0, expectedRevision: 0, acceptedEnvelope, accountCurrentness: witness };
+      await expect(coordinate(claim)).resolves.toMatchObject({ state: 'interrupted', reason: 'workflow_step_timeout' });
+      expect(inputs).toHaveLength(2);
+      const sibling = structuredClone(boundary.rowById(inputs[0]!.invocationRecordId)!);
+      const native = boundary.rowById(inputs[1]!.invocationRecordId)!;
+      const binding = { v: 1 as const, purpose: 'invocation_progress' as const, accountId, runId,
+        recordId: native.index.id, sequence: native.index.sequence, parentRecordId: native.index.parentRecordId,
+        memberOrdinal: native.index.memberOrdinal, attempt: native.index.attempt };
+      const opened = openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding,
+        envelope: parseWorkflowStoredContentEnvelopeV1(native.contentEnvelope) });
+      if (opened.kind !== 'available') throw new Error('native_progress_unavailable');
+      expect(native.index).toMatchObject({ lifecycle: 'needs_attention', attempt: '0' });
+      expect(opened.content).toMatchObject({ execution: { kind: 'session', sessionId: 'session-1',
+        localInputId: deriveWorkflowSessionInputLocalIdV2(inputs[1]!) },
+        observationDeadline: { kind: 'at', expiresAt: '2026-01-01T00:00:01.000Z' } });
+      // Recovery's observed terminal fact is a storage boundary input here;
+      // server composed coverage owns its admission and Continue availability.
+      const { reason: _reason, ...completedProgress } = opened.content;
+      await boundary.execute({ operation: 'invocations.fact', runId, expectedRevision: boundary.run().revision,
+        resolution: 'observed_terminal_execution', invocationId: native.index.id, invocationAttempt: native.index.attempt,
+        expectedLifecycle: native.index.lifecycle, expectedContentRevision: native.index.contentRevision,
+        lifecycle: 'completed', contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+          mode: 'plain', binding, progress: { ...completedProgress, result: 'late native answer' },
+        })) });
+      const completedNative = structuredClone(boundary.rowById(native.index.id)!);
+      expect(boundary.run().state).toBe('interrupted');
+      expect(inputs).toHaveLength(2);
+      expect(observations).toHaveLength(2);
+      await boundary.execute({ operation: 'resume', runId, expectedRevision: boundary.run().revision });
+      await expect(coordinate({ ...claim, expectedRevision: boundary.run().revision,
+        workflowResumeRequestedRevision: boundary.run().revision })).resolves.toMatchObject({ state: 'succeeded' });
+      expect(inputs).toHaveLength(3);
+      expect(new Set(inputs.map(input => input.invocationRecordId)).size).toBe(3);
+      expect(observations).toEqual(inputs.map(deriveWorkflowSessionInputLocalIdV2));
+      const next = boundary.rowById(inputs[2]!.invocationRecordId)!;
+      expect(openWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: { ...binding,
+        recordId: next.index.id, sequence: next.index.sequence, parentRecordId: next.index.parentRecordId,
+        memberOrdinal: next.index.memberOrdinal, attempt: next.index.attempt },
+        envelope: parseWorkflowStoredContentEnvelopeV1(next.contentEnvelope) }))
+        .toMatchObject({ kind: 'available', content: { invocationPath: { blockId: 'next' } } });
+      expect(boundary.rowById(native.index.id)).toEqual(completedNative);
+      expect(boundary.rowById(sibling.index.id)).toEqual(sibling);
+      expect(boundary.rows().filter(row => row.index.parentRecordId !== null).map(row => row.index.attempt)).toEqual(['0', '0', '0']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each(['healthy', 'network_failure', 'never_answers'] as const)('keeps renewing a claimed Workflow during slow native admission (%s)', async scenario => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     vi.setSystemTime(0);
