@@ -4,6 +4,7 @@ import type { ThemeTryOnOwner } from '@/theme/profiles/themeTryOn';
 import type { ThemeEditorDraft } from './themeProfileEditorActions';
 import type { ThemeActionOutput } from '@happier-dev/protocol/actions/themeActionFamily';
 import type { THEME_ACTION_IDS } from '@happier-dev/protocol/actions/themeActionIdsV1';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 export function useThemeProfileEditorPreview(input: Readonly<{
     owner: ThemeTryOnOwner;
@@ -11,6 +12,7 @@ export function useThemeProfileEditorPreview(input: Readonly<{
     preview(draft: ThemeEditorDraft): Promise<ThemeActionOutput<typeof THEME_ACTION_IDS.tryOn>>;
     onFailure(error: unknown): void;
 }>): void {
+    const presented = useLayoutPresentationActive();
     // A receipt identifies this editor's effect; only the shared owner decides
     // whether that preview is still current.
     const receipt = React.useRef<string | null>(null);
@@ -25,7 +27,7 @@ export function useThemeProfileEditorPreview(input: Readonly<{
         }
     }, [input.onFailure, input.owner]);
     React.useEffect(() => {
-        if (!document || !draft || !mode) return;
+        if (!presented || !document || !draft || !mode) return;
         let cancelled = false;
         const timeout = setTimeout(() => {
             void input.preview({ document, draft, mode, ...(css !== undefined ? { css } : {}) })
@@ -35,7 +37,7 @@ export function useThemeProfileEditorPreview(input: Readonly<{
                 }, input.onFailure);
         }, 150);
         return () => { cancelled = true; clearTimeout(timeout); };
-    }, [css, document, draft, input.onFailure, input.preview, mode, revert]);
+    }, [css, document, draft, input.onFailure, input.preview, mode, presented, revert]);
     React.useEffect(() => () => {
         if (receipt.current === null) return;
         revert(receipt.current);

@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
@@ -6,6 +7,7 @@ import type { ThemeEditorDraft } from './themeProfileEditorActions';
 import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraft';
 import { createThemeActionHarness } from '@/dev/testkit/harness/themeActionHarness';
 import { useThemeProfileEditorPreview } from './useThemeProfileEditorPreview';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 afterEach(() => { standardCleanup(); vi.useRealTimers(); });
 
@@ -25,6 +27,39 @@ function fixture() {
 }
 
 describe('useThemeProfileEditorPreview', () => {
+    it('cancels a hidden editor settle and publishes only the latest draft when presented again', async () => {
+        vi.useFakeTimers();
+        const state = fixture();
+        let presented = true;
+        const onFailure = (error: unknown) => { throw error; };
+        const wrapper = ({ children }: React.PropsWithChildren) => <PluginSurfaceFocusEligibilityProvider active={presented}>
+            {children}
+        </PluginSurfaceFocusEligibilityProvider>;
+        const hook = await renderHook(({ document }) => useThemeProfileEditorPreview({ owner: state.owner,
+            draft: { document, draft: document.profile, mode: 'light' }, preview: state.preview, onFailure }),
+        { initialProps: { document: state.document }, wrapper });
+        presented = false;
+        await hook.rerender();
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+        expect(state.previews()).toBe(0);
+        let latest = state.document;
+        for (let index = 0; index < 10; index++) {
+            latest = mergeThemeProfileDocumentEdit(state.document, { name: `Hidden draft ${index}` });
+            await hook.rerender({ document: latest });
+        }
+        expect(vi.getTimerCount()).toBe(0);
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+        expect(state.previews()).toBe(0);
+        presented = true;
+        await hook.rerender();
+        await act(async () => { await vi.advanceTimersByTimeAsync(150); });
+        expect(state.previews()).toBe(1);
+        expect(state.owner.read()?.document).toBe(latest);
+        expect(state.writes()).toBe(0);
+        await hook.unmount();
+        expect(state.owner.read()).toBeNull();
+    });
+
     it('publishes once after the existing settle delay, then reverts its preview on unmount without persistence', async () => {
         vi.useFakeTimers();
         const state = fixture();

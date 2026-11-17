@@ -12,12 +12,35 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 afterEach(standardCleanup);
 const { ThemeLibraryView } = await import('./ThemeLibraryView');
+const { StoreThemeListing } = await import('@/components/store/StoreThemeListing');
+const { ThemeMiniaturePreview } = await import('@/components/settings/appearance/ThemeModePreview');
 function document(id: string, name: string) {
     const parsed = parseThemeProfileDocument(createThemeProfileDraft({ id, name, now: '2026-11-16T12:00:00.000Z' }));
     if (!parsed.ok) throw new Error('Invalid fixture');
     return parsed.document;
 }
 const firstId = '11111111-1111-4111-8111-111111111111';
+it('windows the faces of a 200-theme Store package through the shared Collection', async () => {
+    const miniature = projectThemeLibraryEntry(document(firstId, 'Preview')).miniature;
+    const screen = await renderSettingsView(<StoreThemeListing name="Theme collection" kicker="Theme" meta="Publisher"
+        description={null} faces={Array.from({ length: 200 }, (_, index) => ({ id: `face-${index}`,
+            name: `Face ${index}`, mode: 'light', miniature }))}
+        facesState="ready" tryingFaceId={null} preferredFaceId="face-0" here="This device" installed={false}
+        facts={[]} busy={null} onTryFace={() => {}} onRevert={() => {}} onInstall={() => {}} onRetryFaces={() => {}}
+        testID="store-theme-census" />);
+    await act(async () => {
+        for (const node of screen.tree.root.findAll(node => typeof node.type === 'string'
+            && ['store-theme-census', 'store-theme-census:faces', 'store-theme-census:faces:stage'].includes(node.props.testID)
+            && typeof node.props.onLayout === 'function')) {
+            node.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 600 } } });
+        }
+    });
+    await measureMountedCollections(screen, { width: 390, height: 600 });
+    const previews = screen.findAllByType(ThemeMiniaturePreview);
+    expect(previews.length).toBeGreaterThan(0);
+    expect(previews.length).toBeLessThan(200);
+});
+
 it('windows a 200-theme library through the shared Collection', async () => {
     const miniature = projectThemeLibraryEntry(document(firstId, 'Preview')).miniature;
     const preview = { kind: 'miniature' as const, miniature };
