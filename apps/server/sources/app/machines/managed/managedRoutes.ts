@@ -35,6 +35,7 @@ import { ManagedControllerCredentialDeliveryReportV1Schema, ManagedControllerCre
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { isManagedPresentUser, resolveSignedManagedAccountExecutorInTx } from './managedRequestAuthority';
 import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { readServerGuestCliIdentity } from '@/app/runtime/serverRelease';
 
 type ControllerProof = Pick<FastifyRequest, "userId" | "externalActionExecutionAuthorized" | "externalActionExecutionMachineId" | "externalActionEffectActionId" | "externalActionExecutionRequestId" | "externalActionExecutionCustodianAccountId">;
 export function requireManagedControllerProof(request: ControllerProof, controllerMachineId: string | null | undefined, effects: readonly string[]): Readonly<{ requestId: string; custodianAccountId: string }> {
@@ -108,6 +109,7 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
             custodianAccountId: row.custodianAccountId, requestAuthority: 'creation' as const };
         if (options.retainedContext && input.requestId === undefined) return {
             requestId: row.admittedActionRequestId, custodianAccountId: row.custodianAccountId, requestAuthority: 'creation' as const,
+            accountContext: true as const,
         };
         const creation = input.requestId === row.admittedActionRequestId;
         const submitted = options.submittedReport && readManagedAdmissionState(row.admittedInput).submittedEffect?.requestId === input.requestId;
@@ -465,6 +467,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 ? readManagedOpaquePresetContentOverride(current)
                 : undefined;
             return ManagedControllerContextOutputV1Schema.parse({ machine, requestId,
+                ...('accountContext' in proof && proof.accountContext ? { guestCli: readServerGuestCliIdentity() } : {}),
                 ...(isManagedOpaquePresetMachineV1(machine) ? {
                     presetContent: readManagedOpaquePresetContent(current),
                     ...(presetContentOverride ? { presetContentOverride } : {}),

@@ -31,7 +31,7 @@ export function resolveServerUrlCapabilitiesFeature(
     };
     return {
         capabilities: {
-            guestCli: readServerGuestCliIdentity(),
+            guestCli: readServerGuestCliIdentity(env),
             ...(Object.keys(server).length > 0 ? { server } : null),
             // Its own family: released readers parse `capabilities.server` strictly (see
             // `serverReleaseCapabilities.ts` in protocol).

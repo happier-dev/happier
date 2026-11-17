@@ -1,10 +1,12 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { prepareSourceTreeRuntimeComponents, resolveSourceTreeRevision } from './source_revision_tree.mjs';
 import { resolveCliRuntimeLaunchSpec } from '../runtime/launch/resolveCliRuntimeLaunchSpec.mjs';
+import { resolveServerRuntimeLaunchSpec } from '../runtime/launch/resolveServerRuntimeLaunchSpec.mjs';
 import { readSourceRuntimeBundleRecord, projectRemoteGuestCliPayloadEnvironment } from '../runtime/shared/source_bundle_record.mjs';
 import { chmod, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -16,12 +18,24 @@ import { installSourceAdmissionFixture, installSourcePreparationInputs } from '.
 import { captureBuildInputFiles, mountInstalledNodeModules } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspaceBuildInputs } from '../utils/fs/workspaceBuildInputs.mjs';
 import { readWorkspacePackages, workspaceSourcePackageClosure } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { resolveInstalledRuntimePackage } from '../../../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 import { buildSourceRuntimeBundle, setBundleReadOnly } from './build_source_runtime.mjs';
 import { runCapture } from '../utils/proc/proc.mjs';
 import cliDistBuildManifest from '../../../../packages/cli-common/cliDistBuildManifest.cjs';
 import { createCliSourceLoader } from '../../../../packages/cli-common/cliSourceLoader.mjs';
 import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
-import { readSourceGuestPayloadTargets } from './source_guest_payload.mjs';
+import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
+
+test('retained producer archives never enable a Home whose operator left export off', () => {
+  const env = sourceGuestPayloadEnvironment({ root: '/retained/guest', identity: 'captured',
+    archives: [{ target: { os: 'linux', arch: 'x64' }, sha256: 'a'.repeat(64), archivePath: '/retained/guest.tar.gz' }] });
+  const launch = resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch: { entrypoint: '/retained/server.mjs', env } });
+  for (const operatorEnv of [{}, { HAPPIER_DEV_GUEST_CLI_EXPORT: '0' }]) {
+    assert.notEqual({ ...operatorEnv, ...launch.env }.HAPPIER_DEV_GUEST_CLI_EXPORT, '1');
+  }
+  assert.deepEqual(projectRemoteGuestCliPayloadEnvironment({ HAPPIER_DEV_GUEST_CLI_EXPORT: '1' }),
+    { HAPPIER_DEV_GUEST_CLI_EXPORT: '1' }, 'an opted-in remote producer receives the setting before it has payload metadata');
+});
 
 test('source guest payload defaults to the current native target without a configured root', () => {
   const target = resolveCurrentBinaryTarget({ availableTargets: CLI_BINARY_TARGETS });
@@ -90,6 +104,7 @@ async function createGuestPayloadFixture(t) {
   await mkdir(join(cliDir, 'native/processcustody'), { recursive: true });
   await writeFile(join(cliDir, 'native/processcustody/README.md'), 'native compiler fixture');
   await mkdir(join(cliDir, 'tools/archives'), { recursive: true });
+  await writeFile(join(cliDir, 'tools/archives/.gitkeep'), 'fixture tool archive boundary');
   // Tool acquisition is an OS boundary. Keep capture, graph emission, support
   // staging, finalization and canonical manifest construction real.
   await writeFile(join(cliDir, 'scripts/unpack-tools.cjs'), `
@@ -119,6 +134,7 @@ async function createGuestPayloadFixture(t) {
     await writeFile(join(bin, name), `#!${process.execPath}
       const fs = require('node:fs'); const path = require('node:path');
       const args = process.argv.slice(2);
+      if (${JSON.stringify(name)} === 'go' && args[0] === 'version') { console.log('go version go1.24.0 linux/amd64'); process.exit(0); }
       if (args.includes('--version')) { console.log(${JSON.stringify(bunPin)}); process.exit(0); }
       const liveEdit = ${JSON.stringify(fixture.path('edit-live-source'))};
       if (fs.existsSync(liveEdit)) {
@@ -183,7 +199,6 @@ test('guest payload retains host and target holders and includes native support 
   const first = await buildCliBinaryArtifactPayload(producerOptions);
   for (const name of nativeFiles) assert.match(await readFile(join(payloadDir,
     'node_modules/@happier-dev/iroh-native/native', name), 'utf8'), /^cargo output: /);
-
   assert.match(first.identity ?? '', /^[a-f0-9]{64}$/, 'the complete payload exposes its canonical byte identity');
   const codeIdentity = cliDistBuildManifest.readCliDistBuildManifest(join(payloadDir, 'package-dist/index.mjs')).manifest.fingerprint;
   const repeated = await buildCliBinaryArtifactPayload(producerOptions);
@@ -227,14 +242,21 @@ test('guest payload and daemon retain the same captured source after live edits 
     }
   `);
   const build = native?.build ?? buildSourceRuntimeBundle;
-  const options = { repoDir, stackBaseDir: fixture.path('stacks/guest'), component: 'daemon', env,
+  const options = { repoDir, stackBaseDir: fixture.path('stacks/guest'), component: 'daemon', env: { ...env, HAPPIER_DEV_GUEST_CLI_EXPORT: '1' },
     waitForSourceChanges: false };
-  const ordinary = await build(options);
+  const unexported = await build({ ...options, env });
+  assert.equal(unexported.guestPayload.archives, undefined);
+  const ordinary = await build({ ...options, stackBaseDir: fixture.path('stacks/export-consumer'),
+    env: { ...options.env, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'guest' } });
   assert.ok(ordinary.guestPayload, 'an unconfigured source runtime produces its native guest payload');
+  assert.equal(ordinary.guestPayload.archives?.length, 1, 'opted-in producer retains one archive per actual target');
+  const archive = ordinary.guestPayload.archives[0];
+  assert.deepEqual(archive.target, { os: target.os, arch: target.arch });
+  assert.equal(archive.sha256, createHash('sha256').update(await readFile(archive.archivePath)).digest('hex'));
   assert.equal((await import(pathToFileURL(join(ordinary.guestPayload.root, 'package-dist/index.mjs')))).snapshot, 'captured');
   assert.equal(ordinary.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, ordinary.guestPayload.root);
   assert.deepEqual(JSON.parse(ordinary.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA), {
-    root: ordinary.guestPayload.root, identity: ordinary.guestPayload.identity,
+    root: ordinary.guestPayload.root, identity: ordinary.guestPayload.identity, archives: ordinary.guestPayload.archives,
   });
   const configuredPayload = fixture.path('configured-payload');
   await mkdir(join(configuredPayload, 'tools/unpacked'), { recursive: true });
@@ -320,12 +342,42 @@ test('guest payload and daemon retain the same captured source after live edits 
 
 test('tree reload publishes a native guest payload from the selected revision in its completed record', compilerFixtureOptions, async t => {
   const { fixture, repoDir, cliDir, env } = await createGuestPayloadFixture(t);
-  // Native support acquisition is a process boundary, represented like the tree
-  // tests; guest capture, compilation, staging and record consumption stay real.
-  await writeFile(join(repoDir, 'apps/stack/scripts/build/build_daemon_artifact.mjs'), `
-    export async function ensureDaemonSupportArtifact({ stackBaseDir }) {
-      return { fingerprint: 'fixture', payloadDir: stackBaseDir };
+  const supportLoader = await createCliSourceLoader('source-tree-guest-support-fixture');
+  try {
+    const { CLI_RUNTIME_EXTERNAL_PACKAGES } = await supportLoader.import(
+      new URL('../../../../packages/cli-common/src/componentArtifacts/buildCliBinaryArtifactPayload.ts', import.meta.url).href,
+      import.meta.url);
+    const manifest = JSON.parse(await readFile(join(cliDir, 'package.json'), 'utf8'));
+    // Installed third-party packages are a system boundary; keep the real
+    // support identity, dependency staging and native compiler orchestration.
+    for (const name of CLI_RUNTIME_EXTERNAL_PACKAGES) {
+      manifest.dependencies[name] = '1.0.0';
+      const packageDir = join(cliDir, 'node_modules', name);
+      const installed = resolveInstalledRuntimePackage({ packageName: name,
+        resolveFromPackageJsonPath: fileURLToPath(new URL('../../../../apps/cli/package.json', import.meta.url)) });
+      const optionalNames = Object.keys(installed.packageJson.optionalDependencies ?? {});
+      await mkdir(packageDir, { recursive: true });
+      await writeFile(join(packageDir, 'package.json'), JSON.stringify({ name, version: '1.0.0', main: 'index.cjs',
+        optionalDependencies: Object.fromEntries(optionalNames.map(name => [name, '1.0.0'])) }));
+      await writeFile(join(packageDir, 'index.cjs'), 'module.exports = {};');
+      for (const optionalName of optionalNames) {
+        const optionalDir = join(cliDir, 'node_modules', optionalName);
+        await mkdir(optionalDir, { recursive: true });
+        await writeFile(join(optionalDir, 'package.json'), JSON.stringify({ name: optionalName, version: '1.0.0', main: 'index.cjs' }));
+        await writeFile(join(optionalDir, 'index.cjs'), 'module.exports = {};');
+      }
     }
+    await writeFile(join(cliDir, 'package.json'), JSON.stringify(manifest));
+  } finally { await supportLoader.unregister(); }
+  await mkdir(join(repoDir, 'apps/server/sources'), { recursive: true });
+  await mkdir(join(repoDir, 'apps/server/scripts'), { recursive: true });
+  await writeFile(join(repoDir, 'apps/server/package.json'), JSON.stringify({ name: '@happier-dev/server',
+    dependencies: { '@happier-dev/cli-common': 'workspace:*' } }));
+  await writeFile(join(repoDir, 'apps/server/sources/main.light.ts'), 'export const server = true;');
+  await writeFile(join(repoDir, 'apps/server/scripts/migrate.sqlite.deploy.ts'), 'export const migration = true;');
+  // Resolve the real support owner; only the compiler processes above are fixtures.
+  await writeFile(join(repoDir, 'apps/stack/scripts/build/build_daemon_artifact.mjs'), `
+    export { ensureDaemonSupportArtifact } from ${JSON.stringify(new URL('./build_daemon_artifact.mjs', import.meta.url).href)};
   `);
   // Use physical module directories, as a real checkout does, before snapshotting.
   const commonModules = join(repoDir, 'packages/cli-common/node_modules');
@@ -356,4 +408,15 @@ test('tree reload publishes a native guest payload from the selected revision in
   });
   assert.equal((await import(pathToFileURL(join(record.guestPayload.root, 'package-dist/index.mjs')))).snapshot, 'captured',
     'guest payload uses the selected tree, never the moving checkout');
+  assert.equal(daemon.guestPayload.archives, undefined, 'default-off source preparation does not export archives');
+  const { server } = await prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir: fixture.path('stacks/tree-home'),
+    descriptorPath: revision.descriptorPath, components: [{ component: 'server' }],
+    env: { ...env, HAPPIER_DEV_GUEST_CLI_EXPORT: '1' }, logger: { error() {} } });
+  const serverRecord = JSON.parse(await readFile(join(server.runtimeDir, '../../source-bundle.json'), 'utf8'));
+  assert.deepEqual(serverRecord.guestPayload, server.guestPayload);
+  assert.equal(serverRecord.env.HAPPIER_DEV_GUEST_CLI_EXPORT, undefined, 'producer metadata never enables the runtime operator setting');
+  const archive = serverRecord.guestPayload.archives[0];
+  assert.equal(archive.sha256, createHash('sha256').update(await readFile(archive.archivePath)).digest('hex'));
+  assert.equal((await import(pathToFileURL(join(serverRecord.guestPayload.root, 'package-dist/index.mjs')))).snapshot,
+    'captured', 'Home exports its selected source revision');
 });

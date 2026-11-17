@@ -623,31 +623,6 @@ export async function prepareSourceTreeRuntimeComponents({ repoDir, stackBaseDir
       record = { identity, entrypoint, runtimeCommand: entrypoint, args: [], runtimeDir: cliDir, nodeEntrypoint: entrypoint, cliDir,
         env: { HAPPIER_STACK_CLI_ROOT_DIR: cliDir, HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: entrypoint,
           HAPPIER_CLI_SUBPROCESS_PREFER_TSX: '0', HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK: '0' } };
-      const targets = readSourceGuestPayloadTargets(env);
-      if (targets) {
-        // Payload staging rewrites copied scripts. Capture writable inputs through
-        // the bundle owner instead of carrying the base's read-only hardlinks.
-        const workspace = join(t, 'guest-workspace');
-        try {
-          const captured = await captureSourceWebBuildInputs({ repoDir: t, component: 'daemon', outputDir: workspace, signal });
-          await setBundleReadOnly(workspace, false);
-          // As in bundle preparation, the finite compiler owns its process env
-          // and loader; tool subprocesses must inherit this host's build inputs.
-          const code = `const { buildSourceGuestPayload } = await import(${JSON.stringify(new URL('./source_guest_payload.mjs', import.meta.url).href)});
-const payload = await buildSourceGuestPayload({ ...JSON.parse(process.argv[1]), env: process.env });
-console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify(payload));`;
-          const output = await runCapture(process.execPath, sourceBuildNodeArgs({ repoDir: t, scriptPath: '--input-type=module',
-            args: ['-e', code, JSON.stringify({ repoDir: captured.repoDir, sourceRepoDir: repoDir,
-              dependencyRootDir: join(treesRoot, INSTALLS, tree.installIdentity), outputDir: t, targets, sourceCapture })] }),
-          { cwd: t, env, signal });
-          const line = String(output).split(/\r?\n/u).find(line => line.startsWith('HSTACK_GUEST_PAYLOAD '));
-          if (!line) throw new Error('[source-tree] guest payload preparation returned no artifact');
-          record.guestPayload = JSON.parse(line.slice('HSTACK_GUEST_PAYLOAD '.length));
-        } finally {
-          await rm(workspace, { recursive: true, force: true });
-        }
-        Object.assign(record.env, sourceGuestPayloadEnvironment(record.guestPayload));
-      }
     } else {
       const serverDir = join(t, 'apps/server');
       const entrypoint = join(serverDir, 'sources/main.mjs');
@@ -663,6 +638,31 @@ await runSqliteMigrationDeploy({ serverRoot: ${JSON.stringify(serverDir)}, runSc
       record = { identity, entrypoint, runtimeCommand: entrypoint, args: [], runtimeDir: serverDir, serverDir, serverComponent, dbProvider: provider,
         env: { HAPPIER_DB_PROVIDER: provider, ...(provider === 'sqlite' ? { HAPPIER_SQLITE_MIGRATIONS_DIR: join(serverDir, 'prisma/sqlite/migrations') } : {}) },
         migration: { mode: 'external', command: migrate, args: [], cwd: serverDir } };
+    }
+    const targets = component === 'daemon' || env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1' ? readSourceGuestPayloadTargets(env) : null;
+    if (targets) {
+      // Payload staging rewrites copied scripts. Capture writable inputs through
+      // the bundle owner instead of carrying the base's read-only hardlinks.
+      const workspace = join(t, 'guest-workspace');
+      try {
+        const captured = await captureSourceWebBuildInputs({ repoDir: t, component: 'daemon', outputDir: workspace, signal });
+        await setBundleReadOnly(workspace, false);
+        // As in bundle preparation, the finite compiler owns its process env
+        // and loader; tool subprocesses must inherit this host's build inputs.
+        const code = `const { buildSourceGuestPayload } = await import(${JSON.stringify(new URL('./source_guest_payload.mjs', import.meta.url).href)});
+const payload = await buildSourceGuestPayload({ ...JSON.parse(process.argv[1]), env: process.env });
+console.log('HSTACK_GUEST_PAYLOAD ' + JSON.stringify(payload));`;
+        const output = await runCapture(process.execPath, sourceBuildNodeArgs({ repoDir: t, scriptPath: '--input-type=module',
+          args: ['-e', code, JSON.stringify({ repoDir: captured.repoDir, sourceRepoDir: repoDir,
+            dependencyRootDir: join(treesRoot, INSTALLS, tree.installIdentity), outputDir: t, targets, sourceCapture })] }),
+        { cwd: t, env, signal });
+        const line = String(output).split(/\r?\n/u).find(line => line.startsWith('HSTACK_GUEST_PAYLOAD '));
+        if (!line) throw new Error('[source-tree] guest payload preparation returned no artifact');
+        record.guestPayload = JSON.parse(line.slice('HSTACK_GUEST_PAYLOAD '.length));
+      } finally {
+        await rm(workspace, { recursive: true, force: true });
+      }
+      Object.assign(record.env, sourceGuestPayloadEnvironment(record.guestPayload));
     }
     // The tree runs its base's pinned installation snapshot: launches never consult
     // the moving checkout's dependency publication (the captured-closure contract).

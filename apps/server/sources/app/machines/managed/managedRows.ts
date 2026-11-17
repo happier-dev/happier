@@ -41,6 +41,7 @@ import { encodeBase64 } from 'privacy-kit';
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { ManagedConfigurationFactsV1ReadSchema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import type { ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features/payload/capabilities/guestCliIdentityV1';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
 import { inheritManagedControllerRole, resolveManagedMachineRole } from './managedRole';
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -134,6 +135,7 @@ const StoredManagedComputeInputSchema = z.union([
     }),
 ]);
 const StoredManagedAdmissionSchema = z.strictObject({
+    guestCli: z.optional(GuestCliIdentityV1Schema),
     acquisitionMode: z.optional(z.literal('resource-bound')),
     reuseIdle: z.optional(z.literal(true)),
     bootstrapInstalled: z.optional(z.literal(true)),

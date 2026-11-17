@@ -315,8 +315,20 @@ this input for managed native, managed SSH and SSH setup, using the same archive
 delivery and promotion path. A bad local payload fails with `invalid_payload`
 instead of falling back to a release. Managed acquire, repair and Update read the
 Home's explicit `capabilities.guestCli` identity through the shared supplier.
-`source: 'home-payload'` selects this controller-local payload and reports
-`guest_payload_missing` when unavailable. The released server artifact and Docker
+`source: 'home-payload'` selects the admitted source Home archive when advertised,
+or the existing controller-local payload, and reports `guest_payload_missing` when
+neither is available. In 0.3 development, source-built Homes can opt in with
+`HAPPIER_DEV_GUEST_CLI_EXPORT=1` before source-runtime preparation. Preparation uses
+the existing CLI payload and SCP archive owners, retains one archive per produced
+target with the server runtime, and advertises its exact SHA-256 and Home download
+path in `capabilities.guestCli.payloads`. Home captures its own descriptor in the
+existing Create admission. Update/Retry receives a new Home-owned snapshot through
+its admitted root or the existing authenticated Account context response; requester
+descriptors never choose the retained archive. The installer verifies the pinned
+archive digest before extraction or execution. This is integrity from a trusted
+development Home, not a publisher
+signature. Export defaults off, and released server builds compile it unavailable
+even when the setting is present. The released server artifact and Docker
 image advertise `source: 'public-release'`; they need no embedded guest archive.
 That source selects the newest published signed CLI in the advertised major.minor
 `line` and `channel`, then acquires its exact immutable version. Stable Homes

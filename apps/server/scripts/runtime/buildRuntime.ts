@@ -104,7 +104,8 @@ export async function bundleServerRuntimeEntrypoints(params: Readonly<{
     platform: 'node',
     target: 'node20',
     define: { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify('public-release'),
-      __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify(params.releaseChannel ?? 'publicdev') },
+      __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify(params.releaseChannel ?? 'publicdev'),
+      __HAPPIER_DEV_GUEST_CLI_EXPORT_AVAILABLE__: 'false' },
     outdir: outDir,
     entryPoints: {
       main: join(projectDir, 'sources', 'main.ts'),

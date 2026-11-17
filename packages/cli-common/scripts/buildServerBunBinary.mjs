@@ -48,7 +48,8 @@ const requireFromProject = createRequire(pathToFileURL(join(repoRoot, 'apps/serv
 const result = await Bun.build({
   entrypoints: [entrypoint],
   define: { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify('public-release'),
-    __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify('publicdev'), ...defines },
+    __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify('publicdev'), ...defines,
+    __HAPPIER_DEV_GUEST_CLI_EXPORT_AVAILABLE__: 'false' },
   conditions: [SOURCE_CONDITION],
   external,
   compile: {

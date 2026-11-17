@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { mkdir, symlink } from 'node:fs/promises';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
+import { copyFile, mkdir, symlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CLI_BINARY_TARGETS, resolveCliToolsPlatformDir, resolveCurrentBinaryTarget, resolveExecutableName } from '../../../../packages/cli-common/src/componentArtifacts/targets.ts';
@@ -36,7 +36,8 @@ export function readSourceGuestPayloadTargets(env) {
 export function sourceGuestPayloadEnvironment(payload) {
   return { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: payload.root,
     HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ root: payload.root,
-      identity: payload.identity, ...(payload.targetIdentities ? { targetIdentities: payload.targetIdentities } : {}) }) };
+      identity: payload.identity, ...(payload.targetIdentities ? { targetIdentities: payload.targetIdentities } : {}),
+      ...(payload.archives ? { archives: payload.archives } : {}) }) };
 }
 
 export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependencyRootDir, outputDir, targets, sourceCapture, env, signal }) {
@@ -61,10 +62,13 @@ export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependen
     loader = await createCliSourceLoader('source-runtime-guest-payload');
     const { buildCliBinaryArtifactPayload } = await loader.import(
       pathToFileURL(join(repoDir, 'packages/cli-common/src/componentArtifacts/buildCliBinaryArtifactPayload.ts')).href, import.meta.url);
+    const { createScpReadyPayloadArchive } = await loader.import(
+      pathToFileURL(join(repoDir, 'packages/cli-common/src/systemTasks/kinds/createScpReadyPayloadArchive.ts')).href, import.meta.url);
     const runCommand = (command, args, options) => run(command, args, {
       ...options, env: { ...captureEnv, ...options?.env }, signal, stdio: 'ignore', captureFailureDiagnostic: true,
     });
     const targetIdentities = {};
+    const exportedArchives = [];
     for (const { target, relativeDir } of targets) {
       signal?.throwIfAborted();
       // The payload owner builds the Iroh addon and Session holders from repoDir's Rust sources.
@@ -72,12 +76,24 @@ export async function buildSourceGuestPayload({ repoDir, sourceRepoDir, dependen
         repoRoot: repoDir, payloadDir: join(root, relativeDir), target, runCommand,
       });
       targetIdentities[`${target.os}-${target.arch}`] = payload.identity;
+      if (env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1') {
+        const archive = await createScpReadyPayloadArchive(join(root, relativeDir));
+        try {
+          const archivePath = join(outputDir, 'guest-payload-archives', `${target.os}-${target.arch}.tar.gz`);
+          await mkdir(dirname(archivePath), { recursive: true });
+          await copyFile(join(archive.archiveStageRoot, archive.archiveFileName), archivePath);
+          const hash = createHash('sha256');
+          for await (const chunk of createReadStream(archivePath)) hash.update(chunk);
+          exportedArchives.push({ target: { os: target.os, arch: target.arch }, sha256: hash.digest('hex'), archivePath });
+        } finally { await archive.cleanup(); }
+      }
     }
     const collection = targets.some(item => item.relativeDir);
     const identity = collection
       ? createHash('sha256').update(JSON.stringify(Object.entries(targetIdentities).sort(([a], [b]) => a.localeCompare(b)))).digest('hex')
       : Object.values(targetIdentities)[0];
-    return { root, identity, sourceCapture, ...(collection ? { targetIdentities } : {}) };
+    return { root, identity, sourceCapture, ...(collection ? { targetIdentities } : {}),
+      ...(exportedArchives.length ? { archives: exportedArchives } : {}) };
   } finally {
     await loader?.unregister();
     for (const [key, value] of Object.entries(previousContext)) {

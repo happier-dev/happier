@@ -97,11 +97,14 @@ async function readSharedSourceInputManifest(sharedSourceInputs) {
   return manifest;
 }
 
-export async function captureSourceWebBuildInputs({ repoDir, outputDir, component = 'expo', signal, sharedSourceInputs, revision }) {
+export async function captureSourceWebBuildInputs({ repoDir, outputDir, component = 'expo', signal, sharedSourceInputs, revision, includeGuestPayload = false }) {
   repoDir = resolve(repoDir);
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
   const sourceDir = sharedSourceInputs?.repoDir ?? repoDir;
-  const { workspaceDirs } = await readSourceComponentBuildInputs({ repoDir: sourceDir, component });
+  const inputs = await readSourceComponentBuildInputs({ repoDir: sourceDir, component });
+  const guestInputs = includeGuestPayload && component === 'server'
+    ? await readSourceComponentBuildInputs({ repoDir: sourceDir, component: 'daemon' }) : null;
+  const workspaceDirs = [...new Set([...inputs.workspaceDirs, ...(guestInputs?.workspaceDirs ?? [])])];
   signal?.throwIfAborted();
   const started = performance.now();
   const capture = await captureBuildInputFiles({ sourceDir, captureDir: outputDir,
@@ -172,13 +175,18 @@ async function sourceBundleFingerprint({ repoDir, identityRepoDir = repoDir, com
   const projectDir = join(repoDir, 'apps', component === 'daemon' ? 'cli' : 'server');
   const esbuild = createRequire(pathToFileURL(join(projectDir, 'package.json')))('esbuild');
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
-  const files = sharedManifest ? sharedManifest.filesByComponent[component]
+  const componentFiles = sharedManifest ? sharedManifest.filesByComponent[component]
     : (await readSourceComponentBuildInputs({ repoDir, component })).files;
+  const exportGuestPayload = env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1';
+  const files = component === 'server' && exportGuestPayload
+    ? [...new Set([...componentFiles, ...(sharedManifest?.filesByComponent.daemon
+      ?? (await readSourceComponentBuildInputs({ repoDir, component: 'daemon' })).files)])] : componentFiles;
   const consumed = consumedPaths && new Set(consumedPaths);
-  const guestPayloadTargets = component === 'daemon' ? readSourceGuestPayloadTargets(env) : null;
+  const guestPayloadTargets = component === 'daemon' || component === 'server' && exportGuestPayload ? readSourceGuestPayloadTargets(env) : null;
   const fingerprintFiles = consumed && !guestPayloadTargets ? files.filter(path => !isCompilerTracedSource(path) || consumed.has(path)) : files;
   const options = [identityRepoDir, component, serverComponent, dbProvider, process.version, process.platform, process.arch, esbuild.version, files,
     guestPayloadTargets?.map(({ target, relativeDir }) => [target.bunTarget, relativeDir]) ?? null,
+    exportGuestPayload,
     component === 'server' ? env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload' : null,
     component === 'server' ? env.HAPPIER_BUILD_GUEST_CLI_CHANNEL ?? 'publicdev' : null];
   return await readBuildInputIdentity({ sourceDir: sharedSourceInputs?.repoDir ?? repoDir,
@@ -269,6 +277,13 @@ export async function publishSourceBundleCandidate({ bundleRoot, candidateKey, o
 
 async function readReusableSourceBundle({ outputDir, record, repoDir, component, serverComponent, dbProvider, sharedSourceInputs, env, newestCompleted = false, sourceCapturedAfter }) {
   if (!record.sourceInputDigests) return null;
+  // Opting in requests archives from the producer, including when a consumer
+  // adopts a completed revision without comparing the checkout fingerprint.
+  if (env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1') {
+    const targets = readSourceGuestPayloadTargets(env);
+    if (targets?.some(({ target }) => !record.guestPayload?.archives?.some(archive =>
+      archive.target.os === target.os && archive.target.arch === target.arch))) return null;
+  }
   if (component === 'server'
       && (record.serverComponent !== serverComponent || record.dbProvider !== (dbProvider ?? (serverComponent === 'happier-server-light' ? 'sqlite' : 'postgres')))) return null;
   // A capture older than an explicit boundary is adopted only when its consumed inputs are still
@@ -276,7 +291,8 @@ async function readReusableSourceBundle({ outputDir, record, repoDir, component,
   const predatesBoundary = sourceCapturedAfter != null && !(Date.parse(record.sourceCapture?.capturedAt) >= sourceCapturedAfter);
   if (predatesBoundary && sourceCapturedAfter > Date.now()) return null;
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
-  const sharedFiles = sharedManifest && new Set(sharedManifest.filesByComponent[component]);
+  const sharedFiles = sharedManifest && new Set([...sharedManifest.filesByComponent[component],
+    ...(component === 'server' && env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1' ? sharedManifest.filesByComponent.daemon : [])]);
   const dependencyPublication = await readBuildInputDependencies({ sourceDir: repoDir, env });
   if (!sourceRuntimeDependencyIdentityMatches(record.dependencyPublication, dependencyPublication, component)) return null;
   if (newestCompleted && !predatesBoundary) {
@@ -1315,8 +1331,10 @@ async function consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, 
   if ((await readdir(outputDir)).length > 0) throw new Error(`Source runtime output directory must be empty: ${outputDir}`);
   onOutputReady();
   const sourceRepoDir = repoDir;
-  const guestPayloadTargets = component === 'daemon' ? readSourceGuestPayloadTargets(env) : null;
-  const captured = await captureSourceWebBuildInputs({ repoDir, component, outputDir: join(outputDir, 'workspace'), signal, sharedSourceInputs });
+  const exportGuestPayload = env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1';
+  const guestPayloadTargets = component === 'daemon' || component === 'server' && exportGuestPayload ? readSourceGuestPayloadTargets(env) : null;
+  const captured = await captureSourceWebBuildInputs({ repoDir, component, outputDir: join(outputDir, 'workspace'), signal, sharedSourceInputs,
+    includeGuestPayload: exportGuestPayload });
   const sourceCapture = { inputIdentity: captured.inputIdentity, capturedAt: captured.capturedAt,
     ...(captured.revision ? { revision: captured.revision.revision, overlayDigest: captured.revision.overlayDigest } : {}) };
   repoDir = captured.repoDir;
@@ -1556,7 +1574,8 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, capturedFiles, 
     banner: { js: SOURCE_RUNTIME_COMMONJS_BANNER },
     define: { ...SOURCE_RUNTIME_COMMONJS_DEFINE,
       ...(component === 'server' ? { __HAPPIER_GUEST_CLI_SOURCE__: JSON.stringify(env.HAPPIER_BUILD_GUEST_CLI_SOURCE ?? 'home-payload'),
-        __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify(env.HAPPIER_BUILD_GUEST_CLI_CHANNEL ?? 'publicdev') } : {}) },
+        __HAPPIER_GUEST_CLI_CHANNEL__: JSON.stringify(env.HAPPIER_BUILD_GUEST_CLI_CHANNEL ?? 'publicdev'),
+        __HAPPIER_DEV_GUEST_CLI_EXPORT_AVAILABLE__: 'true' } : {}) },
     metafile: true, logLevel: 'silent', plugins: [
       ...(derivesDaemonProjections ? [createCliSourceProjectionResolver({projectionRoot: daemonProjectionRoot})] : []),
       plugin, createWorkspaceSourceResolver({workspacePackages, requireFromProject}),

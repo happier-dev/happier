@@ -29,6 +29,7 @@ import { isRestrictedAuthTokenKind } from '@/app/api/utils/apiTokenRouteAdmissio
 import { captureFastifyExceptionForSentry } from '@/app/monitoring/sentry';
 import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
 import { isPersonalHomeRuntimePurpose } from '@/app/runtime/personalHomeRuntimePurpose';
+import { registerServerGuestCliPayloadRoutes } from '@/app/runtime/serverGuestCliPayload';
 
 export function featuresRoutes(app: Fastify, params: Readonly<{
     resolveHomeSearchCapability?: () => HomeSearchCapabilities | undefined;
@@ -39,6 +40,7 @@ export function featuresRoutes(app: Fastify, params: Readonly<{
     /** OS boundary override for route tests. */
     resolveHomeHostFact?: (signal: AbortSignal) => Promise<HomeHostFact>;
 }> = {}) {
+    registerServerGuestCliPayloadRoutes(app);
     const featuresRateLimit = resolveApiHotEndpointRateLimit(process.env, "features");
     const hostFactAbort = new AbortController();
     let currentHomeHostFact: HomeHostFact = { kind: 'unknown' };

@@ -26,6 +26,7 @@ import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
 import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import type { ExternalActionRetainedWorkflowRootV1 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { readServerGuestCliIdentity } from '@/app/runtime/serverRelease';
 
 /** Admission evidence comes from the write owner, never an absent-row read. */
 export class ExternalActionAdmissionUnexpectedError extends Error {
@@ -120,6 +121,9 @@ export async function admitManagedAcquire(params: Readonly<{
             await requireManagedControllerInTx(tx, { homeId: review.homeId, custodianAccountId: params.custodianAccountId, controller: review.controller });
             const existing = await existingAdmission(tx);
             if (existing) return existing;
+            // This enrolling admission captures Home's producer, never a
+            // requester descriptor. Retained admissions return above unchanged.
+            const guestCli = request.acquisitionMode === 'resource-bound' ? undefined : readServerGuestCliIdentity();
             if (isManagedPresetAcquireInputV1(request.input)) {
                 const selected = await resolveMachinePresetForAcquireInTx(tx, { accountId: params.requesterAccountId, authentication: params.authentication,
                     ...request.input.selection, boundController: review.controller,
@@ -177,6 +181,7 @@ export async function admitManagedAcquire(params: Readonly<{
                 const scopeChoice = request.input.creationScopeRetention;
                 const creationScopeRetention = scopeChoice ? { ...scopeChoice } : undefined;
                 const admittedInput = { ...admittedInputIdentity,
+                    ...(guestCli ? { guestCli } : {}),
                     enrollmentAccountId: params.requesterAccountId,
                     ...(creationScopeRetention ? { creationScopeRetention } : {}),
                     requestEnvelopeDigest: params.requestEnvelopeDigest,
@@ -244,6 +249,7 @@ export async function admitManagedAcquire(params: Readonly<{
                 homeId: canonical.homeId, custodianAccountId: canonical.custodianAccountId,
                 controllerMachineId: canonical.controller?.machineId ?? null, controllerInstallationId: canonical.controller?.installationId ?? null,
                 admittedActionRequestId: request.requestId, admittedInput: { ...admittedInputIdentity,
+                    ...(guestCli ? { guestCli } : {}),
                     enrollmentAccountId: params.requesterAccountId,
                     ...(creationScopeRetention ? { creationScopeRetention } : {}),
                     requestEnvelopeDigest: params.requestEnvelopeDigest,

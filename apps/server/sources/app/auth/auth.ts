@@ -51,6 +51,7 @@ import { DECISION_ACTION_IDS } from '@happier-dev/protocol/actions/decisionAutho
 import type { AccountApiTokenDeploymentInputV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { resolveApiTokenDeploymentGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readExternalActionBindingAuthority } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { hasAdmittedExternalActionHandoffScope, readAdmittedExternalActionHandoffMachineInTx } from './externalActionHandoffAdmission';
 import { projectWorkspaceSyncAdmissionInputV1, type WorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -731,6 +732,11 @@ class AuthModule {
             throw new ApiTokenOperationError('credential_scope_denied');
         }
         let managedAdmission = input.managedAdmission;
+        if (managedAdmission?.actionId === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) {
+            const { readServerGuestCliIdentity } = await import('@/app/runtime/serverRelease');
+            managedAdmission = { ...managedAdmission,
+                input: { ...managedAdmission.input, guestCli: readServerGuestCliIdentity() } };
+        }
         if (managedAdmission && 'authority' in managedAdmission && managedAdmission.authority !== undefined) {
             throw new ApiTokenOperationError('credential_scope_denied');
         }
