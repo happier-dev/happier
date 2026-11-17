@@ -117,6 +117,16 @@ export function describeMachineReasonDetail(reason: MachineResourceReasonV1, now
     }
 }
 
+/**
+ * The line under a Needs-you row named for a resource reason: the reason's detail, then the services it shows failing,
+ * so a machine listed for its memory still counts its failing services where it is listed (TH MB-2).
+ */
+export function describeMachineLookDetail(subject: MachineAttentionSubject, reason: MachineResourceReasonV1, nowMs: number): string {
+    const failing = subject.failingServices ?? 0;
+    return [describeMachineReasonDetail(reason, nowMs),
+        failing > 0 ? t('machineAttention.words.servicesFailing', { count: failing }) : null].filter(Boolean).join(' · ');
+}
+
 /** A reason's one action: the tab it opens (the tolerant tab reader shows Overview until that tab exists). */
 export function resolveMachineReasonAction(reason: MachineResourceReasonV1): Readonly<{ label: string; tab: MachinePageTabParams }> | null {
     if (reason.nextStep === 'review_processes') return { label: t('machineAttention.actions.reviewProcesses'), tab: { id: 'processes', sort: 'memory' } };

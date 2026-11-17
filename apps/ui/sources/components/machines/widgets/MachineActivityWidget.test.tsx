@@ -323,6 +323,10 @@ describe('MachineActivityWidget', () => {
       .filter((call) => call.method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST).map((call) => call.payload?.machineId);
     expect(new Set(asked)).toEqual(new Set(['m1', 'm2']));
     expect(screen.findByTestId('activity-widget.coverage')).not.toBeNull();
+    // It says how many machines its week comes from, never a second count of the fleet: the Machines header owns that (TH MB-2).
+    const coverage = String(screen.findByTestId('activity-widget.coverage')!.props.children);
+    expect(coverage).toMatch(/2/);
+    expect(coverage).not.toMatch(/3/);
     await act(async () => {
       const answered = [machine('m1', 'leeroy-mbp'), machine('m2', 'edge-1'), machine('m3', 'studio')];
       publishMachineActivityForTest(answered);

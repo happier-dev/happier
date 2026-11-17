@@ -93,6 +93,11 @@ export type ManagedLifecyclePresentation = Readonly<{
   banner?: Readonly<{ title: string }>;
 }>;
 
+/** An action that ends the resource: drawn as the destructive way and placed after every other (TH MB-3). */
+export function isManagedLifecycleActionDestructive(action: ManagedLifecycleAction): boolean {
+  return action === 'deleteNow';
+}
+
 /**
  * The one destructive action a machine still being created offers (TH MB-6). Once a resource is bound and its
  * provider can delete it, Delete is that action (it ends the same resource "Cancel creation" would, through its
@@ -195,7 +200,8 @@ export function describeManagedLifecycleState(
         'warning',
         { cause: t('managedMachines.creation.canceledCleanup'),
           ...(state.cost?.kind === 'local' ? {} : { detail: t('managedMachines.creation.mayBill') }) },
-        ['review', 'deleteNow', 'checkNow', 'openProvider', 'remove'],
+        // Check now confirms the cleanup; Delete… ends the resource and is the destructive way, last (TH MB-3).
+        ['review', 'checkNow', 'openProvider', 'remove', 'deleteNow'],
         { title: t('managedMachines.creation.cleanupPendingShort') },
       ), word: t('managedMachines.creation.cleanupPendingShort') };
     case 'stopPending':

@@ -205,6 +205,21 @@ describe('managed lifecycle presentation', () => {
     expect(pressed).toEqual(['tryAgain', 'openProvider']);
   });
 
+  it('leads a cleanup-pending banner with Check now, keeps the rest quiet and puts the destructive Delete last', async () => {
+    const { ManagedMachineStateRow } = await import('./ManagedMachineStateRow');
+    const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+    const screen = await renderScreen(
+      <ManagedMachineStateRow testID="row" name="Boat" mark={null} provider="Boat"
+        state={{ kind: 'creationCanceledCleanup' }}
+        handlers={{ deleteNow: () => {}, checkNow: () => {}, remove: () => {} }} />,
+    );
+    const buttons = screen.findAllByType(RoundButton).map(button => [button.props.testID, button.props.display]);
+    expect(buttons.map(([testID]) => testID)).toEqual(['row:checkNow', 'row:remove', 'row:deleteNow']);
+    expect(buttons[0]![1]).not.toBe('inverted');
+    expect(buttons[1]![1]).not.toBe('secondary');
+    expect(buttons[2]![1]).toBe('quietDestructive');
+  });
+
   it('waits for an offline controller in a banner that can cancel the creation', async () => {
     const { ManagedMachineStateRow } = await import('./ManagedMachineStateRow');
     const { t } = await import('@/text');

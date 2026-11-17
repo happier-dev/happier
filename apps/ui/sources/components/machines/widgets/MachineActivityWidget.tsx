@@ -217,7 +217,7 @@ function ActivityContent(
     : heldAt !== null ? { kind: 'stale', at: heldAt } : { kind: 'live' };
   useMachineWidgetFreshness(freshness, props.testID,
     !props.target && answered.length < props.machineIds.length
-      ? t('machines.widgets.body.activity.coverage', { answered: answered.length, total: props.machineIds.length }) : null);
+      ? t('machines.widgets.body.activity.coverage', { answered: answered.length }) : null);
   const receipts = React.useMemo(() => {
     const all: ActivityReceipt[] = [];
     for (const machineId of props.machineIds) {

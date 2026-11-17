@@ -223,7 +223,7 @@ const en = {
   },
   activity: {
     allMachines: 'All machines',
-    coverage: ({ answered, total }: { answered: number; total: number }) => `${answered} of ${total} machines`,
+    coverage: ({ answered }: { answered: number }) => answered === 1 ? 'From 1 machine' : `From ${answered} machines`,
     latest: 'Latest',
     today: ({ count }: { count: number }) => `${count} today`,
     todayGroup: 'Today',
@@ -457,7 +457,7 @@ const ca: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Totes les màquines',
-    coverage: ({ answered, total }) => `${answered} de ${total} màquines`,
+    coverage: ({ answered }) => `De ${answered} ${answered === 1 ? 'màquina' : 'màquines'}`,
     latest: 'Més recent',
     today: ({ count }) => `${count} avui`,
     todayGroup: 'Avui',
@@ -690,7 +690,7 @@ const de: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Alle Rechner',
-    coverage: ({ answered, total }) => `${answered} von ${total} Rechnern`,
+    coverage: ({ answered }) => `Von ${answered} ${answered === 1 ? 'Rechner' : 'Rechnern'}`,
     latest: 'Neueste',
     today: ({ count }) => `${count} heute`,
     todayGroup: 'Heute',
@@ -922,7 +922,7 @@ const es: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Todas las máquinas',
-    coverage: ({ answered, total }) => `${answered} de ${total} máquinas`,
+    coverage: ({ answered }) => `De ${answered} ${answered === 1 ? 'máquina' : 'máquinas'}`,
     latest: 'Lo más reciente',
     today: ({ count }) => `${count} hoy`,
     todayGroup: 'Hoy',
@@ -1154,7 +1154,7 @@ const fr: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Toutes les machines',
-    coverage: ({ answered, total }) => `${answered} machines sur ${total}`,
+    coverage: ({ answered }) => `De ${answered} ${answered === 1 ? 'machine' : 'machines'}`,
     latest: 'Dernières',
     today: ({ count }) => `${count} aujourd’hui`,
     todayGroup: 'Aujourd’hui',
@@ -1386,7 +1386,7 @@ const it: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Tutte le macchine',
-    coverage: ({ answered, total }) => `${answered} di ${total} macchine`,
+    coverage: ({ answered }) => `Da ${answered} ${answered === 1 ? 'macchina' : 'macchine'}`,
     latest: 'Più recenti',
     today: ({ count }) => `${count} oggi`,
     todayGroup: 'Oggi',
@@ -1618,7 +1618,7 @@ const ja: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'すべてのマシン',
-    coverage: ({ answered, total }) => `${total}台中${answered}台のマシン`,
+    coverage: ({ answered }) => `${answered}台のマシンから`,
     latest: '最新',
     today: ({ count }) => `今日 ${count} 件`,
     todayGroup: '今日',
@@ -1861,7 +1861,7 @@ const pl: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Wszystkie maszyny',
-    coverage: ({ answered, total }) => `${answered} z ${total} maszyn`,
+    coverage: ({ answered }) => `Z ${answered} ${answered === 1 ? 'maszyny' : 'maszyn'}`,
     latest: 'Najnowsze',
     today: ({ count }) => `${count} dzisiaj`,
     todayGroup: 'Dzisiaj',
@@ -2093,7 +2093,7 @@ const pt: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Todas as máquinas',
-    coverage: ({ answered, total }) => `${answered} de ${total} máquinas`,
+    coverage: ({ answered }) => `De ${answered} ${answered === 1 ? 'máquina' : 'máquinas'}`,
     latest: 'Mais recentes',
     today: ({ count }) => `${count} hoje`,
     todayGroup: 'Hoje',
@@ -2337,7 +2337,7 @@ const ru: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Все машины',
-    coverage: ({ answered, total }) => `${answered} из ${total} машин`,
+    coverage: ({ answered }) => `С ${answered} ${answered % 10 === 1 && answered % 100 !== 11 ? 'машины' : 'машин'}`,
     latest: 'Последнее',
     today: ({ count }) => `Сегодня: ${count}`,
     todayGroup: 'Сегодня',
@@ -2569,7 +2569,7 @@ const zhHans: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: '所有机器',
-    coverage: ({ answered, total }) => `${answered}/${total} 台机器`,
+    coverage: ({ answered }) => `来自 ${answered} 台机器`,
     latest: '最新',
     today: ({ count }) => `今天 ${count} 项`,
     todayGroup: '今天',
@@ -2800,7 +2800,7 @@ const zhHant: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: '所有機器',
-    coverage: ({ answered, total }) => `${answered}/${total} 部機器`,
+    coverage: ({ answered }) => `來自 ${answered} 部機器`,
     latest: '最新',
     today: ({ count }) => `今天 ${count} 項`,
     todayGroup: '今天',

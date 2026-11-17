@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import {
     describeMachineAttentionWord,
-    describeMachineReasonDetail,
+    describeMachineLookDetail,
     resolveMachineReasonAction,
     selectFleetLookSubjects,
     selectHeadlineReason,
@@ -63,7 +63,7 @@ const MachineNeedsYouItem = React.memo(function MachineNeedsYouItem(props: Reado
         : { label: t('machineAttention.actions.review'), tab: SERVICES_TAB };
     const word = reason ? describeMachineAttentionWord(reason)
         : t('machineAttention.words.servicesFailing', { count: entry.failingServices ?? 0 });
-    const detail = reason ? describeMachineReasonDetail(reason, props.nowMs) : undefined;
+    const detail = reason ? describeMachineLookDetail(entry, reason, props.nowMs) : undefined;
     return (
         <Item
             testID={`machines.needs-you.${entry.serverId}.${entry.machineId}`}

@@ -45,6 +45,27 @@ describe('AttentionBanner', () => {
     expect(screen.findAllByType(RoundButton).find(button => button.props.title === 'Roll back')?.props.size).toBe('small');
   });
 
+  it('keeps one lead way forward when narrow: the quiet ones stay quiet as they stack beneath it', async () => {
+    const { HappierBanner } = await import('@happier-dev/plugin-ui/presentation');
+    const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+    const { act } = await import('react-test-renderer');
+    const screen = await renderScreen(
+      <AttentionBanner
+        testID="cleanup"
+        title="Cleanup pending"
+        action={{ label: 'Check now', onPress: () => {} }}
+        secondaryAction={{ label: 'Archive', onPress: () => {} }}
+        moreActions={[{ label: 'Delete…', onPress: () => {}, display: 'quietDestructive' }]}
+      />,
+    );
+    // A narrow banner (a detail column, a phone) stacks its ways forward.
+    act(() => { screen.findByType(HappierBanner).props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 120 } } }); });
+    const display = (title: string) => screen.findAllByType(RoundButton).find(button => button.props.title === title)?.props.display;
+    expect(display('Check now')).toBe('secondary');
+    expect(display('Archive')).toBe('inverted');
+    expect(display('Delete…')).toBe('quietDestructive');
+  });
+
   it('preserves a domain-owned status glyph with its recovery actions', async () => {
     const retry = vi.fn();
     const screen = await renderScreen(

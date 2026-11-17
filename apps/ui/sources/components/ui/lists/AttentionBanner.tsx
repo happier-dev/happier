@@ -265,11 +265,12 @@ function BannerButton(props: Readonly<{ action: AttentionBannerAction; testID: s
             testID={props.action.testID ?? props.testID}
             size={props.fullWidth ? 'normal' : props.beside ? 'small' : 'mini'}
             style={props.fullWidth || props.stacked ? { width: '100%' } : undefined}
-            display={props.action.display ?? (props.quiet && !props.stacked ? 'inverted' : 'secondary')}
+            // A quiet way forward stays quiet when the banner stacks: one lead button, never a column of equals (TH MB-3).
+            display={props.action.display ?? (props.quiet ? 'inverted' : 'secondary')}
             title={props.action.label}
             leading={props.action.icon ? <Icon name={props.action.icon} size={ICON_SIZE.xs}
                 color={props.action.display === 'default' ? theme.colors.button.primary.tint : theme.colors.text.primary} /> : undefined}
-            textStyle={props.quiet && !props.stacked ? Typography.default() : undefined}
+            textStyle={props.quiet ? Typography.default() : undefined}
             disabled={props.action.disabled}
             loading={props.action.loading}
             onPress={props.action.onPress}

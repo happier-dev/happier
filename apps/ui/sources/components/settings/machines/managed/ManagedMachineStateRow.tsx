@@ -14,6 +14,7 @@ import { Typography } from '@/constants/Typography';
 
 import {
   describeManagedLifecycleState,
+  isManagedLifecycleActionDestructive,
   managedLifecycleActionLabel,
   type ManagedLifecycleAction,
   type ManagedLifecycleState,
@@ -63,11 +64,15 @@ export const ManagedMachineStateRow = React.memo(
       (action) => props.handlers[action] !== undefined,
     );
     if (presentation.banner) {
-      const [first, ...rest] = actions.map((action) => ({
+      // One lead way forward, the others quiet, and the destructive way last in its own colour (TH MB-3).
+      const ordered = [...actions.filter(action => !isManagedLifecycleActionDestructive(action)),
+        ...actions.filter(isManagedLifecycleActionDestructive)];
+      const [first, ...rest] = ordered.map((action) => ({
         label: managedLifecycleActionLabel(action, props.provider),
         onPress: props.handlers[action]!,
         loading: props.pendingAction === action,
         testID: `${props.testID}:${action}`,
+        ...(isManagedLifecycleActionDestructive(action) ? { display: 'quietDestructive' as const } : {}),
       }));
       return (
         <AttentionBanner

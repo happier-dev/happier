@@ -43,6 +43,14 @@ describe('Machines needing you', () => {
         expect(opened).toEqual([{ id: 'services' }]);
     });
 
+    it('says a machine\'s failing services beside its resource reason, so they are counted where it is listed (TH MB-2)', async () => {
+        const both = { ...entry('look'), key: 'eadc', machineId: 'eadc', name: 'eadc', failingServices: 8 } as MachineAttentionEntry;
+        const screen = await renderScreen(<MachinesNeedsYouList entries={[both]} nowMs={Date.now()} onOpen={() => {}} />);
+        const row = screen.findByTestId('machines.needs-you.home-a.eadc');
+        expect(row).not.toBeNull();
+        expect(String(row!.props.accessibilityLabel)).toContain('machineAttention.words.servicesFailing');
+    });
+
     it('on a phone keeps each row light: the row opens its reason\'s tab and no bordered button stands under it', async () => {
         const opened: unknown[] = [];
         const screen = await renderScreen(<MachinesNeedsYouList entries={[entry('needs_you'), entry('look')]} nowMs={Date.now()} compact
