@@ -101,6 +101,9 @@ export async function selectStackServicePortOnHost({ reservationDir, stackName, 
   // canonical claim stays theirs.
   const canonical = service === 'server' ? coercePort(startPort) : null;
   const canonicalToken = `${stackName} canonical`;
+  const preferred = coercePort(selection.preferredServerPort);
+  const retainedPreferred = previous.includes(preferred)
+    || (preferred === canonical && preferred != null && await ownerOf(preferred) === canonicalToken);
   if (canonical) {
     const holder = await ownerOf(canonical);
     if (holder && !ownedByStack(holder) && !holder.endsWith(' canonical')) {
@@ -111,7 +114,13 @@ export async function selectStackServicePortOnHost({ reservationDir, stackName, 
   }
   let selected;
   for (;;) {
-    selected = await selectStackServicePort({ ...selection, startPort, reservedPorts: new Set(foreign) });
+    // Retain this service's admitted host allocation across replacement. The
+    // lifecycle owner retires the incumbent; the replacement's native bind
+    // enforces occupancy. Re-probing every interface here can refuse a released
+    // port after retirement (#172b), leaving the Stack down for no new choice.
+    selected = retainedPreferred && !foreign.has(preferred)
+      ? preferred
+      : await selectStackServicePort({ ...selection, startPort, reservedPorts: new Set(foreign) });
     if (await claim(selected)) break;
     foreign.add(selected);
   }

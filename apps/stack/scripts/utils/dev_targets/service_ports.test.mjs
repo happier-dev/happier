@@ -1,8 +1,14 @@
+// @happier-test-preparation source-condition
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import os from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
+import { createServer } from 'node:net';
+import { once } from 'node:events';
+import { selectStackServicePortOnHost } from '../stack/runtime_ports.mjs';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { pickNextFreeTcpPort } from '../net/ports.mjs';
@@ -42,3 +48,30 @@ test("a Stack's canonical port wins over another Stack's earlier server selectio
   const moved = await exec({ stackName: 'early', startPort: contested - 1, preferredServerPort: contested });
   assert.notEqual(moved, contested, "the earlier Stack leaves the other Stack's canonical port");
 });
+
+for (const privatePort of [false, true]) {
+  test(`retained host allocation survives inconclusive interface discovery after incumbent release (${privatePort ? 'private' : 'canonical'})`, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-retained-port-' });
+    const options = { reservationDir: fixture.path('reservations'), stackName: 'restarting', startPort: 43100,
+      ...(privatePort ? { reservedPorts: new Set([43100]) } : {}) };
+    const port = await selectStackServicePortOnHost(options);
+    const incumbent = createServer();
+    incumbent.listen(port, '127.0.0.1');
+    await once(incumbent, 'listening');
+    await new Promise((resolve, reject) => incumbent.close(error => error ? reject(error) : resolve()));
+
+    // The OS inventory is a genuine boundary: emulate the inconclusive observation
+    // seen after #172b's confirmed stop without changing the selector or its probe.
+    const inventory = t.mock.method(os, 'networkInterfaces', () => { throw new Error('inventory unavailable'); });
+    syncBuiltinESMExports();
+    t.after(() => { inventory.mock.restore(); syncBuiltinESMExports(); });
+    const selected = await selectStackServicePortOnHost({ ...options, preferredServerPort: port });
+    assert.equal(selected, port);
+    const replacement = createServer();
+    replacement.unref();
+    t.after(() => { replacement.close(); });
+    replacement.listen(selected, '127.0.0.1');
+    await once(replacement, 'listening');
+    assert.equal(replacement.address().port, port, 'the replacement binds the retained endpoint');
+  });
+}
