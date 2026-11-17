@@ -13,6 +13,7 @@ import {
 
 import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import { logger } from '@/ui/logger';
 
 import type {
     QueuedSessionMutation,
@@ -21,6 +22,7 @@ import type {
     RuntimeActivitySnapshotMutationV1,
 } from './sessionMutationTypes';
 import {
+    createSessionTurnFailureIssue,
     resolveDaemonObservedExitMutationId,
     resolveLegacyDaemonObservedExitMutationId,
     resolveRuntimeActivitySnapshotMutationId,
@@ -203,6 +205,37 @@ function parseSessionTurnPayload(value: unknown): Readonly<{
 }> {
     const parsed = SessionTurnMutationV1Schema.safeParse(value);
     if (parsed.success) return { payload: parsed.data };
+    if (
+        isRecord(value)
+        && value.action === 'fail'
+        && typeof value.observedAt === 'number'
+        && 'issue' in value
+        && parsed.error.issues.every((issue) => issue.path[0] === 'issue')
+    ) {
+        // Optional diagnostic details cannot prevent the authoritative terminal transition.
+        // Revalidate the whole mutation after removing only fields implicated by the issue errors.
+        const invalidIssueFields = new Set(parsed.error.issues.map((issue) => issue.path[1]));
+        const reducedIssue = isRecord(value.issue)
+            ? Object.fromEntries(Object.entries(value.issue).filter(([key]) => !invalidIssueFields.has(key)))
+            : value.issue;
+        const reduced = SessionTurnMutationV1Schema.safeParse({ ...value, issue: reducedIssue });
+        const recovered = reduced.success ? reduced : SessionTurnMutationV1Schema.safeParse({
+            ...value,
+            issue: createSessionTurnFailureIssue({
+                observedAt: value.observedAt,
+                ...(typeof value.provider === 'string' ? { provider: value.provider } : {}),
+                ...(typeof value.providerTurnId === 'string' ? { providerTurnId: value.providerTurnId } : {}),
+            }),
+        });
+        if (recovered.success) {
+            logger.warnFile('[API] Invalid failure issue reduced to preserve terminal session turn', {
+                sessionId: recovered.data.sessionId,
+                mutationId: recovered.data.mutationId,
+                ...summarizeZodIssues(parsed.error),
+            });
+            return { payload: recovered.data };
+        }
+    }
     return {
         payload: null,
         diagnostic: summarizeZodIssues(parsed.error),
@@ -681,12 +714,13 @@ function readRecoverableQueuedMutation(
     if (entry.reason === 'permanent_invalid_payload') return null;
     if (typeof entry.recoveryAttemptedAt === 'number') return null;
     const record = entry as unknown as Record<string, unknown>;
+    const recoveryPayload = record.recoveryPayload ?? record.payload;
     const rawQueuedMutation = record.queuedMutation ?? record.mutation ?? (
-        record.payload
+        recoveryPayload !== undefined
             ? {
                 kind: entry.kind,
                 mutationId: entry.mutationId,
-                payload: record.payload,
+                payload: recoveryPayload,
                 createdAt: entry.createdAt,
                 attempts: entry.attempts,
                 nextAttemptAt: 0,

@@ -885,7 +885,7 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                 advanceInFlightBatch(nextIndex);
             };
             for (let index = 0; index < batch.length; index += 1) {
-                const mutation = batch[index];
+                let mutation = batch[index];
                 if (isSessionTurnMutationParkedForReleasedServer(
                     mutation,
                     sessionSyncPendingInputServerContract,
@@ -946,6 +946,8 @@ function createSessionMutationOutboxInstance(params: CreateSessionMutationJourna
                     didChange = true;
                     continue;
                 }
+                mutation = parsedMutation.mutation;
+                batch[index] = mutation;
                 if (
                     reason !== 'flush'
                     && mutation.kind === 'transcript_message_append'

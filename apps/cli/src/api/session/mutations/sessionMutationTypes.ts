@@ -188,6 +188,24 @@ export type QueuedSessionMutation =
         nextAttemptAt: number;
     }>;
 
+export function createSessionTurnFailureIssue(params: Readonly<{
+    provider?: string;
+    providerTurnId?: string;
+    observedAt: number;
+}>): SessionRuntimeIssueV1 {
+    return {
+        v: 1,
+        scope: 'primary_session',
+        status: 'failed',
+        code: 'provider_turn_failed',
+        source: 'unknown',
+        occurredAt: params.observedAt,
+        ...(params.provider ? { provider: params.provider } : {}),
+        ...(params.providerTurnId ? { providerTurnId: params.providerTurnId } : {}),
+        sanitizedPreview: 'Provider reported turn failure',
+    };
+}
+
 export function createSessionTurnMutation(params: Readonly<{
     sessionId: string;
     action: SessionTurnMutationActionV1;

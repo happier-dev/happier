@@ -143,6 +143,109 @@ function createObservationSocket(options: Readonly<{
 }
 
 describe('createSessionMutationOutbox', () => {
+    it('delivers a failed turn with its valid issue core when optional issue details are invalid', async () => {
+        const { createSessionMutationOutbox } = await import('./createSessionMutationOutbox');
+        const { createSessionTurnMutation } = await import('./sessionMutationTypes');
+        const { logger } = await import('@/ui/logger');
+        const warnFile = vi.spyOn(logger, 'warnFile').mockImplementation(() => {});
+        const issue = {
+            v: 1 as const, scope: 'primary_session' as const, status: 'failed' as const,
+            code: 'usage_limit', source: 'usage_limit' as const, occurredAt: 1_000,
+            provider: 'claude', sanitizedPreview: 'Weekly usage limit reached',
+            temporaryThrottle: { v: 1 as const, retryAfterMs: 500, recoverability: 'retry' as const },
+            usageLimit: {
+                v: 1 as const, resetAtMs: 2_000, retryAfterMs: null,
+                quotaScope: 'account' as const, recoverability: 'switch_account' as const,
+                providerLimitId: 'seven_day', providerObservedAtMs: 1_000,
+                connectedService: { serviceId: 'claude-subscription' as const, profileId: 'profile-1', groupId: 'group-1' },
+            },
+        };
+        const delivered: unknown[] = [];
+        const socket = createApiSessionSocketStub({
+            connected: true,
+            emitWithAck: async (_event, payload) => {
+                delivered.push(payload);
+                return { ok: true };
+            },
+        });
+        const outbox = createSessionMutationOutbox({
+            token: 'tok', sessionId: 's-invalid-optional-issue',
+            getSocket: () => socket, requestReconnect: () => {},
+        });
+        try {
+            await outbox.enqueueSessionTurn(createSessionTurnMutation({
+                sessionId: 's-invalid-optional-issue', action: 'fail', turnId: 'turn-1',
+                mutationId: 'failure-1', observedAt: 1_000, issue,
+            }));
+            expect(delivered).toEqual([expect.objectContaining({
+                action: 'fail', turnId: 'turn-1',
+                issue: expect.objectContaining({
+                    code: 'usage_limit', source: 'usage_limit',
+                    sanitizedPreview: 'Weekly usage limit reached',
+                    temporaryThrottle: issue.temporaryThrottle,
+                }),
+            })]);
+            expect(delivered[0]).not.toHaveProperty('issue.usageLimit');
+            await expect(readDeadLetterEntries('s-invalid-optional-issue')).resolves.toEqual([]);
+            expect(warnFile).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                mutationId: 'failure-1',
+                issues: [{ code: 'unrecognized_keys', path: 'issue.usageLimit' }],
+            }));
+        } finally {
+            await outbox.close();
+            warnFile.mockRestore();
+        }
+    });
+
+    it('readmits historical issue-only failed turns from recovery custody on startup without laundering malformed cores', async () => {
+        const sessionId = 's-historical-invalid-issue';
+        const payload = {
+            v: 1, sessionId, mutationId: 'historical-failure', action: 'fail',
+            turnId: 'turn-1', observedAt: 1_000,
+            issue: {
+                v: 1, scope: 'primary_session', status: 'failed',
+                code: 'usage_limit', source: 'usage_limit', occurredAt: 1_000,
+                usageLimit: {
+                    v: 1, resetAtMs: 2_000, retryAfterMs: null, quotaScope: 'account',
+                    recoverability: 'switch_account', providerLimitId: 'seven_day',
+                    providerObservedAtMs: 1_000,
+                    connectedService: { serviceId: 'claude-subscription', profileId: 'profile-1', groupId: 'group-1' },
+                },
+            },
+        };
+        await writeDeadLetterEntries(sessionId, [payload, {
+            ...payload, mutationId: 'malformed-core', observedAt: 'invalid',
+        }].map((recoveryPayload) => ({
+            v: 1, kind: 'session_turn', sessionId, mutationId: recoveryPayload.mutationId,
+            reason: 'invalid_session_turn_payload', attempts: 0, createdAt: 1_000, deadLetteredAt: 1_100,
+            diagnostic: { issues: [{ code: 'unrecognized_keys', path: 'issue.usageLimit' }] },
+            payloadSummary: {
+                action: 'fail', sessionId, mutationId: recoveryPayload.mutationId, turnId: 'turn-1',
+            },
+            recoveryPayload,
+        })));
+        const { createSessionMutationOutbox } = await import('./createSessionMutationOutbox');
+        const delivered: unknown[] = [];
+        const socket = createApiSessionSocketStub({ connected: true, emitWithAck: async (_event, mutation) => {
+            delivered.push(mutation);
+            return { ok: true };
+        } });
+        const outbox = createSessionMutationOutbox({ token: 'tok', sessionId, getSocket: () => socket, requestReconnect: () => {} });
+        try {
+            await outbox.awaitReady();
+            await outbox.flush('connect');
+            await outbox.flush('connect');
+            expect(delivered).toEqual([expect.objectContaining({ mutationId: 'historical-failure', action: 'fail' })]);
+            expect(delivered[0]).not.toHaveProperty('issue.usageLimit');
+            const deadLetters = await readDeadLetterEntries(sessionId);
+            expect(deadLetters[0]).toHaveProperty('recoveryAttemptedAt', expect.any(Number));
+            expect(deadLetters[0]).toHaveProperty('recoveryPayload.issue.usageLimit.providerObservedAtMs', 1_000);
+            expect(deadLetters[1]).not.toHaveProperty('recoveryAttemptedAt');
+        } finally {
+            await outbox.close();
+        }
+    });
+
     it('preserves an unread journal through failed startup, enqueue and close, then replays it on restart', async () => {
         const { createSessionMutationOutbox } = await import('./createSessionMutationOutbox');
         const { createTranscriptMessageAppendMutation } = await import('./sessionMutationTypes');

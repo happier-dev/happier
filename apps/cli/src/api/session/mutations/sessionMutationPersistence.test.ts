@@ -46,6 +46,27 @@ async function readDeadLetterEntries(sessionId: string): Promise<unknown[]> {
 }
 
 describe('session mutation persistence', () => {
+    it('preserves a valid terminal core when the supplied failure issue is unusable, but rejects malformed terminal fields', async () => {
+        const { parseQueuedSessionMutation } = await import('./sessionMutationPersistence');
+        const payload = {
+            v: 1, sessionId: 's1', mutationId: 'failure-1', action: 'fail', turnId: 'turn-1',
+            observedAt: 1_000, issue: { source: 'invalid' },
+        };
+        const queued = { kind: 'session_turn', mutationId: 'failure-1', payload, createdAt: 1_000, attempts: 0, nextAttemptAt: 0 };
+        expect(parseQueuedSessionMutation(queued, 's1')).toEqual({
+            ok: true,
+            mutation: expect.objectContaining({ payload: expect.objectContaining({
+                action: 'fail', turnId: 'turn-1',
+                issue: expect.objectContaining({ code: 'provider_turn_failed', source: 'unknown', occurredAt: 1_000 }),
+            }) }),
+        });
+        for (const malformed of [{ ...payload, turnId: '' }, { ...payload, observedAt: 'invalid' }, { ...payload, unexpected: true }]) {
+            expect(parseQueuedSessionMutation({ ...queued, payload: malformed }, 's1')).toMatchObject({
+                ok: false, deadLetter: { reason: 'invalid_session_turn_payload' },
+            });
+        }
+    });
+
     it.each(['encrypted', 'installation_encrypted_v1'] as const)('readmits a %s settlement quarantined by the released CLI v0.2.15 reader', async (format) => {
         const { loadSessionMutationOutbox, recoverAuthoritativeSessionMutationDeadLetters } = await import('./sessionMutationPersistence');
         const context = await createRuntimePersistenceContext('rollback-settlement');
