@@ -1,3 +1,4 @@
+import { SCM_WORKTREE_CREATE_ACTION_ID_V1, SCM_WORKTREE_REMOVE_ACTION_ID_V1 } from './scmActionIdsV1.js';
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_V1 } from '../plugins/data/collectionSharingActionIdsV1.js';
 import { PROJECT_STARTER_ACTION_IDS_V1 } from './specs/projectStartersActionIdsV1.js';
 import { PROJECT_SETUP_SET_ACTION_ID_V1 } from './projectActionIdsV1.js';
