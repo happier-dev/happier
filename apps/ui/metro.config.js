@@ -457,14 +457,14 @@ const cliRunnerSnapshotsBlockList = /[\\/]apps[\\/]cli[\\/]\.runner-snapshots(?:
 // with ENOENT before it ever reaches the package's canonical source or `dist` tree.
 const typescriptPackageBuildCacheBlockList =
   /[\\/]\.happier[\\/]typescript-package-build(?:[\\/]|$)/;
-// Package-manager shims, task locks and Skia's postinstall extraction tree
+// Package-manager shims, mutable workspace state, task locks and Skia's postinstall extraction tree
 // are not bundle inputs. The installed Skia script creates this monorepo-
 // relative scratch path, copies its contents to the package's real libs, then
 // deletes it. Pacquet and pnpm likewise publish through temporary package
 // directories. Prune each directory itself before FallbackWatcher descends,
 // retaining the physical .pnpm store and ordinary package source trees.
 const packageManagerTransientBlockList =
-  /[\\/]node_modules[\\/](?:\.bin|\.pnpm-task-run-state-v1|packages[\\/]skia[\\/]artifacts|(?:\.pnpm[\\/])?(?:@[^\\/]+[\\/])?[^\\/]+(?:_pacquet-stage_[^\\/]+|_tmp_[0-9]+))(?:[\\/]|$)/;
+  /[\\/]node_modules[\\/](?:\.bin|\.pnpm-workspace-state-v1\.json|\.pnpm-task-run-state-v1|packages[\\/]skia[\\/]artifacts|(?:\.pnpm[\\/])?(?:@[^\\/]+[\\/])?[^\\/]+(?:_pacquet-stage_[^\\/]+|_tmp_[0-9]+))(?:[\\/]|$)/;
 // Resolve workspace dependencies through the retained app/root trees, rather than crawling their
 // duplicate private copies. Use the discovered roots so nested plugin packages follow the same rule.
 const workspaceNodeModulesBlockList = new RegExp([
