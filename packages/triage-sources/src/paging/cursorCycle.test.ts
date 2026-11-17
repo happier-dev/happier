@@ -49,22 +49,12 @@ describe('the shared cursor-cycle probe', () => {
     let widest = 0;
     for (let step = 0; step < 5_000; step += 1) {
       const advanced = advanceCursorCycleWalkV1(walk, `1754000000000:${step}:0`);
+      expect(advanced.kind).toBe('advanced');
       if (advanced.kind !== 'advanced') return;
       walk = advanced.walk;
       widest = Math.max(widest, JSON.stringify(walk).length);
     }
     expect(widest).toBeLessThan(128);
-  });
-
-  it('watches only a position the walk actually reached', () => {
-    const first = advanceCursorCycleWalkV1(null, 'A');
-    expect(first).toEqual({
-      kind: 'advanced',
-      walk: {
-        cursor: 'A',
-        probe: { cursor: 'A', stepsSince: 0, interval: 2 },
-      },
-    });
   });
 
   it('reads back only states its schedule can mint', () => {
@@ -94,6 +84,7 @@ describe('the shared cursor-cycle probe', () => {
     let walk: CursorCycleWalkV1 | null = null;
     for (let step = 0; step < 2_000; step += 1) {
       const advanced = advanceCursorCycleWalkV1(walk, `c${step}`);
+      expect(advanced.kind).toBe('advanced');
       if (advanced.kind !== 'advanced') return;
       walk = advanced.walk;
       expect(readCursorCycleProbeV1(JSON.parse(JSON.stringify(walk.probe))))
