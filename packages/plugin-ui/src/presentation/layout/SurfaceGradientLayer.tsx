@@ -5,9 +5,9 @@ import { happierSurfaceGradientCssParts, type HappierSurfaceGradient } from './m
 import { happierSvgGradientStop } from './svgGradientStop.js';
 
 /** One native paint layer. Web draws the same stops on its existing surface element. */
-export function HappierSurfaceGradientLayer(props: Readonly<{ gradient?: HappierSurfaceGradient | null; underlay?: HappierSurfaceGradient | null; borderRadius?: number }>) {
+export function HappierSurfaceGradientLayer(props: Readonly<{ gradient?: HappierSurfaceGradient | null; underlay?: HappierSurfaceGradient | null; borderRadius?: number; overrideBackgroundColor?: string | number }>) {
   const id = useId();
-  if (Platform.OS === 'web' || (!props.gradient && !props.underlay)) return null;
+  if (Platform.OS === 'web' || props.overrideBackgroundColor !== undefined || (!props.gradient && !props.underlay)) return null;
   const paints = [props.underlay, props.gradient].filter((gradient): gradient is HappierSurfaceGradient => Boolean(gradient));
   const radius = props.borderRadius ?? 0;
   const stops = (gradient: HappierSurfaceGradient) => gradient.colors.map((color, index) => <Stop key={index} offset={gradient.locations?.[index] ?? index / (gradient.colors.length - 1)} {...happierSvgGradientStop(color)} />);

@@ -1,4 +1,6 @@
-import { HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle, type HappierSurfaceGradient } from '@happier-dev/plugin-ui/presentation';
+import type { SurfaceAddress } from '@happier-dev/plugin-ui';
+import { useUnistyles } from 'react-native-unistyles';
+import { HappierSurfaceGradientLayer, happierSurfaceGradientWebStyle, resolveHappierThemeSurfaceStyle, useHappierThemeSurfaceOverridesEnabled, type HappierSurfaceGradient } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
@@ -7,6 +9,7 @@ export type SurfaceGradient = HappierSurfaceGradient;
 
 export type GradientSurfaceProps = Readonly<{
     fallbackColor: string;
+    themeSurface?: SurfaceAddress;
     gradient?: SurfaceGradient | null;
     overlay?: SurfaceGradient | null;
     clipToPaddingBox?: boolean;
@@ -16,11 +19,16 @@ export type GradientSurfaceProps = Readonly<{
 }>;
 
 export const GradientSurface = React.memo(function GradientSurface(props: GradientSurfaceProps) {
+    const { theme } = useUnistyles();
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
+    const overrideBackgroundColor = surfaceOverridesEnabled && props.themeSurface
+        ? resolveHappierThemeSurfaceStyle(theme, props.themeSurface, Platform.OS)?.backgroundColor
+        : undefined;
     return (
         <View
             style={[
                 {
-                    backgroundColor: props.fallbackColor,
+                    backgroundColor: overrideBackgroundColor === undefined ? props.fallbackColor : 'transparent',
                     borderRadius: props.borderRadius,
                     overflow: 'hidden',
                     position: 'relative',
@@ -29,13 +37,13 @@ export const GradientSurface = React.memo(function GradientSurface(props: Gradie
                 Platform.OS === 'web' ? combinedWebGradientStyle(props.gradient, props.overlay, props.clipToPaddingBox !== false) : null,
             ]}
         >
-            <HappierSurfaceGradientLayer underlay={props.gradient} gradient={props.overlay} borderRadius={props.borderRadius} />
+            <HappierSurfaceGradientLayer overrideBackgroundColor={overrideBackgroundColor} underlay={props.gradient} gradient={props.overlay} borderRadius={props.borderRadius} />
             {props.children}
         </View>
     );
 });
 
-function combinedWebGradientStyle(gradient: SurfaceGradient | null | undefined, overlay: SurfaceGradient | null | undefined, clip: boolean) {
+export function combinedWebGradientStyle(gradient: SurfaceGradient | null | undefined, overlay: SurfaceGradient | null | undefined, clip: boolean): ReturnType<typeof happierSurfaceGradientWebStyle> {
     const base = happierSurfaceGradientWebStyle(gradient, clip);
     const top = happierSurfaceGradientWebStyle(overlay, clip);
     if (!base || !top) return top ?? base;

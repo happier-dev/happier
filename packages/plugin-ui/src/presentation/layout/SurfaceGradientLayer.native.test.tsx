@@ -25,6 +25,14 @@ afterEach(() => {
 });
 
 describe('native surface gradient paint', () => {
+  it('leaves an authored surface background visible without painting a gradient above it', () => {
+    const override = { overrideBackgroundColor: 'rgba(12, 34, 56, 0.4)' };
+    act(() => {
+      renderer = create(<HappierSurfaceGradientLayer {...override} gradient={{ colors: ['red', 'blue'] }} />);
+    });
+    expect(renderer!.toJSON()).toBeNull();
+  });
+
   it('paints Android full-surface layers natively so no view-sized SVG bitmap can outgrow the canvas limit', () => {
     platform.OS = 'android';
     act(() => {

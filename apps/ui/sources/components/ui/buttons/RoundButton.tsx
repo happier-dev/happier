@@ -1,3 +1,8 @@
+import { resolveThemeSurfaceAddress, resolveThemeSurfaceState } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceDataSet } from '@happier-dev/plugin-ui';
+import { useHappierThemeSurfaceOverridesEnabled } from '@happier-dev/plugin-ui/presentation';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
+import type { SurfaceAddress } from '@happier-dev/plugin-ui';
 import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_PAGE_METRICS, HAPPIER_TYPE_SCALE, HappierPressable, happierRaisedEdgeStyle, type HappierPressableProps, type HappierTypeRole } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { Platform, StyleProp, TextStyle, View, type ViewStyle } from 'react-native';
@@ -5,7 +10,7 @@ import Animated from 'react-native-reanimated';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
-import { GradientSurface, type SurfaceGradient } from '@/components/ui/surfaces/GradientSurface';
+import { combinedWebGradientStyle, GradientSurface, type SurfaceGradient } from '@/components/ui/surfaces/GradientSurface';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { resolveAndroidTranslucentUnlift, resolveThemeControlEdge, resolveThemeGloss, resolveThemeSurfaceFinish } from '@/components/ui/surfaces/themeRaisedEdge';
@@ -265,6 +270,7 @@ export const RoundButton = React.memo((props: {
      */
     capsuleHeight?: number,
     style?: RoundButtonStyle,
+    themeSurface?: SurfaceAddress,
     textStyle?: StyleProp<TextStyle>,
     disabled?: boolean,
     loading?: boolean,
@@ -393,6 +399,8 @@ export const RoundButton = React.memo((props: {
     // A words-only or mark-only button has nothing to trade, so its spinner covers it at the same width.
     const busyTradesMark = props.leading != null && props.title != null && props.title !== '';
     const titleLines = props.titleNumberOfLines ?? 1;
+    const surfaceOverridesEnabled = useHappierThemeSurfaceOverridesEnabled();
+    const themeSurface = props.themeSurface ?? { surface: 'button', part: 'root' } as const;
     const disabledReason = props.disabled === true && props.disabledReason ? props.disabledReason : undefined;
     // `undefined` is React Native's "as many lines as it takes"; `0` is not portable
     // across the platforms this primitive renders on.
@@ -437,8 +445,14 @@ export const RoundButton = React.memo((props: {
             accessibilityActions={props.accessibilityActions}
             onAccessibilityAction={props.onAccessibilityAction}
         >
-            {(state) => (
-                <Animated.View
+            {(state) => {
+                const surfaceAddress = resolveThemeSurfaceAddress(themeSurface, state);
+                const buttonState = resolveThemeSurfaceState('button', state);
+                const rootSurfaceStyle = themeSurfaceStyles.surface(surfaceOverridesEnabled ? surfaceAddress : undefined);
+                const labelSurfaceStyle = themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'button', part: 'label', state: buttonState } : undefined);
+                const iconSurfaceStyle = themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'button', part: 'icon', state: buttonState } : undefined);
+                return <Animated.View
+                    {...{ dataSet: surfaceAddress }}
                     style={[
                         styles.pill,
                         {
@@ -452,17 +466,24 @@ export const RoundButton = React.memo((props: {
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),
                         happierRaisedEdgeStyle(resolveRoundButtonEdge(theme, props.display ?? 'default', { pressed: state.pressed, focused: state.focused, disabled: state.disabled })),
                         resolveAndroidTranslucentUnlift(typeof pillBackgroundColor === 'string' ? paintColor(pillBackgroundColor, undefined, paintRole) : pillBackgroundColor),
+                        Platform.OS === 'web' && display.gradient ? combinedWebGradientStyle(
+                            happierMaterialGradient(display.gradient, color => paintColor(color, undefined, 'solidControl')),
+                            resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled }),
+                            !theme.dark,
+                        ) : null,
                         Platform.OS === 'web' && !display.gradient ? happierSurfaceGradientWebStyle(resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' || props.display === 'quietDestructive' }), !theme.dark) : null,
                         ownFillOnPicture && Platform.OS === 'web' ? glassThemeInkWebStyle(theme.colors.text) as ViewStyle : null,
                         pressFeedback.animatedStyle,
+                        rootSurfaceStyle,
                     ]}
                 >
                     <GlassBackedInkContext.Provider value={ownFillOnPicture ? null : inkScope}>
                     {/* The fill's gloss belongs to the pill, not to its content: when a touch floor or a
                         caller's layout makes the pill taller than its label, a gloss sized by the
                         content would draw a second, smaller pill inside the fill. */}
-                    {display.gradient ? (
+                    {display.gradient && Platform.OS !== 'web' ? (
                         <GradientSurface
+                            themeSurface={surfaceAddress}
                             fallbackColor={paintColor(display.backgroundColor, undefined, 'solidControl')}
                             gradient={happierMaterialGradient(display.gradient, color => paintColor(color, undefined, 'solidControl'))}
                             overlay={resolveThemeSurfaceFinish(theme, 'primaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled })}
@@ -471,7 +492,7 @@ export const RoundButton = React.memo((props: {
                             style={StyleSheet.absoluteFillObject}
                         />
                     ) : null}
-                    {!display.gradient ? <HappierSurfaceGradientLayer gradient={resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' || props.display === 'quietDestructive' })} borderRadius={props.capsuleHeight !== undefined ? props.capsuleHeight / 2 : theme.borderRadius.md} /> : null}
+                    {!display.gradient ? <HappierSurfaceGradientLayer overrideBackgroundColor={rootSurfaceStyle.backgroundColor} gradient={resolveThemeSurfaceFinish(theme, (props.display ?? 'default') === 'default' ? 'primaryButton' : 'secondaryButton', { pressed: state.pressed, focused: state.focused, disabled: state.disabled || props.display === 'inverted' || props.display === 'quietDestructive' })} borderRadius={props.capsuleHeight !== undefined ? props.capsuleHeight / 2 : theme.borderRadius.md} /> : null}
                     <View
                         style={[
                             styles.contentContainer,
@@ -491,13 +512,14 @@ export const RoundButton = React.memo((props: {
                             </View>
                         )}
                         {props.leading ? (
-                            <View style={[styles.markSlot, { opacity: state.busy && !busyTradesMark ? 0 : 1 }]}>
+                            <View {...{ dataSet: themeSurfaceDataSet('button', 'icon', buttonState) }} style={[styles.markSlot, { opacity: state.busy && !busyTradesMark ? 0 : 1 }, iconSurfaceStyle]}>
                                 {state.busy && busyTradesMark
                                     ? <ActivitySpinner color={textColor} size={iconMatchedSpinnerSize(BUSY_MARK_SIZE)} />
                                     : props.leading}
                             </View>
                         ) : null}
                         <Text
+                            {...{ dataSet: themeSurfaceDataSet('button', 'label', buttonState) }}
                             style={[
                                 textTypography,
                                 styles.text,
@@ -511,21 +533,22 @@ export const RoundButton = React.memo((props: {
                                 // hanging off the leading edge. Single-line buttons are
                                 // already centred by the container and are unaffected.
                                 titleLines === 1 ? null : { textAlign: 'center' as const, maxWidth: '100%' as const },
-                                props.textStyle
+                                props.textStyle,
+                                labelSurfaceStyle
                             ]}
                             numberOfLines={titleNumberOfLines}
                         >
                             {props.title}
                         </Text>
                         {props.trailing ? (
-                            <View style={[styles.markSlot, { opacity: state.busy && !busyTradesMark ? 0 : 1 }]}>
+                            <View {...{ dataSet: themeSurfaceDataSet('button', 'icon', buttonState) }} style={[styles.markSlot, { opacity: state.busy && !busyTradesMark ? 0 : 1 }, iconSurfaceStyle]}>
                                 {props.trailing}
                             </View>
                         ) : null}
                     </View>
                     </GlassBackedInkContext.Provider>
-                </Animated.View>
-            )}
+                </Animated.View>;
+            }}
         </HappierPressable>
     )
 });

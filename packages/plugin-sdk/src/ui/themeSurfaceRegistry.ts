@@ -7,12 +7,14 @@ export type ThemeSurfacePaintRole = Readonly<{
 
 type Part = Readonly<{ kind: 'view' | 'text' }>;
 const view = { kind: 'view' } as const;
+const text = { kind: 'text' } as const;
 
 export const THEME_SURFACE_REGISTRY = {
   sidebar: { parts: { root: view }, states: ['default'] },
   'session-row': { parts: { root: view }, states: ['default', 'selected'] },
   'user-bubble': { parts: { root: view }, states: ['default'] },
   composer: { parts: { root: view, toolbar: view }, states: ['default', 'disabled'] },
+  button: { parts: { root: view, label: text, icon: view }, states: ['default', 'disabled', 'selected'] },
 } as const satisfies Record<string, Readonly<{ parts: Readonly<Record<string, Part>>; states: readonly string[] }>>;
 
 export type SurfaceId = keyof typeof THEME_SURFACE_REGISTRY;
