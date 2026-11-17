@@ -57,7 +57,7 @@ export type ActivityInteractionCommand =
         sessionId: string;
         serverId: string | null;
         serverUrl: string | null;
-        route: string;
+        route: ReturnType<typeof createActivitySurfaceSessionRoute>;
         identity: ActivityInteractionIdentity | null;
         fallbackReason?: 'direct_actions_disabled' | 'privacy_restricted' | 'unsafe_target';
     }>

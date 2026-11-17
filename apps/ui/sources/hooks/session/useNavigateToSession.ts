@@ -16,7 +16,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { sessionScreenSingular } from '@/components/navigation/root/sessionScreenSingular';
 
 type NavigateToSessionOptions = Readonly<{
-    serverId?: string;
+    serverId?: string | null;
     /** Exact committed server message, resolved by the existing message-detail route. */
     messageId?: string;
     /** Preserve an admitted notification's Session subroute. */
