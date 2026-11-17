@@ -34,7 +34,9 @@ const qualifiedId = formatQualifiedPluginActionId(action);
 const homeId = configuration.activeServerId;
 const context: ActionExecutorContext = { surface: 'cli', serverId: homeId, serverIdentityId: 'srv_home',
     defaultSessionId: 'parent', defaultSessionMachineId: 'machine', authority: 'present_user',
-    actionCaller: { kind: 'host' }, actionRequestId: 'external-target-test', actionsSettings: normalizeActionsSettingsV1({ v: 1 }) };
+    actionCaller: { kind: 'host' }, actionRequestId: 'external-target-test', actionsSettings: normalizeActionsSettingsV1({ v: 1,
+        actions: { [formatQualifiedPluginActionId({ pluginId, localId: 'change' })]: { approvalRequiredSurfaces: ['cli'] } },
+    }) };
 
 async function harness(durableApproval = false, observations?: Readonly<{
     admitActions(): void;
@@ -119,6 +121,7 @@ async function harness(durableApproval = false, observations?: Readonly<{
             });
         },
         runtimeOptions: { resolveCurrentMachineId: () => 'machine',
+            scopedActionRuntime: { credentials: null, actionsSettingsProvider: { getActionsSettings: () => context.actionsSettings! } },
             resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_home', machineId: 'machine' }) },
     });
     const list = createCommittedContributedActionDefinitionLister({ tryAcquireRuntimeRegistryLease: () => {

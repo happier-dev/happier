@@ -3954,7 +3954,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                     ...(actionId === 'action.invoke' ? {} : { expectedSessionAddress: target }),
                     sessionTargetsV1: actionId === 'action.invoke' && sessionTarget.cardinality === 'one'
                       ? snapshot : { ...snapshot, targets: [target], selector: false },
-                    bypassApprovals: true }, true,
+                    // Dispatch wrappers delegate their target's approval policy;
+                    // resolving a Session operand does not admit that policy.
+                    bypassApprovals: delegatesApprovalClassificationToResolvedAction(actionId)
+                      ? materialContext.bypassApprovals : true }, true,
                   legacyMetadataLabel, undefined, options?.approvalReplay === true, undefined, true, undefined, hostInternal);
             results.push({ target, result });
           }
