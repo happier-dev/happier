@@ -9,12 +9,12 @@ description: Happier's working method and taste for designing and building user-
 1. Open the reference: the lab scene image (not a board) or the shipped/0.2 screen.
 2. Render your change while building: the surface's `/dev` specimen for each state you touch
    (add the state there if missing), then the real page in its shell.
-3. Capture the whole page at 1440 and 390, light and dark, same state as the reference.
+3. Capture the real page in its shell (not the specimen) at 1440 and 390, light and dark, in the same state as the reference. Capture after your last commit to it, and include every popover, sheet and state the reference draws.
 4. Put reference and live side by side and write every difference (frame, grid, type, rhythm,
    surface, elements both ways, copy). "Looks fine" is not a list. Fix defects at the owner.
 5. Commit with the four frames + the list in your report. Can't render? Report `BLOCKED: render
    path (<what failed, when>)`; do not mark the look owed and move on.
-6. A fresh reviewer judges your frames against the reference before the corridor closes.
+6. A fresh reviewer judges your frames against the reference before the corridor closes. Specimen-only frames, fragments, or frames older than the last commit are STILL OWED, never accepted. When several lanes build one page, one named design owner runs this loop on the composed page.
 
 Specimens mount the real owner components with fixture data from the shared testkit
 (`@/dev/testkit`); they never copy a component's layout or styles.
