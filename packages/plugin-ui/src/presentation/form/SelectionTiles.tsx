@@ -935,6 +935,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
   // When some tiles describe themselves, a tile without a description keeps that line empty, so every tile reads
   // the same shape and choosing one never changes the group's layout.
   const anySubtitle = props.options.some((option) => typeof option.subtitle === 'string' && option.subtitle.trim().length > 0);
+  // A status line is reserved on every card while any card has one, so a row of cards keeps one height.
+  const anyStatus = props.options.some((option) => typeof option.status === 'string' && option.status.length > 0);
 
   return (
     <View
@@ -1027,6 +1029,15 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                     {option.mark ?? (glyph ? props.renderGlyph({ glyph, size: glyphSize, color: glyphColor }) : null)}
                   </View> : null}
                   <View style={[styles.textContainer, compact && !subtitleLine ? styles.textContainerCentered : null]}>
+                    {/* A status stands on its own line at the card's top end (lab themes A1 "Showing now"), so it
+                        never takes width from the name; cards without one keep the line empty. */}
+                    {anyStatus ? (
+                      <View style={[styles.statusLine, { minHeight: resolveHappierTypeScale(
+                        resolveHappierSelectionTileText('badge', { compact }).role, Platform.OS,
+                      ).lineHeight }]} aria-hidden>
+                        {option.status ? props.renderText({ role: 'badge', text: option.status, selected, compact, numberOfLines: 1 }) : null}
+                      </View>
+                    ) : null}
                     {/* The name wraps in full (a long service name is never cut) and its badge follows it,
                         dropping to its own line only when the name leaves no room. */}
                     <View style={styles.titleLine}>
@@ -1050,7 +1061,6 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                   </View>
                 </View>
                 <View style={styles.selectionAccessory} pointerEvents="none" aria-hidden>
-                  {option.status ? props.renderText({ role: 'badge', text: option.status, selected, compact, numberOfLines: 1 }) : null}
                   {/* A tile marks only the chosen card, with a check beside its ink outline (lab f1src), or by the outline
                       alone (`selectionMark="outline"`); a sheet's cells keep the one single-choice mark (`RadioMark`)
                       that a table's or a list's radio draws. */}
@@ -1314,6 +1324,10 @@ function createTileStyles(colors: HappierSelectionTilesColors) {
       alignItems: 'flex-start',
       justifyContent: 'space-between',
       gap: 12,
+    },
+    statusLine: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
     },
     selectionAccessory: {
       flexDirection: 'row',
