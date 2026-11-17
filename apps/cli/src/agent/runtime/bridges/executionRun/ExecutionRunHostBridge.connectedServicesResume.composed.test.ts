@@ -109,7 +109,7 @@ describe('connected execution-run resume custody', () => {
     await rm(directory, { recursive: true, force: true });
   });
   it('attests backend and voice resumes and publishes only their successfully resumed registrations', async () => {
-    let intent: 'agent' | 'voice_agent' = 'agent';
+    let intent: 'task' | 'agent' | 'voice_agent' = 'agent';
     transport.materialize.mockClear();
     // The fixture Home has no installed Account plugins. Other Home requests
     // fail immediately rather than reaching a live Account with this token.
@@ -129,6 +129,7 @@ describe('connected execution-run resume custody', () => {
     const providerRequests: Array<AgentExecutionRunOpenRequest | AgentSessionOpenRequest> = [];
     let resolveProviderOpened!: () => void;
     let providerOpened = new Promise<void>((resolve) => { resolveProviderOpened = resolve; });
+    const finiteTurnAuthorities: SessionExecutionRunBrokerAuthorityResponseV1[] = [];
     // The authored public-SDK leaf stands in for the external provider process.
     // Its canonical SDK conversation adapter and every host owner remain real.
     const openProvider = async (request: AgentExecutionRunOpenRequest): Promise<AgentExecutionRunRuntime> => {
@@ -149,6 +150,9 @@ describe('connected execution-run resume custody', () => {
             return { dispose() { emit = null; } };
           },
           async send(input) {
+            if (intent === 'task') finiteTurnAuthorities.push(bridge!.resolveLiveBrokerAuthority({
+              v: 1, executionRunId: request.runId, expectedOccurrenceId: null,
+            }));
             emit?.({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
             return { status: 'admitted' };
           },
@@ -366,7 +370,7 @@ describe('connected execution-run resume custody', () => {
             connectedServicesBindings: request.connectedServices, connectedServiceSelectionsEnv: {},
             sessionDirectory: fixture.happyHomeDir, materializedRoot: `${fixture.happyHomeDir}/durable-home` } } };
       });
-      for (const runIntent of ['agent', 'voice_agent'] as const) {
+      for (const runIntent of ['task', 'agent', 'voice_agent'] as const) {
       intent = runIntent;
       failLoad = false;
       loadGate = null;
@@ -393,7 +397,7 @@ describe('connected execution-run resume custody', () => {
       phase = 'initial provider startup';
       const started = await bridge.start({ sessionId: intent === 'voice_agent' ? 'voice-parent-session' : null, intent,
         backendTarget: { kind: 'builtInAgent', agentId }, instructions: 'Wait for input.',
-        permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived',
+        permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: intent === 'task' ? 'bounded' : 'long_lived',
         ioMode: intent === 'voice_agent' ? 'streaming' : 'request_response',
         ...(intent === 'voice_agent' ? { bootstrapMode: 'none' as const, initialContextMode: 'first_turn' as const,
           chatModelId: 'voice-model', commitModelId: 'default' } : {}),
@@ -408,6 +412,19 @@ describe('connected execution-run resume custody', () => {
           throw new Error(`Provider failed before opening: ${JSON.stringify(bridge!.get(started.runId)?.error)}`);
         }),
       ]);
+      if (intent === 'task') {
+        expect(finiteTurnAuthorities).toEqual([expect.objectContaining({
+          status: 'current', parentSessionId: null, intent: 'task', runtimeState: 'active_turn',
+          activeTurnId: expect.any(String),
+        })]);
+        await bridge.stop(started.runId);
+        await bridge.waitForTerminal(started.runId);
+        expect(bridge.resolveLiveBrokerAuthority({ v: 1, executionRunId: started.runId,
+          expectedOccurrenceId: null })).toMatchObject({ status: 'not_current' });
+        await bridge.dispose();
+        bridge = null;
+        continue;
+      }
       for (const occurrence of materializationOccurrences) {
         expect(occurrence.actual).toEqual(expect.any(String));
         expect(occurrence.actual).toBe(occurrence.expected);

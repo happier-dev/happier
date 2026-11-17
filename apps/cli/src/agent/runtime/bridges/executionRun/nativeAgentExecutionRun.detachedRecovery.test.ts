@@ -392,6 +392,7 @@ describe.each([
 it.each(lifetimes)('recovers only accepted failure, never an unknown-custody input (%s)', async lifetime => {
     const requests: AgentExecutionRunOpenRequest[] = [];
     const sends: AgentSessionSendRequest[] = [];
+    const admissions: (AgentInvocationTurnAdmissionWitness | null)[] = [];
     // This provider-native conversation is the sole external fake. The SDK's
     // truthful detached conversation adapter and host lifecycle remain real.
     const openConversation = async (request: AgentExecutionRunOpenRequest): Promise<AgentExecutionRunConversationRuntimeV1> => {
@@ -401,6 +402,7 @@ it.each(lifetimes)('recovers only accepted failure, never an unknown-custody inp
                     watch(next) { listener = next; next({ kind: 'provider-session-id', providerSessionId: 'detached-native-original' }); return { dispose() { listener = undefined; } }; },
                     async send(input) {
                         sends.push(input);
+                        admissions.push(host.readActiveTurnAdmissionWitness?.() ?? null);
                         if (sends.length === 1 && custody !== 'accepted') {
                             if (custody === 'custody-unknown') listener?.({ kind: 'input-custody-unknown', inputIds: input.inputIds,
                                 issue: { code: diagnosticCode, severity: 'error', details: { requestErrorCode: 429 } } });
@@ -454,6 +456,8 @@ it.each(lifetimes)('recovers only accepted failure, never an unknown-custody inp
         await host.provisionRuntime({ initialPrompt: 'Perform effect once' });
         if (custody !== 'accepted') {
             await expect(host.waitForTurnCompletion?.()).rejects.toThrow(diagnosticCode);
+            expect(admissions).toEqual([expect.objectContaining({ inputId: sends[0]!.inputIds[0] })]);
+            expect(host.readActiveTurnAdmissionWitness?.()).toBeNull();
             expect(recovery).not.toHaveBeenCalled();
             expect(requests).toHaveLength(1);
             expect(sends).toHaveLength(1);
@@ -464,6 +468,14 @@ it.each(lifetimes)('recovers only accepted failure, never an unknown-custody inp
         expect(requests).toMatchObject([{ kind: 'create' }, { kind: 'resume', checkpointId: 'detached-native-original' }]);
         expect(sends.map(send => send.input.text)).toEqual(['Perform effect once', 'Continue where you left off']);
         expect(sends[1]?.inputIds).not.toEqual(sends[0]?.inputIds);
+        expect(admissions).toEqual(sends.map(send => expect.objectContaining({ inputId: send.inputIds[0] })));
+        expect(host.readActiveTurnAdmissionWitness?.()).toBeNull();
+        if (lifetime === 'finite') {
+            // Reopening resets the SDK's transport correlation. Host admission
+            // remains distinct and joins that native input through inputIds.
+            expect(sends[1]!.delivery.turnId).toBe(sends[0]!.delivery.turnId);
+            expect(admissions[1]!.turnId).not.toBe(admissions[0]!.turnId);
+        }
         expect(messages.some(message => message.type === 'status' && message.status === 'error')).toBe(false);
         expect(JSON.stringify(messages)).toContain('Partial detached work. ');
         expect(JSON.stringify(messages)).toContain('Detached continuation.');
