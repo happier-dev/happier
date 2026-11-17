@@ -4,11 +4,8 @@ import type { TeamInvitationAcceptResultV1 } from '@happier-dev/protocol/teams';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 import { AccountNameField } from '@/components/account/AccountNameField';
 import { useSyncedAccountName } from '@/components/account/useSyncedAccountName';
-import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
-import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { useIsFocused, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { teamDetailPath } from '@/components/settings/teams/teamsRoutes';
+import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { setAccountName } from '@/sync/api/account/apiAccountName';
@@ -16,6 +13,7 @@ import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAc
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { HappyError } from '@/utils/errors/errors';
 
 import {
   resolveTeamJoinPresentation,
@@ -26,6 +24,11 @@ type TeamAdmissionSuccess = Extract<
   TeamInvitationAcceptResultV1,
   { outcome: 'joined' | 'already_member' }
 >;
+
+export type TeamSetupContinuation = Readonly<{
+  label: string;
+  onContinue: () => Promise<void> | void;
+}>;
 
 /**
  * The one "you're in" card after accepting a Team invitation.
@@ -43,9 +46,9 @@ export function TeamJoinedCard(
     /** The Account that was admitted, on the Home that admitted it. */
     accountScope: ServerAccountScope | null;
     onOpenTeam: () => Promise<void> | void;
+    setupContinuation?: TeamSetupContinuation;
   }>,
 ): React.ReactElement {
-  const router = useRouter();
   const isFocused = useIsFocused();
   const focused = React.useRef(isFocused);
   focused.current = isFocused;
@@ -54,7 +57,6 @@ export function TeamJoinedCard(
     return () => { focused.current = false; };
   }, [isFocused]);
   const accountExecution = useMountedActionExecution(props.accountScope);
-  const { approvalId, approvalPending, approvalSummary } = accountExecution.approval;
   const syncedName = useSyncedAccountName(props.accountScope);
   const offer = shouldOfferTeamJoinName({
     outcome: props.result.outcome,
@@ -76,16 +78,22 @@ export function TeamJoinedCard(
   const admittedLabel = React.useRef<string | null>(null);
   if (syncedName?.label) admittedLabel.current = syncedName.label;
 
-  const [opening, openTeam] = useHappyAction(async () => {
+  const continuationDestination = React.useRef<'team' | 'setup'>(props.setupContinuation ? 'setup' : 'team');
+  const [opening, finishJoined] = useHappyAction(async (destination: 'team' | 'setup') => {
+    continuationDestination.current = destination;
+    const setup = destination === 'setup' ? props.setupContinuation : undefined;
+    if ((setup || (asksName && name.trim()))
+      && !areServerAccountScopesEqual(getActiveServerAccountScope(), props.accountScope)) {
+      const message = admittedLabel.current
+        ? t('teams.join.nameAccountSwitched', { account: admittedLabel.current })
+        : t('teams.join.nameAccountSwitchedUnnamed');
+      if (!asksName) throw new HappyError(message, false);
+      setNameError(message);
+      return;
+    }
     if (asksName && name.trim()) {
       setNameError(null);
       try {
-        if (!areServerAccountScopesEqual(getActiveServerAccountScope(), props.accountScope)) {
-          setNameError(admittedLabel.current
-            ? t('teams.join.nameAccountSwitched', { account: admittedLabel.current })
-            : t('teams.join.nameAccountSwitchedUnnamed'));
-          return;
-        }
         const credentials = getCurrentAuth()?.credentials;
         if (!credentials) throw new Error('Account is unavailable');
         await setAccountName(credentials, name, accountExecution);
@@ -94,9 +102,12 @@ export function TeamJoinedCard(
         return;
       }
     }
-    // Review owns completion while this entry is blurred or retired.
-    if (focused.current) await props.onOpenTeam();
+    // Native confirmation and name saving finish here before the explicit continuation.
+    if (focused.current) await (setup?.onContinue ?? props.onOpenTeam)();
   });
+  const openTeam = React.useCallback(() => {
+    finishJoined(props.setupContinuation ? 'setup' : 'team');
+  }, [finishJoined, props.setupContinuation]);
 
   return (
     <SurfaceStateCard
@@ -122,25 +133,10 @@ export function TeamJoinedCard(
         ) : undefined
       }
       action={{
-        label: t('teams.join.openTeam', { team: props.teamName }),
+        label: props.setupContinuation?.label ?? t('teams.join.openTeam', { team: props.teamName }),
         onPress: openTeam,
         busy: opening,
       }}
-      actionFooter={approvalPending && approvalId ? (
-        <ActionApprovalPendingNotice
-          testID={`${props.testID}-approval`}
-          presentation="inline"
-          message={t('approvals.status.open')}
-          summary={approvalSummary}
-          onOpenApproval={() => {
-            if (props.accountScope) router.pushRetainingCurrent(buildApprovalHref(
-              approvalId,
-              props.accountScope.serverId,
-              teamDetailPath({ serverId: props.accountScope.serverId, teamId: props.result.teamId }),
-            ));
-          }}
-        />
-      ) : undefined}
       accessibilitySemantics="status"
     />
   );
