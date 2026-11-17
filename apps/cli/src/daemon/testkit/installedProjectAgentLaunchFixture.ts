@@ -1,3 +1,4 @@
+import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import axios from 'axios';
@@ -143,6 +144,9 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
       const selected = (!request.serverId || request.serverId === key.serverId)
         && (!request.kinds || request.kinds.includes(key.kind));
       return { status: 200, data: ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows: selected ? [row] : [] }) };
+    }
+    if (new URL(String(url)).pathname === '/v1/home/governance/get') {
+      return { status: 200, data: HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }) };
     }
     throw new Error(`Unexpected Home write: ${new URL(String(url)).pathname}`);
   });

@@ -1,6 +1,7 @@
 import { vi } from 'vitest';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
+import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { MachineActionDirectTargetTransport } from '@/session/actions/cliActionDeps/types';
 import { createApiSessionSocketStub } from './backends/apiSessionSocketHarness';
 
@@ -46,6 +47,7 @@ export function bindApiMachineSocketSequenceMock(
 
 /** Machine socket subscriptions and shutdown are the bootstrap transport boundary. */
 export function createApiMachineTransportFixture() {
+    const roleRpcHandlerManager = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain' });
     return {
         onUpdate: vi.fn<ApiMachineClient['onUpdate']>(() => () => {}),
         onAccountSettingsVersionHint: vi.fn<ApiMachineClient['onAccountSettingsVersionHint']>(() => () => {}),
@@ -67,5 +69,8 @@ export function createApiMachineTransportFixture() {
         onMachineLiveStreamRelayEnvelope: vi.fn<ApiMachineClient['onMachineLiveStreamRelayEnvelope']>(() => () => {}),
         onPeerTcpTunnelRelayEnvelope: vi.fn<ApiMachineClient['onPeerTcpTunnelRelayEnvelope']>(() => () => {}),
         shutdown: vi.fn<ApiMachineClient['shutdown']>(async () => {}),
+        // Split Machine roles register their RPC families on the client's real handler registry.
+        getMachineRoleRpcHandlerManager: vi.fn<ApiMachineClient['getMachineRoleRpcHandlerManager']>(() => roleRpcHandlerManager),
+        getMachineMetadataSnapshot: vi.fn<ApiMachineClient['getMachineMetadataSnapshot']>(() => ({ status: 'unavailable' })),
     };
 }

@@ -4,6 +4,7 @@ import { expect, onTestFinished } from 'vitest';
 import { readStoredCredentialsForServerId, writeCredentialsTokenOnly, writeStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
 import { AgentRuntimeDaemonServiceRequestV1Schema, AgentRuntimeDaemonServiceResponseV1Schema, type AgentRuntimeDaemonServiceRequestV1, type AgentRuntimeDaemonServiceResponseV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
+import type { MachineRpcLifecycleRegistration } from '@/api/machine/rpcHandlers';
 import { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runtimeRegistry/registry';
 import { createRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/createRequesterSessionRuntimeContext';
 import type { TrackedSession } from '@/daemon/types';
@@ -37,6 +38,7 @@ type InstalledProjectAgentDaemonFixtureOwners = Readonly<{
   connectedServiceRuntimeRegistry: ConnectedServiceRuntimeRegistry;
   spawnAwaiterByKey: Map<SessionTrackingKey, (tracked: TrackedSession) => void>;
   daemon: Awaited<ReturnType<typeof startDaemonSessionControlRuntime>>;
+  sessionsRoleFamily: MachineRpcLifecycleRegistration['sessionsRoleFamily'];
   resolveRequesterRuntime: ResolveRequesterSessionRuntimeContext;
   readRequesterRecoveryStage(): string;
   replaceRequesterRuntime(): Promise<RequesterSessionRuntimeContext>;
@@ -182,7 +184,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   onTestFinished(() => daemon.stopControlServer());
   // Full daemon startup binds its produced Account ingress to the Machine.
   // The launch-only fixture predates that owner and cannot publish its routes.
-  machine.setRPCHandlers({ spawnSession: daemon.spawnSession, stopSession: daemon.stopSession, requestShutdown() {} }, {
+  const machineRpcLifecycle = machine.setRPCHandlers({ spawnSession: daemon.spawnSession, stopSession: daemon.stopSession, requestShutdown() {} }, {
     ...(daemon.externalActionIngressOwner ? { externalActionIngressOwner: daemon.externalActionIngressOwner } : {}),
     // Rebinding produced daemon routes must retain the same admitted Account
     // policy; invocation-owned settings are not ambient focused-Account state.
@@ -225,6 +227,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
       isCurrent: async () => true, signal }));
   const operationBase = (invocationId = 'cold-invocation') => ({ invocationId, requestId: `request-${++sequence}` });
   return { ...fixture, signal, cwd, dispatch, operationBase, sessionId, retainedAgent, requester, runner, tracked, plugin, trackedSessionsByKey, connectedServiceRuntimeRegistry, spawnAwaiterByKey, daemon,
+    sessionsRoleFamily: machineRpcLifecycle.sessionsRoleFamily,
     resolveRequesterRuntime,
     readRequesterRecoveryStage: () => requesterRecoveryStage,
     async replaceRequesterRuntime() {
