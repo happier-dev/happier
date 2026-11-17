@@ -656,28 +656,6 @@ test('a shared preparation step takes the highest rank among the runs waiting on
   await commit.admit();
 });
 
-test('an overdue head whose publication is busy keeps its reservation and starts when the lock frees', linux, async t => {
-  // nl1 2026-11-17: protocol/database-protocol package-dist waited 3.5 h. A UI
-  // typecheck's in-slot declaration passes held their publication locks ~98% of the
-  // time; the blocked waiter never kept memory, so it never met a free lock with room.
-  const { root } = await fixture(t);
-  const holder = await (await acquire(root, 50, t)).admit();
-  const locks = [{ path: join(root, 'publication.lock') }];
-  const publication = await tryWorkspaceBuildResources({ locks });
-  assert.equal(publication.acquired, true);
-  let released = false;
-  t.after(async () => { if (!released) await publication.release(); });
-  const overdue = await acquire(root, 60, t, { locks, arrivedAt: Date.now() - headReservationDelayMs });
-  const sample = await requestAdmissionSample(root);
-  assert.equal(sample.head?.ageMs >= headReservationDelayMs, true, 'the blocked overdue waiter is still the head');
-  await holder.release();
-  const younger = await acquire(root, 60, t, { noWait: true });
-  assert.equal((await younger.next()).reason, 'HSTACK_MEMORY_BUSY', 'released memory stays pledged to the blocked overdue head');
-  released = true;
-  await publication.release();
-  await overdue.admit();
-});
-
 test('a producer-ranked head holds free capacity too: nothing backfills past it once it is next', linux, async t => {
   // Systemic 18:35Z: repo-dev's 18.5 GiB server bundle sat at position 1 while
   // smaller validation jobs were admitted into memory that was already free.

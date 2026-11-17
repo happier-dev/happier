@@ -368,9 +368,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
     // Non-admitted memory cannot be recovered by draining broker slots. Keep
     // this request's age, but reserve only once the observed floor is achievable.
-    // An overdue waiter keeps its guaranteed start while its publication is busy:
-    // it holds the pledge, so it can start the moment the lock frees.
-    return !item.slot && (!item.blocked || overdue(item, Date.now())) && !item.socket.destroyed && minimumFloorKiB <= sample.achievableMemoryKiB
+    return !item.slot && !item.blocked && !item.socket.destroyed && minimumFloorKiB <= sample.achievableMemoryKiB
       && minimumCpuCores(item) <= totalCpuCores;
   }
   function status() {
@@ -718,11 +716,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
       if (lendableKiB > 0) headStartAt = projectedHeadStartAt(head, Date.now());
     };
     for (const item of ordered) {
-      if (item.slot) continue;
-      if (item.blocked) {
-        if (!head && canReserveHead(item)) assignHead(item);
-        continue;
-      }
+      if (item.slot || item.blocked) continue;
       if (item.socket.destroyed) { removeWaiting(item); continue; }
       const minimumFloorKiB = item.floorOptions?.at(-1).floorKiB ?? item.floorKiB;
       if (minimumFloorKiB > sample.totalMemoryKiB) {
@@ -761,8 +755,7 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
           if (resources.publicationBlocked) {
             item.blocked = true;
             item.resourceSnapshot = resources.snapshot;
-          }
-          if (!head && canReserveHead(item)) assignHead(item);
+          } else if (!head && canReserveHead(item)) assignHead(item);
         }
         continue;
       }

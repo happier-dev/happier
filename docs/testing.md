@@ -698,10 +698,7 @@ waiters within the 22m24s bound: a waiter that has waited past it is served firs
 arrival order, whatever its rank, so sustained ranked arrivals cannot starve rank-0 work
 (the bound's guaranteed start, owner 2026-11-13; on nl1 on 2026-11-17 package-dist and
 native-custody waited 2.5 h while focused runs and producers kept heading the queue).
-An overdue waiter whose publication lock is busy stays head and keeps its pledge, so it
-starts as soon as the lock frees; a waiter within the bound reserves nothing while its
-publication is blocked (nl1 2026-11-17: in-slot declaration passes held the protocol
-locks ~98% of the time and a blocked waiter never met a free lock with room).
+A publication-blocked waiter reserves nothing, overdue or not.
 The sample's `head.headPriority` is the head's rank (0 = ordinary).
 Each admitted client retains a pathname socket listener
 for its payload's lifetime; closure of the broker's peer connection releases its reservation
