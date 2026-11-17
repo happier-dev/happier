@@ -154,10 +154,6 @@ vi.mock('@expo/vector-icons', () => {
     };
 });
 
-vi.mock('@/components/navigation/Header', () => {
-    return { createHeader: () => null };
-});
-
 vi.mock('@/onboarding/showcase', () => ({
     OnboardingShowcaseAutoShowMount: () => null,
     useOnboardingShowcaseState: () => ({
@@ -312,14 +308,9 @@ vi.mock('@/auth/context/AuthContext', () => {
     };
 });
 
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useProfile: () => ({
-            linkedProviders: [],
-            username: null,
-        }),
-        useLocalSettings: () => ({}),
+vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
+    const { createStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+    return createStorageModuleMock({ importOriginal, overrides: {
         useEndpointConnectivity: () => ({
             status: endpointConnectivityStatus,
             reason: null,
@@ -330,7 +321,7 @@ vi.mock('@/sync/domains/state/storage', async () => {
             lastErrorMessage: null,
         }),
         useSyncError: () => syncErrorState,
-    } as any);
+    } });
 });
 
 vi.mock('@/auth/routing/authRouting', () => {
@@ -356,12 +347,18 @@ vi.mock('@/utils/platform/platform', () => {
     return { isRunningOnMac: () => false };
 });
 
-vi.mock('@/utils/platform/desktopHost', () => ({
-    isDesktopHost: () => tauriDesktopState.value,
-    desktopHostKind: () => tauriDesktopState.value ? 'tauri' : null,
-    invokeDesktopHost: (...args: any[]) => invokeDesktopHostSpy(...args),
-    listenDesktopHostEvent: vi.fn(async () => () => {}),
-}));
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
+    const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
+    return createDesktopHostModuleMock({
+        importOriginal,
+        overrides: {
+            isDesktopHost: () => tauriDesktopState.value,
+            desktopHostKind: () => tauriDesktopState.value ? 'tauri' : null,
+            invokeDesktopHost: invokeDesktopHostSpy,
+            listenDesktopHostEvent: vi.fn(async () => () => {}),
+        },
+    });
+});
 
 // Import once under the unavailable-native-module scenario. Resetting the whole graph after
 // each case forks the live root/testkit singletons while these component references survive.
@@ -453,6 +450,19 @@ describe('RootLayout hooks order', () => {
 });
 
 describe('RootLayout stack options', () => {
+    it('registers every declared Project page with its own header', async () => {
+        stubFeatureFetch();
+        const { PROJECT_PAGES } = await import('@/components/workspaceCockpit/project/projectCockpitState');
+        const screen = await renderScreen(React.createElement(RootLayout));
+        const screens = screen.tree.root.findAllByType('StackScreen');
+        for (const page of PROJECT_PAGES) {
+            const name = `projects/[workspaceRefId]/${page}`;
+            const matches = screens.filter(node => node.props.name === name);
+            expect(matches, name).toHaveLength(1);
+            expect(matches[0]?.props.options, name).toMatchObject({ headerShown: false });
+        }
+    });
+
     it('keeps Home behind a directly linked New modal without duplicating Home on a root load', async () => {
         const layout = await nativeUnavailableRootLayoutImport;
         const screen = { default: () => null };

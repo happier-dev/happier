@@ -1,4 +1,5 @@
 import type * as React from 'react';
+import { PROJECT_PAGES } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,8 +51,11 @@ describe('workspace loading through the canonical Expo context', () => {
         expect(projectKeys.length).toBeGreaterThan(8);
         for (const key of projectKeys) expect(workspaceRouteBodies[key], key).toBe(workspaceRouteBodies['projects/[workspaceRefId]/overview']);
     });
-    it.each(['overview', 'code', 'changes', 'scripts', 'services', 'context'])('hosts the canonical Project %s page through its Expo body', async (page) => {
+    it.each(PROJECT_PAGES)('hosts the canonical Project %s page through its Expo body', async (page) => {
         const key = `projects/[workspaceRefId]/${page}`;
+        const moduleKey = `./(app)/${key}.tsx`;
+        expect(workspaceRouteFiles[key]).toBe(moduleKey);
+        expect(existsSync(resolve(appRoot, moduleKey)), moduleKey).toBe(true);
         context.load.mockImplementation((moduleKey) => {
             if (!moduleKey.startsWith('./(app)/projects/[workspaceRefId]/')) throw new Error('wrong Project page requested');
             return { WorkspaceRouteBody: Body };

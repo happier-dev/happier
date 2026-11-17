@@ -3,8 +3,9 @@ import { PluginUiDestinationReferenceV1Schema, type PluginUiDestinationReference
 import { parsePluginProjectPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
 import { buildPluginSurfaceDestinationId } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 
-export const PROJECT_PAGES = ['overview', 'code', 'changes', 'scripts', 'services', 'deployments', 'context', 'memory'] as const;
-export type ProjectPageV1 = typeof PROJECT_PAGES[number];
+import { PROJECT_PAGES, type ProjectPageV1 } from './projectPages';
+
+export { PROJECT_PAGES, PROJECT_PAGE_ROUTE_NAMES, type ProjectPageV1 } from './projectPages';
 export type ProjectPageSelection =
     | Readonly<{ kind: 'builtin'; page: ProjectPageV1 }>
     | Readonly<{ kind: 'plugin'; destination: PluginUiDestinationReferenceV1; subPath: string }>;

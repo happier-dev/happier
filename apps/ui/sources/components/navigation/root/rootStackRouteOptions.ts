@@ -5,6 +5,7 @@ import type { NewSessionPresentationModeV1 } from '@/sync/domains/settings/regis
 import { createFriendsStackScreenOptions, createInboxStackScreenOptions } from '@/utils/navigation/createSocialStackScreenOptions';
 import { resolveNewSessionPickerRoutePresentation, resolveNewSessionPickerWebModalStyle, resolveNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionPresentation';
 import { createSessionPageScreenOptions } from '@/components/navigation/sessionRouteScreenOptions';
+import { PROJECT_PAGE_ROUTE_NAMES } from '@/components/workspaceCockpit/project/projectPages';
 import { PROJECT_PAGES } from '@/components/workspaceCockpit/project/projectCockpitState';
 
 type StackScreenOptions = ExtendedStackNavigationOptions;
@@ -274,16 +275,9 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
         'projects/[workspaceRefId]/terminal': options.hiddenHeader,
         'projects/index': options.hiddenHeader,
         'projects/[workspaceRefId]/index': options.hiddenHeader,
-        'projects/[workspaceRefId]/overview': options.hiddenHeader,
-        'projects/[workspaceRefId]/code': options.hiddenHeader,
-        'projects/[workspaceRefId]/changes': options.hiddenHeader,
-        'projects/[workspaceRefId]/scripts': options.hiddenHeader,
-        'projects/[workspaceRefId]/services': options.hiddenHeader,
-        'projects/[workspaceRefId]/deployments': options.hiddenHeader,
+        ...Object.fromEntries(PROJECT_PAGE_ROUTE_NAMES.map(name => [name, options.hiddenHeader])),
         // A standalone Environment page: its Project header names it, so the native bar carries only Back.
         'deployments/[projectSourceId]': options.visibleBlankBack,
-        'projects/[workspaceRefId]/context': options.hiddenHeader,
-        'projects/[workspaceRefId]/memory': options.hiddenHeader,
         'session/recent': options.sessionRecent,
         'session/archived': options.sessionArchived,
         ...Object.fromEntries(Object.entries(createSessionPageScreenOptions()).map(([name, options]) => [`session/[id]/${name}`, options])),

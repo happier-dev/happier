@@ -40,6 +40,7 @@ import { NavigatorSafeAreaBleed } from '@/components/navigation/safeArea/Horizon
 import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
 import { ROOT_STACK_ANCHOR } from '@/components/navigation/root/rootStackAnchor';
 import { withSessionsFallbackBack } from '@/components/navigation/root/sessionsFallbackBack';
+import { PROJECT_PAGE_ROUTE_NAMES } from '@/components/workspaceCockpit/project/projectPages';
 
 // Direct modal links need a presenting Home screen, including when linking rebuilds the stack.
 export const unstable_settings = { anchor: ROOT_STACK_ANCHOR.routeName };
@@ -414,15 +415,8 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
 
 
 
-                <Stack.Screen name="projects/[workspaceRefId]/overview" options={rootStackRouteOptions['projects/[workspaceRefId]/overview']} />
-                <Stack.Screen name="projects/[workspaceRefId]/code" options={rootStackRouteOptions['projects/[workspaceRefId]/code']} />
-                <Stack.Screen name="projects/[workspaceRefId]/changes" options={rootStackRouteOptions['projects/[workspaceRefId]/changes']} />
-                <Stack.Screen name="projects/[workspaceRefId]/scripts" options={rootStackRouteOptions['projects/[workspaceRefId]/scripts']} />
-                <Stack.Screen name="projects/[workspaceRefId]/services" options={rootStackRouteOptions['projects/[workspaceRefId]/services']} />
-                <Stack.Screen name="projects/[workspaceRefId]/deployments" options={rootStackRouteOptions['projects/[workspaceRefId]/deployments']} />
+                {PROJECT_PAGE_ROUTE_NAMES.map(name => <Stack.Screen key={name} name={name} options={rootStackRouteOptions[name]} />)}
                 <Stack.Screen name="deployments/[projectSourceId]" options={rootStackRouteOptions['deployments/[projectSourceId]']} />
-                <Stack.Screen name="projects/[workspaceRefId]/context" options={rootStackRouteOptions['projects/[workspaceRefId]/context']} />
-                <Stack.Screen name="projects/[workspaceRefId]/memory" options={rootStackRouteOptions['projects/[workspaceRefId]/memory']} />
                 {/*
                   * `session/[id]` has its own `_layout` (a Slot), so this is the stack's only screen for
                   * every Session route (no `session/[id]/…` entry here would name a stack child). The

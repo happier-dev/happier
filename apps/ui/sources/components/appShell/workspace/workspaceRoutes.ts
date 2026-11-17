@@ -4,6 +4,7 @@ import type { TranslationKeyNoParams } from '@/text';
 import { createWorkspaceRouteMatcher } from './workspaceRouteMatch';
 import { isMachineSubPageId } from '@/components/machines/page/machineSubPages';
 import { resolvePluginAppPageRouteAlias } from '@/components/plugins/pages/pluginPageRouteAliases';
+import { PROJECT_PAGE_ROUTE_NAMES } from '@/components/workspaceCockpit/project/projectPages';
 
 // A navigator's root declaration and its index name describe the same location.
 // The Settings registry owns the actual leaf module name (including /index).
@@ -76,16 +77,9 @@ export const workspaceRouteFiles: Readonly<Record<string, string>> = {
     "plugins/panels": "./(app)/plugins/panels.tsx",
     "projects/[workspaceRefId]/plugins/[pluginId]/[localId]": "./(app)/projects/[workspaceRefId]/plugins/[pluginId]/[localId]/index.tsx",
     "projects/[workspaceRefId]/plugins/[pluginId]/[localId]/[...subPath]": "./(app)/projects/[workspaceRefId]/plugins/[pluginId]/[localId]/[...subPath].tsx",
-    "projects/[workspaceRefId]/overview": "./(app)/projects/[workspaceRefId]/overview.tsx",
-    "projects/[workspaceRefId]/code": "./(app)/projects/[workspaceRefId]/code.tsx",
-    "projects/[workspaceRefId]/changes": "./(app)/projects/[workspaceRefId]/changes.tsx",
-    "projects/[workspaceRefId]/scripts": "./(app)/projects/[workspaceRefId]/scripts.tsx",
-    "projects/[workspaceRefId]/services": "./(app)/projects/[workspaceRefId]/services.tsx",
-    "projects/[workspaceRefId]/deployments": "./(app)/projects/[workspaceRefId]/deployments.tsx",
+    ...Object.fromEntries(PROJECT_PAGE_ROUTE_NAMES.map(name => [name, `./(app)/${name}.tsx`])),
     "deployments/new": "./(app)/deployments/new.tsx",
     "deployments/[projectSourceId]": "./(app)/deployments/[projectSourceId].tsx",
-    "projects/[workspaceRefId]/context": "./(app)/projects/[workspaceRefId]/context.tsx",
-    "projects/[workspaceRefId]/memory": "./(app)/projects/[workspaceRefId]/memory.tsx",
     "projects/[workspaceRefId]": "./(app)/projects/[workspaceRefId]/index.tsx",
     "projects/[workspaceRefId]/terminal": "./(app)/projects/[workspaceRefId]/terminal.tsx",
     "projects": "./(app)/projects/index.tsx",
