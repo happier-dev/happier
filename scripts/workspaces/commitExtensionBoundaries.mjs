@@ -5,10 +5,11 @@
 // packet tree) is materialized from Git objects into a private temp root: other lanes' uncommitted
 // worktree bytes never decide this packet's verdict. Changed files only; only violations the packet adds
 // relative to its base refuse (one already at the base is reported by the validator's own CI lane).
+// It also keeps apps/ui source out of the packages/tests TypeScript program (testsProgramUiImports below).
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const VALIDATOR = fileURLToPath(new URL('../testing/migrations/validateExtensionImportBoundaries.ts', import.meta.url));
@@ -89,12 +90,69 @@ function violations(git, rev, pluginRoots, changedPluginFiles) {
   }
 }
 
+// The packages/tests program maps `@/*` to apps/cli, so an apps/ui source file it reaches fails every `@/...` import
+// of its own and pulls in Expo's ambient globals (P03-TYPECHECK-DEBT 2026-11-17: ~6,000 of 7,239 new typecheck rows).
+// UI code is reachable from that program only through the `.d.mts` facades (`@happier-tests/ui-*`); a composed test
+// that needs real UI source leaves the program through the tsconfig `exclude`. Textual: changed program files only,
+// relative specifiers only (the program's aliases point at apps/cli and the facades), and only imports the packet adds.
+const TESTS_TSCONFIG = 'packages/tests/tsconfig.json';
+const TESTS_UI_FINDING = 'packages/tests program imports apps/ui source (use a .d.mts facade or the tsconfig exclude)';
+const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)(['"])([^'"\n]+)\1/gu;
+
+// tsconfig is JSONC: drop comments outside strings, then trailing commas.
+function parseJsonc(text) {
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"') { const end = /^"(?:[^"\\]|\\.)*"/u.exec(text.slice(i))[0]; out += end; i += end.length - 1; }
+    else if (c === '/' && text[i + 1] === '/') { while (i < text.length && text[i] !== '\n') i++; out += '\n'; }
+    else if (c === '/' && text[i + 1] === '*') { i = text.indexOf('*/', i + 2) + 1; }
+    else out += c;
+  }
+  return JSON.parse(out.replace(/,(\s*[}\]])/gu, '$1'));
+}
+
+const matchesPattern = (path, pattern) => path === pattern || path.startsWith(`${pattern}/`) || posix.matchesGlob(path, pattern);
+
+function uiImports(path, source, exists) {
+  const found = new Set();
+  for (const [, , spec] of source.matchAll(SPECIFIER)) {
+    if (!spec.startsWith('.')) continue;
+    const target = posix.normalize(posix.join(posix.dirname(path), spec));
+    if (!target.startsWith('apps/ui/sources/')) continue;
+    const stem = target.replace(/\.(?:[cm]?[jt]sx?|d\.[cm]?ts)$/u, '');
+    if (target.endsWith('.d.mts') || exists(`${stem}.d.mts`)) continue;
+    found.add(spec);
+  }
+  return found;
+}
+
+function testsProgramUiImports(git, base, tree, changed) {
+  const candidates = changed.filter(path => path.startsWith('packages/tests/') && /\.[cm]?tsx?$/u.test(path));
+  if (!candidates.length) return [];
+  let config;
+  try { config = parseJsonc(git(['show', `${tree}:${TESTS_TSCONFIG}`])); } catch { return []; }
+  const local = path => path.slice('packages/tests/'.length);
+  const inProgram = path => (config.include ?? []).some(pattern => matchesPattern(local(path), pattern))
+    && !(config.exclude ?? []).some(pattern => matchesPattern(local(path), pattern));
+  const show = (rev, path) => { try { return git(['show', `${rev}:${path}`]); } catch { return ''; } };
+  const exists = path => { try { git(['cat-file', '-e', `${tree}:${path}`]); return true; } catch { return false; } };
+  const findings = [];
+  for (const path of candidates.filter(inProgram)) {
+    const before = uiImports(path, show(base, path), exists);
+    for (const spec of uiImports(path, show(tree, path), exists)) if (!before.has(spec)) findings.push(`${TESTS_UI_FINDING}: ${path} -> ${spec}`);
+  }
+  return findings;
+}
+
 export function commitExtensionBoundaries({ repo, base, tree }) {
   const git = gitIn(repo);
+  const all = nul(git(['diff-tree', '-r', '-z', '--name-only', '--no-renames', '--diff-filter=ACMRT', base, tree]));
+  const findings = testsProgramUiImports(git, base, tree, all);
   const changed = nul(git(['diff-tree', '-r', '-z', '--name-only', '--no-renames', base, tree]))
     .filter(path => PLUGIN_ROOT.test(path));
-  if (!changed.length) return { findings: [] };
+  if (!changed.length) return { findings };
   const pluginRoots = new Set(changed.map(path => path.match(PLUGIN_ROOT)[0]));
   const before = new Set(violations(git, base, pluginRoots, changed));
-  return { findings: violations(git, tree, pluginRoots, changed).filter(finding => !before.has(finding)) };
+  return { findings: [...findings, ...violations(git, tree, pluginRoots, changed).filter(finding => !before.has(finding))] };
 }
