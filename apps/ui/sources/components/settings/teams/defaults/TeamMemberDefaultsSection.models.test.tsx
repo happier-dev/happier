@@ -231,8 +231,11 @@ it('lists only Agents with a value at some layer and keeps the rest behind one O
         && typeof node.props.onExpandedChange === 'function').map(node => node.props.testID as string)
         .filter((id, index, ids) => ids.indexOf(id) === index);
     await waitForHomeGovernance(() => expect(agentRows()).toEqual(['defaults-agent:codex']));
-    // Collapsed, an Agent with nothing set here names where its default comes from instead of "None".
-    expect(screen.getTextContent()).toContain(t('teams.settings.memberDefaults.sourceTeamProject', { team: 'Acme', project: 'acme/web' }));
+    // Collapsed, an Agent with nothing set here names the values it inherits (lab L11), not "None" or the source.
+    const { getPermissionModeOptionsForAgentType } = await import('@/sync/domains/permissions/permissionModeOptions');
+    const readOnly = getPermissionModeOptionsForAgentType('codex', 'settings').find(option => option.value === 'read-only')!.label;
+    const header = screen.findAll(node => node.props.testID === 'defaults-agent:codex:header' && node.props.subtitle !== undefined)[0];
+    expect(header?.props.subtitle).toBe(readOnly);
     await openOtherAgents(screen, 'defaults');
     await waitForHomeGovernance(() => expect(agentRows().length).toBeGreaterThan(1));
 });

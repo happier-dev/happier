@@ -285,7 +285,17 @@ const AgentDefaultsList = React.memo(function AgentDefaultsList(props: Readonly<
       const decision = inherited
         ? [inherited.permissionMode, inherited.model, ...inherited.connectedServices].find((field) => field.source !== 'none') ?? null
         : null;
-      const summary = decision && inherited ? describeInheritedDefaultSource(decision.source, inherited.permissionMode.names) : null;
+      // What the Agent starts with from other layers, as values (lab L11): its permission mode by name and its
+      // model by id (a closed Agent reads no model catalog); the source name only when no value can be shown.
+      const values = inherited ? [
+        inherited.permissionMode.source !== 'none' && inherited.permissionMode.value !== undefined
+          ? getPermissionModeOptionsForAgentType(entry.agentId, 'settings')
+            .find((option) => option.value === inherited.permissionMode.value)?.label ?? null
+          : null,
+        inherited.model.source !== 'none' ? inherited.model.value?.ref.modelId ?? null : null,
+      ].filter((value): value is string => Boolean(value)) : [];
+      const summary = values.length > 0 ? values.join(' · ')
+        : decision && inherited ? describeInheritedDefaultSource(decision.source, inherited.permissionMode.names) : null;
       const stored = defaults.permissionModeByAgentTargetKey?.[key] !== undefined
         || defaults.modelByAgentTargetKey?.[key] !== undefined
         || (defaults.connectedServicesByAgentTargetKey?.[key]?.length ?? 0) > 0;
@@ -359,9 +369,8 @@ const AgentDefaultsItem = React.memo(function AgentDefaultsItem(
           .find((option) => option.value === permissionMode)?.label
           ?? t('teams.settings.memberDefaults.permissionMode')
       : null,
-    defaults.modelByAgentTargetKey?.[key] !== undefined
-      ? t('teams.settings.memberDefaults.model')
-      : null,
+    // The model by id, like the inherited summary (a closed Agent reads no model catalog).
+    defaults.modelByAgentTargetKey?.[key]?.ref.modelId ?? null,
     ...(defaults.connectedServicesByAgentTargetKey?.[key]?.length
       ? [t('connectedServices.title')]
       : []),

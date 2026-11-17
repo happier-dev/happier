@@ -7,13 +7,13 @@ import { ProjectSessionDefaultsGetOutputV1Schema } from '@happier-dev/protocol/p
 import { ProjectSessionDefaultsView, type DefaultsScope } from '@/components/projects/sessionDefaults/ProjectSessionDefaultsBody';
 
 /**
- * Lab L11 For me, populated: the project's Team default runs Codex read-only and Claude in plan mode; nothing is
+ * Lab L11 For me, populated: the project's Team default runs Codex read-only and Claude in safe-yolo; nothing is
  * set For me yet, so each field shows what it falls back to and whose it is.
  */
 const POPULATED = ProjectSessionDefaultsGetOutputV1Schema.parse({
   context: { primaryTeamId: 'team-acme', projectDefaults: {
     defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-    permissionModeByAgentTargetKey: { 'agent:happier.agent.codex/codex': 'read-only', 'agent:happier.agent.claude/claude': 'plan' },
+    permissionModeByAgentTargetKey: { 'agent:happier.agent.codex/codex': 'read-only', 'agent:happier.agent.claude/claude': 'safe-yolo' },
   } },
   personalDefaultsRow: null, sourceDefaultsRow: null, source: null, canManageSource: false, repairRequired: false, teamName: 'Acme',
 });
