@@ -608,7 +608,7 @@ export async function reconcileManagedIntent(params: ManagedMachineReconciliatio
                     // Persist replacement identity before ordinary fresh enrollment.
                     // Cancellation or newer intent can stop bootstrap, not erase it.
                     assertLive(options.signal);
-                    if (!await client.isCurrent(machine)) throw new ManagedMachineControllerError('intent_changed');
+                    if (!await client.readCurrent(machine)) throw new ManagedMachineControllerError('intent_changed');
                     await reconcileManagedMachine({ ...params, machine });
                     return await client.row('current', client.correlation(machine));
                 }

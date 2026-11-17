@@ -38,6 +38,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval';
@@ -552,7 +553,7 @@ describe('Delete with a retained native resource after canceled bootstrap', () =
         const nativeDeletes: string[][] = [];
         const exec: Pick<ExecService, 'run'> = { run: async request => {
             expect(request.cwd).toBe(resource.store);
-            expect(request.env).toEqual({ LIMA_HOME: '.' });
+            expect(request.env).toEqual({ LIMA_HOME: resource.store });
             const args = [...(request.args ?? [])];
             expect(['list', 'delete']).toContain(args[0]);
             if (args[0] === 'delete') {
@@ -1425,7 +1426,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
             http: createStablePluginHttpHost({ adapter: { openWebSocket: unavailable, request: http.request },
                 purposeHost: createConnectedAccountPluginHttpPurposeHost(credentialOwner, { registerRawForRedaction() {} }) }) });
         const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, false, undefined, {
-            fixtureManifest: normalizePluginManifestV2(HETZNER_PLUGIN.manifest), actionHandlers, credentialOwner,
+            fixtureManifest: normalizePluginManifestV2(HETZNER_PLUGIN.manifest), actionHandlers, credentialOwner, executionRealm: 'account',
             credentialPurposes: [{ purpose: 'cloud-api', service: { pluginId: HETZNER_PLUGIN.manifest.id, localId: 'hetzner-account' } }],
             createServices: owners.createServices, resolveHostBinding: owners.resolveHostBinding,
         });
@@ -1964,7 +1965,11 @@ describe('unused Stop through guest drain and controller operation custody', () 
         const test = setup(undefined, confirmed ? { kind: 'confirmed' } : { kind: 'unknown' }, 'delete',
             confirmed ? undefined : { observedAt: 123, availability: 'unavailable', reason: 'transport' });
         const machine = test.readMachine();
-        const http = createServer();
+        const http = createServer((_request, response) => {
+            // This Home does not advertise optional Artifact query hints.
+            response.writeHead(404);
+            response.end();
+        });
         const server = new Server(http, { path: '/v1/updates/' });
         const connected = new Promise<void>(resolve => server.once('connection', () => resolve()));
         const disconnected = new Promise<void>(resolve => server.once('connection', socket => socket.once('disconnect', () => resolve())));
@@ -1980,17 +1985,28 @@ describe('unused Stop through guest drain and controller operation custody', () 
             summary: 'Configure isolation', approval: { flow: 'deferred', result: 'none' },
             executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
                 serverId: 'home', ...expectedOrigin } });
+        let artifact = { id: 'isolation-approval', ownerAccountId: 'owner', access: 'owner',
+            encryptionMode: 'plain', publicAudience: 'none',
+            header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(approval)),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }),
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1,
+            createdAt: 1, updatedAt: 1 };
         // Only Home's durable Artifact HTTP boundary is substituted. The real
         // Account socket, coordinator, recorded execution and child observer run.
         vi.spyOn(axios, 'get').mockImplementation(async url => {
             if (String(url).endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             expect(String(url)).toBe(`${serverUrl}/v1/artifacts/isolation-approval`);
-            return { status: 200, data: { id: 'isolation-approval', ownerAccountId: 'owner', access: 'owner',
-                encryptionMode: 'plain', publicAudience: 'none',
-                header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(approval)),
-                body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }),
-                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1, seq: 1,
-                createdAt: 1, updatedAt: 1 } };
+            return { status: 200, data: artifact };
+        });
+        const postManaged = test.post.getMockImplementation()!;
+        test.post.mockImplementation(async (url, raw, config) => {
+            if (String(url) !== `${serverUrl}/v1/artifacts/isolation-approval`) return postManaged(url, raw, config);
+            const mutation = ArtifactJsonUpdateHttpInputV1Schema.parse(raw);
+            expect(mutation.expectedHeaderVersion).toBe(artifact.headerVersion);
+            expect(mutation.expectedBodyVersion).toBe(artifact.bodyVersion);
+            artifact = { ...artifact, header: mutation.header ?? artifact.header, body: mutation.body ?? artifact.body,
+                headerVersion: artifact.headerVersion + 1, bodyVersion: artifact.bodyVersion + 1 };
+            return { status: 200, data: { success: true, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } };
         });
         const harness = createCliActionExecutorHarness({ token, credentials: { token, encryption: null },
             sessionId: 'acquire', serverId: 'home', serverHttpBaseUrl: serverUrl, mode: 'plain', ctx: null });
@@ -2011,7 +2027,9 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 return await waiting;
             } });
         try {
-            await connected;
+            await Promise.race([connected, waiting!.then(result => {
+                throw new Error(`Child approval settled before observation connected: ${JSON.stringify(result)}`);
+            })]);
             expect(await operations.handlers.getV2({ operationId: 'delete-cancels-acquire-1' })).toMatchObject({ kind: 'found',
                 operation: { state: 'running', progress: { phase: 'waiting_for_approval', approval: { artifactId: 'isolation-approval' } } } });
             const input = { homeId: machine.homeId, managedId: machine.id, intent: 'delete', when: 'now',
@@ -2081,7 +2099,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 const failure = ActionExecuteFailureSchema.safeParse(result);
                 return failure.success ? failure.data : { ok: true, result };
             } });
-        const code = 'plugin_managed_provider_operation_custody_invalid';
+        const code = 'plugin_action_generation_retired';
         await expect(work).rejects.toMatchObject({ code });
         expect(test.reports).toEqual([expect.objectContaining({ result: { kind: 'refused', code } })]);
         expect(test.readMachine().submittedNativeEffect).toBeUndefined();
@@ -2094,7 +2112,8 @@ describe('unused Stop through guest drain and controller operation custody', () 
         { intent: 'delete', role: 'destroy', action: 'machines.managed.delete' },
         { intent: 'rebuild', role: 'rebuild', action: 'machines.managed.rebuild' },
     ] as const)('retains native unknown $role receipts without replay and settles definite refusal', async ({ intent, role, action }) => {
-        const test = setup(undefined, { kind: 'unknown' }, intent);
+        const stopped: ProviderObservationV1 = { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' };
+        const test = setup(undefined, { kind: 'unknown' }, intent, stopped);
         const machine = test.readMachine();
         const nativeController = machine.controller;
         if (!nativeController) throw new Error('The native fixture requires its installed controller.');
@@ -2136,7 +2155,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
         test.post.mockRestore();
         const nativeCause = { httpStatusClass: '4xx' as const, code: 'forbidden' as const };
         const refusedResult = { kind: 'refused' as const, code: 'native_denied', nativeCause };
-        const refused = setup(undefined, refusedResult, intent, undefined, undefined,
+        const refused = setup(undefined, refusedResult, intent, stopped, undefined,
             intent === 'rebuild' ? refusedResult : undefined);
         const refusalOperations = createHostActionOperationRuntime({ machineId: nativeController.machineId,
             resolveAccountId: async () => 'owner', generateOperationId: () => `refused-${role}` });
@@ -3103,13 +3122,13 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.effects).toEqual([]);
         expect(test.post).not.toHaveBeenCalled();
         expect(await rpc.handleRequest({ ...request, authorization: ACTION_API_SERVER_ORIGIN })).toMatchObject({ ok: true });
-        expect(test.effects).toEqual(['power']);
+        expect(test.effects).toEqual(['bootstrap']);
         test.setMachine({ controller: undefined });
         const accountRequest = { ...request, params: { target: { ...target, controller: undefined,
             expectedIntentRevision: test.readMachine().intentRevision }, actionOrigin },
             authorization: ACTION_API_SERVER_ORIGIN };
         expect(await rpc.handleRequest(accountRequest)).toMatchObject({ errorCode: 'admission_unavailable' });
-        expect(test.effects).toEqual(['power']);
+        expect(test.effects).toEqual(['bootstrap']);
     });
     it('refuses a finite wake without the original admitted Action authority before native IO', async () => {
         const test = setup(undefined, undefined, 'start', { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' });
@@ -3613,7 +3632,8 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.readMachine().submittedNativeEffect?.requestId).toBe('old-stop');
     });
     it.each(['unknown', 'thrown'] as const)('retains waiting input when native Start is %s', async outcome => {
-        const test = setup({ kind: 'idle', since: 0 }, { kind: 'unknown' }, 'start', undefined,
+        const test = setup({ kind: 'idle', since: 0 }, { kind: 'unknown' }, 'start',
+            { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
             outcome === 'thrown' ? () => { throw new Error('native_transport_lost'); } : undefined);
         const machine = test.readMachine();
         const target = { homeId: machine.homeId, managedId: machine.id, enrolledMachineId: 'guest',
@@ -3625,7 +3645,8 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.post.mock.calls.filter(([url]) => String(url).endsWith('/activation-failed'))).toEqual([]);
     });
     it('reports a definite native wake refusal through the existing pending failure owner without passing requester content', async () => {
-        const test = setup({ kind: 'idle', since: 0 }, { kind: 'refused', code: 'native_denied' }, 'start');
+        const test = setup({ kind: 'idle', since: 0 }, { kind: 'refused', code: 'native_denied' }, 'start',
+            { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' });
         const machine = test.readMachine();
         const target = { homeId: machine.homeId, managedId: machine.id, enrolledMachineId: 'guest',
             expectedIntentRevision: machine.intentRevision, controller: machine.controller,
