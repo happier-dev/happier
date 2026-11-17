@@ -4536,6 +4536,7 @@ const zhHant: ConnectedServicesSettingsCopy = {
     servicePurpose: ({ service }) => `你用來登入 ${service} 的帳號，以及共享它們的帳號池。`,
     chooseMachineDescription: '新增、登入和移除帳號都在你的某台機器上進行。你的帳號仍會列在「已連接服務」中。',
     accountMachineInvitation: '重新登入需要在你的一台機器上進行。',
+    accountMachineInvitationKey: '測試或更換這把金鑰需要在你的一台機器上進行。',
     newAccountTitle: '新帳號',
     newAccountDescription: '選擇登入方式。',
     newAccountInProgress: '請在下方完成登入。',

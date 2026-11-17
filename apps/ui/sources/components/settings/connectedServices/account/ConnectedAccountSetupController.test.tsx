@@ -2484,6 +2484,26 @@ describe('ConnectedAccountSetupController real ownership', () => {
         expect(authenticationCommands).toEqual([]);
     });
 
+    it('says a key needs a machine to be tested or replaced, not to sign in again', async () => {
+        const saved = QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: { service, accountId: 'account-1' }, status: 'connected', authenticationModeId: 'manual', accessMode: 'apiKey',
+            revisionSemantics: 'revisioned', credentialRevision, configurationReady: true,
+            configurationRevision: null, scopes: [],
+        });
+        installAccountLabelBoundary(saved);
+        // Two online machines and no saved choice: the page asks for one, in the key's words.
+        storage.getState().applyMachines([
+            createMachineFixture({ id: 'machine-key-a', activeAt: Date.now() }),
+            createMachineFixture({ id: 'machine-key-b', activeAt: Date.now() }),
+        ], true, { sourceServerId: getActiveServerSnapshot().serverId });
+        await act(async () => storage.getState().applySettings({ ...storage.getState().settings,
+            machineAdministrationTargetsLocalV1: {} }, 2));
+        const screen = await focusedScreen();
+        await vi.waitFor(() => expect(JSON.stringify(screen.tree.toJSON()))
+            .toContain(t('connectedServicesSettings.accountMachineInvitationKey')));
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain(JSON.stringify(t('connectedServicesSettings.accountMachineInvitation')));
+    });
+
     it('recovers an unavailable description through user retry without starting authentication first', async () => {
         let available = false;
         handleControl = (command) => command.operation === 'listPendingAttempts'

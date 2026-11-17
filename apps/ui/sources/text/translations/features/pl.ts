@@ -4656,6 +4656,7 @@ const pl: ConnectedServicesSettingsCopy = {
     servicePurpose: ({ service }) => `Konta, którymi logujesz się do ${service}, i pule, które je współdzielą.`,
     chooseMachineDescription: 'Dodawanie, logowanie i usuwanie kont odbywa się na jednej z Twoich maszyn. Twoje konta pozostają na liście Połączonych usług.',
     accountMachineInvitation: 'Ponowne logowanie odbywa się na jednej z Twoich maszyn.',
+    accountMachineInvitationKey: 'Testowanie lub wymiana tego klucza odbywa się na jednej z Twoich maszyn.',
     newAccountTitle: 'Nowe konto',
     newAccountDescription: 'Wybierz sposób logowania.',
     newAccountInProgress: 'Dokończ logowanie poniżej.',

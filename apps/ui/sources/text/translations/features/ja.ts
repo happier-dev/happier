@@ -4591,6 +4591,7 @@ const ja: ConnectedServicesSettingsCopy = {
     servicePurpose: ({ service }) => `${service} へのサインインに使うアカウントと、それらを共有するプール。`,
     chooseMachineDescription: 'アカウントの追加、サインイン、削除はいずれかのマシン上で行われます。アカウントは「接続済みサービス」に引き続き表示されます。',
     accountMachineInvitation: '再サインインは、あなたのマシンのいずれかで実行されます。',
+    accountMachineInvitationKey: 'このキーのテストや置き換えは、あなたのマシンのいずれかで実行されます。',
     newAccountTitle: '新しいアカウント',
     newAccountDescription: 'サインイン方法を選択してください。',
     newAccountInProgress: '下でサインインを完了してください。',

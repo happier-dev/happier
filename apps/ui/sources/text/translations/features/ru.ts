@@ -4657,6 +4657,7 @@ const ru: ConnectedServicesSettingsCopy = {
     servicePurpose: ({ service }) => `Аккаунты, которыми вы входите в ${service}, и пулы, в которых они используются.`,
     chooseMachineDescription: 'Добавление, вход и удаление аккаунтов выполняются на одной из ваших машин. Ваши аккаунты остаются в списке подключённых сервисов.',
     accountMachineInvitation: 'Повторный вход выполняется на одной из ваших машин.',
+    accountMachineInvitationKey: 'Проверка или замена этого ключа выполняется на одной из ваших машин.',
     newAccountTitle: 'Новый аккаунт',
     newAccountDescription: 'Выберите способ входа.',
     newAccountInProgress: 'Завершите вход ниже.',

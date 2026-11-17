@@ -4648,6 +4648,7 @@ const fr: ConnectedServicesSettingsCopy = {
     servicePurpose: ({ service }) => `Les comptes avec lesquels tu te connectes à ${service}, et les pools qui les partagent.`,
     chooseMachineDescription: 'L’ajout, la connexion et la suppression de comptes se font sur l’une de tes machines. Tes comptes restent listés dans Services connectés.',
     accountMachineInvitation: 'La reconnexion se fait sur l’une de tes machines.',
+    accountMachineInvitationKey: 'Tester ou remplacer cette clé se fait sur l’une de tes machines.',
     newAccountTitle: 'Nouveau compte',
     newAccountDescription: 'Choisis comment te connecter.',
     newAccountInProgress: 'Termine la connexion ci-dessous.',

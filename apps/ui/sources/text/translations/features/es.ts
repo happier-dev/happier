@@ -4526,6 +4526,7 @@ const es: ConnectedServicesSettingsCopy = {
     servicePurpose: ({ service }) => `Las cuentas con las que inicias sesión en ${service} y los grupos que las comparten.`,
     chooseMachineDescription: 'Añadir, iniciar sesión y quitar cuentas se hace en una de tus máquinas. Tus cuentas siguen en Servicios conectados.',
     accountMachineInvitation: 'Volver a iniciar sesión se hace en una de tus máquinas.',
+    accountMachineInvitationKey: 'Probar o sustituir esta clave se hace en una de tus máquinas.',
     newAccountTitle: 'Cuenta nueva',
     newAccountDescription: 'Elige cómo iniciar sesión.',
     newAccountInProgress: 'Termina de iniciar sesión abajo.',

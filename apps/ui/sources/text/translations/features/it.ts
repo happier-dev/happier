@@ -4639,6 +4639,7 @@ const it: ConnectedServicesSettingsCopy = {
     servicePurpose: ({ service }) => `Gli account con cui accedi a ${service} e i pool che li condividono.`,
     chooseMachineDescription: 'Aggiungere, accedere e rimuovere account avviene su una delle tue macchine. I tuoi account restano elencati in Servizi collegati.',
     accountMachineInvitation: 'Il nuovo accesso avviene su una delle tue macchine.',
+    accountMachineInvitationKey: 'Il test o la sostituzione di questa chiave avviene su una delle tue macchine.',
     newAccountTitle: 'Nuovo account',
     newAccountDescription: 'Scegli come accedere.',
     newAccountInProgress: 'Completa l’accesso qui sotto.',

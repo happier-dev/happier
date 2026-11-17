@@ -4641,6 +4641,7 @@ const de: ConnectedServicesSettingsCopy = {
     servicePurpose: ({ service }) => `Die Konten, mit denen du dich bei ${service} anmeldest, und die Pools, die sie teilen.`,
     chooseMachineDescription: 'Konten hinzufügen, anmelden und entfernen läuft auf einem deiner Rechner. Deine Konten bleiben unter Verbundene Dienste aufgelistet.',
     accountMachineInvitation: 'Die erneute Anmeldung läuft auf einem deiner Rechner.',
+    accountMachineInvitationKey: 'Das Testen oder Ersetzen dieses Schlüssels läuft auf einem deiner Rechner.',
     newAccountTitle: 'Neues Konto',
     newAccountDescription: 'Wähle, wie du dich anmeldest.',
     newAccountInProgress: 'Schließe die Anmeldung unten ab.',

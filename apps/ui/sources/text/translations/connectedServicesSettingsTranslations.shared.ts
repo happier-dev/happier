@@ -86,6 +86,7 @@ export const en = {
     servicePurpose: ({ service }: { service: string }) => `The accounts you sign in to ${service} with, and the pools that share them.`,
     chooseMachineDescription: 'Adding, signing in and removing accounts runs on one of your machines. Your accounts stay listed on Connected services.',
     accountMachineInvitation: 'Signing in again runs on one of your machines.',
+    accountMachineInvitationKey: 'Testing or replacing this key runs on one of your machines.',
     newAccountTitle: 'New account',
     newAccountDescription: 'Choose how to sign in.',
     newAccountInProgress: 'Finish signing in below.',

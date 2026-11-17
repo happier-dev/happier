@@ -4536,6 +4536,7 @@ const zhHans: ConnectedServicesSettingsCopy = {
     servicePurpose: ({ service }) => `你用来登录 ${service} 的账号，以及共享它们的账号池。`,
     chooseMachineDescription: '添加、登录和移除账号都在你的某台机器上进行。你的账号仍会列在“已连接服务”中。',
     accountMachineInvitation: '重新登录需要在你的一台机器上进行。',
+    accountMachineInvitationKey: '测试或更换此密钥需要在你的一台机器上进行。',
     newAccountTitle: '新账号',
     newAccountDescription: '选择登录方式。',
     newAccountInProgress: '请在下方完成登录。',

@@ -4624,6 +4624,7 @@ const pt: ConnectedServicesSettingsCopy = {
     servicePurpose: ({ service }) => `As contas com que você entra no ${service} e os pools que as compartilham.`,
     chooseMachineDescription: 'Adicionar, entrar e remover contas acontece em uma das suas máquinas. Suas contas continuam listadas em Serviços conectados.',
     accountMachineInvitation: 'Entrar de novo acontece em uma das suas máquinas.',
+    accountMachineInvitationKey: 'Testar ou substituir esta chave acontece em uma das suas máquinas.',
     newAccountTitle: 'Nova conta',
     newAccountDescription: 'Escolha como entrar.',
     newAccountInProgress: 'Conclua o login abaixo.',

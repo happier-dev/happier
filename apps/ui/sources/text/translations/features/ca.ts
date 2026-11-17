@@ -4631,6 +4631,7 @@ const ca: ConnectedServicesSettingsCopy = {
     chooseMachineDescription: "Afegir, iniciar sessió i eliminar comptes es fa en una de les teves màquines. Els teus comptes continuen llistats a Serveis connectats.",
     newAccountTitle: 'Compte nou',
     accountMachineInvitation: 'Tornar a iniciar la sessió es fa en una de les teves màquines.',
+    accountMachineInvitationKey: 'Provar o substituir aquesta clau es fa en una de les teves màquines.',
     newAccountDescription: 'Tria com vols iniciar sessió.',
     newAccountInProgress: 'Acaba d’iniciar sessió a continuació.',
     modeBrowser: 'Inicia sessió amb un navegador',
