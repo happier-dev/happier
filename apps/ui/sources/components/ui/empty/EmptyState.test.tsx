@@ -60,6 +60,11 @@ describe('EmptyState', () => {
         expect(heading(alone)).toEqual(['header', 1]);
         const underHeader = await renderScreen(<ListPresentationProvider value="page">{state}</ListPresentationProvider>);
         expect(heading(underHeader)).toEqual(['header', 2]);
+        // C77 (Workflows first visit, 11-17): a page column with no header of its own is named by its state.
+        const headerless = await renderScreen(<ListPresentationProvider value="page">
+            <EmptyState layout="page" namesPage title="Save prompts that work" titleTestID="empty-title" />
+        </ListPresentationProvider>);
+        expect(heading(headerless)).toEqual(['header', 1]);
         const centered = await renderScreen(<EmptyState title="Nothing here" titleTestID="empty-title" />);
         expect(heading(centered)).toEqual([undefined, undefined]);
     });

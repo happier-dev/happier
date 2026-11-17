@@ -104,6 +104,11 @@ type EmptyStateProps = Readonly<{
      */
     layout?: 'page' | 'line' | 'inline' | 'centered';
     /**
+     * `page` only: this page has no header of its own, so the state's title is the page's level-one heading even
+     * inside a page column (where a page normally starts with its `PageHeader`).
+     */
+    namesPage?: boolean;
+    /**
      * `centered` only: the container's size step (pane, details, page, phone), which sets the measure,
      * glyph and type. `SurfaceStateCard` passes its container's size here.
      */
@@ -311,8 +316,8 @@ export const EmptyState = React.memo((props: EmptyStateProps) => {
                 description={props.subtitle ?? null}
                 titleTestID={props.titleTestID}
                 descriptionTestID={props.subtitleTestID}
-                // A page state alone in its page names that page; under a page's own header it heads a section.
-                headingLevel={page ? inPageColumn || inSection ? 2 : 1 : undefined}
+                // A page state alone in its page, or in a page with no header, names that page; under a page's own header it heads a section.
+                headingLevel={page ? (inPageColumn && !props.namesPage) || inSection ? 2 : 1 : undefined}
                 paddingHorizontal={props.paddingHorizontal}
                 paddingVertical={page ? HAPPIER_EMPTY_STATE_FRAME.pageTilePaddingVertical : undefined}
             />

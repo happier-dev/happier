@@ -628,6 +628,7 @@ function WorkflowsFirstVisit(props: Readonly<{ onNewWorkflow: () => void; onImpo
                 <EmptyState
                     testID="workflows-home:firstVisit"
                     layout="page"
+                    namesPage
                     scene="noWorkflows"
                     title={t('workflows.destination.firstVisitTitle')}
                     subtitle={t('workflows.destination.firstVisitBody')}
