@@ -19,13 +19,14 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
 }>): SessionLifecycleMachineHandlers['spawnSession'] {
     const context = input.context;
     const local = context?.localActionContext;
+    const authorization = context?.callerInputAuthorization ?? local?.externalActionExecutionAuthorization;
     const operation: ProjectSetupOperationContext | undefined = context?.signal && local?.operationAcceptance
         && local.operationProgress && local.operationOwnerUpdate && local.operationReview
         ? { signal: context.signal, actionRequestId: local.actionRequestId ?? undefined,
             operationProgress: local.operationProgress, operationOwnerUpdate: local.operationOwnerUpdate,
             operationAcceptance: local.operationAcceptance, operationReview: local.operationReview,
-            ...(context.callerInputAuthorization ? { externalActionExecutionAuthorization: context.callerInputAuthorization,
-                externalActionTarget: context.callerInputAuthorization.binding.target } : {}),
+            ...(authorization ? { externalActionExecutionAuthorization: authorization,
+                externalActionTarget: authorization.binding.target } : {}),
             ...(local.operationCancellation ? { operationCancellation: local.operationCancellation } : {}),
             ...(local.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: local.requesterWorkAttributionV1 } : {}) }
         : undefined;

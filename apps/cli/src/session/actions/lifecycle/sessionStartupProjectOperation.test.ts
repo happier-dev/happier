@@ -6,6 +6,8 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 
 import { createSessionStartupProjectSpawn } from './sessionStartupProjectOperation';
+import { createSpawnNewSessionLifecycleActionHandler } from './createSpawnNewSessionLifecycleActionHandler';
+import { createMachineSessionServerStartSpawnLifecycleTransport } from '@/rpc/handlers/sessionServerStartLifecycleAdapter';
 
 describe('resume native startup observation', () => {
     it('keeps the admitted Session requester on postbirth HTTP effects instead of spending the daemon credential', async () => {
@@ -20,12 +22,13 @@ describe('resume native startup observation', () => {
             resolveAccountId: async () => 'requester', generateOperationId: () => 'startup-operation' });
         let signedByOriginalRequester = false;
         await operations.observeExecution({ actionId: 'session.spawn_new', input: { creationKey: 'creation' }, execute: async operation => {
-            const spawn = createSessionStartupProjectSpawn({ context: { signal: operation.signal,
-                callerInputAuthorization: authorization, localActionContext: operation },
+            const lifecycle = createSpawnNewSessionLifecycleActionHandler({
                 stopSession: async () => true,
                 awaitAgentSessionOpen: async () => ({ status: 'opened', request: { kind: 'create', sessionId: 'committed-session', cwd: '/repo' } }),
                 spawnSession: async options => {
-                    const request = { method: 'GET', path: '/v2/sessions/committed-session' };
+                    const request = { method: 'POST', path: '/v1/machines/managed/controller/context',
+                        body: { homeId: 'home', managedId: 'managed', sessionId: 'committed-session', expectedIntentRevision: 0,
+                            controller: { machineId: target.machineId, installationId: 'installation' } } };
                     const resolved = resolveExternalActionServerRequestHeaders({ context: options.projectSetupOperation,
                         effectActionId: 'session.spawn_new', ...request, daemonToken: 'daemon-credential',
                         serverIdentityId: 'home', installationId: 'installation', privateKey: keys.secretKey });
@@ -35,7 +38,14 @@ describe('resume native startup observation', () => {
                         signature: resolved.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER], publicKey: keys.publicKey });
                     return { type: 'success', sessionId: 'committed-session' };
                 } });
-            await spawn({ directory: '/repo' });
+            const transport = createMachineSessionServerStartSpawnLifecycleTransport({ spawnLifecycleHandler: lifecycle });
+            // The canonical exact-daemon creator forwards its admitted root and
+            // operation ports in localActionContext; no serialized RPC runs.
+            expect(await transport.spawn({ directory: '/repo',
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+            }, { signal: operation.signal,
+                localActionContext: { ...operation, externalActionExecutionAuthorization: authorization,
+                    externalActionTarget: target } })).toMatchObject({ type: 'success', sessionId: 'committed-session' });
             return { ok: true, result: {} };
         } });
         expect(signedByOriginalRequester).toBe(true);

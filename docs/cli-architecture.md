@@ -3310,7 +3310,10 @@ separate completion ledger is used.
 
 After Session birth, `target.sessionId` is the actual committed Session ID,
 separate from the holder key. The original spawn authorization reports only to
-that active Session's existing managed-resource association. Installation-only
+that active Session's existing managed-resource association. The exact-daemon
+launch transport retains this authorization in its host-private local Action
+context; startup carries that same requester and signed purpose into target
+hydration and Setup. Installation-only
 completion reports retain the existing `bootstrapInstalled` admission fact even
 when the preset has no Setup; they do not create Setup progress or change the
 private preset snapshot.
