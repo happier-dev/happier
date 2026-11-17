@@ -6,6 +6,10 @@ import { StyleSheet } from 'react-native-unistyles';
 import { publishMakeCoordinatorNotice } from '@/components/sessions/coordinator/MakeCoordinatorDialog';
 import { SessionWorkDigestContent } from '@/components/sessions/work/SessionWorkDigest';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SessionGoalValueItem } from '@/components/sessions/workState/SessionGoalControlContent';
+import { WorkFlatSheet } from '@/components/sessions/work/WorkSection';
+import { Item } from '@/components/ui/lists/Item';
+import type { SessionWorkStateItem } from '@/sync/domains/session/workState/sessionWorkStateTypes';
 import { SessionWorkMapView } from '@/components/sessions/work/SessionWorkMapView';
 import { WorkItemRow } from '@/components/sessions/work/WorkItemRow';
 import { WorkSection } from '@/components/sessions/work/WorkSection';
@@ -206,10 +210,33 @@ const styles = StyleSheet.create((theme) => ({
   caption: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
 }));
 
+/** The Goal value row through its real owner: not set, active, and owner-only blocked work. */
+const GOAL_ENTRY = { available: true, open: noop };
+function goal(status: SessionWorkStateItem['status']): SessionWorkStateItem {
+  return { id: `goal-${status}`, kind: 'goal', origin: 'happier', status, title: 'Keep my sessions moving', updatedAt: NOW };
+}
+const GOALS: ReadonlyArray<Readonly<{ id: string; goal: SessionWorkStateItem | null }>> = [
+  { id: 'not-set', goal: null },
+  { id: 'active', goal: goal('active') },
+  { id: 'blocked', goal: goal('blocked') },
+];
+
+function TopRows() {
+  return (
+    <WorkFlatSheet testID="specimen-work-top">
+      <Item title="Managed by" detail="Top level" density="compact" onPress={noop} />
+      {GOALS.map((entry) => (
+        <SessionGoalValueItem key={entry.id} goal={entry.goal} entry={GOAL_ENTRY} testID={`specimen-goal-${entry.id}`} />
+      ))}
+    </WorkFlatSheet>
+  );
+}
+
 function WorkPane(props: Readonly<{ wide?: boolean }>) {
   return (
     <View style={[styles.pane, props.wide ? styles.paneWide : null]}>
       <View style={styles.paneBody}>
+        <TopRows />
         {groups.working.length > 0 ? (
           <WorkSection
             testID="specimen-work-working"

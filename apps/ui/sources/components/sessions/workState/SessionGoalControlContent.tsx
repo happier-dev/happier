@@ -437,10 +437,18 @@ export const SessionGoalValueRow = React.memo(function SessionGoalValueRow(props
         () => resolveEditableGoalItem(readSessionWorkStateFromMetadata(metadata)),
         [metadata],
     );
-    const rowRef = React.useRef<View>(null);
     if (!props.entry.available) return null;
-    const open = () => props.entry.open(rowRef);
-    const value = goal ? t(resolveGoalStatusLabelKey(goal)) : t('goalControl.row.notSet');
+    return <SessionGoalValueItem goal={goal} entry={props.entry} testID={props.testID} />;
+});
+
+/** The Goal row as drawn from one goal (the Session's, or a `/dev/work-sections?scene=states` fixture). */
+export function SessionGoalValueItem(props: Readonly<{
+    goal: SessionWorkStateItem | null;
+    entry: SessionGoalControlEntry;
+    testID?: string;
+}>) {
+    const rowRef = React.useRef<View>(null);
+    const value = props.goal ? t(resolveGoalStatusLabelKey(props.goal)) : t('goalControl.row.notSet');
     return (
         <Item
             testID={props.testID ?? 'session-goal.value'}
@@ -449,7 +457,7 @@ export const SessionGoalValueRow = React.memo(function SessionGoalValueRow(props
             density="compact"
             accessibilityLabel={`${t('session.workState.goal.title')}, ${value}`}
             pressableRef={rowRef}
-            onPress={open}
+            onPress={() => props.entry.open(rowRef)}
         />
     );
-});
+}
