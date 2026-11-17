@@ -74,6 +74,17 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
             execute,
             // The composed fixture supplies the designed user's explicit Confirm.
             executeConfirmed: confirmed.confirmed,
+            async readDeploymentReceipt(environmentId: string, deploymentId: string) {
+                const [{ captureLazyActionAccountContext }, { createDeploymentReadTransport }] = await Promise.all([
+                    import('@/sync/ops/actions/actionAccountContext'),
+                    import('@/components/projects/deployments/deploymentReadTransport'),
+                ]);
+                const account = await captureLazyActionAccountContext(serverId);
+                try {
+                    return await createDeploymentReadTransport(account.accountLifetime).readReceipt(
+                        account.accountLifetime.scope, environmentId, deploymentId, { signal: new AbortController().signal });
+                } finally { account.dispose(); }
+            },
             async executeVoiceSpawn(input: unknown, effectId: string) {
                 const [{ createVoiceToolHandlers }, { VOICE_ACTION_EXECUTE_TOOL_NAME }, voiceSession] = await Promise.all([
                     import('@/voice/tools/handlers'), import('@/voice/tools/voiceActionExecution'),
