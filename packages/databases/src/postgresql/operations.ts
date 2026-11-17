@@ -358,11 +358,11 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
                 ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, ...(input.database ? { database: input.database } : {}), ...(input.search ? { search: input.search } : {}), after: scalar(rows.at(-1)!, 0) } } : { complete: true } };
         }
         case 'relations.list': {
-            const native = await query({ text: `SELECT c.relname,c.relkind,CASE WHEN c.reltuples>=0 THEN c.reltuples::bigint::text END,
-                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_relation_size(c.oid)::text END,
-                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_table_size(c.oid)::text END,
-                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_indexes_size(c.oid)::text END,
-                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_total_relation_size(c.oid)::text END
+            const native = await query({ text: `SELECT c.relname,c.relkind,CASE WHEN c.reltuples>=0 THEN c.reltuples::bigint::text END AS estimated_rows,
+                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_relation_size(c.oid)::text END AS relation_bytes,
+                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_table_size(c.oid)::text END AS table_bytes,
+                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_indexes_size(c.oid)::text END AS index_bytes,
+                CASE WHEN c.relkind<>'v' THEN pg_catalog.pg_total_relation_size(c.oid)::text END AS size_bytes
                 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m') AND ($2::text IS NULL OR strpos(c.relname,$2)>0) AND ($3::text IS NULL OR c.relname>$3) ORDER BY c.relname LIMIT $4`, values: [input.schema, input.search ?? null, input.page.after ?? null, String(input.page.rows + 1)] });
             const rows = native.rows.slice(0, input.page.rows);
             return { ok: true, operation: input.operation, relations: rows.map(row => ({ relation: { schema: input.schema, name: scalar(row, 0) }, kind: row[1] === 'v' ? 'view' : row[1] === 'm' ? 'materialized_view' : 'table',
