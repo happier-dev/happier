@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -8,7 +8,7 @@ import { hashProcessCommand } from './sessionRegistry';
 import type { TrackedSession } from './types';
 import type { Credentials } from '@/persistence';
 
-import { adoptSessionsFromMarkers as adoptObservedSessionsFromMarkers } from './reattach';
+import { adoptSessionsFromMarkers as adoptObservedSessionsFromMarkers, isOwnedLiveDaemonSessionProcessCommand } from './reattach';
 import {
   buildSessionRunnerRespawnDescriptorV1FromSpawnOptions,
   type SessionRunnerRespawnDescriptorV1,
@@ -890,5 +890,15 @@ describe('adoptSessionsFromMarkers respawn descriptor', () => {
     expect(adopted).toBe(1);
     expect(map.get(legacyPidSessionTrackingKey(783))?.vendorResumeId).toBe('remote-runtime-learned-783');
     expect(map.get(legacyPidSessionTrackingKey(783))?.spawnOptions?.resume).toBeUndefined();
+  });
+});
+
+describe('live daemon Session process ownership', () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it('roots a CLI checkout that lives under a src directory at its own package, not the parent folder', () => {
+    vi.stubEnv('HAPPIER_CLI_SUBPROCESS_ENTRYPOINT', '/home/alice/src/happier/apps/cli/src/index.ts');
+    expect(isOwnedLiveDaemonSessionProcessCommand('node /home/alice/src/happier/apps/cli/src/index.ts claude')).toBe(true);
+    expect(isOwnedLiveDaemonSessionProcessCommand('node /home/alice/other-tool/index.js')).toBe(false);
   });
 });

@@ -50,22 +50,9 @@ function resolveCliRuntimeRootFromEntrypoint(pathLike: string | undefined): stri
   if (!normalized) return null;
 
   const normalizedPath = normalizeProcessCommandPathValue(normalized);
-  const packageDistMarker = '/package-dist/';
-  const distMarker = '/dist/';
-  const srcMarker = '/src/';
-  const packageDistIndex = normalizedPath.indexOf(packageDistMarker);
-  if (packageDistIndex >= 0) {
-    return normalizedPath.slice(0, packageDistIndex);
-  }
-  const distIndex = normalizedPath.indexOf(distMarker);
-  if (distIndex >= 0) {
-    return normalizedPath.slice(0, distIndex);
-  }
-  const srcIndex = normalizedPath.indexOf(srcMarker);
-  if (srcIndex >= 0) {
-    return normalizedPath.slice(0, srcIndex);
-  }
-  return null;
+  // The marker nearest the entrypoint: a checkout may itself live under a `src` or `dist` directory.
+  const index = Math.max(...['/package-dist/', '/dist/', '/src/'].map(marker => normalizedPath.lastIndexOf(marker)));
+  return index >= 0 ? normalizedPath.slice(0, index) : null;
 }
 
 function resolveOwnedLiveDaemonSessionRuntimeRoots(): string[] {
