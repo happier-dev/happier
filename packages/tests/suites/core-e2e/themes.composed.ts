@@ -375,7 +375,8 @@ async function mountThemeRuntime(platform: 'web' | 'ios') {
     const renderer = await import(renderPath) as { renderScreen(element: unknown): Promise<{ unmount(): Promise<void> }> };
     const { createElement } = await import(reactPath) as { createElement(component: unknown): unknown };
     const { Platform } = await import(nativePath) as { Platform: { OS: string } };
-    type RuntimeTheme = { colors: { background: { canvas: string } } };
+    type RuntimeTheme = { colors: { background: { canvas: string } };
+        surfaces?: { sidebar?: { root?: { base: { borderRadius?: number } } } } };
     const { UnistylesRuntime } = await import(unistylesPath) as { UnistylesRuntime: {
         getTheme(mode: 'light' | 'dark'): RuntimeTheme;
         updateTheme(mode: 'light' | 'dark', update: (previous: RuntimeTheme) => RuntimeTheme): void;
@@ -392,6 +393,10 @@ async function mountThemeRuntime(platform: 'web' | 'ios') {
     const updates = vi.spyOn(UnistylesRuntime, 'updateTheme').mockImplementation((mode, update) => {
         registered[mode] = update(registered[mode]);
     });
+    const systemUiPath = 'expo-system-ui';
+    const systemUi = await import(systemUiPath) as { setBackgroundColorAsync(color: string): Promise<void> };
+    // Native system paint is an OS boundary unavailable in the headless host.
+    const systemBackground = vi.spyOn(systemUi, 'setBackgroundColorAsync').mockResolvedValue();
     let mounted: Awaited<ReturnType<typeof renderer.renderScreen>> | undefined;
     try {
         await enrollPlatformCredentials();
@@ -400,12 +405,14 @@ async function mountThemeRuntime(platform: 'web' | 'ios') {
     } catch (error) {
         updates.mockRestore();
         reads.mockRestore();
+        systemBackground.mockRestore();
         if (descriptor) Object.defineProperty(Platform, 'OS', descriptor);
         throw error;
     }
     return {
         updates,
         readCanvas: (mode: 'light' | 'dark') => registered[mode].colors.background.canvas,
+        readSidebarRadius: (mode: 'light' | 'dark') => registered[mode].surfaces?.sidebar?.root?.base.borderRadius,
         writeUnrelatedSetting: () => {
             const state = storage.getState();
             state.applyLocalSettings({ uiFontScale: state.localSettings.uiFontScale === 1 ? 1.1 : 1 });
@@ -414,6 +421,7 @@ async function mountThemeRuntime(platform: 'web' | 'ios') {
             try { await mounted?.unmount(); } finally {
                 updates.mockRestore();
                 reads.mockRestore();
+                systemBackground.mockRestore();
                 if (descriptor) Object.defineProperty(Platform, 'OS', descriptor);
             }
         },
@@ -641,6 +649,10 @@ export async function runF4() {
         const runtime = await mountThemeRuntime(platform);
         console.info(`THEMES F4: mounted ${platform} with Account custody`);
         try {
+            if (platform === 'ios') {
+                await waitFor(() => runtime.readSidebarRadius('dark') === 12);
+                runtime.updates.mockClear();
+            }
             const actPath = 'react-test-renderer';
             const { act } = await import(actPath) as { act(callback: () => Promise<void>): Promise<void> };
             let changed: Preview | undefined;
@@ -648,6 +660,7 @@ export async function runF4() {
                 changed = await theme<Preview>('tryOn', { document: document(`CSS ${platform}`,
                     '[data-surface="sidebar"] { border-radius: 14px; }'), mode: 'dark', origin: { kind: 'editor' } });
             });
+            if (platform === 'ios') await waitFor(() => runtime.readSidebarRadius('dark') === 14);
             expect(runtime.updates).toHaveBeenCalledTimes(platform === 'web' ? 0 : 1);
             runtime.updates.mockClear();
             // A settled React turn, without advancing or inventing a timer.
@@ -656,6 +669,7 @@ export async function runF4() {
             await act(async () => { runtime.writeUnrelatedSetting(); });
             expect(runtime.updates).toHaveBeenCalledTimes(0);
             await act(async () => { await theme('revert', { previewRef: changed!.previewRef }); });
+            if (platform === 'ios') await waitFor(() => runtime.readSidebarRadius('dark') === 12);
             expect(runtime.updates).toHaveBeenCalledTimes(platform === 'web' ? 0 : 1);
         } finally { await runtime.close(); }
     }
