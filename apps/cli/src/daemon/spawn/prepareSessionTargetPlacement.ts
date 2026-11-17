@@ -81,7 +81,7 @@ export async function prepareSessionTargetPlacement(input: Readonly<{
             holder: { version: input.holderVersion, resolveArtifacts: readSessionTargetHolderArtifacts } });
         const relay = await serveSessionTargetRelay({ operations: target, lifetime: lifetime.signal, readTrustedCallerPid: input.readTrustedCallerPid,
             socketPath: input.socketPath ?? createSessionHolderSocketPath() });
-        return { ok: true, target, signal: lifetime.signal, sessionKey, onSessionEnd: step => { endSteps.push(step); }, placement: { id: target.id, holderPath: target.holderPath,
+        return { ok: true, target, signal: lifetime.signal, sessionKey, onSessionEnd: step => { endSteps.push(step); }, placement: { id: target.id, holderPath: target.holderPath, helperPath: target.helperPath,
             socketDirectory: target.socketDirectory, relaySocketPath: relay.socketPath, primarySocketPath: input.primarySocketPath ?? createTargetHolderSocketPath(target) } };
     } catch (error) {
         lifetime.abort();

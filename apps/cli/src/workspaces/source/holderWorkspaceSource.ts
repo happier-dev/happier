@@ -69,22 +69,24 @@ export function createHolderWorkspaceSource(input: Readonly<{
    * absolute root differs. Default: `rootPath`.
    */
   guestRootPath?: string;
-  holder: SessionHolderChild;
+  /** The workspace client; a function is asked on every operation (a client that lost its holder is replaced there). */
+  holder: SessionHolderChild | (() => SessionHolderChild);
   /** The digest-checked process-custody helper inside the target. */
   helperPath: string;
 }>): WorkspaceSource {
   const root = path.posix.resolve(input.rootPath);
   const guestRoot = path.posix.resolve(input.guestRootPath ?? input.rootPath);
   const relative = (target: string) => holderWorkspaceRelativePath(root, target);
+  const holder = (): SessionHolderChild => typeof input.holder === 'function' ? input.holder() : input.holder;
   const helper: WorkspaceSyncNativeConfinedDependencies = {
     platform: 'linux',
     resolveExecutable: () => input.helperPath,
-    spawnChild: (executable, args) => input.holder.spawnStream({ argv: [executable, ...args] }) as never,
+    spawnChild: (executable, args) => holder().spawnStream({ argv: [executable, ...args] }) as never,
   };
   /** One request line (+ raw content) in, one result line out, through a helper process in the target. */
   const runHelper = (command: 'workspace-confined-meta' | 'workspace-confined-write', request: Record<string, unknown>, content?: Uint8Array) =>
     new Promise<TargetResult>((resolve, reject) => {
-      const child = input.holder.spawnStream({ argv: [input.helperPath, command] });
+      const child = holder().spawnStream({ argv: [input.helperPath, command] });
       let out = '';
       child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString('utf8'); });
       child.once('error', reject);
@@ -118,7 +120,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
     return result;
   };
   const spawn = (request: Parameters<WorkspaceSource['spawn']>[0]): WorkspaceChildProcess => {
-    const child = input.holder.spawnStream(resolveHolderWorkspaceCommand(root, request));
+    const child = holder().spawnStream(resolveHolderWorkspaceCommand(root, request));
     if (request.stdoutFd !== undefined) child.stdout.pipe(createWriteStream('', { fd: request.stdoutFd, autoClose: false }));
     return child as unknown as WorkspaceChildProcess;
   };
@@ -144,7 +146,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
     write({ op: 'put', relativePath: relative(target), sizeBytes: bytes.byteLength, expect }, bytes);
   const watch = (target: string, recursive: boolean, onEvent: (event: Readonly<{ path: string; kind: 'directory' | 'file' | 'unknown'; event: string }>) => void,
     onReady?: () => void, onUnavailable?: (error: Error) => void): (() => void) => {
-    const stream: SessionHolderStreamProcess = input.holder.spawnStream({ op: 'watch', path: relative(target), recursive });
+    const stream: SessionHolderStreamProcess = holder().spawnStream({ op: 'watch', path: relative(target), recursive });
     let rest = '';
     stream.stdout.on('data', (chunk: Buffer) => {
       rest += chunk.toString('utf8');
@@ -260,7 +262,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
     }) as WorkspaceSource['replaceFile'],
     resolveExecutable: async (command: string) => {
       if (path.posix.isAbsolute(command)) return command;
-      const reply = await input.holder.request({ op: 'which', command });
+      const reply = await holder().request({ op: 'which', command });
       if (reply.ok !== true) {
         throw new PluginError({ code: 'agent_cli_target_unavailable', retryable: false,
           message: 'The Session target could not resolve a workspace executable' });

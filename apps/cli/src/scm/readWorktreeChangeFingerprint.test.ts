@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -181,9 +181,8 @@ describe('readWorktreeChangeFingerprint', () => {
             readlink: async (path: string) => { reached.push(`readlink:${path}`); return await localWorkspaceSource.readlink(path); } };
         const placed = await runWithWorkspaceSource(source, () => readWorktreeChangeFingerprint(repo));
         expect(placed).toEqual({ kind: 'available', fingerprint: await fingerprint() });
-        // Entries are addressed from Git's toplevel, the physical path (macOS: /private/var).
-        const top = await realpath(repo);
-        expect(reached).toEqual(expect.arrayContaining([`lstat:${join(top, 'tracked.txt')}`,
-            `lstat:${join(top, 'link')}`, `readlink:${join(top, 'link')}`]));
+        // Entries are addressed in the request's own path space (not Git's physical toplevel).
+        expect(reached).toEqual(expect.arrayContaining([`lstat:${join(repo, 'tracked.txt')}`,
+            `lstat:${join(repo, 'link')}`, `readlink:${join(repo, 'link')}`]));
     });
 });

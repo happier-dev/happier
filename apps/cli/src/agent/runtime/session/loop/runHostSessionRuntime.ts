@@ -266,6 +266,7 @@ import {
 import { beginProviderBindingRuntimeDiagnosticRedaction } from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
 import { logger } from '@/ui/logger';
 import { bindHostedSessionId, bindHostedSessionWorkingDirectory, runInHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { bindPlacedSessionWorkspaceSource } from '@/workspaces/source/placedSessionWorkspaceSource';
 import { bindHostedSessionStop } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
 import {
   consumePersistedTakeoverAdmissionFromEnv,
@@ -2514,6 +2515,8 @@ async function runHostedSessionRuntime(
       )
     : runtimeContext.runtimeDirectory;
   if (runtimeDirectory) bindHostedSessionWorkingDirectory(runtimeDirectory);
+  // A placed Session's checkpoints, review fingerprints and media act on its target, not this Machine's path.
+  bindPlacedSessionWorkspaceSource();
   const checkpointCodeRollback = createRepositoryCheckpointCodeRollback({
     session: currentLifecycleSession,
     runtimeDirectory,

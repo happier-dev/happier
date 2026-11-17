@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
@@ -16,11 +16,12 @@ export type WorktreeChangeFingerprintResult =
 
 export async function readWorktreeChangeFingerprint(cwd: string): Promise<WorktreeChangeFingerprintResult> {
     try {
-        const root = await runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--show-toplevel'] });
+        // Relative to the request's cwd: a placed Session's Git reports the target's own absolute paths,
+        // which this Machine's path space (the workspace source's addressing) does not contain.
+        const root = await runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--show-cdup'] });
         if (!root.success) return { kind: 'unavailable' };
         // Remove Git's line terminator only: spaces/newlines can belong to the directory name.
-        const repoRoot = root.stdout.replace(/\n$/, '');
-        if (!repoRoot) return { kind: 'unavailable' };
+        const repoRoot = resolve(cwd, root.stdout.replace(/\n$/, ''));
 
         const [status, modified, untracked] = await Promise.all([
             runScmCommand({

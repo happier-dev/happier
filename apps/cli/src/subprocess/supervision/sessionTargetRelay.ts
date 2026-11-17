@@ -50,6 +50,8 @@ export type SessionTargetPlacement = Readonly<{
     relaySocketPath: string;
     /** The primary Agent's holder socket, chosen by the daemon so its Files/Git client can reach that holder. */
     primarySocketPath?: string;
+    /** The digest-checked custody helper in the target: the runner's workspace operations run through it. */
+    helperPath?: string;
     launch?: SessionTargetLaunch;
 }>;
 
