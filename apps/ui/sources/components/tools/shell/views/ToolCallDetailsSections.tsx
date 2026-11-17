@@ -128,6 +128,11 @@ export const ToolCallDetailsSections = React.memo(
     );
     // Keep the returned approval reference navigable; its current decision comes from the header's matched disposition.
     const failure = outcome.kind === 'failure' ? outcome.failure : null;
+    // A settled call has nothing left to approve or deny: a field the review can't represent drops its
+    // approval advice, and input with nothing representable reads as it was sent.
+    const historyFields = React.useMemo(() => actionFields?.unrepresentable && (failure || tool.state === 'completed' || tool.state === 'error')
+      ? { ...actionFields, rows: actionFields.rows.filter(row => row.kind !== 'unrepresentable') } : actionFields,
+    [actionFields, failure, tool.state]);
     const failureMessage = failure?.message ?? null;
     const approvalRequest = actionId && outcome.kind === 'approval_requested' ? outcome : null;
     const pending = outcome.kind === 'pending' ? outcome : null;
@@ -158,9 +163,9 @@ export const ToolCallDetailsSections = React.memo(
 
     return (
       <>
-        {actionFields && actionFields.rows.length > 0 ? (
+        {historyFields && historyFields.rows.length > 0 ? (
           <ActionApprovalFieldsCard
-            presentation={actionFields}
+            presentation={historyFields}
             anatomy="page"
             serverId={props.serverId ?? null}
             exactSessionReads

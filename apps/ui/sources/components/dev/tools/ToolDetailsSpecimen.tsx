@@ -29,9 +29,23 @@ const CALLS: Readonly<Record<string, Readonly<{ input: unknown; result: unknown 
         result: { content: [{ type: 'text', text: JSON.stringify({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted',
             operation: { serverId: 'server-1', machineId: 'machine-1', operationId: 'operation-1' } }) }] },
     },
+    // An Agent's template Copy as recorded live (SMOKE-CLOSE replay7): the call completes by handing off to an approval.
+    copy: {
+        input: {
+            actionId: 'template.instantiate',
+            input: {
+                source: { kind: 'artifact', serverId: 'server-1', artifactId: '00749bf1-5af6-4820-b331-618adcd7ac55' },
+                expectedVersion: '1.2.0',
+                creation: { directory: { kind: 'path', path: '~/code/happier' } },
+                name: 'Release captain',
+            },
+        },
+        result: { content: [{ type: 'text', text: JSON.stringify({ kind: 'approval_request_created',
+            artifactId: 'a3680fd5-e8ed-881a-a235-95644f44cdc9', actionId: 'template.instantiate' }) }] },
+    },
 };
 
-/** Dev-only: the tool-call details page over a completed Action call (`call` = archive | spawn). */
+/** Dev-only: the tool-call details page over a completed Action call (`call` = archive | spawn | copy). */
 export function ToolDetailsSpecimen(props: Readonly<{ call: string }>) {
     const call = CALLS[props.call] ?? CALLS.archive!;
     const id = `specimen-${props.call}`;
@@ -43,7 +57,7 @@ export function ToolDetailsSpecimen(props: Readonly<{ call: string }>) {
         <View style={styles.page}>
             <AppSessionTranscriptSourceProvider sessionId={SESSION_ID} readOnly navigation="none">
                 <ToolFullView tool={tool} owningMessageId={id} sessionId={SESSION_ID}
-                    header={<PageHeader title={props.call === 'spawn' ? 'Create session' : 'Archive session'} alwaysShowTitle />} />
+                    header={<PageHeader title={props.call === 'spawn' ? 'Create session' : props.call === 'copy' ? 'Make a copy of a Bot template' : 'Archive session'} alwaysShowTitle />} />
             </AppSessionTranscriptSourceProvider>
         </View>
     );

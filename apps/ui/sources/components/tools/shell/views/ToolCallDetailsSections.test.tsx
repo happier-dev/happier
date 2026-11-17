@@ -55,3 +55,23 @@ it.each([
     expect(screen.findAllByTestId('tool-details-approval-request')).toHaveLength(0);
     await screen.unmount();
 });
+
+// SEE-B 11-17: a refused Agent Copy (stale `creation` shape) is history; it has nothing left to approve or deny.
+it('shows a refused call its input as sent, without advice to deny or resend it', async () => {
+    const refusal = JSON.stringify({ errorCode: 'invalid_parameters', error: 'invalid_parameters',
+        details: { issues: [{ code: 'unrecognized_keys', path: ['creation'], message: 'Unrecognized input fields' }] } });
+    const tool: ToolCall = {
+        name: 'mcp__happier__action_execute', state: 'error',
+        // The live Muse call (SEE-B 11-17): its input arrived as a JSON string, with `name` misplaced inside `creation`.
+        input: { actionId: 'template.instantiate', input: JSON.stringify({ creation: { directory: { kind: 'path', path: '~' },
+            name: 'Coffee copy' }, expectedVersion: '1.0.10', source: { artifactId: '00749bf1-5af6-4820-b331-618adcd7ac55',
+            kind: 'artifact', serverId: 'home' } }) },
+        createdAt: 1, startedAt: 1, completedAt: 2, description: null,
+        result: { text: `tool failed: ${refusal}`, status: 'failed', failureReason: refusal },
+    };
+    const screen = await renderScreen(<ToolCallDetailsSections tool={tool} />);
+    expect(screen.findAllByTestId('approvals.unrepresentable-details')).toHaveLength(0);
+    expect(screen.getTextContent()).not.toContain('approvals.unsafeDetailsBody');
+    expect(screen.getTextContent()).toContain('Coffee copy');
+    await screen.unmount();
+});

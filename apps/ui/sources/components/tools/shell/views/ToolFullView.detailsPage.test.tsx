@@ -171,7 +171,9 @@ describe('ToolFullView as the tool-details page', () => {
         await screen.pressByTestIdAsync('approvals.technical-details.header');
         expect(collectHostText(screen.tree).join('\n')).toContain(expectedSession);
       } else {
-        expect(warnings.length).toBeGreaterThan(0);
+        // A completed call is history: no approval advice, and no Session value invented for it.
+        expect(warnings).toHaveLength(0);
+        expect(collectHostText(screen.tree).join('\n')).not.toContain('originating-session');
       }
       await screen.unmount();
     }
