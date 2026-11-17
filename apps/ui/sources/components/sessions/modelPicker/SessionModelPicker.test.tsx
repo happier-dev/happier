@@ -874,6 +874,37 @@ describe('SessionModelPicker', () => {
         expect(errorItems.props.retry).toBeUndefined();
     });
 
+    it('keeps a favorite in the canonical unavailable group until its source recovers', async () => {
+        const { selected, providerGroups } = experimentalProviderGroup('pc_favorite_recovery');
+        const ready = createProviderModelProjectionGroupFixture({ ...providerGroups[0]!,
+            rows: providerGroups[0]!.rows.map(row => ({ ...row, compatibility: { ...row.compatibility, confirmed: true } })),
+        });
+        const refused = createProviderModelProjectionGroupFixture({ ...ready,
+            authorization: { authorized: false, error: createProviderErrorV1('provider_endpoint_unreachable') },
+        });
+        const onSelect = vi.fn();
+        const picker = (group: typeof ready) => <SessionModelPicker
+            agentTargetKey={selected.agentTargetKey} declarationContext={{ kind: 'account' }}
+            nativeModels={[{ value: 'ready-native', label: 'Ready native' }]}
+            providerGroups={[group]} providerProjectionAuthoritative selected={selected}
+            favoriteEntries={[{ ref: selected }]} onSelect={onSelect} />;
+        const screen = await renderScreen(picker(ready));
+        const optionId = `model-picker-overlay-option:${sessionModelSelectionKey(selected)}`;
+        await screen.pressByTestIdAsync(optionId);
+        expect(onSelect).toHaveBeenCalledWith(selected);
+
+        await screen.update(picker(refused));
+        const sections = screen.findByType(SelectionList).props.rootStep.sections;
+        expect(sections.map((section: { id: string }) => section.id)).toEqual(['native', 'unavailable']);
+        expect(sections[1]).toMatchObject({ collapsible: true, options: [{ disabled: true }] });
+
+        await screen.update(picker(ready));
+        expect(screen.findByType(SelectionList).props.rootStep.sections[0].id).toBe('favorites');
+        onSelect.mockClear();
+        await screen.pressByTestIdAsync(optionId);
+        expect(onSelect).toHaveBeenCalledWith(selected);
+    });
+
     it('projects exact favorites as the first canonical section and keeps unavailable favorites removable', async () => {
         const available = {
             agentTargetKey: 'agent:happier.agent.codex/codex',

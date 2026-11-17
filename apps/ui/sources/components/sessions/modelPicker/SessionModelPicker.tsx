@@ -559,15 +559,14 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             if (favoriteKeys.has(key)) return [];
             favoriteKeys.add(key);
             const projected = optionByKey.get(key);
+            if (projected) return [projected];
             return [{
                 value: entry.ref,
-                source: projected?.source,
-                label: projected?.label ?? entry.label ?? entry.ref.modelId,
-                searchText: projected?.searchText ?? entry.ref.modelId,
-                description: projected?.description ?? entry.description,
-                accessibilityLabel: projected?.accessibilityLabel ?? entry.accessibilityLabel,
-                disabled: projected ? projected.disabled : true,
-                trailingStatusIcon: projected?.trailingStatusIcon,
+                label: entry.label ?? entry.ref.modelId,
+                searchText: entry.ref.modelId,
+                description: entry.description,
+                accessibilityLabel: entry.accessibilityLabel,
+                disabled: true,
             }];
         });
         return [
