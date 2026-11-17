@@ -222,25 +222,6 @@ env:
   HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
 
 jobs:
-  # Schedules fire only on the default branch. The v0.3 journey suites run
-  # affected-only per v0.3 push, so the nightly dispatches their full run on
-  # v0.3 through its own manual-dispatch workflow (v0.3's workflow file and source).
-  nightly-v0-3-journeys:
-    name: Dispatch the full v0.3 journey suites
-    if: ${{ github.event_name == 'schedule' }}
-    runs-on: ubuntu-24.04
-    # One API call; GitHub's own job limit is the hang guard otherwise.
-    timeout-minutes: 5
-    permissions:
-      actions: write
-    steps:
-      - name: Dispatch tests-dispatch.yml on v0.3
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh workflow run tests-dispatch.yml --repo "$GITHUB_REPOSITORY" --ref v0.3
-          -f profile=custom -f custom_checks=e2e_core,e2e_core_slow,ui_e2e,daemon_e2e
-
   ci_plan:
     name: Resolve affected source-CI lanes
     permissions:
@@ -3225,7 +3206,7 @@ jobs:
   ci_summary:
     name: CI result summary (all lanes)
     if: always()
-    needs: [process-identity-windows, pre-release-packaged-cli, pre-release-mobile-native, ci_plan, network-transfer, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-windows-service-launcher, build-cli, unit-summary, nightly-v0-3-journeys]
+    needs: [process-identity-windows, pre-release-packaged-cli, pre-release-mobile-native, ci_plan, network-transfer, ui-e2e, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, shared-packages-unit, server, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress, build-windows-service-launcher, build-cli, unit-summary]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

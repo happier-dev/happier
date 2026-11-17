@@ -1,0 +1,28 @@
+name: NIGHTLY — v0.3 journey suites
+
+# Schedules fire only on the default branch. The v0.3 journey suites run
+# affected-only per v0.3 push, so this nightly dispatches their full run on
+# v0.3 through its own manual-dispatch workflow (v0.3's workflow file and source).
+# Kept out of tests.yml: tests.yml is also a reusable workflow, and callers that
+# grant only `actions: read` reject any nested job requesting `actions: write`.
+on:
+  schedule:
+    - cron: "43 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  dispatch:
+    name: Dispatch the full v0.3 journey suites
+    runs-on: ubuntu-24.04
+    # One API call; GitHub's own job limit is the hang guard otherwise.
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch tests-dispatch.yml on v0.3
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh workflow run tests-dispatch.yml --repo "$GITHUB_REPOSITORY" --ref v0.3
+          -f profile=custom -f custom_checks=e2e_core,e2e_core_slow,ui_e2e,daemon_e2e
