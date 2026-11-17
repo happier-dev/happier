@@ -125,6 +125,19 @@ test('reload verdict refuses missing sign-in, pending readiness, changed managed
   assert.equal(projectStackReloadVerification(input).status, 'READY');
 });
 
+test('a start whose readiness is still pending with a live runner is reported as readiness pending, not an identity mismatch', () => {
+  // agent-qa-usage-insights reload 201: the background readiness budget ran out while
+  // the replacement runner was still starting; the verdict said identity:server loaded null.
+  const info = readyInfo();
+  info.runtime.sourceRuntimeIdentities.server.loaded = null;
+  info.runtime.sourceRuntimeIdentities.daemon.loaded = null;
+  const verdict = projectStackReloadVerification({ info, beforeManagedCli: info.runtime.managedCli,
+    start: { readiness: 'pending', runnerPid: 4242 } });
+  assert.equal(verdict.status, 'NOT_READY');
+  assert.equal(verdict.check, 'readiness');
+  assert.deepEqual(verdict.evidence, { status: 'pending', runner: 'live', runnerPid: 4242 });
+});
+
 test('export snapshots use the existing selection and loaded projection; disabled UI needs no render', () => {
   const info = readyInfo();
   info.runtime.mode = 'require';

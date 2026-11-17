@@ -1,7 +1,7 @@
 import { readSourceReloadRefusal } from '../runtime/shared/source_reload_refusal.mjs';
 
 /** Project the existing lifecycle owners' evidence into one reload verdict. */
-export function projectStackReloadVerification({ info, beforeManagedCli, auth, agent, render, failure } = {}) {
+export function projectStackReloadVerification({ info, beforeManagedCli, start, auth, agent, render, failure } = {}) {
   const runtime = info?.runtime;
   const hasBaseline = beforeManagedCli?.status === 'installed' && Boolean(beforeManagedCli.binaryPath);
   const baseline = hasBaseline ? {} : { baseline: 'unavailable' };
@@ -14,6 +14,11 @@ export function projectStackReloadVerification({ info, beforeManagedCli, auth, a
       ...(reason ? { reason } : {}),
       ...(failure.error?.pluginFailures ? { pluginFailures: readSourceReloadRefusal(failure.error).pluginFailures } : {}),
     });
+  }
+  // The start owner left its live runner starting after the readiness budget:
+  // no loaded identity exists yet, so an identity comparison would mislabel it.
+  if (start?.readiness === 'pending') {
+    return notReady('readiness', { status: 'pending', runner: 'live', runnerPid: start.runnerPid ?? null });
   }
   if (!runtime?.running || runtime.valid !== true) {
     return notReady('readiness', { running: runtime?.running === true, valid: runtime?.valid === true });

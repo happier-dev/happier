@@ -68,9 +68,12 @@ export async function runVerifiedStackStart({ rootDir, stackName, scriptPath, ar
     beforeManagedCli = before?.runtime?.managedCli ?? null;
     check = 'start';
     const { runStackScriptWithStackEnv } = await import('./run_script_with_stack_env.mjs');
-    await runStackScriptWithStackEnv({ rootDir, stackName, scriptPath, args, background: true });
+    const start = await runStackScriptWithStackEnv({ rootDir, stackName, scriptPath, args, background: true });
     check = 'observation';
     const info = await readStackInfoSnapshot({ rootDir, stackName });
+    if (start?.readiness === 'pending') {
+      return { ...projectStackReloadVerification({ info, beforeManagedCli, start }), durationMs: Date.now() - startedAt };
+    }
     check = 'auth';
     // Keep the envelope private: only the owner's authenticated boolean is exposed.
     const runtimeMode = info?.runtime?.mode;

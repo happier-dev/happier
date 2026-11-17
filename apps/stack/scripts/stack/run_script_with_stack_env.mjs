@@ -786,7 +786,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
   { runCaptureResult: capture = runCaptureResult, runProcess = runDevTargetControlProcess } = {}) {
   const isStartLikeScript = scriptPath === 'dev.mjs' || scriptPath === 'run.mjs';
   const isStartLikeJsonDryRun = isStartLikeScript && args.includes('--json');
-  await withStackEnv({
+  return await withStackEnv({
     stackName,
     extraEnv,
     reconcileDaemonRuntimeState: !isStartLikeJsonDryRun,
@@ -860,6 +860,8 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
         serverComponent === 'happier-server'
           ? (stackEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0'
           : false;
+      // A background start reports a readiness budget it left pending on a live runner.
+      let startOutcome = { readiness: 'ready' };
       let preservedDaemonForRestart = false;
       let preserveDaemonForRestart = true;
       let restartIdentityDaemons = [];
@@ -1344,6 +1346,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               console.warn(
                 `[stack] ${stackName}: readiness is still pending; leaving live runner pid=${child.pid} active. log: ${logPath}`,
               );
+              startOutcome = { readiness: 'pending', runnerPid: child.pid };
             } else {
               await terminateSpawnedRunnerForBootFailure(child, {
                 runtimeStatePath,
@@ -1358,7 +1361,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             console.log(`[stack] ${stackName}: logs: ${logPath}`);
           }
           release();
-          return;
+          return startOutcome;
         }
 
         let exit = { code: null, sig: null, ok: false };
@@ -1522,6 +1525,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
             console.warn(
               `[stack] ${stackName}: readiness is still pending; leaving live runner pid=${child.pid} active. log: ${logPath}`,
             );
+            startOutcome = { readiness: 'pending', runnerPid: child.pid };
           } else {
             await terminateSpawnedRunnerForBootFailure(child, {
               runtimeStatePath,
@@ -1536,7 +1540,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
           console.log(`[stack] ${stackName}: logs: ${logPath}`);
         }
         release();
-        return;
+        return startOutcome;
         }
         if (isTrueRestart && !wantsJson) {
         const pinnedPort = coercePort(env.HAPPIER_STACK_SERVER_PORT);
