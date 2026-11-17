@@ -1102,7 +1102,7 @@ describe('createDefaultActionExecutor approvals', () => {
         expect(persistedApproval(artifactId)).not.toHaveProperty('execution');
     });
 
-    it('delivers a deferred Session approval result and rejoins receipt replay when Action discovery is unavailable', async () => {
+    it('preserves the host input record when replaying a deferred result without Action discovery', async () => {
         const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
         const { createPlainSessionWithDisplayRecordFixture } = await import('@/dev/testkit/fixtures/sessionDisplayFixtures');
         const { storage } = await import('@/sync/domains/state/storage');
@@ -1121,7 +1121,10 @@ describe('createDefaultActionExecutor approvals', () => {
             executionOriginV1: { v: 1, authority: 'account_automation', surface: 'mcp',
                 caller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 },
                 serverId: homeId, serverIdentityId: 'srv_approval_home', accountId: 'account-a',
-                actionId: 'session.status.set_reason', requestId: 'original-status-request' },
+                actionId: 'session.status.set_reason', requestId: 'original-status-request',
+                actionRequestAttributionV1: { requestRef: 'original-input',
+                    requester: { serverId: 'srv_approval_home', accountId: 'account-a' },
+                    persona: { serverId: 'srv_approval_home', sessionId: 's1' }, origin: null } },
             actionId: 'session.status.set_reason', actionArgs: { reason: 'Investigating' }, summary: 'Set status',
             decision: { kind: 'approve', decidedAtMs: 1, authority: 'present_user' },
             execution: { executedAtMs: 2, ok: true, result: { ok: true, sessionId: 's1', reason: 'Investigating', version: 2 } },
@@ -1152,7 +1155,14 @@ describe('createDefaultActionExecutor approvals', () => {
         }
         expect(delivered).toHaveLength(2);
         for (const input of delivered) expect(input).toMatchObject({ localId: `approval-result:${artifactId}`,
-            targetMachineId: 'machine-exact', requestedAction: { v: 1, kind: 'enqueue' } });
+            targetMachineId: 'machine-exact', requestedAction: { v: 1, kind: 'enqueue' },
+            content: { t: 'plain', v: { role: 'user', meta: {
+                sentFrom: 'cli', source: 'ui', happierProvenanceV1: { v: 1, kind: 'host', producer: 'happierMcp' },
+                happierInputRequestV1: { v: 1, producer: 'happierMcp', caller: { kind: 'host' }, permission: {},
+                    actionRequestAttributionV1: { requestRef: 'original-input',
+                        requester: { serverId: 'srv_approval_home', accountId: 'account-a' },
+                        persona: { serverId: 'srv_approval_home', sessionId: 's1' }, origin: null } },
+            } } } });
         expect(persistedApproval(artifactId)).toMatchObject({ status: 'executed', execution: { ok: true } });
     });
 

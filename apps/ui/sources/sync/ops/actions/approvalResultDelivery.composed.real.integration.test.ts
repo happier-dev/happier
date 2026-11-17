@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { PENDING_INPUT_PROTOCOL_VERSION_V5 } from '@happier-dev/protocol/clientCompatibility/primitives';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { buildApprovalDecisionResult } from '@happier-dev/protocol/actions/executor/approvalResults';
+import { buildProtectedSessionInputTextRecordV1, buildTrustedHostSessionInputAdmissionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
@@ -19,6 +21,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { createDefaultActionExecutor } from './defaultActionExecutor';
+import { sendSessionMessageWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 
 const homeIdentity = 'srv_01234567890123456789012345678901';
 let database: LightSqliteHarness;
@@ -85,6 +88,8 @@ it.each(['available', 'update-required', 'unavailable', 'uncommitted'] as const)
         executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
             caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
             serverId: home.id, serverIdentityId: homeIdentity, accountId: account.id,
+            actionRequestAttributionV1: { requestRef: 'original-input', requester: { serverId: homeIdentity, accountId: account.id },
+                persona: { serverId: homeIdentity, sessionId: session.id }, origin: null },
             machineId: 'retired-birth-machine', actionId: 'session.status.set_reason', requestId: randomUUID() },
         actionId: 'session.status.set_reason', actionArgs: { reason: 'Completed' }, summary: 'Set status',
         decision: { kind: 'approve', decidedAtMs: 1, authority: 'present_user' },
@@ -101,6 +106,25 @@ it.each(['available', 'update-required', 'unavailable', 'uncommitted'] as const)
         const executor = createDefaultActionExecutor({ resolveServerIdForSessionId: () => home.id });
         const replay = () => executor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user',
             currentAccount: { accountId: account.id, serverId: home.id, serverIdentityId: homeIdentity } });
+        if (state === 'available') {
+            const observed = buildApprovalDecisionResult(approval);
+            if (!observed.ok || !observed.result || typeof observed.result !== 'object' || Array.isArray(observed.result)) {
+                throw new Error('Expected a retained approval result');
+            }
+            const message = JSON.stringify({ artifactId, actionId: approval.actionId, ...observed.result });
+            const localId = `approval-result:${artifactId}`;
+            const initial = await app.inject({ method: 'POST', url: `/v2/sessions/${session.id}/pending`,
+                headers: { 'x-test-user-id': account.id, 'x-happier-account-stored-content-protocol': '4' },
+                payload: { localId, targetMachineId: machine.id, requestedAction: { v: 1, kind: 'enqueue' },
+                    content: { t: 'plain', v: buildProtectedSessionInputTextRecordV1({ text: message,
+                        admission: buildTrustedHostSessionInputAdmissionV1('mcp', approval.executionOriginV1.actionRequestAttributionV1) }) } } });
+            expect(initial.statusCode, initial.body).toBe(200);
+            // The previous UI adapter rebuilt ordinary UI metadata for this
+            // retained localId. Explicit rejection retires that local projection.
+            expect(await sendSessionMessageWithServerScope({ sessionId: session.id, serverId: home.id,
+                message, messageLocalId: localId, requestedAction: { v: 1, kind: 'enqueue' } }))
+                .toMatchObject({ ok: false, errorCode: 'session_input_idempotency_conflict' });
+        }
         if (state === 'update-required' || state === 'unavailable') {
             expect(await replay()).toMatchObject({ ok: false, errorCode: state === 'update-required'
                 ? 'session_input_target_update_required' : 'session_input_target_unavailable' });

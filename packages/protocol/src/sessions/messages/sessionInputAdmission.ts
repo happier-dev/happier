@@ -721,6 +721,25 @@ export function buildTrustedHostSessionInputAdmissionV1(
   });
 }
 
+/** Host transport changes must retain the same Pending content identity. */
+export function buildProtectedSessionInputTextRecordV1(params: Readonly<{
+  text: string;
+  admission: Readonly<{ provenance: SessionMessageProvenance; request: SessionInputRequest }>;
+  meta?: Readonly<Record<string, unknown>>;
+}>) {
+  return {
+    role: 'user',
+    content: { type: 'text', text: params.text },
+    meta: {
+      ...params.meta,
+      sentFrom: 'cli',
+      source: params.admission.request.producer === 'automation' ? 'automation' : 'ui',
+      [SESSION_MESSAGE_PROVENANCE_META_KEY]: params.admission.provenance,
+      [SESSION_INPUT_REQUEST_META_KEY]: params.admission.request,
+    },
+  } as const;
+}
+
 export const SessionInputAuthorityV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(SessionInputProtectedCommonV1Schema, {
   permission: z.strictObject({
     requestedPermissionCeiling: zMini.optional(asProtocolZod(AgentPermissionIntentV1Schema)),

@@ -2431,6 +2431,8 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
     /** Validated author intent retained for same-Action transport relays. */
     authoredInput?: SessionMessageSendAuthoredInput;
+    /** Canonical host producer admission; in-process only, never Action JSON. */
+    inputAdmission?: ReturnType<typeof import('../../sessions/messages/sessionInputAdmission.js').buildTrustedHostSessionInputAdmissionV1>;
     callerInputConstraints?: CallerInputConstraintsV1;
     sessionId: string;
     message: string;

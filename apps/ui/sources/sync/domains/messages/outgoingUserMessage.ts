@@ -14,7 +14,7 @@ import type { TranscriptAccountActor } from "@happier-dev/session-core/messages"
 import { nowServerMs } from '@/sync/runtime/time';
 import type { RawRecord } from "@happier-dev/session-core/raw";
 import type { SessionMessageHostAdmissionOrigin } from '@/sync/domains/session/input/types';
-import { buildTrustedHostSessionInputAdmissionV1, SESSION_INPUT_REQUEST_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, stripSessionInputProtectedMeta } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildProtectedSessionInputTextRecordV1, buildTrustedHostSessionInputAdmissionV1, SESSION_INPUT_REQUEST_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, stripSessionInputProtectedMeta } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { projectSessionMessageModelSelectionToLegacyModelV1, withSessionMessageModelSelectionV1, type ProviderBoundModelRef, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { resolveEffectiveApiTokenModelRefV1, resolveEffectiveApiTokenPermissionModeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { SentFrom } from '@happier-dev/protocol/sentFrom';
@@ -128,6 +128,11 @@ export function buildOutgoingUserTextRecord(params: Readonly<{
     /** Per-input permission grant; absent/null retains the unrestricted sender's policy. */
     allowedPermissionModes?: readonly PermissionMode[] | null;
 }>): RawRecord {
+    if (typeof params.hostAdmissionOrigin === 'object') {
+        return buildProtectedSessionInputTextRecordV1({ text: params.text,
+            admission: params.hostAdmissionOrigin.admission,
+            meta: stripOutgoingUserMessageProtectedMeta(params.metaOverrides) });
+    }
     const modelContext = resolveOutgoingModelContext(params.session, params.agentId);
     const structuredModelSelection = constrainOutgoingModelSelection(
         modelContext.selection,

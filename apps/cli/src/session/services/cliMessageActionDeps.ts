@@ -93,6 +93,7 @@ export function createCliMessageActionDeps(
   return {
     sessionSendMessage: async ({
       callerInputConstraints,
+      inputAdmission,
       context,
       sessionId,
       message,
@@ -670,7 +671,7 @@ export function createCliMessageActionDeps(
         // Original Session input and the shared root-bounded Refine child are
         // protected host producers regardless of their original surface.
         // Session/plugin callers retain their causal proofs above.
-        ...((reply !== undefined || callerSurface === 'cli' || context?.externalActionExecutionAuthorization
+        ...(inputAdmission ? { inputAdmission } : (reply !== undefined || callerSurface === 'cli' || context?.externalActionExecutionAuthorization
           && (isOriginalSessionInputExternalActionCustody(context.externalActionExecutionAuthorization.binding)
             || isScmRefineInputPurposeV1({ authorization: context.externalActionExecutionAuthorization,
               effectActionId: 'session.message.send', sessionId, localId, requestedAction, recipient,

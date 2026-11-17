@@ -99,7 +99,8 @@ export type SessionMessageCallerSurface =
  * Trusted in-process admission selector. This never crosses Action/plugin JSON
  * or a server wire shape; the canonical Message record builder consumes it.
  */
-export type SessionMessageHostAdmissionOrigin = 'voice' | 'file_review_note';
+export type SessionMessageHostAdmissionOrigin = 'voice' | 'file_review_note'
+    | Readonly<{ kind: 'action'; admission: ReturnType<typeof import('@happier-dev/protocol/sessions/messages/sessionInputAdmission').buildTrustedHostSessionInputAdmissionV1> }>;
 
 export type SubmitSessionUserMessageOptions = Readonly<{
     sessionId: string;

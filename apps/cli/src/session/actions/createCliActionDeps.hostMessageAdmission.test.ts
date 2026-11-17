@@ -26,6 +26,50 @@ vi.mock('@/api/session/sockets', async importOriginal => {
 
 describe('CLI host Message admission', () => {
   beforeEach(() => vi.clearAllMocks());
+  it('keeps the original host input record for a retained approval result', async () => {
+    const accountId = 'approval-owner';
+    const serverId = 'approval-profile';
+    const serverIdentityId = 'srv_approval_home';
+    const sessionId = 'cmv3approvalresultaaaaaaa';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+    const attribution = { requestRef: 'original-input', requester: { accountId, serverId: serverIdentityId },
+      persona: { serverId: serverIdentityId, sessionId }, origin: null };
+    const writes: unknown[] = [];
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: accountId } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200,
+        data: createAccountEncryptionCurrentnessFixture() };
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
+        id: sessionId, active: true, encryptionMode: 'plain', machineId: 'approval-machine',
+        metadata: JSON.stringify({ machineId: 'approval-machine', permissionMode: 'yolo', model: 'current-model' }),
+      }) } };
+      throw new Error(`Unexpected approval-result HTTP read: ${url}`);
+    });
+    http.post.mockImplementation(async (_url: string, body: unknown) => {
+      writes.push(body); return { status: 200, data: { didWrite: true, terminal: false } };
+    });
+    const deps = createCliActionDeps({ token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
+      serverId, serverIdentityId, machineAdmissionTransport: async request => {
+        writes.push(request);
+        return { status: 'accepted', localId: 'approval-result:retained' };
+      } });
+    const result = await deps.sessionSendMessage!({ sessionId, message: 'Recorded Action result',
+      localId: 'approval-result:retained', requestedAction: { v: 1, kind: 'enqueue' }, reply: 'none',
+      actionCaller: { kind: 'host' }, callerSurface: 'mcp',
+      context: { surface: 'mcp', authority: 'account_automation', runtimeAccountId: accountId, serverId,
+        serverIdentityId, actionCaller: { kind: 'host' }, actionRequestAttributionV1: attribution },
+    });
+    expect(result).toMatchObject({ status: 'accepted', localId: 'approval-result:retained' });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({ content: { t: 'plain', v: {
+      role: 'user', content: { type: 'text', text: 'Recorded Action result' }, meta: {
+        sentFrom: 'cli', source: 'ui', happierProvenanceV1: { v: 1, kind: 'host', producer: 'happierMcp' },
+        happierInputRequestV1: { v: 1, producer: 'happierMcp', caller: { kind: 'host' }, permission: {},
+          actionRequestAttributionV1: attribution },
+      },
+    } } });
+  });
   it.each(['retained_alias', 'missing_machine'] as const)(
     'preserves the approval-result admission failure for %s', async failure => {
     const accountId = 'approval-owner';

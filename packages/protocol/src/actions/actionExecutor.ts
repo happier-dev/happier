@@ -521,7 +521,7 @@ import {
   parseQualifiedPluginActionId,
   type QualifiedPluginActionId,
 } from '../plugins/actions/invocation.js';
-import { PluginSessionInputAttachmentsV1Schema, PluginSessionInputSourceV1Schema, PluginSessionUserTextAuthoredFieldSchemasV1, SessionInputSourceSessionV1Schema, SessionInputAdmissionResultV1Schema, derivePluginSessionInputLocalIdV1, deriveWorkflowSessionInputLocalIdV2 } from '../sessions/messages/sessionInputAdmission.js';
+import { PluginSessionInputAttachmentsV1Schema, PluginSessionInputSourceV1Schema, PluginSessionUserTextAuthoredFieldSchemasV1, SessionInputSourceSessionV1Schema, SessionInputAdmissionResultV1Schema, buildTrustedHostSessionInputAdmissionV1, derivePluginSessionInputLocalIdV1, deriveWorkflowSessionInputLocalIdV2 } from '../sessions/messages/sessionInputAdmission.js';
 import { PendingRequestedActionV1Schema, SessionPendingActionSetInputV1Schema, PendingResetStartSetInputV1Schema, PendingResetStartCancelInputV1Schema } from '../sessions/pending/pendingRequestedActionV1.js';
 import { PendingLocalIdSchema } from '../sessions/pending/pendingLocalId.js';
 import {
@@ -1381,6 +1381,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           message,
           authoredInput: { sessionId: origin.caller.sessionId, message, localId,
             requestedAction, reply: 'none' },
+          inputAdmission: buildTrustedHostSessionInputAdmissionV1('mcp', origin.actionRequestAttributionV1),
           // Ordinary host input carries no question/reply correlation or human
           // permission intent. The existing Pending identity joins retries even
           // after this result has materialized into the parent transcript.

@@ -4321,6 +4321,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           ownedAccount?.dispose();
         }
       }
+      const hostAdmissionOrigin = args.inputAdmission
+        ? { kind: 'action' as const, admission: args.inputAdmission }
+        : args.callerSurface === 'voice' ? 'voice' as const : undefined;
       const delivery = await withAccountLifetime(signal, lifetimeSignal => sendSessionMessageWithServerScope({
         sessionId,
         message,
@@ -4330,7 +4333,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         requestedAction,
         displayText,
         metaOverrides: permissionModeOverride ? { ...messageMeta, permissionMode: permissionModeOverride } : messageMeta,
-        ...(args.callerSurface === 'voice' ? { hostAdmissionOrigin: 'voice' as const } : {}),
+        ...(hostAdmissionOrigin ? { hostAdmissionOrigin } : {}),
         signal: lifetimeSignal,
       }));
       return projectServerScopedSessionSendMessageResult(delivery);

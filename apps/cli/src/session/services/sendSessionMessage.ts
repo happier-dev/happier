@@ -17,7 +17,7 @@ import { assertSessionInputAdmissionReceiptForAuthorityV1, type SessionInputResu
     type SessionInputResultV1, type SessionInputUsageV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 export type { SessionInputResultV1, SessionInputUsageV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
-import { SESSION_MESSAGE_PROVENANCE_META_KEY, SessionInputRequestSchema, SessionMessageProvenanceSchema, stripSessionInputProtectedMeta, readSessionInputAuthority, readSessionInputSenderSessionIdV1, deriveWorkflowSessionInputLocalIdV2, buildTrustedHostSessionInputAdmissionV1, type SessionInputReplyIntentV1, type SessionInputEnqueueResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { SESSION_MESSAGE_PROVENANCE_META_KEY, SessionInputRequestSchema, SessionMessageProvenanceSchema, stripSessionInputProtectedMeta, readSessionInputAuthority, readSessionInputSenderSessionIdV1, deriveWorkflowSessionInputLocalIdV2, buildProtectedSessionInputTextRecordV1, buildTrustedHostSessionInputAdmissionV1, type SessionInputReplyIntentV1, type SessionInputEnqueueResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { ProviderErrorV1, SessionInputRequest, SessionMessageProvenance, SessionInputAdmissionRejectionCodeV1, SessionMessageSendResultV1, SessionPendingEnqueueByMachineRequestV1, SessionPendingExecutionRunEnqueueByMachineRequestV2, PendingRequestedActionV1, ParticipantRecipientV1, ExecutionRunInputTurnV1, ExecutionRunPublicState } from '@happier-dev/protocol';
 import type { PendingDeliveryStatusV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
@@ -385,14 +385,6 @@ function resolvePermissionIntent(params: Readonly<{
   }
   const resolved = resolvePermissionIntentFromSessionMetadata(params.decryptedMetadata);
   return resolved?.intent ?? 'default';
-}
-
-function resolveCanonicalMessageSource(params: Readonly<{
-  protectedAdmission: Readonly<{ request: SessionInputRequest }> | null;
-}>): 'automation' | 'ui' {
-  return params.protectedAdmission?.request.producer === 'automation'
-    ? 'automation'
-    : 'ui';
 }
 
 async function resolveCurrentTurnAfterSeqExclusive(params: Readonly<{
@@ -1763,22 +1755,18 @@ export async function sendSessionMessage(
     // the running agent runtime should treat as "self-sent" (e.g. local provider echoes).
     // A `happier session send` prompt is user intent and must be delivered to the runtime
     // queue even when it is committed by the daemon via session RPC.
-    source: resolveCanonicalMessageSource({ protectedAdmission }),
+    source: 'ui',
     ...(permissionIntent ? { permissionMode: permissionIntent } : {}),
     ...(modelResolution.modelId ? { model: modelResolution.modelId } : {}),
-    ...(protectedAdmission
-      ? {
-          happierProvenanceV1: protectedAdmission.provenance,
-          happierInputRequestV1: protectedAdmission.request,
-        }
-      : {}),
   } as const;
+  const inputRecord = protectedAdmission
+    ? buildProtectedSessionInputTextRecordV1({ text: params.message, admission: protectedAdmission, meta: baseMeta })
+    : { role: 'user', content: { type: 'text', text: params.message }, meta: baseMeta } as const;
   const record = {
-    role: 'user',
-    content: { type: 'text', text: params.message },
+    ...inputRecord,
     meta: withParticipantRecipientV1(modelResolution.selection
-      ? withSessionMessageModelSelectionV1(baseMeta, modelResolution.selection)
-      : baseMeta, recipient),
+      ? withSessionMessageModelSelectionV1(inputRecord.meta, modelResolution.selection)
+      : inputRecord.meta, recipient),
   } as const;
 
   const informationDelivery = params.informationDelivery !== undefined;
