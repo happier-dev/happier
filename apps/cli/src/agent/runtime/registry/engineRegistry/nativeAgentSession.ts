@@ -29,6 +29,7 @@ import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessi
 import { resolveModelSelectionSource } from '@/providers/sessions/resolveModelSelectionSource';
 import { issueAgentNativeLaunchQualifierForHost, captureAgentNativeLaunchAuthorityForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { ScmCommandRunner } from '@/scm/runtime';
+import { repositoryCheckpointPhaseUnavailable, runRepositoryCheckpointPhase, type RepositoryCheckpointPhaseRunner } from '@/scm/checkpoints/repositoryCheckpointPhase';
 import { AgentSessionStartupInstructionsV1Schema } from '@happier-dev/protocol/runtime/agentSessionStartupInstructionsV1';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import type { AgentSessionStartupInstructionsV1 } from '@happier-dev/protocol/runtime';
@@ -1434,6 +1435,7 @@ type NativeAgentSessionUsagePublisher = Readonly<{
 
 type NativeAgentSessionDirectFacets = Readonly<{
     scmCommandRunner?: ScmCommandRunner;
+    scmCheckpointPhaseRunner?: RepositoryCheckpointPhaseRunner;
     managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
     readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
     openedWithoutConnectedServices?: () => boolean;
@@ -1565,6 +1567,7 @@ type NativeAgentSessionInteractionLifecycle = Readonly<{
 
 type NativeAgentSessionDirectHostControls = Readonly<{
     runScmCommand?: ScmCommandRunner;
+    runScmCheckpointPhase?: RepositoryCheckpointPhaseRunner;
     managedProviderRunServices?: SessionRuntimeControls['managedProviderRunServices'];
     readAppliedTeamCredentialModel?: () => import('@happier-dev/protocol').TeamCredentialProviderModelSelectionV1 | null | undefined;
     openedWithoutConnectedServices?: () => boolean;
@@ -3001,6 +3004,12 @@ export function createNativeAgentSessionOperations(
                 }
                 return await directFacets.scmCommandRunner(input);
             },
+            async runScmCheckpointPhase(request) {
+                if (activeControlUnavailable() || !directFacets.scmCommandRunner) return repositoryCheckpointPhaseUnavailable();
+                // A runner-hosted Session sends the whole phase to the daemon; a daemon-hosted one runs it here.
+                return await runRepositoryCheckpointPhase(request, { host: directFacets.scmCheckpointPhaseRunner,
+                    scmCommandRunner: directFacets.scmCommandRunner });
+            },
             ...(directFacets.managedProviderRunServices ? { managedProviderRunServices: directFacets.managedProviderRunServices } : {}),
             readAppliedTeamCredentialModel: () => activeControlUnavailable()
                 ? undefined
@@ -4288,6 +4297,7 @@ function openNativeAgentSessionUntilAbort(
 
 export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
     scmCommandRunner?: ScmCommandRunner;
+    scmCheckpointPhaseRunner?: RepositoryCheckpointPhaseRunner;
     runtime?: AgentRuntime;
     createRuntime?: (params: Readonly<{
         signal: AbortSignal;
@@ -6121,6 +6131,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     readAppliedTeamCredentialModel: () => appliedTeamCredentialModel,
                     ...(observeProviderSessionId ? { observeProviderSessionId } : {}),
                     scmCommandRunner: params.scmCommandRunner,
+                    ...(params.scmCheckpointPhaseRunner ? { scmCheckpointPhaseRunner: params.scmCheckpointPhaseRunner } : {}),
                     ...(params.managedProviderRunServices ? { managedProviderRunServices: params.managedProviderRunServices } : {}),
                     openedWithoutConnectedServices: () => openedWithoutConnectedServices,
                     providerBinding: openRequest.providerBinding,

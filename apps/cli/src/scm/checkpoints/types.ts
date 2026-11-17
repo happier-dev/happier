@@ -20,23 +20,29 @@ export type RepositoryCheckpointRefs = Readonly<{
     turnFinal?: RepositoryCheckpointRef;
 }>;
 
-export type RepositoryCheckpointAvailabilityReason =
-    | 'not_repo'
-    | 'scm_exec_unavailable'
-    | 'unsupported_scm'
-    | 'missing_repo_root'
-    | 'command_failed'
-    | 'permission_denied'
-    | 'missing_git';
+export const REPOSITORY_CHECKPOINT_AVAILABILITY_REASONS = [
+    'not_repo',
+    'scm_exec_unavailable',
+    'unsupported_scm',
+    'missing_repo_root',
+    'command_failed',
+    'permission_denied',
+    'missing_git',
+] as const;
 
-export type RepositoryCheckpointTurnProjectionUnavailableReason =
-    | RepositoryCheckpointAvailabilityReason
-    | 'missing_source'
-    | 'missing_base'
-    | 'missing_final'
-    | 'invalid_ref'
-    | 'diff_failed'
-    | 'capture_failed';
+export type RepositoryCheckpointAvailabilityReason = typeof REPOSITORY_CHECKPOINT_AVAILABILITY_REASONS[number];
+
+export const REPOSITORY_CHECKPOINT_TURN_PROJECTION_UNAVAILABLE_REASONS = [
+    ...REPOSITORY_CHECKPOINT_AVAILABILITY_REASONS,
+    'missing_source',
+    'missing_base',
+    'missing_final',
+    'invalid_ref',
+    'diff_failed',
+    'capture_failed',
+] as const;
+
+export type RepositoryCheckpointTurnProjectionUnavailableReason = typeof REPOSITORY_CHECKPOINT_TURN_PROJECTION_UNAVAILABLE_REASONS[number];
 
 export type RepositoryCheckpointTurnProjectionStatus = 'available' | 'unavailable';
 

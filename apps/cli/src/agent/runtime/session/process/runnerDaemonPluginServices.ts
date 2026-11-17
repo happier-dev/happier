@@ -2,7 +2,8 @@ import { lazyActionSpecRecord } from '@happier-dev/protocol/actions/lazyActionSp
 import { randomUUID } from 'node:crypto';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { ScmCommandRunner } from '@/scm/runtime';
-import { createRunnerDaemonScmCommandRunner } from './runnerDaemonScmCommand';
+import { createRunnerDaemonScmCheckpointPhaseRunner, createRunnerDaemonScmCommandRunner } from './runnerDaemonScmCommand';
+import type { RepositoryCheckpointPhaseRunner } from '@/scm/checkpoints/repositoryCheckpointPhaseWire';
 import { reportRunnerExternalFollowAcquisitionFailure } from './runnerExternalFollowFailure';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { PLUGIN_SERVICE_DESCRIPTORS } from '@/plugins/runtime/invocation/services/unavailable';
@@ -457,7 +458,7 @@ export async function prepareRunnerDaemonPluginServices(
     input: Readonly<{
         invocationId: string;
         /** Private host port; not exposed in the plugin service bag. */
-        bindHostScmCommandRunner?(runner: ScmCommandRunner): void;
+        bindHostScmCommandRunner?(runner: ScmCommandRunner, checkpointPhaseRunner: RepositoryCheckpointPhaseRunner): void;
         /** Current host-resolved Session/Run scope, including late profile materialization. */
         readLaunchEnvironment?(): Readonly<Record<string, string>>;
         /** Host-authored child cwd; only snapshot-backed Run invocations use it. */
@@ -734,7 +735,8 @@ export async function prepareRunnerDaemonPluginServices(
             ...(witness ? { witness } : {}),
         };
     };
-    input.bindHostScmCommandRunner?.(createRunnerDaemonScmCommandRunner({ dispatch, requestBase }));
+    input.bindHostScmCommandRunner?.(createRunnerDaemonScmCommandRunner({ dispatch, requestBase }),
+        createRunnerDaemonScmCheckpointPhaseRunner({ dispatch, requestBase }));
     type LoggerEntry = Extract<
         RunnerDaemonPluginServiceOperationV1,
         { kind: 'plugin_logger.write_v1' }

@@ -1,6 +1,7 @@
 import { resolveCurrentSessionCapabilityBinding } from '@/session/presentation/currentSessionUiBindings';
 import { randomUUID } from 'node:crypto';
 import type { ScmCommandRunner } from '@/scm/runtime';
+import { repositoryCheckpointPhaseUnavailable, type RepositoryCheckpointPhaseRunner } from '@/scm/checkpoints/repositoryCheckpointPhase';
 import { readMcpRequestAuthDispatchCause, type McpRequestAuthPort } from '@/mcp/runtime/mcpRequestAuth';
 import { createRunnerPluginMcpPort } from './runnerPluginMcp';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
@@ -705,6 +706,9 @@ export async function createRunnerAgentSessionRuntimeBootstrap(input: Readonly<{
         async scmCommandRunner(command) {
             return await claimed?.scmCommandRunner?.(command)
                 ?? { success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1 };
+        },
+        async scmCheckpointPhaseRunner(request) {
+            return await claimed?.scmCheckpointPhaseRunner?.(request) ?? repositoryCheckpointPhaseUnavailable();
         },
         async prepareManagedProviderBinding(params) {
             return await requireClaimed()
@@ -1461,6 +1465,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
         PluginServices | null = null;
     let sessionLaunchEnvironment: Readonly<Record<string, string>> = Object.freeze({});
     let sessionScmCommandRunner: ScmCommandRunner | undefined;
+    let sessionScmCheckpointPhaseRunner: RepositoryCheckpointPhaseRunner | undefined;
     const source: RunnerAgentSessionRuntimeSource = Object.freeze({
         agentContribution: verifiedAgentContribution,
         async scmCommandRunner(command) {
@@ -1468,6 +1473,10 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 return { success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1 };
             }
             return await sessionScmCommandRunner(command);
+        },
+        async scmCheckpointPhaseRunner(request) {
+            if (lifetime.signal.aborted || !sessionScmCheckpointPhaseRunner) return repositoryCheckpointPhaseUnavailable();
+            return await sessionScmCheckpointPhaseRunner(request);
         },
         identity: Object.freeze({
             pluginId: binding.pluginId,
@@ -1569,7 +1578,10 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                     await prepareRunnerDaemonPluginServices({
                     processOwner: { kind: 'session', sessionId: params.sessionId },
                     invocationId,
-                    bindHostScmCommandRunner: runner => { sessionScmCommandRunner = runner; },
+                    bindHostScmCommandRunner: (runner, checkpointPhaseRunner) => {
+                        sessionScmCommandRunner = runner;
+                        sessionScmCheckpointPhaseRunner = checkpointPhaseRunner;
+                    },
                     readLaunchEnvironment: () => sessionLaunchEnvironment,
                     signal: params.signal,
                     dispatch: async (operation, options) =>
@@ -1820,7 +1832,10 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 ...(params.processOwner ? { processOwner: params.processOwner } : {}),
                 invocationId: params.processOwner?.kind === 'run' ? params.correlationId : randomUUID(),
                 ...(params.processOwner?.kind === 'run' ? {} : {
-                    bindHostScmCommandRunner: (runner: ScmCommandRunner) => { sessionScmCommandRunner = runner; },
+                    bindHostScmCommandRunner: (runner: ScmCommandRunner, checkpointPhaseRunner: RepositoryCheckpointPhaseRunner) => {
+                        sessionScmCommandRunner = runner;
+                        sessionScmCheckpointPhaseRunner = checkpointPhaseRunner;
+                    },
                 }),
                 readLaunchEnvironment: params.processOwner?.kind === 'run'
                     ? () => params.environment ?? Object.freeze({})

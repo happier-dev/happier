@@ -163,6 +163,7 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
             startupRuntimeDescriptorV1: runnerRuntimeSource.startupRuntimeDescriptorV1,
             nativeAgentTerminalHostOwner: runnerRuntimeSource.startupTerminalHostOwner,
             nativeAgentScmCommandRunner: runnerRuntimeSource.scmCommandRunner,
+            nativeAgentScmCheckpointPhaseRunner: runnerRuntimeSource.scmCheckpointPhaseRunner,
             nativeAgentRuntimeVoiceAuthority:
                 runnerRuntimeSource.agentSessionRealtimeVoiceAuthority,
             createNativeAgentRuntime:

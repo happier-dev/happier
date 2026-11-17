@@ -44,6 +44,8 @@ export type PluginRuntimeHookOperations = RuntimeTurnOperations & Readonly<{
     readNativeLaunchAuthority?: (kind: 'attach' | 'terminal') => import('@/plugins/runtime/invocation/services/exec').HostAgentNativeLaunchAuthority | null;
     /** Host-private repository execution through this Session's current Exec service. */
     runScmCommand?: ScmCommandRunner;
+    /** One repository checkpoint phase through the same execution owner (one daemon operation for a runner-hosted Session). */
+    runScmCheckpointPhase?: import('@/scm/checkpoints/repositoryCheckpointPhaseWire').RepositoryCheckpointPhaseRunner;
     /** The admitted native facet, withdrawn when this Session incarnation retires. */
     readAgentSessionRealtimeConversation?: () => AgentSessionRealtimeConversation | null;
     /** Host-only person Start admission; never an Agent SDK capability. */

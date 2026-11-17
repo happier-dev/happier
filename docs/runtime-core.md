@@ -1610,6 +1610,15 @@ daemon's existing command owner still enforces the batch's output budget.
 Interactive stdin and early-settling stream consumers are not supported by this
 private checkpoint port; no general plugin process authority is added.
 
+A repository checkpoint phase crosses that channel once: `host_scm.checkpoint_v1`
+carries the message-start capture, or the turn-final capture plus its diff against
+the turn-start base, and the daemon runs the phase's Git commands locally through
+the same per-launch Exec authorization, returning the capture and diff results the
+Session's change card is built from. The turn-start alias stays one
+`host_scm.run_v1`. A target-placed workspace runs the phase in the Session host
+through its workspace source, with no daemon round trip. The turn still completes
+after its checkpoint card, and a refused card write still fails the turn.
+
 In 0.3 development source, daemon-started Session runners acquire their own
 Home carrier before command startup and retain it until the command ends.
 `runWithRunnerHomeTransport` reuses the Account-client carrier acquisition policy

@@ -8,6 +8,12 @@ import type { PromptLoopCheckpointLifecycle } from '@/agent/runtime/runPermissio
 import { runWithScmCommandRunner, ScmExecUnavailableError, type ScmCommandRunner } from '@/scm/runtime';
 import { buildRepositoryCheckpointRefs, projectRepositoryCheckpointTurnChangeSet } from '@/scm/checkpoints';
 import { createGitCheckpointRollbackDependencies, gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
+import {
+    runRepositoryCheckpointPhaseHere,
+    type RepositoryCheckpointPhaseRequest,
+    type RepositoryCheckpointPhaseResult,
+    type RepositoryCheckpointPhaseRunner,
+} from '@/scm/checkpoints/repositoryCheckpointPhase';
 import { executeCheckpointCodeRollback } from '@/scm/checkpoints/rollback';
 import { retainRepositoryCheckpointInitialEvidence, retainRepositoryCheckpointTurnEvidence } from '@/scm/checkpoints/sessionEvidence';
 import type {
@@ -169,6 +175,8 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
     attributionRegistry?: WorktreeAttributionRegistry;
     sessionIsNew?: boolean;
     scmCommandRunner?: ScmCommandRunner;
+    /** Runs a whole capture (and turn-end diff) as one operation where Git runs; absent, the phase runs here. */
+    scmCheckpointPhaseRunner?: RepositoryCheckpointPhaseRunner;
 }>): RepositoryCheckpointPromptLifecycle {
     const initialSessionId = params.session.sessionId;
     const bindingsByMessageId = new Map<string, ActiveCheckpointBinding>();
@@ -200,15 +208,24 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
     };
     prepareContext();
 
+    const runCheckpointPhase = (context: GitCheckpointBackendContext, request: Omit<RepositoryCheckpointPhaseRequest, 'repository'>): Promise<RepositoryCheckpointPhaseResult> => {
+        const phase: RepositoryCheckpointPhaseRequest = { ...request, repository: { cwd: context.cwd, projectKey: context.projectKey,
+            rootPath: context.detection.rootPath ?? context.cwd,
+            ...(context.checkpointGitPaths ? { checkpointGitPaths: context.checkpointGitPaths } : {}) } };
+        return params.scmCheckpointPhaseRunner
+            ? params.scmCheckpointPhaseRunner(phase)
+            : runRepositoryCheckpointPhaseHere(phase, { scmCommandRunner: params.scmCommandRunner });
+    };
+
     function endAttributionInterval(binding: ActiveCheckpointBinding): void {
         if (binding.attributionInterval) {
             attributionRegistry.end(binding.attributionInterval);
         }
     }
 
-    function resolveAttributionScope(binding: ActiveCheckpointBinding): RepositoryCheckpointAttributionScope {
+    function resolveAttributionScope(binding: ActiveCheckpointBinding, asOfMs?: number): RepositoryCheckpointAttributionScope {
         return binding.attributionInterval
-            ? attributionRegistry.resolveAttributionScope(binding.attributionInterval)
+            ? attributionRegistry.resolveAttributionScope(binding.attributionInterval, asOfMs)
             : 'unknown';
     }
 
@@ -296,10 +313,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                 bindingsByMessageId.set(messageId, binding);
                 const messageStart = refs.messageStart;
                 if (!messageStart || !binding.context) return;
-                const captured = await gitCheckpointAdapter.capture({
-                    context: binding.context,
-                    checkpointRef: messageStart,
-                });
+                const { captured } = await runCheckpointPhase(binding.context, { checkpointRef: messageStart });
                 if (!captured.success) {
                     bindingsByMessageId.set(messageId, {
                         ...binding,
@@ -385,11 +399,12 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
              * Close the capture interval exactly once, at the boundary where no further checkpoint
              * content can be captured: a peer that begins during the final capture still affects the
              * captured bytes, while a peer that begins during the asynchronous diff/publication does
-             * not. The snapshot is a local value, so later idempotent cleanup cannot erase it.
+             * not. The snapshot is a local value, so later idempotent cleanup cannot erase it. When the
+             * capture and diff run as one operation elsewhere, `capturedAtMs` marks that boundary.
              */
-            const snapshotAttributionScope = (activeBinding: ActiveCheckpointBinding): RepositoryCheckpointAttributionScope => {
+            const snapshotAttributionScope = (activeBinding: ActiveCheckpointBinding, capturedAtMs?: number): RepositoryCheckpointAttributionScope => {
                 if (capturedAttributionScope === null) {
-                    capturedAttributionScope = resolveAttributionScope(activeBinding);
+                    capturedAttributionScope = resolveAttributionScope(activeBinding, capturedAtMs);
                     endAttributionInterval(activeBinding);
                 }
                 return capturedAttributionScope;
@@ -410,7 +425,11 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
             try {
                 // With no tool activity the repository diff can only describe other
                 // writers. Keep the captured baseline for rewind, without a recap.
-                if (binding.publication?.hasToolActivity === false) return;
+                if (binding.publication?.hasToolActivity === false) {
+                    await publishRuntimeTurnChangeSet({ ...binding.publication,
+                        session: params.session, provider: params.provider, source: params.source });
+                    return;
+                }
                 if (binding.unavailableReason || !binding.context) {
                     await emitProjectedDiff({
                         binding,
@@ -429,11 +448,12 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     return;
                 }
                 if (!refs.turnFinal) return;
-                const finalized = await gitCheckpointAdapter.capture({
-                    context: binding.context,
-                    checkpointRef: refs.turnFinal,
-                });
-                const attributionScope = snapshotAttributionScope(binding);
+                // One phase: the final capture and, with a base, its diff (known commits, no ref re-reads).
+                const phase = await runCheckpointPhase(binding.context, { checkpointRef: refs.turnFinal,
+                    ...(baseRef && baseRefSource !== 'unavailable' ? { diff: { baseRef, baseRefSource,
+                        ...(binding.messageStartCommitSha ? { baseCommitSha: binding.messageStartCommitSha } : {}) } } : {}) });
+                const finalized = phase.captured;
+                const attributionScope = snapshotAttributionScope(binding, phase.capturedAtMs);
                 const receiptsAfterFinal = appendReceipts(binding.receipts, finalized.receipts);
                 if (!finalized.success) {
                     await emitProjectedDiff({
@@ -469,15 +489,8 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     });
                     return;
                 }
-                const diff = await gitCheckpointAdapter.diff({
-                    context: binding.context,
-                    baseRef,
-                    finalRef: refs.turnFinal,
-                    baseRefSource,
-                    attributionScope,
-                    ...(binding.messageStartCommitSha ? { baseCommitSha: binding.messageStartCommitSha } : {}),
-                    finalCommitSha: finalized.commitSha,
-                });
+                const diff = phase.diff;
+                if (!diff) throw new Error('Repository checkpoint phase returned no diff');
                 const checkpointDiff: RepositoryCheckpointDiffResult = diff.success
                     ? {
                         ...diff,

@@ -59,6 +59,8 @@ async function openNativeSession(cwd: string, session: ReturnType<typeof createM
     let withdrawAfterAdmission = false;
     let online = true;
     const requests: string[] = [];
+    // Host SCM round trips, except idle repository discovery (`rev-parse --show-toplevel`), which no phase waits on.
+    const scmRoundTrips: string[] = [];
     const makeHost = () => createRunnerDaemonPluginServicesHost({ createInvocation: async () => ({
         services, ...(execution !== 'unavailable' ? { agentIsolation: createAgentIsolationSessionContext({
             ...(execution === 'configured' ? { machine: { read: () => ({ enabled: false,
@@ -89,6 +91,8 @@ async function openNativeSession(cwd: string, session: ReturnType<typeof createM
             execute: async () => { throw new Error('Checkpoint capture does not execute an Action'); },
             dispatchService: async request => {
                 requests.push(request.operation.kind);
+                const operation = request.operation as { kind: string; command?: { args?: string[] } };
+                if (operation.kind.startsWith('host_scm.') && !operation.command?.args?.includes('--show-toplevel')) scmRoundTrips.push(operation.kind);
                 if (request.operation.kind === 'voice.authority.snapshot') return { ok: true, result: {
                     kind: 'voice.authority.snapshot', agentSourceCustody: binding.sourceCustody, providers: [],
                 } };
@@ -125,8 +129,8 @@ async function openNativeSession(cwd: string, session: ReturnType<typeof createM
         const resolved = resolveHostSessionRuntimeFactoryResult(created);
         const hooks = (resolved.nativeRuntime ?? resolved.runtime) as HostSessionRuntimeHookRuntime;
         if (!hooks.runScmCommand) throw new Error('Native SCM binding is absent');
-        return { runner: hooks.runScmCommand,
-            requests,
+        return { runner: hooks.runScmCommand, checkpointPhaseRunner: hooks.runScmCheckpointPhase,
+            requests, scmRoundTrips,
             async replaceDaemon() { await host.dispose(); host = makeHost(); },
             withdrawOnNextAdmission() { withdrawAfterAdmission = true; },
             withdrawAuthority() { current = false; }, unsupportedDaemon() { online = false; },
@@ -174,18 +178,33 @@ describe('Session checkpoint execution and captured-turn reads', () => {
                     .toMatchObject({ success: false, stderr: 'plugin_exec_system_tool_undeclared' });
             }
             const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd,
-                provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true, scmCommandRunner: runner });
+                provider: 'codex', source: { protocol: 'native', agent: { pluginId: 'happier.agent.codex', localId: 'codex' } }, sessionIsNew: true, scmCommandRunner: runner,
+                scmCheckpointPhaseRunner: native.checkpointPhaseRunner });
+            // Daemon round trips each checkpoint phase makes over the runner's services channel.
+            const roundTrips: Record<string, string[]> = {};
+            const phase = async (name: string, run: () => Promise<unknown> | undefined) => {
+                const before = native.scmRoundTrips.length;
+                await run();
+                roundTrips[name] = native.scmRoundTrips.slice(before);
+            };
             const captures: Awaited<ReturnType<typeof captureScmComparison>>[] = [];
             try {
                 for (const [turnId, before, after] of [['turn-1', null, 'added\n'], ['turn-2', 'added\n', 'modified\n']] as const) {
-                    await lifecycle.onBeforePromptDispatch?.({ messageId: turnId, prompt: 'edit' });
-                    await lifecycle.onTurnStarted?.({ messageId: turnId, turnId, sequence: 1 });
+                    await phase(`send-${turnId}`, () => lifecycle.onBeforePromptDispatch?.({ messageId: turnId, prompt: 'edit' }));
+                    await phase(`start-${turnId}`, () => lifecycle.onTurnStarted?.({ messageId: turnId, turnId, sequence: 1 }));
                     await writeFile(join(cwd, 'untracked.txt'), after);
-                    await lifecycle.publishTurnChangeSet({ eventKind: 'turn-final', turnChangeSet: {
+                    await phase(`end-${turnId}`, () => lifecycle.publishTurnChangeSet({ eventKind: 'turn-final', turnChangeSet: {
                         sessionId, turnId, seqRange: { startSeqInclusive: 1, endSeqInclusive: 2 }, status: 'completed',
                         provider: 'codex', derivedAt: 1, files: [{ filePath: 'untracked.txt',
                             changeKind: before === null ? 'added' : 'modified', source: 'provider_tool', confidence: 'exact', provider: 'codex' }],
-                    } });
+                    } }));
+                    // A new Session's first turn also pins its initial evidence (once per Session).
+                    if (availability !== 'unavailable' && turnId === 'turn-2') {
+                        // [p03.CHECKPOINT-OP-2] One daemon operation per checkpoint phase; the daemon runs the Git commands.
+                        expect({ send: roundTrips[`send-${turnId}`], start: roundTrips[`start-${turnId}`], end: roundTrips[`end-${turnId}`] }).toEqual({
+                            send: ['host_scm.checkpoint_v1'], start: ['host_scm.run_v1'], end: ['host_scm.checkpoint_v1'],
+                        });
+                    }
                     const endpointReads: string[][] = [];
                     const readRunner: ScmCommandRunner = command => {
                         if (command.args[0] === 'rev-parse' && command.args.includes('--end-of-options')) endpointReads.push(command.args);

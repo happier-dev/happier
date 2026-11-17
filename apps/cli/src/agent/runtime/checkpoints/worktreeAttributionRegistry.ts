@@ -8,14 +8,18 @@ export type WorktreeAttributionInterval = Readonly<{
 export type WorktreeAttributionRegistry = Readonly<{
     begin: (input: WorktreeAttributionInterval) => WorktreeAttributionInterval;
     end: (input: WorktreeAttributionInterval) => void;
-    resolveAttributionScope: (input: WorktreeAttributionInterval) => RepositoryCheckpointAttributionScope;
+    /** `asOfMs` (wall clock, `performance.timeOrigin + now`): only overlap observed by then counts. */
+    resolveAttributionScope: (input: WorktreeAttributionInterval, asOfMs?: number) => RepositoryCheckpointAttributionScope;
 }>;
 
 type ActiveAttributionInterval = {
     intervalId: string;
     rootComparisonKey: string;
-    overlapObserved: boolean;
+    /** When this registry first saw a peer interval overlap this one, or null. */
+    overlapObservedAtMs: number | null;
 };
+
+const wallClockMs = () => performance.timeOrigin + performance.now();
 
 /**
  * The registry is process-local: it can only observe capture intervals registered with this same
@@ -44,13 +48,14 @@ export function createWorktreeAttributionRegistry(): WorktreeAttributionRegistry
             if (!rootComparisonKey || !intervalId) return input;
             const active = activeByRootComparisonKey.get(rootComparisonKey) ?? new Map<string, ActiveAttributionInterval>();
             const existing = active.get(intervalId);
-            let overlapObserved = existing?.overlapObserved ?? false;
+            const observedAtMs = wallClockMs();
+            let overlapObservedAtMs = existing?.overlapObservedAtMs ?? null;
             for (const peer of active.values()) {
                 if (peer.intervalId === intervalId) continue;
-                peer.overlapObserved = true;
-                overlapObserved = true;
+                peer.overlapObservedAtMs ??= observedAtMs;
+                overlapObservedAtMs ??= observedAtMs;
             }
-            active.set(intervalId, { intervalId, rootComparisonKey, overlapObserved });
+            active.set(intervalId, { intervalId, rootComparisonKey, overlapObservedAtMs });
             activeByRootComparisonKey.set(rootComparisonKey, active);
             return { repoRoot: rootComparisonKey, intervalId };
         },
@@ -63,10 +68,11 @@ export function createWorktreeAttributionRegistry(): WorktreeAttributionRegistry
                 activeByRootComparisonKey.delete(rootComparisonKey);
             }
         },
-        resolveAttributionScope(input) {
+        resolveAttributionScope(input, asOfMs) {
             const interval = readInterval(input);
             if (!interval) return 'unknown';
-            return interval.overlapObserved
+            const at = interval.overlapObservedAtMs;
+            return at !== null && (asOfMs === undefined || at <= asOfMs)
                 ? 'shared_worktree'
                 : 'no_happier_checkpoint_overlap_observed';
         },

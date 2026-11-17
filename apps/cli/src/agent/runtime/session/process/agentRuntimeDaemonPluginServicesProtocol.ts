@@ -33,6 +33,7 @@ import { HOST_AGENT_ISOLATION_LAUNCH_KINDS } from '@/daemon/agentIsolation/agent
 import { SessionMcpLocalContextSchema } from '@/mcp/runtime/sessionMcpLocalContext';
 import { AgentLaunchMaterializationSchema, AgentLaunchNativeIdentitySchema, AgentLaunchNativeSocketDirectorySchema } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { AgentIsolationMemberNativeIdentitySchema } from './agentRuntimeRunnerProtocol';
+import { RepositoryCheckpointPhaseRequestSchema } from '@/scm/checkpoints/repositoryCheckpointPhaseWire';
 
 const McpLaunchMaterialSchema = lazyZodSchema(() => asHostProtocolZod(AgentLaunchMaterializationSchema.safeExtend({
     memberIdentity: z.optional(AgentIsolationMemberNativeIdentitySchema),
@@ -1265,6 +1266,13 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         ...OperationBaseSchema,
         ...OptionalWitnessSchema,
         command: RunnerDaemonScmCommandV1Schema,
+    })),
+    // One repository checkpoint phase (capture, then the turn-end diff) as one round trip.
+    lazyZodSchema(() => z.strictObject({
+        kind: z.literal('host_scm.checkpoint_v1'),
+        ...OperationBaseSchema,
+        ...OptionalWitnessSchema,
+        checkpoint: RepositoryCheckpointPhaseRequestSchema,
     })),
 ] as const;
 

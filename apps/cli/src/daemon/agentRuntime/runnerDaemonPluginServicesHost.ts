@@ -4,6 +4,7 @@ import { readAgentIsolationLaunchMaterialFailureCode } from '@happier-dev/protoc
 import { randomUUID } from 'node:crypto';
 import { closeSync, openSync, writeSync } from 'node:fs';
 import { createHostScmCommandRunner } from '@/scm/runtime';
+import { repositoryCheckpointPhaseUnavailable, runRepositoryCheckpointPhaseHere } from '@/scm/checkpoints/repositoryCheckpointPhase';
 import { isDeepStrictEqual } from 'node:util';
 import { runConnectedAccountBindingStage, withConnectedAccountBindingDiagnostic } from '../connectedServices/purposeBindings/bindingDiagnostics';
 import { readAccountConnectionProviderBrokerFailureDiagnostic } from '@/providers/broker/accountConnectionClient';
@@ -1258,23 +1259,40 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
             scope: 'ephemeral' | 'daemonSession' | 'daemon',
         ) => services.storage[scope];
 
+        const createInvocationScmCommandRunner = (
+            agentIsolation: NonNullable<typeof invocation.agentIsolation>,
+            witness: AgentInvocationTurnAdmissionWitness | undefined,
+            cancellation: AbortSignal,
+        ) => createHostScmCommandRunner({ agentIsolation,
+            isCurrent: () => !invocation.disposed && !cancellation.aborted,
+            async assertLaunchCurrent(launchSignal) {
+                if (invocation.disposed || launchSignal.aborted
+                    || !await invocation.authorizeOperation(witness, { requireActiveTurn: false })
+                    || invocation.disposed || launchSignal.aborted) {
+                    return fail('scm_exec_unavailable', 'Host SCM invocation authority is unavailable');
+                }
+            },
+        });
+
         switch (operation.kind) {
+            case 'host_scm.checkpoint_v1': {
+                if (!invocation.agentIsolation) return result(operation, repositoryCheckpointPhaseUnavailable());
+                const cancellation = AbortSignal.any([invocation.controller.signal, ...(signal ? [signal] : [])]);
+                // The whole phase runs here: each Git launch keeps its own authorization, without a round trip.
+                const phase = await runRepositoryCheckpointPhaseHere(operation.checkpoint, {
+                    scmCommandRunner: createInvocationScmCommandRunner(invocation.agentIsolation, operation.witness, cancellation),
+                    signal: cancellation,
+                });
+                // The wire carries no `undefined`; the result is plain JSON data.
+                return result(operation, JSON.parse(JSON.stringify(phase)));
+            }
             case 'host_scm.run_v1': {
                 if (!invocation.agentIsolation) return result(operation, {
                     success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1,
                 });
                 const command = operation.command;
                 const cancellation = AbortSignal.any([invocation.controller.signal, ...(signal ? [signal] : [])]);
-                const run = createHostScmCommandRunner({ agentIsolation: invocation.agentIsolation,
-                    isCurrent: () => !invocation.disposed && !cancellation.aborted,
-                    async assertLaunchCurrent(launchSignal) {
-                        if (invocation.disposed || launchSignal.aborted
-                            || !await invocation.authorizeOperation(operation.witness, { requireActiveTurn: false })
-                            || invocation.disposed || launchSignal.aborted) {
-                            return fail('scm_exec_unavailable', 'Host SCM invocation authority is unavailable');
-                        }
-                    },
-                });
+                const run = createInvocationScmCommandRunner(invocation.agentIsolation, operation.witness, cancellation);
                 let descriptor: number | undefined;
                 try {
                     if (command.output?.kind === 'batch') descriptor = openSync(command.output.path, 'wx', 0o600);

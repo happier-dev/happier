@@ -145,6 +145,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
     managedProviderRunServices?: import('./types').RunnerAgentSessionRuntimeSource['managedProviderRunServices'];
     createNativeAgentInvocationServices?: CreateAgentInvocationServices;
     nativeAgentScmCommandRunner?: import('@/scm/runtime').ScmCommandRunner;
+    nativeAgentScmCheckpointPhaseRunner?: import('@/scm/checkpoints/repositoryCheckpointPhaseWire').RepositoryCheckpointPhaseRunner;
     authorizeNativeAgentNewTurn?: NonNullable<
         import('./types').RunnerAgentSessionRuntimeSource[
             'authorizeNewTurn'
@@ -249,6 +250,8 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 : { runtime: nativeAgentRuntime! }),
                             identity: nativeIdentity,
                             scmCommandRunner: params.nativeAgentScmCommandRunner ?? runtimeRegistry?.scmCommandRunner,
+                            ...(params.nativeAgentScmCheckpointPhaseRunner
+                                ? { scmCheckpointPhaseRunner: params.nativeAgentScmCheckpointPhaseRunner } : {}),
                             pluginMcpRuntimeRegistry: runtimeRegistry ?? undefined,
                             ...(runtimeRegistry?.resolveServerFeaturesSnapshot
                                 ? {

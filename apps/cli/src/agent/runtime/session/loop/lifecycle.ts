@@ -68,6 +68,7 @@ import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { NormalizedToolTurnChangeTracker } from '@/agent/tools/diff/normalizedToolTurnChangeTracker';
 import { createRepositoryCheckpointPromptLifecycle } from '@/agent/runtime/checkpoints/repositoryCheckpointPromptLifecycle';
+import { repositoryCheckpointPhaseUnavailable } from '@/scm/checkpoints/repositoryCheckpointPhase';
 import { notifyDaemonConnectedServiceTurnLifecycle } from '@/daemon/controlClient';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
@@ -410,6 +411,8 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
     source: toolNormalizationSource,
     scmCommandRunner: input => hookRuntimeForCallbacks.runScmCommand?.(input)
       ?? Promise.resolve({ success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1 }),
+    scmCheckpointPhaseRunner: request => hookRuntimeForCallbacks.runScmCheckpointPhase?.(request)
+      ?? Promise.resolve(repositoryCheckpointPhaseUnavailable()),
   });
   const checkpointLifecycle = configuredCheckpointLifecycle ?? repositoryCheckpointLifecycle;
   let terminalRemoteModeLoop = params.terminalRemoteModeLoop ?? null;

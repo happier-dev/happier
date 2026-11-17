@@ -64,6 +64,8 @@ export type RunnerAgentExternalSessionProviderOps = Required<Pick<
 export type RunnerAgentSessionRuntimeSource = Readonly<{
     /** Host SCM over the existing daemon invocation channel, not plugin Exec. */
     scmCommandRunner?: import('@/scm/runtime').ScmCommandRunner;
+    /** One repository checkpoint phase as one operation on the same daemon invocation channel. */
+    scmCheckpointPhaseRunner?: import('@/scm/checkpoints/repositoryCheckpointPhaseWire').RepositoryCheckpointPhaseRunner;
     /** Captured launch choice; grants no Agent/session authority. */
     startupRuntimeDescriptorV1?: AgentSessionOpenRequest['runtimeDescriptorV1'];
     /** Captured placement owner; does not admit a retained terminal. */

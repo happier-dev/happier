@@ -11,6 +11,7 @@ import type {
     HostSessionRuntimeRunOptions,
 } from '@/agent/runtime/session/loop/runHostSessionRuntime';
 import { isDeepStrictEqual } from 'node:util';
+import { repositoryCheckpointPhaseUnavailable } from '@/scm/checkpoints/repositoryCheckpointPhase';
 import { resolveSessionModelSelectionFromMetadata } from '@happier-dev/agents/session/state/metadataReaders';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import { readRequiredStartupMachineId } from '@/agent/runtime/startup/readRequiredStartupMachineId';
@@ -422,6 +423,11 @@ function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
                 return { success: false, stdout: '', stderr: 'scm_exec_unavailable', exitCode: -1 };
             }
             return await run(input);
+        },
+        async runScmCheckpointPhase(request) {
+            const run = currentOperations.runScmCheckpointPhase;
+            if (runtimeClosed || !run) return repositoryCheckpointPhaseUnavailable();
+            return await run(request);
         },
         openedWithoutConnectedServices: () => !runtimeClosed && (currentOperations.openedWithoutConnectedServices?.() ?? false),
         isProviderNativeCommand: (prompt) => currentOperations.isProviderNativeCommand?.(prompt) ?? false,

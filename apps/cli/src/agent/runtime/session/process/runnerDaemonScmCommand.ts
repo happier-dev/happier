@@ -4,6 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ScmCommandRunner } from '@/scm/runtime';
+import { repositoryCheckpointPhaseUnavailable } from '@/scm/checkpoints/repositoryCheckpointPhase';
+import {
+    RepositoryCheckpointPhaseResultSchema,
+    type RepositoryCheckpointPhaseResult,
+    type RepositoryCheckpointPhaseRunner,
+} from '@/scm/checkpoints/repositoryCheckpointPhaseWire';
 import {
     RunnerDaemonScmCommandV1Schema,
     RunnerDaemonScmCommandResultV1Schema,
@@ -52,6 +58,25 @@ export function createRunnerDaemonScmCommandRunner(input: Readonly<{
             return unavailable;
         } finally {
             if (spoolDirectory) await rm(spoolDirectory, { recursive: true, force: true });
+        }
+    };
+}
+
+/** One checkpoint phase as one daemon operation; the daemon runs its Git commands locally. */
+export function createRunnerDaemonScmCheckpointPhaseRunner(input: Readonly<{
+    dispatch: RunnerDaemonPluginServicesDispatchV1;
+    requestBase(): Pick<RunnerDaemonPluginServiceOperationV1, 'requestId' | 'invocationId'>;
+}>): RepositoryCheckpointPhaseRunner {
+    return async checkpoint => {
+        try {
+            // The schema's enums are the result types' own lists; the cast only restores their literal unions.
+            return RepositoryCheckpointPhaseResultSchema.parse(await input.dispatch({
+                kind: 'host_scm.checkpoint_v1', ...input.requestBase(), checkpoint,
+            }, { timeoutMs: null })) as RepositoryCheckpointPhaseResult;
+        } catch {
+            // As for single commands: a missing operation, authority change or malformed
+            // response is "unavailable", never a fallback to another execution path.
+            return repositoryCheckpointPhaseUnavailable();
         }
     };
 }
