@@ -1,4 +1,5 @@
 import { isProjectSessionDefaultsPreparationReadActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { SCM_WORKTREE_CREATE_ACTION_ID_V1, SCM_WORKTREE_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
 import { deliverExternalActionRequest } from './deliverExternalActionRequest';
 export { deliverExternalActionRequest } from './deliverExternalActionRequest';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -1595,6 +1596,8 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
     || authorization.binding.actionId === 'localServices.launcher.start'
     || authorization.binding.actionId === 'projects.worker.status' ? requesterContext : undefined;
   const projectRowReadCustody = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, authorization.binding.actionId)
+    || authorization.binding.actionId === SCM_WORKTREE_CREATE_ACTION_ID_V1
+    || authorization.binding.actionId === SCM_WORKTREE_REMOVE_ACTION_ID_V1
     || isProjectWorkspaceSyncPreparationActionV1(authorization.binding.actionId)
     || isMachineTerminalOpenOrRestartActionIdV1(authorization.binding.actionId)
     || authorization.binding.actionId === 'projects.inspect'
