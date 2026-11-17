@@ -1,5 +1,5 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import { createServer, request as requestHttp } from 'node:http';
+import { createServer, request as requestHttp, Server } from 'node:http';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -22,6 +22,7 @@ import {
 } from '../../preview/registry';
 import { startLocalServicePreviewNativeAdapter } from '../../preview/nativeAdapter';
 import { localServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import { logger } from '@/ui/logger';
 
 let root: string;
 const DIGEST_WEB = PluginUiArtifactDigestV1Schema.parse(
@@ -488,6 +489,47 @@ describe('hosted-web static asset server', () => {
     await expect(
       fetch(`http://127.0.0.1:${registeredPort}/assets/index.js`),
     ).rejects.toThrow();
+  });
+
+  it('retains static request filesystem causes while preserving the existing generic 500', async () => {
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    const server = await startHostedWebStaticAssetServer(serverInput());
+    try {
+      await rm(root, { recursive: true, force: true });
+      const response = await fetch(server.baseUrl);
+      expect(response.status).toBe(500);
+      expect(response.headers.get('X-Happier-Static-Asset-Error')).toBe('static_asset_server_error');
+      expect(await response.text()).toBe('');
+      expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        phase: 'static_assets.request', errorClass: 'Error', httpStatus: null,
+      }));
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toContain(root);
+    } finally { await server.stop(); diagnostic.mockRestore(); }
+  });
+
+  it('retains static server cleanup causes without replacing the registration failure', async () => {
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    const primary = new Error('private preview registration failure');
+    const cleanup = Object.assign(new Error('private socket cleanup failure'), { code: 'EIO' });
+    const originalClose = Server.prototype.close;
+    // Closing the OS listener is the boundary: finish the real close before failing its callback.
+    const close = vi.spyOn(Server.prototype, 'close').mockImplementation(function (this: Server, callback?: (error?: Error) => void) {
+      originalClose.call(this, () => callback?.(cleanup));
+      return this;
+    });
+    let port: number | undefined;
+    try {
+      await expect(startHostedWebStaticAssetServer(serverInput({ registerPreview(resource) {
+        port = resource.target.port;
+        throw primary;
+      } }))).rejects.toBe(primary);
+      expect(diagnostic).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+        phase: 'static_assets.cleanup', errorClass: 'Error', errorCode: 'EIO', httpStatus: null,
+      }));
+      expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/private preview registration failure|private socket cleanup failure/u);
+      expect(port).toEqual(expect.any(Number));
+      await expect(fetch(`http://127.0.0.1:${port}/`)).rejects.toThrow();
+    } finally { close.mockRestore(); diagnostic.mockRestore(); }
   });
 
   it('unregisters the preview resource from the daemon registry when stopped', async () => {

@@ -4,6 +4,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import type { LocalServicePreviewResourceV1, LocalServicePreviewTargetV1 } from '@happier-dev/protocol';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { logger } from '@/ui/logger';
 
 import { createHostedWebStaticAssetPreviewResource } from '../hostedWeb';
 import {
@@ -216,7 +218,8 @@ export async function startHostedWebStaticAssetServer(
                 return;
             }
             response.end(bytes);
-        } catch {
+        } catch (error) {
+            logger.warnLocalFile('[static-assets] request failed', projectActionFailureCauseV1(error, 'static_assets.request', { allowUnknownErrorCode: false }));
             sendFailure(response, 500, 'static_asset_server_error');
         }
     });
@@ -241,7 +244,9 @@ export async function startHostedWebStaticAssetServer(
             ? await input.registerPreview(previewResource, { isCurrent: () => server.listening && stopPromise === null })
             : null;
     } catch (error) {
-        await stopServer(server).catch(() => undefined);
+        await stopServer(server).catch((cleanupError) => {
+            logger.warnLocalFile('[static-assets] cleanup failed', projectActionFailureCauseV1(cleanupError, 'static_assets.cleanup', { allowUnknownErrorCode: false }));
+        });
         throw error;
     }
     const stopOnce = async (): Promise<void> => {
