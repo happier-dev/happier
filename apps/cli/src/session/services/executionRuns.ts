@@ -652,22 +652,13 @@ export async function listExecutionRuns(
             };
         }
 
-        const markerRuns = await listMarkerBackedExecutionRuns({ sessionId: params.sessionId });
-        const runs = markerRuns.length === 0
-            ? applyExecutionRunListRequest(parsed.data.runs, request)
-            : applyExecutionRunListRequest(
-                mergeExecutionRunLists({
-                    primaryRuns: parsed.data.runs,
-                    markerRuns,
-                }),
-                request,
-            );
-
+        // The Session runner owns this Session's Runs (live and retained) and
+        // writes their markers; markers answer only when that owner cannot.
         return {
             ok: true,
             data: {
                 ...parsed.data,
-                runs,
+                runs: applyExecutionRunListRequest(parsed.data.runs, request),
             },
         };
     } catch (error) {

@@ -252,13 +252,17 @@ describe('listExecutionRuns', () => {
         });
     });
 
-    it('reapplies request filters after merging marker-backed runs into rpc results', async () => {
+    it('answers a live list from the Run owner alone, without reading local Run markers', async () => {
+        // The Session runner owns the Session's Runs (live and retained) and
+        // writes the markers itself; markers are the unavailable-owner fallback.
         callSessionRpc.mockResolvedValueOnce({
-            runs: [createRun({ runId: 'run-primary-succeeded', status: 'succeeded', startedAtMs: 10 })],
+            runs: [
+                createRun({ runId: 'run-primary-succeeded', status: 'succeeded', startedAtMs: 10 }),
+                createRun({ runId: 'run-primary-running', status: 'running', startedAtMs: 20 }),
+            ],
         });
-        listExecutionRunMarkers.mockResolvedValueOnce([
-            createMarker({ runId: 'run-marker-running', status: 'running', startedAtMs: 20 }),
-            createMarker({ runId: 'run-marker-succeeded', status: 'succeeded', startedAtMs: 30 }),
+        listExecutionRunMarkers.mockResolvedValue([
+            createMarker({ runId: 'run-marker-running', status: 'running', startedAtMs: 15 }),
         ]);
 
         const result = await listExecutionRuns({
@@ -269,10 +273,11 @@ describe('listExecutionRuns', () => {
             request: { status: 'running', limit: 1 },
         });
 
+        expect(listExecutionRunMarkers).toHaveBeenCalledTimes(0);
         expect(result).toEqual({
             ok: true,
             data: {
-                runs: [createRun({ runId: 'run-marker-running', status: 'running', startedAtMs: 20 })],
+                runs: [createRun({ runId: 'run-primary-running', status: 'running', startedAtMs: 20 })],
             },
         });
     });
