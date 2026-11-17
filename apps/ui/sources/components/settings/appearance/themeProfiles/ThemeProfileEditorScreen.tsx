@@ -112,7 +112,7 @@ export const ThemeProfileEditorScreen = React.memo(function ThemeProfileEditorSc
     const scope = useAccountSettingsScope();
     const { execute } = useMountedActionExecution(scope);
     const executeTheme = useThemeActionExecution();
-    const share = useThemePluginShare(executeTheme);
+    const share = useThemePluginShare(executeTheme, entries);
     const editorActions = React.useMemo(() => createThemeProfileEditorActions(executeTheme), [executeTheme]);
     const profileId = getProfileIdParam(params.profileId);
     const isNewProfile = profileId === createNewProfileRouteId;

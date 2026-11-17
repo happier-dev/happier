@@ -54,7 +54,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
     const lightDevicesAnchor = React.useRef<unknown>(null);
     const darkDevicesAnchor = React.useRef<unknown>(null);
     const dismissDevices = React.useCallback(() => setDeviceTarget(null), []);
-    const share = useThemePluginShare(execute);
+    const share = useThemePluginShare(execute, inventory.entries);
     const labels = React.useMemo(() => ({
         sourceYours: t('settingsAppearance.themeProfiles.sourceYours'),
         sourceStore: t('settingsAppearance.themeProfiles.sourceStore'),

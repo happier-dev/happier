@@ -24,6 +24,7 @@ import { createThemeProfileDraft } from '@/theme/profiles/createThemeProfileDraf
 import { projectThemeLibraryEntry, projectThemeMiniaturePalette } from '@/theme/profiles/themeProfilePresentation';
 import { getThemePresetSourceReferenceId } from './themeProfilePresetOptions';
 import { Modal } from '@/modal';
+import type { createThemePluginShareForm } from './themePluginShareForm';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { ActionInputFormModal, type ActionInputFormModalProps } from '@/components/plugins/actions/ActionInputFormModal';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
@@ -227,6 +228,31 @@ describe('theme profile library Action ingress', () => {
                 // Addressed header acquisition shares the endpoint, and never acquires a body.
                 return ArtifactReadHeadersBatchInputV1Schema.safeParse(body).success ? [] : [{ path, body }];
             })).toEqual([]);
+            // The real visual grid reveals an unselected theme's operations on hover.
+            const frame = screen.tree.findAll(node => typeof node.props.onHoverIn === 'function' && node.props.accessible === false
+                && node.findAll(child => child.props.testID === `settings-theme-light:${key}`).length > 0)[0]!;
+            await act(async () => { frame.props.onHoverIn(); });
+            const share = screen.findAllByProps({ testID: `settings-theme-tile-menu-${key}` })
+                .flatMap(node => (node.props.actions ?? []) as readonly { id: string; onSelect: () => void }[])
+                .find(action => action.id === 'share-plugin');
+            expect(share).toBeDefined();
+            vi.mocked(Modal.show).mockClear();
+            await act(async () => { share?.onSelect(); });
+            // Modal presentation is the boundary; the mounted controller supplies the real form.
+            const shareForm = vi.mocked(Modal.show).mock.calls.at(-1)?.[0].props?.form as
+                ReturnType<typeof createThemePluginShareForm> | undefined;
+            expect(shareForm?.getInput()).toEqual({ refs: [{ kind: 'artifact', id: firstId }] });
+            expect(shareForm?.getFields()).toMatchObject([
+                { path: 'refs', required: true, widget: 'multiselect' },
+                { path: 'machine', required: true, inputType: { hostType: 'machine' } },
+                { path: 'path', required: true },
+            ]);
+            expect(shareForm?.getFields().find(field => field.path === 'refs')?.options).toEqual(expect.arrayContaining([
+                { value: { kind: 'artifact', id: firstId }, label: 'Custom theme' },
+                { value: { kind: 'artifact', id: siblingId }, label: 'Sibling theme' },
+            ]));
+            shareForm?.cancel();
+            expect(shareForm?.isRetired()).toBe(true);
             const siblingBefore = account.artifacts.readPlainBody(siblingId);
             vi.mocked(Modal.alert).mockClear();
             await screen.pressByTestIdAsync(`settings-theme-light:${key}`);
