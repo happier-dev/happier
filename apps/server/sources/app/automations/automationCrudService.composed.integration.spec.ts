@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { AutomationSessionLifecycleTriggerSchema } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
@@ -216,6 +218,113 @@ describe("automationCrudService (integration)", () => {
         ]);
     });
 
+    it.each(["plain", "e2ee"] as const)("migrates retained 0.3 Session selections without restarting their registrations (%s)", async (mode) => {
+        const account = await db.account.create({ data: { encryptionMode: mode,
+            ...(mode === "e2ee" ? createSignedAccountContentBinding() : {}) } });
+        const machineId = await seedExecutionMachine(account.id);
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(),
+            metadata: "{}", encryptionMode: "plain", latestTurnId: "terminal-turn", latestTurnStatus: "completed" } });
+        await db.sessionTurn.create({ data: { sessionId: session.id, turnId: "terminal-turn", status: "completed",
+            startedAt: 1_700_000_000_000n, updatedAt: 1_700_000_001_000n, terminalAt: 1_700_000_001_000n } });
+        const recipe = AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ ...workflowRecipe(1, machineId),
+            ...(mode === "e2ee" ? { workflow: { t: "encrypted", c: "retained-workflow-context" } } : {}) });
+        const automation = await createAutomation({ accountId: account.id, input: {
+            automationId: randomUUID(), name: "Retained registrations", enabled: true,
+            scopeSessionId: session.id, executionRecipe: recipe, assignments: [{ machineId }],
+            triggers: [{ triggerId: AutomationTriggerIdSchema.parse(randomUUID()), trigger: {
+                kind: "schedule", enabled: true, schedule: { kind: "once", scheduledAt: Date.now() + 60_000 },
+            } }],
+        } });
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const control = await app.inject({ method: "POST", url: "/v3/automations/query",
+                headers: { "x-test-user-id": account.id }, payload: { details: true } });
+            expect(control.statusCode, control.body).toBe(200);
+            expect(AutomationDefinitionDetailsResponseSchema.parse(control.json()).automations.map(item => item.id)).toContain(automation.id);
+        });
+        // These are the exact no-envelope physical fields written by current 0.3
+        // before subject selection; do not encode them through the new writer.
+        const retained = await Promise.all((["currentTurn", "firstMatch"] as const).map(policy => db.automationTrigger.create({
+            data: { id: randomUUID(), automationId: automation.id, kind: "sessionLifecycle", revision: 4,
+                enabled: policy === "currentTurn", sourceSessionId: session.id,
+                sourceTurnId: policy === "currentTurn" ? "terminal-turn" : null,
+                sessionLifecycleEventsJson: JSON.stringify(["parentTurnCompleted"]),
+                sessionLifecyclePolicyKind: policy, remainingOccurrences: 0,
+            },
+        })));
+        const missed = await db.automationRun.create({ data: { automationId: automation.id, accountId: account.id,
+            state: "missed", triggerId: retained[0]!.id, scheduledAt: new Date(1_700_000_000_000), dueAt: new Date(1_700_000_000_000),
+            causeKind: "trigger", occurrenceKey: "retained-session-occurrence",
+            automationScopeCaptured: true, automationScopeSessionId: session.id,
+            causeTriggerKind: "sessionLifecycle", causeTriggerRevision: 4, causeSourceSessionId: session.id,
+            causeSourceTurnId: "terminal-turn", causeSessionLifecyclePolicyKind: "currentTurn",
+            causeOccurredAt: new Date(1_700_000_000_000),
+            causeSessionLifecycleEvent: "parentTurnCompleted", executionInputEnvelope: createCanonicalJsonSigningInput(recipe.workflow),
+        } });
+        const before = await db.automation.findUniqueOrThrow({ where: { id: automation.id } });
+        const scheduleBefore = await db.automationTrigger.findUniqueOrThrow({ where: { id: automation.triggers[0]!.id } });
+        const encryption = mode === "plain" ? { mode: "plain" as const } : { mode: "e2ee" as const,
+            material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: "e2ee",
+                material: { type: "legacy", secret: new Uint8Array(32).fill(7) } }).material,
+            randomBytes: (length: number) => new Uint8Array(length).fill(1) };
+        await withAuthenticatedTestApp(registerAutomationV3Routes, async app => {
+            const headers = { "x-test-user-id": account.id };
+            const page = await app.inject({ method: "POST", url: "/v3/automations/query", headers,
+                payload: { details: true, legacySessionLifecycleSelections: true, limit: 1 } });
+            expect(page.statusCode, page.body).toBe(200);
+            const inventory = AutomationDefinitionDetailsResponseSchema.parse(page.json());
+            expect(inventory.automations).toEqual([]);
+            expect(inventory.legacySessionLifecycleSelections).toHaveLength(1);
+            const selected = inventory.legacySessionLifecycleSelections![0]!;
+            expect(selected).toMatchObject({ automationId: automation.id, expectedTemplateVersion: before.templateVersion });
+            expect(selected.selections.map(item => item.triggerId).sort()).toEqual(retained.map(item => item.id).sort());
+            const sessionLifecycleMigrations = selected.selections.map(selection => ({ triggerId: selection.triggerId,
+                expectedRevision: selection.triggerRevision,
+                triggerDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                    ...encryption,
+                    binding: { v: 1, automationId: automation.id, triggerId: selection.triggerId,
+                        triggerRevision: selection.triggerRevision, triggerKind: "sessionLifecycle" },
+                    definition: AutomationSessionLifecycleTriggerSchema.parse({ kind: "sessionLifecycle",
+                        subject: selection.subject, events: selection.events, policy: selection.policy }),
+                }),
+            }));
+            const stale = await app.inject({ method: "PATCH", url: `/v3/automations/${automation.id}`, headers,
+                payload: { expectedTemplateVersion: selected.expectedTemplateVersion,
+                    sessionLifecycleMigrations: sessionLifecycleMigrations.map((item, index) => index === 0
+                        ? { ...item, expectedRevision: item.expectedRevision + 1 } : item) } });
+            expect(stale.statusCode).toBe(400);
+            expect(await db.automationTrigger.findMany({ where: { id: { in: retained.map(item => item.id) } },
+                orderBy: { id: "asc" } })).toEqual([...retained].sort((a, b) => a.id.localeCompare(b.id)));
+            const patch = await app.inject({ method: "PATCH", url: `/v3/automations/${automation.id}`, headers,
+                payload: { expectedTemplateVersion: selected.expectedTemplateVersion, sessionLifecycleMigrations } });
+            expect(patch.statusCode, patch.body).toBe(200);
+            const repeated = await app.inject({ method: "PATCH", url: `/v3/automations/${automation.id}`, headers,
+                payload: { expectedTemplateVersion: selected.expectedTemplateVersion, sessionLifecycleMigrations } });
+            expect(repeated.statusCode).toBe(400);
+            const afterPage = await app.inject({ method: "POST", url: "/v3/automations/query", headers,
+                payload: { details: true, legacySessionLifecycleSelections: true } });
+            expect(afterPage.statusCode).toBe(200);
+            expect(AutomationDefinitionDetailsResponseSchema.parse(afterPage.json()).legacySessionLifecycleSelections).toEqual([]);
+        });
+        expect(await db.automation.findUniqueOrThrow({ where: { id: automation.id } })).toEqual(before);
+        expect(await db.automationTrigger.findUniqueOrThrow({ where: { id: scheduleBefore.id } })).toEqual(scheduleBefore);
+        expect(await db.automationRun.findUniqueOrThrow({ where: { id: missed.id } })).toEqual(missed);
+        for (const original of retained) {
+            const current = await db.automationTrigger.findUniqueOrThrow({ where: { id: original.id } });
+            const { definitionEnvelope, subjectKind, subjectKey, ...unchanged } = current;
+            const { definitionEnvelope: _envelope, subjectKind: _kind, subjectKey: _key, ...oldUnchanged } = original;
+            expect(unchanged).toEqual({ ...oldUnchanged,
+                sourceSessionId: original.sessionLifecyclePolicyKind === "currentTurn" ? session.id : null });
+            expect(subjectKind).toBe("session");
+            expect(subjectKey).toBeTruthy();
+            expect(openAutomationTriggerDefinitionStoredEnvelopeV1({
+                ...encryption,
+                binding: { v: 1, automationId: automation.id, triggerId: original.id, triggerRevision: 4, triggerKind: "sessionLifecycle" },
+                envelope: JSON.parse(definitionEnvelope!),
+            })).toMatchObject({ kind: "available", definition: { kind: "sessionLifecycle",
+                subject: { kind: "session", sessionId: session.id }, policy: { kind: original.sessionLifecyclePolicyKind } } });
+        }
+    });
+
     it("stores and reads a Session-B Habit targeting A through the Action, HTTP and SQLite owners", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const machineId = await seedExecutionMachine(account.id);
@@ -225,7 +334,7 @@ describe("automationCrudService (integration)", () => {
         const project = { machineId, directory: "/authored-a" };
         const definition = WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [], defaults: { conversation: destination },
             blocks: [{ kind: "step", id: "first", name: "Habit B", document: { text: "Reply HABIT B", references: [], attachments: [] },
-                execution: { engine: { agentTarget: { kind: "agent", identity: { pluginId: "acme.external-agent", localId: "agent" } } },
+                execution: { agentTarget: { kind: "agent", identity: { pluginId: "acme.external-agent", localId: "agent" } },
                     conversation: destination }, result: { kind: "text" } }] });
         await withAuthenticatedTestApp(registerAutomationV3Routes, async (app) => {
             const headers = { "x-test-user-id": account.id };

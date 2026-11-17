@@ -1,4 +1,6 @@
-import type { AutomationSessionLifecycleRegistrationErrorCode, AutomationSessionLifecycleTrigger, AutomationSessionLifecycleTriggerInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import type { AutomationSessionLifecycleRegistrationErrorCode, AutomationSessionLifecycleStructuralTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 
 import type { Tx } from "@/storage/inTx";
 
@@ -16,7 +18,7 @@ export class AutomationSessionLifecycleRegistrationValidationError
     }
 }
 
-export type ValidatedSessionLifecycleTriggerRegistration = AutomationSessionLifecycleTrigger;
+export type ValidatedSessionLifecycleTriggerRegistration = AutomationSessionLifecycleStructuralTrigger;
 
 /** Server-private context supplied only by the canonical Session row birth writer. */
 export type AutomationSessionBirthContext = Readonly<{
@@ -25,20 +27,24 @@ export type AutomationSessionBirthContext = Readonly<{
     createdAt: Date;
 }>;
 
+/** Exact Session selection can prove target inequality; broad scopes use cause-chain exclusion. */
 export function validateSessionLifecycleExecutionTargetInequality(params: Readonly<{
     automationTargetType: "new_session" | "existing_session" | "execution_run" | null;
     automationExistingSessionId?: string | null;
-    sourceSessionId: string;
+    serverIdentityId: string | null;
+    input: AutomationSessionLifecycleStructuralTrigger;
 }>): void {
-    if (params.automationTargetType !== "existing_session") return;
+    if (params.automationTargetType !== "existing_session" || params.input.subjectKind !== 'session') return;
     const targetSessionId = params.automationExistingSessionId?.trim();
-    if (!targetSessionId) {
+    if (!targetSessionId || !params.serverIdentityId) {
         throw new AutomationSessionLifecycleRegistrationValidationError(
             "executionTargetInequalityUnproven",
             "Existing-Session Automation target cannot prove it differs from the lifecycle source",
         );
     }
-    if (targetSessionId === params.sourceSessionId) {
+    if (params.input.subjectKey === automationSubjectKeyV1({
+        kind: 'session', serverId: params.serverIdentityId, sessionId: targetSessionId,
+    })) {
         throw new AutomationSessionLifecycleRegistrationValidationError(
             "sourceMatchesExecutionTarget",
             "Session lifecycle source Session must differ from the Automation execution target",
@@ -46,59 +52,52 @@ export function validateSessionLifecycleExecutionTargetInequality(params: Readon
     }
 }
 
-/** Same-Account source witness, plus exact current-turn eligibility where selected. */
+/** Exact-turn registration consumes a local digest witness; future scopes need no source census. */
 export async function validateSessionLifecycleTriggerRegistrationTx(params: Readonly<{
     tx: Tx;
     accountId: string;
     automationTargetType: "new_session" | "existing_session" | "execution_run" | null;
     automationExistingSessionId?: string | null;
-    input: AutomationSessionLifecycleTriggerInput;
+    serverIdentityId: string | null;
+    input: AutomationSessionLifecycleStructuralTrigger & Readonly<{ enabled: boolean }>;
     newbornSession?: AutomationSessionBirthContext;
 }>): Promise<ValidatedSessionLifecycleTriggerRegistration> {
-    const onSessionStart = params.input.events.includes("sessionStarted");
-    // Ordinary CRUD cannot register a missed creation occurrence. Only the
-    // row returned by Session birth supplies this private transaction context.
-    if (onSessionStart && (!params.newbornSession
-        || params.newbornSession.id !== params.input.sourceSessionId
-        || params.newbornSession.accountId !== params.accountId)) {
+    const { enabled: _enabled, ...definition } = params.input;
+    validateSessionLifecycleExecutionTargetInequality(params);
+    if (definition.events.includes('sessionStarted') && definition.subjectKind === 'session') {
+        const birth = params.newbornSession;
+        if (!birth || birth.accountId !== params.accountId || !params.serverIdentityId
+            || definition.subjectKey !== automationSubjectKeyV1({
+                kind: 'session', serverId: params.serverIdentityId, sessionId: birth.id,
+            })) {
+            throw new AutomationSessionLifecycleRegistrationValidationError(
+                'session_already_started', 'Session-start triggers require the Session creation transaction',
+            );
+        }
+    }
+    if (definition.policy.kind !== 'currentTurn') return definition;
+    const sourceSessionId = definition.sourceSessionId;
+    if (definition.subjectKind !== 'session' || !sourceSessionId || !params.serverIdentityId
+        || definition.subjectKey !== automationSubjectKeyV1({
+            kind: 'session', serverId: params.serverIdentityId, sessionId: sourceSessionId,
+        })) {
         throw new AutomationSessionLifecycleRegistrationValidationError(
-            "session_already_started", "Session-start triggers require the Session creation transaction",
+            'session_trigger_current_turn_requires_session', 'Current-turn policy requires an exact local Session',
         );
     }
-    const sourceSessionId = params.input.sourceSessionId;
     const sourceSession = await params.tx.session.findFirst({
         where: { id: sourceSessionId, accountId: params.accountId },
-        select: { latestTurnId: true, createdAt: true },
+        select: { latestTurnId: true },
     });
     if (!sourceSession) {
         throw new AutomationSessionLifecycleRegistrationValidationError(
-            "sourceSessionUnavailable",
-            "Session lifecycle source Session is unavailable",
+            'sourceSessionUnavailable', 'Session lifecycle source Session is unavailable',
         );
     }
-    if (onSessionStart && sourceSession.createdAt.getTime() !== params.newbornSession!.createdAt.getTime()) {
-        throw new AutomationSessionLifecycleRegistrationValidationError(
-            "session_already_started", "Session-start registration does not match the newborn Session",
-        );
-    }
-    validateSessionLifecycleExecutionTargetInequality({
-        automationTargetType: params.automationTargetType,
-        automationExistingSessionId: params.automationExistingSessionId,
-        sourceSessionId,
-    });
-    if (params.input.policy.kind !== "currentTurn") {
-        return {
-            kind: "sessionLifecycle",
-            sourceSessionId,
-            events: params.input.events,
-            policy: params.input.policy,
-        };
-    }
-    const sourceTurnId = params.input.policy.sourceTurnId;
+    const sourceTurnId = definition.policy.sourceTurnId;
     if (sourceSession.latestTurnId !== sourceTurnId) {
         throw new AutomationSessionLifecycleRegistrationValidationError(
-            "sourceTurnNotCurrent",
-            "Session lifecycle source turn is not the current latest turn",
+            'sourceTurnNotCurrent', 'Session lifecycle source turn is not the current latest turn',
         );
     }
     const sourceTurn = await params.tx.sessionTurn.findUnique({
@@ -107,27 +106,15 @@ export async function validateSessionLifecycleTriggerRegistrationTx(params: Read
     });
     if (!sourceTurn) {
         throw new AutomationSessionLifecycleRegistrationValidationError(
-            "sourceTurnUnavailable",
-            "Session lifecycle source turn is unavailable",
+            'sourceTurnUnavailable', 'Session lifecycle source turn is unavailable',
         );
     }
-    if (
-        sourceTurn.status !== "in_progress"
-        || await hasAppliedSessionLifecycleTerminalNoRunReceiptTx({
-            tx: params.tx,
-            sourceSessionId,
-            sourceTurnId,
-        })
-    ) {
+    if (sourceTurn.status !== 'in_progress' || await hasAppliedSessionLifecycleTerminalNoRunReceiptTx({
+        tx: params.tx, sourceSessionId, sourceTurnId,
+    })) {
         throw new AutomationSessionLifecycleRegistrationValidationError(
-            "sourceTurnNotInProgress",
-            "Session lifecycle source turn is no longer eligible for completion admission",
+            'sourceTurnNotInProgress', 'Session lifecycle source turn is no longer eligible for completion admission',
         );
     }
-    return {
-        kind: "sessionLifecycle",
-        sourceSessionId,
-        events: params.input.events,
-        policy: params.input.policy,
-    };
+    return definition;
 }

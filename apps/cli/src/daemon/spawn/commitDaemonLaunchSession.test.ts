@@ -250,6 +250,10 @@ describe('commitDaemonLaunchSession', () => {
     expect(daemonLaunchRequiresCommittedSession({ directory: '/repo', creationAuthorization: { token: 'signed-proof' } })).toBe(true);
   });
 
+  it('commits a prepared final identity before the runner starts', () => {
+    expect(daemonLaunchRequiresCommittedSession({ directory: '/repo', preparedFinalSessionId: 'prepared-final-session' })).toBe(true);
+  });
+
   it('commits a complete role snapshot before launch instead of transporting role text in the process environment', () => {
     const initialSessionRolesV1 = snapshotSessionRolesAtSpawnV1({
       leadSessionId: 'lead-1',

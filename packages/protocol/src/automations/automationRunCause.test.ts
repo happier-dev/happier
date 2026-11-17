@@ -57,6 +57,34 @@ describe('AutomationRunCauseSchema', () => {
     })).not.toHaveProperty('triggerId');
   });
 
+  it('accepts only corresponding public Machine presence evidence', () => {
+    const cause = {
+      kind: 'trigger', triggerId: 'presence-trigger', triggerRevision: 1, triggerKind: 'pluginEvent',
+      occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', occurredAt: 1_700_000_000_000,
+      evidence: {
+        eventRef: { pluginId: 'happier.machine.services', localId: 'machine-offline' },
+        sourceSelectorId: '9d5af559-2c82-4c22-b6a0-ecabce38a631',
+        serverOccurrence: { kind: 'machinePresence', payload: { serverId: 'srv_presenceCause1', machineId: 'machine-1',
+          transition: 'offline', revision: 1, observedAt: 1_700_000_000_000 } },
+      },
+    };
+    expect(AutomationRunCauseSchema.parse(cause)).toEqual(cause);
+    const { serverId: _unavailableHome, ...unqualifiedPayload } = cause.evidence.serverOccurrence.payload;
+    const unqualified = { ...cause, evidence: { ...cause.evidence,
+      serverOccurrence: { ...cause.evidence.serverOccurrence, payload: unqualifiedPayload } } };
+    expect(AutomationRunCauseSchema.parse(unqualified)).toEqual(unqualified);
+    for (const eventRef of [
+      { pluginId: 'other.plugin', localId: 'machine-offline' },
+      { pluginId: 'happier.machine.services', localId: 'machine-online' },
+    ]) {
+      expect(AutomationRunCauseSchema.safeParse({ ...cause, evidence: { ...cause.evidence, eventRef } }).success).toBe(false);
+    }
+    expect(AutomationRunCauseSchema.safeParse({ ...cause, occurredAt: cause.occurredAt + 1 }).success).toBe(false);
+    expect(AutomationRunCauseSchema.safeParse({ ...cause, evidence: { ...cause.evidence,
+      serverOccurrence: { ...cause.evidence.serverOccurrence, payload: { ...cause.evidence.serverOccurrence.payload,
+        privateInput: 'forbidden' } } } }).success).toBe(false);
+  });
+
   it('freezes the actual lifecycle Event and occurrence policy without request content', () => {
     const cause = AutomationRunCauseSchema.parse({
       kind: 'trigger',

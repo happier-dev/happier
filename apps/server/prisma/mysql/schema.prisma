@@ -2909,6 +2909,7 @@ enum AutomationSessionLifecycleEvent {
     userActionRequired
     sessionStarted
     sessionArchived
+    parentTurnStarted
 }
 
 enum AutomationSessionLifecyclePolicyKind {

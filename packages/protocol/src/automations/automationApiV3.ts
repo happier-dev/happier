@@ -58,7 +58,7 @@ import type { AutomationTriggerDetail, AutomationTriggerListItem } from './autom
 import { WorkflowDefinitionRefV1StringSchema } from '../workflows/workflowDefinitionRefV1.js';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '../artifacts/artifactListPageV1.js';
 import { WorkflowTriggerSummaryV1Schema, WorkflowIntendedPluginEventV1Schema, WorkflowAttachedTriggerPageV1Schema } from '../workflows/triggers/workflowTriggerActionsV1.js';
-import { AutomationSubjectV1Schema } from './automationSubjectV1.js';
+import { AutomationSessionSubjectV1Schema, AutomationSubjectV1Schema } from './automationSubjectV1.js';
 import { WorkflowTriggerEventDeclarationV1Schema } from '../workflows/workflowTriggerEventReferenceV1.js';
 
 export {
@@ -227,10 +227,18 @@ export const AutomationDefinitionPatchRequestSchema = lazyZodSchema(() => z.stri
   scopeSessionId: z.optional(z.nullable(IDENTIFIER_SCHEMA)),
   executionRecipe: zMini.optional(AutomationDefinitionExecutionRecipeSchema),
   observationOnly: z.optional(AutomationObservationOnlyDefinitionV1Schema),
+  /** One-time current 0.3 format repair at the same registration and revision. */
+  sessionLifecycleMigrations: z.optional(z.array(z.strictObject({
+    triggerId: AutomationTriggerIdSchema, expectedRevision: AutomationTriggerRevisionSchema,
+    triggerDefinitionEnvelope: AutomationStoredContentEnvelopeV1Schema,
+  })).check(z.minLength(1))),
   /** CAS recovery of an already-stored predecessor template; never a current recipe writer. */
   templateCiphertext: z.optional(z.string().check(z.minLength(1), z.maxLength(AUTOMATION_TEMPLATE_CIPHERTEXT_MAX_CHARS))),
   assignments: z.optional(z.array(AutomationAssignmentInputSchema)),
 }).check(z.superRefine((value, context) => {
+  if (value.sessionLifecycleMigrations !== undefined && Object.keys(value).some(key => key !== 'expectedTemplateVersion' && key !== 'sessionLifecycleMigrations')) {
+    context.addIssue({ code: 'custom', path: ['sessionLifecycleMigrations'], message: 'Session selection repair cannot edit a definition' });
+  }
   if ([value.executionRecipe, value.observationOnly, value.templateCiphertext].filter(item => item !== undefined).length > 1) {
     context.addIssue({ code: "custom", message: 'Choose a current recipe or retained template recovery, not both' });
   }
@@ -466,8 +474,12 @@ export const AutomationDefinitionListRequestSchema = lazyZodSchema(() => z.stric
   managedTarget: z.optional(AutomationManagedTargetV1Schema),
   includeUnindexedManagedTargets: z.optional(z.literal(true)),
   managedTargetUnindexed: z.optional(z.literal(true)),
+  legacySessionLifecycleSelections: z.optional(z.literal(true)),
   healthCheckSources: z.optional(z.strictObject({ sources: z.optional(z.array(AutomationTriggerReferenceV1Schema)) })),
 }).check(z.superRefine((value, context) => {
+  if (value.legacySessionLifecycleSelections !== undefined && Object.keys(value).some(key => key !== 'limit' && key !== 'cursor' && key !== 'details' && key !== 'legacySessionLifecycleSelections')) {
+    context.addIssue({ code: 'custom', path: ['legacySessionLifecycleSelections'], message: 'Session selection repair requires its own inventory' });
+  }
   const managedSelection = value.managedTarget !== undefined || value.managedTargetUnindexed !== undefined;
   if (value.healthCheckSources && (managedSelection || value.includeUnindexedManagedTargets !== undefined
     || value.workflowDefinitionId !== undefined || value.workflowDefinitionIds !== undefined
@@ -518,7 +530,20 @@ export const AutomationDefinitionDetailsRequestSchema = lazyZodSchema(() => z.sa
 }).check(z.refine(value => value.subject === undefined, 'Subject selection returns list-safe attached rows only')));
 export type AutomationDefinitionDetailsRequest = z.infer<typeof AutomationDefinitionDetailsRequestSchema>;
 
+export const AutomationLegacySessionLifecycleSelectionV1Schema = lazyZodSchema(() => z.strictObject({
+  triggerId: AutomationTriggerIdSchema, triggerRevision: AutomationTriggerRevisionSchema,
+  subject: AutomationSessionSubjectV1Schema,
+  events: AutomationSessionLifecycleConfigurationSchema.shape.events,
+  policy: AutomationSessionLifecycleConfigurationSchema.shape.policy,
+}));
+export const AutomationLegacySessionLifecycleSelectionsV1Schema = lazyZodSchema(() => z.strictObject({
+  automationId: asProtocolZod(AutomationIdV1Schema),
+  expectedTemplateVersion: z.number().check(z.int(), z.nonnegative()),
+  selections: z.array(AutomationLegacySessionLifecycleSelectionV1Schema),
+}));
+
 export const AutomationDefinitionDetailsResponseSchema = lazyZodSchema(() => z.strictObject({
+  legacySessionLifecycleSelections: z.optional(z.array(AutomationLegacySessionLifecycleSelectionsV1Schema)),
   automations: z.array(AutomationDefinitionDetailSchema).check(z.maxLength(AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS)),
   nextCursor: z.nullable(OPAQUE_CURSOR_SCHEMA),
 }));

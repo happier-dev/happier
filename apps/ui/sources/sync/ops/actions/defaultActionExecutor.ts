@@ -500,7 +500,6 @@ import { normalizeWorkflowActionThrownError } from '@happier-dev/protocol/action
 import { getAutomationDefinition } from '@/sync/api/automations/apiAutomations';
 import {
   WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema,
-  SessionTriggerAddRequestV1Schema, SessionTriggerUpdateRequestV1Schema, SessionTriggerListResultV1Schema,
 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { createUiOccurrenceAction } from './occurrenceAction';
 import { createUiNotificationActionDeps } from './notificationActionDeps';
@@ -1478,7 +1477,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
             if (context.externalActionTarget?.kind === 'machine') machineIds = [context.externalActionTarget.machineId];
           } else if (actionId === 'workflow.trigger.add') {
             const selected = WorkflowTriggerAddRequestV1Schema.safeParse(input);
-            if (selected.success && selected.data.project) machineIds = [selected.data.project.machineId];
+            if (selected.success) {
+              if (selected.data.project) machineIds = [selected.data.project.machineId];
+              else if (selected.data.lifetimeSession) machineIds = [(await createUiTriggerSessionResolver(accountContext)(
+                selected.data.lifetimeSession.sessionId, { signal: context.signal })).project.machineId];
+            }
           } else if (actionId === 'workflow.trigger.update') {
             const selected = WorkflowTriggerUpdateRequestV1Schema.safeParse(input);
             if (selected.success) {
@@ -1487,23 +1490,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
                 const row = await withAccountLifetime(context.signal, signal => getAutomationDefinition(accountContext.credentials,
                   selected.data.automationId, { ...accountContext, invocationSignal: signal }));
                 machineIds = row.assignments.filter(assignment => assignment.enabled).map(assignment => assignment.machineId);
-              }
-            }
-          } else if (actionId === 'session.trigger.add') {
-            const selected = SessionTriggerAddRequestV1Schema.safeParse(input);
-            if (selected.success) machineIds = [(selected.data.project
-              ?? (await createUiTriggerSessionResolver(accountContext)(selected.data.sessionId, { signal: context.signal })).project).machineId];
-          } else if (actionId === 'session.trigger.update') {
-            const selected = SessionTriggerUpdateRequestV1Schema.safeParse(input);
-            if (selected.success) {
-              if (selected.data.patch.project) machineIds = [selected.data.patch.project.machineId];
-              else if (workflowAction) {
-                const listed = await workflowAction({ actionId: 'session.trigger.list', input: { sessionId: selected.data.sessionId }, context });
-                const failure = ActionExecuteFailureSchema.safeParse(listed);
-                if (failure.success) return failure.data;
-                const set = SessionTriggerListResultV1Schema.parse(listed).sets
-                  .find(set => set.triggers.some(trigger => trigger.id === selected.data.triggerId));
-                machineIds = set?.project ? [set.project.machineId] : (set?.placements ?? []).map(placement => placement.machineId);
               }
             }
           } else return defaultPreview;

@@ -13,6 +13,7 @@ export const AUTOMATION_SESSION_LIFECYCLE_TERMINAL_NO_RUN_ACTIONS = [
  * settlements must be able to restart and rejoin instead of failing the turn.
  */
 const AUTOMATION_SESSION_LIFECYCLE_OCCURRENCE_ACTIONS: readonly string[] = [
+    "begin",
     "complete",
     ...AUTOMATION_SESSION_LIFECYCLE_TERMINAL_NO_RUN_ACTIONS,
 ];

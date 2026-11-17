@@ -1,15 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
+import { automationSubjectKeyV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { Tx } from "@/storage/inTx";
 import {
     AutomationSessionLifecycleRegistrationValidationError,
     validateSessionLifecycleExecutionTargetInequality,
-    validateSessionLifecycleTriggerRegistrationTx,
+    validateSessionLifecycleTriggerRegistrationTx as register,
 } from "./automationSessionLifecycleRegistration";
 
+const serverIdentityId = 'srv_00000000000000000000000000000000';
+const exact = { subjectKind: 'session' as const, subjectKey: automationSubjectKeyV1({
+    kind: 'session', serverId: serverIdentityId, sessionId: 'source-session',
+}) };
+const validateSessionLifecycleTriggerRegistrationTx = (params: Omit<Parameters<typeof register>[0], 'serverIdentityId'>) =>
+    register({ ...params, serverIdentityId });
 const input = {
     kind: "sessionLifecycle" as const,
     enabled: true,
     sourceSessionId: "source-session",
+    ...exact,
     events: ["parentTurnCompleted"] as ["parentTurnCompleted"],
     policy: { kind: "currentTurn" as const, sourceTurnId: "source-turn" },
 };
@@ -40,28 +48,35 @@ describe("Session lifecycle trigger registration", () => {
             tx: txFixture({ sourceSession: { latestTurnId: null, createdAt } }),
             accountId: "account", automationTargetType: null,
             newbornSession: { id: "source-session", accountId: "account", createdAt },
-            input: { kind: "sessionLifecycle", enabled: true, sourceSessionId: "source-session",
+            input: { kind: "sessionLifecycle", enabled: true, ...exact,
                 events: ["sessionStarted"], policy: { kind: "everyMatch" } },
-        })).resolves.toMatchObject({ sourceSessionId: "source-session", events: ["sessionStarted"] });
+        })).resolves.toMatchObject({ ...exact, events: ["sessionStarted"] });
     });
 
     it("refuses a Session-start registration outside the birth transaction", async () => {
         await expect(code(validateSessionLifecycleTriggerRegistrationTx({
             tx: txFixture(), accountId: "account", automationTargetType: null,
-            input: { kind: "sessionLifecycle", enabled: true, sourceSessionId: "source-session",
+            input: { kind: "sessionLifecycle", enabled: true, ...exact,
                 events: ["sessionStarted"], policy: { kind: "everyMatch" } },
         }))).resolves.toBe("session_already_started");
     });
 
-    it("refuses a creation context that does not match the row in this transaction", async () => {
-        const createdAt = new Date("2026-10-05T00:00:00.000Z");
+    it('accepts a future broad Session-start selection without a newborn or source read', async () => {
+        const tx = txFixture({ sourceSession: null });
+        await expect(validateSessionLifecycleTriggerRegistrationTx({
+            tx, accountId: 'account', automationTargetType: 'existing_session',
+            input: { kind: 'sessionLifecycle', enabled: true, events: ['sessionStarted'], policy: { kind: 'everyMatch' } },
+        })).resolves.toMatchObject({ events: ['sessionStarted'], policy: { kind: 'everyMatch' } });
+        expect(tx.session.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('rejects a forged exact-turn digest witness', async () => {
         await expect(code(validateSessionLifecycleTriggerRegistrationTx({
-            tx: txFixture({ sourceSession: { latestTurnId: null, createdAt } }),
-            accountId: "account", automationTargetType: null,
-            newbornSession: { id: "source-session", accountId: "account", createdAt: new Date(createdAt.getTime() - 1) },
-            input: { kind: "sessionLifecycle", enabled: true, sourceSessionId: "source-session",
-                events: ["sessionStarted"], policy: { kind: "everyMatch" } },
-        }))).resolves.toBe("session_already_started");
+            tx: txFixture(), accountId: 'account', automationTargetType: null,
+            input: { ...input, subjectKey: automationSubjectKeyV1({
+                kind: 'session', serverId: serverIdentityId, sessionId: 'different-session',
+            }) },
+        }))).resolves.toBe('session_trigger_current_turn_requires_session');
     });
 
     it("accepts only the same-Account exact current in-progress turn", async () => {
@@ -73,6 +88,7 @@ describe("Session lifecycle trigger registration", () => {
         })).resolves.toEqual({
             kind: "sessionLifecycle",
             sourceSessionId: "source-session",
+            ...exact,
             events: ["parentTurnCompleted"],
             policy: { kind: "currentTurn", sourceTurnId: "source-turn" },
         });
@@ -87,12 +103,12 @@ describe("Session lifecycle trigger registration", () => {
             input: {
                 kind: "sessionLifecycle",
                 enabled: true,
-                sourceSessionId: "source-session",
+                ...exact,
                 events: ["parentTurnFailed", "userActionRequired"],
                 policy: { kind: "everyMatch" },
             },
         })).resolves.toMatchObject({
-            sourceSessionId: "source-session",
+            ...exact,
             policy: { kind: "everyMatch" },
         });
         expect(tx.sessionTurn.findUnique).not.toHaveBeenCalled();
@@ -132,7 +148,7 @@ describe("Session lifecycle trigger registration", () => {
         expect(() => validateSessionLifecycleExecutionTargetInequality({
             automationTargetType: "existing_session",
             automationExistingSessionId: "target-session",
-            sourceSessionId: "source-session",
+            serverIdentityId, input,
         })).not.toThrow();
     });
 });

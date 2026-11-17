@@ -32,7 +32,7 @@ export async function isAutomationOriginRunPublisherTx(tx: Tx, params: Readonly<
     const trigger = await tx.automationTrigger.findFirst({ where: { id: cause.triggerId, automationId: run.automationId,
         revision: cause.triggerRevision, kind: cause.triggerKind, enabled: true, deletedAt: null,
         automation: { accountId: params.accountId, enabled: true, deletedAt: null } },
-        select: { sourceSessionId: true, sourceRunId: true, sourceRunMachineId: true,
+        select: { sourceRunId: true, sourceRunMachineId: true,
             automation: { select: { templateCiphertext: true } } } });
     if (!trigger) return false;
     const recipe = parseAutomationStoredWorkflowDefinitionRecipeV2(trigger.automation.templateCiphertext);
@@ -44,8 +44,8 @@ export async function isAutomationOriginRunPublisherTx(tx: Tx, params: Readonly<
     // Accepted intent settles the FIN leaf, not the pending native operation.
     // The immutable occurrence remains authoritative even after budget use.
     if (cause.triggerKind === 'sessionLifecycle') {
-        if (cause.evidence.event !== 'sessionArchived' || trigger.sourceSessionId !== cause.evidence.sourceSessionId) return false;
-        const source = await tx.session.findFirst({ where: { id: cause.evidence.sourceSessionId, accountId: params.accountId },
+        if (cause.evidence.event !== 'sessionArchived') return false;
+        const source = await tx.session.findUnique({ where: { id: cause.evidence.sourceSessionId },
             select: { archivedAt: true } });
         return source?.archivedAt?.getTime() === cause.occurredAt;
     }

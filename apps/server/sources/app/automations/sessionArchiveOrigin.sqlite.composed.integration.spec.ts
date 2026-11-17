@@ -6,7 +6,7 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { registerSessionArchiveRoutes } from "@/app/api/routes/session/registerSessionArchiveRoutes";
 import { db } from "@/storage/db";
-import { encodeAutomationSessionLifecycleConfiguration } from "./automationSessionLifecycleConfigurationCodec";
+import { createAutomationSessionLifecycleFixtureFields } from "@/testkit/automationSessionLifecycleFixture";
 import { decodeAutomationRunCause } from "./automationRunCauseCodec";
 import { createCliActionDeps } from "../../../../cli/src/session/actions/createCliActionDeps";
 import { createSessionRecordFixture } from "../../../../cli/src/testkit/backends/sessionFixtures";
@@ -40,7 +40,7 @@ it("retains the real CLI Workflow archive origin through the strict HTTP consume
         enabled: true, templateCiphertext: recipe.serialized, templateVersion: 1, workflowDefinitionId: "builtin:keep-going" } });
     await db.automationAssignment.create({ data: { automationId: automation.id, machineId: machine.id, enabled: true } });
     const trigger = await db.automationTrigger.create({ data: { automationId: automation.id, kind: "sessionLifecycle",
-        revision: 1, enabled: true, ...encodeAutomationSessionLifecycleConfiguration({ kind: "sessionLifecycle",
+        revision: 1, enabled: true, ...await createAutomationSessionLifecycleFixtureFields({ automationId: automation.id, kind: "sessionLifecycle",
             sourceSessionId: session.id, events: ["sessionArchived"], policy: { kind: "everyMatch" } }) } });
     const run = await db.automationRun.create({ data: { accountId: account.id, originKind: "direct", causeKind: null,
         state: "running", scheduledAt: new Date(), dueAt: new Date(), workflowCustodyState: "pending",

@@ -1,5 +1,7 @@
+import { asServerProtocolZod } from '@/app/api/utils/protocolComposableZodAdapter';
 import { UsageSessionTimingV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { z } from 'zod/mini';
+import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { SessionOrganizationPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionOwnerMetadataEnvelopeV1Schema, SessionDisplayProjectionV1Schema, SESSION_METADATA_LAYOUT_VERSION_V1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionInitialAccessMaterializedV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
@@ -33,6 +35,7 @@ export const SessionCreateRequestSchema = z.union([z.strictObject({
     organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema),
     initialAccess: z.optional(SessionInitialAccessMaterializedV1Schema),
     initialTriggers: z.optional(z.array(SessionInitialTriggerAdmissionV1Schema)),
+    preparedFinalSessionId: z.optional(asServerProtocolZod(SessionIdSchema)),
     managedCreation: z.optional(SessionManagedCreationV1Schema),
     primaryTeamId: z.optional(z.nullable(z.string().check(z.minLength(1)))),
     teamCredentialBindings: z.optional(SessionTeamCredentialBindingIntentsV1Schema),

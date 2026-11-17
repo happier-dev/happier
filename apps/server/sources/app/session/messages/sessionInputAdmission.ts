@@ -105,12 +105,19 @@ function sameMachineTarget(left: SessionInputMachineTargetV1, right: SessionInpu
 }
 
 /** Parsing committed placement is shared by point reads and publication set reads. */
+export function readRetainedCommittedSessionInputMachineTarget(session: Readonly<{
+    id: string; accountId: string; runtimeMachineTarget: unknown;
+}>): SessionInputMachineTargetV1 | undefined {
+    if (session.runtimeMachineTarget == null) return undefined;
+    const stored = createStoredReadSchema(SessionInputMachineTargetV1Schema).safeParse(session.runtimeMachineTarget);
+    return stored.success && stored.data.sessionId === session.id && stored.data.accountId === session.accountId
+        ? stored.data : undefined;
+}
+
 export function readStoredCommittedSessionInputMachineTarget(session: Readonly<{
     id: string; accountId: string; archivedAt: Date | null; runtimeMachineTarget: unknown;
 }>): SessionInputMachineTargetV1 | undefined {
-    if (session.archivedAt !== null || session.runtimeMachineTarget == null) return undefined;
-    const stored = createStoredReadSchema(SessionInputMachineTargetV1Schema).safeParse(session.runtimeMachineTarget);
-    return stored.success && stored.data.sessionId === session.id && stored.data.accountId === session.accountId ? stored.data : undefined;
+    return session.archivedAt !== null ? undefined : readRetainedCommittedSessionInputMachineTarget(session);
 }
 
 /** Only an actual publisher commit establishes cold placement; keys alone never select it. */

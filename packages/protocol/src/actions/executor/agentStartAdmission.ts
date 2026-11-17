@@ -100,8 +100,7 @@ export function requiresActionAgentStartDepthV1(actionId: string): boolean {
         || actionId === 'workflow.run.start' || actionId === 'workflow.trigger.run_now'
         || actionId === 'workflow.definition.create' || actionId === 'workflow.definition.update'
         || actionId === 'workflow.definition.edit'
-        || actionId === 'workflow.trigger.add' || actionId === 'workflow.trigger.update'
-        || actionId === 'session.trigger.add' || actionId === 'session.trigger.update';
+        || actionId === 'workflow.trigger.add' || actionId === 'workflow.trigger.update';
 }
 /** Native target input supplied by Workflow Agent selection. */
 export function readActionWorkflowTargetInputFieldV1(actionId: string): 'agentTarget' | 'backendTarget' | 'engineIds' | 'backendTargetKeys' | null {

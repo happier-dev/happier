@@ -170,7 +170,6 @@ export function buildUiActionDispatchRequestV1(request: Readonly<{
 const WORKFLOW_HOST_ADMITTED_CHILD_ACTION_IDS_V1: ReadonlySet<ActionId> = new Set<ActionId>([
   'workflow.definition.create', 'workflow.definition.update', 'workflow.definition.edit', 'workflow.definition.delete',
   'workflow.trigger.list', 'workflow.trigger.add', 'workflow.trigger.update', 'workflow.trigger.remove', 'workflow.trigger.test',
-  'session.trigger.list', 'session.trigger.add', 'session.trigger.update', 'session.trigger.remove',
 ]);
 
 /** Exact list: a new trigger Action joins deliberately; `workflow.trigger.run_now` is not a child here. */

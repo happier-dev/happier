@@ -1,10 +1,14 @@
+import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
+import { backgroundDeliveryAuthentication } from '@/app/session/access/sessionAccessAuthentication';
+import { readAutomationSessionLifecycleCandidatesInTx, type AutomationSessionLifecycleSourceFacts, type SessionLifecycleCandidateRow } from './automationSessionLifecycleSubjects';
 import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/run-cause';
 import { AutomationSessionLifecycleOccurrenceEvidenceV1Schema, deriveAutomationOccurrenceKeyV1, type AutomationSessionLifecycleOccurrenceEvidenceV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { snapshotAutomationSessionLifecyclePolicy } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import { type SessionTurnFactsV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
-import { afterTx, type Tx } from "@/storage/inTx";
+import { afterTx, inTx, type Tx } from "@/storage/inTx";
+import { log } from '@/utils/logging/log';
 
 import { emitAutomationSourceStatusUpdated } from "./automationChangePublisher";
 import {
@@ -96,12 +100,14 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
     accountId: string;
     occurrence: SessionLifecycleOccurrence;
     sourceTurnFacts?: SessionTurnFactsV1;
+    sourceSession: AutomationSessionLifecycleSourceFacts;
+    recipientAccountIds: readonly string[];
     /** Authenticated write actor, distinct from immutable turn admission facts. */
 }>): Promise<ReadonlyArray<SessionLifecycleAdmissionResult>> {
     const occurrence = AutomationSessionLifecycleOccurrenceEvidenceV1Schema.parse(
         params.occurrence,
     );
-    if (occurrence.event === "parentTurnCompleted" || occurrence.event === "parentTurnFailed"
+    if (occurrence.event === "parentTurnStarted" || occurrence.event === "parentTurnCompleted" || occurrence.event === "parentTurnFailed"
         || occurrence.event === "parentTurnCancelled") {
         const turn = await params.tx.sessionTurn.findUnique({
             where: { sessionId_turnId: { sessionId: occurrence.sourceSessionId, turnId: occurrence.sourceTurnId } },
@@ -131,31 +137,43 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
         });
         if (sourceSession?.latestTurnId !== occurrence.sourceTurnId) return [];
     }
-    const rows = await params.tx.automationTrigger.findMany({
-        where: {
-            kind: "sessionLifecycle",
-            sourceSessionId: occurrence.sourceSessionId,
-            deletedAt: null,
-            automation: {
-                accountId: params.accountId,
-                deletedAt: null,
-            },
-        },
-        orderBy: { id: "asc" },
-        select: {
-            id: true,
-            automationId: true,
-            enabled: true,
-            revision: true,
-            sessionLifecycleEventsJson: true,
-            sessionLifecyclePolicyKind: true,
-            sessionLifecycleMatchCount: true,
-            remainingOccurrences: true,
-            sourceSessionId: true,
-            sourceTurnId: true,
-            automation: { select: { enabled: true, scopeSessionId: true } },
-        },
-    });
+    const [{ source, rows }] = await readAutomationSessionLifecycleCandidatesInTx(params.tx, [params.sourceSession]);
+
+    const ownRows = rows.filter(row => row.automation.accountId === params.accountId);
+    const otherAccountIds = [...new Set(rows.filter(row => row.automation.accountId !== params.accountId)
+        .map(row => row.automation.accountId))];
+    if (otherAccountIds.length > 0) {
+        const recipients = new Set(params.recipientAccountIds);
+        afterTx(params.tx, () => {
+            void (async () => { for (const accountId of otherAccountIds) {
+                await inTx(async tx => {
+                    if (!recipients.has(accountId)) {
+                        const access = await resolveSessionAccessForOperation(tx, {
+                            accountId, sessionId: source.sessionId, capability: 'readTranscript',
+                            authentication: backgroundDeliveryAuthentication(),
+                        });
+                        if (access.status !== 'allowed') return;
+                    }
+                    await admitSessionLifecycleCandidatesTx({
+                        ...params, tx, accountId, occurrence,
+                        rows: rows.filter(row => row.automation.accountId === accountId),
+                    });
+                });
+            } })().catch(error => log({ module: 'automation-session-lifecycle', level: 'error' },
+                'Session lifecycle recipient admission failed after source commit', error));
+        });
+    }
+    return admitSessionLifecycleCandidatesTx({ ...params, occurrence, rows: ownRows });
+}
+
+async function admitSessionLifecycleCandidatesTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    occurrence: SessionLifecycleOccurrence;
+    sourceTurnFacts?: SessionTurnFactsV1;
+    rows: readonly SessionLifecycleCandidateRow[];
+}>): Promise<ReadonlyArray<SessionLifecycleAdmissionResult>> {
+    const { occurrence, rows } = params;
 
     const originRunId = rows.length > 0 ? await readAutomationLifecycleOriginRunIdTx(params.tx, occurrence) : null;
     const originTriggerIds = rows.length > 0
@@ -190,7 +208,10 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
                 where: { id: row.id, remainingOccurrences: { gt: 0 } },
                 data: { remainingOccurrences: 0 },
             });
-            if (consumed.count === 1) budgetConsumedWithoutRun.add(row.automationId);
+            if (consumed.count === 1) {
+                row.remainingOccurrences = 0;
+                budgetConsumedWithoutRun.add(row.automationId);
+            }
             continue;
         }
         if (!selected || !enabled) continue;
@@ -214,11 +235,12 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
                 where: {
                     id: row.id,
                     revision: row.revision,
-                    remainingOccurrences: stored.remainingOccurrences,
+                    remainingOccurrences: { gt: 0 },
                 },
                 data: { remainingOccurrences: { decrement: 1 } },
             });
             if (reserved.count !== 1) continue;
+            row.remainingOccurrences = stored.remainingOccurrences! - 1;
         }
         candidates.push({ row, cause, reserved: bounded });
     }
@@ -287,6 +309,7 @@ export async function admitSessionLifecycleAutomationRunsTx(params: Readonly<{
             where: { id: candidate.row.id },
             data: { remainingOccurrences: { increment: 1 } },
         });
+        candidate.row.remainingOccurrences = (candidate.row.remainingOccurrences ?? 0) + 1;
     }
     await publishNoRunBudgetConsumptionTx({
         tx: params.tx,

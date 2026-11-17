@@ -197,7 +197,9 @@ export function registerAutomationV3Routes(
                 ...(query.managedTargetUnindexed !== undefined ? { managedTargetUnindexed: query.managedTargetUnindexed } : {}),
                 ...(query.healthCheckSources !== undefined ? { healthCheckSources: query.healthCheckSources } : {}),
                 ...('details' in query ? { details: true as const } : {}),
+                ...(query.legacySessionLifecycleSelections ? { legacySessionLifecycleSelections: true as const } : {}),
             });
+            if (page.legacySessionLifecycleSelections !== undefined) return AutomationDefinitionDetailsResponseSchema.parse(page);
             if (page.attached !== undefined) return AutomationDefinitionListResponseSchema.parse(page);
             const rows = page.automations;
             const [eventProjections, lifecycleProjections, lastRunAt, scheduleOccurrences] = await Promise.all([
@@ -360,6 +362,7 @@ export function registerAutomationV3Routes(
                 automationId: request.params.id,
                 input,
                 expectedTemplateVersion: body.expectedTemplateVersion,
+                ...(body.sessionLifecycleMigrations !== undefined ? { sessionLifecycleMigrations: body.sessionLifecycleMigrations } : {}),
                 ...(body.templateCiphertext !== undefined ? { retainedLegacyTemplateRecovery: true } : {}),
             });
             if (!automation) return reply.code(404).send({ error: "automation_not_found" });

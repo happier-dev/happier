@@ -58,6 +58,7 @@ export const en = {
         schedule: 'On a schedule',
         prComment: 'When someone comments on a pull request',
         ciFailed: 'When CI fails on a pull request',
+        turnStarts: 'When a turn starts',
         turnEnds: 'When a turn ends',
         needsYou: 'When the session needs you',
         runEnds: 'When the run ends',
@@ -243,6 +244,7 @@ export const en = {
     },
     kindDescription: {
         pluginEvent: 'Run when a plugin observes an event.',
+        turnStarts: 'When a turn by you or by an agent you work with starts.',
         turnEnds: 'After a turn by you or by an agent you work with.',
         needsYou: 'Whenever this session waits for you, including while a workflow or Keep going drives it.',
         sessionArchived: 'Runs once, when you archive this session.',
@@ -319,7 +321,7 @@ export const en = {
     card: {
         when: "When",
         schedule: "On a schedule",
-        sessionStart: { turnEnds: "A session finishes a turn", needsYou: "A session needs you", sessionArchived: "A session is archived", sessionStarts: "A session starts" },
+        sessionStart: { turnStarts: "A session starts a turn", turnEnds: "A session finishes a turn", needsYou: "A session needs you", sessionArchived: "A session is archived", sessionStarts: "A session starts" },
         groupTime: "Time",
         groupSessions: "Sessions",
         add: "Add a trigger",

@@ -100,7 +100,7 @@ function triggerProjection(
             ...lifecycle.definition,
             remainingOccurrences: lifecycle.remainingOccurrences,
             status: required(lifecycleStatuses.get(trigger.id), "sessionLifecycle status"),
-            ...(includeDefinition ? { triggerDefinitionEnvelope: null } : {}),
+            ...(includeDefinition ? { triggerDefinitionEnvelope: required(trigger.definitionEnvelope, "sessionLifecycle private definition") } : {}),
         };
     }
     if (trigger.kind === "runLifecycle") {

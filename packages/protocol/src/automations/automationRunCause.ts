@@ -262,7 +262,7 @@ export type AutomationRunCauseDeclarationV1 = Readonly<
     occurrenceKey: string;
     occurredAt: number;
     evidence: Readonly<{
-      event: 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnCancelled';
+      event: 'parentTurnStarted' | 'parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnCancelled';
       sourceSessionId: string;
       sourceTurnId: string;
       policy:

@@ -1,5 +1,7 @@
+import { asServerProtocolZod } from '@/app/api/utils/protocolComposableZodAdapter';
 import type { UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import * as z from 'zod/mini';
+import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { isSessionEncryptionModeAllowedByStoragePolicy, resolveEffectiveDefaultAccountEncryptionMode } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
 import { SessionSharedMetadataV1Schema, validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1, type SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { SessionDisplayProjectionV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -84,6 +86,7 @@ export type Layout1SessionCreateRequest = Readonly<SessionCreateOriginFieldsV1 &
     organizationPlacement: SessionOrganizationPlacementInput | undefined;
     initialAccess?: SessionInitialAccessMaterializedV1;
     initialTriggers?: readonly SessionInitialTriggerAdmissionV1[];
+    preparedFinalSessionId?: string;
     primaryTeamId?: string | null;
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
     accountEncryptionMode: AccountEncryptionMode;
@@ -109,6 +112,7 @@ export type PreparedLayout1SessionCreate = Readonly<SessionCreateOriginFieldsV1 
     organizationPlacement: SessionOrganizationPlacementInput | undefined;
     initialAccess?: SessionInitialAccessMaterializedV1;
     initialTriggers?: readonly SessionInitialTriggerAdmissionV1[];
+    preparedFinalSessionId?: string;
     primaryTeamId?: string | null;
     teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
     storagePolicy: EncryptionStoragePolicy;
@@ -222,6 +226,8 @@ export function prepareLayout1SessionCreate(
     if (!origin.success) return { ok: false, rejection: { reason: "invalid-params" } };
     const manager = z.optional(SessionManagerV1Schema).safeParse(request.manager);
     if (!manager.success) return { ok: false, rejection: { reason: "invalid-params" } };
+    const preparedFinalSessionId = z.optional(asServerProtocolZod(SessionIdSchema)).safeParse(request.preparedFinalSessionId);
+    if (!preparedFinalSessionId.success) return { ok: false, rejection: { reason: "invalid-params" } };
     const initialTriggers = z.optional(z.array(SessionInitialTriggerAdmissionV1Schema)).safeParse(request.initialTriggers);
     if (!initialTriggers.success) {
         return { ok: false, rejection: { reason: "session-initial-trigger-invalid", code: "invalid_input" } };
@@ -279,6 +285,7 @@ export function prepareLayout1SessionCreate(
             organizationPlacement: request.organizationPlacement,
             initialAccess: request.initialAccess,
             ...(initialTriggers.data !== undefined ? { initialTriggers: initialTriggers.data } : {}),
+            ...(preparedFinalSessionId.data !== undefined ? { preparedFinalSessionId: preparedFinalSessionId.data } : {}),
             primaryTeamId: request.primaryTeamId,
             ...(request.teamCredentialBindings !== undefined ? { teamCredentialBindings: request.teamCredentialBindings } : {}),
             storagePolicy: request.storagePolicy,

@@ -23,10 +23,10 @@ function deferred() {
 }
 
 /** Barrier over canonical delegates only; it reproduces no persistence behavior. */
-function installCanonicalRaceBarrier(params: { sessionId: string; turnId: string }) {
+function installCanonicalRaceBarrier(params: { accountId: string; sessionId: string; turnId: string }) {
     const registrationWitnessed = deferred();
     const settlementTransactionRequested = deferred();
-    const settlementWriteAttempted = deferred();
+    const settlementSerializationLockRequested = deferred();
     const settlementMembershipRead = deferred();
     const releaseRegistration = deferred();
     const releaseSettlementMembership = deferred();
@@ -35,6 +35,7 @@ function installCanonicalRaceBarrier(params: { sessionId: string; turnId: string
     let registrationReads = 0;
     let settlementWrites = 0;
     let settlementHasEntered = false;
+    let registrationHoldsSourceSession = false;
 
     db.$transaction = (async (...args: unknown[]) => {
         const operation = args[0];
@@ -82,9 +83,6 @@ function installCanonicalRaceBarrier(params: { sessionId: string; turnId: string
                             const query = updateArgs[0] as { data?: { status?: unknown } } | undefined;
                             if (query?.data?.status === "completed") {
                                 settlementWrites += 1;
-                                const executing = Promise.resolve(Reflect.apply(originalUpdate, target, updateArgs));
-                                settlementWriteAttempted.resolve();
-                                return executing;
                             }
                             return Reflect.apply(originalUpdate, target, updateArgs);
                         };
@@ -114,6 +112,22 @@ function installCanonicalRaceBarrier(params: { sessionId: string; turnId: string
                 });
                 return await Reflect.apply(operation, undefined, [new Proxy(tx, {
                     get(target, property, receiver) {
+                        if (property === "$queryRawUnsafe") return (...queryArgs: unknown[]) => {
+                            const sql = queryArgs[0];
+                            const sourceSessionLock = typeof sql === "string" && sql.includes("FOR ")
+                                && (sql.includes('FROM "Session"') || sql.includes("FROM `Session`"))
+                                && queryArgs.slice(1).flat().includes(params.sessionId);
+                            const accountLock = typeof sql === "string"
+                                && sql.includes("FROM `Account`") && sql.includes("FOR UPDATE")
+                                && queryArgs.slice(1).includes(params.accountId);
+                            const executing = Promise.resolve(Reflect.apply(Reflect.get(target, property), target, queryArgs));
+                            if (registrationReads > 0 && (accountLock || (sourceSessionLock && registrationHoldsSourceSession))) {
+                                settlementSerializationLockRequested.resolve();
+                            }
+                            return sourceSessionLock && registrationReads === 0
+                                ? executing.then(result => { registrationHoldsSourceSession = true; return result; })
+                                : executing;
+                        };
                         if (property === "sessionTurn") return sessionTurn;
                         if (property === "automationTrigger") return automationTrigger;
                         return Reflect.get(target, property, receiver);
@@ -127,7 +141,8 @@ function installCanonicalRaceBarrier(params: { sessionId: string; turnId: string
     return {
         registrationWitnessed: registrationWitnessed.promise,
         settlementTransactionRequested: settlementTransactionRequested.promise,
-        settlementWriteAttempted: settlementWriteAttempted.promise,
+        settlementSerializationLockRequested: settlementSerializationLockRequested.promise,
+        registrationHoldsSourceSession: () => registrationHoldsSourceSession,
         settlementMembershipRead: settlementMembershipRead.promise,
         releaseRegistration: releaseRegistration.resolve,
         releaseSettlementMembership: releaseSettlementMembership.resolve,
@@ -222,7 +237,7 @@ export async function proveSessionLifecycleRegistrationSettlementRace(
     const fixture = await createSessionLifecycleRaceFixture("race");
     const { suffix, accountId, sessionId, turnId, automationId } = fixture;
 
-    const barrier = installCanonicalRaceBarrier({ sessionId, turnId });
+    const barrier = installCanonicalRaceBarrier({ accountId, sessionId, turnId });
     try {
         const registration = createAutomationTrigger({
             accountId,
@@ -243,7 +258,9 @@ export async function proveSessionLifecycleRegistrationSettlementRace(
         });
         const provider = getDbProviderFromEnv(process.env, "postgres");
         let settled: Awaited<typeof settlement> | null = null;
-        if (provider === "postgres") {
+        if (provider === "postgres" && !barrier.registrationHoldsSourceSession()) {
+            // Keep the optimistic interleaving sensitive to a missing source
+            // lock: settlement must commit before the stale witness proceeds.
             await barrier.settlementMembershipRead;
             barrier.releaseSettlementMembership();
             settled = await settlement;
@@ -262,7 +279,10 @@ export async function proveSessionLifecycleRegistrationSettlementRace(
             }
             barrier.releaseRegistration();
         } else {
-            await barrier.settlementWriteAttempted;
+            // Account admission on MySQL and the lifecycle source Session on
+            // PostgreSQL serialize before the turn update or membership read.
+            // Release the holder once its peer requests the same native lock.
+            await barrier.settlementSerializationLockRequested;
             barrier.releaseRegistration();
         }
         const registrationResult = await registration.then(

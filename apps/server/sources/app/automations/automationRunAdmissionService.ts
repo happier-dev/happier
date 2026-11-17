@@ -622,12 +622,12 @@ export async function admitAutomationRunsTx(params: Readonly<{
         ? []
         : (await Promise.all(automationPortableQueryChunks({
             values: occurrenceDiscriminators,
-            // Every arm binds two columns: the canonical
-            // `(automationId, occurrenceKey)` identity, or the retained V2
-            // `(automationId, legacyManualIdempotencyKey)` seam. Account
-            // ownership adds one fixed predicate.
+            // Each arm binds `(automationId, occurrenceKey)`. Prisma SQLite
+            // also binds Account, originKind, LIMIT and OFFSET, even without
+            // an authored limit: 497 arms produce 998 parameters; 498 exceed
+            // the compiler's 999-parameter boundary.
             bindingsPerValue: 2,
-            fixedBindings: 1,
+            fixedBindings: 4,
         }).map((chunk) => params.tx.automationRun.findMany({
             where: {
                 accountId: params.accountId,

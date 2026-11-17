@@ -1,3 +1,13 @@
+import {
+  AutomationSessionSubjectV1Schema,
+  AutomationProjectSubjectV1Schema,
+  AutomationMachineSubjectV1Schema,
+  AutomationSubjectStructuralV1Schema,
+  checkAutomationSubjectStructuralV1,
+  projectAutomationSubjectStructuralV1,
+} from './automationSubjectV1.js';
+
+
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
@@ -9,6 +19,7 @@ import {
 } from '../sessions/userActionRequiredOccurrenceV1.js';
 
 export const AutomationSessionLifecycleEventSchema = lazyZodSchema(() => z.enum([
+  'parentTurnStarted',
   'parentTurnCompleted',
   'parentTurnFailed',
   'parentTurnCancelled',
@@ -22,6 +33,7 @@ export type AutomationSessionLifecycleEvent = z.infer<
 
 /** Authoring groups project the exact lifecycle event schema, never a matcher. */
 export const AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 = {
+  turnStarts: ['parentTurnStarted'],
   turnEnds: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'],
   needsYou: ['userActionRequired'],
   sessionArchived: ['sessionArchived'],
@@ -89,14 +101,63 @@ export function canonicalizeAutomationSessionLifecycleEvents(
   );
 }
 
+export const AutomationSessionLifecycleSubjectV1Schema = lazyZodSchema(() => z.union([
+  AutomationSessionSubjectV1Schema,
+  AutomationProjectSubjectV1Schema,
+  AutomationMachineSubjectV1Schema,
+]));
+export type AutomationSessionLifecycleSubjectV1 = z.infer<typeof AutomationSessionLifecycleSubjectV1Schema>;
+
 export const AutomationSessionLifecycleConfigurationSchema = lazyZodSchema(() => z.strictObject({
-  sourceSessionId: asProtocolZod(SessionIdSchema),
+  subject: z.optional(AutomationSessionLifecycleSubjectV1Schema),
   events: AutomationSessionLifecycleEventsSchema,
   policy: AutomationSessionLifecyclePolicySchema,
 }));
-export type AutomationSessionLifecycleConfiguration = z.infer<
-  typeof AutomationSessionLifecycleConfigurationSchema
+export type AutomationSessionLifecycleConfiguration = z.infer<typeof AutomationSessionLifecycleConfigurationSchema>;
+
+/** Matching headers reveal only the C1 digest; a source id is a registration witness. */
+export const AutomationSessionLifecycleStructuralConfigurationSchema = lazyZodSchema(() => z.strictObject({
+  ...AutomationSubjectStructuralV1Schema.shape,
+  subjectKind: z.optional(z.union([
+    AutomationSessionSubjectV1Schema.shape.kind,
+    AutomationProjectSubjectV1Schema.shape.kind,
+    AutomationMachineSubjectV1Schema.shape.kind,
+  ])),
+  sourceSessionId: z.optional(asProtocolZod(SessionIdSchema)),
+  events: AutomationSessionLifecycleEventsSchema,
+  policy: AutomationSessionLifecyclePolicySchema,
+}).check(z.superRefine(checkAutomationSubjectStructuralV1)));
+export type AutomationSessionLifecycleStructuralConfiguration = z.infer<
+  typeof AutomationSessionLifecycleStructuralConfigurationSchema
 >;
+
+/** The only authored Session selection to indexed matching-header projection. */
+export function projectAutomationSessionLifecycleStructuralConfiguration(
+  definition: AutomationSessionLifecycleConfiguration,
+): AutomationSessionLifecycleStructuralConfiguration {
+  return canonicalizeAutomationSessionLifecycleStructuralConfiguration({
+    ...(definition.subject ? {
+      ...projectAutomationSubjectStructuralV1(definition.subject), subjectKind: definition.subject.kind,
+    } : {}),
+    ...(definition.policy.kind === 'currentTurn' && definition.subject?.kind === 'session'
+      ? { sourceSessionId: definition.subject.sessionId } : {}),
+    events: canonicalizeAutomationSessionLifecycleEvents(definition.events),
+    policy: definition.policy,
+  });
+}
+
+/** Consumers compare only this owner's matching fields, excluding row status. */
+export function canonicalizeAutomationSessionLifecycleStructuralConfiguration(
+  configuration: AutomationSessionLifecycleStructuralConfiguration,
+): AutomationSessionLifecycleStructuralConfiguration {
+  return {
+    ...(configuration.subjectKind === undefined ? {} : { subjectKind: configuration.subjectKind }),
+    ...(configuration.subjectKey === undefined ? {} : { subjectKey: configuration.subjectKey }),
+    ...(configuration.sourceSessionId === undefined ? {} : { sourceSessionId: configuration.sourceSessionId }),
+    events: canonicalizeAutomationSessionLifecycleEvents(configuration.events),
+    policy: configuration.policy,
+  };
+}
 
 export function initialAutomationSessionLifecycleRemainingOccurrences(
   policy: AutomationSessionLifecyclePolicy,

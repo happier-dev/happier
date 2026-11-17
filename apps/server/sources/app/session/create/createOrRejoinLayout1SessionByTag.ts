@@ -192,6 +192,7 @@ async function insertAdmittedLayout1SessionInTx(
 ): Promise<Extract<Layout1SessionCreateOutcome, { kind: "created" }>> {
     const created = await insertLayout1SessionRowInTx(tx, {
         prepared,
+        ...(prepared.preparedFinalSessionId ? { sessionId: prepared.preparedFinalSessionId } : {}),
         effectiveEncryptionMode: invariants.effectiveEncryptionMode,
         ownerAccountMode: invariants.accountEncryptionMode,
         authentication,
@@ -333,7 +334,14 @@ export async function createOrRejoinLayout1SessionByTag(
             transactionClass: "session.rejoin-after-create-race",
             prepare: () => prepareLayout1SessionCreatePublicationAdmission({ ...prepared, sessionCreationAuthorization }),
         });
-        if (rejoined === null) throw error;
+        if (rejoined === null) {
+            // A final id never changes ordinary tag-rejoin semantics. A holder
+            // under another tag/Account is a conflicting birth, not its winner.
+            if (prepared.preparedFinalSessionId && await inTx(tx => tx.session.findUnique({
+                where: { id: prepared.preparedFinalSessionId }, select: { id: true },
+            }))) return { kind: "rejected", rejection: { reason: "invalid-params" } };
+            throw error;
+        }
         if (rejoined.kind === "rejoined" && rejoined.publication) {
             await publishSessionArchiveTransition(rejoined.publication);
         }

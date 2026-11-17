@@ -96,7 +96,7 @@ export function describeLegacyTriggerSet(set: WorkflowTriggerSetV1, resolveMachi
 }
 
 /**
- * A session's triggers (03 §5.4, §5.7) as `session.trigger.list` returns them: one row per trigger
+ * A session's triggers (03 §5.4, §5.7) as the Workflow trigger list returns them: one row per trigger
  * under its event. A firing timestamp alone never supplies terminal lifecycle;
  * last-result status comes from the accepted Run summary when it is loaded.
  */

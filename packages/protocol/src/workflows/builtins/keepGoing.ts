@@ -7,6 +7,7 @@ export const KEEP_GOING_WORKFLOW_V1: WorkflowDefinitionV1 = {
     { name: 'maxRounds', valueType: 'number', required: false, default: 4 },
     { name: 'strikes', valueType: 'number', required: false, default: 3 },
     { name: 'secondOpinion', valueType: 'boolean', required: false, default: false },
+    { name: 'automationId', valueType: 'string', required: false },
     { name: 'triggerId', valueType: 'string', required: false },
   ],
   blocks: [
@@ -63,9 +64,10 @@ export const KEEP_GOING_WORKFLOW_V1: WorkflowDefinitionV1 = {
             { kind: 'action', id: 'complete-goal', name: 'Mark the goal complete', actionId: 'session.goal.set', input: {
               sessionId: { kind: 'origin_session_id' }, status: literal('complete'),
             } },
-            { kind: 'action', id: 'detach', name: 'Stop keeping going', actionId: 'session.trigger.remove',
-              onlyWhen: { kind: 'exists', value: input('triggerId') }, input: {
-                sessionId: { kind: 'origin_session_id' }, triggerId: input('triggerId'),
+            { kind: 'action', id: 'detach', name: 'Stop keeping going', actionId: 'workflow.trigger.remove',
+              onlyWhen: { kind: 'all', conditions: [
+                { kind: 'exists', value: input('automationId') }, { kind: 'exists', value: input('triggerId') },
+              ] }, input: { automationId: input('automationId'), triggerId: input('triggerId'),
               } },
           ],
         },

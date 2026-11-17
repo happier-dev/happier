@@ -15,10 +15,6 @@ const ADMITTED: readonly ActionId[] = [
   'workflow.trigger.update',
   'workflow.trigger.remove',
   'workflow.trigger.test',
-  'session.trigger.list',
-  'session.trigger.add',
-  'session.trigger.update',
-  'session.trigger.remove',
 ];
 // A future trigger-prefixed Action must be listed deliberately, never admitted by its prefix.
 const UNLISTED_TRIGGER_IDS = [

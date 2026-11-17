@@ -64,8 +64,8 @@ export async function loadAutomationSessionLifecycleStatusProjections(params: Re
     const currentTurnCandidates = candidates.filter(({ stored }) => (
         stored.definition.policy.kind === "currentTurn"
     ));
-    const sourceSessionIds = [...new Set(candidates.map(({ stored }) => (
-        stored.definition.sourceSessionId
+    const sourceSessionIds = [...new Set(currentTurnCandidates.flatMap(({ stored }) => (
+        stored.definition.sourceSessionId ? [stored.definition.sourceSessionId] : []
     )))];
     const id = workflowRunSqlIdentifier;
     const textType = prismaRuntime.raw(getDbProviderFromEnv(process.env, "postgres") === "mysql" ? "CHAR" : "TEXT");
@@ -167,9 +167,9 @@ export async function loadAutomationSessionLifecycleStatusProjections(params: Re
         // stored trigger revision cannot decide that: every trigger write
         // advances it, including the pause/resume and unrelated editor saves
         // that keep the registration and its produced Run. The canonical
-        // registration facts are the ones the trigger writer itself uses — a
-        // semantic edit restarts the occurrence budget and may reselect the
-        // Event set, while every other edit preserves both.
+        // registration facts are the ones the trigger writer itself uses.
+        // Selection and Event edits preserve the stored policy budget; only
+        // changing the policy starts a new budget.
         const boundRun = definition.policy.kind !== "currentTurn"
             ? latestRun
             : latestRun
@@ -183,12 +183,12 @@ export async function loadAutomationSessionLifecycleStatusProjections(params: Re
             perTrigger.set(trigger.id, admittedStatus(boundRun));
             continue;
         }
-        if (!existingSessions.has(definition.sourceSessionId)) {
+        if (definition.policy.kind === 'currentTurn' && !existingSessions.has(definition.sourceSessionId!)) {
             perTrigger.set(trigger.id, { state: "sourceUnavailable", runId: null });
             continue;
         }
         if (definition.policy.kind === "currentTurn") {
-            const key = sourceKey(definition.sourceSessionId, definition.policy.sourceTurnId);
+            const key = sourceKey(definition.sourceSessionId!, definition.policy.sourceTurnId);
             // An admitted Run for this exact source turn is the genuine
             // outcome of the occurrence the trigger selected. Terminal source
             // truth describes the turn, not the Run, so it must not replace a

@@ -16,6 +16,7 @@ export type TriggerEventGroup = Readonly<{
 
 /** I4-W §Handoff glyphs: turn end, session start and archive; the attention event uses the hand. */
 export const TRIGGER_LIFECYCLE_GLYPHS = {
+    turnStarts: 'play',
     turnEnds: 'arrows-clockwise',
     needsYou: 'hand',
     sessionStarts: 'play',

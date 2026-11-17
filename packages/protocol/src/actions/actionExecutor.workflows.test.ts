@@ -90,7 +90,7 @@ describe('createActionExecutor (Workflow family)', () => {
           witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
         normalizeAbsolutePath: () => null, randomBytes: () => { throw new Error('discovery_needs_no_keys'); } }),
     }) } as unknown as ActionExecutorDeps);
-    for (const [actionId, fieldPath] of [['workflow.trigger.add', 'workflow'], ['session.trigger.add', 'target.ref'],
+    for (const [actionId, fieldPath] of [['workflow.trigger.add', 'workflow'],
       ['workflow.run.start', 'source.workflow']] as const) {
       const result = await executor.execute('action.options.resolve', { actionId, fieldPath, draftInput: {} }, { surface: 'agent' });
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { options: expect.arrayContaining([

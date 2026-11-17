@@ -25,9 +25,10 @@ import { AutomationEventFilterV1Schema } from './automationEventFilterV1.js';
 import { AutomationDefinitionDisplayV1Schema } from './automationDefinitionDisplayV1.js';
 import {
   ENCRYPTED_STORED_CONTENT_SCHEMA,
+  AutomationStoredContentEnvelopeV1Schema,
   addAutomationStoredEnvelopeUtf8LimitIssue,
 } from './automationStoredContentEnvelopeV1.js';
-import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, AutomationSessionLifecycleConfigurationSchema, AutomationSessionLifecycleEventSchema, type AutomationSessionLifecycleEvent } from './automationSessionLifecycle.js';
+import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, AutomationSessionLifecycleConfigurationSchema, AutomationSessionLifecycleStructuralConfigurationSchema, projectAutomationSessionLifecycleStructuralConfiguration, AutomationSessionLifecycleEventSchema, type AutomationSessionLifecycleEvent } from './automationSessionLifecycle.js';
 import { FOLLOW_EVENT_KINDS_V1, type FollowEventKindV1 } from '../sessions/follow/sessionFollowPolicyV1.js';
 import { SessionPersonalEventKindV1Schema, resolveSessionPersonalFollowEventV1, type SessionPersonalEventKindV1 } from '../sessions/personal/eventEligibility.js';
 import { AutomationRunLifecycleTriggerSchema, AutomationRunLifecycleTriggerInputSchema } from './automationRunLifecycle.js';
@@ -49,19 +50,43 @@ export const AutomationScheduleTriggerInputSchema = lazyZodSchema(() => (<T exte
 })));
 export type AutomationScheduleTriggerInput = z.infer<typeof AutomationScheduleTriggerInputSchema>;
 
-export const AutomationSessionLifecycleTriggerSchema =
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationSessionLifecycleConfigurationSchema, {
+export const AutomationSessionLifecycleTriggerSchema = lazyZodSchema(() => z.strictObject({
+    ...AutomationSessionLifecycleConfigurationSchema.shape,
     kind: z.literal('sessionLifecycle'),
-  })));
-export type AutomationSessionLifecycleTrigger = z.infer<
-  typeof AutomationSessionLifecycleTriggerSchema
->;
+}));
+export type AutomationSessionLifecycleTrigger = z.infer<typeof AutomationSessionLifecycleTriggerSchema>;
 
-export const AutomationSessionLifecycleTriggerInputSchema =
-  lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationSessionLifecycleTriggerSchema, { enabled: z.boolean() })));
-export type AutomationSessionLifecycleTriggerInput = z.infer<
-  typeof AutomationSessionLifecycleTriggerInputSchema
->;
+export const AutomationSessionLifecycleStructuralTriggerSchema = lazyZodSchema(() => z.strictObject({
+    ...AutomationSessionLifecycleStructuralConfigurationSchema.shape,
+    kind: z.literal('sessionLifecycle'),
+}).check(z.superRefine(checkAutomationSubjectStructuralV1)));
+export type AutomationSessionLifecycleStructuralTrigger = z.infer<typeof AutomationSessionLifecycleStructuralTriggerSchema>;
+
+export const AutomationSessionLifecycleEncryptedTriggerSchema = lazyZodSchema(() => z.strictObject({
+    ...AutomationSessionLifecycleStructuralTriggerSchema.shape,
+    triggerDefinitionEnvelope: AutomationStoredContentEnvelopeV1Schema,
+}).check(z.superRefine(checkAutomationSubjectStructuralV1)));
+export type AutomationSessionLifecycleEncryptedTrigger = z.infer<typeof AutomationSessionLifecycleEncryptedTriggerSchema>;
+
+/** Initial-Session DTOs consume this named authored arm before binding birth. */
+export const AutomationSessionLifecycleAuthoredTriggerInputSchema = lazyZodSchema(() => z.strictObject({
+    ...AutomationSessionLifecycleTriggerSchema.shape,
+    enabled: z.boolean(),
+}));
+export const AutomationSessionLifecycleTriggerInputSchema = lazyZodSchema(() => z.union([
+    AutomationSessionLifecycleAuthoredTriggerInputSchema,
+    z.strictObject({ ...AutomationSessionLifecycleEncryptedTriggerSchema.shape, enabled: z.boolean() })
+        .check(z.superRefine(checkAutomationSubjectStructuralV1)),
+]));
+export type AutomationSessionLifecycleTriggerInput = z.infer<typeof AutomationSessionLifecycleTriggerInputSchema>;
+
+export function projectAutomationSessionLifecycleStructuralTrigger(
+    trigger: AutomationSessionLifecycleTrigger,
+): AutomationSessionLifecycleStructuralTrigger {
+    return AutomationSessionLifecycleStructuralTriggerSchema.parse({
+        kind: 'sessionLifecycle', ...projectAutomationSessionLifecycleStructuralConfiguration(trigger),
+    });
+}
 
 /** Stable exact-turn registration refusals derived by the Session owner. */
 export const AutomationSessionLifecycleRegistrationErrorCodeSchema = lazyZodSchema(() => z.enum([
@@ -72,6 +97,7 @@ export const AutomationSessionLifecycleRegistrationErrorCodeSchema = lazyZodSche
   'executionTargetInequalityUnproven',
   'sourceMatchesExecutionTarget',
   'session_already_started',
+  'session_trigger_current_turn_requires_session',
 ]));
 export type AutomationSessionLifecycleRegistrationErrorCode = z.infer<
   typeof AutomationSessionLifecycleRegistrationErrorCodeSchema
@@ -173,6 +199,7 @@ export const AutomationTriggerDefinitionSchema = lazyZodSchema(() => z.union([
   AutomationPluginEventDefinitionTriggerSchema,
   AutomationPluginEventEncryptedDefinitionTriggerSchema,
   AutomationSessionLifecycleTriggerSchema,
+  AutomationSessionLifecycleEncryptedTriggerSchema,
   AutomationRunLifecycleTriggerSchema,
   AutomationPullRequestTriggerSchema,
   AutomationPullRequestEncryptedTriggerSchema,

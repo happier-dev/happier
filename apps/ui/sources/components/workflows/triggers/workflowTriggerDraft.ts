@@ -70,7 +70,7 @@ function readSavedTriggerDefinition(saved: WorkflowTriggerSetV1['triggers'][numb
             return when ? buildTriggerDefinition({ when, enabled: saved.enabled, sessionId: null }) : null;
         }
         case 'schedule': return { kind: saved.kind, schedule: saved.schedule, enabled: saved.enabled };
-        case 'sessionLifecycle': return { kind: saved.kind, sourceSessionId: saved.sourceSessionId, events: saved.events,
+        case 'sessionLifecycle': return { kind: saved.kind, ...(saved.subject === undefined ? {} : { subject: saved.subject }), events: saved.events,
             policy: saved.policy, enabled: saved.enabled };
         case 'runLifecycle': return { kind: saved.kind, source: saved.source, condition: saved.condition, enabled: saved.enabled };
         case 'prComment':

@@ -176,45 +176,6 @@ describe('workflow Action contracts', () => {
       details: { runId: 'run-1' },
     }).success).toBe(false);
   });
-  it('owns the Run/validation and definition Actions including typed partial edits', () => {
-    expect(WORKFLOW_ACTION_IDS_V1).toEqual([
-      'workflow.validate',
-      'workflow.run.start',
-      'workflow.run.list',
-      'workflow.run.summaries',
-      'workflow.run.get',
-      'workflow.run.wait',
-      'workflow.run.read_state.set',
-      'workflow.run.pause',
-      'workflow.run.resume',
-      'workflow.run.cancel',
-      'workflow.run.invocations.list',
-      'workflow.run.invocations.get',
-      'workflow.run.invocations.retry',
-      'workflow.run.delete',
-      'workflow.run.invocations.publish_draft',
-      'workflow.run.invocations.complete_review',
-      'workflow.definition.list',
-      'workflow.definition.get',
-      'workflow.definition.create',
-      'workflow.definition.update',
-      'workflow.definition.edit',
-      'workflow.definition.delete',
-      'workflow.definition.import',
-      'workflow.definition.export',
-      'workflow.definition.capture',
-      'workflow.trigger.list',
-      'workflow.trigger.add',
-      'workflow.trigger.update',
-      'workflow.trigger.remove',
-      'workflow.trigger.run_now',
-      'session.trigger.list',
-      'session.trigger.add',
-      'session.trigger.update',
-      'session.trigger.remove',
-    ]);
-  });
-
   it('initializes the canonical workflow definition schema through the workflow public barrel', () => {
     expect(WORKFLOW_ACTION_IDS_V1).toContain('workflow.validate');
     expect(WorkflowActionInputSchemasV1['workflow.validate'].safeParse({}).success).toBe(false);

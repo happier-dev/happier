@@ -7,7 +7,7 @@ import { ArtifactSavedByPersonV1Schema } from '../../artifacts/artifactBinaryV1.
 import { ArtifactCallerAccessV1Schema } from '../../artifacts/artifactAccessV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowDestinationsV1Schema } from '../workflowDestinationsV1.js';
-import { AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema, AutomationPluginEventDefinitionTriggerSchema } from '../../automations/automationTriggerDefinition.js';
+import { AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema, AutomationPluginEventDefinitionTriggerSchema, AutomationSessionLifecycleTriggerSchema, AutomationSessionLifecycleAuthoredTriggerInputSchema } from '../../automations/automationTriggerDefinition.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from '../../automations/automationTriggerIdentity.js';
 import { OPAQUE_CURSOR_SCHEMA } from '../../automations/automationActionSpecsV1.js';
 import { AutomationEventSourceStatusV1Schema } from '../../automations/automationEventSourceStatusV1.js';
@@ -184,19 +184,28 @@ export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
   }) }),
   z.strictObject({ healthSource: z.strictObject({ sourceInstanceIds: z.array(AutomationEventSourceInstanceIdV1Schema) }) }),
   z.strictObject({ scope: z.enum(['account_inline', 'account_all', 'account_source_unavailable']) }),
+  z.strictObject({ lifetimeSession: z.pick(WorkflowTriggerLifetimeSessionV1Schema, { sessionId: true }) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), review: z.literal(true) }),
   z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema), triggerId: AutomationTriggerIdSchema }),
 ]));
+const WorkflowTriggerLifetimeSessionV1Schema = lazyZodSchema(() => z.strictObject({
+  sessionId: asProtocolZod(SessionIdSchema),
+  onComplete: z.optional(AutomationStoredWorkflowDefinitionV2Schema.shape.onComplete),
+}));
 const WorkflowTriggerExecutableAddRequestV1Schema = lazyZodSchema(() => z.strictObject({
   workflow: zMini.optional(WorkflowDefinitionRefV1StringSchema),
   target: zMini.optional(TriggerTargetV1Schema),
-  project: WorkflowProjectTargetV1Schema,
+  project: z.optional(WorkflowProjectTargetV1Schema),
+  lifetimeSession: z.optional(WorkflowTriggerLifetimeSessionV1Schema),
   observationOnly: z.optional(z.never()),
   ...zMini.partial(ContextFields).shape,
-  trigger: AutomationTriggerDefinitionInputSchema,
+  trigger: SessionTriggerDefinitionInputV1Schema,
   deployment: z.optional(AutomationDeploymentTriggerFilterV1Schema),
   actionApproval: z.optional(z.enum(['automatic', 'ask'])),
 }).check(z.superRefine((value, ctx) => {
+  if (value.project === undefined && value.lifetimeSession === undefined) {
+    ctx.addIssue({ code: 'custom', path: ['project'], message: 'Choose an execution project or Session lifetime' });
+  }
   if ((value.workflow === undefined) === (value.target === undefined)) {
     ctx.addIssue({ code: 'custom', path: ['target'], message: 'Choose exactly one workflow or target' });
   }
@@ -228,6 +237,7 @@ export const WorkflowTriggerUpdateRequestV1Schema = lazyZodSchema(() => z.strict
     trigger: zMini.optional(AutomationTriggerDefinitionSchema),
     deployment: z.optional(z.nullable(AutomationDeploymentTriggerFilterV1Schema)),
     actionApproval: z.optional(z.enum(['automatic', 'ask'])),
+    onComplete: z.optional(AutomationStoredWorkflowDefinitionV2Schema.shape.onComplete),
   }).check(z.refine((patch) => Object.keys(patch).length > 0, 'A trigger update needs a change')),
 }).check(z.superRefine((value, ctx) => {
   if (value.patch.trigger !== undefined && value.triggerId === undefined) {
@@ -255,6 +265,11 @@ const OpenedPullRequestTriggerDetailSchema = lazyZodSchema(() => z.strictObject(
   createdAt: z.number().check(z.int(), z.nonnegative(), z.int()), updatedAt: z.number().check(z.int(), z.nonnegative(), z.int()),
   sourceSessionId: asProtocolZod(SessionIdSchema), triggerDefinitionEnvelope: z.string().check(z.minLength(1)),
   ...AutomationPullRequestTriggerSchema.shape,
+}));
+const OpenedSessionLifecycleTriggerDetailSchema = lazyZodSchema(() => z.strictObject({
+  ...AutomationSessionLifecycleTriggerProjectionSchema.shape,
+  ...AutomationSessionLifecycleTriggerSchema.shape,
+  triggerDefinitionEnvelope: z.string().check(z.minLength(1)),
 }));
 const OpenedActionTriggerDetailSchema = lazyZodSchema(() => z.extend(AutomationActionTriggerSchema,
   z.pick(AutomationActionTriggerProjectionSchema, {
@@ -290,7 +305,7 @@ export const WorkflowTriggerSetV1Schema = lazyZodSchema(() => z.strictObject({
       /** Private source owner projection, independent of execution placement and Environment lifecycle. */
       subject: z.optional(HealthCheckSubjectV1Schema),
     }),
-    AutomationTriggerDetailSchema._zod.def.options[4], AutomationTriggerDetailSchema._zod.def.options[5],
+    OpenedSessionLifecycleTriggerDetailSchema, AutomationTriggerDetailSchema._zod.def.options[5],
     OpenedPullRequestTriggerDetailSchema,
     OpenedActionTriggerDetailSchema, AutomationTriggerDetailSchema._zod.def.options[7],
   ])),
@@ -325,6 +340,8 @@ export const WorkflowTriggerHealthSourceV1Schema = lazyZodSchema(() => z.strictO
 }));
 export type WorkflowTriggerHealthSourceV1 = z.infer<typeof WorkflowTriggerHealthSourceV1Schema>;
 export const WorkflowTriggerListResultV1Schema = lazyZodSchema(() => z.strictObject({
+  lifetimeSession: z.optional(z.pick(WorkflowTriggerLifetimeSessionV1Schema, { sessionId: true })),
+  pullRequestLinks: z.optional(SessionTriggerPullRequestLinksV1Schema),
   sets: z.array(WorkflowTriggerSetV1Schema), triggerDefinition: z.optional(WorkflowTriggerEventDefinitionV1Schema),
   attached: z.optional(WorkflowAttachedTriggerPageV1Schema.shape.attached),
   nextCursor: z.optional(WorkflowAttachedTriggerPageV1Schema.shape.nextCursor),
@@ -373,13 +390,10 @@ export type SessionTriggerDefinitionInputV1 = z.infer<typeof SessionTriggerDefin
 export const SessionInitialTriggerDefinitionV1Schema = lazyZodSchema(() => z.union([
   AutomationTriggerDefinitionInputSchema._zod.def.options[0],
   AutomationTriggerDefinitionInputSchema._zod.def.options[1],
-  (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(zMini.omit(AutomationTriggerDefinitionInputSchema._zod.def.options[2], { sourceSessionId: true }), {
-    policy: z.union([
-      AutomationSessionLifecyclePolicySchema._zod.def.options[1],
-      AutomationSessionLifecyclePolicySchema._zod.def.options[2],
-      AutomationSessionLifecyclePolicySchema._zod.def.options[3],
-    ]),
-  })),
+  z.strictObject({
+    ...zMini.omit(AutomationSessionLifecycleAuthoredTriggerInputSchema, { subject: true }).shape,
+    policy: z.union(AutomationSessionLifecyclePolicySchema._zod.def.options.filter(policy => policy.shape.kind._zod.def.values[0] !== 'currentTurn')),
+  }),
   AutomationTriggerDefinitionInputSchema._zod.def.options[3],
   (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(SessionPullRequestTriggerSchema, { enabled: z.boolean() })),
 ]));

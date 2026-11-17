@@ -1,4 +1,4 @@
-import type { AutomationSessionLifecycleEvent} from '@happier-dev/protocol/automations/automationSessionLifecycle';
+import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLifecycleEvent } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
 import type { AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -152,16 +152,16 @@ export function formatTriggerInterval(everyMs: number): string {
         : t('workflows.triggers.summary.everyMinutes', { count: minutes });
 }
 
-export type SessionLifecycleKind = 'turnEnds' | 'needsYou' | 'sessionStarts' | 'sessionArchived';
+export type SessionLifecycleKind = keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1;
 
 /**
  * The kind a session event reads as: turn-end events fire together as one "When a turn ends"; the
  * attention, start and archive events are their own kinds (07 S16).
  */
 export function readSessionLifecycleKind(events: readonly AutomationSessionLifecycleEvent[]): SessionLifecycleKind {
-    if (events.includes('sessionArchived')) return 'sessionArchived';
-    if (events.includes('sessionStarted')) return 'sessionStarts';
-    return events.length > 0 && events.every((event) => event === 'userActionRequired') ? 'needsYou' : 'turnEnds';
+    const groups = AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1;
+    return (Object.keys(groups) as SessionLifecycleKind[]).find(kind =>
+        events.length > 0 && events.every(event => (groups[kind] as readonly AutomationSessionLifecycleEvent[]).includes(event))) ?? 'turnEnds';
 }
 
 export type TriggerSummaryContext = Readonly<{

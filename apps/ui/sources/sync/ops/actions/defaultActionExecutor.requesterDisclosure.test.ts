@@ -14,10 +14,10 @@ import { readSpawnSessionRpcTimeoutMsFromEnv } from '@/sync/domains/session/spaw
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createExistingSessionDirectoryPreflightResult } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createExistingSessionDirectoryPreflightResult, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
+import { storage } from '@/sync/domains/state/storage';
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -145,8 +145,13 @@ describe('requester credential disclosure at the human Action front door', () =>
         else expect(result.errorCode).toBeTruthy();
     });
 
-    it.each(['workflow.run.start', 'workflow.trigger.add', 'workflow.trigger.update', 'session.trigger.add', 'session.trigger.update'] as const)(
-        'discloses requester retention before approving %s on a shared Machine', async actionId => {
+    it.each([
+        { actionId: 'workflow.run.start', lifetimeSession: false },
+        { actionId: 'workflow.trigger.add', lifetimeSession: false },
+        { actionId: 'workflow.trigger.update', lifetimeSession: false },
+        { actionId: 'workflow.trigger.add', lifetimeSession: true },
+    ] as const)(
+        'discloses requester retention before approving $actionId on a shared Machine (Session lifetime=$lifetimeSession)', async ({ actionId, lifetimeSession }) => {
         const serverId = await harness.addHome({ name: 'Workflow requester Home', serverUrl: 'https://workflow-disclosure.test',
             serverIdentityId: 'srv_workflow_disclosure', accountId: 'bob', currentAccount: true });
         harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
@@ -174,32 +179,19 @@ describe('requester credential disclosure at the human Action front door', () =>
         const project = { machineId: 'alice-machine', directory: '/repo' };
         const scheduledTrigger = { kind: 'schedule', enabled: true,
             schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } };
-        if (actionId === 'session.trigger.update') {
-            // The real Account list owner returns its parsed payload directly.
-            // An edit without a new placement must disclose the retained one.
-            const row = AutomationDefinitionDetailSchema.parse({
-                id: 'workflow-trigger', name: 'Workflow trigger', description: null, enabled: true,
-                workflowDefinitionId: null, scopeSessionId: 'session-one',
-                targetType: null, existingSessionId: null, templateVersion: 1,
-                lastRunAt: null, createdAt: 1, updatedAt: 1,
-                assignments: [{ machineId: project.machineId, enabled: true, priority: 0, updatedAt: 1 }],
-                triggers: [{ ...scheduledTrigger, id: 'trigger-one', revision: 1,
-                    createdAt: 1, updatedAt: 1, nextRunAt: 2, triggerDefinitionEnvelope: null }],
-                executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null,
-                    workflow: { t: 'plain', v: { workspace: { directory: project.directory },
-                        executionTarget: { kind: 'detached_run' }, inlineDefinition: definition } } },
-            });
-            harness.answer(serverId, 'POST /v3/automations/query', { body: { automations: [row], nextCursor: null } });
-        }
+        const previousSessions = storage.getState().sessions;
+        if (lifetimeSession) storage.setState({ sessions: { ...previousSessions,
+            'session-one': createSessionFixture({ id: 'session-one', serverId,
+                metadata: { ...createSessionFixture().metadata!, machineId: project.machineId, path: project.directory } }),
+        } });
         const input = actionId === 'workflow.run.start' ? {
             runId: '22222222-2222-4222-8222-222222222222', source: { kind: 'inline', definition },
         } : actionId === 'workflow.trigger.add' ? {
-            target: { kind: 'inline', definition }, project, trigger: scheduledTrigger,
-        } : actionId === 'workflow.trigger.update' ? {
+            target: { kind: 'inline', definition }, trigger: scheduledTrigger,
+            ...(lifetimeSession ? { lifetimeSession: { sessionId: 'session-one' } } : { project }),
+        } : {
             automationId: 'workflow-trigger', expectedRevision: 1, patch: { enabled: true },
-        } : actionId === 'session.trigger.add' ? {
-            sessionId: 'session-one', target: { kind: 'inline', definition }, project, trigger: scheduledTrigger,
-        } : { sessionId: 'session-one', triggerId: 'trigger-one', expectedRevision: 1, patch: { enabled: true } };
+        };
         const controller = new AbortController();
         const pending = createFrontDoorActionExecute(createDefaultActionExecutor())(actionId, input, {
             surface: 'ui', serverId, actionRequestId: `disclosure-${actionId}`, signal: controller.signal,

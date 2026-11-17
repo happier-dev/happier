@@ -1,8 +1,8 @@
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { normalizeWorkflowIngress } from '@happier-dev/protocol/workflows/workflowValidationV1';
-import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { readWorkflowEngineChoiceV1, resolveWorkflowStepSelectionV1, workflowSelectionChoosesEngineV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { SessionInitialTriggerDefinitionV1Schema, type WorkflowTriggerSetV1, type SessionInitialTriggerDefinitionV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
-import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLifecycleEvent } from '@happier-dev/protocol/automations/automationSessionLifecycle';
+import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLifecycleEvent, type AutomationSessionLifecyclePolicy, type AutomationSessionLifecycleSubjectV1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import { projectFollowEventConditionPickerV1, type AutomationTriggerDefinitionInput } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { TriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
@@ -19,7 +19,7 @@ import { projectWorkflowRunInputFields, buildWorkflowRunStartInputs, type Workfl
 /**
  * What a session or Account trigger's popover edits (FIN 04 §5.4–§5.5; 07 S16, S16b): **When** and
  * **Then**, written as the Protocol trigger definition and target through the one owner of each
- * (`session.trigger.*` / `workflow.trigger.*`). This module only translates between the two; it
+ * (`workflow.trigger.*`). This module only translates between the two; it
  * decides nothing about admission, which the trigger owner refuses with its typed reason.
  */
 
@@ -34,20 +34,24 @@ export type SessionTriggerWhenKind = (typeof SESSION_TRIGGER_WHEN_KINDS)[number]
 /** Saved projections omit private source setup; only the exact Event editor can supply it. */
 export type PluginEventTriggerInput = Extract<AutomationTriggerDefinitionInput, Readonly<{ kind: 'pluginEvent'; sourceInstanceId: string }>>;
 
+export type SessionLifecycleWhen = {
+    [Kind in keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1]: Readonly<{
+        kind: Kind;
+        subject?: AutomationSessionLifecycleSubjectV1;
+        /** Keep a saved subset until the person chooses a different Event group. */
+        events?: readonly AutomationSessionLifecycleEvent[];
+        nextTimeOnly?: true;
+        /** Retained until the person deliberately chooses a different firing policy. */
+        policy?: Extract<AutomationSessionLifecyclePolicy, { kind: 'nextMatches' }>;
+    }> & (Kind extends 'turnEnds' ? Readonly<{ sourceTurnId?: string }> : object);
+}[keyof typeof AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1];
+
 export type TriggerWhenValue =
     | AutomationRunLifecycleTrigger
     | AutomationActionTrigger
     | Readonly<{ kind: 'pluginEvent'; value: PluginEventTriggerInput | null; eventRef?: Readonly<{ pluginId: string; localId: string }>;
         observationOnly?: Readonly<{ kind: 'observationOnly' }>; payloadSchema?: PluginJsonSchemaV2 | null }>
-    | Readonly<{
-        kind: 'turnEnds';
-        sourceSessionId?: string;
-        /** "When this turn finishes…" (04 §5.5): bound to that exact turn, it fires once for it. */
-        sourceTurnId?: string;
-        /** Next matching event only, using the existing firstMatch policy. */
-        nextTimeOnly?: true;
-    }>
-    | Readonly<{ kind: 'needsYou' | 'sessionArchived' | 'sessionStarts'; sourceSessionId?: string; nextTimeOnly?: true }>
+    | SessionLifecycleWhen
     /**
      * A simple schedule, a cron kept as written, or an interval ("Every hour", `everyMs`) kept as it
      * was saved until the person picks a simple schedule instead.
@@ -55,6 +59,10 @@ export type TriggerWhenValue =
     | Readonly<{ kind: 'schedule'; schedule: SimpleSchedule | null; expression: string; everyMs?: number; timezone: string | null;
         once?: OnceScheduleDraft }>
     | Readonly<{ kind: 'prComment' | 'ciFailed'; pullRequest: Readonly<{ repository: string; number: number }> | null }>;
+
+export function isSessionLifecycleWhen(when: TriggerWhenValue): when is SessionLifecycleWhen {
+    return Object.hasOwn(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, when.kind);
+}
 
 export const TRIGGER_THEN_KINDS = ['sendPrompt', 'doAction', 'notifyMe', 'runWorkflow'] as const;
 export type TriggerThenKind = (typeof TRIGGER_THEN_KINDS)[number];
@@ -198,16 +206,15 @@ export function buildTriggerDefinition(params: Readonly<{
     if ('pullRequest' in when) {
         return params.sessionId === null || when.pullRequest === null ? null : { kind: when.kind, enabled, pullRequest: when.pullRequest };
     }
-    const sourceSessionId = ('sourceSessionId' in when ? when.sourceSessionId : undefined) ?? params.sessionId;
-    if (sourceSessionId === null) return null;
+    if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined && when.subject?.kind !== 'session') return null;
     return {
         kind: 'sessionLifecycle',
         enabled,
-        sourceSessionId,
-        events: [...LIFECYCLE_EVENTS[when.kind]],
+        ...(when.subject === undefined ? {} : { subject: when.subject }),
+        events: [...(when.events ?? LIFECYCLE_EVENTS[when.kind])],
         policy: when.kind === 'turnEnds' && when.sourceTurnId !== undefined
             ? { kind: 'currentTurn', sourceTurnId: when.sourceTurnId }
-            : when.nextTimeOnly ? { kind: 'firstMatch' } : { kind: 'everyMatch' },
+            : when.policy ?? (when.nextTimeOnly ? { kind: 'firstMatch' } : { kind: 'everyMatch' }),
     };
 }
 
@@ -227,7 +234,8 @@ export function buildInitialTriggerDefinition(params: Readonly<{
     }
     if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined) return null;
     return SessionInitialTriggerDefinitionV1Schema.parse({
-        kind: 'sessionLifecycle', enabled, events: [...LIFECYCLE_EVENTS[when.kind]], policy: when.nextTimeOnly ? { kind: 'firstMatch' } : { kind: 'everyMatch' },
+        kind: 'sessionLifecycle', enabled, events: [...(when.events ?? LIFECYCLE_EVENTS[when.kind])],
+        policy: when.policy ?? (when.nextTimeOnly ? { kind: 'firstMatch' } : { kind: 'everyMatch' }),
     });
 }
 
@@ -270,7 +278,7 @@ export function buildTriggerTarget(then: TriggerThenValue, scope: 'session' | 'a
             let defaults = source?.defaults ?? {};
             let execution = only?.kind === 'step' ? only.execution : undefined;
             if (selection !== undefined) {
-                if (execution?.engine !== undefined || execution?.agentTarget !== undefined) {
+                if (workflowSelectionChoosesEngineV1(execution)) {
                     execution = withWorkflowAuthoringEngineFields(execution, selection);
                 } else {
                     defaults = withWorkflowAuthoringEngineFields(defaults, selection);
@@ -278,7 +286,7 @@ export function buildTriggerTarget(then: TriggerThenValue, scope: 'session' | 'a
             }
             const effective = resolveWorkflowStepSelectionV1({ defaults, step: execution, purpose: 'authoring' }).selection;
             if (!keepConversation && scope === 'account' && conversation.kind === 'fresh' && effective.agentTarget == null
-                && execution?.engine === undefined && defaults.engine === undefined) return null;
+                && readWorkflowEngineChoiceV1(defaults, execution) === undefined) return null;
             const definition = normalizeInline(source && only?.kind === 'step'
                 ? { ...source, defaults: { ...defaults, ...(keepConversation ? {} : { conversation }) }, blocks: [{ ...only,
                     document: { ...only.document, text: prompt },
@@ -405,7 +413,7 @@ export function readScheduleWhen(schedule: Readonly<{ kind: 'once'; scheduledAt:
 
 /** Reads a saved trigger back as the When it was written with. */
 export function readTriggerWhen(
-    trigger: SetTrigger | SessionInitialTriggerDefinitionV1,
+    trigger: SetTrigger | SessionInitialTriggerDefinitionV1 | Omit<Extract<AutomationTriggerDefinitionInput, { kind: 'sessionLifecycle' }>, 'enabled'>,
     observationOnly?: Readonly<{ kind: 'observationOnly' }>,
 ): TriggerWhenValue | null {
     if (trigger.kind === 'pluginEvent') return { kind: 'pluginEvent', value: null, eventRef: trigger.eventRef,
@@ -421,11 +429,13 @@ export function readTriggerWhen(
     }
     if (trigger.kind === 'sessionLifecycle') {
         const kind = readSessionLifecycleKind(trigger.events);
-        const source = 'sourceSessionId' in trigger ? { sourceSessionId: trigger.sourceSessionId } : {};
+        const source = 'subject' in trigger && trigger.subject !== undefined ? { subject: trigger.subject } : {};
+        const retained = matchesSessionLifecycleEvents(trigger.events, kind) ? source : { ...source, events: trigger.events };
         // A trigger bound to one turn stays bound when edited.
         return kind === 'turnEnds' && trigger.policy.kind === 'currentTurn'
-            ? { kind, ...source, sourceTurnId: trigger.policy.sourceTurnId }
-            : trigger.policy.kind === 'firstMatch' ? { kind, ...source, nextTimeOnly: true } : { kind, ...source };
+            ? { kind, ...retained, sourceTurnId: trigger.policy.sourceTurnId }
+            : trigger.policy.kind === 'firstMatch' ? { kind, ...retained, nextTimeOnly: true }
+                : trigger.policy.kind === 'nextMatches' ? { kind, ...retained, policy: trigger.policy } : { kind, ...retained };
     }
     return null;
 }

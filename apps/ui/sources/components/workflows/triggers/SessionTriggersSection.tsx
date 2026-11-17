@@ -24,6 +24,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { createAdmittedWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 
 import { TriggerPopover } from './TriggerPopover';
 import { TriggerRow } from './TriggerRow';
@@ -244,7 +245,7 @@ type OpenPopover = Readonly<{ anchor: React.RefObject<View | null>; row: Session
 
 /**
  * The section as the Work tab mounts it in ORC's `triggersSection` slot: the session's triggers
- * through `session.trigger.*` (the one writer the Work tab and agents share), the switch and the
+ * through `workflow.trigger.*` (the one writer the Work tab and agents share), the switch and the
  * popover each one immediate call with its own result. Last outcomes and expanded history read
  * the shared Account Run store; a firing timestamp alone never supplies a Run's lifecycle.
  */
@@ -433,8 +434,10 @@ function SessionTriggersContent(props: SessionTriggersSectionProps) {
     // the list opens the blank trigger popover at the same anchor. Without a known Machine an example cannot
     // be bound here, so "+" goes straight to the blank trigger.
     const [examplesAnchor, setExamplesAnchor] = React.useState<React.RefObject<View | null> | null>(null);
-    const exampleSession = React.useMemo(() => (read.machineId ? { sessionId: props.sessionId, machineId: read.machineId } : undefined),
-        [props.sessionId, read.machineId]);
+    const exampleServerId = resolvePortableServerIdentityForRoutingId(props.serverId ?? scope?.serverId);
+    const exampleSession = React.useMemo(() => (read.machineId && exampleServerId
+        ? { sessionId: props.sessionId, machineId: read.machineId, serverId: exampleServerId } : undefined),
+        [exampleServerId, props.sessionId, read.machineId]);
     const openBlankTrigger = React.useCallback((anchor: React.RefObject<View | null>) => {
         setExamplesAnchor(null);
         setBoundWhen(undefined);
@@ -490,6 +493,7 @@ function SessionTriggersContent(props: SessionTriggersSectionProps) {
                     whenKinds={[...SESSION_TRIGGER_WHEN_KINDS, 'pluginEvent']}
                     unavailableKinds={Object.fromEntries(Object.entries(SESSION_UNAVAILABLE_KINDS).map(([kind, key]) => [kind, t(key)]))}
                     sessionId={editorSessionId}
+                    serverId={props.serverId}
                     scope={editorScope}
                     {...(Array.isArray(read.pullRequestLinks) ? { pullRequestLinks: read.pullRequestLinks } : {})}
                     initial={initial}
@@ -514,7 +518,7 @@ function SessionTriggersContent(props: SessionTriggersSectionProps) {
                     {...(row === null ? {} : {
                         onSaveAsWorkflow: (target: TriggerTargetV1) => openTriggerAsWorkflow(target,
                             editedSet?.scopeSessionId
-                                ? { scope: 'session', sessionId: editedSet.scopeSessionId, triggerId: row.triggerId, expectedRevision: row.revision }
+                                ? { scope: 'session', sessionId: editedSet.scopeSessionId, automationId: editedSet.automationId, triggerId: row.triggerId, expectedRevision: row.revision }
                                 : { scope: 'account', automationId: row.automationId, triggerId: row.triggerId, expectedRevision: row.revision }),
                         // History and Run now are the row's own line here, not a second copy in its popover.
                         onDelete: async () => { await read.remove(row.triggerId); },

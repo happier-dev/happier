@@ -5,6 +5,7 @@ import {
     DEFAULT_NEW_SESSION_AUTOMATION_DRAFT,
     materializeNewSessionAutomationEditorDraft,
     sanitizeNewSessionAutomationDraft,
+    replaceExactTurnAutomationRowsWithCurrentTurns,
 } from './automationDraft';
 
 const schedule = {
@@ -14,6 +15,19 @@ const schedule = {
 };
 
 describe('automationDraft', () => {
+    it('advances an exact Session subject to its observed turn without changing sibling selections', () => {
+        const exact = { clientId: 'exact', definition: { kind: 'sessionLifecycle' as const,
+            subject: { kind: 'session' as const, serverId: 'srv_00000000000000000000000000000000', sessionId: 'source-session' },
+            events: ['parentTurnCompleted' as const], policy: { kind: 'currentTurn' as const, sourceTurnId: 'old-turn' } } };
+        const sibling = { clientId: 'schedule', definition: schedule };
+        const draft = { ...DEFAULT_NEW_SESSION_AUTOMATION_DRAFT, triggers: [exact, sibling] };
+        const next = replaceExactTurnAutomationRowsWithCurrentTurns({ automation: draft,
+            readExactTurn: sessionId => sessionId === 'source-session' ? { sourceTurnId: 'current-turn' } : null });
+        expect(next).toMatchObject({ changed: true, canReplace: true,
+            automation: { triggers: [{ ...exact, definition: { ...exact.definition,
+                policy: { kind: 'currentTurn', sourceTurnId: 'current-turn' } } }, sibling] } });
+        expect(next.automation.triggers[1]).toBe(sibling);
+    });
     it('restores retained trigger definitions while dropping unknown fields recursively', () => {
         expect(sanitizeNewSessionAutomationDraft({ enabled: true, triggers: [{ clientId: 'saved', definition: {
             ...schedule, retired: true, schedule: { ...schedule.schedule, retired: true },
@@ -32,7 +46,7 @@ describe('automationDraft', () => {
                     definition: {
                         kind: 'sessionLifecycle',
                         enabled: false,
-                        sourceSessionId: 'session-1',
+                        subject: { kind: 'session', serverId: 'srv_00000000000000000000000000000000', sessionId: 'session-1' },
                         events: ['parentTurnCompleted'],
                         policy: { kind: 'currentTurn', sourceTurnId: 'turn-1' },
                     },

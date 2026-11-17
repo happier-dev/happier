@@ -1,5 +1,5 @@
 import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
-import type { SessionTriggerAddRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { WorkflowTriggerAddRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 /**
  * The Goal control's continuation owner (FIN 04 §5.5, 08 §3.4): one per session, decided by the
@@ -31,8 +31,9 @@ function readKeepGoingDefaults(): KeepGoingInputs {
 
 export const KEEP_GOING_DEFAULT_INPUTS: KeepGoingInputs = readKeepGoingDefaults();
 
-/** The session's Keep going trigger as `session.trigger.list` returns it. */
+/** The session's Keep going trigger as the canonical Workflow trigger list returns it. */
 export type KeepGoingAttachment = Readonly<{
+    automationId: string;
     triggerId: string;
     /** The trigger set's revision, the `expectedRevision` of an update. */
     revision: number;
@@ -52,6 +53,7 @@ export function readKeepGoingAttachment(sets: readonly WorkflowTriggerSetV1[], s
         if (!trigger) continue;
         const stored = set.context?.inputs ?? {};
         return {
+            automationId: set.automationId,
             triggerId: trigger.id,
             revision: set.revision,
             enabled: set.enabled && trigger.enabled,
@@ -68,15 +70,18 @@ export function readKeepGoingAttachment(sets: readonly WorkflowTriggerSetV1[], s
 }
 
 /** 08 §3.4's attach: the built-in on every completed turn of this session, with the limits as left. */
-export function buildKeepGoingTriggerAddRequest(sessionId: string, inputs: KeepGoingInputs): SessionTriggerAddRequestV1 {
+export function buildKeepGoingTriggerAddRequest(
+    session: Readonly<{ serverId: string; sessionId: string }>,
+    inputs: KeepGoingInputs,
+): WorkflowTriggerAddRequestV1 {
     return {
-        sessionId,
+        lifetimeSession: { sessionId: session.sessionId },
         target: { kind: 'workflow', ref: KEEP_GOING_WORKFLOW_REF },
         inputs: { maxRounds: inputs.maxRounds, strikes: inputs.strikes, secondOpinion: inputs.secondOpinion },
         trigger: {
             kind: 'sessionLifecycle',
             enabled: true,
-            sourceSessionId: sessionId,
+            subject: { kind: 'session', serverId: session.serverId, sessionId: session.sessionId },
             events: ['parentTurnCompleted'],
             policy: { kind: 'everyMatch' },
         },

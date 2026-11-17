@@ -18,10 +18,24 @@ import {
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { createAutomationPluginEventTriggerDefinitionV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import { projectAutomationSessionLifecycleStructuralTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import { initialAutomationSessionLifecycleRemainingOccurrences } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 
 /** The HTTP owner seals plain Event configuration and projects its public observation separately. */
-function createdTriggerDetail(automationId: string, row: AutomationTriggerCreateRequest) {
+export function createWorkflowAutomationTriggerDetailFixture(automationId: string, row: AutomationTriggerCreateRequest) {
     const trigger = row.trigger;
+    if (trigger.kind === 'sessionLifecycle') {
+        const envelope = 'triggerDefinitionEnvelope' in trigger ? trigger.triggerDefinitionEnvelope
+            : sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding: {
+                v: 1, automationId, triggerId: row.triggerId, triggerRevision: 0, triggerKind: 'sessionLifecycle',
+            }, definition: { kind: trigger.kind, ...(trigger.subject === undefined ? {} : { subject: trigger.subject }),
+                events: trigger.events, policy: trigger.policy } });
+        const structural = 'triggerDefinitionEnvelope' in trigger ? trigger : projectAutomationSessionLifecycleStructuralTrigger(trigger);
+        return AutomationTriggerDetailSchema.parse({ ...structural, enabled: trigger.enabled, id: row.triggerId,
+            revision: 0, createdAt: 1, updatedAt: 1,
+            remainingOccurrences: initialAutomationSessionLifecycleRemainingOccurrences(trigger.policy),
+            status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: JSON.stringify(envelope) });
+    }
     if (trigger.kind === 'action' && 'triggerDefinitionEnvelope' in trigger) return AutomationTriggerDetailSchema.parse({ ...trigger, id: row.triggerId,
         revision: 0, createdAt: 1, updatedAt: 1,
         triggerDefinitionEnvelope: JSON.stringify(trigger.triggerDefinitionEnvelope) });
@@ -174,7 +188,7 @@ export function createWorkflowAutomationHttpBoundary(): {
                     ...(created.executionRecipe.v === 2 && created.executionRecipe.managedTarget !== undefined
                         ? { managedTarget: created.executionRecipe.managedTarget } : {}),
                     assignments: (created.assignments ?? []).map(row => ({ ...row, enabled: row.enabled ?? true, priority: row.priority ?? 0, updatedAt: 1 })),
-                    triggers: created.triggers.map(row => createdTriggerDetail(created.automationId, row)),
+                    triggers: created.triggers.map(row => createWorkflowAutomationTriggerDetailFixture(created.automationId, row)),
                 });
                 rows.set(detail.id, detail);
                 return Response.json(detail);
@@ -196,7 +210,7 @@ export function createWorkflowAutomationHttpBoundary(): {
                     assignments: input.assignments.map(row => ({ ...row, enabled: row.enabled ?? true, priority: row.priority ?? 0, updatedAt: 1 })),
                     triggers: input.triggers.map(row => {
                         const saved = current.triggers.find(trigger => trigger.id === row.triggerId);
-                        if (row.kind === 'new') return createdTriggerDetail(id, row);
+                        if (row.kind === 'new') return createWorkflowAutomationTriggerDetailFixture(id, row);
                         if (!saved) throw new Error('Automation fixture missing retained trigger');
                         return AutomationTriggerDetailSchema.parse({ ...saved, ...(row.trigger ?? {}),
                             ...(row.enabled === undefined ? {} : { enabled: row.enabled }),

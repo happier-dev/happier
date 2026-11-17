@@ -1,5 +1,5 @@
 import type { z } from 'zod/mini';
-import { SessionTriggerAddRequestV1Schema, SessionTriggerListRequestV1Schema, SessionTriggerListResultV1Schema, SessionTriggerRemoveRequestV1Schema, SessionTriggerUpdateRequestV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerListRequestV1Schema, WorkflowTriggerListResultV1Schema, WorkflowTriggerRemoveRequestV1Schema, WorkflowTriggerRemoveResultV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowTriggerAddRequestV1Schema, WorkflowTriggerListRequestV1Schema, WorkflowTriggerListResultV1Schema, WorkflowTriggerRemoveRequestV1Schema, WorkflowTriggerRemoveResultV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { AutomationEventTriggerDefinitionStoredPayloadV1 } from '@happier-dev/protocol/automations/automationEventV1';
@@ -15,8 +15,7 @@ import { workflowTriggerQueryKey } from './workflowTriggerQuery';
 import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 
 /**
- * The trigger client: `workflow.trigger.list | add | update | remove` (03 §5.3–§5.5) and the
- * session-scoped `session.trigger.list | add | update | remove` (03 §5.4, §5.7), and nothing else. It names the Action, hands the one workflow Action front door a request the canonical
+ * The trigger client: `workflow.trigger.list | add | update | remove`. It names the Action, hands the one workflow Action front door a request the canonical
  * Protocol schema accepts, and parses the reply through the canonical result schema. There is no
  * second trigger owner: parsed observations land in the existing Automation store domain.
  *
@@ -52,6 +51,7 @@ function sameTriggerAccountScope(left: ServerAccountScope, right: ServerAccountS
 function invalidateTriggerListPublications(scope: ServerAccountScope, automationId: string, written: WorkflowTriggerSetV1 | null,
     requestedWorkflow: string | null) {
     const queries = new Set(['account_all']);
+    if (written?.scopeSessionId) queries.add(`session:${written.scopeSessionId}`);
     if (requestedWorkflow) queries.add(`workflow:${requestedWorkflow}`);
     if (written && !written.scopeSessionId && (written.target || written.observationOnly)) {
         queries.add(written.target?.kind === 'workflow' ? `workflow:${written.target.ref}` : 'account_inline');
@@ -118,7 +118,10 @@ async function callTriggerAction<TResult>(
     }
     // A deliberate private review or exact Event read is not an Account list observation.
     if (actionId === 'workflow.trigger.list' && (('review' in request && request.review === true) || 'triggerId' in request)) return result;
-    const sessionId = 'sessionId' in request && typeof request.sessionId === 'string' ? request.sessionId : null;
+    const lifetimeSession = 'lifetimeSession' in request && typeof request.lifetimeSession === 'object' && request.lifetimeSession !== null
+        ? request.lifetimeSession : null;
+    const sessionId = lifetimeSession && 'sessionId' in lifetimeSession && typeof lifetimeSession.sessionId === 'string'
+        ? lifetimeSession.sessionId : null;
     const queryKey = actionId.endsWith('.list') && actionId === 'workflow.trigger.list'
         ? workflowTriggerQueryKey(WorkflowTriggerListRequestV1Schema.parse(request))
         : sessionId ? `session:${sessionId}` : workflow ? `workflow:${workflow}` : 'account_inline';
@@ -134,7 +137,7 @@ async function callTriggerAction<TResult>(
         if (!written) return result;
         // A missing-source result has no readable target. Keep its known
         // memberships rather than guessing that it belongs to Account inline.
-        const writtenQueryKey = sessionId || workflow ? queryKey
+        const writtenQueryKey = written.scopeSessionId ? `session:${written.scopeSessionId}` : sessionId || workflow ? queryKey
             : written.target?.kind === 'workflow' ? `workflow:${written.target.ref}`
                 : written.target?.kind === 'inline' || written.observationOnly ? 'account_inline' : undefined;
         getStorage().getState().upsertWorkflowTriggerSet({
@@ -238,55 +241,6 @@ export async function removeWorkflowTrigger(request: z.input<typeof WorkflowTrig
         'workflow.trigger.remove',
         WorkflowTriggerRemoveRequestV1Schema.parse(request),
         (value) => WorkflowTriggerRemoveResultV1Schema.parse(value),
-        options,
-    );
-}
-
-/** A session's trigger sets (03 §5.7): the triggers scoped to it, which never enter the Library. */
-export async function listSessionTriggerSets(
-    request: z.input<typeof SessionTriggerListRequestV1Schema>,
-    options: CallOptions = {},
-): Promise<readonly WorkflowTriggerSetV1[]> {
-    return (await listSessionTriggers(request, options)).sets;
-}
-
-/** Preserve the binding-owned PR links alongside the session's trigger sets. */
-export async function listSessionTriggers(
-    request: z.input<typeof SessionTriggerListRequestV1Schema>,
-    options: CallOptions = {},
-): Promise<z.output<typeof SessionTriggerListResultV1Schema>> {
-    const result = await callTriggerAction(
-        'session.trigger.list',
-        SessionTriggerListRequestV1Schema.parse(request),
-        (value) => SessionTriggerListResultV1Schema.parse(value),
-        options,
-    );
-    return result;
-}
-
-export async function addSessionTrigger(request: z.input<typeof SessionTriggerAddRequestV1Schema>, options: CallOptions = {}): Promise<WorkflowTriggerWriteResult> {
-    return callTriggerAction(
-        'session.trigger.add',
-        SessionTriggerAddRequestV1Schema.parse(request),
-        (value) => WorkflowTriggerWriteResultV1Schema.parse(value),
-        options,
-    );
-}
-
-export async function updateSessionTrigger(request: z.input<typeof SessionTriggerUpdateRequestV1Schema>, options: CallOptions = {}): Promise<WorkflowTriggerWriteResult> {
-    return callTriggerAction(
-        'session.trigger.update',
-        SessionTriggerUpdateRequestV1Schema.parse(request),
-        (value) => WorkflowTriggerWriteResultV1Schema.parse(value),
-        options,
-    );
-}
-
-export async function removeSessionTrigger(request: z.input<typeof SessionTriggerRemoveRequestV1Schema>, options: CallOptions = {}): Promise<WorkflowTriggerWriteResult> {
-    return callTriggerAction(
-        'session.trigger.remove',
-        SessionTriggerRemoveRequestV1Schema.parse(request),
-        (value) => WorkflowTriggerWriteResultV1Schema.parse(value),
         options,
     );
 }

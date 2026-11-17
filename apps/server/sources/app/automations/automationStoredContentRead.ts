@@ -68,7 +68,7 @@ export function readAutomationTriggerDefinitionBinding(params: Readonly<{
                 }
                 : null
         )
-        : params.triggerKind === "prComment" || params.triggerKind === "ciFailed" || params.triggerKind === "action"
+        : params.triggerKind === "prComment" || params.triggerKind === "ciFailed" || params.triggerKind === "action" || params.triggerKind === "sessionLifecycle"
             ? { v: 1, automationId: params.automationId, triggerId: params.triggerId,
                 triggerRevision: params.triggerRevision, triggerKind: params.triggerKind }
             : null;

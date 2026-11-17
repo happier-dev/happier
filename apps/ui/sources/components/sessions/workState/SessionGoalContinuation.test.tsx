@@ -8,7 +8,7 @@ import { SessionWorkStateContent } from './SessionWorkStateContent';
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
-import { SessionTriggerUpdateRequestV1Schema, WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { AutomationDefinitionListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { createAutomationDefinitionSummary } from '@/sync/domains/automations/automationDefinitionProjection';
 
@@ -16,7 +16,7 @@ import { createAutomationDefinitionSummary } from '@/sync/domains/automations/au
 
 const confirm = vi.hoisted(() => vi.fn());
 const alert = vi.hoisted(() => vi.fn());
-// The Action front door is the relay to the daemon that owns `session.trigger.*`: the boundary.
+// The Action front door is the relay to the daemon that owns `workflow.trigger.*`: the boundary.
 const execute = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
@@ -67,6 +67,7 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 
 const SESSION_ID = 'session-goal-1';
 const MACHINE_ID = 'machine-1';
+let portableHome: string;
 const renderedTrees: renderer.ReactTestRenderer[] = [];
 let accountNumber = 0;
 
@@ -104,12 +105,12 @@ function keepGoingSet(inputs: Record<string, unknown>) {
             createdAt: 1,
             updatedAt: 1,
             kind: 'sessionLifecycle',
-            sourceSessionId: SESSION_ID,
+            subject: { kind: 'session', serverId: portableHome, sessionId: SESSION_ID },
             events: ['parentTurnCompleted'],
             policy: { kind: 'everyMatch' },
             remainingOccurrences: null,
             status: { state: 'waiting', runId: null },
-            triggerDefinitionEnvelope: null,
+            triggerDefinitionEnvelope: 'opened-definition',
         }],
     };
 }
@@ -117,19 +118,19 @@ function keepGoingSet(inputs: Record<string, unknown>) {
 function installTriggerHost(initialSets: readonly unknown[]) {
     let sets = [...initialSets];
     execute.mockImplementation(async (actionId: string, input: Record<string, unknown>) => {
-        if (actionId === 'session.trigger.list') return { ok: true, result: { sessionId: SESSION_ID, sets, pullRequestLinks: [] } };
-        if (actionId === 'session.trigger.add') {
+        if (actionId === 'workflow.trigger.list') return { ok: true, result: { lifetimeSession: { sessionId: SESSION_ID }, sets, pullRequestLinks: [] } };
+        if (actionId === 'workflow.trigger.add') {
             const set = keepGoingSet(input.inputs as Record<string, unknown>);
             sets = [set];
             return { ok: true, result: { set, triggerId: 'trigger-keep-going' } };
         }
-        if (actionId === 'session.trigger.remove') {
+        if (actionId === 'workflow.trigger.remove') {
             const removed = sets[0] as ReturnType<typeof keepGoingSet>;
             sets = [];
             return { ok: true, result: { set: { ...removed, revision: removed.revision + 1, triggers: [] } } };
         }
-        if (actionId === 'session.trigger.update') {
-            const request = SessionTriggerUpdateRequestV1Schema.parse(input);
+        if (actionId === 'workflow.trigger.update') {
+            const request = WorkflowTriggerUpdateRequestV1Schema.parse(input);
             const current = sets[0] as ReturnType<typeof keepGoingSet>;
             if (request.expectedRevision !== current.revision) return { ok: false, errorCode: 'currentness_conflict', error: 'currentness_conflict' };
             const set = { ...current, revision: current.revision + 1,
@@ -189,7 +190,12 @@ function hasTestId(tree: renderer.ReactTestRenderer, testID: string): boolean {
 
 describe('the Goal control: one continuation owner (FIN 04 §5.5, 07 S16c)', () => {
     afterEach(() => { act(() => { for (const tree of renderedTrees.splice(0)) tree.unmount(); }); });
-    beforeEach(() => {
+    beforeEach(async () => {
+        const { getServerProfileById, setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
+        const profile = getServerProfileById(getActiveServerSnapshot().serverId);
+        if (!profile) throw new Error('Expected the selected Home profile');
+        portableHome = profile.serverIdentityId ?? 'goal-home';
+        await setServerProfileIdentityForUrl(profile.serverUrl, portableHome);
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
         storage.setState({ profileScope: { serverId: getActiveServerSnapshot().serverId, accountId: `goal-reader-${++accountNumber}` },
             automations: {}, workflowTriggerSetsById: {}, workflowTriggerSetIdsByQuery: {} });
@@ -227,7 +233,7 @@ describe('the Goal control: one continuation owner (FIN 04 §5.5, 07 S16c)', () 
     it('refreshes on the existing Session trigger change signal and ignores unrelated changes', async () => {
         const host = installTriggerHost([keepGoingSet({ maxRounds: 6, strikes: 2, secondOpinion: true })]);
         const tree = await renderGoalControl({ nativeGoalOwner: false });
-        const reads = callsOf('session.trigger.list').length;
+        const reads = callsOf('workflow.trigger.list').length;
         const publish = (id: string, sessionId: string) => storage.getState().upsertAutomation(
             createAutomationDefinitionSummary(AutomationDefinitionListItemSchema.parse({
                 id, name: 'Keep going', description: null, enabled: true, triggers: [],
@@ -236,17 +242,17 @@ describe('the Goal control: one continuation owner (FIN 04 §5.5, 07 S16c)', () 
             })),
         );
         await act(async () => { publish('unrelated', 'other-session'); });
-        expect(callsOf('session.trigger.list')).toHaveLength(reads);
+        expect(callsOf('workflow.trigger.list')).toHaveLength(reads);
         host.replaceSets([]);
         await act(async () => { publish('automation-keep-going', SESSION_ID); });
-        expect(callsOf('session.trigger.list')).toHaveLength(reads + 1);
+        expect(callsOf('workflow.trigger.list')).toHaveLength(reads + 1);
         expect(findByTestId(tree, 'session-goal-keep-going-switch').props.value).toBe(false);
     });
 
     it('keeps clean fields live after a refused detach', async () => {
         const host = installTriggerHost([keepGoingSet({ maxRounds: 6, strikes: 2, secondOpinion: false })]);
         const transport = execute.getMockImplementation()!;
-        execute.mockImplementation((actionId, ...args) => actionId === 'session.trigger.remove'
+        execute.mockImplementation((actionId, ...args) => actionId === 'workflow.trigger.remove'
             ? Promise.resolve({ ok: false, errorCode: 'currentness_conflict', error: 'currentness_conflict' })
             : transport(actionId, ...args));
         const tree = await renderGoalControl({ nativeGoalOwner: false });
@@ -289,7 +295,7 @@ describe('the Goal control: one continuation owner (FIN 04 §5.5, 07 S16c)', () 
         let writes = 0;
         execute.mockImplementation(async (actionId, ...args) => {
             const result = await transport(actionId, ...args);
-            if (actionId === 'session.trigger.update') {
+            if (actionId === 'workflow.trigger.update') {
                 if (++writes === 1) await firstResponse;
                 else finishSecond!();
             }
@@ -322,16 +328,16 @@ describe('the Goal control: one continuation owner (FIN 04 §5.5, 07 S16c)', () 
 
         await act(async () => { await keepGoing.props.onValueChange(true); });
 
-        expect(callsOf('session.trigger.add')).toEqual([[
-            'session.trigger.add',
+        expect(callsOf('workflow.trigger.add')).toEqual([[
+            'workflow.trigger.add',
             {
-                sessionId: SESSION_ID,
+                lifetimeSession: { sessionId: SESSION_ID },
                 target: { kind: 'workflow', ref: 'builtin:keep-going' },
                 inputs: { maxRounds: 4, strikes: 3, secondOpinion: false },
                 trigger: {
                     kind: 'sessionLifecycle',
                     enabled: true,
-                    sourceSessionId: SESSION_ID,
+                    subject: { kind: 'session', serverId: portableHome, sessionId: SESSION_ID },
                     events: ['parentTurnCompleted'],
                     policy: { kind: 'everyMatch' },
                 },
@@ -355,8 +361,8 @@ describe('the Goal control: one continuation owner (FIN 04 §5.5, 07 S16c)', () 
 
         await act(async () => { await native.props.onValueChange(false); });
 
-        expect(callsOf('session.trigger.add')).toEqual([]);
-        expect(callsOf('session.trigger.remove')).toEqual([]);
+        expect(callsOf('workflow.trigger.add')).toEqual([]);
+        expect(callsOf('workflow.trigger.remove')).toEqual([]);
         expect(onSetGoal).toHaveBeenCalledWith({ status: 'paused' }, expect.any(AbortSignal));
 
     });
@@ -377,7 +383,7 @@ describe('the Goal control: one continuation owner (FIN 04 §5.5, 07 S16c)', () 
         await act(async () => { await Promise.resolve(); });
 
         expect(onClearGoal).toHaveBeenCalledTimes(1);
-        expect(callsOf('session.trigger.remove')).toEqual([]);
+        expect(callsOf('workflow.trigger.remove')).toEqual([]);
 
     });
 

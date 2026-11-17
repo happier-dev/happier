@@ -143,13 +143,13 @@ describe('CLI workflow trigger Account codec', () => {
     const { createCliWorkflowTriggerActions } = await import('./workflowTriggers');
     const actions = createCliWorkflowTriggerActions({ credentials: { token: 'token', encryption: null }, resolveWorkflow: async () => ({ definition }),
       resolveSession: async () => ({ project: { machineId: 'session-machine', directory: '/session-work' }, nativeGoalOwner: false }) });
-    const written = await actions.sessionAdd({ sessionId: 'session-one', target: { kind: 'inline', definition }, trigger,
-      onComplete: { kind: 'originating_session' } });
+    const written = await actions.add({ lifetimeSession: { sessionId: 'session-one',
+      onComplete: { kind: 'originating_session' } }, target: { kind: 'inline', definition }, trigger });
     expect(written.set.health).toBe('available');
     expect(stored).toMatchObject({ scopeSessionId: 'session-one', assignments: [{ machineId: 'session-machine' }], executionRecipe: {
       v: 2, workflow: { t: 'plain', v: { workspace: { directory: '/session-work' }, onComplete: { kind: 'originating_session' } } },
     } });
     expect((await actions.list({ scope: 'account_inline' })).sets).toEqual([]);
-    expect((await actions.sessionList({ sessionId: 'session-one' })).sets).toHaveLength(1);
+    expect((await actions.list({ lifetimeSession: { sessionId: 'session-one' } })).sets).toHaveLength(1);
   });
 });

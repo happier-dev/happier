@@ -523,6 +523,7 @@ export class ApiClient {
     organizationPlacement?: import('@happier-dev/protocol').SessionOrganizationPlacementV1,
     initialAccess?: import('@happier-dev/protocol').SessionInitialAccessDraftV1,
     initialTriggers?: readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[],
+    preparedFinalSessionId?: string,
     manager?: import('@happier-dev/protocol').SessionManagerV1,
     primaryTeamId?: string | null,
     teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1,
@@ -704,6 +705,7 @@ export class ApiClient {
             ...(opts.manager !== undefined ? { manager: opts.manager } : {}),
             ...materializedInitialAccessCreateFields,
             ...(opts.initialTriggers !== undefined ? { initialTriggers: opts.initialTriggers } : {}),
+            ...(opts.preparedFinalSessionId !== undefined ? { preparedFinalSessionId: opts.preparedFinalSessionId } : {}),
             ...metadataEnvelopeFields,
             dataEncryptionKey:
               desiredSessionEncryptionMode === 'plain'

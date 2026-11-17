@@ -1,9 +1,13 @@
+import { AutomationSessionLifecycleTriggerSchema, projectAutomationSessionLifecycleStructuralTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import type { AutomationTriggerReferenceV1 } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { decodeStoredText, encodeStoredText } from '@/storage/storedContent';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { WorkflowAttachedTriggerPageV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { listAutomationAttachedTriggers } from './automationAttachedTriggerQuery';
+import { legacyAutomationSessionSelectionWhere, legacyAutomationSessionSelectionSelect,
+    readLegacyAutomationSessionSelection, migrateLegacyAutomationSessionSelectionsTx } from './automationSessionLifecycleMigration';
+import type { AutomationDefinitionPatchRequest, AutomationDefinitionDetailsResponse } from '@happier-dev/protocol/automations/automationApiV3';
 import { randomUUID } from "node:crypto";
 import { markSharedWorkflowTriggerSummaryChangedInTx, publishAutomationMutationInTx,
     type AutomationMutationPublication } from './automationSharedWorkflowSummaries';
@@ -36,7 +40,7 @@ import { AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS, AUTOMATION_V3_RUN_LIST_MAX_ITE
 import { parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { isAccountScopedBlobCiphertextForKind } from '@happier-dev/protocol/crypto/accountScopedCipherEnvelope';
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema, validateAutomationEventFilterAgainstPayloadSchemaV1, validateAutomationReplyHandoffStoredEnvelopeOuterForModeV1 } from '@happier-dev/protocol/automations/event';
-import { AutomationPullRequestTriggerSchema, type AutomationSessionLifecycleTrigger, type AutomationTriggerDefinition, type AutomationTriggerDefinitionInput, type AutomationPluginEventDefinitionTriggerInput, type AutomationPluginEventEncryptedDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
+import { AutomationPullRequestTriggerSchema, type AutomationTriggerDefinition, type AutomationTriggerDefinitionInput, type AutomationPluginEventDefinitionTriggerInput, type AutomationPluginEventEncryptedDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
 import { readPluginAutomationSubjectV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { readAutomationEventSubjectKindsV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
@@ -94,7 +98,7 @@ import { readAutomationRunCauseChainTx } from "./automationTriggerCauseChain";
 import { portableQueryChunks as automationPortableQueryChunks } from "@/storage/portableQueryChunks";
 import { parseStoredSessionTurnFacts } from "@/app/session/turns/parseSessionTurnState";
 import { checkCurrentPluginWebhookEndpointCorrespondenceTxV1 } from "@/app/plugins/webhooks/endpointCorrespondence";
-import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
+import { getOrCreateServerIdentityId, readCurrentServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { resolveCurrentClaimablePluginMachineMaterializationTx } from "@/app/plugins/availability/operations";
 import {
     assertAutomationTemplateEnvelopeForAccountMode,
@@ -125,6 +129,7 @@ import {
 } from "./automationSessionLifecycleRegistration";
 import {
     automationSessionLifecycleConfigurationsEqual,
+    automationSessionLifecyclePoliciesEqual,
     decodeAutomationSessionLifecycleConfiguration,
     encodeAutomationSessionLifecycleConfiguration,
 } from "./automationSessionLifecycleConfigurationCodec";
@@ -161,7 +166,10 @@ function requestedLifecycleSourceScope(
         runIds: triggers.flatMap(trigger => trigger?.kind === "runLifecycle" && trigger.source.kind === "workflow_run" ? [trigger.source.runId] : []),
         sessionIds: [
             ...(scopeSessionId ? [scopeSessionId] : []),
-            ...triggers.flatMap(trigger => trigger?.kind === "sessionLifecycle" ? [trigger.sourceSessionId] : []),
+            ...triggers.flatMap(trigger => trigger?.kind === "sessionLifecycle" && trigger.policy.kind === 'currentTurn'
+                ? 'sourceSessionId' in trigger && trigger.sourceSessionId ? [trigger.sourceSessionId]
+                    : 'subject' in trigger && trigger.subject?.kind === 'session' ? [trigger.subject.sessionId] : []
+                : []),
         ],
     };
 }
@@ -979,7 +987,13 @@ function automationTriggerInputMatches(params: Readonly<{
         return hasSameAutomationScheduleFields(existing, schedule);
     }
     if (requested.trigger.kind === "sessionLifecycle") {
-        return automationSessionLifecycleConfigurationsEqual(existing, requested.trigger);
+        const { enabled: _enabled, ...definition } = requested.trigger;
+        const structural = 'triggerDefinitionEnvelope' in definition
+            ? (({ triggerDefinitionEnvelope: _envelope, ...header }) => header)(definition)
+            : projectAutomationSessionLifecycleStructuralTrigger(definition);
+        return automationSessionLifecycleConfigurationsEqual(existing, structural)
+            && (!('triggerDefinitionEnvelope' in definition)
+                || pluginJsonValuesEqual(JSON.parse(existing.definitionEnvelope ?? 'null'), definition.triggerDefinitionEnvelope));
     }
     if (requested.trigger.kind === "runLifecycle") {
         return createCanonicalJsonSigningInput(decodeAutomationRunLifecycleConfiguration(existing))
@@ -4463,58 +4477,59 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
             runLifecycleConfigurationJson: encoded, remainingOccurrences: retains ? params.existing?.remainingOccurrences ?? 1 : 1 } };
     }
 
-    if (params.input.kind === "sessionLifecycle") {
-        const automationExistingSessionId =
-            readAutomationExistingSessionTargetId(params.automation);
-        // Enablement is not part of the registration, so the comparison and
-        // the encoder both consume the definition alone.
-        const submittedDefinition: AutomationSessionLifecycleTrigger = {
-            kind: "sessionLifecycle",
-            sourceSessionId: params.input.sourceSessionId,
-            events: params.input.events,
-            policy: params.input.policy,
-        };
-        const retainsRegistration = params.existing?.kind === "sessionLifecycle"
-            && automationSessionLifecycleConfigurationsEqual(params.existing, submittedDefinition);
-        // Source/target inequality is a property of the effective recipe, not
-        // of registration freshness: every normalized lifecycle write re-proves
-        // it (and target-ID presence) against the current execution target, so
-        // a recipe retarget cannot slip past an unchanged exact-turn patch.
-        // Only a new, changed, or re-enabled registration additionally re-runs
-        // the current-turn eligibility proof, keeping terminal historical
-        // triggers inert instead of blocking unrelated edits.
-        validateSessionLifecycleExecutionTargetInequality({
-            automationTargetType: params.automation.targetType,
-            automationExistingSessionId,
-            sourceSessionId: params.input.sourceSessionId,
-        });
+    if (params.input.kind === 'sessionLifecycle') {
+        const serverIdentityId = params.serverIdentityId ?? await readCurrentServerIdentityId(process.env, params.tx);
+        const currentness = await fetchAutomationAccountCurrentnessWitnessTx(params.tx, params.accountId);
+        if (!currentness) throw new AutomationStoredContentReadError('contentInvalid');
+        const binding = { v: 1 as const, automationId: params.automation.id,
+            triggerId: AutomationTriggerIdSchema.parse(params.triggerId),
+            triggerRevision: params.triggerRevision, triggerKind: 'sessionLifecycle' as const };
+        const { enabled: _enabled, ...submitted } = params.input;
+        const structural = 'triggerDefinitionEnvelope' in submitted
+            ? (({ triggerDefinitionEnvelope: _envelope, ...facts }) => facts)(submitted)
+            : projectAutomationSessionLifecycleStructuralTrigger(submitted);
+        const envelope = 'triggerDefinitionEnvelope' in submitted ? submitted.triggerDefinitionEnvelope
+            : currentness.mode === 'plain' ? sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: 'plain', binding, definition: AutomationSessionLifecycleTriggerSchema.parse(submitted),
+            }) : null;
+        if (!envelope || validateAutomationTriggerDefinitionEnvelopeOuterForMode({
+            raw: JSON.stringify(envelope), mode: currentness.mode, binding,
+        }).kind !== 'available') throw new AutomationStoredContentReadError('modeMismatch');
+        if (envelope.t === 'plain') {
+            const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding, envelope });
+            if (opened.kind !== 'available') throw new AutomationStoredContentReadError('contentInvalid');
+            const projection = projectAutomationSessionLifecycleStructuralTrigger(
+                AutomationSessionLifecycleTriggerSchema.parse(opened.definition),
+            );
+            if (!pluginJsonValuesEqual(projection, structural)) throw new AutomationStoredContentReadError('contentInvalid');
+        }
+        const retainsRegistration = params.existing?.kind === 'sessionLifecycle'
+            && automationSessionLifecycleConfigurationsEqual(params.existing, structural);
+        const retainsPolicy = params.existing?.kind === 'sessionLifecycle'
+            && automationSessionLifecyclePoliciesEqual(params.existing, structural);
+        const automationExistingSessionId = readAutomationExistingSessionTargetId(params.automation);
         const reArms = params.existing?.enabled === false && params.input.enabled;
-        const mustRegister = !retainsRegistration || reArms;
-        const lifecycle = mustRegister
+        if (retainsRegistration && !reArms) validateSessionLifecycleExecutionTargetInequality({
+            automationTargetType: params.automation.targetType,
+            automationExistingSessionId, input: structural, serverIdentityId,
+        });
+        const lifecycle = !retainsRegistration || reArms
             ? await validateSessionLifecycleTriggerRegistrationTx({
-                tx: params.tx,
-                accountId: params.accountId,
-                automationTargetType: params.automation.targetType,
-                automationExistingSessionId,
-                input: params.input,
-                newbornSession: params.newbornSession,
-            })
-            : submittedDefinition;
+                tx: params.tx, accountId: params.accountId,
+                automationTargetType: params.automation.targetType, automationExistingSessionId,
+                input: { ...structural, enabled: params.input.enabled }, newbornSession: params.newbornSession,
+                serverIdentityId,
+            }) : structural;
         const encoded = encodeAutomationSessionLifecycleConfiguration(lifecycle);
-        return {
-            isEvent: false,
-            data: {
-                ...common,
-                kind: "sessionLifecycle",
-                ...encoded,
-                // Pause/resume and unrelated editor saves preserve runtime
-                // consumption; semantic definition edits initialize a fresh
-                // policy budget.
-                remainingOccurrences: retainsRegistration
-                    ? params.existing?.remainingOccurrences ?? encoded.remainingOccurrences
-                    : encoded.remainingOccurrences,
-            },
-        };
+        return { isEvent: false, data: {
+            ...common, kind: 'sessionLifecycle', ...encoded,
+            definitionEnvelope: JSON.stringify(envelope),
+            // Selection, event membership and enablement edits do not refund the
+            // policy's consumed authoritative occurrence budget.
+            remainingOccurrences: retainsPolicy && params.existing
+                ? params.existing.remainingOccurrences
+                : encoded.remainingOccurrences,
+        } };
     }
 
     if (params.input.kind !== "pluginEvent") {
@@ -4722,11 +4737,13 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
     healthCheckSources?: Readonly<{ sources?: readonly AutomationTriggerReferenceV1[] }>;
     /** The explicit private-detail query uses the canonical full definition selection. */
     details?: true;
+    legacySessionLifecycleSelections?: true;
 }>): Promise<Readonly<{
     automations: AutomationListItem[];
     nextCursor: string | null;
     attached?: WorkflowAttachedTriggerPageV1["attached"];
     skippedNotSharedCount?: number;
+    legacySessionLifecycleSelections?: AutomationDefinitionDetailsResponse['legacySessionLifecycleSelections'];
 }>> {
     if (params.subject !== undefined) {
         return { automations: [], ...await listAutomationAttachedTriggers({ ...params, subject: params.subject }) };
@@ -4736,6 +4753,24 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
         AUTOMATION_V3_DEFINITION_LIST_MAX_ITEMS,
     );
     const cursor = decodeAutomationDefinitionListCursor(params.cursor);
+    if (params.legacySessionLifecycleSelections) {
+        const serverId = await getOrCreateServerIdentityId();
+        const rows = await db.automation.findMany({
+            where: { accountId: params.accountId, deletedAt: null,
+                triggers: { some: legacyAutomationSessionSelectionWhere },
+                ...(cursor ? { OR: [{ updatedAt: { lt: cursor.updatedAt } },
+                    { updatedAt: cursor.updatedAt, id: { gt: cursor.id } }] } : {}) },
+            select: { id: true, templateVersion: true, updatedAt: true,
+                triggers: { where: legacyAutomationSessionSelectionWhere, select: legacyAutomationSessionSelectionSelect } },
+            orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }], take: limit + 1,
+        });
+        const page = rows.slice(0, limit);
+        const last = page[page.length - 1];
+        return { automations: [], nextCursor: rows.length > limit && last ? encodeAutomationDefinitionListCursor(last) : null,
+            legacySessionLifecycleSelections: page.map(row => ({ automationId: row.id, expectedTemplateVersion: row.templateVersion,
+                selections: row.triggers.map(trigger => ({ triggerId: trigger.id, triggerRevision: trigger.revision,
+                    ...readLegacyAutomationSessionSelection(trigger, serverId) })) })) };
+    }
     const healthTriggers = params.healthCheckSources ? { kind: 'pluginEvent' as const, deletedAt: null,
         sourceContractVersion: HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1.sourceContractVersion,
         OR: HEALTH_CHECK_EVENT_SOURCE_SELECTION_V1.eventRefs.map(ref => ({ eventPluginId: ref.pluginId, eventLocalId: ref.localId })),
@@ -5142,6 +5177,7 @@ export async function updateAutomation(params: {
 
     expectedTemplateVersion?: number;
     retainedLegacyTemplateRecovery?: boolean;
+    sessionLifecycleMigrations?: AutomationDefinitionPatchRequest['sessionLifecycleMigrations'];
 }): Promise<AutomationListItem | null> {
     return await inTx(async (tx) => {
         await lockAutomationDeploymentEnvironmentInTx(tx, { automationId: params.automationId });
@@ -5166,6 +5202,15 @@ export async function updateAutomation(params: {
             && existing.templateVersion !== params.expectedTemplateVersion
         ) {
             throw new AutomationTemplateMutationConflictError();
+        }
+        if (params.sessionLifecycleMigrations !== undefined) {
+            const serverId = await readCurrentServerIdentityId(process.env, tx);
+            if (!serverId || params.expectedTemplateVersion === undefined) {
+                throw new AutomationValidationError('Session selection repair requires its retained inventory');
+            }
+            return migrateLegacyAutomationSessionSelectionsTx(tx, { automation: existing,
+                migrations: params.sessionLifecycleMigrations, serverId,
+                mode: accountFence.account.currentness.encryptionMode });
         }
 
         const legacyInput = isAutomationCurrentPatchInput(params.input)
@@ -5327,11 +5372,12 @@ export async function updateAutomation(params: {
                 : {}),
         });
         for (const trigger of existing.triggers) {
-            if (trigger.kind !== "sessionLifecycle" || trigger.sourceSessionId === null) continue;
+            if (trigger.kind !== "sessionLifecycle") continue;
             validateSessionLifecycleExecutionTargetInequality({
                 automationTargetType: effectiveTargetType,
                 automationExistingSessionId: effectiveExistingSessionId,
-                sourceSessionId: trigger.sourceSessionId,
+                input: decodeAutomationSessionLifecycleConfiguration(trigger).definition,
+                serverIdentityId: await readCurrentServerIdentityId(process.env, tx),
             });
         }
 
@@ -5706,11 +5752,12 @@ export async function reconcileAutomationDefinition(params: Readonly<{
         for (const item of params.input.triggers) {
             if (item.kind !== "existing") continue;
             const trigger = existing.triggers.find((candidate) => candidate.id === item.triggerId)!;
-            if (item.trigger || trigger.kind !== "sessionLifecycle" || trigger.sourceSessionId === null) continue;
+            if (item.trigger || trigger.kind !== "sessionLifecycle") continue;
             validateSessionLifecycleExecutionTargetInequality({
                 automationTargetType: effectiveAutomation.targetType,
                 automationExistingSessionId: effectiveExistingSessionId,
-                sourceSessionId: trigger.sourceSessionId,
+                input: decodeAutomationSessionLifecycleConfiguration(trigger).definition,
+                serverIdentityId: await readCurrentServerIdentityId(process.env, tx),
             });
         }
 
@@ -5838,6 +5885,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                         accountId: params.accountId,
                         automationTargetType: effectiveAutomation.targetType,
                         automationExistingSessionId: effectiveExistingSessionId,
+                        serverIdentityId: serverIdentityId ?? await readCurrentServerIdentityId(process.env, tx),
                         input: {
                             ...decodeAutomationSessionLifecycleConfiguration(trigger).definition,
                             enabled: true,
@@ -6149,6 +6197,7 @@ export async function updateAutomationTrigger(params: Readonly<{
                     accountId: params.accountId,
                     automationTargetType: automation.targetType,
                     automationExistingSessionId: readAutomationExistingSessionTargetId(automation),
+                    serverIdentityId: serverIdentityId ?? await readCurrentServerIdentityId(process.env, tx),
                     input: {
                         ...decodeAutomationSessionLifecycleConfiguration(existing).definition,
                         enabled: true,

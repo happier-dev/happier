@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ACTION_IDS } from './actionIds.js';
 import type { ActionId } from './actionIds.js';
+import type { AutomationDefinitionDetail } from '../automations/automationApiV3.js';
 import type { ActionExecutorContext } from './actionExecutor.js';
 import {
   normalizeActionsSettingsV1,
@@ -4043,9 +4044,9 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }).required,
     ).toBe(false);
   });
-  it.each(['agent', 'mcp'] as const)('defaults scoped Session trigger removal to Ask on %s while retaining admitted cleanup', surface => {
+  it.each(['agent', 'mcp'] as const)('defaults generic trigger removal to Ask on %s except exact admitted firing cleanup', surface => {
     // RC1115-02: Session access authorizes the removal, not its human approval.
-    const actionId = 'session.trigger.remove';
+    const actionId = 'workflow.trigger.remove';
     const spec = getActionSpec(actionId);
     const context = {
       surface,
@@ -4070,11 +4071,19 @@ describe('isApprovalRequiredByActionsSettings', () => {
     const waived = normalizeActionsSettingsV1({ v: 1,
       approvalWaivedSurfaces: { [actionId]: [surface] } });
     expect(resolveActionApprovalRouting({ actionId, spec, settings: waived, context }).required).toBe(false);
-    const cleanup = { ...context, actionCaller: { kind: 'workflowRun' as const, runId: 'firing-run',
+    const row: AutomationDefinitionDetail = { id: 'cleanup-automation', name: 'Habit', description: null,
+      enabled: true, targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null,
+      createdAt: 1, updatedAt: 1, workflowDefinitionId: null, scopeSessionId: 'lifetime-session', assignments: [], triggers: [] };
+    const admission = { actionId, row, changesProfile: false,
+      exactFiringCleanup: { automationId: row.id, triggerId: 'firing-trigger', lifetimeSessionId: 'lifetime-session' } } as const;
+    const cleanup = { ...context, workflowTriggerMutationAdmission: admission, actionCaller: { kind: 'workflowRun' as const, runId: 'firing-run',
       authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'read-only' as const } } };
     expect(resolveActionApprovalRouting({ actionId, spec, context: cleanup }).required).toBe(false);
     const automationCleanup = { ...cleanup, actionCaller: { ...cleanup.actionCaller, kind: 'automationRun' as const } };
     expect(resolveActionApprovalRouting({ actionId, spec, context: automationCleanup }).required).toBe(false);
+    const unrelated = { ...cleanup, workflowTriggerMutationAdmission: { actionId, row, changesProfile: false } };
+    expect(resolveActionApprovalRouting({ actionId, spec, context: unrelated }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId, spec, settings: waived, context: unrelated }).required).toBe(false);
 
     for (const ambiguousContext of [
       undefined,

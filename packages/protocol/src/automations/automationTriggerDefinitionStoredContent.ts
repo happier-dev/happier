@@ -40,7 +40,7 @@ export const AUTOMATION_TRIGGER_DEFINITION_ACCOUNT_SCOPED_BLOB_KIND_V1 =
 
 /** The private-content owner distinguishes matching Actions from reference-only consent. */
 export function automationTriggerHasPrivateDefinitionV1(trigger: Readonly<{ kind: string; consentFor?: unknown }>): boolean {
-  return trigger.kind === 'pluginEvent' || trigger.kind === 'prComment' || trigger.kind === 'ciFailed'
+  return trigger.kind === 'sessionLifecycle' || trigger.kind === 'pluginEvent' || trigger.kind === 'prComment' || trigger.kind === 'ciFailed'
     || trigger.kind === 'action' && trigger.consentFor === undefined;
 }
 
@@ -57,6 +57,7 @@ const AutomationTriggerDefinitionBindingBaseV1Schema = lazyZodSchema(() => z.str
 }));
 export const AutomationTriggerDefinitionBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('triggerKind', [
   z.strictObject({ ...AutomationTriggerDefinitionBindingBaseV1Schema.shape, triggerKind: z.literal('action') }),
+  z.strictObject({ ...AutomationTriggerDefinitionBindingBaseV1Schema.shape, triggerKind: z.literal('sessionLifecycle') }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerDefinitionBindingBaseV1Schema, {
     triggerKind: z.literal('pluginEvent'),
     eventRef: asProtocolZod(AutomationQualifiedPluginContributionRefV1Schema),

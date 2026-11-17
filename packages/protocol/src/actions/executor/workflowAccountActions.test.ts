@@ -14,7 +14,8 @@ const definition = { version: 1 as const, inputs: [], defaults: {}, blocks: [{ k
 
 function executor(invalidStoredHeader = false, readFailure?: unknown,
   isWorkflowFeatureEnabled: () => boolean | Promise<boolean> = () => true,
-  artifactStore: Partial<WorkflowDefinitionArtifactOperations> = {}) {
+  artifactStore: Partial<WorkflowDefinitionArtifactOperations> = {},
+  onFailureDiagnostic?: (diagnostic: WorkflowActionFailureDiagnosticV1) => void) {
   const unexpected = (): never => { throw new Error('unexpected_effect'); };
   // Artifact and Run persistence are the only boundaries; all family, reader,
   // validation and admission logic stays real.
@@ -38,7 +39,7 @@ function executor(invalidStoredHeader = false, readFailure?: unknown,
     resolveAccountId: async () => 'account', resolveEncryption: async () => ({ kind: 'available',
       witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
     normalizeAbsolutePath: unexpected, randomBytes: unexpected });
-  return createWorkflowActionExecutor({ isWorkflowFeatureEnabled, definitions, runs });
+  return createWorkflowActionExecutor({ isWorkflowFeatureEnabled, definitions, runs, onFailureDiagnostic });
 }
 
 describe('workflow Action refusal classification', () => {
@@ -76,14 +77,19 @@ describe('workflow Action refusal classification', () => {
 
   it('preserves renewed approval required by the Run owner through the strict Workflow failure consumer', () => {
     const result = normalizeWorkflowActionThrownError(Object.assign(new Error('approval_required'), { code: 'approval_required' }));
-    expect(WorkflowActionFailureV1Schema.parse(result)).toEqual({ ok: false, errorCode: 'approval_required', error: 'approval_required' });
+    expect(WorkflowActionFailureV1Schema.parse(result)).toEqual({ ok: false, errorCode: 'approval_required', error: 'approval_required',
+      failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'approval_required', httpStatus: null } });
     expect(WorkflowOperationErrorCodeV1Schema.parse(result.errorCode)).toBe('approval_required');
   });
-  it('preserves a wait transport failure cause through the strict Workflow failure consumer', async () => {
-    const actions = executor(false, Object.assign(new Error('connection lost'), { code: 'ECONNRESET' }));
-    const failureCause = { phase: 'workflow.run.wait', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null };
+  it('preserves the typed wait refusal and its transport diagnostic through the strict Workflow consumer', async () => {
+    const diagnostics: WorkflowActionFailureDiagnosticV1[] = [];
+    const actions = executor(false, Object.assign(new Error('connection lost'), { code: 'ECONNRESET' }),
+      () => true, {}, diagnostic => { diagnostics.push(diagnostic); });
+    const failureCause = { phase: 'workflow.run.wait', errorClass: 'Error', errorCode: 'storage_unavailable', httpStatus: null };
     const result = await actions({ actionId: 'workflow.run.wait', input: { runId: 'run-1' }, context: { surface: 'cli' } });
     expect(WorkflowActionFailureV1Schema.parse(result)).toMatchObject({ ok: false, errorCode: 'storage_unavailable', failureCause });
+    expect(diagnostics).toContainEqual(expect.objectContaining({ errorCode: 'storage_unavailable',
+      originalCode: 'ECONNRESET', operation: 'workflow.run.wait' }));
   });
   it('preserves the missing daemon runtime cause through the strict Workflow failure consumer', async () => {
     const actions = executor(false, Object.assign(new Error('Daemon runtime unavailable'), {
@@ -129,7 +135,8 @@ describe('workflow Action refusal classification', () => {
     const actions = createActionExecutor({ workflowAction: executor(false, error) } as unknown as ActionExecutorDeps);
     const result = await actions.execute('workflow.definition.get', { definitionId }, { surface: 'ui' });
     expect(WorkflowActionFailureV1Schema.parse(result)).toEqual({ ok: false, errorCode: 'currentness_conflict',
-      error: error.message, details: { revision: 7 } });
+      error: error.message, details: { revision: 7 },
+      failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: 'currentness_conflict', httpStatus: null } });
   });
 
   it('does not prove cancellation when an Artifact delete commits but its receipt is aborted', async () => {
@@ -172,7 +179,7 @@ describe('workflow Action refusal classification', () => {
     const actions = createActionExecutor({ workflowAction: executor(false, error) } as unknown as ActionExecutorDeps);
     await expect(actions.execute('workflow.definition.get', { definitionId }, { surface: 'api' }))
       .resolves.toEqual({ ok: false, effectAttempted: false, errorCode: 'workflow_http_error', error: error.message, details,
-        failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: null, httpStatus: 400 } });
+        failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: 'workflow_http_error', httpStatus: 400 } });
   });
   it('does not infer no effect from a server failure or a lost response', () => {
     for (const response of [{ status: 503 }, undefined]) {
@@ -187,7 +194,8 @@ describe('workflow Action refusal classification', () => {
     const actions = createActionExecutor({ workflowAction: executor(false,
       Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details })) } as unknown as ActionExecutorDeps);
     await expect(actions.execute('workflow.definition.get', { definitionId }, { surface: 'ui' }))
-      .resolves.toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details });
+      .resolves.toEqual({ ok: false, errorCode: 'target_unavailable', error: 'target_unavailable', details,
+        failureCause: { phase: 'workflow.definition.get', errorClass: 'Error', errorCode: 'target_unavailable', httpStatus: null } });
     expect(normalizeWorkflowActionThrownError(Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' })))
       .toMatchObject({ errorCode: 'target_unavailable', details: { code: 'target_unavailable', reason: 'selection_unavailable' } });
   });
@@ -263,7 +271,7 @@ describe('workflow Action refusal classification', () => {
     const events: WorkflowActionFailureDiagnosticV1[] = [];
     const result = normalizeWorkflowActionThrownError(Object.assign(new Error('Session snapshot unavailable'), {
       name: 'SessionSnapshotReadError', errorCode: 'not_found', httpStatus: 404,
-    }), { operation: 'session.trigger.add', durationMs: 1, emit: event => events.push(event) });
+    }), { operation: 'workflow.trigger.add', durationMs: 1, emit: event => events.push(event) });
     expect(WorkflowActionFailureV1Schema.parse(result)).toMatchObject({ ok: false, errorCode: 'target_unavailable',
       details: { code: 'target_unavailable', reason: 'session_unavailable' } });
     expect(events).toEqual([]);
@@ -276,10 +284,10 @@ describe('workflow Action refusal classification', () => {
     const events: WorkflowActionFailureDiagnosticV1[] = [];
     const result = normalizeWorkflowActionThrownError(Object.assign(new Error('Session snapshot unavailable'), {
       name: 'SessionSnapshotReadError', errorCode, ...(errorCode === 'http_error' ? { httpStatus: 503 } : {}),
-    }), { operation: 'session.trigger.add', durationMs: 1, emit: event => events.push(event) });
+    }), { operation: 'workflow.trigger.add', durationMs: 1, emit: event => events.push(event) });
     expect(WorkflowActionFailureV1Schema.parse(result)).toMatchObject({ ok: false, errorCode: 'storage_unavailable' });
     expect(events).toEqual([{ event: 'workflow_action_failure', errorCode: 'storage_unavailable',
-      originalCode: null, httpStatus: null, operation: 'session.trigger.add', durationMs: 1 }]);
+      originalCode: null, httpStatus: null, operation: 'workflow.trigger.add', durationMs: 1 }]);
   });
 
   it('preserves the Account role preparation cause in the content-free diagnostic', () => {

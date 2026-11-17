@@ -26,6 +26,7 @@ function lifecycleTrigger(
         sessionLifecycleMatchCount: null,
         // An exact-turn registration keeps one occurrence until it is consumed.
         remainingOccurrences: consumption.remainingOccurrences ?? 1,
+        subjectKind: "session", subjectKey: "private-selection-digest",
         sourceSessionId: "source-session",
         sourceTurnId,
     } as const;

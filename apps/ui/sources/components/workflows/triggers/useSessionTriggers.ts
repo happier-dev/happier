@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { WorkflowTriggerUpdateRequestV1Schema, type SessionTriggerAddRequestV1, type SessionTriggerUpdateRequestV1, type SessionTriggerPullRequestLinksV1, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { WorkflowTriggerAddRequestV1, WorkflowTriggerUpdateRequestV1, SessionTriggerPullRequestLinksV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1 } from '@happier-dev/channels-protocol/v1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
 
@@ -10,16 +10,15 @@ import { useLayoutPresentationActive } from '@/components/ui/presentation/Plugin
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector } from '@/sync/store/domains/automations';
 import {
-    addSessionTrigger,
-    listSessionTriggers,
-    removeSessionTrigger,
-    updateSessionTrigger,
+    addWorkflowTrigger,
+    listWorkflowTriggerPage,
     updateWorkflowTrigger,
     removeWorkflowTrigger,
     type WorkflowTriggerWriteResult,
 } from '@/sync/domains/workflows/workflowTriggerActions';
 import { readMachineControlTargetForSession, resolveMachineControlTargetForSessionFromState } from '@/sync/ops/sessionMachineTarget';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 
 const ACCOUNT_TRIGGERS = { scope: 'account_all' } as const;
 
@@ -32,8 +31,8 @@ export type SessionTriggersRead = Readonly<{
     machineId: string | null;
     pullRequestLinks: SessionTriggerPullRequestLinksV1 | Readonly<{ status: 'loading' }>;
     retry: () => void;
-    add: (request: Omit<SessionTriggerAddRequestV1, 'sessionId'>) => Promise<WorkflowTriggerWriteResult>;
-    update: (request: Omit<SessionTriggerUpdateRequestV1, 'sessionId'>) => Promise<WorkflowTriggerWriteResult>;
+    add: (request: Omit<Exclude<WorkflowTriggerAddRequestV1, { observationOnly: unknown }>, 'lifetimeSession'>) => Promise<WorkflowTriggerWriteResult>;
+    update: (request: Omit<WorkflowTriggerUpdateRequestV1, 'automationId'> & Readonly<{ triggerId: string }>) => Promise<WorkflowTriggerWriteResult>;
     remove: (triggerId: string) => Promise<WorkflowTriggerWriteResult>;
 }>;
 
@@ -112,10 +111,10 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
         if (!accountLifetime) return;
         const controller = new AbortController();
         const retirement = accountLifetime.onRetire(() => controller.abort());
-        listSessionTriggers({ sessionId }, { ...options(), signal: controller.signal })
+        listWorkflowTriggerPage({ lifetimeSession: { sessionId } }, { ...options(), accountLifetime, signal: controller.signal })
             .then((result) => {
                 if (!controller.signal.aborted && accountLifetime.isCurrent()) {
-                    setLinks({ scopeKey: linkScopeKey, value: result.pullRequestLinks });
+                    setLinks({ scopeKey: linkScopeKey, value: result.pullRequestLinks ?? { status: 'unavailable', code: 'target_unavailable' } });
                 }
             })
             .catch(() => {
@@ -132,28 +131,26 @@ export function useSessionTriggers(sessionId: string): SessionTriggersRead {
     }, []);
 
     const add = React.useCallback<SessionTriggersRead['add']>(
-        async (request) => applyWrite(await addSessionTrigger({ ...request, sessionId }, options())),
-        [applyWrite, options, sessionId],
+        async (request) => applyWrite(await addWorkflowTrigger({ ...request, lifetimeSession: { sessionId } }, { ...options(), accountLifetime })),
+        [accountLifetime, applyWrite, options, sessionId],
     );
     const update = React.useCallback<SessionTriggersRead['update']>(
         async (request) => {
             const set = sets.find((set) => set.triggers.some((trigger) => trigger.id === request.triggerId));
-            const scopeSessionId = set?.scopeSessionId ?? sessionId;
-            return applyWrite(await (set && !set.scopeSessionId
-                ? updateWorkflowTrigger(WorkflowTriggerUpdateRequestV1Schema.parse({ ...request, automationId: set.automationId }))
-                : updateSessionTrigger({ ...request, sessionId: scopeSessionId }, options(scopeSessionId))));
+            if (!set) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
+            return applyWrite(await updateWorkflowTrigger({ ...request, automationId: set.automationId },
+                { ...options(set.scopeSessionId ?? sessionId), accountLifetime }));
         },
-        [applyWrite, options, sessionId, sets],
+        [accountLifetime, applyWrite, options, sessionId, sets],
     );
     const remove = React.useCallback<SessionTriggersRead['remove']>(
         async (triggerId) => {
             const set = sets.find((set) => set.triggers.some((trigger) => trigger.id === triggerId));
-            const scopeSessionId = set?.scopeSessionId ?? sessionId;
-            return applyWrite(await (set && !set.scopeSessionId
-                ? removeWorkflowTrigger({ automationId: set.automationId, triggerId })
-                : removeSessionTrigger({ sessionId: scopeSessionId, triggerId }, options(scopeSessionId))));
+            if (!set) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
+            return applyWrite(await removeWorkflowTrigger({ automationId: set.automationId, triggerId },
+                { ...options(set.scopeSessionId ?? sessionId), accountLifetime }));
         },
-        [applyWrite, options, sessionId, sets],
+        [accountLifetime, applyWrite, options, sessionId, sets],
     );
     const retry = React.useCallback(() => {
         setAttempt(value => value + 1); setObserverAttempt(value => value + 1); accountRead.retry();

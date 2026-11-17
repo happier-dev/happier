@@ -5,7 +5,8 @@ import { resolveServerIdForSession } from '../sessionScope.js';
 import { completeActionResult } from '../resultProjection.js';
 import { isAgentCaller } from '../callerContext.js';
 import type { SessionGoalSetRequestV1 } from '../../../sessions/work/state/sessionWorkStateRpc.js';
-import { SessionTriggerListResultV1Schema } from '../../../workflows/triggers/workflowTriggerActionsV1.js';
+import { WorkflowTriggerListResultV1Schema } from '../../../workflows/triggers/workflowTriggerActionsV1.js';
+import { isKeepGoingTriggerTargetV1 } from '../../../workflows/triggers/triggerTargetV1.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 
@@ -89,21 +90,21 @@ export async function dispatchSessionWork(inv: Pick<CoreInvocation, 'actionId' |
           }
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const context = serverId ? { ...ctx, serverId } : ctx;
-          const listed = await deps.workflowAction({ actionId: 'session.trigger.list', input: { sessionId }, context,
+          const listed = await deps.workflowAction({ actionId: 'workflow.trigger.list', input: { lifetimeSession: { sessionId } }, context,
             ...(ctx.signal ? { signal: ctx.signal } : {}) });
           const listResult = completeActionResult(listed);
           if (!listResult.ok) return listResult;
-          const sets = SessionTriggerListResultV1Schema.parse(listed).sets;
+          const sets = WorkflowTriggerListResultV1Schema.parse(listed).sets;
           const cleared = completeActionResult(await deps.sessionGoalClear({ sessionId, ...(serverId ? { serverId } : {}),
             ...(ctx.authority || isAgentCaller(ctx) ? { context: ctx } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) }));
           if (!cleared.ok) return cleared;
           // Preserve a refused Goal mutation's continuation. A later detach failure is
           // returned honestly; retrying Clear can finish the retained attachment.
           for (const set of sets) {
-            if (set.target?.kind !== 'workflow' || set.target.ref !== 'builtin:keep-going') continue;
+            if (!isKeepGoingTriggerTargetV1(set.target)) continue;
             for (const trigger of set.triggers) {
-              const removed = completeActionResult(await deps.workflowAction({ actionId: 'session.trigger.remove',
-                input: { sessionId, triggerId: trigger.id }, context, ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+              const removed = completeActionResult(await deps.workflowAction({ actionId: 'workflow.trigger.remove',
+                input: { automationId: set.automationId, triggerId: trigger.id }, context, ...(ctx.signal ? { signal: ctx.signal } : {}) }));
               if (!removed.ok) return removed;
             }
           }

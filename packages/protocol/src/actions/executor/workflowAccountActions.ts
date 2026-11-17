@@ -300,22 +300,6 @@ export function createWorkflowActionExecutor(deps: Readonly<{
         return deps.triggers ? await deps.triggers.remove(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
           : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
       }
-      if (actionId === 'session.trigger.list') {
-        return deps.triggers ? await deps.triggers.sessionList(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
-          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
-      }
-      if (actionId === 'session.trigger.add') {
-        return deps.triggers ? await deps.triggers.sessionAdd(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
-          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
-      }
-      if (actionId === 'session.trigger.update') {
-        return deps.triggers ? await deps.triggers.sessionUpdate(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
-          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
-      }
-      if (actionId === 'session.trigger.remove') {
-        return deps.triggers ? await deps.triggers.sessionRemove(parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input), rawArgs.context)
-          : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
-      }
       if (actionId === WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1) {
         const input = parseWorkflowActionInput(WorkflowActionInputSchemasV1[actionId], rawArgs.input);
         const retained = await deps.runs.execute({ actionId: 'workflow.run.list',

@@ -115,8 +115,7 @@ describe('resolveEffectiveActionInputFields', () => {
       .toMatchObject({ required: true, optionsSourceId: 'workflows.references.available' });
     expect(resolveEffectiveActionInputFields(spec, { review: true }).find(field => field.path === 'automationId'))
       .toMatchObject({ required: true });
-    expect(resolveEffectiveActionInputFields(getActionSpec('session.trigger.list'), {}))
-      .toContainEqual(expect.objectContaining({ path: 'sessionId', required: true }));
+    expect(getActionSpec('workflow.trigger.list').inputSchema.safeParse({ lifetimeSession: { sessionId: 'session-one' } }).success).toBe(true);
   });
   it('uses the neutral field owner for structured selections and conditional fields', () => {
     const a = { service: { pluginId: 'com.acme.accounts', localId: 'service' }, accountId: 'a' };

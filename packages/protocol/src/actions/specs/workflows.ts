@@ -14,7 +14,6 @@ export const WORKFLOW_DANGER_ACTION_IDS = new Set<WorkflowActionIdV1>([
   'workflow.run.delete', 'workflow.definition.delete',
   'workflow.trigger.add', 'workflow.trigger.update', 'workflow.trigger.remove',
   'workflow.trigger.run_now',
-  'session.trigger.remove',
 ]);
 
 export const WORKFLOW_ACTION_TITLES: Readonly<Record<WorkflowActionIdV1, string>> = {
@@ -50,10 +49,6 @@ export const WORKFLOW_ACTION_TITLES: Readonly<Record<WorkflowActionIdV1, string>
   'workflow.trigger.update': 'Update workflow trigger',
   'workflow.trigger.remove': 'Remove workflow trigger',
   'workflow.trigger.run_now': 'Run saved Workflow now',
-  'session.trigger.list': 'List session triggers',
-  'session.trigger.add': 'Add session trigger',
-  'session.trigger.update': 'Update session trigger',
-  'session.trigger.remove': 'Remove session trigger',
 };
 
 export const WORKFLOW_TRIGGER_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<WorkflowActionIdV1, string>>> = {
@@ -64,10 +59,6 @@ export const WORKFLOW_TRIGGER_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<Workf
   'workflow.trigger.update': '{"automationId":"automation_123","triggerId":"trigger_123","expectedRevision":1,"patch":{"enabled":false}}',
   'workflow.trigger.remove': '{"automationId":"automation_123","triggerId":"trigger_123"}',
   'workflow.trigger.run_now': '{"automationId":"automation_123"}',
-  'session.trigger.list': '{"sessionId":"session_123"}',
-  'session.trigger.add': '{"sessionId":"session_123","target":{"kind":"workflow","ref":"builtin:keep-going"},"trigger":{"kind":"sessionLifecycle","enabled":true,"sourceSessionId":"session_123","events":["parentTurnCompleted"],"policy":{"kind":"everyMatch"}}}',
-  'session.trigger.update': '{"sessionId":"session_123","triggerId":"trigger_123","expectedRevision":1,"patch":{"enabled":false}}',
-  'session.trigger.remove': '{"sessionId":"session_123","triggerId":"trigger_123"}',
 };
 
 export const WORKFLOW_ACTION_DESCRIPTIONS: Readonly<Partial<Record<WorkflowActionIdV1, string>>> = {
@@ -100,7 +91,7 @@ export const WORKFLOW_READ_ACTION_IDS: ReadonlySet<WorkflowActionIdV1> = new Set
   'workflow.validate', WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
   'workflow.run.invocations.list', 'workflow.run.invocations.get',
   'workflow.definition.list', 'workflow.definition.get', 'workflow.definition.import', 'workflow.definition.export', 'workflow.definition.capture',
-  WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1, 'workflow.trigger.list', 'session.trigger.list',
+  WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1, 'workflow.trigger.list',
 ]);
 
 function removesWholeTriggerSet(input: unknown): boolean {
@@ -148,7 +139,6 @@ export const WORKFLOW_ACTION_SPECS_V1: readonly PreNormalizedActionSpec[] = lazy
       ...(actionId === 'workflow.trigger.remove' ? {
         uiConfirmationForInput: removesWholeTriggerSet,
       } : {}),
-      ...(actionId === 'session.trigger.remove' ? { scopeAdmissionOwnsConfirmation: true as const } : {}),
     },
     ...(deletesRetainedContent || actionId === 'workflow.trigger.remove'
       ? { irreversible: true as const, confirmVerb: { key: 'common.delete', fallback: 'Delete' } } : {}),

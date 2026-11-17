@@ -255,8 +255,9 @@ for (const owner of ['api', 'http'] as const) {
     });
 
     it('delivers the sealed trigger recipe only through the Session birth request', async () => {
-      await create({ initialTriggers });
-      expect(vi.mocked(axios.post).mock.calls[0]?.[1]).toMatchObject({ initialTriggers });
+      const preparedFinalSessionId = 'prepared-final-session';
+      await create({ initialTriggers, preparedFinalSessionId });
+      expect(vi.mocked(axios.post).mock.calls[0]?.[1]).toMatchObject({ initialTriggers, preparedFinalSessionId });
       expect(JSON.stringify((vi.mocked(axios.post).mock.calls[0]?.[1] as { ownerMetadata: unknown }).ownerMetadata))
         .not.toContain('initialTriggers');
     });
@@ -562,6 +563,7 @@ for (const owner of ['api', 'http'] as const) {
       expect(attached).toMatchObject({ existingSessionId: 'created-session' });
       expect(attached).not.toHaveProperty('initialAccess');
       expect(attached).not.toHaveProperty('initialTriggers');
+      expect(attached).not.toHaveProperty('preparedFinalSessionId');
       expect(attached).not.toHaveProperty('primaryTeamId');
     });
 

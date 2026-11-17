@@ -2,7 +2,6 @@ import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/tr
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 
 import {
-    updateSessionTrigger,
     updateWorkflowTrigger,
 } from '@/sync/domains/workflows/workflowTriggerActions';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
@@ -18,7 +17,7 @@ import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/doma
  * it was. Only an opaque id travels in the route (the temporary-data store, like the Run seed).
  */
 export type TriggerRetarget =
-    | Readonly<{ scope: 'session'; sessionId: string; triggerId: string; expectedRevision: number }>
+    | Readonly<{ scope: 'session'; sessionId: string; automationId: string; triggerId: string; expectedRevision: number }>
     | Readonly<{ scope: 'account'; automationId: string; triggerId?: string; expectedRevision: number }>;
 
 export type TriggerWorkflowSeed = Readonly<{
@@ -46,24 +45,15 @@ export function readTriggerWorkflowSeed(id: string, scope?: ServerAccountScope |
 export async function retargetTriggerToWorkflow(retarget: TriggerRetarget, workflowRef: string,
     caller?: WorkflowActionCallerContext, accountLifetime?: ServerAccountScopeLifetime | null): Promise<void> {
     const target = { kind: 'workflow', ref: workflowRef } as const;
-    if (retarget.scope === 'account') {
-        await updateWorkflowTrigger({
-            automationId: retarget.automationId,
-            ...(retarget.triggerId === undefined ? {} : { triggerId: retarget.triggerId }),
-            expectedRevision: retarget.expectedRevision,
-            patch: { target },
-        }, { ...(caller === undefined ? {} : { context: caller, signal: caller.signal }),
-            ...(accountLifetime === undefined ? {} : { accountLifetime }) });
-        return;
-    }
-    const machineId = readMachineControlTargetForSession(retarget.sessionId)?.machineId;
-    await updateSessionTrigger({
-        sessionId: retarget.sessionId,
-        triggerId: retarget.triggerId,
+    const machineId = retarget.scope === 'session' ? readMachineControlTargetForSession(retarget.sessionId)?.machineId : undefined;
+    await updateWorkflowTrigger({
+        automationId: retarget.automationId,
+        ...(retarget.triggerId === undefined ? {} : { triggerId: retarget.triggerId }),
         expectedRevision: retarget.expectedRevision,
         patch: { target },
     }, {
         ...(caller === undefined ? {} : { signal: caller.signal }),
         context: { ...caller, ...(machineId ? { externalActionTarget: { kind: 'machine', machineId } as const } : {}) },
+        ...(accountLifetime === undefined ? {} : { accountLifetime }),
     });
 }

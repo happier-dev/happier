@@ -41,7 +41,6 @@ export function getActionNewWorkFeatureId(
     case 'workflow.run.start': case 'workflow.definition.create':
     case 'workflow.definition.import': case 'workflow.definition.capture':
     case 'workflow.trigger.add': case 'workflow.trigger.run_now':
-    case 'session.trigger.add':
       return requiredFeature;
     case 'execution.run.start': case 'execution.run.ensure_or_start':
     case 'review.start': case 'review.apply': case 'review.walkthrough': case 'review.explain_findings':

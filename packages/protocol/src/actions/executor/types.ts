@@ -1136,6 +1136,8 @@ export type ActionExecutorContext = Readonly<{
   workflowTriggerMutationAdmission?: Readonly<{ actionId: 'workflow.trigger.add'; changesProfile: boolean }>
     | Readonly<{ actionId: 'workflow.trigger.update' | 'workflow.trigger.remove';
       changesProfile: boolean;
+      /** The trigger owner matched this Run's retained firing origin before approval routing. */
+      exactFiringCleanup?: Readonly<{ automationId: string; triggerId: string; lifetimeSessionId: string }>;
       row: import('../../automations/automationApiV3.js').AutomationDefinitionDetail }>;
 
   /** Host-only diagnostic correlation, separate from retry and approval identity. Never wire input. */

@@ -10,6 +10,7 @@ import type { PluginActionInputById } from '../actions/actionTypeMap.generated.j
 import type { ActionApprovalRequestCreatedResult, ActionExecuteResult } from '../actions/dtos/pluginActionDtoSupport.generated.js';
 import type { ProtocolComposableSchema, ProtocolSchemaInput, ProtocolSchemaOutput } from '../protocol/protocolFacade.js';
 import type { SessionSchema } from '../services/sessions.js';
+import { projectProtocolValue } from '../protocol/projectProtocolValue.js';
 import type { ActionSessionAddressV1, SessionTargetV1 } from './sessionTargets.js';
 import type { SessionInputForgeEvidenceV1 } from './forgeEvidence.js';
 import { runSessionInputHandoffV1 as canonicalRun, runSessionInputDestinationV1 as canonicalDestination, sendSessionInputHandoffV1 as canonicalSend, composeSessionInputHandoffV1 as canonicalCompose,
@@ -64,10 +65,10 @@ export type SessionInputHandoffDepsV1 = Readonly<{
     author?(seed: SessionInputHandoffNewDestinationV1['seed'], input: SessionInputHandoffContentV1, signal?: AbortSignal): Promise<SessionInputHandoffEffectV1<PluginActionResultById['session.authoring.open']>>;
 }>;
 export type SessionInputHandoffExecutionV1 = Readonly<{ resolvedSession?: ActionSessionAddressV1; signal?: AbortSignal }>;
-export const SessionInputHandoffInputV1Schema: SessionSchema<SessionInputHandoffInputV1> = canonicalInputSchema;
-export const SessionInputHandoffResultV1Schema: SessionSchema<SessionInputHandoffResultV1> = canonicalResultSchema;
+export const SessionInputHandoffInputV1Schema: SessionSchema<SessionInputHandoffInputV1> = /* @__PURE__ */ projectProtocolValue(canonicalInputSchema);
+export const SessionInputHandoffResultV1Schema: SessionSchema<SessionInputHandoffResultV1> = /* @__PURE__ */ projectProtocolValue(canonicalResultSchema);
 export const runSessionInputHandoffV1: (input: SessionInputHandoffInputV1, deps: SessionInputHandoffDepsV1,
-    execution?: SessionInputHandoffExecutionV1) => Promise<SessionInputHandoffResultV1> = canonicalRun;
+    execution?: SessionInputHandoffExecutionV1) => Promise<SessionInputHandoffResultV1> = /* @__PURE__ */ projectProtocolValue(canonicalRun);
 export type SessionInputDestinationResultV1<TResult> = Readonly<{ kind: 'completed'; result: TResult }>
     | Readonly<{ kind: 'creationResult'; result: Exclude<PluginActionResultById['session.spawn_new'], { type: 'success' }> }>
     | Extract<SessionInputHandoffResultV1, { kind: 'failed' | 'approvalPending' | 'selectionRequired' }>;
@@ -86,11 +87,11 @@ export const runSessionInputDestinationV1: {
             complete(session: TSession | ActionSessionAddressV1, creation?: Extract<PluginActionResultById['session.spawn_new'], { type: 'success' }>): Promise<TResult> }>,
         signal?: AbortSignal,
     ): Promise<SessionInputDestinationResultV1<TResult>>;
-} = canonicalDestination;
+} = /* @__PURE__ */ projectProtocolValue(canonicalDestination);
 export const sendSessionInputHandoffV1: (input: Parameters<SessionInputHandoffDepsV1['send']>[0], deps: Pick<SessionInputHandoffDepsV1, 'send'>,
-    signal?: AbortSignal) => Promise<Extract<SessionInputHandoffResultV1, { kind: 'sendResult' | 'failed' | 'approvalPending' }>> = canonicalSend;
+    signal?: AbortSignal) => Promise<Extract<SessionInputHandoffResultV1, { kind: 'sendResult' | 'failed' | 'approvalPending' }>> = /* @__PURE__ */ projectProtocolValue(canonicalSend);
 export const composeSessionInputHandoffV1: (session: ActionSessionAddressV1, input: SessionInputHandoffContentV1,
-    compose: NonNullable<SessionInputHandoffDepsV1['compose']>, signal?: AbortSignal) => Promise<Extract<SessionInputHandoffResultV1, { kind: 'composed' | 'unavailable' | 'failed' | 'approvalPending' }>> = canonicalCompose;
+    compose: NonNullable<SessionInputHandoffDepsV1['compose']>, signal?: AbortSignal) => Promise<Extract<SessionInputHandoffResultV1, { kind: 'composed' | 'unavailable' | 'failed' | 'approvalPending' }>> = /* @__PURE__ */ projectProtocolValue(canonicalCompose);
 export const resolveSessionInputHandoffDeliveryV1: {
     (requested: SessionInputHandoffInputV1['delivery'], configured: 'compose' | 'send'): 'compose' | 'send';
     (requested: SessionInputHandoffInputV1['delivery'], configured?: 'compose' | 'send'): 'compose' | 'send' | undefined;
@@ -98,4 +99,4 @@ export const resolveSessionInputHandoffDeliveryV1: {
 export const resolveSessionInputHandoffSelectionV1: (input: Pick<SessionInputHandoffInputV1, 'sessionChoice' | 'delivery' | 'defaults' | 'newSession'>) => Readonly<{
     destination: Readonly<{ kind: 'existing'; session: SessionTargetV1 }> | SessionInputHandoffNewDestinationV1 | undefined;
     delivery: 'compose' | 'send' | undefined; authoring: boolean;
-}> = canonicalResolve;
+}> = /* @__PURE__ */ projectProtocolValue(canonicalResolve);

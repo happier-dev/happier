@@ -1,3 +1,4 @@
+import { readAutomationSessionLifecycleCandidatesInTx } from '@/app/automations/automationSessionLifecycleSubjects';
 import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
@@ -82,21 +83,18 @@ async function readAutomationPublicationAudienceInTx(tx: Tx, automationIds: read
 /** Session fact writers collect lifecycle admission's review/wake audience before locking their source. */
 export async function getSessionLifecycleAutomationPublicationAudienceInTx(tx: Tx, sourceSessionIds: readonly string[]): Promise<WorkflowPublicationAudience> {
     if (sourceSessionIds.length === 0) return { accountIds: [], sessionIds: [] };
-    const automationIds = new Set<string>();
-    const reviewSourceSessionIds = new Set<string>();
-    // Kind, both enabled predicates and the portable Prisma offset are fixed bindings.
-    for (const ids of portableQueryChunks({ values: [...new Set(sourceSessionIds)], bindingsPerValue: 1, fixedBindings: 4 })) {
-        const triggers = await tx.automationTrigger.findMany({ where: {
-            kind: "sessionLifecycle", sourceSessionId: { in: [...ids] }, enabled: true, deletedAt: null,
-            automation: { enabled: true, deletedAt: null },
-        }, distinct: ["automationId", "sourceSessionId"], select: { automationId: true, sourceSessionId: true } });
-        for (const trigger of triggers) {
-            automationIds.add(trigger.automationId);
-            if (trigger.sourceSessionId) reviewSourceSessionIds.add(trigger.sourceSessionId);
-        }
-    }
-    const audience = await readAutomationPublicationAudienceInTx(tx, [...automationIds]);
-    return { ...audience, sessionIds: [...new Set([...reviewSourceSessionIds, ...audience.sessionIds])].sort() };
+    const sources = (await Promise.all(portableQueryChunks({
+        values: [...new Set(sourceSessionIds)], bindingsPerValue: 1,
+    }).map(ids => tx.session.findMany({ where: { id: { in: [...ids] } },
+        select: { id: true, accountId: true, projectKey: true, runtimeMachineTarget: true },
+    })))).flat();
+    const candidates = await readAutomationSessionLifecycleCandidatesInTx(tx, sources);
+    const automationIds = [...new Set(candidates.flatMap(({ source, rows }) => rows
+        .filter(row => row.automation.accountId === source.ownerAccountId && row.enabled && row.automation.enabled)
+        .map(row => row.automationId)))];
+    const audience = await readAutomationPublicationAudienceInTx(tx, automationIds);
+    return { ...audience, sessionIds: [...new Set([...sourceSessionIds, ...audience.sessionIds])].sort() };
+
 }
 
 /** Pure census of the immediate source, watcher, review and managed-wake composition; never acquires locks. */

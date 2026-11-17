@@ -222,7 +222,6 @@ export const WORKFLOW_ACTION_IDS_V1 = [
   'workflow.definition.import', 'workflow.definition.export', 'workflow.definition.capture',
   'workflow.trigger.list', 'workflow.trigger.add', 'workflow.trigger.update', 'workflow.trigger.remove',
   'workflow.trigger.run_now',
-  'session.trigger.list', 'session.trigger.add', 'session.trigger.update', 'session.trigger.remove',
 ] as const;
 export type WorkflowActionIdV1 = typeof WORKFLOW_ACTION_IDS_V1[number];
 /** Run-family classification; the Action catalog separately owns availability. */

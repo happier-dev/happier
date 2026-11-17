@@ -91,6 +91,7 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
   shouldCommit?: () => boolean;
   initialAccess?: SessionInitialAccessDraftV1;
   initialTriggers?: readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[];
+  preparedFinalSessionId?: string;
   manager?: SessionManagerV1;
   primaryTeamId?: string | null;
   teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
@@ -187,6 +188,7 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
       ...(params.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
     ...materializedInitialAccessFields,
     ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
+    ...(params.preparedFinalSessionId !== undefined ? { preparedFinalSessionId: params.preparedFinalSessionId } : {}),
     ...(serverSupportsFeatureSnapshot ? { encryptionMode: desiredSessionEncryptionMode } : {}),
   };
   const response = await postSessionCreationRequest<unknown>({

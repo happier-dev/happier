@@ -53,6 +53,7 @@ export async function transitionSessionArchiveStateInTx(params: Readonly<{
         await admitSessionLifecycleAutomationRunsTx({
             tx: params.tx,
             accountId: session.accountId,
+            sourceSession: session, recipientAccountIds: [session.accountId],
             occurrence: {
                 v: 1, kind: "sessionLifecycle", event: "sessionArchived",
                 sourceSessionId: session.id, occurredAt: params.archivedAt.getTime(),

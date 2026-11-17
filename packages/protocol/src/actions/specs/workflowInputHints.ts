@@ -119,8 +119,6 @@ export function getWorkflowInputHints(actionId: WorkflowActionIdV1, title: strin
           { path: 'automationId', title: 'Workflow trigger set', widget: 'text',
             requiredWhen: { op: 'eq', path: 'review', value: true } },
         ]
-      : actionId === 'session.trigger.list'
-        ? [{ path: 'sessionId', title: 'Session', widget: 'text', required: true }]
       : actionId === 'workflow.trigger.add'
       ? [{ path: 'workflow', title: 'Workflow', widget: 'select', optionsSourceId: 'workflows.references.available' }]
       : actionId === 'workflow.trigger.update'
@@ -133,8 +131,6 @@ export function getWorkflowInputHints(actionId: WorkflowActionIdV1, title: strin
           { path: 'confirmLegacyConversion', title: 'Store reviewed workflow without end-to-end encryption', widget: 'boolean', required: true,
             visibleWhen: { op: 'eq', path: 'confirmLegacyConversion', value: true } },
         ]
-      : actionId === 'session.trigger.add'
-        ? [{ path: 'target.ref', title: 'Workflow', widget: 'select', optionsSourceId: 'workflows.references.available' }]
       : actionId === 'workflow.run.start'
         ? [
           { path: 'runId', title: 'New Run id', widget: 'text', required: true,

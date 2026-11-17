@@ -47,6 +47,7 @@ export function daemonLaunchRequiresCommittedSession(
 ): boolean {
   // Managed endpoint custody belongs to the real Session, never a spawn nonce.
   if (context.requiresSessionConsumer) return true;
+  if (options.preparedFinalSessionId) return true;
   if (!options.existingSessionId && (options.discussionParticipant !== undefined
     || options.sessionCreationCorrespondence?.recipe.discussionParticipant !== undefined)) {
     // Typed native callers share the raw owner's fresh-origin correspondence
@@ -131,6 +132,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
       state: { controlledByUser: false },
       ...(options.initialAccess !== undefined ? { initialAccess: options.initialAccess } : {}),
       ...(options.initialTriggers !== undefined ? { initialTriggers: options.initialTriggers } : {}),
+      ...(options.preparedFinalSessionId ? { preparedFinalSessionId: options.preparedFinalSessionId } : {}),
       ...(options.manager !== undefined ? { manager: options.manager } : {}),
       ...(options.primaryTeamId !== undefined ? { primaryTeamId: options.primaryTeamId } : {}),
       ...(options.teamCredentialBindings !== undefined
@@ -226,6 +228,7 @@ export function withoutFreshSessionCreationFields(options: SpawnSessionOptions):
   const {
     initialAccess: _initialAccess,
     initialTriggers: _initialTriggers,
+    preparedFinalSessionId: _preparedFinalSessionId,
     initialTitle: _initialTitle,
     authoringOrigin: _authoringOrigin,
     identity: _initialIdentity,

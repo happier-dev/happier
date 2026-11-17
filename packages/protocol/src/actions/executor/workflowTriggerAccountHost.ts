@@ -28,6 +28,8 @@ import {
   AutomationPluginEventDefinitionTriggerInputSchema,
   AutomationTriggerDefinitionSchema,
   AutomationPullRequestTriggerSchema,
+  AutomationSessionLifecycleTriggerSchema,
+  projectAutomationSessionLifecycleStructuralTrigger,
   type AutomationTriggerDefinitionInput,
 } from '../../automations/automationTriggerDefinition.js';
 import {
@@ -71,10 +73,11 @@ import {
 } from './workflowTriggerActions.js';
 import { normalizeStoredWorkflowTriggerConsent } from './workflowTriggerConsent.js';
 import type { WorkflowAccountRunActionDeps } from './workflowRunActions.js';
-import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '../../automations/automationActionTriggerV1.js';
 import { isConfirmedActionWriteRefusal } from './actionFailureEnvelope.js';
 import { HEALTH_CHECK_EVENT_REFS_V1 } from '../../deployments/healthCheckV1.js';
 import { isHealthCheckEventSourceV1 } from '../../deployments/healthCheckSourceV1.js';
+import { canonicalizeAutomationSessionLifecycleStructuralConfiguration, projectAutomationSessionLifecycleStructuralConfiguration } from '../../automations/automationSessionLifecycle.js';
+import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '../../automations/automationActionTriggerV1.js';
 
 function unavailable(code = 'content_unavailable', details?: unknown): never {
   throw Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
@@ -134,6 +137,46 @@ export async function backfillAutomationManagedTargetsV1(params: WorkflowCodecPa
   };
   let updated = 0;
   let unresolved = 0;
+  let legacyCursor: string | undefined;
+  do {
+    assertCurrent();
+    const page = await params.automations.listDetails({ legacySessionLifecycleSelections: true,
+      ...(legacyCursor ? { cursor: legacyCursor } : {}) });
+    assertCurrent();
+    for (const row of page.legacySessionLifecycleSelections ?? []) {
+      assertCurrent();
+      try {
+        const openedEncryption = await params.resolveEncryption();
+        assertCurrent();
+        const sameAuthority = (current: AvailableAutomationAccountEncryptionV1) => {
+          assertCurrent();
+          assertSameAccountEncryption(openedEncryption, current);
+        };
+        const sessionLifecycleMigrations = row.selections.map(selection => ({
+          triggerId: selection.triggerId, expectedRevision: selection.triggerRevision,
+          triggerDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            ...(isAvailableE2eeAutomationAccountEncryptionV1(openedEncryption)
+              ? { mode: 'e2ee' as const, material: openedEncryption.material.material, randomBytes: params.randomBytes }
+              : { mode: 'plain' as const }),
+            binding: AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: row.automationId,
+              triggerId: selection.triggerId, triggerRevision: selection.triggerRevision, triggerKind: 'sessionLifecycle' }),
+            definition: AutomationSessionLifecycleTriggerSchema.parse({ kind: 'sessionLifecycle',
+              subject: selection.subject, events: selection.events, policy: selection.policy }),
+          }),
+        }));
+        const beforeWrite = async () => { sameAuthority(await params.resolveEncryption()); };
+        await beforeWrite();
+        await params.automations.patch(row.automationId, {
+          expectedTemplateVersion: row.expectedTemplateVersion, sessionLifecycleMigrations,
+        }, beforeWrite);
+        updated++;
+      } catch {
+        assertCurrent();
+        unresolved++;
+      }
+    }
+    legacyCursor = page.nextCursor ?? undefined;
+  } while (legacyCursor);
   let cursor: string | undefined;
   do {
     assertCurrent();
@@ -155,8 +198,7 @@ export async function backfillAutomationManagedTargetsV1(params: WorkflowCodecPa
         if (readTriggerTargetV1(row, context).kind !== 'available') unavailable('source_unavailable');
         const sameAuthority = (current: AvailableAutomationAccountEncryptionV1) => {
           assertCurrent();
-          if (current.witness.mode !== openedEncryption.witness.mode
-            || current.witness.contentKeyFingerprint !== openedEncryption.witness.contentKeyFingerprint) unavailable();
+          assertSameAccountEncryption(openedEncryption, current);
           return current;
         };
         const executionRecipe = await sealWorkflowContext({ ...params,
@@ -180,10 +222,12 @@ export async function backfillAutomationManagedTargetsV1(params: WorkflowCodecPa
 }
 
 const eventBinding = (automationId: string, triggerId: string, triggerRevision: number,
-    eventRef: Extract<AutomationTriggerDefinitionBindingV1, { triggerKind: 'pluginEvent' }>['eventRef'], sourceSelectorId: string) => (
-    AutomationTriggerDefinitionBindingV1Schema._zod.def.options[0].parse({ v: 1, automationId, triggerId, triggerRevision,
-      triggerKind: 'pluginEvent', eventRef, sourceSelectorId })
-  );
+    eventRef: Extract<AutomationTriggerDefinitionBindingV1, { triggerKind: 'pluginEvent' }>['eventRef'], sourceSelectorId: string) => {
+    const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId, triggerId, triggerRevision,
+      triggerKind: 'pluginEvent', eventRef, sourceSelectorId });
+    if (binding.triggerKind !== 'pluginEvent') unavailable();
+    return binding;
+  };
 
 const openEvent = (binding: AutomationTriggerDefinitionBindingV1, envelope: unknown, current: AvailableAutomationAccountEncryptionV1, storedRead = false) => {
     const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope,
@@ -257,8 +301,7 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
   };
   const sameEncryption = (before: AvailableAutomationAccountEncryptionV1) => async () => {
     const current = await params.resolveEncryption();
-    if (current.witness.mode !== before.witness.mode
-      || current.witness.contentKeyFingerprint !== before.witness.contentKeyFingerprint) unavailable();
+    assertSameAccountEncryption(before, current);
     return current;
   };
   const materializePrivateDisplay = <T extends AutomationDefinitionDetail | AutomationDefinitionListItem>(
@@ -467,6 +510,25 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     const binding = pullRequestBinding(row.id, trigger.id, trigger.revision, trigger.kind);
     return { trigger, binding, definition: openPullRequest(binding, envelope, current, true) };
   };
+const storedSessionLifecycle = (row: AutomationDefinitionDetail, triggerId: string,
+    current: AvailableAutomationAccountEncryptionV1) => {
+    const trigger = row.triggers.find(item => item.id === triggerId);
+    if (!trigger || trigger.kind !== 'sessionLifecycle') unavailable();
+    const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: row.id,
+        triggerId, triggerRevision: trigger.revision, triggerKind: 'sessionLifecycle' });
+    let envelope: unknown;
+    try { envelope = JSON.parse(trigger.triggerDefinitionEnvelope); } catch { unavailable(); }
+    const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope,
+        ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
+            ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
+    if (opened.kind !== 'available') unavailable();
+    const definition = createStoredReadSchema(AutomationSessionLifecycleTriggerSchema).parse(opened.definition);
+    if (!pluginJsonValuesEqual(projectAutomationSessionLifecycleStructuralConfiguration(definition),
+        canonicalizeAutomationSessionLifecycleStructuralConfiguration(trigger))) unavailable();
+    return { trigger, binding, definition };
+};
+
+
   const prepareEvent = (automationId: string, triggerId: string, triggerRevision: number,
     trigger: AutomationTriggerDefinitionInput, current: AvailableAutomationAccountEncryptionV1,
     previous?: ReturnType<typeof readAccountStoredPluginEventTriggerV1>): AutomationTriggerDefinitionInput => {
@@ -537,6 +599,28 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
   const preparePrivateTrigger = (automationId: string, triggerId: string, triggerRevision: number,
     trigger: AutomationTriggerDefinitionInput, current: AvailableAutomationAccountEncryptionV1,
     previous?: ReturnType<typeof readAccountStoredPluginEventTriggerV1>): AutomationTriggerDefinitionInput => {
+if (trigger.kind === 'sessionLifecycle') {
+    const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId,
+        triggerId, triggerRevision, triggerKind: 'sessionLifecycle' });
+    if ('triggerDefinitionEnvelope' in trigger) {
+        const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ binding, envelope: trigger.triggerDefinitionEnvelope,
+            ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
+                ? { mode: 'e2ee' as const, material: current.material.material } : { mode: 'plain' as const }) });
+        if (opened.kind !== 'available') unavailable();
+        const definition = AutomationSessionLifecycleTriggerSchema.parse(opened.definition);
+        if (!pluginJsonValuesEqual(projectAutomationSessionLifecycleStructuralConfiguration(definition),
+            canonicalizeAutomationSessionLifecycleStructuralConfiguration(trigger))) unavailable();
+        return trigger;
+    }
+    const { enabled: _enabled, ...definition } = trigger;
+    return { ...projectAutomationSessionLifecycleStructuralTrigger(definition), enabled: trigger.enabled,
+        triggerDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
+            ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
+                ? { mode: 'e2ee' as const, material: current.material.material, randomBytes: params.randomBytes }
+                : { mode: 'plain' as const }), binding, definition,
+        }) };
+}
+
     if (trigger.kind === 'action' && !('consentFor' in trigger)) {
       const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId,
         triggerId, triggerRevision, triggerKind: 'action' });
@@ -574,6 +658,10 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
   const privateTriggerMatches = (row: AutomationDefinitionDetail, retained: AutomationDefinitionDetail['triggers'][number],
     requested: AutomationTriggerDefinitionInput, current: AvailableAutomationAccountEncryptionV1): boolean => {
     if (retained.kind !== requested.kind || retained.enabled !== requested.enabled || 'triggerDefinitionEnvelope' in requested) return false;
+    if (requested.kind === 'sessionLifecycle' && retained.kind === 'sessionLifecycle') {
+      const { enabled: _enabled, ...definition } = requested;
+      return pluginJsonValuesEqual(storedSessionLifecycle(row, retained.id, current).definition, definition);
+    }
     if (requested.kind === 'action' && !('consentFor' in requested) && retained.kind === 'action' && !('consentFor' in retained)) {
       const { enabled: _enabled, ...definition } = requested;
       return pluginJsonValuesEqual(readAccountStoredActionTriggerV1(row, retained.id, current).definition, definition);
@@ -773,6 +861,15 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
             observationDisplayStored = true;
             return resealRetainedObservationDisplay(row, retained, item.enabled, observationDisplay, current);
           }
+          if (retained.kind === 'sessionLifecycle') {
+            const previous = storedSessionLifecycle(row, item.triggerId, current);
+            return { ...item, triggerDefinitionEnvelope: sealAutomationTriggerDefinitionStoredEnvelopeV1({
+              ...(isAvailableE2eeAutomationAccountEncryptionV1(current)
+                ? { mode: 'e2ee' as const, material: current.material.material, randomBytes: params.randomBytes }
+                : { mode: 'plain' as const }),
+              binding: { ...previous.binding, triggerRevision: item.expectedRevision + 1 }, definition: previous.definition,
+            }) };
+          }
           if (!isAvailableE2eeAutomationAccountEncryptionV1(current)) return item;
           const previous = retained.kind === 'pluginEvent' ? readAccountStoredPluginEventTriggerV1(row, item.triggerId, current)
             : retained.kind === 'action' ? readAccountStoredActionTriggerV1(row, item.triggerId, current) : storedPullRequest(row, item.triggerId, current);
@@ -813,6 +910,8 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     ...(params.pullRequests ? { pullRequests: params.pullRequests } : {}),
     openPullRequestTrigger: async (row, trigger) => storedPullRequest(row, trigger.id, await params.resolveEncryption()).definition,
     openPluginEventTrigger: async (row, trigger) => readAccountStoredPluginEventTriggerV1(row, trigger.id, await params.resolveEncryption()).definition,
+    openSessionLifecycleTrigger: async (row, trigger) => storedSessionLifecycle(row, trigger.id, await params.resolveEncryption()).definition,
+    prepareBirthTrigger: async (automationId, triggerId, trigger) => preparePrivateTrigger(automationId, triggerId, 0, trigger, await params.resolveEncryption()),
     openActionTrigger: async (row, trigger) => readAccountStoredActionTriggerV1(row, trigger.id, await params.resolveEncryption()).definition,
     resolveWorkflow: params.resolveWorkflow,
     ...(params.resolveWorkflowTeamIds ? { resolveWorkflowTeamIds: params.resolveWorkflowTeamIds } : {}),
@@ -847,11 +946,15 @@ type HealthCheckSourceReaderParams = Readonly<{
   resolveEncryption: WorkflowTriggerAccountHostParams['resolveEncryption'];
 }>;
 
+function assertSameAccountEncryption(opened: AvailableAutomationAccountEncryptionV1, current: AvailableAutomationAccountEncryptionV1): void {
+  if (current.witness.mode !== opened.witness.mode
+    || current.witness.contentKeyFingerprint !== opened.witness.contentKeyFingerprint) unavailable();
+}
+
 async function assertAccountDisclosureCurrent(opened: AvailableAutomationAccountEncryptionV1,
   resolveEncryption: WorkflowTriggerAccountHostParams['resolveEncryption']) {
   const current = await resolveEncryption();
-  if (current.witness.mode !== opened.witness.mode
-    || current.witness.contentKeyFingerprint !== opened.witness.contentKeyFingerprint) unavailable();
+  assertSameAccountEncryption(opened, current);
 }
 
 /** Internal assembly consumers borrow the same decoded census before public selection. */

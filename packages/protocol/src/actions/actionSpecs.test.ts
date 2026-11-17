@@ -464,7 +464,6 @@ const WORKFLOW_READ_ACTION_ID_SET = new Set([
   'workflow.run.invocations.list',
   'workflow.run.invocations.get',
   'workflow.trigger.list',
-  'session.trigger.list',
 ] as const);
 
 const HOME_PUBLIC_PROFILE_DEFERRED_ACTION_IDS = [

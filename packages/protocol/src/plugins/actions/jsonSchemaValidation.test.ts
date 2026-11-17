@@ -329,10 +329,11 @@ describe('plugin JSON Schema validation policy', () => {
     expect(createStoredReadSchema(schema).safeParse({ native: { kind: 'b', name: 3, extra: true } }).success).toBe(false);
   });
   it('validates the real trigger-removal output against its frozen recursive Action projection', () => {
-    const outputSchema = WorkflowActionOutputSchemasV1['session.trigger.remove'];
+    const outputSchema = WorkflowActionOutputSchemasV1['workflow.trigger.remove'];
     const result = outputSchema.parse({ set: {
       automationId: 'origin-automation', revision: 1, enabled: false, health: 'available', triggers: [],
     } });
+    if (!('set' in result)) throw new Error('Expected the retained trigger set');
     const projected = zodSchemaToJsonSchemaObject(outputSchema, { target: 'draft-7' });
     expect(JSON.stringify(projected)).toContain('"$ref"');
     const frozen = normalizePluginJsonSchema(JSON.parse(JSON.stringify(projected)));

@@ -7924,6 +7924,19 @@ initializes the same acknowledgement as direct admission; otherwise it remains
 null. An exact acceptance replay uses the frozen scope and delivery choice,
 preserves an advanced acknowledgement, and does not reread a later scope edit.
 
+Development Session lifecycle triggers keep their watched `subject` separate
+from the definition's `scopeSessionId` lifetime. The selection can be one
+Session, Project, Machine, or omitted for any visible Session in that Home;
+`currentTurn` requires an exact Session and retains its accepted turn witness.
+The generic `workflow.trigger.*` Actions accept `lifetimeSession` for Session
+habits. The undeployed `session.trigger.*` Action family is removed; the 0.2
+frontier has no such Actions. Matching Protocol, SDK, UI, CLI and server readers
+reload together. Retained 0.3 rows without a private selection envelope use the
+explicit one-time Account-mode migration, preserving revisions, consumed
+budgets, schedule cursors and Run history. This is not a 0.2 reader fallback.
+Apply the append-only `20261117053000_automation_parent_turn_started` migration
+before recording `parentTurnStarted`; earlier applied migrations stay unchanged.
+
 Development Discussion-origin Runs freeze a nullable `originDiscussionId` beside
 `originSessionId` at direct admission. `originKind` remains `direct`; the new
 field records provenance, without changing Run access or execution kind. Run

@@ -10,8 +10,6 @@ import {
   WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerRemoveRequestV1Schema,
   WorkflowTriggerRunNowRequestV1Schema,
   WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema, WorkflowTriggerRemoveResultV1Schema,
-  SessionTriggerListRequestV1Schema, SessionTriggerAddRequestV1Schema,
-  SessionTriggerUpdateRequestV1Schema, SessionTriggerRemoveRequestV1Schema, SessionTriggerListResultV1Schema,
   WorkflowTriggerSummaryInputV1Schema,
   WorkflowIntendedTriggerV1Schema,
 } from './triggers/workflowTriggerActionsV1.js';
@@ -647,10 +645,6 @@ export const WorkflowActionInputSchemasV1: {
   readonly 'workflow.trigger.update': typeof WorkflowTriggerUpdateRequestV1Schema;
   readonly 'workflow.trigger.remove': typeof WorkflowTriggerRemoveRequestV1Schema;
   readonly 'workflow.trigger.run_now': typeof WorkflowTriggerRunNowRequestV1Schema;
-  readonly 'session.trigger.list': typeof SessionTriggerListRequestV1Schema;
-  readonly 'session.trigger.add': typeof SessionTriggerAddRequestV1Schema;
-  readonly 'session.trigger.update': typeof SessionTriggerUpdateRequestV1Schema;
-  readonly 'session.trigger.remove': typeof SessionTriggerRemoveRequestV1Schema;
 } = {
   'workflow.validate': WorkflowValidateRequestV1Schema,
   'workflow.run.start': WorkflowRunStartRequestV1Schema,
@@ -684,10 +678,6 @@ export const WorkflowActionInputSchemasV1: {
   'workflow.trigger.update': WorkflowTriggerUpdateRequestV1Schema,
   'workflow.trigger.remove': WorkflowTriggerRemoveRequestV1Schema,
   'workflow.trigger.run_now': WorkflowTriggerRunNowRequestV1Schema,
-  'session.trigger.list': SessionTriggerListRequestV1Schema,
-  'session.trigger.add': SessionTriggerAddRequestV1Schema,
-  'session.trigger.update': SessionTriggerUpdateRequestV1Schema,
-  'session.trigger.remove': SessionTriggerRemoveRequestV1Schema,
 };
 
 export const WorkflowActionOutputSchemasV1: {
@@ -723,10 +713,6 @@ export const WorkflowActionOutputSchemasV1: {
   readonly 'workflow.trigger.update': typeof WorkflowTriggerWriteResultV1Schema;
   readonly 'workflow.trigger.remove': typeof WorkflowTriggerRemoveResultV1Schema;
   readonly 'workflow.trigger.run_now': typeof AutomationV3RunMutationResponseSchema;
-  readonly 'session.trigger.list': typeof SessionTriggerListResultV1Schema;
-  readonly 'session.trigger.add': typeof WorkflowTriggerWriteResultV1Schema;
-  readonly 'session.trigger.update': typeof WorkflowTriggerWriteResultV1Schema;
-  readonly 'session.trigger.remove': typeof WorkflowTriggerWriteResultV1Schema;
 } = {
   'workflow.validate': WorkflowValidateResultV1Schema,
   'workflow.run.start': WorkflowRunStartResultV1Schema,
@@ -760,10 +746,6 @@ export const WorkflowActionOutputSchemasV1: {
   'workflow.trigger.update': WorkflowTriggerWriteResultV1Schema,
   'workflow.trigger.remove': WorkflowTriggerRemoveResultV1Schema,
   'workflow.trigger.run_now': AutomationV3RunMutationResponseSchema,
-  'session.trigger.list': SessionTriggerListResultV1Schema,
-  'session.trigger.add': WorkflowTriggerWriteResultV1Schema,
-  'session.trigger.update': WorkflowTriggerWriteResultV1Schema,
-  'session.trigger.remove': WorkflowTriggerWriteResultV1Schema,
 } as const satisfies Record<WorkflowActionIdV1, z.ZodMiniType>;
 
 export type WorkflowValidateRequestV1 = z.infer<typeof WorkflowValidateRequestV1Schema>;

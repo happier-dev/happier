@@ -765,7 +765,8 @@ function buildLegacyThinkingProjectionWriteData(params: Readonly<{
 }
 
 const SESSION_MUTATION_CONTEXT_SELECT = {
-    tag: true, encryptionMode: true, agentStateVersion: true, latestTurnStatusObservedAt: true, ...selectSessionActivityBadgeInputs(),
+    tag: true, encryptionMode: true, agentStateVersion: true, latestTurnStatusObservedAt: true,
+    projectKey: true, runtimeMachineTarget: true, ...selectSessionActivityBadgeInputs(),
 } as const;
 type SessionMutationContextState = Prisma.SessionGetPayload<{ select: typeof SESSION_MUTATION_CONTEXT_SELECT }>;
 
@@ -2391,6 +2392,8 @@ function normalizePendingRequestActivitySummary(
 async function publishCommittedSessionRequestOccurrencesInTx(tx: Tx, input: Readonly<{
     sessionId: string;
     ownerAccountId: string;
+    sourceSession: import("@/app/automations/automationSessionLifecycleSubjects").AutomationSessionLifecycleSourceFacts;
+    recipientAccountIds: readonly string[];
     agentStateVersion: number;
     source: Readonly<{ latestTurnId: string | null; latestTurnStatus: string | null; seq: number }>;
     occurrences: readonly SessionUserActionRequiredOccurrenceV1[];
@@ -2403,6 +2406,7 @@ async function publishCommittedSessionRequestOccurrencesInTx(tx: Tx, input: Read
         });
         const lifecycleAdmissions = await admitSessionLifecycleAutomationRunsTx({
             tx, accountId: input.ownerAccountId,
+            sourceSession: input.sourceSession, recipientAccountIds: input.recipientAccountIds,
             ...(sourceTurn ? { sourceTurnFacts: parseStoredSessionTurnFacts(sourceTurn) } : {}),
             occurrence: {
                 v: 1, kind: 'sessionLifecycle', event: 'userActionRequired', sourceSessionId: input.sessionId,
@@ -2544,6 +2548,7 @@ export async function updateSessionAgentState(params: {
             };
             await publishCommittedSessionRequestOccurrencesInTx(tx, {
                 sessionId, ownerAccountId: access.sessionOwnerId, source: written.previous,
+                sourceSession: { ...access.sessionState, id: sessionId }, recipientAccountIds: access.recipientAccountIds,
                 agentStateVersion: written.agentState.version, occurrences: parsedUserActionRequiredOccurrences.data,
                 ...(params.runtimeComposition ? { runtimeComposition: params.runtimeComposition } : {}),
             });
@@ -3349,7 +3354,9 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
         }
         await projectSessionInputRepliesFromTurnInTx(tx, appliedTurn);
 
-        const lifecycleEvent = currentTurn?.status === "in_progress"
+        const lifecycleEvent = !currentTurn && params.turnMutation.action === "begin"
+            ? "parentTurnStarted" as const
+            : currentTurn?.status === "in_progress"
             ? appliedTurn.status === "completed"
                 ? "parentTurnCompleted" as const
                 : appliedTurn.status === "failed"
@@ -3362,6 +3369,7 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             const lifecycleAdmissions = await admitSessionLifecycleAutomationRunsTx({
                 tx,
                 accountId: writeAuthority.accountId,
+                sourceSession: { ...session, id: sessionId }, recipientAccountIds: access.recipientAccountIds,
                 sourceTurnFacts: parseStoredSessionTurnFacts(appliedTurn),
                 occurrence: {
                     v: 1,
@@ -4473,6 +4481,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
         }
         await publishCommittedSessionRequestOccurrencesInTx(tx, {
             sessionId: params.sessionId, ownerAccountId: access.sessionOwnerId, source: current,
+            sourceSession: { ...access.sessionState, id: params.sessionId }, recipientAccountIds: access.recipientAccountIds,
             agentStateVersion: nextAgentStateVersion,
             occurrences: params.activitySummaryV1?.newUserActionRequiredOccurrences ?? [],
         });
@@ -4808,6 +4817,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
 
     if (params.mode === 'owner') await publishCommittedSessionRequestOccurrencesInTx(tx, {
         sessionId: params.sessionId, ownerAccountId: access.sessionOwnerId, source: current,
+        sourceSession: { ...access.sessionState, id: params.sessionId }, recipientAccountIds: access.recipientAccountIds,
         agentStateVersion: nextAgentStateVersion,
         occurrences: params.activitySummaryV1?.newUserActionRequiredOccurrences ?? [],
     });

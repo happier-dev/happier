@@ -650,10 +650,15 @@ describe('canonical Session creation admission', () => {
       triggers: [{ triggerId: 'trigger-initial', trigger: { kind: 'sessionLifecycle', enabled: true,
         events: ['sessionStarted'], policy: { kind: 'firstMatch' } } }],
     })];
-    await expect(createSpawnedSession({ ...params, prepareInitialTriggers: async () => initialTriggers })).resolves.toMatchObject({
+    let sealedForSessionId: string | undefined;
+    await expect(createSpawnedSession({ ...params, prepareInitialTriggers: async (preparedFinalSessionId?: string) => {
+      sealedForSessionId = preparedFinalSessionId;
+      return initialTriggers;
+    } })).resolves.toMatchObject({
       sessionId: 'session-created', disposition: 'created',
     });
-    expect(spawn.mock.calls[0]![0]).toMatchObject({ initialTriggers });
+    expect(sealedForSessionId).toEqual(expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i));
+    expect(spawn.mock.calls[0]![0]).toMatchObject({ initialTriggers, preparedFinalSessionId: sealedForSessionId });
   });
 
   it.each(['returned', 'thrown'] as const)('preserves a confirmed Home rollback through plugin spawn and rejoins the same birth after retry (%s)', async responseKind => {

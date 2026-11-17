@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { projectAutomationSessionLifecycleStructuralTrigger } from './automationTriggerDefinition.js';
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from './automationTriggerDefinitionStoredContent.js';
+import { AutomationTriggerIdSchema } from './automationTriggerIdentity.js';
 
 import * as Api from './automationApiV3.js';
 import { AutomationRunReplyHandoffStateV1Schema } from './automationEventV1.js';
@@ -104,7 +107,7 @@ it('admits observation-only Event enrollment without executable context and reje
 const lifecycleInput = {
   kind: 'sessionLifecycle' as const,
   enabled: false,
-  sourceSessionId: 'session-source',
+  subject: { kind: 'session' as const, serverId: 'portable-home', sessionId: 'session-source' },
   events: ['parentTurnCompleted'] as const,
   policy: { kind: 'currentTurn' as const, sourceTurnId: 'turn-42' },
 };
@@ -147,7 +150,8 @@ const lifecycle = {
   revision: 2,
   createdAt: timestamp,
   updatedAt: timestamp,
-  ...lifecycleInput,
+  ...projectAutomationSessionLifecycleStructuralTrigger(lifecycleInput),
+  enabled: lifecycleInput.enabled,
   remainingOccurrences: 1,
   status: { state: 'waiting' as const, runId: null },
 };
@@ -495,7 +499,11 @@ describe('Automation versioned API schemas', () => {
       triggers: [
         { ...schedule, triggerDefinitionEnvelope: null },
         { ...event, triggerDefinitionEnvelope: '{"t":"plain","v":{"source":"private"}}' },
-        { ...lifecycle, triggerDefinitionEnvelope: null },
+        { ...lifecycle, triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, automationId: listDefinition.id, triggerId: AutomationTriggerIdSchema.parse(lifecycle.id),
+            triggerRevision: lifecycle.revision, triggerKind: lifecycle.kind },
+          definition: { kind: lifecycleInput.kind, subject: lifecycleInput.subject, events: lifecycleInput.events, policy: lifecycleInput.policy },
+        })) },
       ],
     };
     expect(Api.AutomationDefinitionListItemSchema.parse(listDefinition)).toEqual(listDefinition);

@@ -24,6 +24,7 @@ import {
 
 import { createDeferred, createSessionFixture, flushHookEffects, renderHook, renderScreen } from '@/dev/testkit';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createWorkflowAutomationTriggerDetailFixture } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { serveSessionActionHome } from '@/dev/testkit/harness/sessionActionHome';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installWorkflowActionHttpBoundary } from '@/dev/testkit/fixtures/workflowActionHttpBoundary';
@@ -115,8 +116,8 @@ function lifecycleTrigger(id: string, enabled: boolean) {
     createdAt: 1,
     updatedAt: 1,
     kind: 'sessionLifecycle',
-    triggerDefinitionEnvelope: null,
-    sourceSessionId: 'session-1',
+    triggerDefinitionEnvelope: 'opened-definition',
+    subject: { kind: 'session', serverId: 'portable-home', sessionId: 'session-1' },
     events: ['parentTurnCompleted'],
     policy: { kind: 'everyMatch' },
     remainingOccurrences: null,
@@ -176,10 +177,7 @@ const automationHttp = vi.fn(async (url: URL, init?: RequestInit): Promise<Respo
       templateVersion: input.executionRecipe!.templateVersion, lastRunAt: null, createdAt: 1, updatedAt: 1,
       executionRecipe: input.executionRecipe, assignments: input.assignments?.map(assignment => ({ ...assignment,
         enabled: assignment.enabled ?? true, priority: assignment.priority ?? 0, updatedAt: 1 })) ?? [],
-      triggers: input.triggers.map(({ triggerId, trigger }) => ({ ...trigger, id: triggerId, revision: 1,
-        enabled: true, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null,
-        remainingOccurrences: trigger.kind === 'sessionLifecycle' && trigger.policy.kind === 'currentTurn' ? 1 : null,
-        status: { state: 'waiting', runId: null } })),
+      triggers: input.triggers.map(row => createWorkflowAutomationTriggerDetailFixture(input.automationId, row)),
     });
     rows = [...rows, row];
     return Response.json(row);
@@ -210,7 +208,11 @@ function answer(sets: readonly WorkflowTriggerSetV1[]) {
     assignments: [{ machineId: 'machine-a', enabled: true, priority: 0, updatedAt: 1 }],
     executionRecipe: AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: set.revision,
       workflow: { t: 'plain', v: AutomationStoredWorkflowDefinitionV2Schema.parse({ workspace: { directory: '/repo' },
-        executionTarget: { kind: 'session' }, inlineDefinition: set.target?.kind === 'inline' ? set.target.definition : definition }) }, triggerEvidence: null }), triggers: set.triggers,
+        executionTarget: { kind: 'session' }, inlineDefinition: set.target?.kind === 'inline' ? set.target.definition : definition }) }, triggerEvidence: null }), triggers: set.triggers.map(trigger => trigger.kind === 'sessionLifecycle'
+        ? createWorkflowAutomationTriggerDetailFixture(set.automationId, { triggerId: trigger.id, trigger: {
+            kind: trigger.kind, enabled: trigger.enabled, ...(trigger.subject === undefined ? {} : { subject: trigger.subject }),
+            events: trigger.events, policy: trigger.policy,
+        } }) : trigger),
   }));
 }
 
@@ -299,7 +301,7 @@ describe('the Session Info page Triggers section', () => {
     // The FIN-REPLAY3 Account census has 62 sets. Keep that admission/projection
     // cardinality while all of these inline workflows belong to other Sessions.
     const unrelatedSets = Array.from({ length: 62 }, (_, index) => WorkflowTriggerSetV1Schema.parse({
-      ...triggerSet([{ ...lifecycleTrigger(`unrelated-trigger-${index}`, true), sourceSessionId: `other-session-${index}` }]),
+      ...triggerSet([{ ...lifecycleTrigger(`unrelated-trigger-${index}`, true), subject: { kind: 'session', serverId: 'portable-home', sessionId: `other-session-${index}` } }]),
       automationId: `unrelated-set-${index}`, scopeSessionId: `other-session-${index}`,
     }));
     answer(unrelatedSets);
@@ -412,7 +414,7 @@ describe('the Session Info page Triggers section', () => {
   it('keeps destination-only Habit content mounted through a Machine flap and pending recovery', async () => {
     const example = WORKFLOW_STARTER_EXAMPLES_V1.find(value => value.key === 'daily-summary-in-session')!;
     const selection = materializeWorkflowStarterExample(example, {
-      session: { sessionId: 'session-1', machineId: 'machine-a' },
+      session: { serverId: 'portable-home', sessionId: 'session-1', machineId: 'machine-a' },
     });
     if (selection.status !== 'ready') throw new Error('Session-bound example required');
     answer([WorkflowTriggerSetV1Schema.parse({ ...triggerSet([]), scopeSessionId: null,
@@ -471,7 +473,7 @@ describe('the Session Info page Triggers section', () => {
     'shows a scheduled Habit exactly once in its owning group (%s), retaining it after a read failure', async (relation) => {
       const example = WORKFLOW_STARTER_EXAMPLES_V1.find(value => value.key === 'daily-summary-in-session')!;
       const selection = materializeWorkflowStarterExample(example, {
-        session: { sessionId: relation === 'starts-only' ? 'elsewhere' : 'session-1', machineId: 'machine-a' },
+        session: { serverId: 'portable-home', sessionId: relation === 'starts-only' ? 'elsewhere' : 'session-1', machineId: 'machine-a' },
       });
       if (selection.status !== 'ready') throw new Error('Session-bound example required');
       const set = WorkflowTriggerSetV1Schema.parse({ ...triggerSet([]),
@@ -525,7 +527,7 @@ describe('the Session Info page Triggers section', () => {
       screen.findByTestId('session-work-trigger-links-unavailable'),
     ).toBeNull();
   });
-  it('turns one trigger on or off through session.trigger.update, never by pausing its Automation', async () => {
+  it('turns one trigger on or off through workflow.trigger.update, never by pausing its Automation', async () => {
     // trig-1 is off at trigger level inside an enabled set; trig-2 shares the set.
     answer([
       triggerSet([
@@ -604,7 +606,7 @@ describe('the Session Info page Triggers section', () => {
     expect(screen.findByTestId('session-work-writes-here')).toBeNull();
   });
 
-  it('opens "When this turn finishes…" bound to that turn and adds it through session.trigger.add', async () => {
+  it('opens "When this turn finishes…" bound to that turn and adds it through workflow.trigger.add', async () => {
     answer([]);
     routeParams.current = {
       sourceSessionId: 'session-1',

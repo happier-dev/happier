@@ -574,7 +574,7 @@ import {
   type SessionSpawnNewInputV2,
 } from '../sessions/creation/sessionSpawnNewInputV2.js';
 import {
-  admitActionAgentStartV1, isActionCallerOwnSessionV1, isAgentStartActionV1, isAgentStartActionInvocationV1, requiresActionAgentStartDepthV1, resolveActionAgentStartRequestsV1, resolveProfileSkillSeedsAtAdmissionV1,
+  admitActionAgentStartV1, isAgentStartActionV1, isAgentStartActionInvocationV1, requiresActionAgentStartDepthV1, resolveActionAgentStartRequestsV1, resolveProfileSkillSeedsAtAdmissionV1,
   resolveActionAgentStartContextV1, resolveRunStartModelAndConfig, stampAgentStartSelectionV1, projectAgentStartSelectionV1, readAdmittedWorkflowLeafStartDepthV1,
 } from './executor/agentStartAdmission.js';
 import { refuseAgentStartWhenNotReadyV1 } from './executor/agents/agentBackendReadiness.js';
@@ -4758,15 +4758,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (!workflowAction) {
           return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         }
-        if ((workflowActionId === 'session.trigger.list' || workflowActionId === 'session.trigger.remove')
-          && isAgentCaller(ctx) && (!ctx.actionCaller || ctx.actionCaller.kind === 'session')
-          && !ctx.agentStartContext && !isActionCallerOwnSessionV1(ctx, readRecord(parsed.data).sessionId)) {
-          // Resolve host caller facts only, not target membership or launch
-          // selection. The trigger owner admits the Session exactly once.
-          const caller = await resolveActionAgentStartContextV1(deps, ctx, undefined, { purpose: 'session_scope' });
-          if (caller && 'ok' in caller) return caller;
-          ctx = { ...ctx, agentStartContext: caller ?? undefined };
-        }
         const common = {
           context: ctx,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
@@ -4840,14 +4831,6 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             case 'workflow.trigger.remove':
               return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
             case 'workflow.trigger.run_now':
-              return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
-            case 'session.trigger.list':
-              return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
-            case 'session.trigger.add':
-              return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
-            case 'session.trigger.update':
-              return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
-            case 'session.trigger.remove':
               return workflowAction({ actionId: workflowId, input: (parsed.data as z.infer<(typeof WorkflowActionInputSchemasV1)[typeof workflowId]>), ...common });
             default:
               workflowId satisfies never;

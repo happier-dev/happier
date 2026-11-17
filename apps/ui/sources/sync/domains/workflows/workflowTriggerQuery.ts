@@ -1,11 +1,11 @@
-import type { SessionTriggerListRequestV1, WorkflowTriggerListRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { WorkflowTriggerListRequestV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { isWorkflowTriggerSourceGoneV1, WorkflowTriggerListRequestV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 
 /** The same identity owns hook demand, list publication and store membership. */
-export function workflowTriggerQueryKey(request: WorkflowTriggerListRequestV1 | SessionTriggerListRequestV1): string {
-    if ('sessionId' in request) return `session:${request.sessionId}`;
+export function workflowTriggerQueryKey(request: WorkflowTriggerListRequestV1): string {
+    if ('lifetimeSession' in request) return `session:${request.lifetimeSession.sessionId}`;
     if ('subject' in request) return `selected:${createCanonicalJsonSigningInput(request)}`;
     if ('workflow' in request) return `workflow:${request.workflow}`;
     if ('managedTarget' in request) return `managed:${JSON.stringify([request.managedTarget.homeId, request.managedTarget.managedId])}`;
@@ -14,6 +14,7 @@ export function workflowTriggerQueryKey(request: WorkflowTriggerListRequestV1 | 
 }
 
 export function workflowTriggerRequestForQueryKey(queryKey: string): WorkflowTriggerListRequestV1 | null {
+    if (queryKey.startsWith('session:')) return { lifetimeSession: { sessionId: queryKey.slice('session:'.length) } };
     if (queryKey.startsWith('selected:')) return WorkflowTriggerListRequestV1Schema.parse(JSON.parse(queryKey.slice('selected:'.length)));
     if (queryKey.startsWith('workflow:')) return { workflow: queryKey.slice('workflow:'.length) };
     if (queryKey.startsWith('managed:')) {

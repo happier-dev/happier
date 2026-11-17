@@ -5,7 +5,7 @@ import { AutomationEventPositiveSafeIntegerV1Schema } from './automationColumnBo
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
 import { AutomationScheduleTriggerSchema } from './automationTriggerDefinition.js';
 import { AutomationActionTriggerStructuralV1Schema, AutomationActionConsentTriggerSchema } from './automationActionTriggerV1.js';
-import { AutomationSessionLifecycleConfigurationSchema } from './automationSessionLifecycle.js';
+import { AutomationSessionLifecycleStructuralConfigurationSchema } from './automationSessionLifecycle.js';
 import { AutomationRunLifecycleTriggerSchema } from './automationRunLifecycle.js';
 import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/publicTypes.js';
@@ -128,7 +128,7 @@ export type AutomationSessionLifecycleTriggerStatus = z.infer<
 
 export const AutomationSessionLifecycleTriggerProjectionSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, {
   kind: z.literal('sessionLifecycle'),
-  ...AutomationSessionLifecycleConfigurationSchema.shape,
+  ...AutomationSessionLifecycleStructuralConfigurationSchema.shape,
   remainingOccurrences: z.nullable(z.number().check(z.int(), z.nonnegative(), z.maximum(2_147_483_647))),
   status: AutomationSessionLifecycleTriggerStatusSchema,
 })));
@@ -163,7 +163,7 @@ export const AutomationTriggerDetailSchema = lazyZodSchema(() => z.union([
     triggerDefinitionEnvelope: z.string().check(z.minLength(1)),
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationSessionLifecycleTriggerProjectionSchema, {
-    triggerDefinitionEnvelope: z.null(),
+    triggerDefinitionEnvelope: z.string().check(z.minLength(1)),
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { ...AutomationRunLifecycleTriggerSchema.shape,
     remainingOccurrences: z.number().check(z.int(), z.minimum(0), z.maximum(1)), status: AutomationSessionLifecycleTriggerStatusSchema,

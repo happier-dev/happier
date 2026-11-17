@@ -132,7 +132,7 @@ export const en = {
         findingsReported: 'findings reported',
         reviewDidNotConverge: ({ count }: { count: number }) => `Review didn't converge after ${count} ${count === 1 ? 'round' : 'rounds'}`,
         meta: ({ workflow, trigger }: { workflow: string; trigger: string }) => `${workflow} · ${trigger}`,
-        trigger: { turnEnds: 'on turn end', sessionStarts: 'on session start', needsYou: 'when the session needs you', sessionArchived: 'on archive', schedule: 'on a schedule' },
+        trigger: { turnStarts: 'on turn start', turnEnds: 'on turn end', sessionStarts: 'on session start', needsYou: 'when the session needs you', sessionArchived: 'on archive', schedule: 'on a schedule' },
     },
     map: {
         yes: 'Yes',

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ActionIdSchema } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
@@ -18,7 +19,10 @@ describe('workflow trigger Action metadata', () => {
       expect(getActionSpec(id)).toMatchObject({ safety: 'safe', sideEffectClass: 'read', surfaces: { ui: true, agent: true, mcp: true, cli: true } });
     }
   });
-  it('classifies scoped trigger removal as danger at the Action metadata owner', () => {
-    expect(getActionSpec('session.trigger.remove')).toMatchObject({ safety: 'danger', sideEffectClass: 'danger' });
+  it('uses only the generic workflow trigger family for Session lifetimes', () => {
+    for (const id of ['session.trigger.list', 'session.trigger.add', 'session.trigger.update', 'session.trigger.remove']) {
+      expect(ActionIdSchema.safeParse(id).success).toBe(false);
+    }
+    expect(getActionSpec('workflow.trigger.remove')).toMatchObject({ safety: 'danger', sideEffectClass: 'danger' });
   });
 });

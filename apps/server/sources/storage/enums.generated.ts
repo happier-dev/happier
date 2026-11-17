@@ -254,6 +254,7 @@ export const AutomationSessionLifecycleEvent = {
     userActionRequired: "userActionRequired",
     sessionStarted: "sessionStarted",
     sessionArchived: "sessionArchived",
+    parentTurnStarted: "parentTurnStarted",
 } as const;
 
 export type AutomationSessionLifecycleEvent = (typeof AutomationSessionLifecycleEvent)[keyof typeof AutomationSessionLifecycleEvent];

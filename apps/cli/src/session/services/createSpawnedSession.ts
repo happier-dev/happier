@@ -165,8 +165,9 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   organizationPlacement?: SessionOrganizationPlacementV1;
   initialAccess?: import('@happier-dev/protocol').SessionInitialAccessDraftV1;
   initialTriggers?: readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[];
+  preparedFinalSessionId?: string;
   /** Birth-only preparation; an authenticated creation-key rejoin never re-admits drafts. */
-  prepareInitialTriggers?: () => Promise<readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[]>;
+  prepareInitialTriggers?: (preparedFinalSessionId: string) => Promise<readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[]>;
   manager?: import('@happier-dev/protocol').SessionManagerV1;
   /** Canonical Action host's resolved snapshot; never accepted from raw public Action input. */
   initialSessionRolesV1?: import('@happier-dev/protocol').SessionRolesV1;
@@ -601,6 +602,7 @@ async function dispatchCommittedSpawn(args: Readonly<{
     authoringOrigin: _creationOwnedAuthoringOrigin,
     initialAccess: _creationOwnedInitialAccess,
     initialTriggers: _creationOwnedInitialTriggers,
+    preparedFinalSessionId: _creationOwnedFinalSessionId,
     manager: _creationOwnedManager,
     initialSessionRolesV1: _creationOwnedRoles,
     identity: _creationOwnedIdentity,
@@ -744,6 +746,7 @@ async function createSeededSpawnedSession(args: Readonly<{
         agentState: null,
         ...(params.initialAccess !== undefined ? { initialAccess: params.initialAccess } : {}),
         ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
+        ...(params.preparedFinalSessionId !== undefined ? { preparedFinalSessionId: params.preparedFinalSessionId } : {}),
         ...(params.manager !== undefined ? { manager: params.manager } : {}),
         ...(params.primaryTeamId !== undefined ? { primaryTeamId: params.primaryTeamId } : {}),
         ...(params.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
@@ -998,6 +1001,7 @@ export async function createSpawnedSession(
     ...(params.managedDirectorySeed ? { managedDirectorySeed: params.managedDirectorySeed } : {}),
     ...(params.initialAccess !== undefined ? { initialAccess: params.initialAccess } : {}),
     ...(params.initialTriggers !== undefined ? { initialTriggers: params.initialTriggers } : {}),
+    ...(params.preparedFinalSessionId !== undefined ? { preparedFinalSessionId: params.preparedFinalSessionId } : {}),
     ...(params.manager !== undefined ? { manager: params.manager } : {}),
     ...(params.initialSessionRolesV1 !== undefined ? { initialSessionRolesV1: params.initialSessionRolesV1 } : {}),
     ...(params.authoringOrigin !== undefined ? { authoringOrigin: params.authoringOrigin } : {}),
@@ -1372,8 +1376,9 @@ export async function createSpawnedSession(
     } : {}),
   } : {};
   if (params.resumeOnly !== true) await params.preparePromptStack?.();
-  const preparedInitialTriggers = params.resumeOnly !== true && params.prepareInitialTriggers
-    ? await params.prepareInitialTriggers()
+  const preparedFinalSessionId = params.preparedFinalSessionId ?? (params.resumeOnly !== true && params.prepareInitialTriggers ? randomUUID() : undefined);
+  const preparedInitialTriggers = preparedFinalSessionId && params.prepareInitialTriggers
+    ? await params.prepareInitialTriggers(preparedFinalSessionId)
     : params.initialTriggers;
   const hasInitialTriggers = (preparedInitialTriggers?.length ?? 0) > 0;
   const hasSessionToolPolicy = params.allowedTools !== undefined || params.unlistedTools !== undefined
@@ -1406,6 +1411,7 @@ export async function createSpawnedSession(
     }
   }
   const birthSpawnRequestInput = { ...spawnRequestInput, ...birthContext,
+    ...(preparedFinalSessionId ? { preparedFinalSessionId } : {}),
     ...(preparedInitialTriggers !== undefined ? { initialTriggers: preparedInitialTriggers } : {}) };
   const birthSpawnRequest = params.deferLaunch ? birthSpawnRequestInput : SpawnDaemonSessionRequestSchema.parse(birthSpawnRequestInput);
   async function dispatchSpawnRequest(request: SpawnDaemonSessionRequest): Promise<unknown> {
@@ -1489,7 +1495,9 @@ export async function createSpawnedSession(
   }
   if (seededCreation) {
     const result = await createSeededSpawnedSession({
-      params: { ...params, ...birthContext, ...(preparedInitialTriggers !== undefined ? { initialTriggers: preparedInitialTriggers } : {}) },
+      params: { ...params, ...birthContext,
+        ...(preparedFinalSessionId !== undefined ? { preparedFinalSessionId } : {}),
+        ...(preparedInitialTriggers !== undefined ? { initialTriggers: preparedInitialTriggers } : {}) },
       seededCreation,
       spawnRequestInput: birthSpawnRequestInput,
       dispatchSpawnRequest,

@@ -185,6 +185,7 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   initialAccess?: SessionInitialAccessDraftV1;
   /** Canonical host-sealed trigger intents committed with fresh Session birth. */
   initialTriggers?: readonly import('@happier-dev/protocol').SessionInitialTriggerAdmissionV1[];
+  preparedFinalSessionId?: string;
   manager?: SessionManagerV1;
   /** Host-resolved role selection and complete lead snapshot, seeded in fresh owner metadata only. */
   initialSessionRolesV1?: SessionRolesV1;

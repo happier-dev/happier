@@ -28,6 +28,7 @@ import { createQualifiedConnectedAccountGroupDigest, createQualifiedConnectedAcc
 import { createFreshBoundLayout1SessionInTx as createFreshBoundLayout1SessionWithAuthenticationInTx } from "./createFreshBoundLayout1Session";
 import { createLegacyLayout0SessionInTx } from "./createLegacyLayout0Session";
 import {
+    createOrRejoinLayout1SessionByTag,
     createOrRejoinLayout1SessionByTagInTx as createOrRejoinLayout1SessionByTagWithAuthenticationInTx,
     rejoinLayout1SessionByTagInTx,
 } from "./createOrRejoinLayout1SessionByTag";
@@ -124,6 +125,7 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
     function prepared(params: Readonly<{
         accountId: string;
         tag: string;
+        preparedFinalSessionId?: string;
         agentState?: string | null;
         accountEncryptionMode?: "plain" | "e2ee";
         dataEncryptionKey?: string | null;
@@ -142,6 +144,7 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
         const result = prepareLayout1SessionCreate({
             accountId: params.accountId,
             tag: params.tag,
+            ...(params.preparedFinalSessionId === undefined ? {} : { preparedFinalSessionId: params.preparedFinalSessionId }),
             metadata: accountEncryptionMode === "plain"
                 ? JSON.stringify({ v: 1 })
                 : "opaque-shared-ciphertext",
@@ -242,10 +245,12 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
         admission.triggers.push({ triggerId: AutomationTriggerIdSchema.parse("prepare-on-schedule"),
             trigger: { kind: "schedule", enabled: true,
                 schedule: { kind: "interval", everyMs: 60_000, scheduleExpr: null, timezone: null } } });
-        const request = prepared({ accountId: owner.id, tag: "initial-triggers",
+        const preparedFinalSessionId = randomUUID();
+        const request = prepared({ accountId: owner.id, tag: "initial-triggers", preparedFinalSessionId,
             initialTriggers: [admission] });
         const created = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx, request));
         if (created.kind !== "created") throw new Error("Session was not created");
+        expect(created.session.id).toBe(preparedFinalSessionId);
         expect(await db.automation.findUnique({ where: { id: "prepare-on-birth" } }))
             .toMatchObject({ scopeSessionId: created.session.id, accountId: owner.id });
         expect(await db.automationRun.findMany({ where: { automationId: "prepare-on-birth" } }))
@@ -253,12 +258,32 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
                 causeSessionLifecycleEvent: "sessionStarted", causeTriggerKind: "sessionLifecycle", state: "queued" })]);
         expect(await db.automationTrigger.findUniqueOrThrow({ where: { id: "prepare-on-schedule" } }))
             .toMatchObject({ kind: "schedule", nextRunAt: expect.any(Date) });
-        const rejoined = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx, {
-            ...request, initialTriggers: [initialTrigger(machine.id, "should-not-attach-on-rejoin")],
-        }));
+        const rejoinRequest = {
+            ...request, preparedFinalSessionId: randomUUID(),
+            initialTriggers: [initialTrigger(machine.id, "should-not-attach-on-rejoin")],
+        };
+        const rejoined = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx, rejoinRequest));
         expect(rejoined.kind).toBe("rejoined");
+        if (rejoined.kind !== "rejoined") throw new Error("Session was not rejoined");
+        expect(rejoined.session.id).toBe(preparedFinalSessionId);
         expect(await db.automation.count({ where: { accountId: owner.id } })).toBe(1);
         expect(await db.automationRun.count({ where: { accountId: owner.id } })).toBe(1);
+    });
+
+    it("refuses a prepared final identity held by another tag or Account without rejoining or rewriting it", async () => {
+        const owner = await createPlainAccount(`prepared-identity-owner-${randomUUID()}`);
+        const other = await createPlainAccount(`prepared-identity-other-${randomUUID()}`);
+        const created = await createOrRejoinLayout1SessionByTag(prepared({ accountId: owner.id,
+            tag: "identity-holder" }), TEST_AUTHENTICATION);
+        if (created.kind !== "created") throw new Error("Session was not created");
+        for (const accountId of [owner.id, other.id]) {
+            const result = await createOrRejoinLayout1SessionByTag(prepared({ accountId,
+                tag: "different-tag", preparedFinalSessionId: created.session.id }), TEST_AUTHENTICATION);
+            expect(result).toEqual({ kind: "rejected", rejection: { reason: "invalid-params" } });
+        }
+        expect(await db.session.count({ where: { accountId: { in: [owner.id, other.id] } } })).toBe(1);
+        expect(await db.session.findUniqueOrThrow({ where: { id: created.session.id } }))
+            .toMatchObject({ accountId: owner.id, tag: "identity-holder" });
     });
 
     it.each(["unavailable assignment", "duplicate trigger identity"] as const)(

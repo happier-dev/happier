@@ -1,4 +1,5 @@
 import { ACTION_IDS } from './actionIds.js';
+import { WORKFLOW_TRIGGER_REMOVE_ACTION_ID } from './workflowTriggerActionIds.js';
 import { resolveProfiledActionsSettingsV1, type ApprovalProfileResolutionV1, type ActionTargetApprovalV1 } from './approvalProfiles.js';
 import { isAutomationApprovalRequestSurface, canRequestPresentUserApprovalForActionInputV1 } from './decisionAuthority.js';
 import { ActionIdSchema, type ActionId } from './actionIds.js';
@@ -49,7 +50,7 @@ export type ActionEnvironmentApprovalScopeAdmissionV1 = Readonly<{
 
 type ApprovalInvocationContext = Pick<ActionExecutorContext,
   'surface' | 'callerSurface' | 'authority' | 'presentUserConfirmation' | 'actionCaller'
-  | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'rpcSessionAuthorization'>;
+  | 'externalActionCredential' | 'externalActionExecutionAuthorization' | 'rpcSessionAuthorization' | 'workflowTriggerMutationAdmission'>;
 
 function isOwnUiInvocation(actionId: ActionSettingsActionId, ctx?: ApprovalInvocationContext | null): boolean {
   if (ctx?.surface !== 'ui' || ctx.callerSurface === 'foreign_session_html') return false;
@@ -184,8 +185,9 @@ function requiresDefaultApprovalFloor(
   // Admitted Run cleanup retains its consent; the trigger owner restricts it
   // to the exact firing trigger (FIN 03 §5.7). Ordinary own/led Session access
   // authorizes execution but does not answer the dangerous Action's Ask default.
-  if (policy?.scopeAdmissionOwnsConfirmation === true && surface.kind !== 'ambiguous'
-    && (ctx?.actionCaller?.kind === 'workflowRun' || ctx?.actionCaller?.kind === 'automationRun')) return false;
+  if (actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID
+    && ctx?.workflowTriggerMutationAdmission?.actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID
+    && ctx.workflowTriggerMutationAdmission.exactFiringCleanup !== undefined) return false;
   // Present-person hosts suppress the duplicate default after a completed
   // confirmation for this exact Action. Explicit settings are evaluated first
   // and still win.

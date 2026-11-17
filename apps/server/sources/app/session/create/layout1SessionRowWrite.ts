@@ -350,6 +350,8 @@ export async function insertLayout1SessionRowInTx(
             });
         }
     }
+    const initialLifecycleTriggerIds = new Set(prepared.initialTriggers?.flatMap(admission => admission.triggers
+        .flatMap(({ triggerId, trigger }) => trigger.kind === 'sessionLifecycle' ? [triggerId] : [])) ?? []);
     if (prepared.initialTriggers?.length) {
         const featurePolicy = await resolveAutomationRecipeFeaturePolicy({ tx });
         if (!featurePolicy.workflowsEnabled) throw new SessionInitialTriggerAdmissionError("feature_disabled");
@@ -357,9 +359,7 @@ export async function insertLayout1SessionRowInTx(
             for (const admission of prepared.initialTriggers) {
                 const triggers: AutomationTriggerCreateRequest[] = [];
                 for (const { triggerId, trigger } of admission.triggers) {
-                    if (trigger.kind === "sessionLifecycle") {
-                        triggers.push({ triggerId, trigger: { ...trigger, sourceSessionId: session.id } });
-                    } else if (trigger.kind === "schedule") {
+                    if (trigger.kind === "sessionLifecycle" || trigger.kind === "schedule") {
                         triggers.push({ triggerId, trigger });
                     } else {
                         // PR triggers need their Session's Channel binding; plugin/run
@@ -377,24 +377,25 @@ export async function insertLayout1SessionRowInTx(
                     newbornSession: session,
                 });
             }
-            const admissions = await admitSessionLifecycleAutomationRunsTx({
-                tx, accountId: prepared.accountId,
-                occurrence: { v: 1, kind: "sessionLifecycle", event: "sessionStarted",
-                    sourceSessionId: session.id, occurredAt: session.createdAt.getTime() },
-            });
-            for (const admission of admissions) {
-                if (admission.result.kind === "ineligible") {
-                    throw new SessionInitialTriggerAdmissionError(
-                        admission.result.reason === "featureDisabled" ? "feature_disabled" : "invalid_input",
-                    );
-                }
-            }
         } catch (error) {
             if (error instanceof AutomationValidationError || error instanceof AutomationStoredContentReadError
                 || isPrismaErrorCode(error, "P2002")) {
                 throw new SessionInitialTriggerAdmissionError("invalid_input");
             }
             throw error;
+        }
+    }
+    const lifecycleAdmissions = await admitSessionLifecycleAutomationRunsTx({
+        tx, accountId: prepared.accountId, sourceSession: session,
+        recipientAccountIds: [prepared.accountId, ...accessResult.effects.accountCursors.keys()],
+        occurrence: { v: 1, kind: "sessionLifecycle", event: "sessionStarted",
+            sourceSessionId: session.id, occurredAt: session.createdAt.getTime() },
+    });
+    for (const admission of lifecycleAdmissions) {
+        if (initialLifecycleTriggerIds.has(admission.triggerId) && admission.result.kind === 'ineligible') {
+            throw new SessionInitialTriggerAdmissionError(
+                admission.result.reason === 'featureDisabled' ? 'feature_disabled' : 'invalid_input',
+            );
         }
     }
     await publishSessionCreationInTx(tx, { session, ownerAccountMode: params.ownerAccountMode });

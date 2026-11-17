@@ -48,7 +48,7 @@ import {
   SessionInitialTriggerV1Schema, type SessionInitialTriggerV1, type SessionInitialTriggerDefinitionV1,
 } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 import { SessionInitialTriggerAdmissionV1Schema, type SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
-import type { AutomationTriggerDefinition, AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
+import { AutomationTriggerDefinitionInputSchema, type AutomationTriggerDefinition, type AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
 import { ActionIdSchema } from '../actionIds.js';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import type { AutomationActionConsentTrigger } from '../../automations/automationActionTriggerV1.js';
@@ -64,7 +64,7 @@ import { resolveWorkflowRunStartInputsV1 } from '../../workflows/workflowStartPr
 import type { ActionExecutorDeps, WorkflowActionExecuteArgs } from './types.js';
 import { admitActionAgentStartV1, isActionCallerOwnSessionV1, resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-import { canonicalizeAutomationSessionLifecycleEvents } from '../../automations/automationSessionLifecycle.js';
+import { canonicalizeAutomationSessionLifecycleEvents, projectAutomationSessionLifecycleStructuralConfiguration } from '../../automations/automationSessionLifecycle.js';
 import type { AutomationRunLifecycleSource } from '../../automations/automationRunLifecycle.js';
 import { ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema } from '../../machines/managed/actionsV1.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
@@ -168,6 +168,9 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
   requiresLegacyReview?: (automation: AutomationDefinitionDetail) => Promise<boolean>;
   openPullRequestTrigger?: (automation: AutomationDefinitionDetail,
     trigger: Extract<AutomationDefinitionDetail['triggers'][number], { kind: 'prComment' | 'ciFailed' }>) => Promise<AutomationPullRequestTrigger>;
+  openSessionLifecycleTrigger?: (automation: AutomationDefinitionDetail,
+    trigger: Extract<AutomationDefinitionDetail['triggers'][number], { kind: 'sessionLifecycle' }>) => Promise<import('../../automations/automationTriggerDefinition.js').AutomationSessionLifecycleTrigger>;
+  prepareBirthTrigger?: (automationId: string, triggerId: string, trigger: AutomationTriggerDefinitionInput) => Promise<AutomationTriggerDefinitionInput>;
   openActionTrigger?: (automation: AutomationDefinitionDetail,
     trigger: Extract<AutomationDefinitionDetail['triggers'][number], { kind: 'action' }>) => Promise<import('../../automations/automationActionTriggerV1.js').AutomationActionTrigger>;
   openPluginEventTrigger?: (automation: AutomationDefinitionDetail,
@@ -207,7 +210,7 @@ export interface WorkflowTriggerActions {
   remove: (raw: WorkflowTriggerRemoveRequestV1, caller?: Caller) => Promise<ReturnType<typeof WorkflowTriggerRemoveResultV1Schema.parse>>;
   removeForWorkflow: (workflow: string, signal?: AbortSignal) => Promise<void>;
   prepareSessionInitialTriggers: (input: Readonly<{
-    initialTriggers: readonly SessionInitialTriggerV1[]; project: WorkflowProjectTargetV1; caller?: Caller;
+    initialTriggers: readonly SessionInitialTriggerV1[]; project: WorkflowProjectTargetV1; preparedFinalSessionId: string; caller?: Caller;
   }>) => Promise<SessionInitialTriggerAdmissionV1[]>;
   sessionList: (raw: SessionTriggerListRequestV1, caller?: Caller) => Promise<ReturnType<typeof SessionTriggerListResultV1Schema.parse>>;
   sessionAdd: (raw: SessionTriggerAddRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
@@ -369,13 +372,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
   }>> => {
     caller?.signal?.throwIfAborted();
     if (!isWorkflowTriggerAgentCallerV1(caller)) return {};
-    const runId = caller?.actionCaller?.kind === 'workflowRun' || caller?.actionCaller?.kind === 'automationRun'
-      ? caller.actionCaller.runId : undefined;
-    if (runId && removalTriggerId !== undefined) {
-      const firing = await deps.resolveRunTrigger?.(runId);
-      caller?.signal?.throwIfAborted();
-      if (!firing || firing.sessionId !== sessionId || firing.triggerId !== removalTriggerId) refuse('run_access_denied');
-      return { firingTrigger: firing };
+    const admission = caller?.workflowTriggerMutationAdmission;
+    const exact = admission?.actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID ? admission.exactFiringCleanup : undefined;
+    if (exact && exact.lifetimeSessionId === sessionId && exact.triggerId === removalTriggerId) {
+      return { firingTrigger: { automationId: exact.automationId, triggerId: exact.triggerId, sessionId: exact.lifetimeSessionId } };
     }
     if (isActionCallerOwnSessionV1(caller, sessionId)) return {};
     const authority = caller ? await resolveActionAgentStartContextV1(deps, caller, sessionId) : null;
@@ -394,11 +394,16 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     const resolved = await deps.resolveSession(sessionId, caller, { checkNativeGoalOwner: false });
     return { ...resolved, ...admission };
   };
-  const read = async (automationId: string, sessionId: string | null = null, caller?: Caller) => {
+  const readRetained = async (automationId: string, caller?: Caller) => {
     const admission = caller?.workflowTriggerMutationAdmission;
     const admitted = admission && 'row' in admission ? admission.row : undefined;
     const row = admitted?.id === automationId ? admitted : await deps.automations.get(automationId);
-    if (!row || (row.scopeSessionId ?? null) !== sessionId) refuse('content_unavailable');
+    if (!row) refuse('content_unavailable');
+    return row;
+  };
+  const read = async (automationId: string, sessionId: string | null = null, caller?: Caller) => {
+    const row = await readRetained(automationId, caller);
+    if ((row.scopeSessionId ?? null) !== sessionId) refuse('content_unavailable');
     return row;
   };
   const readRemovalSet = async (automationId: string, caller?: Caller) => {
@@ -664,7 +669,11 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const readSubject = trigger.kind !== 'pluginEvent' ? null
         : isDeploymentReceiptEventSourceV1(trigger) ? readDeploymentReceiptEventSubjectV1
         : isHealthCheckEventSourceV1(trigger) ? readHealthCheckEventSubjectV1 : null;
-      if (trigger.kind === 'action' && !('consentFor' in trigger)) {
+      if (trigger.kind === 'sessionLifecycle') {
+        if (!deps.openSessionLifecycleTrigger) refuse('target_unavailable');
+        const definition = await deps.openSessionLifecycleTrigger(row, trigger);
+        triggers.push({ ...trigger, ...definition });
+      } else if (trigger.kind === 'action' && !('consentFor' in trigger)) {
         if (!deps.openActionTrigger) refuse('target_unavailable');
         const definition = await deps.openActionTrigger(row, trigger);
         triggers.push({ id: trigger.id, revision: trigger.revision, enabled: trigger.enabled,
@@ -821,15 +830,25 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         return { workflowTriggerMutationAdmission: { actionId: args.actionId,
           changesProfile: 'subject' in input.trigger && input.trigger.subject?.kind === 'approvalProfile' } };
       }
-      const input = args.actionId === WORKFLOW_TRIGGER_UPDATE_ACTION_ID
-        ? WorkflowTriggerUpdateRequestV1Schema.parse(args.input) : WorkflowTriggerRemoveRequestV1Schema.parse(args.input);
+      const update = args.actionId === WORKFLOW_TRIGGER_UPDATE_ACTION_ID
+        ? WorkflowTriggerUpdateRequestV1Schema.parse(args.input) : undefined;
+      const input = update ?? WorkflowTriggerRemoveRequestV1Schema.parse(args.input);
       // Move the mutation's authorized row read before routing; dispatch keeps its snapshot and normal CAS.
       const row = args.actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID && input.triggerId === undefined
-        ? await readRemovalSet(input.automationId, args.context) : await read(input.automationId);
+        ? await readRemovalSet(input.automationId, args.context) : await readRetained(input.automationId, args.context);
       const incumbentProfile = row.triggers.some(trigger => (input.triggerId === undefined || trigger.id === input.triggerId)
         && 'subjectKind' in trigger && trigger.subjectKind === 'approvalProfile');
-      const next = 'patch' in input ? input.patch.trigger : undefined;
-      return { workflowTriggerMutationAdmission: { actionId: args.actionId, row, changesProfile: incumbentProfile
+      const next = update?.patch.trigger;
+      const runId = args.context.actionCaller?.kind === 'workflowRun' || args.context.actionCaller?.kind === 'automationRun'
+        ? args.context.actionCaller.runId : undefined;
+      const firing = args.actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID && input.triggerId !== undefined
+        && row.scopeSessionId && runId ? await deps.resolveRunTrigger?.(runId) : undefined;
+      args.context.signal?.throwIfAborted();
+      const exactFiringCleanup = firing && firing.automationId === row.id && firing.triggerId === input.triggerId
+        && firing.sessionId === row.scopeSessionId
+        ? { automationId: row.id, triggerId: firing.triggerId, lifetimeSessionId: firing.sessionId } : undefined;
+      return { workflowTriggerMutationAdmission: { actionId: args.actionId, row,
+        ...(exactFiringCleanup === undefined ? {} : { exactFiringCleanup }), changesProfile: incumbentProfile
         || next !== undefined && 'subject' in next && next.subject?.kind === 'approvalProfile' } };
     },
     readActorConsent: async (input: Parameters<WorkflowTriggerActions['readActorConsent']>[0], caller: Caller): ReturnType<WorkflowTriggerActions['readActorConsent']> => {
@@ -1131,7 +1150,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       return { sets };
     },
     add: async (raw: WorkflowTriggerAddRequestV1, caller?: Caller, scope?: AdmittedSessionWrite) => {
-      const input = WorkflowTriggerAddRequestV1Schema.parse(raw);
+      const parsed = WorkflowTriggerAddRequestV1Schema.parse(raw);
+      const input = { ...parsed, trigger: AutomationTriggerDefinitionInputSchema.parse(parsed.trigger) };
+      if (input.trigger.kind === 'sessionLifecycle' && input.trigger.policy.kind === 'currentTurn'
+        && (!('subject' in input.trigger) || input.trigger.subject?.kind !== 'session')) refuseInput('session_trigger_current_turn_requires_session');
       if (input.observationOnly) {
         if (scope || input.trigger.kind !== 'pluginEvent') refuse('invalid_input');
         const automationId = deps.newId('automation');
@@ -1231,7 +1253,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           if (createCanonicalJsonSigningInput(current.context) !== intended) continue;
           const registered = candidate.triggers.find((item) => item.kind === 'sessionLifecycle' && item.enabled
             && item.remainingOccurrences !== 0 && item.status.state === 'waiting'
-            && item.sourceSessionId === source.sourceSessionId
+            && item.subjectKey === projectAutomationSessionLifecycleStructuralConfiguration(source).subjectKey
             && createCanonicalJsonSigningInput(item.policy) === createCanonicalJsonSigningInput(source.policy)
             && createCanonicalJsonSigningInput(canonicalizeAutomationSessionLifecycleEvents(item.events))
               === createCanonicalJsonSigningInput(canonicalizeAutomationSessionLifecycleEvents(source.events)));
@@ -1438,8 +1460,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     if (trigger.kind === 'pluginEvent') refuse('target_unavailable');
     if (trigger.kind === 'runLifecycle') refuseInput('session_trigger_kind_unsupported');
     if (trigger.kind === 'sessionLifecycle') {
-      if (sessionId !== undefined && trigger.events.includes('sessionStarted')) refuse('session_already_started');
-      if (sessionId !== undefined && (!('sourceSessionId' in trigger) || trigger.sourceSessionId !== sessionId)) refuseInput('session_trigger_source_mismatch');
+      if (trigger.policy.kind === 'currentTurn' && (!('subject' in trigger) || trigger.subject?.kind !== 'session')) refuseInput('session_trigger_current_turn_requires_session');
     }
   };
   const resolveScopedTrigger = async <T extends SessionTriggerDefinitionV1>(trigger: T, sessionId: string, caller?: Caller) => {
@@ -1477,7 +1498,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       }
     },
     prepareSessionInitialTriggers: async (input: Readonly<{ initialTriggers: readonly SessionInitialTriggerV1[];
-      project: WorkflowProjectTargetV1; caller?: Caller }>): Promise<SessionInitialTriggerAdmissionV1[]> => {
+      project: WorkflowProjectTargetV1; preparedFinalSessionId: string; caller?: Caller }>): Promise<SessionInitialTriggerAdmissionV1[]> => {
       const prepared: SessionInitialTriggerAdmissionV1[] = [];
       for (const raw of input.initialTriggers) {
         input.caller?.signal?.throwIfAborted();
@@ -1485,24 +1506,86 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         assertScopedTrigger(draft.trigger);
         // PR/CI registration requires a born Session's Channel binding; nothing
         // may be committed if this prerequisite cannot be admitted at birth.
-        if (draft.trigger.kind === 'prComment' || draft.trigger.kind === 'ciFailed') refuse('target_unavailable');
+        const authoredTrigger = draft.trigger;
+        switch (authoredTrigger.kind) {
+          case 'prComment':
+          case 'ciFailed':
+            refuse('target_unavailable');
+        }
         const context = triggerContext(draft, draft.target, input.project, input.caller);
         await assertWrite(draft.target, context, input.project, input.caller, undefined, true);
         const automationId = deps.newId('automation');
+        const triggerId = AutomationTriggerIdSchema.parse(deps.newId('trigger'));
+        const trigger = authoredTrigger.kind === 'sessionLifecycle'
+          ? { ...authoredTrigger, subject: { kind: 'session' as const,
+              serverId: input.caller?.serverIdentityId ?? refuse('target_unavailable'),
+              sessionId: input.preparedFinalSessionId } }
+          : authoredTrigger;
+        if (trigger.kind === 'sessionLifecycle' && !deps.prepareBirthTrigger) refuse('target_unavailable');
+        const admittedTrigger = deps.prepareBirthTrigger
+          ? await deps.prepareBirthTrigger(automationId, triggerId, trigger) : trigger;
         prepared.push(SessionInitialTriggerAdmissionV1Schema.parse({ automationId, name: WORKFLOW_TRIGGER_SET_STORAGE_NAME, description: null,
           enabled: true, workflowDefinitionId: draft.target.kind === 'workflow' ? draft.target.ref : null,
           executionRecipe: await deps.sealContext({ automationId, templateVersion: 1, context }),
           assignments: [{ machineId: input.project.machineId, enabled: true }],
-          triggers: [{ triggerId: AutomationTriggerIdSchema.parse(deps.newId('trigger')), trigger: draft.trigger }],
+          triggers: [{ triggerId, trigger: admittedTrigger }],
         }));
       }
       return prepared;
     },
-    add: (raw: WorkflowTriggerAddRequestV1, caller?: Caller) => actions.add(raw, caller),
-    update: (raw: WorkflowTriggerUpdateRequestV1, caller?: Caller) => actions.update(raw, caller),
+    list: async (raw: WorkflowTriggerListRequestV1, caller?: Caller) => {
+      const input = WorkflowTriggerListRequestV1Schema.parse(raw);
+      if (!('lifetimeSession' in input)) return actions.list(input, caller);
+      const { sessionId, ...listed } = await sessionActions.sessionList({ sessionId: input.lifetimeSession.sessionId }, caller);
+      return { ...listed, lifetimeSession: { sessionId } };
+    },
+    add: async (raw: WorkflowTriggerAddRequestV1, caller?: Caller) => {
+      const input = WorkflowTriggerAddRequestV1Schema.parse(raw);
+      if (!('lifetimeSession' in input) || input.lifetimeSession === undefined) return actions.add(input, caller);
+      const { lifetimeSession, ...fields } = input;
+      return sessionActions.sessionAdd({ ...fields,
+        target: input.target ?? { kind: 'workflow', ref: input.workflow! },
+        sessionId: lifetimeSession.sessionId,
+        ...(lifetimeSession.onComplete === undefined ? {} : { onComplete: lifetimeSession.onComplete }) }, caller);
+    },
+    update: async (raw: WorkflowTriggerUpdateRequestV1, caller?: Caller) => {
+      const input = WorkflowTriggerUpdateRequestV1Schema.parse(raw);
+      const row = await readRetained(input.automationId, caller);
+      if (!row.scopeSessionId) return actions.update(input, caller);
+      if (row.triggers.some(trigger => trigger.kind === 'pluginEvent')) refuse('target_unavailable');
+      const authorized = await session(row.scopeSessionId, caller);
+      const current = await opened(row, false, caller);
+      const managed = readManagedMachineTriggerAction(input.patch.target ?? current.target);
+      if (input.patch.project && !managed
+        && createCanonicalJsonSigningInput(input.patch.project) !== createCanonicalJsonSigningInput(authorized.project)) refuseInput('session_trigger_project_mismatch');
+      await assertContinuationOwner(input.patch.target ?? current.target, row.scopeSessionId, caller);
+      if (input.patch.trigger) assertScopedTrigger(input.patch.trigger, row.scopeSessionId);
+      const trigger = input.patch.trigger === undefined ? undefined
+        : await resolveScopedTrigger(input.patch.trigger, row.scopeSessionId, caller);
+      const result = await actions.update({ ...input, patch: { ...input.patch,
+        ...(trigger === undefined ? {} : { trigger }), project: managed
+          ? input.patch.project ?? project(row, current.context) : authorized.project } }, caller,
+        { sessionId: row.scopeSessionId, onComplete: input.patch.onComplete, project: authorized.project, authority: authorized.authority });
+      try {
+        await attachPullRequest(row.scopeSessionId, result, caller);
+        if (input.patch.trigger && input.patch.trigger.kind !== 'prComment' && input.patch.trigger.kind !== 'ciFailed'
+          && row.triggers.some(item => item.id === input.triggerId && (item.kind === 'prComment' || item.kind === 'ciFailed'))
+          && input.triggerId !== undefined) await deps.pullRequests?.removeTrigger({ sessionId: row.scopeSessionId, triggerId: input.triggerId }, caller);
+      } catch (cause) { return unresolvedWriteReceipt(cause); }
+      return result;
+    },
     remove: async (raw: WorkflowTriggerRemoveRequestV1, caller?: Caller) => {
       const input = WorkflowTriggerRemoveRequestV1Schema.parse(raw);
-      if (input.triggerId !== undefined) return actions.remove({ ...input, triggerId: input.triggerId }, undefined, caller);
+      if (input.triggerId !== undefined) {
+        const row = await readRetained(input.automationId, caller);
+        if (row.scopeSessionId) await assertSessionAdmission(row.scopeSessionId, caller, input.triggerId);
+        const result = await actions.remove({ ...input, triggerId: input.triggerId }, row.scopeSessionId ?? undefined, caller);
+        try {
+          if (row.scopeSessionId && row.triggers.some(item => item.id === input.triggerId && (item.kind === 'prComment' || item.kind === 'ciFailed')))
+            await deps.pullRequests?.removeTrigger({ sessionId: row.scopeSessionId, triggerId: input.triggerId }, caller);
+        } catch (cause) { return unresolvedWriteReceipt(cause); }
+        return result;
+      }
       const admission = caller?.workflowTriggerMutationAdmission;
       const row = admission?.actionId === WORKFLOW_TRIGGER_REMOVE_ACTION_ID && admission.row.id === input.automationId
         ? admission.row : await readRemovalSet(input.automationId, caller);

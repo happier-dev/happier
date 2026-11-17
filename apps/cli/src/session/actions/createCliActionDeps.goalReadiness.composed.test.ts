@@ -112,7 +112,7 @@ describe('Keep going capability discovery during native controls installation', 
     const controller = new AbortController();
     let settled = false;
     const entered = new Promise<void>(resolve => { boundary.onEnter = resolve; });
-    const outcome = deps.workflowAction!({ actionId: 'session.trigger.add', input: { sessionId, target: { kind: 'workflow', ref: 'builtin:keep-going' },
+    const outcome = deps.workflowAction!({ actionId: 'workflow.trigger.add', input: { lifetimeSession: { sessionId }, target: { kind: 'workflow', ref: 'builtin:keep-going' },
       trigger: { kind: 'schedule', enabled: true,
         schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } } },
       context: { surface: 'cli', authority: 'present_user', signal: controller.signal } }).catch((error: unknown) => error)

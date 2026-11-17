@@ -13,7 +13,7 @@ import {
   sealAutomationPluginEventTriggerInputV1,
   sealAutomationTriggerDefinitionStoredEnvelopeV1,
 } from './automationTriggerDefinitionStoredContent.js';
-import { AutomationPluginEventDefinitionTriggerSchema } from './automationTriggerDefinition.js';
+import { AutomationPluginEventDefinitionTriggerSchema, AutomationSessionLifecycleTriggerSchema } from './automationTriggerDefinition.js';
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from './automationEventV1.js';
 import { automationSubjectKeyV1 } from './automationSubjectV1.js';
 
@@ -42,6 +42,22 @@ const definition = {
 } as const;
 
 describe('Automation trigger-definition stored content', () => {
+  it.each(['plain', 'e2ee'] as const)('opens a private Session watch only at its bound %s trigger revision', mode => {
+    const lifecycleBinding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: binding.automationId,
+      triggerId: binding.triggerId, triggerRevision: 3, triggerKind: 'sessionLifecycle' });
+    const authored = AutomationSessionLifecycleTriggerSchema.parse({ kind: 'sessionLifecycle',
+      subject: { kind: 'session', serverId: 'portable-home', sessionId: 'watched-session' },
+      events: ['parentTurnCompleted'], policy: { kind: 'nextMatches', count: 3 } });
+    const envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode, material, binding: lifecycleBinding,
+      definition: authored, randomBytes: length => new Uint8Array(length).fill(8) });
+    if (mode === 'e2ee') expect(JSON.stringify(envelope)).not.toContain('watched-session');
+    const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode, material, binding: lifecycleBinding, envelope });
+    expect(opened).toEqual({ kind: 'available', definition: authored });
+    if (opened.kind !== 'available') throw new Error(opened.kind);
+    expect(AutomationSessionLifecycleTriggerSchema.parse(opened.definition)).toEqual(authored);
+    expect(openAutomationTriggerDefinitionStoredEnvelopeV1({ mode, material,
+      binding: { ...lifecycleBinding, triggerRevision: 4 }, envelope })).toEqual({ kind: 'bindingMismatch' });
+  });
   it.each(['plain', 'e2ee'] as const)('retains the authored Event subject in the %s definition envelope', mode => {
     const subject = { kind: 'machine', serverId: 'home-1', machineId: 'machine-1' } as const;
     const authored = AutomationPluginEventDefinitionTriggerSchema.parse({

@@ -7,6 +7,7 @@ import { AutomationActionTriggerSchema } from '@happier-dev/protocol/automations
 
 import {
     buildTriggerDefinition,
+    buildInitialTriggerDefinition,
     buildTriggerExecutionTarget,
     buildTriggerTarget,
     projectSessionTriggerWorkflowInputFields,
@@ -20,6 +21,59 @@ import {
 const selection = { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
 
 describe('session trigger form', () => {
+    // P01 U2: watched scope is independent of the Session retaining the habit.
+    it.each([
+        undefined,
+        { kind: 'session' as const, serverId: 'portable-home', sessionId: 'watched-session' },
+        { kind: 'project' as const, serverId: 'portable-home', projectKey: 'project-one' },
+        { kind: 'machine' as const, serverId: 'portable-home', machineId: 'machine-one' },
+    ])('writes the chosen Session event scope without substituting the lifetime Session: %j', subject => {
+        expect(buildTriggerDefinition({ when: { kind: 'needsYou', ...(subject ? { subject } : {}), nextTimeOnly: true },
+            enabled: true, sessionId: 'habit-session' })).toEqual({ kind: 'sessionLifecycle', enabled: true,
+            ...(subject ? { subject } : {}), events: ['userActionRequired'], policy: { kind: 'firstMatch' } });
+    });
+
+    it('authors a turn-start event from the canonical lifecycle group', () => {
+        expect(buildTriggerDefinition({ when: { kind: 'turnStarts' }, enabled: true, sessionId: null }))
+            .toEqual({ kind: 'sessionLifecycle', enabled: true, events: ['parentTurnStarted'], policy: { kind: 'everyMatch' } });
+    });
+    it('preserves the authored occurrence budget when preparing a Session birth trigger', () => {
+        expect(buildInitialTriggerDefinition({ when: { kind: 'needsYou', policy: { kind: 'nextMatches', count: 3 } }, enabled: true }))
+            .toEqual({ kind: 'sessionLifecycle', enabled: true, events: ['userActionRequired'], policy: { kind: 'nextMatches', count: 3 } });
+    });
+
+    it('preserves a retained next-matches policy while changing an unrelated field', () => {
+        const when = readTriggerWhen({ kind: 'sessionLifecycle', enabled: true,
+            events: ['userActionRequired'], policy: { kind: 'nextMatches', count: 3 } });
+        expect(when).toEqual({ kind: 'needsYou', policy: { kind: 'nextMatches', count: 3 } });
+        if (!when) throw new Error('Expected the saved Session event');
+        expect(buildTriggerDefinition({ when,
+            enabled: false, sessionId: null })).toEqual({ kind: 'sessionLifecycle', enabled: false,
+            events: ['userActionRequired'], policy: { kind: 'nextMatches', count: 3 } });
+    });
+
+    it('preserves saved event membership when an unrelated field changes', () => {
+        const when = readTriggerWhen({ kind: 'sessionLifecycle', enabled: true,
+            events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' } });
+        if (!when) throw new Error('Expected the saved Session event');
+        expect(buildTriggerDefinition({ when, enabled: false, sessionId: null })).toEqual({
+            kind: 'sessionLifecycle', enabled: false, events: ['parentTurnCompleted'], policy: { kind: 'everyMatch' },
+        });
+    });
+
+    it('keeps an exact turn incomplete until its watched subject is an exact Session', () => {
+        const bound = { kind: 'turnEnds' as const, sourceTurnId: 'turn-one' };
+        for (const subject of [undefined,
+            { kind: 'project' as const, serverId: 'portable-home', projectKey: 'project-one' },
+            { kind: 'machine' as const, serverId: 'portable-home', machineId: 'machine-one' }]) {
+            expect(buildTriggerDefinition({ when: { ...bound, ...(subject ? { subject } : {}) },
+                enabled: true, sessionId: 'habit-session' })).toBeNull();
+        }
+        const subject = { kind: 'session' as const, serverId: 'portable-home', sessionId: 'watched-session' };
+        expect(buildTriggerDefinition({ when: { ...bound, subject }, enabled: true, sessionId: 'habit-session' }))
+            .toMatchObject({ subject, policy: { kind: 'currentTurn', sourceTurnId: 'turn-one' } });
+    });
+
     it.each([
         { phase: 'before', mode: 'wait', onFailure: 'ask',
             subject: { kind: 'machine', serverId: 'home-one', machineId: 'machine-one' } },
@@ -297,9 +351,10 @@ describe('session trigger form', () => {
         });
     });
 
-    it('writes each session kind as its lifecycle events on this session, and a weekly schedule as its cron', () => {
-        expect(buildTriggerDefinition({ when: { kind: 'turnEnds' }, enabled: true, sessionId: 'session-1' })).toEqual({
-            kind: 'sessionLifecycle', enabled: true, sourceSessionId: 'session-1',
+    it('writes each session kind as its chosen lifecycle scope, and a weekly schedule as its cron', () => {
+        const subject = { kind: 'session' as const, serverId: 'portable-home', sessionId: 'session-1' };
+        expect(buildTriggerDefinition({ when: { kind: 'turnEnds', subject }, enabled: true, sessionId: 'session-1' })).toEqual({
+            kind: 'sessionLifecycle', enabled: true, subject,
             events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'], policy: { kind: 'everyMatch' },
         });
         expect(buildTriggerDefinition({ when: { kind: 'sessionArchived' }, enabled: false, sessionId: 'session-1' }))
@@ -310,8 +365,9 @@ describe('session trigger form', () => {
             sessionId: null,
         });
         expect(weekly).toEqual({ kind: 'schedule', enabled: true, schedule: { kind: 'cron', scheduleExpr: '30 2 * * 3', everyMs: null, timezone: 'Europe/Zurich' } });
-        // A session kind needs its session.
-        expect(buildTriggerDefinition({ when: { kind: 'needsYou' }, enabled: true, sessionId: null })).toBeNull();
+        // P01 U2: omitted subject means any Session, independently of lifetime.
+        expect(buildTriggerDefinition({ when: { kind: 'needsYou' }, enabled: true, sessionId: null }))
+            .toMatchObject({ kind: 'sessionLifecycle', events: ['userActionRequired'] });
     });
 
     it('reads a saved everyMatch lifecycle and custom schedule back as the When they were written with', () => {
@@ -319,14 +375,15 @@ describe('session trigger form', () => {
             health: 'available', target: { kind: 'workflow', ref: 'builtin:review-and-converge' },
             triggers: [
                 { id: 'archived', revision: 1, kind: 'sessionLifecycle', enabled: true,
-                    sourceSessionId: 'source', events: ['sessionArchived'], policy: { kind: 'everyMatch' },
+                    subject: { kind: 'session', serverId: 'portable-home', sessionId: 'source' }, events: ['sessionArchived'], policy: { kind: 'everyMatch' },
                     createdAt: 1, updatedAt: 1, remainingOccurrences: null,
-                    status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null },
+                    status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: 'opened-definition' },
                 { id: 'custom', revision: 1, kind: 'schedule', enabled: true,
                     schedule: { kind: 'cron', scheduleExpr: '*/15 * * * *', everyMs: null, timezone: null },
                     createdAt: 1, updatedAt: 1, nextRunAt: null, triggerDefinitionEnvelope: null },
             ] }).triggers;
-        expect(readTriggerWhen(triggers[0]!)).toEqual({ kind: 'sessionArchived', sourceSessionId: 'source' });
+        expect(readTriggerWhen(triggers[0]!)).toEqual({ kind: 'sessionArchived',
+            subject: { kind: 'session', serverId: 'portable-home', sessionId: 'source' } });
         // A cron that is not a simple schedule keeps its expression.
         expect(readTriggerWhen(triggers[1]!)).toEqual({ kind: 'schedule', schedule: null, expression: '*/15 * * * *', timezone: null });
     });
@@ -336,13 +393,13 @@ describe('session trigger form', () => {
         const trigger = WorkflowTriggerSetV1Schema.parse({ automationId: 'habit', revision: 1, enabled: true,
             health: 'available', target: { kind: 'workflow', ref: 'builtin:review-and-converge' },
             triggers: [{ id: 'event', revision: 1, kind: 'sessionLifecycle', enabled: true,
-                sourceSessionId: 'original-source', events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'],
+                subject: { kind: 'session', serverId: 'portable-home', sessionId: 'original-source' }, events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'],
                 policy: { kind: 'currentTurn', sourceTurnId: 'turn-7' }, createdAt: 1, updatedAt: 1,
-                remainingOccurrences: 1, status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null }] }).triggers[0]!;
+                remainingOccurrences: 1, status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: 'opened-definition' }] }).triggers[0]!;
         const when = readTriggerWhen(trigger);
         if (!when) throw new Error('Expected editable lifecycle');
         expect(buildTriggerDefinition({ when, enabled: false, sessionId })).toEqual({
-            kind: 'sessionLifecycle', enabled: false, sourceSessionId: 'original-source',
+            kind: 'sessionLifecycle', enabled: false, subject: { kind: 'session', serverId: 'portable-home', sessionId: 'original-source' },
             events: ['parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled'],
             policy: { kind: 'currentTurn', sourceTurnId: 'turn-7' },
         });
@@ -395,9 +452,10 @@ describe('session trigger form', () => {
     });
 
     it('binds "When this turn finishes…" to that exact turn, and keeps the binding when read back', () => {
-        const bound = buildTriggerDefinition({ when: { kind: 'turnEnds', sourceTurnId: 'turn-7' }, enabled: true, sessionId: 'session-1' });
+        const subject = { kind: 'session' as const, serverId: 'portable-home', sessionId: 'session-1' };
+        const bound = buildTriggerDefinition({ when: { kind: 'turnEnds', subject, sourceTurnId: 'turn-7' }, enabled: true, sessionId: 'session-1' });
         expect(bound).toMatchObject({ kind: 'sessionLifecycle', policy: { kind: 'currentTurn', sourceTurnId: 'turn-7' } });
-        const saved = { kind: 'sessionLifecycle', events: ['parentTurnCompleted'], policy: { kind: 'currentTurn', sourceTurnId: 'turn-7' } } as unknown as Parameters<typeof readTriggerWhen>[0];
-        expect(readTriggerWhen(saved)).toEqual({ kind: 'turnEnds', sourceTurnId: 'turn-7' });
+        const saved = { kind: 'sessionLifecycle', subject, events: ['parentTurnCompleted'], policy: { kind: 'currentTurn', sourceTurnId: 'turn-7' } } as unknown as Parameters<typeof readTriggerWhen>[0];
+        expect(readTriggerWhen(saved)).toEqual({ kind: 'turnEnds', subject, events: ['parentTurnCompleted'], sourceTurnId: 'turn-7' });
     });
 });

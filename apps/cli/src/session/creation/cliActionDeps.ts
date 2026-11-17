@@ -894,7 +894,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       const initialTriggerPreparationState: { failure?: unknown } = {};
       let cleanupInitialTriggerCustody: (() => Promise<void>) | undefined;
       const prepareInitialTriggers: Parameters<typeof createSpawnedSession>[0]['prepareInitialTriggers'] =
-        !discussionParticipant && (identity?.bot?.kind === 'bot' || (initialTriggers && initialTriggers.length > 0)) ? async () => {
+        !discussionParticipant && (identity?.bot?.kind === 'bot' || (initialTriggers && initialTriggers.length > 0)) ? async (preparedFinalSessionId) => {
           try {
             const preparedDrafts = [...(initialTriggers ?? [])];
             if (identity?.bot?.kind === 'bot') {
@@ -910,6 +910,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             if (preparedDrafts.length === 0) return [];
             if (!workflowTriggers) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
             const prepared = await workflowTriggers.prepareSessionInitialTriggers({
+              preparedFinalSessionId,
               project: { machineId: executionTarget.machineId, directory: normalizedDirectory },
               initialTriggers: preparedDrafts,
               caller: {

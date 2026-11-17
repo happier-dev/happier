@@ -6,11 +6,13 @@ import { createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector, 
 
 import { resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import {
-    addSessionTrigger,
-    listSessionTriggerSets,
-    removeSessionTrigger,
-    updateSessionTrigger,
+    addWorkflowTrigger,
+    listWorkflowTriggerSets,
+    removeWorkflowTrigger,
+    updateWorkflowTrigger,
 } from '@/sync/domains/workflows/workflowTriggerActions';
+import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 
 import {
     KEEP_GOING_DEFAULT_INPUTS,
@@ -90,7 +92,7 @@ export function useSessionKeepGoingTrigger(params: Readonly<{
         const controller = new AbortController();
         const retirement = accountLifetime.onRetire(() => controller.abort());
         setPhase(current => current === 'loaded' ? current : 'loading');
-        listSessionTriggerSets({ sessionId }, { ...options, signal: controller.signal })
+        listWorkflowTriggerSets({ lifetimeSession: { sessionId } }, { ...options, signal: controller.signal })
             .then(() => {
                 if (!controller.signal.aborted) setPhase('loaded');
             })
@@ -126,16 +128,18 @@ export function useSessionKeepGoingTrigger(params: Readonly<{
         setError(null);
         setPendingOn(on);
         setBusy(true);
-        const write = !on
-            ? (current ? removeSessionTrigger({ sessionId, triggerId: current.triggerId }, options) : Promise.resolve())
-            : current
-                ? updateSessionTrigger({
-                    sessionId,
-                    triggerId: current.triggerId,
-                    expectedRevision: current.revision,
-                    patch: { enabled: true, inputs: complete },
-                }, options)
-                : addSessionTrigger(buildKeepGoingTriggerAddRequest(sessionId, complete), options);
+        const write = (async () => {
+            if (!on) return current ? removeWorkflowTrigger({ automationId: current.automationId, triggerId: current.triggerId }, options) : undefined;
+            if (current) return updateWorkflowTrigger({
+                automationId: current.automationId,
+                triggerId: current.triggerId,
+                expectedRevision: current.revision,
+                patch: { enabled: true, inputs: complete },
+            }, options);
+            const serverId = resolvePortableServerIdentityForRoutingId(accountLifetime?.scope.serverId);
+            if (serverId === null) throw new WorkflowActionError({ message: 'source_unavailable', rawCode: 'source_unavailable' });
+            return addWorkflowTrigger(buildKeepGoingTriggerAddRequest({ sessionId, serverId }, complete), options);
+        })();
         void write
             .then(() => {
                 if (on) acknowledgeInputs(complete);
@@ -145,7 +149,7 @@ export function useSessionKeepGoingTrigger(params: Readonly<{
                 setPendingOn(null);
                 setBusy(false);
             });
-    }, [acknowledgeInputs, busy, fail, inputs, options, readAttachment, sessionId]);
+    }, [accountLifetime, acknowledgeInputs, busy, fail, inputs, options, readAttachment, sessionId]);
 
     const writeInputs = React.useCallback(() => {
         const queue = inputWriteRef.current;
@@ -165,8 +169,8 @@ export function useSessionKeepGoingTrigger(params: Readonly<{
         // Incomplete fields stay visible as drafts until the person repairs them.
         if (!areKeepGoingInputsValid(next)) return;
         queue.inFlight = true;
-        void updateSessionTrigger({
-            sessionId,
+        void updateWorkflowTrigger({
+            automationId: current.automationId,
             triggerId: current.triggerId,
             expectedRevision: current.revision,
             patch: { inputs: next },

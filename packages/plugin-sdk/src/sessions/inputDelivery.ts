@@ -4,7 +4,7 @@ import { ActionFailureCauseV1Schema, isPluginError, readUnexpectedActionErrorDia
 import type { SessionId } from '../services/sessions.js';
 import type { ComposerTransactionV1, PluginUiHostApi } from '../ui/index.js';
 import { defineProtocolJsonValue } from '../protocol/protocolFacade.js';
-import { sendSessionInputHandoffV1 } from '@happier-dev/protocol/sessions/messages/runSessionInputHandoffV1';
+import { sendSessionInputHandoffV1 } from './inputHandoff.js';
 
 const attachmentJsonValue = defineProtocolJsonValue();
 

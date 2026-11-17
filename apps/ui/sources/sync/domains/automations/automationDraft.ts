@@ -78,7 +78,8 @@ export function replaceExactTurnAutomationRowsWithCurrentTurns(params: Readonly<
     const triggers = params.automation.triggers.map((trigger) => {
         const definition = trigger.definition;
         if (definition.kind !== 'sessionLifecycle' || definition.policy.kind !== 'currentTurn') return trigger;
-        const exact = params.readExactTurn(definition.sourceSessionId);
+        const exact = definition.subject?.kind === 'session'
+            ? params.readExactTurn(definition.subject.sessionId) : null;
         if (!exact) {
             canReplace = false;
             return trigger;

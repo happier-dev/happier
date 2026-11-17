@@ -61,10 +61,10 @@ describe('CLI session pull request binding', () => {
         features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {},
       }) }),
     });
-    const result = await deps.workflowAction!({ actionId: 'session.trigger.list', input: { sessionId }, context: { surface: 'cli', actionCaller: { kind: 'host' } } });
+    const result = await deps.workflowAction!({ actionId: 'workflow.trigger.list', input: { lifetimeSession: { sessionId } }, context: { surface: 'cli', actionCaller: { kind: 'host' } } });
     expect(result).toMatchObject(echoSessionId === sessionId
-      ? { sessionId, pullRequestLinks: [{ provider: 'github', repository: 'acme/widgets', number: 42 }] }
-      : { sessionId, sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable', diagnostic: { reason: 'channels_session_mismatch' } } });
+      ? { lifetimeSession: { sessionId }, pullRequestLinks: [{ provider: 'github', repository: 'acme/widgets', number: 42 }] }
+      : { lifetimeSession: { sessionId }, sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable', diagnostic: { reason: 'channels_session_mismatch' } } });
   });
   it.each(['session_transport_absent', 'session_machine_absent', 'caller_fallback_unsupported', 'channels_result_invalid', 'channels_session_mismatch', 'channels_operation_mismatch', 'malformed_failure_envelope'] as const)(
     'retains the binding refusal reason after native PR creation: %s', async scenario => {
@@ -99,8 +99,8 @@ describe('CLI session pull request binding', () => {
         features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {},
       }) }),
     });
-    await expect(deps.workflowAction!({ actionId: 'session.trigger.list', input: { sessionId }, context: { surface: 'cli', actionCaller: { kind: 'host' } } }))
-      .resolves.toMatchObject({ sessionId, sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable' } });
+    await expect(deps.workflowAction!({ actionId: 'workflow.trigger.list', input: { lifetimeSession: { sessionId } }, context: { surface: 'cli', actionCaller: { kind: 'host' } } }))
+      .resolves.toMatchObject({ lifetimeSession: { sessionId }, sets: [], pullRequestLinks: { status: 'unavailable', code: 'target_unavailable' } });
   });
   it.each(['created', 'reused'] as const)('links a successful %s PR on the originating Session machine', async (result) => {
     const effects: unknown[] = [];

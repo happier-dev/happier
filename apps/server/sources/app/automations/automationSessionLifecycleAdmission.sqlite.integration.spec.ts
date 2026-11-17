@@ -10,6 +10,9 @@ import {
     createCanonicalJsonSigningInput,
 } from "@happier-dev/protocol";
 import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { projectAutomationSessionLifecycleStructuralTrigger, type AutomationSessionLifecycleTrigger } from "@happier-dev/protocol/automations/automationTriggerDefinition";
+import { sealAutomationTriggerDefinitionStoredEnvelopeV1 } from "@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent";
+import type { AutomationSessionLifecycleEvent } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     applySessionTurnMutation as applySessionTurnMutationWithAuthentication,
@@ -41,6 +44,7 @@ import { isAutomationOriginRunPublisherTx, readAutomationOriginTriggerIdsTx } fr
 import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { loadAutomationSessionLifecycleStatusProjections } from "./automationSessionLifecycleStatusProjection";
 
+const serverId = "srv_00000000000000000000000000000000";
 const authentication = createPresentUserSessionAccessAuthentication();
 
 function applySessionTurnMutation(
@@ -130,7 +134,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             initFiles: false,
         });
     }, 120_000);
-    beforeEach(() => harness.resetEnv());
+    beforeEach(() => harness.resetEnv({ HAPPIER_SERVER_IDENTITY_ID: serverId }));
     afterAll(async () => await harness.close());
 
     async function source(params: Readonly<{
@@ -152,7 +156,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         });
         const session = await db.session.create({
             data: { accountId: account.id, tag: `source-${suffix}`, encryptionMode: "plain", metadata: "{}" },
-            select: { id: true },
+            select: { id: true, accountId: true, projectKey: true, runtimeMachineTarget: true },
         });
         const turnId = `turn-${suffix}`;
         await applySessionTurnMutation({
@@ -173,7 +177,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
                 } : {}),
             },
         });
-        return { accountId: account.id, sessionId: session.id, turnId, suffix };
+        return { accountId: account.id, sessionId: session.id, sourceSession: session, turnId, suffix };
     }
 
     async function trigger(params: Awaited<ReturnType<typeof source>> & {
@@ -182,7 +186,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         deleted?: boolean;
         scoped?: boolean;
         workflow?: boolean;
-        events?: Array<"parentTurnCompleted" | "parentTurnFailed" | "parentTurnCancelled" | "userActionRequired">;
+        events?: AutomationSessionLifecycleEvent[];
         policy?:
             | { kind: "currentTurn"; sourceTurnId: string }
             | { kind: "firstMatch" }
@@ -235,17 +239,24 @@ describe("Session lifecycle Automation admission on SQLite", () => {
                 enabled: true,
             },
         });
-        const lifecycle = encodeAutomationSessionLifecycleConfiguration({
+        const definition: AutomationSessionLifecycleTrigger = {
             kind: "sessionLifecycle",
-            sourceSessionId: params.sessionId,
+            subject: { kind: "session", serverId, sessionId: params.sessionId },
             events: params.events ?? ["parentTurnCompleted"],
             policy: params.policy ?? { kind: "currentTurn", sourceTurnId: params.turnId },
-        });
+        };
+        const lifecycle = encodeAutomationSessionLifecycleConfiguration(projectAutomationSessionLifecycleStructuralTrigger(definition));
+        const triggerId = randomUUID();
         return await db.automationTrigger.create({
             data: {
+                id: triggerId,
                 automationId: automation.id,
                 kind: "sessionLifecycle",
                 revision: 1,
+                definitionEnvelope: params.deleted ? null : JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                    mode: "plain", binding: { v: 1, automationId: automation.id, triggerId, triggerRevision: 1, triggerKind: "sessionLifecycle" },
+                    definition,
+                })),
                 ...(params.deleted
                     ? {
                         enabled: false,
@@ -266,6 +277,50 @@ describe("Session lifecycle Automation admission on SQLite", () => {
             select: { id: true, automationId: true },
         });
     }
+
+    it.each(["user", "agent_session", "host", "workflow"] as const)(
+        "publishes an accepted %s turn start once, preserving its initiator through replay, re-begin and touch",
+        async (initiator) => {
+            const current = await source();
+            const attached = await trigger({ ...current, events: ["parentTurnStarted"], policy: { kind: "everyMatch" } });
+            const turnId = `accepted-${current.suffix}`;
+            const observedAt = Date.now();
+            const mutation = {
+                v: 1 as const, sessionId: current.sessionId, turnId, action: "begin" as const,
+                mutationId: `accepted-begin-${current.suffix}`, observedAt, initiator, workDepth: 2,
+                ...(initiator === "workflow" ? {
+                    workflowInvocation: { runId: `run-${current.suffix}`, invocationRecordId: `invocation-${current.suffix}` },
+                } : {}),
+            };
+            await expect(applySessionTurnMutation({ actorUserId: current.accountId, mutation }))
+                .resolves.toMatchObject({ ok: true, didApply: true });
+            const fires = initiator === "user" || initiator === "agent_session";
+            const runs = await db.automationRun.findMany({ where: { triggerId: attached.id } });
+            expect(runs).toHaveLength(fires ? 1 : 0);
+            if (fires) {
+                expect(decodeAutomationRunCause(runs[0]!)).toMatchObject({
+                    kind: "trigger", triggerKind: "sessionLifecycle", triggerId: attached.id,
+                    occurredAt: observedAt, evidence: { event: "parentTurnStarted",
+                        sourceSessionId: current.sessionId, sourceTurnId: turnId, policy: { kind: "everyMatch" } },
+                });
+            }
+            await expect(applySessionTurnMutation({ actorUserId: current.accountId, mutation }))
+                .resolves.toMatchObject({ ok: true, didApply: false });
+            await expect(applySessionTurnMutation({ actorUserId: current.accountId,
+                mutation: { ...mutation, mutationId: `rebegin-${current.suffix}`, observedAt: observedAt + 1,
+                    initiator: "user", workflowInvocation: undefined } }))
+                .resolves.toMatchObject({ ok: true, didApply: true });
+            await expect(applySessionTurnMutation({ actorUserId: current.accountId, mutation: {
+                v: 1, sessionId: current.sessionId, turnId, action: "touch_active",
+                mutationId: `touch-${current.suffix}`, observedAt: observedAt + 2,
+            } })).resolves.toMatchObject({ ok: true, didApply: true });
+            expect(await db.sessionTurn.findUniqueOrThrow({
+                where: { sessionId_turnId: { sessionId: current.sessionId, turnId } },
+                select: { initiator: true, workDepth: true },
+            })).toEqual({ initiator, workDepth: 2 });
+            expect(await db.automationRun.count({ where: { triggerId: attached.id } })).toBe(fires ? 1 : 0);
+        },
+    );
 
     it.each(["user", "agent_session", "host", "workflow"] as const)(
         "admits needs-you for %s turns but reserves turn-end occurrences only for user and agent-session turns",
@@ -460,7 +515,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
                     .resolves.toMatchObject({ status: "cleared" });
             }
         }
-        const fire = (requestId: string, turnId: string) => inTx(tx => admitSessionLifecycleAutomationRunsTx({ tx, accountId: current.accountId,
+        const fire = (requestId: string, turnId: string) => inTx(tx => admitSessionLifecycleAutomationRunsTx({ tx, accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: { v: 1, kind: "sessionLifecycle", event: "userActionRequired", sourceSessionId: current.sessionId,
                 sourceTurnId: turnId, requestId, requestKind: "permission", occurredAt: Date.now() } }));
         await fire("workflow-request", workflowTurnId);
@@ -752,9 +807,10 @@ describe("Session lifecycle Automation admission on SQLite", () => {
     it("refuses late sessionStarted registration at the canonical server owner", async () => {
         const current = await source();
         await expect(inTx((tx) => validateSessionLifecycleTriggerRegistrationTx({
-            tx, accountId: current.accountId, automationTargetType: "new_session",
-            input: { kind: "sessionLifecycle", enabled: true,
-                sourceSessionId: current.sessionId, events: ["sessionStarted"], policy: { kind: "firstMatch" } },
+            tx, accountId: current.accountId, automationTargetType: "new_session", serverIdentityId: serverId,
+            input: { ...projectAutomationSessionLifecycleStructuralTrigger({ kind: "sessionLifecycle",
+                subject: { kind: "session", serverId, sessionId: current.sessionId },
+                events: ["sessionStarted"], policy: { kind: "firstMatch" } }), enabled: true },
         }))).rejects.toMatchObject({ code: "session_already_started" });
     });
 
@@ -769,7 +825,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         const assignment = await db.automationAssignment.findFirstOrThrow({ where: { automationId: attached.automationId } });
         if (noTurn) {
             await db.automationTrigger.update({ where: { id: attached.id }, data: { sessionLifecycleEventsJson: '["sessionArchived"]' } });
-            await inTx((tx) => admitSessionLifecycleAutomationRunsTx({ tx, accountId: current.accountId,
+            await inTx((tx) => admitSessionLifecycleAutomationRunsTx({ tx, accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
                 occurrence: { v: 1, kind: "sessionLifecycle", event: "sessionArchived",
                     sourceSessionId: current.sessionId, occurredAt: Date.now() },
             }));
@@ -834,7 +890,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
 
         await expect(inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: {
                 v: 1,
                 kind: "sessionLifecycle",
@@ -878,17 +934,20 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         for (const chunk of automationPortableQueryChunks({ values: automationRows, bindingsPerValue: 9 })) {
             await db.automation.createMany({ data: [...chunk] });
         }
-        const lifecycle = encodeAutomationSessionLifecycleConfiguration({
-            kind: "sessionLifecycle",
-            sourceSessionId: current.sessionId,
-            events: ["parentTurnCompleted"],
-            policy: { kind: "currentTurn", sourceTurnId: current.turnId },
-        });
+        const definition: AutomationSessionLifecycleTrigger = {
+            kind: "sessionLifecycle", subject: { kind: "session", serverId, sessionId: current.sessionId },
+            events: ["parentTurnCompleted"], policy: { kind: "currentTurn", sourceTurnId: current.turnId },
+        };
+        const lifecycle = encodeAutomationSessionLifecycleConfiguration(projectAutomationSessionLifecycleStructuralTrigger(definition));
         const triggerRows = automationRows.map((automation) => ({
             id: `fan-out-trigger-${automation.id}`,
             automationId: automation.id,
             kind: "sessionLifecycle" as const,
             enabled: true,
+            definitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+                mode: "plain", binding: { v: 1, automationId: automation.id, triggerId: `fan-out-trigger-${automation.id}`, triggerRevision: 1, triggerKind: "sessionLifecycle" },
+                definition,
+            })),
             ...lifecycle,
             updatedAt: now,
         }));
@@ -935,7 +994,9 @@ describe("Session lifecycle Automation admission on SQLite", () => {
                 observedAt: now.getTime(),
             },
         }); } finally { transactionBoundary.$transaction = originalTransaction; }
-        expect(fanOutResult, transactionFailure instanceof Error ? transactionFailure.stack : String(transactionFailure))
+        expect(fanOutResult, transactionFailure instanceof Error
+            ? `${transactionFailure.stack}\n${JSON.stringify(transactionFailure)}`
+            : String(transactionFailure))
             .toMatchObject({ ok: true, didApply: true });
 
         await expect(db.automationRun.count({
@@ -1230,12 +1291,12 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         })) });
         await inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: first,
         }));
         await inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: first,
         }));
         const secondOccurrence = {
@@ -1246,17 +1307,17 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         };
         await inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: secondOccurrence,
         }));
         await expect(inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: secondOccurrence,
         }))).resolves.toMatchObject([{ triggerId: created.id, result: { kind: "rejoined" } }]);
         await inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: {
                 ...first,
                 sourceTurnId: `${current.turnId}-3`,
@@ -1280,7 +1341,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         const occurredAt = Date.now();
         const admitted = await inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: {
                 v: 1,
                 kind: "sessionLifecycle",
@@ -1310,7 +1371,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
 
         await expect(inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: {
                 v: 1,
                 kind: "sessionLifecycle",
@@ -1347,7 +1408,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         // Control: the live parent turn still admits its attention occurrence.
         await expect(inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: attention(current.turnId, "request-live", occurredAt),
         }))).resolves.toHaveLength(1);
 
@@ -1371,7 +1432,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         })).resolves.toEqual({ status: "in_progress" });
         await expect(inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: attention(current.turnId, "request-superseded", occurredAt + 2),
         }))).resolves.toEqual([]);
 
@@ -1390,7 +1451,7 @@ describe("Session lifecycle Automation admission on SQLite", () => {
         })).resolves.toMatchObject({ ok: true, didApply: true });
         await expect(inTx(async (tx) => await admitSessionLifecycleAutomationRunsTx({
             tx,
-            accountId: current.accountId,
+            accountId: current.accountId, sourceSession: current.sourceSession, recipientAccountIds: [current.accountId],
             occurrence: attention(supersedingTurnId, "request-terminal", occurredAt + 4),
         }))).resolves.toEqual([]);
 

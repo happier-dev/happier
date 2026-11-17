@@ -14,6 +14,7 @@ import { SessionAuthoringCheckoutCreationDraftV1Schema } from '@happier-dev/prot
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { SessionInitialAccessDraftV1Schema } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 import { SessionInitialTriggerAdmissionV1Schema } from '@happier-dev/protocol/sessions/creation/sessionInitialTriggerAdmissionV1';
+import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import { SessionCreateOriginFieldsV1Schema, refineSessionCreateOriginFieldsV1 } from '@happier-dev/protocol/sessions/creation/sessionCreateOriginV1';
 import { SessionAttachMetadataIdentityPolicySchema } from '@happier-dev/protocol/sessions/attach/metadataIdentityPolicy';
 import { readCapabilitySelectionCarrierV1, SessionCapabilitySelectionAuthoringV1Schema } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
@@ -226,6 +227,7 @@ const SpawnDaemonSessionRequestCompatSchema = lazyZodSchema(() => (<I extends z.
   promptStack: z.optional(asHostProtocolZod(SessionPromptStackV1Schema)),
   initialAccess: z.optional(SessionInitialAccessDraftV1Schema),
   initialTriggers: z.optional(z.array(asHostProtocolZod(SessionInitialTriggerAdmissionV1Schema))),
+  preparedFinalSessionId: z.optional(asHostProtocolZod(SessionIdSchema)),
   manager: z.optional(SessionManagerV1Schema),
   initialSessionRolesV1: z.optional(asHostProtocolZod(SessionRolesV1Schema)),
   primaryTeamId: z.optional(z.nullable(z.string().check(z.minLength(1)))),
@@ -468,6 +470,7 @@ const SPAWN_SESSION_OPTION_KEYS = [
   'promptStack',
   'initialAccess',
   'initialTriggers',
+  'preparedFinalSessionId',
   'manager',
   'initialSessionRolesV1',
   'primaryTeamId',
