@@ -3,6 +3,7 @@
 // public barrel's import cycle read this binding during evaluation (Systemic 2026-11-10 16:42Z).
 export { orderWidgetGroupCellsForStack } from './layout/widgetGroupLayout.js';
 export * from './index.public.js';
+export { resolveHappierThemeSurfaceStyle } from './themeSurface.js';
 // Host-only: the page count line a core main screen's head draws under its band; plugins reach the same owner
 // through `PageHeader`'s `count` (one drawing, one formatting rule).
 export { formatHappierPageCount, HappierPageCountLine, type HappierPageCountLineTextRender } from './layout/PageCountLine.js';

@@ -2,7 +2,7 @@ import type { PluginUiThemeV1, SurfaceAddress } from '@happier-dev/plugin-sdk/ui
 
 /** Read the host compiler's mode-resolved table; web keeps its CSS cascade. */
 export function resolveHappierThemeSurfaceStyle(
-  theme: PluginUiThemeV1 | null,
+  theme: Pick<PluginUiThemeV1, 'surfaces'> | null,
   address: SurfaceAddress,
   platform: string,
 ) {

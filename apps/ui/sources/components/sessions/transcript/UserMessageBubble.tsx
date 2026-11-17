@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import type { Theme } from '@/theme';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 
 import { TranscriptJumpAttention } from './navigation/TranscriptJumpHighlightOverlay';
 
@@ -48,13 +49,13 @@ export function UserMessageBubble(props: Readonly<{
 }>) {
     const { theme: currentTheme } = useUnistyles();
     const theme = props.theme ?? currentTheme;
-    const style = {
+    const style = [{
         backgroundColor: glassContentFill(theme.colors.message.user.background, theme.colors),
         ...(props.padding === 'parts' ? null : userMessageBubbleContentPadding(theme)),
         borderRadius: theme.parts.userBubble.radius,
         maxWidth: '100%' as const,
         ...(props.discarded ? { opacity: 0.65 } : null),
-    };
+    }, themeSurfaceStyles.surface({ surface: 'user-bubble', part: 'root', state: 'default' })];
     const dataSet = themeSurfaceDataSet('user-bubble', 'root', 'default');
     return props.attention
         ? (

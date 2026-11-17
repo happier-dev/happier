@@ -18,6 +18,7 @@ import { useGlassRuntimeEnvironment } from './glassRuntimeEnvironment';
 import { glassElementsCoatColor, glassSurfaceBackgroundColor, glassSurfaceTintColor, resolveGlassSurfacePlaneMaterial, glassSurfacePlaneBackdropStyle, type AtmosphereContentCoat } from './glassSurfacePaint';
 import { useGlassMaterialColorResolver } from './useGlassSurfaceColor';
 import { parseThemeColor } from '@/theme/parseThemeColor';
+import { themeSurfaceStyles } from '@/theme/css/themeSurfaceStyles';
 import { GLASS_BACKED_FAINT_INK_SHARE, GLASS_QUIET_INK_WEB_TOKENS, GlassBackedInkContext, glassQuietThemeInks, glassThemeInkWebStyle, resolveGlassBackedInk, resolveGlassPictureInk, useRetainedGlassBackedInk } from './glassBackedInk';
 import { GlassLivePictureBackdropContext } from './livePictureBackdrop';
 
@@ -158,8 +159,15 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     const runtimeEnvironment = useGlassRuntimeEnvironment();
     const group = props.surfaceGroup ?? 'floating';
     const resolveMaterialColor = useGlassMaterialColorResolver(group, props.plane === true);
+    const surfaceStyle = themeSurfaceStyles.surface(props.themeSurface);
+    const effectiveStyle = [props.style, surfaceStyle];
     const styleBackground = readSurfaceStyleProperty(props.style, 'backgroundColor');
-    const borderRadius = readSurfaceStyleProperty(props.style, 'borderRadius');
+    const borderRadius = readSurfaceStyleProperty(effectiveStyle, 'borderRadius');
+    const materialShape: ViewStyle = {};
+    for (const key of WEB_CORNER_RADII) {
+        const radius = readSurfaceStyleProperty(effectiveStyle, key);
+        if (radius !== undefined) materialShape[key] = radius;
+    }
     const containingSurface = React.useContext(GlassSurfaceGroupContext);
     const containingMaterialRole = useContainingHappierMaterialRole();
     const nested = props.nested === true && containingSurface?.openedOver !== true;
@@ -251,7 +259,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
                     // Untinted, as in 0.2: any tint switches Liquid Glass to its darker tinted mode, and an opaque one
                     // turns it into a flat disc (owner, 2026-11-10). Panels carry their coat over the glass instead.
                     // Liquid Glass draws its own rim along its own shape: it takes the surface's corners.
-                    style={[StyleSheet.absoluteFillObject, { borderRadius }]}
+                    style={[StyleSheet.absoluteFillObject, materialShape]}
                 />
             );
         }
@@ -309,7 +317,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     };
 
     if (Platform.OS !== 'web') {
-        const borderWidth = readSurfaceStyleProperty(props.style, 'borderWidth');
+        const borderWidth = readSurfaceStyleProperty(effectiveStyle, 'borderWidth');
         const materialInset = typeof borderWidth === 'number' ? -borderWidth : 0;
         // The coat a native material carries over its glass: a reading ground's own, or a floating surface's heavy
         // panel coat (light popovers read through without it, NATIVE-SWEEP M3). Native glass has no backdrop tone,
@@ -317,6 +325,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         const nativeCoatOpacity = !nativeBackdrop ? undefined
             : props.atmosphereCoat === 'reading' ? material.opacity
             : group === 'floating' ? resolveGlassPanelCoatOpacity(settings, theme.dark, panel, { nativeRenderer: true }) : undefined;
+        const surfaceFill = readSurfaceStyleProperty(surfaceStyle, 'backgroundColor');
         const backgroundColor = transparentPlane && enabled ? 'transparent' : nativeBackdrop || inheritsTranslucentMaterial ? 'transparent'
             : tintsWithoutBlur && enabled
                 ? withMaterialOpacity(tintColor, material.opacity) : solidColor;
@@ -324,14 +333,15 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
         // must stay under the same native parent when a preset or OS choice changes.
         // A surface that keeps its tint on Android (no blur behind it) is not lifted there; an opaque one keeps its lift.
         return <View {...viewProps} style={[props.style, props.noCoat ? null : { backgroundColor },
-            finishLift, props.noCoat ? null : resolveAndroidTranslucentUnlift(backgroundColor)]}>
+            finishLift, props.noCoat ? null : resolveAndroidTranslucentUnlift(backgroundColor), surfaceStyle,
+            surfaceFill !== undefined ? { backgroundColor: 'transparent' } : null]}>
             {/* The material fills the border box, so the glass's own edge lies under the surface's border: one edge. */}
             <View pointerEvents="none" style={[
                 StyleSheet.absoluteFillObject,
-                { top: materialInset, left: materialInset, right: materialInset, bottom: materialInset, borderRadius, overflow: 'hidden' },
-            ]}>{nativeBackdrop}{nativeCoatOpacity !== undefined ? <View pointerEvents="none"
-                style={[StyleSheet.absoluteFillObject, { backgroundColor: withMaterialOpacity(tintColor, nativeCoatOpacity) }]} /> : null}
-                <HappierSurfaceGradientLayer gradient={gradient} borderRadius={typeof borderRadius === 'number' ? borderRadius : undefined} /></View>
+                { top: materialInset, left: materialInset, right: materialInset, bottom: materialInset, ...materialShape, overflow: 'hidden' },
+            ]}>{nativeBackdrop}{surfaceFill !== undefined || nativeCoatOpacity !== undefined ? <View pointerEvents="none"
+                style={[StyleSheet.absoluteFillObject, { backgroundColor: surfaceFill ?? withMaterialOpacity(tintColor, nativeCoatOpacity!) }]} /> : null}
+                <HappierSurfaceGradientLayer gradient={surfaceFill === undefined ? gradient : null} borderRadius={typeof borderRadius === 'number' ? borderRadius : undefined} /></View>
             <GlassSurfaceGroupContext.Provider value={plane}>
                 <HappierMaterialRoleProvider {...materialPlane}>
                     {withBackedInk(props.children)}
