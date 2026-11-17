@@ -185,6 +185,8 @@ export type ClaudeAgentSdkSessionContext = ClaudeAgentSdkContextBase & Readonly<
         awaitTurnPublication?: (turnId: string, signal?: AbortSignal) => Promise<void>;
         /** The host's `adoptsHeldAgent`: this runner adopts the Agent its crashed predecessor left running. */
         adoptsHeldAgent?: boolean;
+        /** The host's `startsRemote`: the first prompt of this new Session arrives through the host. */
+        startsRemote?: boolean;
         modes?: ClaudeUnifiedTerminalContext['agentRuntime']['modes'];
         sessionHooks: ClaudeUnifiedTerminalContext['agentRuntime']['sessionHooks'];
         transcripts: ClaudeUnifiedTerminalContext['agentRuntime']['transcripts'];
@@ -813,8 +815,11 @@ export type ClaudeAgentSdkNativeOperations = ClaudeRuntimeTurnOperations & Reado
     subscribeEffectiveModel: ClaudeEffectiveModelEvidenceSubscription;
     subscribeUsageObservation: ClaudeUsageObservationSubscription;
     setOnPromptDeliveryOutcome(handler: ClaudeProviderPromptDeliveryOutcomeCallback | null): void;
-    /** Once the runtime is watched: adopt a held Agent when the host handed one over (no-op otherwise). */
-    startHeldAgentAdoption(): void;
+    /**
+     * Once the runtime is watched: adopt a held Agent when the host handed one over, or start
+     * Claude for a remote-started new Session ahead of its first prompt (no-op otherwise).
+     */
+    startAgentAtOpen(): void;
 }>;
 
 function isClaudeAgentSdkSessionContext(
@@ -847,14 +852,15 @@ export function createClaudeAgentSdkTurnOperations(
     let resumableProviderSessionId: string | null = null;
     let pendingResumeProviderSessionId: string | null = readClaudeProviderIdentityValue(params.initialProviderSessionId);
     let activeQuery: ClaudeSdkQuery | null = null;
-    // Held-Agent adoption (`adoptHeldAgent`): `adopting` while `heldAgentAdoption` is
+    // Held-Agent adoption (`adoptHeldAgent`) or the start at open (`startAgentBeforeFirstPrompt`): `adopting` while `agentStartAtOpen` is
     // pending, then `adopted` (its turn runs as the active query, or the idle Agent is
     // retained for the next prompt) or `none`. Prompts and control requests wait for it.
-    let heldAgentAdoption: Promise<void> | null = null;
+    let agentStartAtOpen: Promise<void> | null = null;
     // The adopted Agent's query until a turn or a prompt claims it.
     let adoptedQuery: ClaudeSdkQuery | null = null;
     let disposeQuery: ClaudeSdkQuery | null = null;
-    let retainedIdleQuery: Readonly<{ query: ClaudeSdkQuery; unpublishedLaunchEffort: string | null }> | null = null;
+    // `startedAtOpen`: launched ahead of the Session's first prompt and not yet prompted.
+    let retainedIdleQuery: Readonly<{ query: ClaudeSdkQuery; unpublishedLaunchEffort: string | null; startedAtOpen?: true }> | null = null;
     let activeProviderTask: Readonly<{ taskId: string; ownerScope?: object }> | null = null;
     const cancelledQueries = new WeakMap<ClaudeSdkQuery, string>();
     let activeCompletion: DeferredCompletion | null = null;
@@ -901,6 +907,11 @@ export function createClaudeAgentSdkTurnOperations(
         const retained = retainedIdleQuery;
         retainedIdleQuery = null;
         await retained?.query.dispose();
+    }
+
+    /** Retires the Claude started at open while it is still unprompted (a turn never reused it). */
+    async function retireAgentStartedAtOpen(): Promise<void> {
+        if (retainedIdleQuery?.startedAtOpen) await invalidateRetainedQueryReuse();
     }
 
     let contextUsageRefreshPromise: Promise<boolean> | null = null;
@@ -1425,7 +1436,7 @@ export function createClaudeAgentSdkTurnOperations(
 
     async function withControlQuery<T>(operation: (query: ClaudeSdkQuery) => Promise<T>): Promise<T | null> {
         // A second Agent launch would replace the held one the host keeps for the next runner.
-        if (heldAgentAdoption) await heldAgentAdoption;
+        if (agentStartAtOpen) await agentStartAtOpen;
         const retainedQuery = readLiveRetainedQuery();
         const reusableQuery = activeQuery ?? compactionControl.readQuery() ?? adoptedQuery ?? retainedQuery;
         if (reusableQuery) return await operation(reusableQuery);
@@ -2401,6 +2412,31 @@ export function createClaudeAgentSdkTurnOperations(
     });
     let terminalStartupInstructions: ReturnType<typeof materializeClaudeStartupInstructions> | undefined;
     let terminalMcpConfig: ReturnType<typeof materializeClaudeMcpConfigArgsForSpawn> | undefined;
+    /**
+     * A new Session the host starts under remote control (`agentRuntime.startsRemote`) gets its
+     * first prompt through the host only after the host's remaining startup (runtime publication,
+     * pending-queue materialization, turn preparation and admission). Claude Code boots for about
+     * a second before it reads a prompt, so it starts here on an idle prompt stream, with the same
+     * launch options a first turn would use, and is retained: the first prompt reuses it like any
+     * retained Agent. A launch-setting change disposes it before that prompt (the turn launches a
+     * fresh one, as before); a resume id or a local terminal start retires it.
+     */
+    async function startAgentBeforeFirstPrompt(): Promise<void> {
+        const hookPluginDir = await ensureSessionHookPluginDir();
+        if (runtimeDisposed || readCurrentResumeProviderSessionId() || turnInFlight || pendingSubmission
+            || disposeQuery || readLiveRetainedQuery()) return;
+        const { options, launchEffort } = buildQueryLaunchOptions(hookPluginDir);
+        const idle = new AbortController();
+        const query = createOwnedQuery({
+            prompt: createIdlePromptStream(idle.signal),
+            options,
+            onMessageReceived: message => observeSessionQueryMessage(query, message),
+            onObservationLost: () => idle.abort(),
+        }, () => currentTurnId);
+        disposeQuery = query;
+        retainedIdleQuery = { query, unpublishedLaunchEffort: launchEffort, startedAtOpen: true };
+    }
+
     const readCurrentResumeProviderSessionId = () => params.enableSessionResumability === true
         ? resumableProviderSessionId ?? pendingResumeProviderSessionId
         : providerSessionId ?? pendingResumeProviderSessionId;
@@ -2521,6 +2557,8 @@ export function createClaudeAgentSdkTurnOperations(
                 if (runtimeDisposed || !pending) return;
                 preparedLocalHookBinding = null;
                 providerActivityLedger.registerTerminalOwner(binding);
+                // The local terminal Agent owns the conversation now; an unprompted SDK Agent is no one's.
+                await retireAgentStartedAtOpen();
                 return;
             }
             if (pending) preparedLocalHookBinding = null;
@@ -2569,9 +2607,16 @@ export function createClaudeAgentSdkTurnOperations(
             usageObservationListeners.add(listener);
             return () => usageObservationListeners.delete(listener);
         },
-        startHeldAgentAdoption() {
-            if (heldAgentAdoption || sessionContext?.agentRuntime.adoptsHeldAgent !== true) return;
-            heldAgentAdoption = adoptHeldAgent().catch((error: unknown) => {
+        startAgentAtOpen() {
+            if (agentStartAtOpen || !sessionContext) return;
+            if (sessionContext.agentRuntime.adoptsHeldAgent !== true) {
+                if (sessionContext.agentRuntime.startsRemote !== true) return;
+                agentStartAtOpen = startAgentBeforeFirstPrompt().catch((error: unknown) => {
+                    params.ctx.logger.warn('[ClaudeAgentSdk] Agent start before the first prompt failed', { error });
+                });
+                return;
+            }
+            agentStartAtOpen = adoptHeldAgent().catch((error: unknown) => {
                 params.ctx.logger.warn('[ClaudeAgentSdk] Held Agent adoption failed', { error });
             });
         },
@@ -2591,12 +2636,17 @@ export function createClaudeAgentSdkTurnOperations(
         },
         async startProviderSession(opts) {
             const requestedResumeId = readClaudeProviderIdentityValue(opts?.resumeId);
-            if (requestedResumeId && providerSessionId === null) pendingResumeProviderSessionId = requestedResumeId;
+            if (requestedResumeId && providerSessionId === null) {
+                pendingResumeProviderSessionId = requestedResumeId;
+                // A Claude started at open began a new conversation, not this one.
+                if (agentStartAtOpen) await agentStartAtOpen;
+                await retireAgentStartedAtOpen();
+            }
             return providerSessionId;
         },
         async sendProviderTurnPrompt(prompt, meta, publishTurnTerminal: boolean = true) {
             // While adopting, a held turn may still be running: decide after the holder said.
-            if (heldAgentAdoption) await heldAgentAdoption;
+            if (agentStartAtOpen) await agentStartAtOpen;
             const compactionCompletion = compactionControl.readCompletion();
             if (compactionCompletion) await compactionCompletion;
             if (runtimeDisposed) {

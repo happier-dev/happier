@@ -5597,7 +5597,13 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     subagents: readAgentSessionSubagentObservationPublisher(services),
                 }), nativeLaunch,
                 // Read before the Session's first Agent launch consumes the hand-off.
-                ...(hasSessionHolderAdoptToken() ? { adoptsHeldAgent: true as const } : {}) });
+                ...(hasSessionHolderAdoptToken() ? { adoptsHeldAgent: true as const }
+                    // A new Session started under remote control gets its first prompt through
+                    // this host (the same starting-mode rule as its startup presentation).
+                    : openIntent.kind === 'create'
+                        && (normalizeStartingMode(params.sessionInput.runtimePreferences.startingMode)
+                            ?? (params.sessionInput.bootstrap.source === 'terminal' ? 'terminal' : 'remote')) === 'remote'
+                        ? { startsRemote: true as const } : {}) });
             const acpToolNormalizationSource = {
                 protocol: 'acp' as const,
                 agent: { pluginId: identity.pluginId, localId: contributionId },

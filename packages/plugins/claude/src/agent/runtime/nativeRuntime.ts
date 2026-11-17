@@ -152,8 +152,11 @@ export type ClaudeNativeSessionOperations = ClaudeRuntimeTurnOperations & Readon
     handler: (event: AgentSessionRuntimeEvent) => void,
   ) => () => void;
   isTurnInFlight?: () => boolean;
-  /** Adopts a held Agent once someone watches this runtime (its adopted turn is published then). */
-  startHeldAgentAdoption?: () => void;
+  /**
+   * Once someone watches this runtime: adopts a held Agent (its adopted turn is published then), or
+   * starts the Agent of a remote-started new Session ahead of its first prompt.
+   */
+  startAgentAtOpen?: () => void;
   canSteerPrompt?: () => boolean;
   canInterruptForPendingInput?: () => boolean;
   notifyPromptQueuedDuringTurn?: () => void;
@@ -1135,7 +1138,7 @@ export function createClaudeNativeSessionRuntimeFromOperations(
     },
     watch(listener) {
       listeners.add(listener);
-      if (!disposed) operations.startHeldAgentAdoption?.();
+      if (!disposed) operations.startAgentAtOpen?.();
       if (initialProviderSessionId && !disposed) {
         listener(Object.freeze({
           kind: 'provider-session-id',

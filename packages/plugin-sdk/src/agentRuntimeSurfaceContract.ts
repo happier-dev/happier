@@ -671,6 +671,7 @@ type _SessionHostServicesMustStayNarrowAndProviderNeutral = AssertTrue<
     | 'publishWorkStatus'
     | 'sessionHooks'
     | 'nativeLaunch'
+    | 'startsRemote'
     | 'transcripts'
     | 'accountUsage'
     | 'mcp'

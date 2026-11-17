@@ -130,6 +130,64 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       expect(JSON.stringify(events)).not.toContain('fixture-private-provider-detail');
     } finally { unregister.close(); subscription.dispose(); await operations.disposeProviderSession(); }
   });
+  describe('Agent start at open (first word)', () => {
+    const openRemote = (options: Readonly<{ startsRemote: boolean; resume?: string }>) => {
+      const exec = createSdkExecFixture();
+      const fixture = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
+      const ctx = options.startsRemote ? { ...fixture, agentRuntime: { ...fixture.agentRuntime, startsRemote: true } } : fixture;
+      const operations = createClaudeAgentSdkProviderOperations({ ctx, directory: '/tmp/claude-project', launchEnv: {},
+        happierSessionId: 'sdk-start-at-open', permissionMode: 'default', enableSessionResumability: true,
+        ...(options.resume ? { initialProviderSessionId: options.resume } : {}) });
+      const context = { session: { services: {
+        activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+      } } } as unknown as AgentSessionRuntimeContext;
+      const runtime = createClaudeNativeSessionRuntimeFromOperations(operations, options.resume
+        ? { kind: 'resume', sessionId: 'sdk-start-at-open', cwd: '/tmp/claude-project', providerSessionId: options.resume }
+        : { kind: 'create', sessionId: 'sdk-start-at-open', cwd: '/tmp/claude-project' }, context);
+      return { exec, operations, subscription: runtime.watch(() => {}) };
+    };
+    const userRecords = (written: readonly unknown[]) => written.filter(record =>
+      typeof record === 'object' && record !== null && Reflect.get(record, 'type') === 'user');
+
+    it('starts Claude at open for a remote start, before any prompt, and sends the first prompt to that process', async () => {
+      const { exec, operations, subscription } = openRemote({ startsRemote: true });
+      try {
+        await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledTimes(1));
+        expect(userRecords(exec.written)).toHaveLength(0);
+        operations.beginProviderTurn('first-turn');
+        await expect(operations.sendProviderTurnPrompt('hello')).resolves.toEqual({ kind: 'accepted' });
+        expect(exec.spawnClient).toHaveBeenCalledTimes(1);
+        expect(userRecords(exec.processes[0]!.written)).toHaveLength(1);
+      } finally { subscription.dispose(); await operations.disposeProviderSession(); }
+    });
+
+    it('starts no Claude before the first prompt without a remote start or when resuming', async () => {
+      for (const options of [{ startsRemote: false }, { startsRemote: true, resume: 'native-resume-id' }]) {
+        const { exec, operations, subscription } = openRemote(options);
+        try {
+          await new Promise(resolve => setTimeout(resolve, 20));
+          expect(exec.spawnClient).toHaveBeenCalledTimes(0);
+          operations.beginProviderTurn('first-turn');
+          await expect(operations.sendProviderTurnPrompt('hello')).resolves.toEqual({ kind: 'accepted' });
+          expect(exec.spawnClient).toHaveBeenCalledTimes(1);
+        } finally { subscription.dispose(); await operations.disposeProviderSession(); }
+      }
+    });
+
+    it('launches a fresh Claude when a launch setting changes before the first prompt', async () => {
+      const { exec, operations, subscription } = openRemote({ startsRemote: true });
+      try {
+        await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledTimes(1));
+        await operations.updateProviderConfiguration({ modelId: 'claude-opus-4-1' });
+        operations.beginProviderTurn('first-turn');
+        await expect(operations.sendProviderTurnPrompt('hello')).resolves.toEqual({ kind: 'accepted' });
+        expect(exec.spawnClient).toHaveBeenCalledTimes(2);
+        expect(userRecords(exec.processes[0]!.written)).toHaveLength(0);
+        expect(userRecords(exec.processes[1]!.written)).toHaveLength(1);
+      } finally { subscription.dispose(); await operations.disposeProviderSession(); }
+    });
+  });
+
   it('reserves SDK host prompts before native transcript replay can publish them as user facts', async () => {
     const exec = createSdkExecFixture();
     let releaseReservation!: () => void;

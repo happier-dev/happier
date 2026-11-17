@@ -687,6 +687,13 @@ export type AgentSessionHostServices = Readonly<{
   /** Optional, content-free Session progress detail through the existing awareness publication. */
   publishWorkStatus?(status: SessionRuntimeWorkStatusV1 | null): void;
   nativeLaunch?: AgentNativeLaunchQualifier;
+  /**
+   * Present when the host starts this new Session under remote control: its first
+   * prompt arrives through the host, after the host's own startup. A runtime whose
+   * Agent boots before it reads a prompt may start that Agent at session open, so
+   * its boot overlaps the host's startup instead of following the first prompt.
+   */
+  startsRemote?: true;
   features: AgentFeatureDecisionService;
   /** Host-bound native authentication; it grants no general Session capability. */
   auth?: SessionAuthService;

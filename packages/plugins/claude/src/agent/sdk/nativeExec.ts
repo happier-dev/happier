@@ -75,7 +75,7 @@ export function createClaudeNativeSdkQueryContext(
         },
         maxFrameBytes: CLAUDE_SDK_MAX_FRAME_BYTES,
         // The Session runtime surfaces a held Agent's in-flight turn
-        // (`startHeldAgentAdoption` in `runtime/remote/sdk/session.ts`).
+        // (`startAgentAtOpen` in `runtime/remote/sdk/session.ts`).
         adoptsHeldAgentTurns: 'streamJsonControl',
       }, options?.signal || nativeLaunch ? {
         ...(options?.signal ? { signal: options.signal } : {}),
