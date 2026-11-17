@@ -91,7 +91,8 @@ const AFFORDANCE_HALF_WIDTH = 56;
 const AFFORDANCE_LIFT = 44;
 /** The margin opens beside the passage only when the body keeps a readable measure next to it. */
 const MARGIN_MIN_FRAME_WIDTH = 860;
-const MARGIN_WIDTH = 288;
+/** The Doc comments column beside the body: its thread cards and their specimens share this width. */
+export const DOC_PASSAGE_MARGIN_WIDTH = 288;
 
 /**
  * A Doc's Markdown body with its passages (C5 lab K1-S/A/R/ST):
@@ -716,7 +717,7 @@ const styles = StyleSheet.create((theme) => ({
   changed: { gap: theme.space.s12, marginTop: theme.space.s16 },
   frame: { position: 'relative' },
   body: { flex: 1, minWidth: 0 },
-  margin: { width: MARGIN_WIDTH, position: 'relative' },
+  margin: { width: DOC_PASSAGE_MARGIN_WIDTH, position: 'relative' },
   card: { position: 'absolute', left: 0, right: 0 },
   mark: {
     position: 'absolute',
