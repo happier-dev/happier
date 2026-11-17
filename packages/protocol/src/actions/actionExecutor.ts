@@ -674,6 +674,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
 }> {
   const settleActionOutput: typeof projectTerminalActionOutput = (actionId, result, requestId, schema) =>
     projectTerminalActionOutput(actionId, result, requestId, schema, deps.recordActionOutputDiagnostic);
+  const recordCaughtActionCause = (error: unknown, phase: string): void => {
+    try {
+      deps.recordActionOutputDiagnostic?.({ source: phase, phase, issues: [],
+        failureCause: projectActionFailureCauseV1(error, phase, { allowUnknownErrorCode: false }) });
+    } catch { /* Diagnostics cannot replace the original Action outcome. */ }
+  };
   const observeTerminalAction = async (actionId: ActionId, input: unknown, context: ActionExecutorContext,
     result: ActionExecuteResult, caller: NonNullable<ActionExecutorContext['actionCaller']>): Promise<void> => {
     if (!deps.observeActionExecution || isDeferredApprovalResult(result)) return;
@@ -7660,6 +7666,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
     } catch (error) {
       if (dispatchFacts.dispatchedPluginSessionInputLocalId !== null) {
+        recordCaughtActionCause(error, 'action.plugin_session_input.dispatch');
         return {
           ok: true,
           result: {
@@ -7887,7 +7894,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           caller,
           ...(ctx.signal ? { signal: ctx.signal } : {}),
         });
-      } catch {
+      } catch (error) {
+        recordCaughtActionCause(error, 'action.interception');
         return settlePrepareResult(actionId, classifyExecutionRunStartPreDispatchFailure(actionId, {
           ok: false,
           errorCode: 'action_interception_failed',
