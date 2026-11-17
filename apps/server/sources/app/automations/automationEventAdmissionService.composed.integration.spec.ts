@@ -1058,8 +1058,7 @@ function encryptedHostEvidence(params: Readonly<{
                 material: params.snapshot.material,
                 evidence: {
                     ...evidence,
-                    ...(params.subject === undefined ? {} : { subject: params.subject }),
-            sourceInstanceId: params.sourceInstanceId ?? "repository-happier-example",
+                    sourceInstanceId: params.sourceInstanceId ?? "repository-happier-example",
                     sourceContractVersion: 1,
                     observationReceivedAt: event.observationReceivedAt,
                     filter: { version: null, result: "matched" as const },
