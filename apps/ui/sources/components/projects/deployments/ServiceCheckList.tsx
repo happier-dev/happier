@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { DetailsPaneOpenAsPageButton } from '@happier-dev/plugin-ui/components';
+import { HAPPIER_DATA_METRICS } from '@happier-dev/plugin-ui/presentation';
 import {
   Status,
   useHappierCollection,
@@ -30,6 +31,7 @@ import {
 } from './DeploymentEnvironmentRows';
 import { ServiceCheckBars, type ServiceCheckBarCell } from './ServiceCheckBars';
 import { ServiceCheckDetail } from './ServiceCheckDetail';
+import { ServiceCheckResponseTrend } from './ServiceCheckResponseTrend';
 import {
   NO_OFFLINE_OBSERVERS,
   SERVICE_CHECK_ROW_BARS,
@@ -299,8 +301,8 @@ export function ServiceCheckList(
         },
         {
           key: 'response',
-          title: t(`${k}.response`),
-          minWidth: 72,
+          title: t(`${m}.columnResponse24h`),
+          minWidth: 152,
           priority: 1,
           align: 'end',
           listColumn: true,
@@ -327,11 +329,11 @@ export function ServiceCheckList(
       ],
       card: {
         headerRight: state,
+        // D36 2B: the response area and its latest value with 30-day uptime, then the last checks.
         body: {
-          render: bars,
-          heightAtNormalText: 24,
+          render: (row) => <CheckCardBody facts={factsOf(row)} bars={bars(row)} />,
+          heightAtNormalText: HAPPIER_DATA_METRICS.plotHeightPx + HAPPIER_DATA_METRICS.blockGapPx + 24,
         },
-        facts: (row) => <CheckCardFacts facts={factsOf(row)} />,
         // What it is, or why it fails (lab B2): the row's line 2 without its phone bars.
         description: (row) => (
           <CheckByline row={row} facts={factsOf(row)} scope={scope} stale={staleOf(row)} loading={settling} columns />
@@ -401,6 +403,7 @@ const CheckRowBars = React.memo(function CheckRowBars(
   );
 });
 
+/** Response · 24 h (D36 2A): the retained responses as a small line, then the latest. */
 function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts }>) {
   const { theme } = useUnistyles();
   if (props.facts.latencyMs === null) return null;
@@ -409,7 +412,9 @@ function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts }>) {
       ? theme.colors.state.warning.textForeground
       : theme.colors.text.secondary;
   return (
-    <Text
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
+      <ServiceCheckResponseTrend facts={props.facts} form="line" label={t(`${m}.columnResponse24h`)} />
+      <Text
       style={{
         ...Typography.variant('meta'),
         color: tone,
@@ -418,7 +423,8 @@ function CheckResponse(props: Readonly<{ facts: ServiceCheckListFacts }>) {
       numberOfLines={1}
     >
       {formatServiceCheckLatency(props.facts.latencyMs)}
-    </Text>
+      </Text>
+    </View>
   );
 }
 
@@ -443,32 +449,47 @@ function CheckUptime(props: Readonly<{ facts: ServiceCheckListFacts }>) {
   );
 }
 
-/** A card's foot: uptime over 30 days, then the latest response. */
-function CheckCardFacts(props: Readonly<{ facts: ServiceCheckListFacts }>) {
-  const { theme } = useUnistyles();
-  const uptime = serviceCheckUptimeText(props.facts.uptimePercent);
-  const parts = [
-    uptime ? t(`${m}.uptimeOverDays`, { percent: uptime }) : null,
-    props.facts.latencyMs === null
-      ? null
-      : formatServiceCheckLatency(props.facts.latencyMs),
-  ].filter(Boolean);
-  if (parts.length === 0) return null;
+/** A card's response area beside its latest value and 30-day uptime (D36 2B); a kind without response times keeps the facts. */
+function CheckCardBody(props: Readonly<{ facts: ServiceCheckListFacts; bars: React.ReactNode }>) {
   return (
-    <Text
-      style={{
-        ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
-        fontVariant: ['tabular-nums'],
-      }}
-      numberOfLines={1}
-    >
-      {parts.join(' · ')}
-    </Text>
+    <View style={{ gap: HAPPIER_DATA_METRICS.blockGapPx }}>
+      <CheckCardFacts facts={props.facts} />
+      {props.bars}
+    </View>
   );
 }
 
-/** A Check's state, said only when it needs saying: failing, degraded, paused, waiting, or stopped being checked. */
+function CheckCardFacts(props: Readonly<{ facts: ServiceCheckListFacts }>) {
+  const { theme } = useUnistyles();
+  const uptime = serviceCheckUptimeText(props.facts.uptimePercent);
+  const value = props.facts.latencyMs === null ? null : formatServiceCheckLatency(props.facts.latencyMs);
+  const tone = props.facts.status === 'down'
+    ? theme.colors.state.danger.textForeground
+    : props.facts.status === 'degraded'
+      ? theme.colors.state.warning.textForeground
+      : theme.colors.text.primary;
+  if (!uptime && !value) return null;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: theme.space.s12, minHeight: HAPPIER_DATA_METRICS.plotHeightPx }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <ServiceCheckResponseTrend facts={props.facts} form="area" label={t(`${m}.columnResponse24h`)} />
+      </View>
+      <View style={{ alignItems: 'flex-end' }}>
+        {value ? (
+          <Text style={{ ...Typography.variant('label', 'semiBold'), color: tone, fontVariant: ['tabular-nums'] }} numberOfLines={1}>
+            {value}
+          </Text>
+        ) : null}
+        {uptime ? (
+          <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] }} numberOfLines={1}>
+            {t(`${m}.uptimeOverDays`, { percent: uptime })}
+          </Text>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
 const CheckState = React.memo(function CheckState(
   props: Readonly<{
     row: ManagedConfiguredCheckRow;

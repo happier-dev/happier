@@ -10,6 +10,7 @@ import {
   serviceCheckInvestigationSubject,
   serviceCheckHistoryStrip,
   serviceCheckRecentBars,
+  serviceCheckResponseSeries,
   serviceCheckAverageLatency,
   serviceCheckTodayUptime,
   serviceCheckMonitorSummary,
@@ -263,6 +264,44 @@ describe('the Check detail names what it checks from the inventory’s definitio
 });
 
 describe('Services → Checks rows (lab svcChk: named by what they check, Every, Last result)', () => {
+  it('retains an explicit gap between measured responses and keeps a measured zero', () => {
+    const evidence = { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: 'Health check' },
+      author: { kind: 'process' as const }, text: 'Observed response' }] };
+    const recent = readServiceCheckRecent({ checkId: 'response-gap', result: {
+      status: 'up', observedAt: today, latencyMs: 0, evidence,
+    }, recentResults: [
+      { status: 'up', observedAt: today - 3_000, latencyMs: 125, evidence },
+      { status: 'unknown', observedAt: today - 2_000, evidence },
+      { status: 'down', observedAt: today - 1_000, evidence },
+      { status: 'up', observedAt: today, latencyMs: 0, evidence },
+    ] });
+    expect(serviceCheckResponseSeries(recent, 3_000)).toEqual([
+      { observedAt: today - 3_000, latencyMs: 125 },
+      { observedAt: today - 2_000, latencyMs: null },
+      { observedAt: today - 1_000, latencyMs: null },
+      { observedAt: today, latencyMs: 0 },
+    ]);
+  });
+
+  it('draws the shown target’s response over the 24 hours before its newest result, oldest first (D36 2A/2B)', async () => {
+    const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
+    const at = (hoursAgo: number, latencyMs?: number) =>
+      ({ status: 'up', observedAt: today - hoursAgo * 3_600_000, ...(latencyMs === undefined ? {} : { latencyMs }), evidence: { kind: 'none' } }) as never;
+    const facts = serviceCheckListFacts({
+      native: { name: 'Shop' },
+      definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: 'c1', name: 'HTTP', targetLabel: 'shop.example', periodMs: 60_000, domainId: null }] },
+      lastResults: { kind: 'available', checks: [{ checkId: 'c1', result: at(0, 142),
+        // Newest last, as the health owner retains them: one older than the window, one without a response time.
+        recentResults: [at(30, 400), at(20, 150), at(6), at(2, 138), at(0, 142)], recentResultsCoverage: 'complete' }] },
+    } as never);
+    expect(facts.response24h).toEqual([
+      { observedAt: today - 20 * 3_600_000, latencyMs: 150 },
+      { observedAt: today - 6 * 3_600_000, latencyMs: null },
+      { observedAt: today - 2 * 3_600_000, latencyMs: 138 },
+      { observedAt: today, latencyMs: 142 },
+    ]);
+  });
+
   it('names a row by the target its definition checks, with its kind, cadence and latest result', async () => {
     const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
     const facts = serviceCheckListFacts({

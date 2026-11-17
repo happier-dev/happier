@@ -325,6 +325,22 @@ export function serviceCheckRecentBars(recent: ServiceCheckRecent | null, slots:
   };
 }
 
+/** The response trend's window: the Monitoring column and card say "24 h" (D36). */
+export const SERVICE_CHECK_RESPONSE_WINDOW_MS = 86_400_000;
+
+/**
+ * Retained response observations within `windowMs` before the newest result, oldest first.
+ * An observation without timing remains a chart gap; a trimmed history draws a shorter line.
+ */
+export function serviceCheckResponseSeries(recent: ServiceCheckRecent, windowMs: number): readonly Readonly<{ observedAt: number; latencyMs: number | null }>[] {
+  const newest = recent.results[0]?.observedAt;
+  if (newest === undefined) return [];
+  return recent.results
+    .filter((result) => result.observedAt >= newest - windowMs)
+    .map((result) => ({ observedAt: result.observedAt, latencyMs: result.latencyMs ?? null }))
+    .reverse();
+}
+
 /** The average response over the last `count` retained results that carry one ("last N checks"); null when none do. */
 export function serviceCheckAverageLatency(recent: ServiceCheckRecent, count: number): Readonly<{ averageMs: number; count: number }> | null {
   const latencies = recent.results.slice(0, count).flatMap((result) => (result.latencyMs === undefined ? [] : [result.latencyMs]));
@@ -464,6 +480,8 @@ export type ServiceCheckListFacts = Readonly<{
   /** The shown target's last results as bars. */
   recent: ServiceCheckBars;
   latencyMs: number | null;
+  /** The shown target's retained responses over the 24 hours before its newest result, oldest first (D36 2A/2B). */
+  response24h: readonly Readonly<{ observedAt: number; latencyMs: number | null }>[];
   /** The shown target's usual response: the average over its passing results in the bars' window. */
   usualMs: number | null;
   uptimePercent: number | null;
@@ -497,6 +515,7 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
     status: facts.status,
     recent: serviceCheckRecentBars(recent, slots),
     latencyMs: shown?.result.latencyMs ?? null,
+    response24h: recent ? serviceCheckResponseSeries(recent, SERVICE_CHECK_RESPONSE_WINDOW_MS) : [],
     usualMs: usual.length === 0 ? null : usual.reduce((sum, value) => sum + value, 0) / usual.length,
     uptimePercent: facts.uptimePercent,
     failingSince: recent?.failingSince ?? null,
