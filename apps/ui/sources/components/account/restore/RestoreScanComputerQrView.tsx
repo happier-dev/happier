@@ -1072,12 +1072,12 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                         {/* On a step column the scanner's own state (Retry) is the one primary and link entry is
                             one more quiet way in, like the others; standalone it stays the filled action. */}
                         {props.onOpenPairingLinkEntry ? (embedded
-                            ? renderAlternative('restore-enter-pairing-link', t('connect.enterUrlManually'), props.onOpenPairingLinkEntry)
+                            ? renderAlternative('restore-enter-pairing-link', t('connect.pairingLinkPlaceholder'), props.onOpenPairingLinkEntry)
                             : <View style={styles.footerButton}>
                                 <RoundButton
                                     testID="restore-enter-pairing-link"
                                     size="normal"
-                                    title={t('connect.enterUrlManually')}
+                                    title={t('connect.pairingLinkPlaceholder')}
                                     onPress={props.onOpenPairingLinkEntry}
                                 />
                             </View>) : null}

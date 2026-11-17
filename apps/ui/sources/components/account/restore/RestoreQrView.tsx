@@ -372,7 +372,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                             <TextLinkButton testID="restore-open-scan-qr" label={t('connect.scanQrCodeOnDevice')} onPress={props.onOpenScanQr} />
                         ) : null}
                         {props.onOpenPairingLinkEntry ? (
-                            <TextLinkButton testID="restore-enter-pairing-link" label={t('connect.enterUrlManually')} onPress={props.onOpenPairingLinkEntry} />
+                            <TextLinkButton testID="restore-enter-pairing-link" label={t('connect.pairingLinkPlaceholder')} onPress={props.onOpenPairingLinkEntry} />
                         ) : null}
                         <TextLinkButton testID="restore-open-manual" label={t('connect.restoreWithSecretKeyInstead')} onPress={openSecretKeyLogin} />
                         {providerResetEnabled ? (
@@ -444,7 +444,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                                 <RoundButton
                                     testID="restore-enter-pairing-link"
                                     size="small"
-                                    title={t('connect.enterUrlManually')}
+                                    title={t('connect.pairingLinkPlaceholder')}
                                     display="inverted"
                                     onPress={props.onOpenPairingLinkEntry}
                                 />
