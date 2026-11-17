@@ -18,7 +18,8 @@ describe('ordinary editable Session authoring Action', () => {
     expect(spec.inputSchema.safeParse({ ...input, pluginId: 'caller-credit' }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ seed: { ...input.seed, send: true } }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ sourceSession: { serverId: 'home-a', sessionId: 'session-a' } }).success).toBe(true);
-    expect(spec.inputSchema.safeParse({ ...input, sourceSession: { serverId: 'home-a', sessionId: 'session-a' } }).success).toBe(false);
+    expect(spec.inputSchema.safeParse({ ...input, sourceSession: { serverId: 'home-a', sessionId: 'session-a' } }).success).toBe(true);
+    expect(spec.inputSchema.safeParse({ seed: { ...input.seed, send: true }, sourceSession: { serverId: 'home-a', sessionId: 'session-a' } }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ sourceSession: { serverId: '', sessionId: 'session-a' } }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ sourceSession: { serverId: 'home-a', sessionId: 'session-a', send: true } }).success).toBe(false);
   });
