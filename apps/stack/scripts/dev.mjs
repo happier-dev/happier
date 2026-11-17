@@ -672,10 +672,33 @@ async function main() {
     });
     return expoResEarly;
   };
-  // Dependency publication replaces Metro through the reload coordinator below.
+  // Dependency publication replaces Metro through its existing lifecycle owner.
   // Other source refreshes keep the serving process until an explicit restart.
   // A cold or broken component must not gate admission of another component's
   // last-green output. Retain this single Expo operation for auth and UI readers.
+  const dependencyReload = await createDevDependencyReload({
+    repoDir, env: baseEnv,
+    reloadExpo: startExpo ? async () => {
+      await expoStartup;
+      console.log('[local] dependency publication: replacing Expo for the current installed generation');
+      // Retire the old crash supervisor before the lifecycle owner replaces its child.
+      await expoResEarly?.close?.();
+      expoResEarly = null;
+      return await ensureExpoAvailable();
+    } : null,
+  });
+  // Installation publication is runtime maintenance, independent of optional
+  // source watching. Admit it before server/daemon startup can wait on builds.
+  if (dependencyReload.expo) {
+    const publicationWatcher = startDevReloadCoordinator({
+      descriptors: [dependencyReload.expo.descriptor],
+      executors: [dependencyReload.expo.executor],
+      isShuttingDown: () => shuttingDown || startupAbort.signal.aborted,
+      logger: console,
+    });
+    if (publicationWatcher) watchers.push(publicationWatcher);
+    console.log(`[local] Expo dependency publications: observing ${dependencyReload.expo.descriptor.paths[0]}`);
+  }
   const expoStartup = startExpo ? ensureExpoAvailable().catch(error => {
     expoResEarly = reportStartupFailure('expo', error);
     return expoResEarly;
@@ -908,22 +931,8 @@ async function main() {
     }
   }
 
-  const dependencyReload = await createDevDependencyReload({
-    repoDir, env: baseEnv,
-    reloadExpo: startExpo ? async () => {
-      await expoStartup;
-      // Retire the old crash supervisor before its child is replaced by the owner.
-      await expoResEarly?.close?.();
-      expoResEarly = null;
-      return await ensureExpoAvailable();
-    } : null,
-  });
   const reloadDescriptors = [dependencyReload.descriptor];
   const reloadExecutors = [dependencyReload.executor];
-  if (dependencyReload.expo) {
-    reloadDescriptors.push(dependencyReload.expo.descriptor);
-    reloadExecutors.push(dependencyReload.expo.executor);
-  }
   const localProducerProvider = resolveEffectiveDbProvider({ serverComponentName, env: serverEnv });
   const remoteProducerServer = remoteServerRuntimeConfig
     ?? resolveRemoteServerRuntimeConfig({ serverComponentName: 'happier-server-light' });
