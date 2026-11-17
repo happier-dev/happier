@@ -76,17 +76,10 @@ export const TeamResourceSessionModelSelectionV2Schema = lazyZodSchema(() => z.s
   ref: TeamResourceSessionModelRefV2Schema,
 }));
 
-export const SessionModelSelectionV2Schema = lazyZodSchema(() => z.union([
-  z.strictObject({
-    ...SessionModelSelectionV2BaseShape,
-    ref: NativeSessionModelRefV2Schema,
-  }),
-  z.strictObject({
-    ...SessionModelSelectionV2BaseShape,
-    ref: AccountProviderConnectionSessionModelRefV2Schema,
-  }),
-  TeamResourceSessionModelSelectionV2Schema,
-]));
+export const SessionModelSelectionV2Schema = lazyZodSchema(() => z.strictObject({
+  ...SessionModelSelectionV2BaseShape,
+  ref: SessionModelRefV2Schema,
+}));
 export type SessionModelSelectionV2 = z.infer<typeof SessionModelSelectionV2Schema>;
 
 /** Current Session launch carrier; retained V1 inputs keep their original source. */
