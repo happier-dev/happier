@@ -4245,6 +4245,7 @@
     "sources/components/workflows/events/WorkflowEventStartedRuns.tsx",
     "sources/components/workflows/events/WorkflowEventsList.tsx",
     "sources/components/workflows/events/WorkflowLiveEventsPane.tsx",
+    "sources/components/workflows/events/useWorkflowEventDraftSeed.ts",
     "sources/components/workflows/events/useWorkflowEventPresentation.ts",
     "sources/components/workflows/events/workflowEventFacts.ts",
     "sources/components/workflows/flow/WorkflowFlowLoopItemSelector.tsx",
