@@ -877,6 +877,55 @@ describe('private installed Environment secret launch transport', () => {
         }, { authentication: 'real' });
     });
 
+    it('admits a managed provider read Action Environment metadata read for its Environment manager (MANAGED-READ-172)', async () => {
+        // The provider-role admission host (createDeploymentTargetRoleAdmissionHost) signs its Environment read
+        // with the admitted action.invoke root. A Neon project list carries no database read admission.
+        const f = await admittedTeamDelivery('plain');
+        const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });
+        // The fixture's controller belongs to a separate custodian; first the manager runs it on their own Machine.
+        const machine = await db.machine.findUniqueOrThrow({ where: { id: f.controller.machineId }, select: { accountId: true } });
+        await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: f.owner.id } });
+        const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const target = { kind: 'machine' as const, machineId: f.controller.machineId };
+        const actionId = 'action.invoke' as const;
+        const service = { pluginId: 'happier.deploy.neon', localId: 'neon' };
+        const read = async (accountId: string, tokenEpoch: number, path = `/v1/deployments/environments/${row.id}?serverId=${serverId}`) => {
+            const credentialRef = { service, accountId: crypto.randomUUID() };
+            const actionInput = { action: { pluginId: 'happier.deploy.neon', localId: 'projects-list-read' }, input: { v: 1, serverId,
+                credentialRef, credentialPrincipal: { kind: 'account', accountId, purpose: { consumer: { pluginId: 'happier.deploy.neon',
+                    localId: 'projects-list-read' }, purpose: 'deploy-manage' }, target: { kind: 'account', account: credentialRef } },
+                providerEnvironment: { kind: 'production' }, environmentId: row.id, expectedRevision: row.revision,
+                providerAccountId: 'org-fixture' } };
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: actionInput };
+            expect(projectDeploymentReadAdmissionV1(actionId, actionInput)).toBeUndefined();
+            const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId, serverIdentityId: serverId,
+                authentication: { kind: 'account', tokenEpoch }, actionId, machineId: target.machineId, target,
+                requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) });
+            const url = path;
+            return { method: 'GET' as const, url, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: f.controller.installationId, requestId: envelope.requestId,
+                    method: 'GET', path: url, privateKey: f.controller.keys.secretKey }),
+            } };
+        };
+        await withAuthenticatedTestApp(app => { registerDeploymentRoutes(app); artifactsRoutes(app); }, async app => {
+            const manager = await app.inject(await read(f.owner.id, f.owner.tokenEpoch));
+            expect(manager.statusCode, manager.body).toBe(200);
+            expect(manager.json()).toMatchObject({ ok: true, environment: { id: row.id } });
+            // The same host then opens the Environment's content Artifact under that root.
+            const content = await app.inject(await read(f.owner.id, f.owner.tokenEpoch, `/v1/artifacts/${row.contentArtifactId}`));
+            expect(content.statusCode, content.body).toBe(200);
+            const foreign = await app.inject(await read(outsider.id, outsider.tokenEpoch).catch(() => null) ?? { method: 'GET', url: '/v1/never' });
+            expect(foreign.statusCode, foreign.body).not.toBe(200);
+            // A foreign custodian that cannot read this Environment itself cannot name it under the requester's root.
+            await db.machine.update({ where: { id: f.controller.machineId }, data: { accountId: machine.accountId } });
+            const custodian = await app.inject(await read(f.owner.id, f.owner.tokenEpoch));
+            expect(custodian.statusCode, custodian.body).toBe(401);
+        }, { authentication: 'real' });
+    });
     it('refuses a person-presented semantic database root after its member left the Source Team', async () => {
         const f = await admittedTeamDelivery('plain', false, 'postgres');
         const row = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.payload.environmentId } });

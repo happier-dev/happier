@@ -2604,6 +2604,35 @@ async function isAdmittedDeclaredDeploymentReadInScope(
     return await isDeploymentReadOperandInAdmittedScopeInTx(db, binding, proof.routeInput ?? proof.body, acceptedEnvironmentId, undefined, effectActionId) === true;
 }
 
+/**
+ * A provider-role admission host (createDeploymentTargetRoleAdmissionHost) reads the Environment a
+ * contributed provider read names (a Neon project list), then opens its content Artifact, with its
+ * admitted contributed root; that root carries no deployment read admission. The Environment and
+ * Artifact routes keep the requester's own access, as for the requester's bearer read. A foreign
+ * custodian (a Team member's Machine) chose the operand itself, so it names only an Environment its own
+ * Account can read, as readDeploymentReferenceHttpPurpose does.
+ */
+async function isContributedRootEnvironmentRead(verified: VerifiedSignedChildRequest,
+    proof: ExternalActionExecutionRequestProof): Promise<boolean> {
+    const binding = verified.binding;
+    if (!isContributedActionRoot(binding.actionId) || verified.effectActionId !== binding.actionId
+        || binding.deploymentReadAdmission !== undefined) return false;
+    let environmentId: string;
+    if (isAccountActionHttpOperation(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, proof)) {
+        const read = DeploymentEnvironmentGetInputV1Schema.safeParse(proof.routeInput);
+        if (!read.success || read.data.serverId !== binding.serverIdentityId) return false;
+        environmentId = read.data.environmentId;
+    } else {
+        const artifactId = readArtifactGetHttpPurpose(proof);
+        const content = artifactId === null ? null : await db.deploymentEnvironment.findFirst({ where: {
+            contentArtifactId: artifactId, deletedAt: null }, select: { id: true } });
+        if (!content) return false;
+        environmentId = content.id;
+    }
+    return binding.custodianAccountId === binding.accountId || (await loadDeploymentEnvironmentInTx(db,
+        binding.custodianAccountId, binding.serverIdentityId, environmentId)).ok;
+}
+
 /** A Discussion operation admits only its resource-codec preparation phases. */
 function isDiscussionActionHttpPreparation(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
@@ -4267,6 +4296,8 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (await isAdmittedDeclaredDeploymentReadInScope(verified.binding, verified.effectActionId, proof)) {
         // ActionSpec transport and the one admitted deployment scope own this
         // read; no per-purpose table entry is needed.
+    } else if (await isContributedRootEnvironmentRead(verified, proof)) {
+        // Environment and Artifact routes retain the requester's access; this opens no content custody.
     } else if ((accountHttpPurpose = await isAccountActionHttpPurpose(verified, { ...proof,
         onRefusal: phase => { accountHttpRefusal = phase; } }, snapshotBatch)) !== null) {
         // A specialized refusal is terminal before generic Session reads.
