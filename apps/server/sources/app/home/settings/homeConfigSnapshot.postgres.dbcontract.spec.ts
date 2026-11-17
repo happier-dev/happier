@@ -1,3 +1,4 @@
+import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 import { randomUUID } from 'node:crypto';
 import type { FastifyRequest, LightMyRequestResponse } from 'fastify';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -59,6 +60,24 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
             return { value, spans, orm };
         } finally { sink.mockRestore(); }
     }
+
+    it('keeps the pglite Home capture in one PostgreSQL statement', async () => {
+        const previous = process.env.HAPPIER_DB_PROVIDER;
+        process.env.HAPPIER_DB_PROVIDER = 'pglite';
+        const reads: string[] = [];
+        const stop = observePrismaRequests(db, { before: request => {
+            if (request.model === undefined && request.action.toLowerCase().includes('queryraw')
+                && JSON.stringify(request.args).includes('HomeSettings')) reads.push(request.action);
+        } });
+        try {
+            expect((await readHomeConfigSnapshot({})).record).toEqual({ revision: 0, values: {}, sealedSecrets: {} });
+            expect(reads).toHaveLength(1);
+        } finally {
+            stop();
+            if (previous === undefined) delete process.env.HAPPIER_DB_PROVIDER;
+            else process.env.HAPPIER_DB_PROVIDER = previous;
+        }
+    });
 
     it('uses one Home data read per real authenticated request, retaining fresh capture and epoch revocation', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });

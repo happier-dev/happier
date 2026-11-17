@@ -20,6 +20,7 @@ import { afterTx, inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { eventRouter } from "@/app/events/eventRouter";
 import { readSignInPolicyGeneration, tagEnvSignInPolicyGeneration } from "@/app/auth/signInPolicyGeneration";
 import { getDbProviderFromEnv } from "@/storage/prisma";
+import { resolveDbSqlDialect } from "@/config/databaseProvider";
 
 import { buildHomeConfigEnv, composeHomeConfigEnv, projectHomeSettings } from "./homeConfigOverlay";
 import { readHomeDeploymentEnv, readStartupHomeEnv, type StoredHomeSettings } from "./startupHomeEnv";
@@ -159,12 +160,12 @@ export type HomeConfigSnapshot = Readonly<{
 export async function readHomeConfigSnapshot(base: ServerConfigEnv = process.env): Promise<HomeConfigSnapshot> {
     // PostgreSQL reads both singletons in one joined statement; other engines read them separately.
     return inReadSnapshot(tx => readHomeConfigSnapshotInTx(tx, base), {
-        singleStatementRead: getDbProviderFromEnv(process.env, "postgres") === "postgres",
+        singleStatementRead: resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres")) === "postgres",
     });
 }
 
 async function readHomeConfigSnapshotInTx(tx: Tx, base: ServerConfigEnv): Promise<HomeConfigSnapshot> {
-    if (getDbProviderFromEnv(process.env, "postgres") === "postgres") {
+    if (resolveDbSqlDialect(getDbProviderFromEnv(process.env, "postgres")) === "postgres") {
         // Neither singleton is required to exist. Seed the join so an empty Home
         // still yields its defaults, with settings and governance from one read.
         // One statement is one snapshot; a composing transaction keeps its own mode and budget.
