@@ -1,13 +1,13 @@
 import type { DiscoveredPetPackageV1 } from '@happier-dev/protocol/pets/daemonRpc';
-import type { PetPackageDiscoveryCacheEntry } from '../discovery/petPackageDiscoveryCache';
+import type { DiscoveredPetPackage } from '../discovery/discoverCodexPets';
 
-function originLabelForSource(source: PetPackageDiscoveryCacheEntry['source']): string {
+function originLabelForSource(source: DiscoveredPetPackage['source']): string {
   if (source.kind === 'happierManagedLocal') return 'This device';
   if ('homeKind' in source && source.homeKind === 'connectedService') return 'Connected Codex home';
   return 'Codex home';
 }
 
-export function toDiscoveredPetPackageDto(entry: PetPackageDiscoveryCacheEntry): DiscoveredPetPackageV1 {
+export function toDiscoveredPetPackageDto(entry: DiscoveredPetPackage): DiscoveredPetPackageV1 {
   return {
     sourceKey: entry.sourceKey,
     kind: entry.source.kind,

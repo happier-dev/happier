@@ -13,8 +13,7 @@ import type { WorkflowRunsDomain } from './domains/workflowRuns';
 import type { AutomationsDomain } from './domains/automations';
 import type { Profile } from '../domains/profiles/profile';
 import type { Purchases } from '../domains/purchases/purchases';
-import type { AccountPetMetadata } from '../domains/pets/accountPetLibraryTypes';
-import type { LocalPetSourceMetadata } from '../domains/pets/localPetSourceTypes';
+import type { PetsDomain } from './domains/pets';
 import type { Settings } from '../domains/settings/settings';
 import type { AuthoringMemoryDomain } from './domains/authoringMemory';
 import type { ArtifactsDomain } from './domains/artifacts';
@@ -238,15 +237,7 @@ export type WorkflowRunsDomainSlice = WorkflowRunsDomain;
 
 export type AutomationsDomainSlice = AutomationsDomain;
 
-export interface PetsDomainSlice {
-    accountPetsById: Record<string, AccountPetMetadata>;
-    localPetSourcesBySourceKey: Record<string, LocalPetSourceMetadata>;
-    applyAccountPets: (pets: AccountPetMetadata[]) => void;
-    upsertAccountPet: (pet: AccountPetMetadata) => void;
-    removeAccountPet: (petId: string) => void;
-    upsertLocalPetSources: (sources: readonly LocalPetSourceMetadata[]) => void;
-    removeLocalPetSource: (sourceKey: string) => void;
-}
+export type PetsDomainSlice = PetsDomain;
 
 export interface ProjectDomainSlice {
     getProject: (projectId: string) => import('../runtime/orchestration/projectManager').Project | null;

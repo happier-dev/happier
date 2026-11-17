@@ -40,6 +40,7 @@ import { PetsMoreSection } from './petsSettingsScreen/PetsMoreSection';
 import {
     buildImportPayload,
     isDetectedPet,
+    isLocalPetImportFailure,
     isManagedLocalPet,
     isRpcMethodNotAvailableError,
     managedPetToLocalPetRow,
@@ -284,7 +285,7 @@ export function PetsSettingsScreen() {
             });
             if (request.signal.aborted || !isExecutionTargetCurrent(target)) return;
             const parsed = DaemonPetImportLocalPackageResponseV1Schema.parse(raw);
-            if ('ok' in parsed && parsed.ok === false) {
+            if (isLocalPetImportFailure(parsed)) {
                 setLocalImportDiagnosticTargetKey(targetKey);
                 setLocalImportDiagnostic({
                     code: typeof parsed.errorCode === 'string' ? parsed.errorCode : 'daemon_import_failed',

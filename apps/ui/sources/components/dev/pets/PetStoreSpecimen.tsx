@@ -302,6 +302,7 @@ function StoreScene() {
             value: query,
             onChangeText: setQuery,
             placeholder: t('settingsPets.store.search'),
+            testID: 'pets.specimen.store.search',
           }}
           band={
             <View style={styles.band}>

@@ -1,5 +1,6 @@
 import type {
     DaemonPetImportLocalPackageRequestV1,
+    DaemonPetImportLocalPackageResponseV1,
     DiscoveredPetPackageV1,
     ImportedLocalPetPackageV1,
 } from '@happier-dev/protocol/pets/daemonRpc';
@@ -40,6 +41,12 @@ export const detectedRowTestId = (petId: string) => `settings-pets-detected-sour
 export const useOnDeviceActionTestId = (petId: string) => `settings-pets-use-on-this-device-${sanitizeTestIdPart(petId)}`;
 export const importToAccountActionTestId = (petId: string) => `settings-pets-import-to-account-${sanitizeTestIdPart(petId)}`;
 export const removeFromDeviceActionTestId = (petId: string) => `settings-pets-remove-from-device-${sanitizeTestIdPart(petId)}`;
+
+export function isLocalPetImportFailure(
+    response: DaemonPetImportLocalPackageResponseV1,
+): response is Extract<DaemonPetImportLocalPackageResponseV1, { ok: false }> {
+    return 'ok' in response && response.ok === false;
+}
 
 export function upsertByKey<T>(rows: readonly T[], next: T, readKey: (row: T) => string): T[] {
     const nextKey = readKey(next);

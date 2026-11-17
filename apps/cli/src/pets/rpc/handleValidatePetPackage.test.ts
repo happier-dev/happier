@@ -92,7 +92,7 @@ describe('handleValidatePetPackage', () => {
     expect(rechecked).toMatchObject({ ok: true, validation: { ok: true }, previewHandle: result.previewHandle });
     const preview = await handleReadPetPreviewAsset({ sourceKey: result.previewHandle.sourceKey }, { discoveryCache });
     expect(preview).toMatchObject({ mediaType: 'image/png', dataBase64: expect.any(String) });
-    expect('dataBase64' in preview && Buffer.from(preview.dataBase64, 'base64').equals(createTransparentPetSpritesheetPng())).toBe(true);
+    expect(typeof preview.dataBase64 === 'string' && Buffer.from(preview.dataBase64, 'base64').equals(createTransparentPetSpritesheetPng())).toBe(true);
     expect(JSON.stringify(preview)).not.toContain(root);
   });
 });

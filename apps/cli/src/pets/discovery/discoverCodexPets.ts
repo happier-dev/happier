@@ -16,9 +16,13 @@ const INTERNAL_VALIDATION_ERROR: PetPackageValidationResultV1 = {
   issues: [{ code: 'internal_error', message: 'Pet package validation failed.' }],
 };
 
+export type DiscoveredPetPackage = PetPackageDiscoveryCacheEntry & Readonly<{
+  source: NonNullable<PetPackageDiscoveryCacheEntry['source']>;
+}>;
+
 export type DiscoverCodexPetsResult = Readonly<{
   ok: true;
-  pets: PetPackageDiscoveryCacheEntry[];
+  pets: DiscoveredPetPackage[];
   diagnostics: PetDiscoveryDiagnosticV1[];
   partial: boolean;
 }>;
@@ -95,7 +99,7 @@ export async function discoverCodexPets(input: Readonly<{
   const nowMs = input.nowMs ?? Date.now;
   const packageValidator = input.validatePackage ?? validatePetPackage;
   const startedAt = nowMs();
-  const pets: PetPackageDiscoveryCacheEntry[] = [];
+  const pets: DiscoveredPetPackage[] = [];
   const diagnostics: PetDiscoveryDiagnosticV1[] = [];
   let partial = false;
 

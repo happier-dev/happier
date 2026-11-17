@@ -25129,7 +25129,7 @@ type EnglishNamespaces0 = {
         readonly title: string; readonly change: string; readonly style: string; readonly body: string; readonly colour: string;
         readonly styles: { readonly dither: string; readonly pixel: string; readonly solid: string; readonly dots: string; readonly planet: string };
         readonly note: string; readonly useDefault: string; readonly surprise: string; readonly shuffle: string; readonly custom: string;
-        readonly surpriseNote: string; readonly customNote: string; readonly customEmptyNote: string; readonly failed: string;
+        readonly surpriseNote: string; readonly customNote: string; readonly customEmptyNote: string;
         readonly pet: string; readonly findPet: string; readonly createPet: string; readonly petAccountNote: (params: { name: string }) => string; readonly petEmptyNote: string;
         readonly wearTitle: (params: { name: string }) => string; readonly wearBody: string; readonly wearNewBot: (params: { name: string }) => string; readonly failed: string;
     } & BotFaceNames;
