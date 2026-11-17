@@ -8,6 +8,8 @@ import type { PluginDeclarativeDataNodeV1 as DtoPluginDeclarativeDataNodeV1 } fr
 import { compilePluginJsonSchema as canonicalCompilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { PluginAvailabilityDescriptor } from './availability.js';
 import type { PluginSecretSourceContributionV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
+import type { PluginThemeContributionV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
+export type { PluginThemeContributionV1 } from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginActionDeclaration, PluginActionExecutionV2 } from './definePlugin.js';
 export type { PluginAvailabilityDescriptor } from './availability.js';
 export { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
@@ -649,6 +651,7 @@ export interface PluginManifest {
     workflows?: readonly PluginWorkflowContributionV1[];
     inputTypes?: readonly PluginInputTypeContributionV1[];
     atmospherePictures?: readonly PluginAtmospherePictureContributionV1[];
+    themes?: readonly PluginThemeContributionV1[];
     registrySources?: readonly PluginRegistrySourceContributionV1[];
     languageServers?: readonly PluginLanguageServerContributionV1[];
     skills?: readonly PluginSkillContributionV1[];
@@ -787,6 +790,7 @@ export type PluginContributes = Readonly<{
   workflows: NonNullable<NonNullable<PluginManifest['contributes']>['workflows']>;
   inputTypes: NonNullable<NonNullable<PluginManifest['contributes']>['inputTypes']>;
   atmospherePictures: NonNullable<NonNullable<PluginManifest['contributes']>['atmospherePictures']>;
+  themes: NonNullable<NonNullable<PluginManifest['contributes']>['themes']>;
   registrySources: NonNullable<NonNullable<PluginManifest['contributes']>['registrySources']>;
   languageServers: NonNullable<NonNullable<PluginManifest['contributes']>['languageServers']>;
   skills: NonNullable<NonNullable<PluginManifest['contributes']>['skills']>;

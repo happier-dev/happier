@@ -12,6 +12,7 @@ export * as healthNoticeAuthoring from './healthNotice.js';
 export { createExternalHealthKind, readEndpointMetadata } from './healthChecks.js';
 export * as accountActionAuthoring from './accountActions.js';
 export { botTemplateAuthoring } from './botTemplates.js';
+export { themeAuthoring } from './themes.js';
 export { sharedSecretSaveAuthoring, saveGeneratedProviderSecret, sendSavedSecretToProvider } from './sharedSecrets.js';
 export { machinePageAuthoring } from './daemon.js';
 

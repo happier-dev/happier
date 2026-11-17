@@ -432,6 +432,7 @@
     "examples/public-authoring/templates/researcher.json",
     "examples/public-authoring/templates/reviewer.json",
     "examples/public-authoring/test/index.test.mjs",
+    "examples/public-authoring/themes.ts",
     "examples/public-authoring/tsconfig.json",
     "examples/public-authoring/ui/reviewClientActions.ts",
     "examples/public-authoring/ui/reviewOpenableContent.ts",

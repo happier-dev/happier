@@ -81,6 +81,7 @@ export type { PluginProjectNativeAdapterContributionV1 } from './manifest.js';
 export type { PluginInputTypeReferenceV1 } from './manifest.js';
 export type { PluginLocalizedStringV2 } from './manifest.js';
 export type { PluginAtmospherePictureContributionV1 } from './manifest.js';
+export type { PluginThemeContributionV1 } from './manifest.js';
 export type { PluginRegistrySourceContributionV1 } from './manifest.js';
 export type { DeploymentTemplateV1, DeploymentTemplateDataV1, DeploymentTemplateSecretProfileV1 } from './manifest.js';
 export type { PluginLanguageServerContributionV1 } from './manifest.js';
