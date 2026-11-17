@@ -1,7 +1,11 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
-import type { OwnServerDataQueryNative } from './dataQuery';
+
+export type OwnServerDataQueryNative = Readonly<{
+    run(input: Readonly<{ argv: readonly string[]; stdin: Uint8Array; env: Readonly<Record<string, string>>;
+        signal: AbortSignal }>): Promise<Readonly<{ exitCode: number; stdout: string; stdoutTruncated: boolean; stderr?: string }>>;
+}>;
 
 const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;

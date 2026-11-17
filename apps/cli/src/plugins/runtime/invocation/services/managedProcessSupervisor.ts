@@ -161,6 +161,9 @@ export type ProjectNativeContainerObservation = Readonly<{
 export type ProjectNativeDockerPort = Readonly<{
     engineId: string;
     engineKind?: NativeDockerEngineFacts['kind'];
+    openStream?(args: readonly string[], signal?: AbortSignal): Promise<Readonly<{
+        stream: import('node:stream').Duplex; close(): Promise<void>;
+    }>>;
     run(args: readonly string[], signal?: AbortSignal, inputBytes?: Uint8Array,
         options?: Readonly<{ allowTruncatedStdout?: true }>): Promise<Readonly<{
             exitCode: number; stdout: string; stderr?: string; stdoutTruncated?: boolean;

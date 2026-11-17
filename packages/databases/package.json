@@ -7,6 +7,21 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
+    "./connection/postgresql": {
+      "happier-source": "./src/connection/postgresql.ts",
+      "types": "./dist/connection/postgresql.d.ts",
+      "default": "./dist/connection/postgresql.js"
+    },
+    "./connection/mysql": {
+      "happier-source": "./src/connection/mysql.ts",
+      "types": "./dist/connection/mysql.d.ts",
+      "default": "./dist/connection/mysql.js"
+    },
+    "./capabilities": {
+      "happier-source": "./src/capabilities.ts",
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
+    },
     ".": {
       "happier-source": "./src/index.ts",
       "types": "./dist/index.d.ts",
@@ -47,11 +62,14 @@
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "devDependencies": {
+    "@types/pg": "8.23.1",
     "@types/node": ">=20",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   },
   "dependencies": {
+    "pg": "8.23.1",
+    "mysql2": "3.24.6",
     "@happier-dev/database-protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"
   }

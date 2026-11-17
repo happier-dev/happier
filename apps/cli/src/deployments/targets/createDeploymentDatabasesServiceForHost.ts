@@ -2,6 +2,9 @@ import { PluginError, type DeploymentDatabasesServiceV1, type DeploymentTargetPr
     type DeploymentTargetDatabaseRuntimeV1 } from '@happier-dev/plugin-sdk';
 import type { DatabaseCompletenessV1, DatabaseDescriptorV1, DatabaseManagedDeploymentTargetV1,
     DatabaseOperationClassV1, DatabaseTargetsListInputV1 } from '@happier-dev/database-protocol';
+import { builtinDatabaseCapabilities } from '@happier-dev/databases/capabilities';
+import { openOwnServerDatabaseConnectionForHost } from './ownServer/databaseConnection';
+import { readOwnServerDataServiceDeploymentForHost, resolveOwnServerDataQueryDefinitionForHost } from './ownServer/dataQueryScope';
 import { decideDatabaseAccessV1, resolveDatabaseRequesterKindV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases';
 import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -19,7 +22,7 @@ import { readCurrentDeploymentTargetLinkForHost, readDeploymentTargetEnvironment
 import { createManagedDataRoleSecretReaderForHost } from '../secrets/createManagedDataRoleSecretReaderForHost';
 
 type AttachmentHost = Pick<DeploymentTargetRoleAdmissionHost, 'serverId' | 'machineId' | 'installationId'
-    | 'credentialOwnerAccountId' | 'credentials' | 'serverHttpBaseUrl' | 'readEnvironment'> & Readonly<{
+    | 'credentialOwnerAccountId' | 'credentials' | 'serverHttpBaseUrl' | 'readEnvironment' | 'readReceipt' | 'assertCurrent'> & Readonly<{
         readConnectedAccountPurposes?(): Readonly<{ owner: ConnectedAccountPurposeBindingOwner }> | null;
     }>;
 
@@ -44,7 +47,7 @@ type EnvironmentScope = Extract<DatabaseTargetsListInputV1['scope'], { kind: 'en
 export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabasesHostInput): DeploymentDatabasesServiceV1 {
     const context = input.seed.approvalContext;
     const readEnvironment = async (scope: EnvironmentScope, targetLinkId?: string,
-        options: Readonly<{ includeDataTargetLinkContent?: true }> = {}) => {
+        options: Readonly<{ includeDataTargetLinkContent?: true; nativeMember?: true }> = {}) => {
         if (!context) return refuse('deployment_target_role_unavailable');
         const captured = { ...context, signal: input.seed.signal };
         const host = await input.readHost(captured);
@@ -52,7 +55,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         const detail = await readDeploymentTargetEnvironmentForHost({ ...scope.environment, context: captured,
             ...(targetLinkId ? { targetLinkId } : {}),
             ...(options.includeDataTargetLinkContent ? { includeDataTargetLinkContent: true } : {}) }, host);
-        if (detail.environment.controllerMachineId !== host.machineId || !host.installationId) return refuse('machine_unavailable');
+        if ((!options.nativeMember && detail.environment.controllerMachineId !== host.machineId) || !host.installationId) return refuse('machine_unavailable');
         const placement: DatabaseDescriptorV1['placement'] = { serverId: host.serverId, accountId: host.credentialOwnerAccountId,
             machineId: host.machineId, installationId: host.installationId };
         return { host, detail, context: captured, placement };
@@ -159,11 +162,28 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
     return Object.freeze({
         async listTargets(request) {
             if (request.scope.kind !== 'environment') return { targets: [], completeness: { complete: true } };
-            const admission = await readEnvironment(request.scope, undefined, { includeDataTargetLinkContent: true });
+            const admission = await readEnvironment(request.scope, undefined, { includeDataTargetLinkContent: true, nativeMember: true });
             const summary = access(admission, 'read');
             const targets: DatabaseDescriptorV1[] = [];
             let completeness: DatabaseCompletenessV1 = { complete: true };
+            const runtime = admission.detail.targetLinks.find(row => row.targetLink.id === admission.detail.environment.runtimeTargetLinkId)?.targetLink;
+            if (runtime?.targetKind === 'ownServer' && runtime.activeDeploymentId && admission.detail.content.template?.data?.length) {
+                const { basis } = await readOwnServerDataServiceDeploymentForHost(admission.host, {
+                    environmentId: admission.detail.environment.id, targetLinkId: runtime.id, deploymentId: runtime.activeDeploymentId,
+                    machineId: admission.host.machineId, installationId: admission.placement.installationId,
+                }, admission.context, admission.detail);
+                for (const data of admission.detail.content.template?.data ?? []) {
+                    if (!basis.services.includes(data.service)) continue;
+                    if (data.engine !== 'postgres' && data.engine !== 'postgresql' && data.engine !== 'mysql') continue;
+                    const definition = resolveOwnServerDataQueryDefinitionForHost(admission.detail.content, data.service, basis.bindings);
+                    targets.push({ target: { kind: 'deployment_service', environment: request.scope.environment,
+                        deploymentId: runtime.activeDeploymentId, targetLinkId: runtime.id, serviceId: data.service, database: definition.database },
+                        label: definition.database, engine: definition.engine, origin: { label: admission.detail.content.name },
+                        capabilities: builtinDatabaseCapabilities(definition.engine), access: summary, placement: admission.placement });
+                }
+            }
             for (const candidate of admission.detail.targetLinks) {
+                if (admission.detail.environment.controllerMachineId !== admission.host.machineId) continue;
                 if (candidate.targetLink.role !== 'data' || candidate.targetLink.deletedAtMs !== undefined
                     || candidate.targetLink.detachedAtMs !== undefined || candidate.targetLink.source.kind !== 'plugin') continue;
                 const source = candidate.targetLink.source.contribution;
@@ -186,6 +206,17 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         },
         async resolve(request, operation) {
             const target = request.target;
+            if (target.kind === 'deployment_service') {
+                const admission = await readEnvironment({ kind: 'environment', environment: target.environment }, target.targetLinkId, { nativeMember: true });
+                const summary = access(admission, operation);
+                if (operation === 'write') return refuse('write_role_setup_required');
+                const connection = await openOwnServerDatabaseConnectionForHost({ host: admission.host, target,
+                    environment: admission.detail, installationId: admission.placement.installationId,
+                    context: admission.context, signal: input.seed.signal, operationId: input.seed.correlationId });
+                return { descriptor: { target, engine: connection.engine, label: target.database,
+                    origin: { label: admission.detail.content.name }, capabilities: builtinDatabaseCapabilities(connection.engine),
+                    access: summary, placement: admission.placement }, connection };
+            }
             if (target.kind !== 'managed_deployment') return refuse('target_mismatch');
             const admission = await readEnvironment({ kind: 'environment', environment: target.environment }, target.targetLinkId);
             const selected = selectLink(admission, target.targetLinkId);

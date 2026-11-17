@@ -16,6 +16,7 @@ import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/deployment-neon
 describe('managed database attachment at the deployment owner', () => {
     it('lists the selected native service from the active deployment without provider credentials', async () => {
         const stored = createDeploymentTargetRoleAdmissionFixture('inspect');
+        stored.state.environment.environment.controllerMachineId = 'other-controller';
         const native = stored.state.environment.targetLinks[0]!;
         native.targetLink.targetKind = 'ownServer';
         native.targetLink.source = { kind: 'host', id: 'own-server' };
@@ -33,11 +34,10 @@ describe('managed database attachment at the deployment owner', () => {
         const { createDeploymentReceiptDetailV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
         const receipt = createDeploymentReceiptDetailV1();
         const { OwnServerDeploymentInputBasisV1Schema } = await import('@happier-dev/deployment-protocol');
-        const basis = OwnServerDeploymentInputBasisV1Schema.parse({ v: 1, environmentId: environmentId(), environmentRevision: 1,
+        const basis = OwnServerDeploymentInputBasisV1Schema.parse({ v: 1, environmentId: stored.state.environment.environment.id, environmentRevision: 1,
             targetLinkId: 'target-link', targetLinkRevision: 1, sourceIntent: receipt.content.sourceIntent, manifestFingerprint: 'manifest',
             configInputDigests: [], physicalProjectName: 'native', toolVersion: '2.40.1', services: ['db'], profiles: [], bindings: active,
             images: receipt.content.images, ownServer: stored.state.environment.content.ownServer, members: [{ machineId: 'controller', installationId: 'installation-controller' }] });
-        function environmentId() { return stored.state.environment.environment.id; }
         stored.state.receipt = { ...receipt, content: { ...original, ownServer: { ...receipt.content.ownServer!,
             approvedInputBasis: { ...basis, bindings: active, services: ['db'] } } } };
         const owners = createProductionPluginInvocationServiceOwners({ loggerSink: { write() {} } });
@@ -54,6 +54,11 @@ describe('managed database attachment at the deployment owner', () => {
                 target: { kind: 'deployment_service', environment, deploymentId: 'deployment-a', targetLinkId: 'target-link', serviceId: 'db', database: 'deployed' },
                 engine: 'postgresql', access: { canRead: true, canWrite: false },
             }], completeness: { complete: true } });
+            stored.state.environment.environment.dataEditorMode = 'managers';
+            stored.state.environment.environment.capabilities.editData = true;
+            await expect(service.resolve({ operation: 'describe', target: { kind: 'deployment_service', environment,
+                deploymentId: 'deployment-a', targetLinkId: 'target-link', serviceId: 'db', database: 'deployed' } }, 'write'))
+                .rejects.toMatchObject({ code: 'write_role_setup_required' });
         } finally { await owners.dispose(); }
     });
 

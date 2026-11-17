@@ -5,7 +5,7 @@ import { configuration } from '@/configuration';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
-import { assertOwnServerDataQuerySupportedEngine } from './dataQuery';
+import { assertOwnServerDataQuerySupportedEngine } from './dataRoleGuard';
 
 const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
@@ -41,23 +41,37 @@ export type OwnServerDataServiceSelector = Readonly<{
     machineId: string; installationId: string; service: string;
 }>;
 
-/** Exact indexed mounted-service acquisition, shared by reviewed role bootstrap
- * and query. Native labels and neighboring services never supply authority. */
-export async function acquireOwnServerDataServiceForHost(host: OwnServerDataServiceHost,
-    selector: OwnServerDataServiceSelector, context: ActionExecutorContext,
-    preparedEnvironment?: Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'> & Readonly<{ targetLinks: readonly Pick<DeploymentEnvironmentDetailV1['targetLinks'][number], 'targetLink'>[] }>) {
-    const environment = preparedEnvironment ?? await host.readEnvironment({ environmentId: selector.environmentId,
-        targetLinkId: selector.targetLinkId, context });
+type DataEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'content'> & Readonly<{
+    targetLinks: readonly Pick<DeploymentEnvironmentDetailV1['targetLinks'][number], 'targetLink'>[];
+}>;
+
+/** Discovery and execution consume the same active deployment identity. */
+export async function readOwnServerDataServiceDeploymentForHost(host: OwnServerDataServiceHost,
+    selector: Omit<OwnServerDataServiceSelector, 'expectedRevision' | 'service'>,
+    context: ActionExecutorContext, environment: DataEnvironment) {
     const link = environment.targetLinks.find(item => item.targetLink.id === selector.targetLinkId)?.targetLink;
-    if (environment.environment.id !== selector.environmentId || environment.environment.revision !== selector.expectedRevision
+    if (environment.environment.id !== selector.environmentId
         || environment.environment.runtimeTargetLinkId !== selector.targetLinkId || !link || link.targetKind !== 'ownServer'
         || link.activeDeploymentId !== selector.deploymentId
         || !link.members.some(member => member.machineId === selector.machineId && member.installationId === selector.installationId)) return refuse('target_mismatch');
     const receipt = await host.readReceipt({ environmentId: selector.environmentId, deploymentId: selector.deploymentId, context });
     const basis = receipt.content.ownServer?.approvedInputBasis;
     if (receipt.deployment.id !== selector.deploymentId || receipt.deployment.environmentId !== selector.environmentId
-        || receipt.deployment.targetLinkId !== selector.targetLinkId || !basis || !basis.services.includes(selector.service)
+        || receipt.deployment.targetLinkId !== selector.targetLinkId || !basis
         || !basis.members.some(member => member.machineId === selector.machineId && member.installationId === selector.installationId)) return refuse('target_mismatch');
+    return { receipt, basis };
+}
+
+/** Exact indexed mounted-service acquisition, shared by reviewed role bootstrap
+ * and query. Native labels and neighboring services never supply authority. */
+export async function acquireOwnServerDataServiceForHost(host: OwnServerDataServiceHost,
+    selector: OwnServerDataServiceSelector, context: ActionExecutorContext,
+    preparedEnvironment?: DataEnvironment) {
+    const environment = preparedEnvironment ?? await host.readEnvironment({ environmentId: selector.environmentId,
+        targetLinkId: selector.targetLinkId, context });
+    if (environment.environment.revision !== selector.expectedRevision) return refuse('target_mismatch');
+    const { basis } = await readOwnServerDataServiceDeploymentForHost(host, selector, context, environment);
+    if (!basis.services.includes(selector.service)) return refuse('target_mismatch');
     const definition = resolveOwnServerDataQueryDefinitionForHost(environment.content, selector.service, basis.bindings);
     const use = environment.content.bindings.find(binding => binding.purpose === 'dataRole'
         && 'service' in binding && binding.service === selector.service && binding.role === 'readOnlyPassword');

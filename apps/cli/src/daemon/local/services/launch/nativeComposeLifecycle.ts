@@ -36,6 +36,7 @@ import { isDeploymentSourceUnchangedManifestInput } from '@/deployments/targets/
 import { readNativeComposeEngine, assertNativeComposeAvailable, type NativeComposeEngineFacts } from './nativeComposeEngine';
 import { createNativeComposeGenerationProof, nativeComposeCompletedServices } from './nativeComposeGeneration';
 import { observeDockerEngine, openDockerEngineEvents, type DockerEngineEventSource } from './dockerEngineObservation';
+import { openNativeDockerStream } from './nativeDockerStream';
 import { createManagedServiceAccountingRead } from '@/plugins/runtime/invocation/services/managedServiceAccountingRead';
 import { invalidateProcessLaunchDiscovery } from '@/processes/launchNotification';
 import { createNativeComposeImagePreparation, NativeComposeBakeFailure, type NativeComposePrepareImagesOptions, type NativeComposeBuildDescription,
@@ -582,9 +583,13 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
             const current = await readNativeComposeEngine({ io: input.io, command: launch.command, prefix,
                 cwd: launch.cwd, env, signal: options?.signal });
             if (current.id !== engineId) throw new PluginError({ code: 'service_unavailable', message: 'The native generation engine changed' });
-            return { engineId, engineKind: current.kind, run: (args, signal, inputBytes, options) =>
-                run(args, signal, { ...(inputBytes ? { stdin: inputBytes } : {}),
-                    ...(options?.allowTruncatedStdout ? { allowTruncatedStdout: true } : {}) }) };
+            const streamLaunch = launch;
+            const streamPrefix = prefix;
+            return { engineId, engineKind: current.kind,
+                openStream: (args, signal) => openNativeDockerStream(streamLaunch, streamPrefix, args, signal ?? options?.signal),
+                run: (args, signal, inputBytes, options) =>
+                    run(args, signal, { ...(inputBytes ? { stdin: inputBytes } : {}),
+                        ...(options?.allowTruncatedStdout ? { allowTruncatedStdout: true } : {}) }) };
         },
         nativeInstances() {
             if (!engineId) return undefined;
@@ -1285,6 +1290,11 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             const tuple = authorizedPrefixes.get(launch)!;
             const cwd = launch.cwd!;
             return { engineId: request.render.engineId, dispose: async () => { await launch.release(); },
+                openStream: (args, signal) => {
+                    const effectiveSignal = signal ?? request.signal;
+                    assertOpen(effectiveSignal);
+                    return openNativeDockerStream({ ...launch, env: tuple.env }, tuple.prefix, args, effectiveSignal);
+                },
                 run: async (args, signal, inputBytes, options) => {
                     const effectiveSignal = signal ?? request.signal;
                     assertOpen(effectiveSignal);

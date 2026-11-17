@@ -96,7 +96,7 @@ describe('read-role binding producer', () => {
                         async nativeDocker() { return { engineId: 'fixture-docker', async run(args, _signal, bytes) {
                             expect(args).toEqual(['exec', '-i', 'exact-database-container', 'sh', '-s']);
                             const script = Buffer.from(bytes ?? []).toString(); scripts.push(script);
-                            return { exitCode: 0, stdout: script.includes('CREATE ROLE') ? '' : 'happier_role_ready\n1\n', stdoutTruncated: false };
+                            return { exitCode: 0, stdout: script.includes('CREATE ROLE') ? '' : '1\n', stdoutTruncated: false };
                         } }; },
                     } } } });
                 const receipt = createDeploymentReceiptDetailV1();

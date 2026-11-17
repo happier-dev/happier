@@ -2250,10 +2250,19 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../plugin-sdk
+      mysql2:
+        specifier: 3.24.6
+        version: 3.24.6(@types/node@22.20.5)
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
     devDependencies:
       '@types/node':
         specifier: '>=20'
         version: 22.20.5
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
       typescript:
         specifier: ^5.9.2
         version: 5.9.3

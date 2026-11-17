@@ -2,6 +2,8 @@
 
 Development package for shared SQL dialect rules used by deployments, the database workbench, insights and capture. Engine modules own statement boundaries, compilation, decoding and literal masking. Transports own connections and transactions; Actions own read/write admission.
 
+PostgreSQL and MySQL connections live in the nonoptional `./connection/postgresql` and `./connection/mysql` exports. Native deployments and the optional workbench reuse those drivers, transaction and cancellation semantics; each demand or standalone Action owns its connection lifetime. Native deployments select their existing observed endpoint and dedicated credential through the deployment role owner.
+
 PostgreSQL dump validation retains the incremental psql scanner used by native deployment restore. Query mode permits one SQL result and excludes client commands, COPY, binary and incomplete input.
 
 Browser and native Console clients use `databaseStatementRangesV1(sql, engine, options?)` from `@happier-dev/databases/statements`. It projects the same native lexers without importing drivers or Node crypto; ranges use JavaScript string offsets and omit statement separators.

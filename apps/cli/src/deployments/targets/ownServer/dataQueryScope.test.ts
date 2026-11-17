@@ -75,10 +75,21 @@ describe('reviewed database read-role setup', () => {
             if (request.argv[0] === 'sh') return { exitCode: 0,
                 stdout: sql.includes('SELECT IF(EXISTS') ? 'absent\n' : sql.includes('SELECT @happier_query_authorized') ? '1\n' : '', stdoutTruncated: false };
             rolePassword = request.env.MYSQL_PWD;
-            return { exitCode: 0, stdout: '<resultset><row><field name="happier_role_ready">1</field></row></resultset>', stdoutTruncated: false };
+            return { exitCode: 0, stdout: '1\n', stdoutTruncated: false };
         } };
         await expect(bootstrapOwnServerReadOnlyDataRoleForHost(input, native)).resolves.toBeUndefined();
         expect(rolePassword).toBe(input.password);
+    });
+
+    it.each(['postgresql', 'mysql'] as const)('requires the dedicated %s login to return its readiness value', async engine => {
+        const native: OwnServerDataQueryNative = { async run(request) {
+            const sql = Buffer.from(request.stdin).toString();
+            if (request.argv[0] === 'sh') return { exitCode: 0, stdout: sql.includes('SELECT IF(EXISTS') ? 'absent\n'
+                : sql.includes('SELECT @happier_query_authorized') ? '1\n' : '', stdoutTruncated: false };
+            return { exitCode: 0, stdout: '', stdoutTruncated: false };
+        } };
+        await expect(bootstrapOwnServerReadOnlyDataRoleForHost({ ...input, engine }, native))
+            .rejects.toMatchObject({ code: 'read_role_unavailable' });
     });
 
     it('keeps a new role with inherited server privileges locked when setup refuses', async () => {

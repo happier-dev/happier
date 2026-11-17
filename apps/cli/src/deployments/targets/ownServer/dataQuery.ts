@@ -1,16 +1,14 @@
 import { admitPsqlInput } from './postgresqlInput';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { postgresqlReadOnlyRoleGuardSql } from '@happier-dev/deployment-protocol';
+import { assertOwnServerDataQuerySupportedEngine, ownServerMysqlNativeTextLiteral, type OwnServerDataEngine } from './dataRoleGuard';
 import type { DeploymentDataQueryInputV1, DeploymentDataQuerySuccessV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
     measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '@happier-dev/protocol/actions/externalActionLimits';
 
-export type OwnServerDataQueryNative = Readonly<{
-    run(input: Readonly<{ argv: readonly string[]; stdin: Uint8Array; env: Readonly<Record<string, string>>;
-        signal: AbortSignal }>): Promise<Readonly<{ exitCode: number; stdout: string; stdoutTruncated: boolean; stderr?: string }>>;
-}>;
+import type { OwnServerDataQueryNative } from './dataQueryNative';
+export type { OwnServerDataQueryNative } from './dataQueryNative';
 export type OwnServerReadOnlyDataQueryInput = Readonly<{
-    engine: 'postgresql' | 'mysql' | 'mariadb'; database: string; sql: string;
+    engine: OwnServerDataEngine; database: string; sql: string;
     port?: number; params: Readonly<DeploymentDataQueryInputV1['params']>; password: string; signal: AbortSignal;
 }>;
 export type OwnServerReadOnlyDataQueryResult = Readonly<Omit<DeploymentDataQuerySuccessV1, 'ok'>>;
@@ -18,39 +16,7 @@ function refuse(code: string, reason: string): never {
     throw new PluginError({ code, message: 'The read-only database query is unavailable', details: { reason } });
 }
 
-/** MariaDB's implicit PUBLIC authority has not been proven by bootstrap. */
-export function assertOwnServerDataQuerySupportedEngine(engine: OwnServerReadOnlyDataQueryInput['engine']):
-    asserts engine is 'postgresql' | 'mysql' {
-    if (engine === 'mariadb') refuse('unsupported_action', 'mariadb_read_role_authority_unproven');
-}
-
-const mysqlText = (value: string) => `CONVERT(X'${Buffer.from(value, 'utf8').toString('hex')}' USING utf8mb4)`;
-
-/** Reviewed bootstrap owns role authority. Ordinary query sessions consume its
- * admitted dedicated-login credential and never obtain administrator access. */
-export function ownServerReadOnlyRoleGuardSql(engine: 'postgresql' | 'mysql',
-    options: Readonly<{ mysqlGrantee?: string; database?: string }> = {}): string {
-    if (engine === 'postgresql') return postgresqlReadOnlyRoleGuardSql;
-    const grantee = mysqlText(options.mysqlGrantee ?? "'happier_ro'@'127.0.0.1'");
-    const database = options.database ? mysqlText(options.database) : 'DATABASE()';
-    const roles = "NOT EXISTS (SELECT 1 FROM mysql.role_edges WHERE TO_USER = 'happier_ro' AND TO_HOST = '127.0.0.1')\n"
-                + "  AND NOT EXISTS (SELECT 1 FROM mysql.global_grants WHERE USER = 'happier_ro' AND HOST = '127.0.0.1')\n"
-                + "  AND @@mandatory_roles = ''";
-    // Routine visibility includes built-in sys routines and is not an EXECUTE
-    // grant. Reviewed administrator adoption checks the account's grant table.
-    const routines = "NOT EXISTS (SELECT 1 FROM mysql.procs_priv WHERE User = 'happier_ro' AND Host = '127.0.0.1')";
-    return `SET @happier_query_authorized = (
-  ${roles} AND ${routines}
-  AND NOT EXISTS (SELECT 1 FROM information_schema.USER_PRIVILEGES
-    WHERE GRANTEE = ${grantee} AND (PRIVILEGE_TYPE <> 'USAGE' OR IS_GRANTABLE <> 'NO'))
-  AND NOT EXISTS (SELECT 1 FROM information_schema.SCHEMA_PRIVILEGES WHERE GRANTEE = ${grantee}
-    AND (TABLE_SCHEMA <> ${database} OR PRIVILEGE_TYPE NOT IN ('SELECT', 'SHOW VIEW') OR IS_GRANTABLE <> 'NO'))
-  AND (SELECT COUNT(DISTINCT PRIVILEGE_TYPE) FROM information_schema.SCHEMA_PRIVILEGES
-    WHERE GRANTEE = ${grantee} AND TABLE_SCHEMA = ${database} AND PRIVILEGE_TYPE IN ('SELECT', 'SHOW VIEW')) = 2
-  AND NOT EXISTS (SELECT 1 FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE = ${grantee})
-  AND NOT EXISTS (SELECT 1 FROM information_schema.COLUMN_PRIVILEGES WHERE GRANTEE = ${grantee})
-);`;
-}
+export { assertOwnServerDataQuerySupportedEngine, ownServerReadOnlyRoleGuardSql } from './dataRoleGuard';
 
 export { admitPsqlInput } from './postgresqlInput';
 
@@ -188,8 +154,8 @@ export async function executeOwnServerReadOnlyDataQuery(input: OwnServerReadOnly
     // The engine's COPY CSV serializer quotes empty text and leaves NULL empty.
     // psql --csv itself emits both as an unquoted empty field, losing the type.
     const sql = postgres ? `BEGIN READ ONLY;\nCOPY (\n${statement}\n) TO STDOUT WITH (FORMAT CSV, HEADER TRUE);\nROLLBACK;\n`
-        : `${params.map(([name, value]) => `SET @${name} = ${mysqlText(value)};`).join('\n')}\n`
-            + `SET @happier_query_sql = ${mysqlText(input.sql)};\n`
+        : `${params.map(([name, value]) => `SET @${name} = ${ownServerMysqlNativeTextLiteral(value)};`).join('\n')}\n`
+            + `SET @happier_query_sql = ${ownServerMysqlNativeTextLiteral(input.sql)};\n`
             + 'START TRANSACTION READ ONLY;\nPREPARE happier_query FROM @happier_query_sql;\nEXECUTE happier_query;\nROLLBACK;\n';
     const env: Readonly<Record<string, string>> = postgres ? { PGPASSWORD: input.password, PGHOSTADDR: '',
         PGCLIENTENCODING: 'UTF8', PGOPTIONS: '-c default_transaction_read_only=on -c standard_conforming_strings=on', LC_ALL: 'C' }

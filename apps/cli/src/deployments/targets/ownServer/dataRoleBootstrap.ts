@@ -1,14 +1,15 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { OwnServerDataQueryNative, OwnServerReadOnlyDataQueryInput } from './dataQuery';
-import { assertOwnServerDataQuerySupportedEngine, executeOwnServerReadOnlyDataQuery, ownServerReadOnlyRoleGuardSql } from './dataQuery';
+import type { OwnServerDataQueryNative } from './dataQueryNative';
+import { assertOwnServerDataQuerySupportedEngine, ownServerReadOnlyRoleGuardSql, type OwnServerDataEngine } from './dataRoleGuard';
 
 const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 const mysqlIdentifier = (value: string) => `\`${value.replaceAll('`', '``')}\``;
 
 /** Called only from the reviewed bindings writer. Administrator credentials stay
  * inside the selected container; queries never obtain this setup command. */
-export async function bootstrapOwnServerReadOnlyDataRoleForHost(input: Pick<OwnServerReadOnlyDataQueryInput,
-    'engine' | 'database' | 'port' | 'password' | 'signal'>, native: OwnServerDataQueryNative): Promise<void> {
+export async function bootstrapOwnServerReadOnlyDataRoleForHost(input: Readonly<{
+    engine: OwnServerDataEngine; database: string; port?: number; password: string; signal: AbortSignal;
+}>, native: OwnServerDataQueryNative): Promise<void> {
     const engine = input.engine;
     assertOwnServerDataQuerySupportedEngine(engine);
     const passwordBase64 = Buffer.from(input.password).toString('base64');
@@ -68,5 +69,22 @@ ${exists === 'absent' ? `GRANT SELECT, SHOW VIEW ON ${mysqlIdentifier(input.data
             await run(`ALTER USER ${account} ACCOUNT UNLOCK;`);
         }
     }
-    await executeOwnServerReadOnlyDataQuery({ ...input, sql: 'SELECT 1 AS happier_role_ready', params: {} }, native);
+    // This fixed readiness statement is bootstrap's login proof, not a public
+    // query transport. Keep its output independent of legacy result mappers.
+    const postgres = engine === 'postgresql';
+    const ready = await native.run({
+        argv: postgres ? ['psql', '-X', '-q', '-At', '--no-password', '--host=127.0.0.1', '--username=happier_ro',
+            `--dbname=dbname='${input.database.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`,
+            '--port', String(input.port ?? 5432), '-v', 'ON_ERROR_STOP=1', '-f', '-']
+            : ['mysql', '--no-defaults', '--binary-mode', '--batch', '--raw', '--skip-column-names',
+                '--protocol=TCP', '--host=127.0.0.1', '--user=happier_ro', `--database=${input.database}`,
+                `--port=${input.port ?? 3306}`],
+        stdin: Buffer.from(postgres ? `BEGIN READ ONLY;\n${ownServerReadOnlyRoleGuardSql('postgresql')}\nSELECT 1;\nROLLBACK;\n`
+            : 'START TRANSACTION READ ONLY;\nSELECT 1;\nROLLBACK;\n'),
+        env: postgres ? { PGPASSWORD: input.password, PGHOSTADDR: '', PGCLIENTENCODING: 'UTF8',
+            PGOPTIONS: '-c default_transaction_read_only=on -c standard_conforming_strings=on', LC_ALL: 'C' }
+            : { MYSQL_PWD: input.password, LC_ALL: 'C' },
+        signal: input.signal,
+    });
+    if (ready.exitCode !== 0 || ready.stdoutTruncated || ready.stdout.trim() !== '1') return refuse('read_role_unavailable');
 }
