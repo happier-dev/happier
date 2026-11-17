@@ -364,9 +364,9 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   const seriesAccent = props.theme.colors.dataAccent ?? props.theme.colors.accent;
   const color = (index: number) => props.series[index]?.color
     ?? resolveHappierSeriesRampColor(seriesAccent, props.theme.colors.surface, resolveHappierSeriesRampStep(index, props.series.length));
-  // A live or dense history is one image (plan 20 §6.7): it names its range, its newest reading in the caller's
+  // A live or dense history names its range and its newest reading in the caller's
   // units ("As of 7:35 AM: Mean 12%", past any trailing gap) and, below, its threshold. The plot control, the bucket
-  // controls and the exact-values table keep every exact point; a short chart still names each of its buckets.
+  // controls and the exact-values table keep every exact point; interactive plots expose a labelled group.
   const summarised = (props.liveMotion !== undefined || (denseLine && !nativeInline)) && geometry.buckets.length > 0;
   let latest: HappierSeriesBucket | null = null;
   if (summarised) {
@@ -457,7 +457,8 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     renderControl={(interaction, onKeyboardUse) => <HappierPressable
     testID={props.testID ? `${props.testID}-history-control` : undefined}
     controlRef={control => { historyControlRef.current = control; }}
-    accessibilityLabel={describe(activeBucket)} accessibilityPositionInSet={activeIndex + 1} accessibilitySetSize={geometry.buckets.length}
+    accessibilityLabel={describe(activeBucket)}
+    {...(nativeTarget === undefined ? {} : { accessibilityPositionInSet: activeIndex + 1, accessibilitySetSize: geometry.buckets.length })}
     accessibilityActions={nativeTarget === undefined ? undefined : [{ name: 'increment' }, { name: 'decrement' }]}
     onAccessibilityAction={nativeTarget === undefined ? undefined : ({ nativeEvent }) => {
       onKeyboardUse?.();
@@ -710,7 +711,8 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   </View>;
   return <View testID={props.testID} accessible={nativeInline && !props.decorative ? true : undefined}
     aria-hidden={props.decorative} importantForAccessibility={props.decorative ? 'no-hide-descendants' : undefined}
-    accessibilityRole={!props.decorative && (threshold || props.mirrored || summarised) ? 'image' : undefined}
+    role={!props.decorative && !nativeInline ? 'group' : undefined}
+    accessibilityRole={!props.decorative && nativeInline ? 'image' : undefined}
     accessibilityLabel={props.decorative ? undefined : `${props.label}${latest ? imageName(latest) : exact ? `: ${exact}` : ''}${threshold ? `; ${threshold.label} ${format(threshold.value)}` : ''}${reference ? `; ${reference.label} ${reference.value}` : ''}${barRanges.map(range => `; ${range.label} ${range.lower}–${range.upper}`).join('')}`}
     onLayout={(event: HappierLayoutChangeEvent) => {
       const visibleWidth = readHappierVisibleLayoutWidth(event.nativeEvent.layout.width);

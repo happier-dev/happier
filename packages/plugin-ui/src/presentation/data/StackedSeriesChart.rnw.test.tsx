@@ -28,6 +28,16 @@ function animates(element: Element): boolean {
 }
 
 describe('neutral series dataset', () => {
+  it.each(['line', 'bar'] as const)('keeps short %s chart controls outside image semantics', variant => {
+    const mount = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="Observed" width={320}
+      series={series} variant={variant} size="tile" threshold={{ value: 3, label: 'Warning' }} testID="short" />);
+    try {
+      expect(find(mount.container, 'short').getAttribute('role')).toBe('group');
+      const controls = mount.container.querySelectorAll('[role="button"]');
+      expect(controls.length).toBeGreaterThan(0);
+      for (const control of controls) expect(control.closest('[role="img"]')).toBeNull();
+    } finally { mount.unmount(); }
+  });
   it('uses the pointer position for dense history datum precision instead of the first sample', () => {
     const drawInk = vi.fn((visual: ReactNode) => visual);
     const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID, renderTrigger) =>
@@ -165,7 +175,7 @@ describe('neutral series dataset', () => {
       expect(find(mount.container, 'dense-readout').textContent).toContain('Used · 0');
     } finally { mount.unmount(); }
   }, 180_000);
-  it('names one dense history image by its range, its latest reading in the caller\'s units and its threshold', () => {
+  it('names one dense history group by its range, its latest reading in the caller\'s units and its threshold', () => {
     // A range that has only begun: its start is a gap, and the newest sample is before its trailing gap.
     const points = Array.from({ length: 400 }, (_, x) => ({ id: `p${x}`, x, y: x === 0 || x === 399 ? null : x === 398 ? 41.5 : x / 10 }));
     const mount = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="Memory used" width={160}
@@ -173,7 +183,7 @@ describe('neutral series dataset', () => {
       threshold={{ value: 60, label: 'Critical', tone: 'error' }} variant="line" size="tile" testID="named" />);
     try {
       const image = find(mount.container, 'named');
-      expect(image.getAttribute('role')).toBe('img');
+      expect(image.getAttribute('role')).toBe('group');
       const name = image.getAttribute('aria-label')!;
       expect(name).toContain('time 0');
       expect(name).toContain('time 399');
@@ -183,6 +193,9 @@ describe('neutral series dataset', () => {
       expect(name).not.toContain('Used —');
       // The plot control keeps the exact sample it reads.
       const control = find(mount.container, 'named-history-control');
+      expect(control.closest('[role="img"]')).toBeNull();
+      expect(control.hasAttribute('aria-posinset')).toBe(false);
+      expect(control.hasAttribute('aria-setsize')).toBe(false);
       act(() => control.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })));
       expect(control.getAttribute('aria-label')).toContain('Used —');
       expect(image.getAttribute('aria-label')).toBe(name);
@@ -192,12 +205,12 @@ describe('neutral series dataset', () => {
       expect(control.getAttribute('aria-label')).toContain('Used 41.5 GB');
     } finally { mount.unmount(); }
   });
-  it('names a dense history image without a threshold as an image too', () => {
+  it('names a dense history group without a threshold', () => {
     const points = Array.from({ length: 400 }, (_, x) => ({ id: `p${x}`, x, y: x % 7 }));
     const mount = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="CPU busy" width={160}
       series={[{ id: 'mean', label: 'Mean', points }]} valueFormatter={value => `${value}%`} variant="area" size="tile" testID="plain" />);
     try {
-      expect(find(mount.container, 'plain').getAttribute('role')).toBe('img');
+      expect(find(mount.container, 'plain').getAttribute('role')).toBe('group');
       expect(find(mount.container, 'plain').getAttribute('aria-label')).toContain(`Mean ${399 % 7}%`);
     } finally { mount.unmount(); }
   });
@@ -455,7 +468,7 @@ describe('neutral series dataset', () => {
       reducedMotion={reducedMotion} {...{ liveMotion: { sampleKey, stepPx: 10, durationMs: 100, active } }} />;
     const mount = mountThroughReactNativeWeb(render(1, false));
     try {
-      expect(find(mount.container, 'live').getAttribute('role')).toBe('img');
+      expect(find(mount.container, 'live').getAttribute('role')).toBe('group');
       expect(find(mount.container, 'live').getAttribute('aria-label')).toContain('CPU 40');
       expect(find(mount.container, 'live').getAttribute('aria-label')).not.toContain('CPU 20');
       await mount.render(render(2, false));

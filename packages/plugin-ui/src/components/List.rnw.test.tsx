@@ -28,6 +28,25 @@ function listTree(context: ReturnType<typeof createSurfaceContext>, children: Re
 }
 
 describe('plugin-ui List item presentation', () => {
+  it.each([false, true])('owns list membership for custom and standard rows (page: %s)', page => {
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(
+      <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+        <List accessibilityLabel="Inventory" items={[{ id: 'custom' }, { id: 'standard' }]}
+          keyForItem={item => item.id}
+          {...(page ? { pageLayout: { estimatedRowHeight: 48 } } : {})}
+          renderItem={item => item.id === 'custom' ? <Text>Custom inventory row</Text> : <List.Item title="Standard row" />} />
+      </PluginUiProvider>,
+    );
+    try {
+      const list = mount.container.querySelector('[role="list"]')!;
+      const items = list.querySelectorAll('[role="listitem"]');
+      expect(items).toHaveLength(2);
+      expect(items[0]!.textContent).toContain('Custom inventory row');
+      expect(items[1]!.textContent).toContain('Standard row');
+      expect(list.querySelector('[role="listitem"] [role="listitem"]')).toBeNull();
+    } finally { mount.unmount(); }
+  });
   it('keeps the staged Move and additional composer operation in the same row menu', async () => {
     const move = vi.fn();
     const mention = vi.fn();

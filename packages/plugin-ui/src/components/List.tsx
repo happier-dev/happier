@@ -70,6 +70,7 @@ import {
 import {
   HappierList,
   HappierListItem,
+  HappierListItemMembershipContext,
   HappierListSection,
   HappierRowActionsReveal,
   resolveHappierPlainListTextInset,
@@ -774,7 +775,11 @@ class VirtualizedListRow<Item> extends PureComponent<
 
     const followed = props.followed;
     return selection === null ? (
-      <HappierListRowFollowedContext.Provider value={followed}>{row}</HappierListRowFollowedContext.Provider>
+      <HappierListRowFollowedContext.Provider value={followed}>
+        {Platform.OS === 'web' ? <View role="listitem" style={{ display: 'contents' }}>
+          <HappierListItemMembershipContext.Provider value>{row}</HappierListItemMembershipContext.Provider>
+        </View> : row}
+      </HappierListRowFollowedContext.Provider>
     ) : (
       <HappierListRowFollowedContext.Provider value={followed}>
       <HappierListRowOpenContext.Provider value={props.open}>

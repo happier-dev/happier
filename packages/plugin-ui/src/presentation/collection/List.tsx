@@ -1,4 +1,4 @@
-import { useCallback, useContext, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useId, useMemo, useState, type ReactElement, type ReactNode } from 'react';
 import { HappierBodyEdgeContext } from '../layout/columnEdge.js';
 import { useHappierPrecisePointer } from '../interaction/precisePointer.js';
 import { Dimensions, Platform, View, type TextStyle, type ViewStyle } from 'react-native';
@@ -76,6 +76,9 @@ import { ListGridRow } from './ListGridRow.js';
  * their callers. Letting either a plugin or the core reimplement the row
  * semantics would create a second owner.
  */
+/** The web List row supplies membership for arbitrary authored content. */
+export const HappierListItemMembershipContext = createContext(false);
+
 export type HappierListProps = Readonly<{
   children?: ReactNode;
   /** Names the collection when its visible surrounding heading is insufficient. */
@@ -383,7 +386,7 @@ export function HappierList({
       testID={testID}
       style={[listStyle, style]}
     >
-      {children}
+      <HappierListItemMembershipContext.Provider value={false}>{children}</HappierListItemMembershipContext.Provider>
     </View>
   );
 }
@@ -693,6 +696,7 @@ export function HappierListItem({
   accessibilityRowIndex,
   accessibilityRowCount,
 }: HappierListItemProps) {
+  const parentOwnsMembership = useContext(HappierListItemMembershipContext);
   // A middle ellipsis on the web is two runs (the web draws only a tail one); native uses the platform's mode.
   const titleMiddleRequested = titleEllipsizeMode === 'middle' && typeof title === 'string' && titleContent === undefined;
   const titleMiddle = titleMiddleRequested && Platform.OS === 'web' ? splitForWebMiddleEllipsis(title) : null;
@@ -1319,7 +1323,7 @@ export function HappierListItem({
               columnSpan: 1,
               heading: false,
             },
-      } : {}) : { role: 'listitem' })}
+      } : {}) : parentOwnsMembership ? {} : { role: 'listitem' })}
       {...(suppressListItemRole && isGridRow && treeRow !== null ? {
         'aria-level': treeRow.level,
         ...(treeRow.expanded === undefined ? {} : { 'aria-expanded': treeRow.expanded }),
