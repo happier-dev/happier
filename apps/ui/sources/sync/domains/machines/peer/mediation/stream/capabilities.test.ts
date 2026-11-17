@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 describe('live-stream viewer capabilities', () => {
+    it('negotiates an H.264-only source on a phone with the embedded web renderer', async () => {
+        const { resolveLiveStreamViewerCapabilities } = await import('./capabilities');
+        const { resolveMachineLiveStreamCodecPreference } = await import('./codecs');
+        const viewer = resolveLiveStreamViewerCapabilities({
+            platform: 'native',
+            renderers: { mjpeg: true, webcodecs: true, mse: false, wasm: false, nativeVideo: false },
+        });
+        expect(viewer.supportedCodecs).toContain('h264.avcc');
+        expect(viewer.renderers).toContain('webcodecs');
+        expect(resolveMachineLiveStreamCodecPreference({ sourceCodecs: ['h264.avcc'], viewerCodecs: viewer.supportedCodecs })).toMatchObject({ ok: true, codecId: 'h264.avcc' });
+    });
     it('advertises WebCodecs H.264 support when the product renderer is available', async () => {
         const mod = await import('./capabilities').catch((error: unknown) => ({ importError: error }));
 

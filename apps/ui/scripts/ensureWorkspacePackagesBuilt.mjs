@@ -317,6 +317,8 @@ export async function ensureUiWorkspacePackagesBuilt({
     packageRoot: resolve(repoRoot, 'packages/plugin-sdk'),
     outputFile: resolve(uiPackageDir, 'sources/components/plugins/hostedWeb/guestBootstrap.generated.ts'),
   });
+  const { buildStreamWebViewBundle } = await import('../tools/stream/buildStreamWebViewBundle.mjs');
+  await buildStreamWebViewBundle({ expoAppDir: uiPackageDir });
   if (source) {
     if (publicationMode !== 'live') throw new Error('Source Expo preparation cannot publish package artifacts');
     // Source worker bundles and the atmosphere worklet are prepared with the

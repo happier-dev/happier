@@ -13,6 +13,7 @@ import {
 } from '@/sync/domains/machines/peer/mediation/stream/webCodecs';
 
 import { MjpegImageRenderer } from './MjpegImageRenderer';
+import { addedAvccChunks } from './avccBatches';
 
 export type AvccWebCodecsRendererProps = Readonly<{
     /** Complete carrier payloads; each may contain multiple AVCC envelopes. */
@@ -21,6 +22,10 @@ export type AvccWebCodecsRendererProps = Readonly<{
     onDiagnostic?: (diagnostic: LiveStreamPlayerDiagnostic) => void;
     onDecoded?: () => void;
     onReconfigured?: (event: LiveStreamPlayerRenderEvent) => void;
+    /** Reopen the existing stream after the embedded decoder process is lost. */
+    onRecoveryRequired?: () => void;
+    /** Decoder and page load failures settle through the stream owner's Retry flow. */
+    onFailure?: (diagnostic: LiveStreamPlayerDiagnostic) => void;
     style?: StyleProp<ViewStyle>;
     surface?: React.ReactNode;
     testID: string;
@@ -89,8 +94,7 @@ export function AvccWebCodecsRenderer(props: AvccWebCodecsRendererProps): React.
         }
 
         const previous = previousChunksRef.current;
-        const isAppend = previous.length <= chunks.length && previous.every((chunk, index) => chunks[index] === chunk);
-        const chunksToProcess = isAppend ? chunks.slice(previous.length) : chunks;
+        const chunksToProcess = addedAvccChunks(previous, chunks);
         // Relay updates are complete payload batches, not a cumulative array.
         previousChunksRef.current = chunks;
         if (chunksToProcess.length === 0) return;

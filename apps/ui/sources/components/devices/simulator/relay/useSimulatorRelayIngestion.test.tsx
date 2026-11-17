@@ -150,6 +150,23 @@ function baseInput(transport: SimulatorRelayTransport): UseSimulatorRelayIngesti
 }
 
 describe('useSimulatorRelayIngestion', () => {
+    it('opens an H264-only phone stream and reopens it through the existing retry after decoder process loss', async () => {
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        const fake = createFakeTransport();
+        let opens = 0;
+        const hook = await renderHook(() => useSimulatorRelayIngestion({
+            ...baseInput(fake.transport), sourceCodecs: ['h264.avcc'],
+            openRelay: async ({ streamId }) => { opens += 1; return { ok: true, streamId }; },
+        }));
+        expect(opens).toBe(1);
+        expect(hook.getCurrent().playerStatesBySimulatorId[SIMULATOR_ID]?.selectedCodec).toBe('h264.avcc');
+        await act(async () => hook.getCurrent().playerStatesBySimulatorId[SIMULATOR_ID]?.onDecoderFailure?.({ reasonCode: 'webcodecs_webview_load_failed' }));
+        expect(hook.getCurrent().playerStatesBySimulatorId[SIMULATOR_ID]).toMatchObject({ phase: 'error', diagnostic: { reasonCode: 'webcodecs_webview_load_failed' } });
+        await act(async () => hook.getCurrent().playerStatesBySimulatorId[SIMULATOR_ID]?.onDecoderRecoveryRequired?.());
+        expect(opens).toBe(2);
+        await hook.unmount();
+        expect(fake.listenerCount()).toBe(0);
+    });
     afterEach(() => {
         vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals();
         if (platformOsDescriptor) Object.defineProperty(Platform, 'OS', platformOsDescriptor);

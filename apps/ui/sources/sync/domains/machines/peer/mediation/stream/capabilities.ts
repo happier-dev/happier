@@ -44,7 +44,7 @@ export function resolveLiveStreamViewerCapabilities(input: Readonly<{
     }
 
     let hasH264CapabilityLayer = false;
-    if ((input.platform === 'web' || input.platform === 'desktop') && input.renderers.webcodecs) {
+    if (input.renderers.webcodecs) {
         renderers.push('webcodecs');
         hasH264CapabilityLayer = true;
     }
@@ -67,7 +67,7 @@ export function resolveLiveStreamViewerCapabilities(input: Readonly<{
     if ((input.platform === 'native' || input.platform === 'desktop') && input.renderers.nativeVideo) {
         renderers.push('native-video');
         hasH264CapabilityLayer = true;
-    } else if (input.platform === 'native') {
+    } else if (input.platform === 'native' && !input.renderers.webcodecs) {
         degradedReasonCodes.push('native_video_unavailable');
     }
 

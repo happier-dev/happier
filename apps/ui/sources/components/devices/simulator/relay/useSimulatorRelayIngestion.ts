@@ -9,6 +9,7 @@ import { openMachineLiveStreamRelayClient, renewMachineLiveStreamRelayClient, ty
 import { resolveLiveStreamViewerCapabilities, type LiveStreamViewerCapabilities } from '@/sync/domains/machines/peer/mediation/stream/capabilities';
 import { resolveMachineLiveStreamCodecPreference } from '@/sync/domains/machines/peer/mediation/stream/codecs';
 import { resolveBrowserLiveStreamWebCodecsSupport } from '@/sync/domains/machines/peer/mediation/stream/webCodecs';
+import type { LiveStreamPlayerDiagnostic } from '@/sync/domains/machines/peer/mediation/stream/diagnostics';
 import type { SimulatorPreviewStreamState } from '@/sync/domains/devices/simulator/types';
 import {
     createSimulatorRelayStreamState,
@@ -109,14 +110,13 @@ function isWebPlatform(): boolean {
 }
 
 function resolveDefaultViewerCapabilities(): LiveStreamViewerCapabilities {
-    // Advertise the same platform support that the actual decoder requires.
-    // A browser SDK polyfill does not make the native surface a WebCodecs renderer.
+    // Native renders through the bundled web decoder inside react-native-webview.
     const web = isWebPlatform();
     return resolveLiveStreamViewerCapabilities({
         platform: web ? 'web' : 'native',
         renderers: {
             mjpeg: true,
-            webcodecs: web && resolveBrowserLiveStreamWebCodecsSupport().ok,
+            webcodecs: !web || resolveBrowserLiveStreamWebCodecsSupport().ok,
             mse: false,
             wasm: false,
             nativeVideo: false,
@@ -364,12 +364,15 @@ export function useSimulatorRelayIngestion(
     }, [attempt, enabled, transport, serverId, sessionId, simulatorId, sourceMachineId, targetMachineId, streamId, streamFamily, sourceId, sourceOccurrenceId]);
 
     const onFrameDecoded = React.useCallback(() => dispatch({ type: 'frame_decoded', streamId }), [streamId]);
+    const onDecoderFailure = React.useCallback((diagnostic: LiveStreamPlayerDiagnostic) => {
+        dispatch({ type: 'error', reasonCode: diagnostic.reasonCode });
+    }, []);
     const playerStatesBySimulatorId = React.useMemo<UseSimulatorRelayIngestionResult['playerStatesBySimulatorId']>(() => {
         // A suspended subscriber retains its exact stream's last frame. Never
         // project that frame under a different source while the surface is hidden.
         if (!retainPicture) return EMPTY_PLAYER_STATES;
-        return { [simulatorId]: { ...toSimulatorPreviewStreamState(state), onFrameDecoded } };
-    }, [retainPicture, streamIdentityKey, simulatorId, state, onFrameDecoded]);
+        return { [simulatorId]: { ...toSimulatorPreviewStreamState(state), onFrameDecoded, onDecoderRecoveryRequired: retry, onDecoderFailure } };
+    }, [retainPicture, streamIdentityKey, simulatorId, state, onFrameDecoded, retry, onDecoderFailure]);
 
     const negotiatedCaps = enabled && authorization?.identityKey === streamIdentityKey ? authorization.caps : null;
     return React.useMemo(() => ({ playerStatesBySimulatorId, retry, negotiatedCaps }), [playerStatesBySimulatorId, retry, negotiatedCaps]);
