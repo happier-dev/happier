@@ -10,6 +10,7 @@ import { readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 
 const platformState = vi.hoisted(() => ({
     os: 'ios' as 'android' | 'ios' | 'web',
+    theme: undefined as import('@/theme').Theme | undefined,
 }));
 
 // Lays the pressable out at its drawn size (how the shared owner learns the drawn box), then reads the hit area it publishes.
@@ -47,6 +48,18 @@ vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
     } });
 });
 
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    const unistyles = await createUnistylesMock();
+    return {
+        ...unistyles,
+        useUnistyles: () => {
+            const current = unistyles.useUnistyles();
+            return { ...current, theme: platformState.theme ?? current.theme };
+        },
+    };
+});
+
 import { IconButton } from '../buttons/IconButton';
 import { AppPresentationPlatformProvider } from './AppPresentationPlatformProvider';
 
@@ -72,9 +85,48 @@ function resolvePressableStyle(style: unknown): Record<string, unknown> {
 
 afterEach(() => {
     platformState.os = 'ios';
+    platformState.theme = undefined;
 });
 
 describe('AppPresentationPlatformProvider', () => {
+    it('applies active native theme CSS to shared controls and repaints without remounting', async () => {
+        const { HappierPressable } = await import('@happier-dev/plugin-ui/presentation');
+        const { useHappierUiTheme } = await import('@happier-dev/plugin-ui/environment');
+        const { prepareThemeCss } = await import('@/theme/css/prepareThemeCss');
+        const { lightTheme } = await import('@/theme');
+        const nativeTheme = (radius: number) => ({
+            ...lightTheme,
+            surfaces: prepareThemeCss(`[data-surface="button"][data-part="root"] { border-radius: ${radius}px; }`).light,
+        });
+        const selectedTheme = nativeTheme(29);
+        platformState.theme = selectedTheme;
+        let mounts = 0;
+        let themeRenders = 0;
+        function NativeControl() {
+            useHappierUiTheme();
+            themeRenders += 1;
+            React.useEffect(() => { mounts += 1; }, []);
+            return <HappierPressable testID="native-css-button" themeSurface={{ surface: 'button', part: 'root' }}
+                accessibilityRole="button" accessibilityLabel="Apply theme" onPress={() => undefined} />;
+        }
+        const control = <NativeControl />;
+        const render = () => <AppPresentationPlatformProvider>{control}</AppPresentationPlatformProvider>;
+        const screen = await renderScreen(render());
+        const radius = () => resolvePressableStyle(screen.findByTestId('native-css-button')?.props.style).borderTopLeftRadius;
+        expect(radius()).toBe(29);
+
+        const rendersBeforeEqualTheme = themeRenders;
+        platformState.theme = { ...selectedTheme };
+        await screen.update(render());
+        expect(themeRenders).toBe(rendersBeforeEqualTheme);
+
+        platformState.theme = nativeTheme(43);
+        await screen.update(render());
+        expect(radius()).toBe(43);
+        expect(mounts).toBe(1);
+        expect(themeRenders).toBe(rendersBeforeEqualTheme + 1);
+    });
+
     for (const [platform, minimum] of [
         ['android', 48],
         ['ios', 44],

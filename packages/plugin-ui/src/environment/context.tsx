@@ -87,6 +87,12 @@ export type HappierUiPlatformProviderProps = Readonly<{
   children?: ReactNode;
 }>;
 
+/** Supply a prepared theme without subscribing the host root to unrelated capabilities. */
+export type HappierUiThemeProviderProps = Readonly<{
+  theme: PluginUiThemeV1;
+  children?: ReactNode;
+}>;
+
 function requireEnvironmentCapability<T>(value: T | null, capability: string): T {
   if (value === null) {
     throw new Error(
@@ -136,6 +142,14 @@ export function HappierUiPlatformProvider({
   );
 }
 
+export function HappierUiThemeProvider({ theme, children }: HappierUiThemeProviderProps) {
+  return (
+    <HappierUiThemeContext.Provider value={theme}>
+      {children}
+    </HappierUiThemeContext.Provider>
+  );
+}
+
 /**
  * Install the environment.
  *
@@ -176,7 +190,7 @@ export function HappierUiEnvironmentProvider(props: HappierUiEnvironmentProvider
 
   return (
     <HappierUiAnimationActivityProviderInternal active={presentationActive}>
-      <HappierUiThemeContext.Provider value={themeValue}>
+      <HappierUiThemeProvider theme={themeValue}>
         <HappierUiLocalizationContext.Provider value={localizationValue}>
           <HappierUiAccessibilityContext.Provider value={accessibilityValue}>
             <HappierUiPlatformProvider platform={platform}>
@@ -186,7 +200,7 @@ export function HappierUiEnvironmentProvider(props: HappierUiEnvironmentProvider
             </HappierUiPlatformProvider>
           </HappierUiAccessibilityContext.Provider>
         </HappierUiLocalizationContext.Provider>
-      </HappierUiThemeContext.Provider>
+      </HappierUiThemeProvider>
     </HappierUiAnimationActivityProviderInternal>
   );
 }

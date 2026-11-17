@@ -2,6 +2,7 @@ export {
   HappierUiEnvironmentProvider,
   HappierUiPaletteProvider,
   HappierUiPlatformProvider,
+  HappierUiThemeProvider,
   HappierUiTypographyProvider,
   resolveHappierUiPalette,
   resolveHappierUiPresentationTheme,
@@ -18,6 +19,7 @@ export {
   useOptionalHappierUiTypography,
   type HappierUiEnvironmentProviderProps,
   type HappierUiPlatformProviderProps,
+  type HappierUiThemeProviderProps,
 } from './context.js';
 export type {
   HappierUiAccessibility,

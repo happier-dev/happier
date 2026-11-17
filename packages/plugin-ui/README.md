@@ -459,6 +459,20 @@ inside a mounted artifact. `HappierUiEnvironmentProvider` is for an isolated
 test or a complete standalone RN/RNW environment where the caller actually owns
 every supplied fact.
 
+A renderer host that owns only a prepared theme can install that capability
+without supplying unrelated environment facts:
+
+```tsx
+import { HappierUiThemeProvider } from '@happier-dev/plugin-ui/environment';
+
+<HappierUiThemeProvider theme={preparedTheme}>
+  {children}
+</HappierUiThemeProvider>
+```
+
+Happier core supplies its canonical theme projection once above app boot.
+Mounted plugin environments shadow that theme with their own host snapshot.
+
 ### Semantic testkit
 
 For semantic RN/RNW author-surface tests, pair the public SDK fixture with the
