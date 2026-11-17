@@ -8,6 +8,8 @@ import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import { isGuardRestoration } from '@/components/machines/guard/activity/guardActivityPresentation';
 import { MachineActivityRow } from '@/components/machines/guard/activity/MachineActivityRow';
 import { useGuardWayBack } from '@/components/machines/guard/activity/useGuardWayBack';
+import { readGuardActivityFreshness } from '@/components/machines/guard/useGuardFreshness';
+import type { MachineFreshness } from '@/components/machines/page/MachineFreshnessChip';
 import { Text } from '@/components/ui/text/Text';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Typography } from '@/constants/Typography';
@@ -33,6 +35,7 @@ import {
   useMachineWidgetTarget,
   useOpenMachinePage,
   type MachineWidgetBodyProps,
+  type MachineWidgetFreshness,
   type MachineWidgetTarget,
 } from './machineWidgetKit';
 
@@ -52,6 +55,7 @@ type MachineActivityReading = Readonly<{
   status: MachineGuardStatus;
   entries: readonly MachineGuardActivityRowV1[] | null;
   offline: boolean;
+  freshness: MachineFreshness;
   guardOn: boolean | null;
   name: string;
   recipient: boolean;
@@ -84,6 +88,7 @@ export function MachineActivityWidget(props: MachineWidgetBodyProps) {
       const fact = facts[index];
       if (!fact) return;
       byMachine[activity.machineId] = { status: activity.status, entries: activity.list?.entries ?? null, offline: activity.offline,
+        freshness: readGuardActivityFreshness(activity),
         guardOn: fact.guardOn, name: fact.name, recipient: fact.recipient, retry: activity.retry };
     });
     return byMachine;
@@ -198,15 +203,21 @@ function ActivityContent(
         ? { serverId: props.serverId, machineId: props.machineIds[0] }
         : null),
   );
-  useMachineWidgetFreshness(
-    single?.offline ? { kind: 'offline' } : { kind: 'live' },
-    props.testID,
-  );
   const known = props.machineIds
     .map((id) => readings[id])
     .filter(
       (reading): reading is MachineActivityReading => reading !== undefined,
     );
+  const answered = known.filter((reading) => reading.entries !== null);
+  const heldTimes = known.flatMap(({ freshness }) =>
+    freshness.kind === 'stale' || freshness.kind === 'offline' ? [freshness.at] : []);
+  const heldAt = heldTimes.length > 0 ? Math.min(...heldTimes) : null;
+  const freshness: MachineWidgetFreshness = single?.offline
+    ? { kind: 'offline', ...(heldAt !== null ? { heldAt } : {}) }
+    : heldAt !== null ? { kind: 'stale', at: heldAt } : { kind: 'live' };
+  useMachineWidgetFreshness(freshness, props.testID,
+    !props.target && answered.length < props.machineIds.length
+      ? t('machines.widgets.body.activity.coverage', { answered: answered.length, total: props.machineIds.length }) : null);
   const receipts = React.useMemo(() => {
     const all: ActivityReceipt[] = [];
     for (const machineId of props.machineIds) {
@@ -231,7 +242,6 @@ function ActivityContent(
         testID={props.testID}
       />
     );
-  const answered = known.filter((reading) => reading.entries !== null);
   if (answered.length === 0) {
     if (single?.offline)
       return (

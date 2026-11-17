@@ -86,7 +86,7 @@ it('heads the table with the fleet in one count line and offers the rollout only
   // The page's count line says the fleet once, under its purpose.
   expect(
     textOf(screen.findByTestId('machines.updates.header:count')),
-  ).toContain(t('machineFleetUpdates.statusWith', { count: 2, total: 3 }));
+  ).toContain(t('machineFleetUpdates.statusPartial', { count: 2, checked: 2, total: 3 }));
 
   await act(async () => {
     pressable('machines.updates.review').props.onPress();

@@ -14,6 +14,7 @@ import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineActivityForTest, publishMachineInventoryForTest as publishTruthMachineInventory } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
@@ -513,6 +514,58 @@ describe('MachineProcessesTab', () => {
     } });
     await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-processes-older')).not.toBeNull()); });
     expect(screen.findByTestId('machine-processes-error')).toBeNull();
+  });
+
+  it('shows checking until the first process answer arrives, then becomes live', async () => {
+    await import('@/sync/ops/actions/defaultActionExecutor');
+    let answer!: (value: MachineProcessesAnswerV1) => void;
+    const pending = new Promise<MachineProcessesAnswerV1>((resolve) => { answer = resolve; });
+    const { screen, serverId } = await mount({ waitForRows: false, reply: (rpc) =>
+      rpc.method === RPC_METHODS.MACHINES_PROCESSES_LIST ? pending : undefined });
+    const current = machine();
+    publishMachineActivityForTest([current]);
+    await act(async () => { await publishTruthMachineInventory({ serverId, accountId: 'owner' }, [current]); });
+    expect(screen.findByTestId('machine-processes-checking')).not.toBeNull();
+    expect(screen.findByTestId('machine-processes-live')).toBeNull();
+    await act(async () => { answer(createProcessesAnswer()); });
+    await vi.waitFor(() => expect(screen.findByTestId('machine-processes-live')).not.toBeNull());
+    expect(screen.findByTestId('machine-processes-checking')).toBeNull();
+  });
+
+  it.each([null, 0])('keeps unknown owner meters distinct from measured zero (%s)', async (value) => {
+    await import('@/sync/ops/actions/defaultActionExecutor');
+    const answer = createProcessesAnswer();
+    const owner = answer.owners[0]!;
+    if (value === null) delete owner.totals.cpuPercent;
+    else owner.totals.cpuPercent = value;
+    owner.totals.memoryBytes = value;
+    const { screen, serverId } = await mount({ answer, params: { id: 'processes', page: 'owner', owner: owner.rowId }, waitForRows: false });
+    const current = machine();
+    publishMachineActivityForTest([current]);
+    await act(async () => { await publishTruthMachineInventory({ serverId, accountId: 'owner' }, [current]); });
+    const descriptions = () => screen.root.findAll(node => typeof node.props.accessibilityLabel === 'string')
+      .map(node => node.props.accessibilityLabel as string);
+    await act(async () => { await vi.waitFor(() => expect(descriptions().some(label => label.startsWith(`${t('machineProcesses.tiles.cpu')} `) && label.includes(' / '))).toBe(true)); });
+    const cpu = descriptions().find(label => label.startsWith(`${t('machineProcesses.tiles.cpu')} `) && label.includes(' / '));
+    const memory = descriptions().find(label => label.startsWith(`${t('machineProcesses.tiles.memory')} `) && label.includes(' / '));
+    expect(cpu).toContain(value === null ? 'Unknown / ' : ', 0 / ');
+    expect(memory).toContain(value === null ? 'Unknown / ' : ', 0 / ');
+  });
+
+  it.each([
+    ['error', new Error('request failed')],
+    ['older', new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND)],
+  ])('does not claim live or checking after the first read settles as %s', async (state, error) => {
+    await import('@/sync/ops/actions/defaultActionExecutor');
+    const { screen, serverId } = await mount({ waitForRows: false, reply: (rpc) => {
+      if (rpc.method === RPC_METHODS.MACHINES_PROCESSES_LIST) throw error;
+    } });
+    const current = machine();
+    publishMachineActivityForTest([current]);
+    await act(async () => { await publishTruthMachineInventory({ serverId, accountId: 'owner' }, [current]); });
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId(`machine-processes-${state}`)).not.toBeNull()); });
+    expect(screen.findByTestId('machine-processes-live')).toBeNull();
+    expect(screen.findByTestId('machine-processes-checking')).toBeNull();
   });
 
   it('lists each owner with its own totals, opens one in place, and closes on Happier in total', async () => {

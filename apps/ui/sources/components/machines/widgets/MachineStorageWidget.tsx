@@ -57,13 +57,13 @@ import {
   MachineWidgetSectionLabel,
   MachineWidgetState,
   MachineWidgetTwoColumns,
+  readStorageWidgetFreshness,
   useMachineWidgetFreshness,
   useMachineWidgetMachine,
   useMachineWidgetSize,
   useMachineWidgetTarget,
   useOpenMachinePage,
   type MachineWidgetBodyProps,
-  type MachineWidgetFreshness,
   type MachineWidgetTarget,
 } from './machineWidgetKit';
 
@@ -155,12 +155,7 @@ function MachineStorageWidgetBody(
     offline: storage.offline,
     recipient: facts.recipient,
   });
-  const freshness: MachineWidgetFreshness = storage.offline
-    ? { kind: 'offline' }
-    : tabView.kind === 'ready' && tabView.stale
-      ? { kind: 'stale', at: tabView.summary.sizedAt }
-      : { kind: 'live' };
-  useMachineWidgetFreshness(freshness, props.testID);
+  useMachineWidgetFreshness(readStorageWidgetFreshness(tabView), props.testID);
   if (facts.online === null) return <MachineWidgetState kind="unavailable" title={t('common.unknown')} testID={props.testID} />;
   if (tabView.kind === 'not_reported')
     return (

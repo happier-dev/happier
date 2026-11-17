@@ -20,7 +20,7 @@ import { useStorageCollect } from '@/components/machines/storage/StorageCollectT
 import { StorageItemRow, StorageVerdictPill } from '@/components/machines/storage/StorageItemRow';
 import { describeStorageVerdict, storageReasonLabel, storageEvidenceLabel } from '@/components/machines/storage/storageReasonPresentation';
 import { StorageVolumeRow } from '@/components/machines/storage/StorageVolumes';
-import { selectStorageHeadlineVolume } from '@/components/machines/storage/storageViewModel';
+import { selectStorageHeadlineVolume, selectStorageTabView } from '@/components/machines/storage/storageViewModel';
 import {
   VitalsSubLine,
   VitalsValue,
@@ -46,6 +46,7 @@ import {
   MachineWidgetSectionLabel,
   MachineWidgetState,
   MachineWidgetTwoColumns,
+  readStorageWidgetFreshness,
   useMachineWidgetFreshness,
   useMachineWidgetMachine,
   useMachineWidgetSize,
@@ -577,7 +578,10 @@ function MachineSuggestionFallback(
   const storage = useMachineStorageSummary(props.target);
   const open = useOpenMachinePage(props.target);
   useMachineWidgetFreshness(
-    storage.offline ? { kind: 'offline' } : { kind: 'live' },
+    readStorageWidgetFreshness(selectStorageTabView({
+      status: storage.status, enabled: storage.enabled, summary: storage.summary,
+      offline: storage.offline, recipient: facts.recipient,
+    })),
     props.testID,
   );
   const items = storage.summary?.suggestionsSafeTop ?? storage.summary?.suggestionsTop ?? EMPTY_ITEMS;

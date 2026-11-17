@@ -10981,6 +10981,7 @@ const machineDetailPageTranslations = { ru: translated({
             description: "Пакеты операционной системы, ожидающие на каждой машине этого Home. Обновления приложения, CLI и демона Happier остаются в Настройки → Обновления.",
             reviewRollout: "Проверить развёртывание…",
             statusWith: ({ count, total }: { count: number; total: number }) => `Машин с обновлениями: ${count} из ${total}`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} с обновлениями · проверено ${checked} из ${total}`,
             security: ({ count }: { count: number }) => `безопасности: ${count}`,
             all: ({ count }: { count: number }) => `всего: ${count}`,
             restarts: ({ count }: { count: number }) => `нужно перезапусков: ${count}`,

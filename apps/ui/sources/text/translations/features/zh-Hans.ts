@@ -10850,6 +10850,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
             description: "此 Home 中每台机器上等待安装的操作系统软件包。Happier 自身的应用、CLI 和守护进程更新仍在 设置 → 更新 中。",
             reviewRollout: "检查推送…",
             statusWith: ({ count, total }: { count: number; total: number }) => `${total} 台机器中有 ${count} 台有更新`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} 台有更新 · 已检查 ${total} 台中的 ${checked} 台`,
             security: ({ count }: { count: number }) => `安全 ${count}`,
             all: ({ count }: { count: number }) => `共 ${count}`,
             restarts: ({ count }: { count: number }) => `需要重启 ${count}`,

@@ -14,6 +14,7 @@ const time =
 const en = {
   common: {
     unknownMachine: 'This machine',
+    lastKnown: 'Last known',
     offline: 'Offline',
     loading: 'Reading this machine',
     lastSeen: time('Last seen ', '.'),
@@ -222,6 +223,7 @@ const en = {
   },
   activity: {
     allMachines: 'All machines',
+    coverage: ({ answered, total }: { answered: number; total: number }) => `${answered} of ${total} machines`,
     latest: 'Latest',
     today: ({ count }: { count: number }) => `${count} today`,
     todayGroup: 'Today',
@@ -249,6 +251,7 @@ export type MachineWidgetBodyTranslations = typeof en;
 const ca: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: 'Aquesta màquina',
+    lastKnown: 'Últimes dades conegudes',
     offline: 'Fora de línia',
     loading: 'Llegint aquesta màquina',
     lastSeen: time('Vista per última vegada ', '.'),
@@ -454,6 +457,7 @@ const ca: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Totes les màquines',
+    coverage: ({ answered, total }) => `${answered} de ${total} màquines`,
     latest: 'Més recent',
     today: ({ count }) => `${count} avui`,
     todayGroup: 'Avui',
@@ -479,6 +483,7 @@ const ca: MachineWidgetBodyTranslations = {
 const de: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: 'Dieser Rechner',
+    lastKnown: 'Zuletzt bekannt',
     offline: 'Offline',
     loading: 'Dieser Rechner wird gelesen',
     lastSeen: time('Zuletzt gesehen ', '.'),
@@ -685,6 +690,7 @@ const de: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Alle Rechner',
+    coverage: ({ answered, total }) => `${answered} von ${total} Rechnern`,
     latest: 'Neueste',
     today: ({ count }) => `${count} heute`,
     todayGroup: 'Heute',
@@ -711,6 +717,7 @@ const es: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: 'Esta máquina',
     offline: 'Sin conexión',
+    lastKnown: 'Últimos datos conocidos',
     loading: 'Leyendo esta máquina',
     lastSeen: time('Vista por última vez ', '.'),
     machineOffline: machine('', ' está sin conexión'),
@@ -915,6 +922,7 @@ const es: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Todas las máquinas',
+    coverage: ({ answered, total }) => `${answered} de ${total} máquinas`,
     latest: 'Lo más reciente',
     today: ({ count }) => `${count} hoy`,
     todayGroup: 'Hoy',
@@ -940,6 +948,7 @@ const es: MachineWidgetBodyTranslations = {
 const fr: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: 'Cette machine',
+    lastKnown: 'Dernières données connues',
     offline: 'Hors ligne',
     loading: 'Lecture de cette machine',
     lastSeen: time('Vue pour la dernière fois ', '.'),
@@ -1145,6 +1154,7 @@ const fr: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Toutes les machines',
+    coverage: ({ answered, total }) => `${answered} machines sur ${total}`,
     latest: 'Dernières',
     today: ({ count }) => `${count} aujourd’hui`,
     todayGroup: 'Aujourd’hui',
@@ -1170,6 +1180,7 @@ const fr: MachineWidgetBodyTranslations = {
 const it: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: 'Questa macchina',
+    lastKnown: 'Ultimi dati noti',
     offline: 'Offline',
     loading: 'Lettura di questa macchina',
     lastSeen: time('Vista l’ultima volta ', '.'),
@@ -1375,6 +1386,7 @@ const it: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Tutte le macchine',
+    coverage: ({ answered, total }) => `${answered} di ${total} macchine`,
     latest: 'Più recenti',
     today: ({ count }) => `${count} oggi`,
     todayGroup: 'Oggi',
@@ -1400,6 +1412,7 @@ const it: MachineWidgetBodyTranslations = {
 const ja: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: 'このマシン',
+    lastKnown: '最後に確認した情報',
     offline: 'オフライン',
     loading: 'このマシンを読み取り中',
     lastSeen: time('最終確認: ', '。'),
@@ -1605,6 +1618,7 @@ const ja: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'すべてのマシン',
+    coverage: ({ answered, total }) => `${total}台中${answered}台のマシン`,
     latest: '最新',
     today: ({ count }) => `今日 ${count} 件`,
     todayGroup: '今日',
@@ -1637,6 +1651,7 @@ const pluralPl = (count: number, one: string, few: string, many: string) => {
 const pl: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: 'Ta maszyna',
+    lastKnown: 'Ostatnio znane dane',
     offline: 'Offline',
     loading: 'Odczytywanie tej maszyny',
     lastSeen: time('Ostatnio widziana ', '.'),
@@ -1848,6 +1863,7 @@ const pl: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Wszystkie maszyny',
+    coverage: ({ answered, total }) => `${answered} z ${total} maszyn`,
     latest: 'Najnowsze',
     today: ({ count }) => `${count} dzisiaj`,
     todayGroup: 'Dzisiaj',
@@ -1874,6 +1890,7 @@ const pt: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: 'Esta máquina',
     offline: 'Offline',
+    lastKnown: 'Últimos dados conhecidos',
     loading: 'Lendo esta máquina',
     lastSeen: time('Vista pela última vez ', '.'),
     machineOffline: machine('', ' está offline'),
@@ -2078,6 +2095,7 @@ const pt: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Todas as máquinas',
+    coverage: ({ answered, total }) => `${answered} de ${total} máquinas`,
     latest: 'Mais recentes',
     today: ({ count }) => `${count} hoje`,
     todayGroup: 'Hoje',
@@ -2111,6 +2129,7 @@ const pluralRu = (count: number, one: string, few: string, many: string) => {
 const ru: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: 'Эта машина',
+    lastKnown: 'Последние известные данные',
     offline: 'Не в сети',
     loading: 'Чтение данных этой машины',
     lastSeen: time('Последний раз в сети: ', '.'),
@@ -2320,6 +2339,7 @@ const ru: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: 'Все машины',
+    coverage: ({ answered, total }) => `${answered} из ${total} машин`,
     latest: 'Последнее',
     today: ({ count }) => `Сегодня: ${count}`,
     todayGroup: 'Сегодня',
@@ -2345,6 +2365,7 @@ const ru: MachineWidgetBodyTranslations = {
 const zhHans: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: '这台机器',
+    lastKnown: '上次已知数据',
     offline: '离线',
     loading: '正在读取这台机器',
     lastSeen: time('上次在线：', '。'),
@@ -2550,6 +2571,7 @@ const zhHans: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: '所有机器',
+    coverage: ({ answered, total }) => `${answered}/${total} 台机器`,
     latest: '最新',
     today: ({ count }) => `今天 ${count} 项`,
     todayGroup: '今天',
@@ -2574,6 +2596,7 @@ const zhHans: MachineWidgetBodyTranslations = {
 const zhHant: MachineWidgetBodyTranslations = {
   common: {
     unknownMachine: '這部機器',
+    lastKnown: '上次已知資料',
     offline: '離線',
     loading: '正在讀取這部機器',
     lastSeen: time('上次上線：', '。'),
@@ -2779,6 +2802,7 @@ const zhHant: MachineWidgetBodyTranslations = {
   },
   activity: {
     allMachines: '所有機器',
+    coverage: ({ answered, total }) => `${answered}/${total} 部機器`,
     latest: '最新',
     today: ({ count }) => `今天 ${count} 項`,
     todayGroup: '今天',

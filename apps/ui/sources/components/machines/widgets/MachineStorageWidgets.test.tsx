@@ -14,10 +14,12 @@ import {
 } from '@happier-dev/protocol/widgets';
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { renderScreen } from '@/dev/testkit';
+import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { WidgetFrameBodyMetaContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
@@ -46,6 +48,7 @@ const { machineStorageStore } =
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { MachineStorageWidget } = await import('./MachineStorageWidget');
 const { MachineWorktreesWidget } = await import('./MachineWorktreesWidget');
+const { MachineSuggestionWidget } = await import('./MachineSuggestionWidget');
 const { t } = await import('@/text');
 const { resolveServerCredentialAccountScope } = await import('@/sync/domains/scope/serverCredentialAccountScope');
 
@@ -168,8 +171,12 @@ function machine(overrides: Partial<Machine> = {}): Machine {
 }
 
 type Rpc = Readonly<{ method: string; payload?: Record<string, unknown> }>;
+function MetaHost(props: Readonly<{ children: React.ReactNode }>) {
+  const [meta, setMeta] = React.useState<React.ReactNode>(null);
+  return <WidgetFrameBodyMetaContext.Provider value={setMeta}>{meta}{props.children}</WidgetFrameBodyMetaContext.Provider>;
+}
 async function mount(
-  body: 'storage' | 'worktrees',
+  body: 'storage' | 'worktrees' | 'suggestion',
   widgetSize: WidgetSizeV1,
   input: Record<string, unknown> = {},
   overrides: Partial<Machine> = {},
@@ -221,8 +228,9 @@ async function mount(
     }
   });
   const Body =
-    body === 'storage' ? MachineStorageWidget : MachineWorktreesWidget;
+    body === 'storage' ? MachineStorageWidget : body === 'suggestion' ? MachineSuggestionWidget : MachineWorktreesWidget;
   const screen = await renderScreen(
+    <MetaHost>
     <WidgetPresentationProvider
       value={{
         size: widgetSize,
@@ -236,7 +244,8 @@ async function mount(
         serverId={serverId}
         testID="widget"
       />
-    </WidgetPresentationProvider>,
+    </WidgetPresentationProvider>
+    </MetaHost>,
   );
   return {
     screen,
@@ -263,6 +272,52 @@ afterEach(async () => {
 });
 
 describe('Machine storage widgets', () => {
+  it('Worktrees marks retained rows as last known without borrowing the summary time', async () => {
+    const { screen, serverId } = await mount('worktrees', 'medium');
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('widget.review')).not.toBeNull()); });
+    transport.rpc.mockRejectedValue(new Error('refresh failed'));
+    const resolution = await resolveServerCredentialAccountScope(serverId);
+    if (resolution.kind !== 'bound') throw new Error('Widget Home must be bound');
+    const key = { serverId: resolution.scope.serverId, machineId: 'machine', expectedAccountId: resolution.scope.accountId, list: 'worktrees' as const };
+    await act(async () => {
+      machineStorageStore.retryItems(key);
+      await vi.waitFor(() => expect(machineStorageStore.getItems(key).status).toBe('error'));
+    });
+    expect(screen.findByTestId('widget.rows')).not.toBeNull();
+    expect(screen.findByTestId('widget.lastKnown')).not.toBeNull();
+    expect(screen.findByTestId('widget.asOf')).toBeNull();
+  });
+
+  it.each(['storage', 'suggestion'] as const)('%s dates retained sizes after a failed refresh', async (body) => {
+    const { screen, serverId } = await mount(body, 'medium');
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('widget.review')).not.toBeNull()); });
+    transport.rpc.mockRejectedValue(new Error('refresh failed'));
+    const resolution = await resolveServerCredentialAccountScope(serverId);
+    if (resolution.kind !== 'bound') throw new Error('Widget Home must be bound');
+    await act(async () => {
+      await machineStorageStore.read({ serverId: resolution.scope.serverId, machineId: 'machine', expectedAccountId: resolution.scope.accountId });
+    });
+    expect(screen.findByTestId(body === 'storage' ? 'widget.ring' : 'widget.hero')).not.toBeNull();
+    expect(screen.findByTestId('widget.asOf')).not.toBeNull();
+  });
+
+  it.each(['storage', 'suggestion'] as const)('%s dates retained sizes when its machine goes offline', async (body) => {
+    const { screen, serverId } = await mount(body, 'medium');
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('widget.review')).not.toBeNull()); });
+    expect(screen.findByTestId('widget.asOf')).toBeNull();
+    await act(async () => {
+      const admitted = resolveServerScopedMachine(storage.getState(), serverId, 'machine');
+      expect(admitted).not.toBeNull();
+      publishMachineActivityForTest([admitted!], { active: false, activeAt: Date.now() - 3_600_000 });
+    });
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(screen.findByTestId('widget.offline')).not.toBeNull();
+    });
+    expect(screen.findByTestId('widget.asOf')).not.toBeNull();
+    expect(screen.findByTestId(body === 'storage' ? 'widget.ring' : 'widget.hero')).not.toBeNull();
+  });
+
   it('Worktrees: Review collects only the ones that can go into the pile, then opens the Worktrees page', async () => {
     const { screen, pileSets } = await mount('worktrees', 'medium');
     await act(async () => {

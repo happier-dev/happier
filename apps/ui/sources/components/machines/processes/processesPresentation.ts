@@ -146,8 +146,8 @@ function compareFigures(sort: ProcessesSort) {
 function sum(values: readonly (number | null | undefined)[]): number | null {
   let total = 0;
   for (const value of values) {
-    if (value === null) return null;
-    total += value ?? 0;
+    if (value == null) return null;
+    total += value;
   }
   return total;
 }
@@ -207,8 +207,11 @@ function foldIdle<T extends ProcessesItem>(
   if (input.sort.key !== 'cpu' || input.query?.trim())
     return { shown: siblings, folded: new Set() };
   let start = siblings.length;
-  while (start > 0 && (siblings[start - 1]!.cpuPercent ?? 0) < IDLE_CPU_PERCENT)
+  while (start > 0) {
+    const cpuPercent = siblings[start - 1]!.cpuPercent;
+    if (cpuPercent === null || cpuPercent >= IDLE_CPU_PERCENT) break;
     start -= 1;
+  }
   const idle = siblings.slice(start);
   const key = `f:${parentKey ?? group}`;
   if (idle.length < FOLD_MIN_ROWS || input.unfolded?.has(key))
@@ -447,7 +450,7 @@ export function buildMachineProcessesView(
         group: 'notHappier',
         app,
         count: app.members.length,
-        cpuPercent: sum(app.members.map((row) => row.cpuPercent ?? 0)),
+        cpuPercent: sum(app.members.map((row) => row.cpuPercent)),
         memoryBytes: sum(app.members.map((row) => row.memoryBytes)),
       }))
       .sort(compare);
@@ -503,8 +506,8 @@ export function buildMachineProcessesView(
           ...owners.map((build) =>
             build.matched > 0 ? build.owner.cpuPercent : 0,
           ),
-          ...leftBehind.items.map((row) => row.cpuPercent ?? 0),
-          ...externalMatches.map((entry) => entry.cpuPercent ?? 0),
+          ...leftBehind.items.map((row) => row.cpuPercent),
+          ...externalMatches.map((entry) => entry.cpuPercent),
         ]),
         memoryBytes: sum([
           ...owners.map((build) =>

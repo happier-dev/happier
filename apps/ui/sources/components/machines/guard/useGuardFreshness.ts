@@ -7,17 +7,23 @@ import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/
 const LIVE: MachineFreshness = { kind: 'live' };
 const NONE: MachineFreshness = { kind: 'none' };
 
+/** Activity's successful query answer owns the age of the receipts held by every surface. */
+export function readGuardActivityFreshness(activity: Pick<MachineGuardActivityHookResult, 'list' | 'status' | 'offline' | 'retry'>): MachineFreshness {
+    const { list, status, offline, retry } = activity;
+    const at = list?.asOf ?? null;
+    if (offline) return at === null ? NONE : { kind: 'offline', at };
+    if (list && (status === 'error' || status === 'not_reported')) return { kind: 'stale', at: list.asOf, onRetry: retry };
+    if (status === 'loading') return { kind: 'checking', at };
+    return list ? LIVE : NONE;
+}
+
 /** Activity is a distinct reader: its selected query and successful answer time own its freshness. */
 export function useGuardActivityFreshness(activity: MachineGuardActivityHookResult, input: Readonly<{ serverId: string; machineId: string }>): MachineFreshness {
     const { list, status, offline, retry } = activity;
     const { reachability } = useMachinePresenceSummary(input.serverId, input.machineId);
     return React.useMemo<MachineFreshness>(() => {
         if (reachability === 'unknown') return NONE;
-        const at = list?.asOf ?? null;
-        if (offline) return at === null ? NONE : { kind: 'offline', at };
-        if (list && (status === 'error' || status === 'not_reported')) return { kind: 'stale', at: list.asOf, onRetry: retry };
-        if (status === 'loading') return { kind: 'checking', at };
-        return list ? LIVE : NONE;
+        return readGuardActivityFreshness({ list, status, offline, retry });
     }, [list, offline, reachability, retry, status]);
 }
 

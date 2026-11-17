@@ -44,6 +44,16 @@ const plan = (machineId: string, scope: 'security' | 'all') =>
   });
 
 describe('fleet update facts', () => {
+  it('keeps unchecked coverage separate from measured zero and retains positive known updates', () => {
+    const unchecked = readFleetUpdatesRow(machine('unchecked', true), undefined);
+    const measuredZero = readFleetUpdatesRow(machine('zero', true), { machineId: 'zero', observation: observed(0, 0) });
+    const positive = readFleetUpdatesRow(machine('positive', true), { machineId: 'positive', observation: observed(2, undefined) });
+    const securityOnlyZero = readFleetUpdatesRow(machine('security-only', true), { machineId: 'security-only', observation: observed(0, undefined) });
+    expect(summarizeFleetUpdates([unchecked])).toMatchObject({ checked: 0, withUpdates: 0 });
+    expect(summarizeFleetUpdates([measuredZero])).toMatchObject({ checked: 1, withUpdates: 0 });
+    expect(summarizeFleetUpdates([unchecked, measuredZero, positive, securityOnlyZero])).toMatchObject({ machines: 4, checked: 2, withUpdates: 1 });
+  });
+
   it('shows an offline or unchecked Machine as unknown, never as zero, and counts only what Machines reported', () => {
     const rows = [
       readFleetUpdatesRow(machine('hetzner', true), {
@@ -73,6 +83,7 @@ describe('fleet update facts', () => {
     ]);
     expect(summarizeFleetUpdates(rows)).toEqual({
       machines: 4,
+      checked: 2,
       withUpdates: 2,
       security: 3,
       restarts: 1,

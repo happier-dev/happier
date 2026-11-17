@@ -111,10 +111,11 @@ export function MachineFleetUpdatesView() {
     summary.machines === 0
       ? null
       : [
-          t(`${s}.statusWith`, {
-            count: summary.withUpdates,
-            total: summary.machines,
-          }),
+          summary.checked === 0
+            ? t(`${s}.notChecked`)
+            : summary.checked < summary.machines
+              ? t(`${s}.statusPartial`, { count: summary.withUpdates, checked: summary.checked, total: summary.machines })
+              : t(`${s}.statusWith`, { count: summary.withUpdates, total: summary.machines }),
           summary.security > 0
             ? t(`${s}.security`, { count: summary.security })
             : null,

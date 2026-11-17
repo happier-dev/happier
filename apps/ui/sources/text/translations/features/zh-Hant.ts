@@ -10849,6 +10849,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
             description: "此 Home 中每台機器上等待安裝的作業系統套件。Happier 本身的 App、CLI 與常駐程式更新仍在 設定 → 更新 中。",
             reviewRollout: "檢查推送…",
             statusWith: ({ count, total }: { count: number; total: number }) => `${total} 台機器中有 ${count} 台有更新`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} 台有更新 · 已檢查 ${total} 台中的 ${checked} 台`,
             security: ({ count }: { count: number }) => `安全性 ${count}`,
             all: ({ count }: { count: number }) => `共 ${count}`,
             restarts: ({ count }: { count: number }) => `需要重新啟動 ${count}`,

@@ -8,6 +8,7 @@ import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { WidgetFrameBodyMetaContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import {
@@ -15,7 +16,8 @@ import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
@@ -116,6 +118,11 @@ const FOOTPRINTS = {
   },
 } as const;
 
+function MetaHost(props: Readonly<{ children: React.ReactNode }>) {
+  const [meta, setMeta] = React.useState<React.ReactNode>(null);
+  return <WidgetFrameBodyMetaContext.Provider value={setMeta}>{meta}{props.children}</WidgetFrameBodyMetaContext.Provider>;
+}
+
 async function mount(
   options: Readonly<{
     Body: typeof MachineTopConsumersWidget;
@@ -178,6 +185,7 @@ async function mount(
   const size: WidgetSizeV1 = options.size ?? 'medium';
   const Body = options.Body;
   const screen = await renderScreen(
+    <MetaHost>
     <AuthProvider
       initialCredentials={{
         token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`,
@@ -198,7 +206,8 @@ async function mount(
           />
         </WidgetPresentationProvider>
       </ModalProvider>
-    </AuthProvider>,
+    </AuthProvider>
+    </MetaHost>,
   );
   if (options.waitFor) {
     const id = options.waitFor;
@@ -227,6 +236,25 @@ afterEach(async () => {
 });
 
 describe('Using the most widget', () => {
+  it.each([
+    ['Using the most', MachineTopConsumersWidget, 'widget.total'],
+    ['Left behind', MachineLeftBehindWidget, 'widget.count'],
+  ] as const)('%s dates retained process figures when its machine goes offline', async (_name, Body, figureId) => {
+    const { screen, serverId } = await mount({ Body });
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId(figureId)).not.toBeNull()); });
+    expect(screen.findByTestId('widget.asOf')).toBeNull();
+    await act(async () => {
+      const admitted = resolveServerScopedMachine(storage.getState(), serverId, 'machine');
+      expect(admitted).not.toBeNull();
+      publishMachineActivityForTest([admitted!], { active: false, activeAt: Date.now() - 3_600_000 });
+    });
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(screen.findByTestId('widget.offline')).not.toBeNull();
+    });
+    expect(screen.findByTestId('widget.asOf')).not.toBeNull();
+  });
+
   it('counts admitted native container memory in Services without offering raw Stop', async () => {
     const answer = createProcessesAnswer();
     const owner = answer.owners[0];

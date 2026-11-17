@@ -18,9 +18,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useMachineStorageItems } from '@/sync/domains/machines/storage/useMachineStorageItems';
-import { useMachineStorageSummary } from '@/sync/domains/machines/storage/useMachineStorageSummary';
 import { getPreferredLanguage, t } from '@/text';
-import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 import {
   MachineWidgetSectionLabel,
@@ -96,12 +94,11 @@ function MachineWorktreesWidgetBody(
     list: 'worktrees',
     ...(props.project ? { projectId: props.project } : {}),
   });
-  const summary = useMachineStorageSummary(props.target);
   const page = list.page;
   const freshness: MachineWidgetFreshness = list.offline
     ? { kind: 'offline' }
-    : page && list.status === 'error' && summary.summary
-      ? { kind: 'stale', at: summary.summary.sizedAt }
+    : page && list.status === 'error'
+      ? { kind: 'stale', at: null }
       : { kind: 'live' };
   useMachineWidgetFreshness(freshness, props.testID);
   const items = page?.items;
@@ -196,7 +193,6 @@ function MachineWorktreesWidgetBody(
       rows={counts.deletable}
       open={open}
       note={size !== 'wide'}
-      stale={freshness.kind === 'stale' ? freshness.at : null}
       testID={props.testID}
     />
   );
@@ -294,7 +290,6 @@ function WorktreesReviewAction(
     rows: readonly StorageItemV1[];
     open: (tab?: MachinePageTabParams) => void;
     note: boolean;
-    stale: number | null;
     testID: string;
   }>,
 ) {
@@ -307,14 +302,7 @@ function WorktreesReviewAction(
     if (collect.groupOf(rows) !== 'checked') collect.collectAll(rows);
     open(WORKTREES_TAB);
   }, [collect, open, rows]);
-  const note =
-    props.stale !== null
-      ? t('machines.widgets.body.worktrees.measuredAt', {
-          time: formatAsOfTime(props.stale),
-        })
-      : props.note
-        ? t('machines.widgets.body.storage.trashFirst')
-        : null;
+  const note = props.note ? t('machines.widgets.body.storage.trashFirst') : null;
   return (
     <View style={styles.actions}>
       <RoundButton

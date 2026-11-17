@@ -10949,6 +10949,7 @@ const machineDetailPageTranslations = { ca: translated({
             description: "Paquets del sistema operatiu pendents a cada màquina d’aquest Home. Les actualitzacions de l’app, la CLI i el daemon de Happier continuen a Configuració → Actualitzacions.",
             reviewRollout: "Revisa el desplegament…",
             statusWith: ({ count, total }: { count: number; total: number }) => `${count} de ${total} màquines tenen actualitzacions`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} tenen actualitzacions · ${checked} de ${total} comprovades`,
             security: ({ count }: { count: number }) => `${count} de seguretat`,
             all: ({ count }: { count: number }) => `${count} en total`,
             restarts: ({ count }: { count: number }) => count === 1 ? "1 reinici necessari" : `${count} reinicis necessaris`,

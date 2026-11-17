@@ -10846,6 +10846,7 @@ const machineDetailPageTranslations = { es: translated({
             description: "Paquetes del sistema operativo pendientes en cada máquina de este Home. Las actualizaciones de la app, la CLI y el daemon de Happier siguen en Ajustes → Actualizaciones.",
             reviewRollout: "Revisar despliegue…",
             statusWith: ({ count, total }: { count: number; total: number }) => `${count} de ${total} máquinas tienen actualizaciones`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} tienen actualizaciones · ${checked} de ${total} comprobadas`,
             security: ({ count }: { count: number }) => `${count} de seguridad`,
             all: ({ count }: { count: number }) => `${count} en total`,
             restarts: ({ count }: { count: number }) => count === 1 ? "1 reinicio necesario" : `${count} reinicios necesarios`,

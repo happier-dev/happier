@@ -8,13 +8,15 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import { MachineResourcesPolicyV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { WidgetFrameBodyMetaContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import {
   createHomeGovernanceHarness,
   installHomeGovernanceBoundaries,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineActivityForTest, publishMachineInventoryForTest as publishTruthMachineInventory } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
@@ -84,6 +86,11 @@ const list = (entries: MachineGuardActivityRowV1[]) => ({
   asOf: Date.now(),
 });
 
+function MetaHost(props: Readonly<{ children: React.ReactNode }>) {
+  const [meta, setMeta] = React.useState<React.ReactNode>(null);
+  return <WidgetFrameBodyMetaContext.Provider value={setMeta}>{meta}{props.children}</WidgetFrameBodyMetaContext.Provider>;
+}
+
 async function mount(
   options: Readonly<{
     size?: WidgetSizeV1;
@@ -123,6 +130,7 @@ async function mount(
     ? { machine: { serverId, machineId: options.machines[0]!.id } }
     : {};
   const screen = await renderScreen(
+    <MetaHost>
     <WidgetPresentationProvider
       value={{
         size: options.size ?? 'medium',
@@ -140,7 +148,8 @@ async function mount(
         serverId={serverId}
         testID="activity-widget"
       />
-    </WidgetPresentationProvider>,
+    </WidgetPresentationProvider>
+    </MetaHost>,
   );
   return { screen, serverId };
 }
@@ -159,6 +168,38 @@ afterEach(async () => {
 });
 
 describe('MachineActivityWidget', () => {
+  it.each([true, false])('dates retained receipts after a failed refresh (bound: %s)', async (bound) => {
+    const watch = createDeferred<never>();
+    const current = machine('m1', 'leeroy-mbp');
+    const { screen, serverId } = await mount({
+      bound, machines: [current],
+      rpc: method => {
+        if (method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST) {
+          return list([entry({})]);
+        }
+        return watch.promise;
+      },
+    });
+    await act(async () => {
+      publishMachineActivityForTest([current]);
+      await publishTruthMachineInventory({ serverId, accountId: 'owner' }, [current]);
+    });
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-activity-e1')).not.toBeNull()); });
+    expect(screen.findByTestId('activity-widget.asOf')).toBeNull();
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(transport.rpc.mock.calls.some(([call]) => call.method === RPC_METHODS.DAEMON_GUARD_ACTIVITY_WATCH)).toBe(true);
+    });
+    await act(async () => {
+      watch.reject(new Error('watch failed'));
+    });
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(screen.findByTestId('machine-activity-e1')).not.toBeNull();
+      expect(screen.findByTestId('activity-widget.asOf')).not.toBeNull();
+    });
+  });
+
   it.each(['manage', 'use'] as const)('offers all-off Set up only for shared Manage (%s)', async (role) => {
     const shared = machine('m1', 'leeroy-mbp');
     const { screen } = await mount({
@@ -235,10 +276,11 @@ describe('MachineActivityWidget', () => {
     expect(screen.findByTestId('machine-activity-e1-resume')).toBeNull();
   });
 
-  it('lists every machine’s receipts newest first, each naming its machine, when no machine is bound', async () => {
-    const { screen } = await mount({
+  it('lists answered receipts newest first and qualifies missing fleet answers', async () => {
+    const current = [machine('m1', 'leeroy-mbp'), machine('m2', 'edge-1'), { ...machine('m3', 'studio'), active: false, activeAt: Date.now() - 86_400_000 }];
+    const { screen, serverId } = await mount({
       bound: false,
-      machines: [machine('m1', 'leeroy-mbp'), machine('m2', 'edge-1'), { ...machine('m3', 'studio'), active: false, activeAt: Date.now() - 86_400_000 }],
+      machines: current,
       rpc: (method, payload) => {
         if (method !== RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST)
           return undefined;
@@ -255,6 +297,10 @@ describe('MachineActivityWidget', () => {
               }),
             ]);
       },
+    });
+    await act(async () => {
+      publishMachineActivityForTest(current);
+      await publishTruthMachineInventory({ serverId, accountId: 'owner' }, current);
     });
     await act(async () => {
       await vi.waitFor(() =>
@@ -276,6 +322,16 @@ describe('MachineActivityWidget', () => {
     const asked = transport.rpc.mock.calls.map(([call]) => (call as { method: string; payload?: { machineId?: string } }))
       .filter((call) => call.method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST).map((call) => call.payload?.machineId);
     expect(new Set(asked)).toEqual(new Set(['m1', 'm2']));
+    expect(screen.findByTestId('activity-widget.coverage')).not.toBeNull();
+    await act(async () => {
+      const answered = [machine('m1', 'leeroy-mbp'), machine('m2', 'edge-1'), machine('m3', 'studio')];
+      publishMachineActivityForTest(answered);
+      await publishTruthMachineInventory({ serverId, accountId: 'owner' }, answered);
+    });
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(screen.findByTestId('activity-widget.coverage')).toBeNull();
+    });
   });
 
   it('says nothing happened this week as one quiet line, never an empty list', async () => {

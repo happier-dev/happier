@@ -27,7 +27,7 @@ export const VitalsMeterRow = React.memo(function VitalsMeterRow(
     /** "free" after the part, when the figure is a free amount. */
     partWord?: string;
     whole: string;
-    used: number;
+    used: number | null;
     capacity: number;
     tone: MachineResourceTone;
     /** Used bytes the OS can give back on its own (purgeable); drawn as a quiet hatched stretch. */
@@ -80,7 +80,7 @@ export const VitalsMeterRow = React.memo(function VitalsMeterRow(
         showCaption={false}
         animated
         reducedMotion={reducedMotion}
-        {...(props.reclaimable !== undefined && props.reclaimable > 0
+        {...(props.used !== null && props.reclaimable !== undefined && props.reclaimable > 0
           ? {
               projection: 'remaining' as const,
               projected: Math.max(0, props.used - props.reclaimable),

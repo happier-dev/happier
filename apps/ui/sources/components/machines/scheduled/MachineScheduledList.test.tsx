@@ -15,6 +15,19 @@ const { MachineScheduledList } = await import('./MachineScheduledList');
 const { t } = await import('@/text');
 
 describe('Machine → Scheduled (lab mSched; MACH-SCHEDULED-READ-1112)', () => {
+  it.each(['read', 'observation'] as const)('keeps scheduled jobs visible and qualifies their retained %s failure', async (failure) => {
+    const screen = await renderScreen(<MachineScheduledList machineName="machine" onRefresh={() => {}} onMore={() => {}}
+      state={{ status: failure === 'read' ? 'error' : 'ready', snapshot: {
+        kind: 'snapshot', revision: 3, nextOffset: null, sources: [{ source: 'cron:user', kind: 'available', totalJobs: 1,
+          jobs: [{ id: 'daily', name: 'Backup', schedule: 'daily' }],
+          ...(failure === 'observation' ? { observation: { kind: 'unavailable' as const, reason: 'watch_native_EACCES' } } : {}),
+        }],
+      } }} />);
+    expect(screen.findByTestId('machine-scheduled.job.daily')).not.toBeNull();
+    expect(screen.findByTestId(failure === 'read' ? 'machine-scheduled.stale' : 'machine-scheduled.source.cron:user.observation')).not.toBeNull();
+    expect(screen.findByTestId('machine-scheduled.empty')).toBeNull();
+  });
+
   it('draws one section per source with its jobs, an empty source as none, an unreadable source with its reason, and paging', async () => {
     const onMore = vi.fn();
     const screen = await renderScreen(

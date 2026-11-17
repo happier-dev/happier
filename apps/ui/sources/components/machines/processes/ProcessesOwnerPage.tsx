@@ -347,7 +347,7 @@ function OwnerMeters(
               ? `· ${t('machineProcesses.phone.memoryOfMachine', { percent: formatVitalsPercent((memoryBytes / memoryTotal) * 100) })}`
               : ''
           }
-          used={memoryBytes ?? 0}
+              used={memoryBytes}
           capacity={memoryTotal ?? Math.max(1, memoryBytes ?? 1)}
           tone="calm"
           accessibilityLabel={`${t('machineProcesses.tiles.memory')} ${formatProcessMemory(memoryBytes)}`}
@@ -361,7 +361,7 @@ function OwnerMeters(
               ? `· ${t('machineProcesses.phone.cpuOfCores', { cores })}`
               : ''
           }
-          used={cpuPercent ?? 0}
+              used={cpuPercent}
           capacity={100}
           tone="calm"
           accessibilityLabel={`${t('machineProcesses.tiles.cpu')} ${formatProcessCpu(cpuPercent)}`}

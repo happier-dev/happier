@@ -16,6 +16,34 @@ const byKey = (items: readonly ProcessesItem[], key: string) =>
   items.find((item) => item.key === key);
 
 describe('buildMachineProcessesView', () => {
+  it('keeps unknown CPU in app and search aggregates, while measured zero stays zero', () => {
+    const answer = createProcessesAnswer({ owners: [], leftBehind: [], notHappier: [{ appGroup: 'Editor', members: [
+      { name: 'Editor', appGroup: 'Editor', pid: 900, ref: 'editor', memoryBytes: 640 },
+    ] }] });
+    const input = { answer, scope: 'all' as const, sort: { key: 'memory' as const, direction: 'descending' as const } };
+    const unknown = buildMachineProcessesView({ ...input, query: 'Editor' });
+    expect(byKey(unknown.items, 'a:Editor')).toMatchObject({ cpuPercent: null });
+    expect(unknown.match?.cpuPercent).toBeNull();
+    answer.notHappier![0]!.members[0]!.cpuPercent = 0;
+    const measured = buildMachineProcessesView({ ...input, query: 'Editor' });
+    expect(byKey(measured.items, 'a:Editor')).toMatchObject({ cpuPercent: 0 });
+    expect(measured.match?.cpuPercent).toBe(0);
+  });
+
+  it('keeps unknown CPU in a left-behind search total', () => {
+    const answer = createProcessesAnswer({ owners: [] });
+    delete answer.leftBehind[0]!.cpuPercent;
+    const view = buildMachineProcessesView({ answer, scope: 'happier', sort: { key: 'memory', direction: 'descending' }, query: 'next' });
+    expect(view.match?.cpuPercent).toBeNull();
+  });
+
+  it('does not fold unknown CPU rows into an idle group', () => {
+    const answer = createProcessesAnswer();
+    for (const row of answer.owners[0]!.members) row.cpuPercent = undefined;
+    const view = buildMachineProcessesView({ answer, scope: 'happier', sort: { key: 'cpu', direction: 'descending' } });
+    expect(view.items.some((item) => item.kind === 'fold' && item.parentKey === 'o:session:refactor')).toBe(false);
+  });
+
   it('shows browser group figures while retaining helper refs and unchanged owner totals', () => {
     const browser = processRow('browser', 'driver', { role: 'browser', browserEngine: 'chromium', browserHelper: false,
       driverLabel: 'node playwright test', memoryBytes: 10, cpuPercent: 1,

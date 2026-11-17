@@ -7,6 +7,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { MachineScheduledState } from '@/sync/domains/machines/scheduled/machineScheduledStore';
 import { t } from '@/text';
 
@@ -94,11 +95,14 @@ export function MachineScheduledList(
     );
   }
   const nothing = snapshot.sources.every(
-    (source) => source.kind === 'available' && source.totalJobs === 0,
+    (source) => source.kind === 'available' && source.totalJobs === 0 && source.observation === undefined,
   );
   return (
     <>
       {header}
+      {state.status === 'error' ? <ItemGroup surface="none"><SurfaceFreshnessLine
+        testID="machine-scheduled.stale" reason={t('machineScheduled.errorTitle')} tone="warning"
+      /></ItemGroup> : null}
       {nothing ? (
         <ItemGroup surface="none">
           <SurfaceStateCard
@@ -118,6 +122,10 @@ export function MachineScheduledList(
               source.kind === 'available' ? jobsLine(source) : undefined
             }
           >
+            {source.kind === 'available' && source.observation?.kind === 'unavailable' ? <SurfaceFreshnessLine
+              testID={`machine-scheduled.source.${source.source}.observation`}
+              reason={t('machineScheduled.sourceUnavailable')} tone="warning"
+            /> : null}
             {source.kind === 'unavailable' ? (
               <SurfaceStateCard
                 testID={`machine-scheduled.source.${source.source}.unavailable`}

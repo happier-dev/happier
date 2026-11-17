@@ -10,6 +10,7 @@ import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
+import type { StorageTabView } from '@/components/machines/storage/storageViewModel';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
@@ -153,8 +154,16 @@ export function useOpenMachinePage(
 }
 
 export type MachineWidgetFreshness = Readonly<
-  { kind: 'live' } | { kind: 'stale'; at: number } | { kind: 'offline'; heldAt?: number }
+  { kind: 'live' } | { kind: 'stale'; at: number | null } | { kind: 'offline'; heldAt?: number }
 >;
+
+/** Storage widgets consume the Storage tab's retained-answer decision and successful measurement time. */
+export function readStorageWidgetFreshness(view: StorageTabView): MachineWidgetFreshness {
+  if (view.kind === 'offline_empty') return { kind: 'offline' };
+  if (view.kind !== 'ready') return { kind: 'live' };
+  if (view.offline) return { kind: 'offline', heldAt: view.summary.sizedAt };
+  return view.stale ? { kind: 'stale', at: view.summary.sizedAt } : { kind: 'live' };
+}
 
 /**
  * The frame's meta slot speaks only when values are not live (R38): "As of 10:42" for a held reading,
@@ -164,24 +173,28 @@ export type MachineWidgetFreshness = Readonly<
 export function useMachineWidgetFreshness(
   freshness: MachineWidgetFreshness,
   testID: string,
+  qualifier?: string | null,
 ): void {
   const language = usePreferredLanguage();
   const kind = freshness.kind;
   const at = freshness.kind === 'stale' ? freshness.at : null;
   const heldAt = freshness.kind === 'offline' ? freshness.heldAt ?? null : null;
   const meta = React.useMemo(
-    () =>
-      kind === 'offline' ? (
+    () => {
+      const age = kind === 'offline' ? (
         <View style={styles.offlineMeta}>
           <Text testID={`${testID}.offline`} style={styles.meta}>
             {t('machines.widgets.body.common.offline')}
           </Text>
           {heldAt !== null ? <SurfaceAsOfLabel at={heldAt} testID={`${testID}.asOf`} /> : null}
         </View>
-      ) : kind === 'stale' && at !== null ? (
-        <SurfaceAsOfLabel at={at} testID={`${testID}.asOf`} />
-      ) : null,
-    [language, at, heldAt, kind, testID],
+      ) : kind === 'stale' ? (
+        at !== null ? <SurfaceAsOfLabel at={at} testID={`${testID}.asOf`} />
+          : <Text testID={`${testID}.lastKnown`} style={styles.meta}>{t('machines.widgets.body.common.lastKnown')}</Text>
+      ) : null;
+      return qualifier ? <View style={styles.offlineMeta}>{age}<Text testID={`${testID}.coverage`} style={styles.meta}>{qualifier}</Text></View> : age;
+    },
+    [language, at, heldAt, kind, qualifier, testID],
   );
   useWidgetFrameBodyMeta(meta);
 }

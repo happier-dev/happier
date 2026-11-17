@@ -269,8 +269,10 @@ function MachineProcessesTree(
     if (online === null) return { kind: 'none' };
     if (online === false) return capturedAtMs !== null ? { kind: 'offline', at: capturedAtMs } : { kind: 'none' };
     if (stale && capturedAtMs !== null) return { kind: 'stale', at: capturedAtMs, onRetry: retryProcesses };
+    if (capturedAtMs === null) return processes.status === 'loading' && !processes.paused
+      ? { kind: 'checking', at: null } : { kind: 'none' };
     return processes.paused ? PAUSED : LIVE;
-  }, [capturedAtMs, online, processes.paused, retryProcesses, stale]);
+  }, [capturedAtMs, online, processes.paused, processes.status, retryProcesses, stale]);
   const unavailableReason = online === null ? t('common.unknown') : online === false
     ? t('machineProcesses.states.offlineTitle', { machine: machineName })
     : stale

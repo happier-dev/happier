@@ -10982,6 +10982,7 @@ const machineDetailPageTranslations = { pl: translated({
             description: "Pakiety systemu operacyjnego czekające na każdej maszynie tego Home. Aktualizacje aplikacji, CLI i demona Happier pozostają w Ustawienia → Aktualizacje.",
             reviewRollout: "Przejrzyj wdrożenie…",
             statusWith: ({ count, total }: { count: number; total: number }) => `Maszyny z aktualizacjami: ${count} z ${total}`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} z aktualizacjami · sprawdzono ${checked} z ${total}`,
             security: ({ count }: { count: number }) => `bezpieczeństwa: ${count}`,
             all: ({ count }: { count: number }) => `łącznie: ${count}`,
             restarts: ({ count }: { count: number }) => `wymagane restarty: ${count}`,

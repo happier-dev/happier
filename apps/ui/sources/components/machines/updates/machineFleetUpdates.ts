@@ -64,6 +64,8 @@ export function readMachineUpdateWord(row: MachineUpdateFacts): MachineUpdateWor
 
 export type FleetUpdatesSummary = Readonly<{
   machines: number;
+  /** Machines whose reported counts decide whether any updates are waiting. */
+  checked: number;
   withUpdates: number;
   security: number;
   restarts: number;
@@ -73,14 +75,26 @@ export type FleetUpdatesSummary = Readonly<{
 export function summarizeFleetUpdates(
   rows: readonly FleetUpdatesRow[],
 ): FleetUpdatesSummary {
+  let checked = 0;
+  let withUpdates = 0;
+  let security = 0;
+  let restarts = 0;
+  const offline: string[] = [];
+  for (const row of rows) {
+    const hasUpdates = (row.security ?? 0) > 0 || (row.all ?? 0) > 0;
+    if (hasUpdates || row.all !== null) checked += 1;
+    if (hasUpdates) withUpdates += 1;
+    security += row.security ?? 0;
+    if (row.restartNeeded) restarts += 1;
+    if (row.online === false) offline.push(row.name);
+  }
   return {
     machines: rows.length,
-    withUpdates: rows.filter(
-      (row) => (row.security ?? 0) > 0 || (row.all ?? 0) > 0,
-    ).length,
-    security: rows.reduce((sum, row) => sum + (row.security ?? 0), 0),
-    restarts: rows.filter((row) => row.restartNeeded).length,
-    offline: rows.filter((row) => row.online === false).map((row) => row.name),
+    checked,
+    withUpdates,
+    security,
+    restarts,
+    offline,
   };
 }
 

@@ -10905,6 +10905,7 @@ const machineDetailPageTranslations = { ja: translated({
             description: "この Home の各マシンで待機中の OS パッケージです。Happier のアプリ、CLI、デーモンのアップデートは 設定 → アップデート にあります。",
             reviewRollout: "ロールアウトを確認…",
             statusWith: ({ count, total }: { count: number; total: number }) => `${total} 台中 ${count} 台にアップデートがあります`,
+        statusPartial: ({ count, checked, total }: { count: number; checked: number; total: number }) => `${count} 台にアップデート · ${total} 台中 ${checked} 台を確認済み`,
             security: ({ count }: { count: number }) => `セキュリティ ${count}`,
             all: ({ count }: { count: number }) => `合計 ${count}`,
             restarts: ({ count }: { count: number }) => `再起動が必要 ${count}`,

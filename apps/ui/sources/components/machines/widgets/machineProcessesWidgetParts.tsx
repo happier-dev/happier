@@ -50,9 +50,9 @@ export function readMachineProcessesWidgetFreshness(
   processes: MachineProcessesWidgetState,
   online: boolean | null,
 ): MachineWidgetFreshness {
-  if (online === false) return { kind: 'offline' };
-  if (online === null) return { kind: 'live' };
   const answer = readMachineProcessesWidgetAnswer(processes);
+  if (online === false) return { kind: 'offline', ...(answer ? { heldAt: answer.capturedAtMs } : {}) };
+  if (online === null) return { kind: 'live' };
   return answer && processes.status === 'error'
     ? { kind: 'stale', at: answer.capturedAtMs }
     : { kind: 'live' };
