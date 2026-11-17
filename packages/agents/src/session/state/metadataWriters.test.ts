@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
 import * as metadataWriters from './metadataWriters.js';
-import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol';
+import { createSessionOwnerMetadataV1, projectSessionOwnerCompatibilityViewV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 describe('metadataWriters', () => {
+  it('keeps the selected Team model source intact at Session birth', () => {
+    const modelSelection = { v: 2 as const, updatedAt: 17, ref: { source: 'team_resource' as const,
+      teamId: 'team-model-owner', resourceId: 'model-resource', expectedResourceRevision: 3,
+      deliveryMode: 'direct' as const, agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'source-model' } };
+    const metadata = metadataWriters.buildCommittedLaunchMetadata({ options: { modelSelection } });
+    expect(metadata.modelSelectionIntentV2).toEqual(modelSelection);
+    expect(metadata).not.toHaveProperty('modelSelectionIntentV1');
+    const owner = createSessionOwnerMetadataV1({ metadata });
+    expect(owner.ok).toBe(true);
+    if (!owner.ok) throw new Error('Invalid Team model birth metadata');
+    expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: projectSessionSharedMetadataV1({ metadata }),
+      ownerMetadata: owner.ownerMetadata }).modelSelectionIntentV2).toEqual(modelSelection);
+  });
   it('retains creation approval provenance in private metadata and clears it on deliberate acceptance', () => {
     const metadata = metadataWriters.applyInitialSessionCreationFactsToMetadata({}, {
       approvalProfileId: 'team-profile', approvalProfileTeamOrGroupDerived: true,

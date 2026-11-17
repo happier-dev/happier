@@ -9,7 +9,7 @@ import { PluginUiNewSessionSeedOriginV1Schema, type PluginUiNewSessionSeedOrigin
 import { SessionRolesV1Schema } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { writeSessionCapabilitySelectionToMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { AcpConfigOptionOverridesV1Schema } from '@happier-dev/protocol/sessions/metadata/overrides';
-import type { SessionOwnerMetadataV1, SessionCreationCorrespondenceV1, MachinePoolSelectionOriginV1, ConnectedServiceMaterializationIdentityV1, SessionRolesV1, SessionCapabilitySelectionV1, SessionModelSelectionV1, AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import type { SessionOwnerMetadataV1, SessionCreationCorrespondenceV1, MachinePoolSelectionOriginV1, ConnectedServiceMaterializationIdentityV1, SessionRolesV1, SessionCapabilitySelectionV1, AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import type {
   RuntimeDescriptorV1,
@@ -20,7 +20,7 @@ import type {
   SessionStateFieldValue,
 } from '@happier-dev/protocol';
 import { ProviderBoundModelRefSchema, SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/model-selection';
-import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { SessionModelSelectionV2Schema, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { SessionModelMutationExpectedV1, SessionModelMutationReversalV1, SessionModelMutationScopeV1 } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 
 import type { SessionStateFieldWriteValue } from './_types.js';
@@ -403,7 +403,7 @@ export type CommittedLaunchMetadataOptionsV1 = Readonly<{
   initialSessionRolesV1?: SessionRolesV1;
   capabilitySelection?: SessionCapabilitySelectionV1;
   initialTitle?: string;
-  modelSelection?: SessionModelSelectionV1;
+  modelSelection?: SessionModelSelection;
   teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
   allowedTools?: readonly string[];
@@ -527,7 +527,8 @@ export function buildCommittedLaunchMetadata(input: Readonly<{
         const teamBinding = options.teamCredentialBindings?.find(binding => binding.slot.kind === 'provider_model');
         // Commit the selected source with its binding. The runner's later startup
         // merge replays this accepted intent rather than choosing a native source.
-        metadata = teamBinding?.resourceId && teamBinding.teamId && model.ref.providerConnectionId === null
+        metadata = model.v === 2 ? { ...metadata, modelSelectionIntentV2: model }
+            : teamBinding?.resourceId && teamBinding.teamId && model.ref.providerConnectionId === null
             ? { ...metadata, modelSelectionIntentV2: SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: model.updatedAt, ref: {
                     source: 'team_resource', resourceId: teamBinding.resourceId, teamId: teamBinding.teamId,
                     expectedResourceRevision: teamBinding.expectedResourceRevision, deliveryMode: teamBinding.deliveryMode,
