@@ -90,6 +90,11 @@ describe('theme proposal card controller', () => {
         presented = true;
         await hook.rerender();
         expect(hook.getCurrent()?.phase.kind).toBe('replaced');
+        renders = 0;
+        for (let index = 0; index < 10; index++) await act(async () => {
+            state.owner.begin({ document: themeActionDocument(`Other-${index}`), mode: 'dark', origin: { kind: 'agent' } });
+        });
+        expect(renders, 'a replaced card ignores other previews').toBe(0);
         for (const key of ['A', 'B', 'A']) {
             await act(async () => hook.getCurrent()!.onTryOption(key));
             await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ theme: { name: key }, currentOptionKey: key, busy: null }));
@@ -99,6 +104,11 @@ describe('theme proposal card controller', () => {
         expect(state.writes()).toBe(writesBefore);
         await act(async () => hook.getCurrent()!.onKeep());
         await vi.waitFor(() => expect(hook.getCurrent()?.phase.kind).toBe('kept'));
+        renders = 0;
+        for (let index = 0; index < 10; index++) await act(async () => {
+            state.owner.begin({ document: themeActionDocument(`After-keep-${index}`), mode: 'dark', origin: { kind: 'agent' } });
+        });
+        expect(renders, 'a kept card ignores other previews').toBe(0);
         expect(state.writes()).toBe(writesBefore + 1);
         expect([...state.rows.values()].map(row => row.document.profile.name).sort()).toEqual(['A', 'Sibling']);
         expect([...state.rows.values()].find(row => row.document.profile.name === 'A')!.document.raw.style).toEqual({ futurePresentation: { glow: true } });
@@ -150,8 +160,14 @@ describe('theme proposal card controller', () => {
         const miniature = projectThemeMiniature({ overrides: { light: {}, dark: {} }, assetAppearance: 'light' });
         const facts = { preview: state.owner, entry: null, created: false, here: 'here',
             appliedTheme: { name: 'Base', mode: 'light' as const, miniature }, onUseOtherDevices: distribute, onEdit: vi.fn() };
-        const hook = await renderHook(() => useThemeActionResultModel(presentation, facts, execute));
+        let renders = 0;
+        const hook = await renderHook(() => { renders++; return useThemeActionResultModel(presentation, facts, execute); });
         expect(hook.getCurrent()).toMatchObject({ theme: { name: 'Base', mode: 'light', miniature }, phase: { kind: 'applied' } });
+        renders = 0;
+        for (let index = 0; index < 10; index++) await act(async () => {
+            state.owner.begin({ document: themeActionDocument(`After-apply-${index}`), mode: 'dark', origin: { kind: 'agent' } });
+        });
+        expect(renders, 'an applied card ignores other previews').toBe(0);
         expect(hook.getCurrent()?.onEdit).toBeUndefined();
         hook.getCurrent()!.onUseOtherDevices!();
         expect(distribute).toHaveBeenCalledWith({ reference: null, mode: 'light', name: 'Base' });

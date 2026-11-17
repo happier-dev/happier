@@ -48,16 +48,22 @@ function projectTryEntry(call: TranscriptThemeTry) {
 export function useThemeActionResultModel(input: ThemeActionCardPresentation, facts: ThemeActionCardFacts,
     execute: ThemeUiActionExecute): ThemeActionResultViewProps | null {
     const presented = useLayoutPresentationActive();
-    const subscribePreview = React.useCallback((listener: () => void) => presented ? facts.preview.subscribe(listener) : () => {}, [presented, facts.preview]);
-    const preview = React.useSyncExternalStore(subscribePreview, facts.preview.read, facts.preview.read);
-    // The retained preview is the compiler identity; transcript inputs rebuild documents.
-    const surfaceStyles = React.useMemo(() => preview?.document ? prepareThemeProfileCss(preview.document.profile)[preview.mode] : undefined, [preview]);
     const call = input.call;
     const [outcome, setOutcome] = React.useState<Outcome>(() => {
         if (call.actionId === THEME_ACTION_IDS.tryOn) return { kind: 'preview', output: call.output };
         if (call.actionId === THEME_ACTION_IDS.keep) return { kind: 'kept', output: call.output };
         return { kind: 'applied', output: call.output };
     });
+    const previewRef = outcome.kind === 'preview' ? outcome.output.previewRef : null;
+    const subscribePreview = React.useCallback((listener: () => void) => presented && previewRef !== null
+        ? facts.preview.subscribe(listener) : () => {}, [presented, previewRef, facts.preview]);
+    const readPreview = React.useCallback(() => {
+        const current = facts.preview.read();
+        return current?.previewRef === previewRef ? current : null;
+    }, [facts.preview, previewRef]);
+    const preview = React.useSyncExternalStore(subscribePreview, readPreview, readPreview);
+    // The retained preview is the compiler identity; transcript inputs rebuild documents.
+    const surfaceStyles = React.useMemo(() => preview?.document ? prepareThemeProfileCss(preview.document.profile)[preview.mode] : undefined, [preview]);
     const [currentOptionKey, setCurrentOptionKey] = React.useState(() => input.options.at(-1)?.id ?? null);
     const [busy, setBusy] = React.useState<ThemeResultOperation | null>(null);
     const [failure, setFailure] = React.useState<Extract<ThemeResultPhase, { kind: 'failed' }> | null>(null);
@@ -134,14 +140,14 @@ export function useThemeActionResultModel(input: ThemeActionCardPresentation, fa
         : outcome.kind === 'applied' && call.actionId === THEME_ACTION_IDS.apply
             ? { reference: call.input.ref, mode: outcome.output.applied.mode, name: display.name } : null;
     const phase: ThemeResultPhase = failure ?? (outcome.kind === 'preview'
-        ? { kind: preview?.previewRef === outcome.output.previewRef ? 'trying' : 'replaced' }
+        ? { kind: preview ? 'trying' : 'replaced' }
         : outcome.kind === 'undone'
             ? outcome.previous === 'preview' ? { kind: 'reverted' } : { kind: 'undone', restoredName: null }
             : { kind: outcome.kind === 'kept' ? 'kept' : 'applied' });
     const coverage = outcome.kind === 'preview' ? outcome.output.coverage : null;
     return { theme: { name: display.name, mode: selected?.input.mode ?? display.mode,
         miniature: previewEntry?.miniature ?? display.miniature,
-        surfaceStyles: outcome.kind === 'preview' && preview?.previewRef === outcome.output.previewRef ? surfaceStyles : undefined,
+        surfaceStyles,
         created: facts.created }, phase, busy, here: facts.here,
         before: facts.before?.miniature, beforeSurfaceStyles: facts.before?.surfaceStyles,
         options, currentOptionKey, coverage,
