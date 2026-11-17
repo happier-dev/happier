@@ -5,7 +5,7 @@ import { buildManagedSessionDefaultsContext, resolveManagedSessionDefaults } fro
 import { getOrganizationPolicySessionDefaults } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import type { ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isManagedPresetAcquireInputV1, type ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedControllerAccessV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2, projectSessionSpawnNewActionInputV2,
     type SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -70,7 +70,7 @@ export function createUiPrepareSessionSpawnNewInput(ports: PreparationPorts): No
                 managedPresetAcquisition = bound.input;
                 managedPresetControllerAccess = bound.controllerAccess;
             }
-            if (!managedPresetAcquisition.controller) return unavailable('controller_unavailable');
+            if (!isManagedPresetAcquireInputV1(managedPresetAcquisition) || !managedPresetAcquisition.controller) return unavailable('controller_unavailable');
             executionTarget = { serverId: selected.placement.value.homeId, machineId: managedPresetAcquisition.controller.machineId };
         }
         if (!executionTarget) return unavailable('machine_target_unavailable');

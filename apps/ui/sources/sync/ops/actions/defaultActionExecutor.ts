@@ -325,7 +325,7 @@ import { subscribeActionOperationByRequestId } from '@/sync/domains/actionOperat
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createUiManagedMachineReferenceReader, createUiMachineDeploymentReferenceReader } from './managedMachineReferenceDeps';
 import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
-import { unwrapManagedMachineReadV1, ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { unwrapManagedMachineReadV1, isManagedPresetAcquireInputV1, ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createUiEphemeralRunnerAction } from './ephemeralRunnerAction';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
@@ -997,8 +997,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   const forwardSessionSpawnNew = async (input: SessionSpawnNewActionInputV2, context: ActionExecutorContext) => {
     const { actionCaller: _actionCaller, actionRequestId, signal } = context;
     const { placementOrigin, ...exactInput } = admitSessionSpawnNewActionInputV2(input);
-    const scopedController = input.sessionPlacement?.kind === 'preset' && context.sessionCreationDefaults?.managedPresetAcquisition?.controller
-      && context.sessionCreationDefaults.managedPresetControllerAccess;
+    const acquisition = context.sessionCreationDefaults?.managedPresetAcquisition;
+    const scopedController = input.sessionPlacement?.kind === 'preset' && acquisition && isManagedPresetAcquireInputV1(acquisition) && acquisition.controller
+      && context.sessionCreationDefaults?.managedPresetControllerAccess;
     const serverId = resolveServerProfileScopeIdForIdentifier(input.executionTarget.serverId);
     const machine = storage.getState().machineListByServerId[serverId]
       ?.find((candidate) => candidate.id === input.executionTarget.machineId);
