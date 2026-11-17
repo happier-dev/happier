@@ -102,7 +102,14 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
       }
       const commit = git('commit-tree', tree, '-p', head, '-F', messageFile);
       try {
-        git('update-ref', 'HEAD', commit, head);
+        // The ref update takes the commit wrapper's lock (.project/scripts/p03/cw-head/commit-partial.sh), so it never
+        // moves HEAD between that wrapper's locked recheck and its compare-and-swap (P03-GATE-FIX 2026-11-17: DBW-SPINE
+        // lost its final CAS to commits from this path). The reflog names the committer. Native Windows has no flock and
+        // no wrapper; there the update stays a plain compare-and-swap.
+        const update = ['update-ref', '-m', `commitFromPrivateIndex: pid ${process.pid}`, 'HEAD', commit, head];
+        if (process.platform === 'win32') git(...update);
+        else execFileSync('flock', ['-x', path.join(git('rev-parse', '--path-format=absolute', '--git-common-dir'), 'p03-commit-partial.lock'), 'git', ...update],
+          { cwd, env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
       } catch (error) {
         if (git('rev-parse', 'HEAD') !== head) continue; // Rebuild, never attach an old tree to a new parent.
         throw error;

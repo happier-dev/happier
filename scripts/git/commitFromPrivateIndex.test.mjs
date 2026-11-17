@@ -247,3 +247,21 @@ test('recovery never stages descendants when a later commit replaced a selected 
   await commitFromPrivateIndex({ cwd: f.cwd, syncCommit: commit });
   assert.equal(f.git('ls-files', '--stage', '-z', '--', 'changed/child'), before);
 });
+
+// P03-GATE-FIX 2026-11-17: this path moved HEAD without the commit wrapper's lock, so DBW-SPINE's packet lost its
+// final compare-and-swap after passing under that lock. Every committer serializes its ref update on the same lock.
+test('waits for the commit wrapper lock before moving HEAD', { skip: process.platform === 'win32' }, async (t) => {
+  const f = fixture(t);
+  const lock = path.join(f.cwd, '.git', 'p03-commit-partial.lock');
+  const released = path.join(f.cwd, 'released');
+  // The holder records when it lets go; the commit's ref update is synchronous, so the test reads order, not timers.
+  const holder = spawn('flock', ['-x', lock, 'sh', '-c', `sleep 1.5; : > '${released}'`], { stdio: 'ignore' });
+  t.after(() => holder.kill());
+  while (!fs.existsSync(lock)) await new Promise(resolve => setTimeout(resolve, 20));
+  await new Promise(resolve => setTimeout(resolve, 200));
+  f.write('changed', 'selected\n');
+  const commit = await commitFromPrivateIndex({ ...f, paths: ['changed'] });
+  assert.equal(fs.existsSync(released), true, 'HEAD moved while the wrapper held its lock');
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), commit);
+  assert.match(f.git('reflog', '-1', '--format=%gs', 'HEAD'), /^commitFromPrivateIndex: pid \d+/);
+});
