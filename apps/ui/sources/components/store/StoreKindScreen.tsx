@@ -16,6 +16,9 @@ export function StoreAppKind(props: KindProps<'app'>): React.ReactNode {
 export function StoreThemeKind(props: KindProps<'theme'>): React.ReactNode {
     return props.children(storeKinds.theme.useList(props.input, props.demand));
 }
+export function StorePetKind(props: KindProps<'pet'>): React.ReactNode {
+    return props.children(storeKinds.pet.useList(props.input, props.demand));
+}
 export function StoreStarterKind(props: KindProps<'starter'>): React.ReactNode {
     return props.children(storeKinds.starter.useList(props.input, props.demand));
 }
@@ -46,6 +49,7 @@ export function StoreKindScreen(props: StoreKindScreenProps): React.ReactNode {
     switch (props.kind) {
         case 'app': return <StoreAppKind {...props} />;
         case 'theme': return <StoreThemeKind {...props} />;
+        case 'pet': return <StorePetKind {...props} />;
         case 'starter': return <StoreStarterKind {...props} />;
         case 'browserExtension': return <StoreBrowserExtensionKind {...props} />;
         case 'mcpServer': return <StoreMcpKind {...props} />;

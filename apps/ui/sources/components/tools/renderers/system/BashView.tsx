@@ -12,6 +12,8 @@ import type { ToolViewProps } from '../core/_registry';
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 import { parseToolUseError } from '@/utils/errors/toolErrorParser';
+import { readHatchPetProgressPresentation } from '@/components/sessions/transcript/references/transcriptHatchPetProgress';
+import { HatchPetProgressCard } from './HatchPetProgressCard';
 
 function getBashDisplay(tool: ToolCall, full: boolean) {
     const { input, result, state } = tool;
@@ -71,6 +73,9 @@ export const BashView = React.memo<ToolViewProps>((props) => {
     const find = useToolFindState(props.messageId);
     const { state } = props.tool;
     const isFullView = props.detailLevel === 'full' || find.active;
+    // A Hatch pet phase draws the skill's own checklist instead of its command (one block; older snapshots step aside).
+    const hatchProgress = React.useMemo(() => isFullView ? null : readHatchPetProgressPresentation({ tool: props.tool, messages: props.messages }),
+        [isFullView, props.tool, props.messages]);
     const display = getBashDisplay(props.tool, isFullView);
     const { command, rawCommandTrimmed, didStripPrelude, error } = display;
     const maxStreamingChars = isFullView ? 8000 : 2000;
@@ -82,6 +87,7 @@ export const BashView = React.memo<ToolViewProps>((props) => {
     const completedStderr =
         display.stderr ? (isFullView ? display.stderr : tailTextWithEllipsis(display.stderr, maxCompletedChars)) : null;
 
+    if (hatchProgress) return hatchProgress.visible ? <HatchPetProgressCard plan={hatchProgress.plan} /> : null;
     return (
         <>
             <ToolSectionView>

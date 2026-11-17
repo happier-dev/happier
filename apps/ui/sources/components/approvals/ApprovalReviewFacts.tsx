@@ -30,6 +30,8 @@ import { ActionApprovalFieldsCard } from './ActionApprovalFieldsCard';
 import { ApprovalIncludedSteps } from './ApprovalIncludedSteps';
 import { ApprovalPreviewFacts, ApprovalPreviewSummary } from './ApprovalPreviewCard';
 import { ApprovalVisualPreview } from './ApprovalVisualPreview';
+import { PetImportConfirmationCard } from './PetImportConfirmationCard';
+import { readPetImportConfirmationV1 } from '@happier-dev/protocol/pets/importActionV1';
 import { ComputerActionApprovalCard, describeComputerActionApproval, type ComputerActionApproval } from './ComputerActionApprovalCard';
 import { ComputerApprovalCapture } from './ComputerApprovalCapture';
 import { DeploymentReviewApprovalFacts, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
@@ -48,6 +50,7 @@ export type ApprovalReviewFactsInput = Readonly<{
   actionArgs: unknown;
   preview: unknown;
   status?: ApprovalRequest['status'];
+  execution?: ApprovalRequest['execution'];
   serverId: string | null;
   testID: string;
 }>;
@@ -69,7 +72,8 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
   artifactId?: string;
 }>) {
   const { actionId, actionArgs, preview, serverId, testID } = props;
-  const request = React.useMemo(() => ({ actionId, actionArgs, preview, status: props.status }), [actionId, actionArgs, preview, props.status]);
+  const request = React.useMemo(() => ({ actionId, actionArgs, preview, status: props.status, execution: props.execution }),
+    [actionId, actionArgs, preview, props.status, props.execution]);
   const deployment = React.useMemo(() => readDeploymentReviewApproval(request), [request]);
   const template = React.useMemo(() => readDeploymentTemplateApprovalReview(preview), [preview]);
   const creation = React.useMemo(() => {
@@ -81,8 +85,10 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
   const edit = React.useMemo(() => readApprovalDocEditProposal(request), [request]);
   const visual = React.useMemo(() => resolveApprovalVisualPreview(request), [request]);
   const resource = React.useMemo(() => readResourceProposalApproval(request), [request]);
+  // Hatch pet's import request: its preview card is the confirmation (Add to my pets is approving it).
+  const petImport = React.useMemo(() => readPetImportConfirmationV1(request), [request]);
   const handoff = React.useMemo(() => HandoffTargetReplacementApprovalV1Schema.safeParse(readRecord(preview).handoffTargetReplacementApproval), [preview]);
-  const generic = !deployment && !template && !command && !computer && !edit && !resource && !props.resourceProposal;
+  const generic = !deployment && !template && !command && !computer && !edit && !resource && !props.resourceProposal && !petImport;
   const fields = React.useMemo(() => generic && props.fields === undefined ? describeApprovalRequestFields(request) : null, [generic, props.fields, request]);
   const reboot = readRecord(readRecord(preview).machineRebootReview);
   return <>
@@ -92,6 +98,9 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
         <ApprovalPreviewSummary preview={preview} request={request} serverId={serverId} />
       </SectionContentRow></ItemGroup>
     ) : null}
+    {petImport ? <ItemGroup><SectionContentRow testID={`${testID}.pet-import`}>
+      <PetImportConfirmationCard confirmation={petImport} serverId={serverId} testID={`${testID}.pet-import.card`} />
+    </SectionContentRow></ItemGroup> : null}
     {visual ? <ApprovalVisualPreview preview={visual} artifactId={props.artifactId ?? testID} serverId={serverId} testID={`${testID}.visual`} /> : null}
     {deployment ? <DeploymentReviewApprovalFacts approval={deployment} serverId={serverId}
       testID={`${testID}.deployment-review`} decided={props.decided} /> : null}

@@ -36,6 +36,7 @@ import { PetsAccountLibrarySection } from './petsSettingsScreen/PetsAccountLibra
 import { PetsAccountSettingsSection } from './petsSettingsScreen/PetsAccountSettingsSection';
 import { PetsDesktopOverlaySettingsSection } from './petsSettingsScreen/PetsDesktopOverlaySettingsSection';
 import { PetsLocalLibrarySection } from './petsSettingsScreen/PetsLocalLibrarySection';
+import { PetsMoreSection } from './petsSettingsScreen/PetsMoreSection';
 import {
     buildImportPayload,
     isDetectedPet,
@@ -474,6 +475,8 @@ export function PetsSettingsScreen() {
                     }
                 />
             ) : null}
+
+            <PetsMoreSection />
 
             {showDesktopOverlaySettings ? (
                 <PetsDesktopOverlaySettingsSection

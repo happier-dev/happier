@@ -48,6 +48,7 @@ import { StoreKindSurface } from './StoreKindSurface';
 import { releaseMcpAddDraftContinuation } from '@/components/settings/mcpServers/add/mcpAddDraftState';
 import { StoreThemeListing } from './StoreThemeListing';
 import { StorePluginThemeListingController } from './StorePluginThemeListingController';
+import { StorePetListingController } from './StorePetListingController';
 
 type Presentation = 'pane' | 'page';
 
@@ -56,8 +57,9 @@ const referenceKey = (reference: StoreListingReference) =>
 
 /** What a listing is (App, MCP server…): the bar or pane header above it says this, while the listing names the item. */
 function storeListingKindWord(reference: StoreListingReference | null): string {
-  const kind = reference?.type === 'pluginTheme' ? 'theme' : reference?.type === 'software' ? 'software' : reference?.type === 'registryItem' ? reference.kind : null;
-  return kind === null ? t('capabilities.store.listingLabel') : kind === 'theme' ? t('settingsAppearance.theme') : t(`capabilities.store.kindWord.${kind}`);
+  const kind = reference?.type === 'pluginTheme' ? 'theme' : reference?.type === 'builtInPet' ? 'pet' : reference?.type === 'software' ? 'software' : reference?.type === 'registryItem' ? reference.kind : null;
+  return kind === null ? t('capabilities.store.listingLabel') : kind === 'theme' ? t('settingsAppearance.theme')
+    : kind === 'pet' ? t('settingsPets.store.kicker') : t(`capabilities.store.kindWord.${kind}`);
 }
 
 /**
@@ -262,6 +264,13 @@ export function StoreListingBody(
   if (props.reference.type === 'software') return <ListingTitleFocus>
     <StoreSoftwareRouteListing reference={props.reference} pushed={phone && props.presentation === 'page'} onClose={props.onClose} />
   </ListingTitleFocus>;
+  if (props.reference.type === 'builtInPet' || (props.reference.type === 'registryItem' && props.reference.kind === 'pet')) {
+    const reference = props.reference;
+    return <ListingTitleFocus><StorePetListingController size={size} reference={reference.type === 'builtInPet'
+      ? { kind: 'builtIn', petId: reference.petId }
+      : { kind: 'registry', sourceId: reference.sourceId, itemId: reference.itemId, ...(reference.version ? { version: reference.version } : {}) }} />
+    </ListingTitleFocus>;
+  }
   if (props.reference.type === 'pluginTheme') return <ListingTitleFocus>
     <StorePluginThemeListingController reference={props.reference.reference}>{view => <StoreThemeListing {...view} />}</StorePluginThemeListingController>
   </ListingTitleFocus>;

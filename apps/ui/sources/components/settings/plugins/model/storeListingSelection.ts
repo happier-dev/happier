@@ -3,13 +3,18 @@ import { PluginStoreItemReferenceV1Schema, type PluginStoreItemReferenceV1 } fro
 import { MachineAdministrationTargetV1Schema, type MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import { createServerAccountScope, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { ThemeReferenceSchema, type ThemeReference } from '@happier-dev/protocol/account/settings/themeProfiles';
+import { BUILT_IN_PET_IDS_V1 } from '@happier-dev/protocol/pets/constants';
+import type { BuiltInPetId } from '@/components/pets/builtIns/builtInPetRegistry';
 
 export type StoreSoftwareListingReference = Extract<MarketplaceCatalogReferenceV1, { type: 'software' }> & Readonly<{
     target?: Readonly<{ scope: ServerAccountScope; machine: MachineAdministrationTargetV1 }>;
 }>;
 /** Host navigation only; Software retains its native P20 identity, without a registry kind. */
 export type StorePluginThemeListingReference = Readonly<{ type: 'pluginTheme'; reference: Extract<ThemeReference, { kind: 'plugin' }> }>;
-export type StoreListingReference = Exclude<MarketplaceCatalogReferenceV1, { type: 'software' }> | StoreSoftwareListingReference | PluginStoreItemReferenceV1 | StorePluginThemeListingReference;
+/** Host navigation only: a pet built into Happier has no catalog listing, so its page opens by its built-in id. */
+export type StoreBuiltInPetListingReference = Readonly<{ type: 'builtInPet'; petId: BuiltInPetId }>;
+export type StoreListingReference = Exclude<MarketplaceCatalogReferenceV1, { type: 'software' }> | StoreSoftwareListingReference | PluginStoreItemReferenceV1 | StorePluginThemeListingReference
+    | StoreBuiltInPetListingReference;
 
 function record(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
     return !!value && typeof value === 'object' && !Array.isArray(value)
@@ -28,6 +33,10 @@ export function readStoreListingReference(value: unknown): StoreListingReference
     if (record(value, ['type', 'reference']) && value.type === 'pluginTheme') {
         const reference = ThemeReferenceSchema.safeParse(value.reference);
         return reference.success && reference.data.kind === 'plugin' ? { type: 'pluginTheme', reference: reference.data } : null;
+    }
+    if (record(value, ['type', 'petId']) && value.type === 'builtInPet') {
+        const petId = BUILT_IN_PET_IDS_V1.find(id => id === value.petId);
+        return petId ? { type: 'builtInPet', petId } : null;
     }
     const contributed = PluginStoreItemReferenceV1Schema.safeParse(value);
     if (contributed.success) return contributed.data;

@@ -373,6 +373,15 @@ it('previews each kind in an all-kind search and opens the rest behind that kind
     expect(directory().props.groupAction).toBeUndefined();
 });
 
+it('lists the built-in pets in an all-kind search though no pet catalog answers (PET-STORE-UI, 14:31Z Store crash)', async () => {
+    const { Page } = await setup('preview');
+    const screen = await renderWindowedScreen(<Page filters="{}" />);
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Tool 1'));
+    const directory = () => screen.root.findByType(Directory);
+    await waitForHomeGovernance(() => expect(directory().props.rows.filter((row: { group: string }) => row.group === 'pet')
+        .map((row: { key: string }) => row.key)).toContain('pet|builtIn|blink'));
+});
+
 it('leaves a kind page\'s query and rows still when Discover re-renders without new curation facts', async () => {
     const { Page } = await setup('curation-locality');
     const screen = await renderWindowedScreen(<Page kind="mcpServer" />);

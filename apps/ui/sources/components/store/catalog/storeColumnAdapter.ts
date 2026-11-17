@@ -43,6 +43,11 @@ function nativeReference(row: StoreSearchRow): MarketplaceCatalogReferenceV1 | n
             return item.kind === 'pluginTheme' ? null : { type: 'registryItem', kind: item.kind,
                 sourceId: item.sourceId, itemId: item.itemId, ...(item.version ? { version: item.version } : {}) };
         }
+        case 'pet': {
+            const item = row.summary.ref;
+            return item.kind === 'builtInPet' ? null : { type: 'registryItem', kind: item.kind,
+                sourceId: item.sourceId, itemId: item.itemId, ...(item.version ? { version: item.version } : {}) };
+        }
         case 'app': case 'browserExtension': case 'mcpServer': case 'skill': case 'starter': return { type: 'registryItem', kind: row.summary.ref.kind,
             sourceId: row.summary.ref.sourceId, itemId: row.summary.ref.itemId,
             ...(row.summary.ref.version ? { version: row.summary.ref.version } : {}) };

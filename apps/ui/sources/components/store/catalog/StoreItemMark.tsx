@@ -27,6 +27,7 @@ export const STORE_KIND_GLYPHS: Readonly<Record<StoreKind | 'bot', IconName>> =
   {
     app: 'rocket-launch',
     theme: 'palette',
+    pet: 'paw-print',
     browserExtension: 'globe',
     mcpServer: 'plug',
     skill: 'book-open',

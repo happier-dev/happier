@@ -19,6 +19,8 @@ import type { NewSessionBotCreationModel } from '@/components/sessions/new/hooks
 import { NewSessionLaunchSurface } from '@/components/sessions/new/components/NewSessionLaunchSurface';
 import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNewSessionScreenModel';
 import { useNewSessionDraftPresentation } from '@/components/sessions/new/hooks/useNewSessionDraftPresentation';
+import { createNewSessionComposerDocumentOwner } from '@/components/sessions/composer/newSessionComposerDocumentOwner';
+import { NewSessionDraftIntro } from '@/components/sessions/new/components/NewSessionDraftIntro';
 import type { ExactTurnAutomationPrefill } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import { NewSessionScreenPortalScope } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
 import {
@@ -71,6 +73,8 @@ function NewSessionScreenInner(props: Readonly<{
     presentation: NewSessionScreenPresentation;
     composerTopContent?: React.ReactNode;
     composerBottomContent?: React.ReactNode;
+    /** The draft's own first screen (a seeded intro), drawn above the composer. */
+    intro?: React.ReactNode;
     draftId: string;
     draftOrigin?: 'ordinary' | null;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
@@ -107,7 +111,7 @@ function NewSessionScreenInner(props: Readonly<{
                         panelProps={embeddedPanelProps ?? model.simpleProps}
                         creationProfile={creationProfile}
                         controlPreset={props.composerControlPreset} />
-                    : <NewSessionSimplePanel {...withBotDraftPresentation(model.simpleProps, model.botCreation)} />}
+                    : <NewSessionSimplePanel {...withBotDraftPresentation(model.simpleProps, model.botCreation)} intro={props.intro} />}
             </NewSessionLaunchSurface>
         );
     }
@@ -188,6 +192,8 @@ function NewSessionContent(props: Readonly<{
     presentation: NewSessionScreenPresentation;
     composerTopContent?: React.ReactNode;
     composerBottomContent?: React.ReactNode;
+    /** The draft's own first screen (a seeded intro), drawn above the composer. */
+    intro?: React.ReactNode;
     draftId: string;
     draftOrigin?: 'ordinary' | null;
     statusBadges?: ReadonlyArray<AgentInputStatusBadge>;
@@ -450,6 +456,15 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
         ...(draftSyncStatusBadge ? [draftSyncStatusBadge] : []),
         ...(draftConflictBanner.statusBadge ? [draftConflictBanner.statusBadge] : []),
     ], [draftConflictBanner.statusBadge, draftSyncStatusBadge]);
+    // A seeded draft opens on its own first screen (Create a pet); a suggestion fills the composer and never sends.
+    const introFact = exactDraft?.intro;
+    const fillSuggestion = React.useCallback((text: string) => {
+        if (!draftScope) return;
+        const owner = createNewSessionComposerDocumentOwner({ scope: draftScope, ref: { kind: 'newSession', instanceId: draftIdentity.draftId } });
+        owner.replaceDocument({ ...owner.read().document, text, structuredInputMentions: [] });
+    }, [draftScope, draftIdentity.draftId]);
+    const intro = React.useMemo(() => introFact ? <NewSessionDraftIntro intro={introFact} onSuggestion={fillSuggestion} /> : null,
+        [introFact, fillSuggestion]);
     const showDraftActions = Boolean(draftScope && exactDraft?.materialized === true);
     // An empty composer opened from an item asks about that item; an embedding page's own question wins.
     const subjectLabel = exactDraft?.subjectLabel ?? null;
@@ -474,6 +489,7 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
             presentation={props.presentation}
             composerTopContent={composerTopContent}
             composerBottomContent={composerBottomContent}
+            intro={intro}
             draftId={draftIdentity.draftId}
             draftOrigin={draftIdentity.draftOrigin}
             statusBadges={statusBadges}

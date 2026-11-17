@@ -5,6 +5,7 @@ import type { StoreKind } from './storeKinds';
 export function kindCopy(kind: StoreKind | 'bot'): Readonly<{ title: string; description: string; search: string }> {
     switch (kind) {
         case 'theme': return { title: t('themeStore.title'), description: t('themeStore.description'), search: t('themeStore.search') };
+        case 'pet': return { title: t('settingsPets.title'), description: t('settingsPets.store.description'), search: t('settingsPets.store.search') };
         case 'bot': return { title: t('bots.title'), description: t('botTemplates.storeDescription'), search: t('botTemplates.storeSearch') };
         case 'app': return { title: t('capabilities.store.kinds.app.title'), description: t('capabilities.store.kinds.app.description'), search: t('capabilities.store.kinds.app.search') };
         case 'starter': return { title: t('capabilities.store.kinds.starter.title'), description: t('capabilities.store.kinds.starter.description'), search: t('capabilities.store.kinds.starter.search') };

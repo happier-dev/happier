@@ -23,6 +23,7 @@ import { APP_STORE_KIND } from './storeKindContributions';
 import { useThemeLibraryInventory } from '@/sync/store/useThemeProfiles';
 import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
 import { storeThemeSummary, type StoreThemeItem } from './storeThemes';
+import { storeBuiltInPets, storePetSummary, type StorePetItem } from './storePets';
 export type { InstalledAppRow } from './storeApps';
 export type { InstalledBrowserExtensionRow } from './storeBrowserExtensions';
 export type { InstalledRow, InstalledMcpServerRow, InstalledSkillRow, InstalledAgentRow, InstalledProviderRow, InstalledPluginRow } from './storeInstalled';
@@ -75,6 +76,14 @@ function useThemeList(input: StoreListInput, demand: StoreDemand): Omit<Registry
                 pluginName: plugin.pluginName }];
         })];
     }, [registry.items, library.entries, plugins, input.query, input.sourceIds]);
+    return { ...registry, items };
+}
+/** Built-in pets lead (they need no catalog); registry pets follow from every pet catalog the Account holds. */
+function usePetList(input: StoreListInput, demand: StoreDemand): Omit<RegistryList, 'items'> & Readonly<{ items: readonly StorePetItem[] }> {
+    const registry = useRegistryItems({ kind: 'pet', query: input.query, sourceIds: input.sourceIds }, demand.presented);
+    const items = React.useMemo<readonly StorePetItem[]>(() => [
+        ...(demand.presented && input.sourceIds === undefined ? storeBuiltInPets(input.query) : []), ...registry.items,
+    ], [demand.presented, input.sourceIds, input.query, registry.items]);
     return { ...registry, items };
 }
 function useStarterList(input: StoreListInput, demand: StoreDemand): RegistryList {
@@ -174,6 +183,7 @@ function pluginSummary(item: PluginMarketplaceCatalogEntry): StoreItemSummary<Pl
 export const storeKinds = {
     app: { ...APP_STORE_KIND, summary: registrySummary, useList: useAppList, useInstalled: useInstalledApps },
     theme: { summary: storeThemeSummary, useList: useThemeList, useInstalled: useInstalledThemes },
+    pet: { summary: storePetSummary, useList: usePetList, useInstalled: undefined },
     // Software second: what a Machine runs sits beside the Apps it hosts (S40-R02).
     software: { summary: softwareSummary, useList: useSoftwareList, useInstalled: useInstalledSoftware },
     starter: { summary: registrySummary, useList: useStarterList, useInstalled: undefined },

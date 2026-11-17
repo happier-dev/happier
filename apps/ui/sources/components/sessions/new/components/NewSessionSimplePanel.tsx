@@ -131,6 +131,8 @@ export type NewSessionSimplePanelProps = Readonly<{
     connectionStatus: React.ComponentProps<typeof AgentInput>['connectionStatus'];
     statusBadges?: React.ComponentProps<typeof AgentInput>['statusBadges'];
     composerTopContent?: React.ReactNode;
+    /** A seeded draft's first screen (its intro), above the composer: in the composer column when centred, in the page when bottom-anchored. */
+    intro?: React.ReactNode;
     /** What the empty composer asks for; defaults to the ordinary session prompt. */
     inputPlaceholder?: string;
     /** Below the composer card (a seeded draft's provenance footnote). */
@@ -399,6 +401,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                           * Its reach starts at that wrapper's foot, not the card's visible edge.
                           */}
                         <View>
+                        {shouldBottomAnchor ? null : props.intro}
                         {shouldBottomAnchor ? null : pendingLaunchPreview}
                         {isFloatingComposer && (!isWebFloatingComposer || shouldBottomAnchor) ? (
                             <NewSessionFloatingBand progress={entrance.enterProgress} sidePadding={props.newSessionSidePadding}
@@ -436,6 +439,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                         onPress={isFloatingComposer && !props.isCreating ? handleDismissScreen : handleDismissKeyboard}
                     />
                 ) : null}
+                {shouldBottomAnchor ? props.intro : null}
                 {shouldBottomAnchor ? pendingLaunchPreview : null}
             </View>
         </ComposerKeyboardScaffold>

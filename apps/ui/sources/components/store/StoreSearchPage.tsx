@@ -35,7 +35,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { t } from '@/text';
 
 import type { StoreColumnField } from './catalog/storeColumnAdapter';
-import { STORE_KIND_ORDER } from './catalog/storeKinds';
+import { STORE_KIND_ORDER, storeKinds } from './catalog/storeKinds';
 import { useStoreFilterFields } from './catalog/useStoreFilterFields';
 import { StoreDirectoryUnavailable } from './StoreDirectoryUnavailable';
 import { ContributedStoreKindSections, useContributedStoreKinds, selectContributedStoreKinds } from './StoreKindSurface';
@@ -200,6 +200,8 @@ function useStoreSearchSections(props: SearchSectionsInput) {
   const appItems = React.useMemo(() => pick(lists.app?.items), [lists.app?.items, visible]);
   const themeItems = React.useMemo(() => pick(lists.theme?.items), [lists.theme?.items, visible]);
   const starterItems = React.useMemo(() => pick(lists.starter?.items), [lists.starter?.items, visible]);
+  const petItems = React.useMemo(() => pick(lists.pet?.items), [lists.pet?.items, visible]);
+  const registryPetItems = React.useMemo(() => petItems.filter((item): item is RegistryCatalogItemSummary => item.kind !== 'builtInPet'), [petItems]);
   const browserExtensionItems = React.useMemo(() => pick(lists.browserExtension?.items), [lists.browserExtension?.items, visible]);
   const skillItems = React.useMemo(
     () => pick(lists.skill?.items),
@@ -233,6 +235,13 @@ function useStoreSearchSections(props: SearchSectionsInput) {
   );
   const app = useRegistryRows({ items: appItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle, undefined, addRegistry);
   const themes = useStoreThemeRows({ items: themeItems, curation: NO_CURATION }, openRegistry, sourceTitle);
+  const registryPets = useRegistryRows({ items: registryPetItems, curation: NO_CURATION }, openRegistry, sourceTitle);
+  // Built-in pets open their own listing; there is nothing to add (they are always in the person's pets).
+  const pets = React.useMemo(() => [...petItems.flatMap((item): DirectoryRow[] => item.kind !== 'builtInPet' ? [] : [{
+    key: `pet|builtIn|${item.pet.id}`, title: item.pet.manifest.displayName, description: storeKinds.pet.summary(item).description ?? null,
+    group: 'builtIn', addable: false, open: () => openListing({ type: 'builtInPet', petId: item.pet.id }),
+    mark: <StoreItemMark facts={{ kind: 'pet', title: item.pet.manifest.displayName }} size={ROW_MARK_PX} />,
+  }]), ...registryPets.rows], [petItems, openListing, registryPets.rows]);
   const starterRows = useRegistryRows({ items: starterItems, curation: NO_CURATION, sources }, openRegistry, sourceTitle, undefined, addRegistry);
   // A starter's + starts a project from it, as on its kind page.
   const starter = React.useMemo(() => starterRows.rows.map((row): DirectoryRow => ({ ...row, addLabel: t('capabilities.store.startProject') })), [starterRows.rows]);
@@ -293,6 +302,7 @@ function useStoreSearchSections(props: SearchSectionsInput) {
       () => ({
         app: rankByTitleMatch(app.rows, state.query),
         theme: rankByTitleMatch(themes.rows, state.query),
+        pet: rankByTitleMatch(pets, state.query),
         starter: rankByTitleMatch(starter, state.query),
         browserExtension: rankByTitleMatch(browserExtension.rows, state.query),
         mcpServer: rankByTitleMatch(mcp.rows, state.query),
@@ -302,7 +312,7 @@ function useStoreSearchSections(props: SearchSectionsInput) {
         plugin: rankByTitleMatch(plugins, state.query),
         software: rankByTitleMatch(software, state.query),
       }),
-      [app.rows, themes.rows, starter, browserExtension.rows, agent.rows, builtIn, mcp.rows, plugins, providers, skill.rows, software, state.query],
+      [app.rows, themes.rows, pets, starter, browserExtension.rows, agent.rows, builtIn, mcp.rows, plugins, providers, skill.rows, software, state.query],
     );
   const sections = KIND_ORDER.filter((kind) => byKind[kind].length > 0);
   const selectedKind =

@@ -72,6 +72,12 @@ import { THEME_MINIATURE_CARD_MIN_WIDTH } from '@/components/settings/appearance
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { StoreMachineScopeContext, StoreMachineSelectionContext, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 import { usePluginThemeList } from '@/theme/profiles/usePluginThemeList';
+import { accountPetRegistryKey, collectAddedRegistryPets, projectStorePetCard, type StorePetCardView, type StorePetItem } from './catalog/storePets';
+import { STORE_PET_CARD_MIN_WIDTH, STORE_PET_CARD_MIN_WIDTH_PHONE, useStorePetCardAnatomy } from './storePetCardAnatomy';
+import { useCreatePetSession } from '@/components/pets/useCreatePetSession';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { storage, usePeripheralFeedDemand } from '@/sync/domains/state/storage';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 export type StoreDirectoryKind = Exclude<StoreKind, 'plugin' | 'software'>;
 /** The catalog row's mark box draws a bare logo at this size inside it (S10 catalogRow). */
@@ -210,6 +216,12 @@ function KindResults(props: Readonly<{ kind: StoreDirectoryKind; presented: bool
     case 'theme':
       if (state.lists.theme) return frame(<ThemeDirectory list={{ ...state.lists.theme, items: themeItems }} query={state.query} />);
       break;
+    case 'pet':
+      if (state.lists.pet) return frame(<PetDirectory list={{ ...state.lists.pet, curation: [...props.curation, ...state.lists.pet.curation],
+          sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.pet.sourceFailures],
+          items: state.lists.pet.items.filter(item => visible.has(item)) }} query={state.query} presented={props.presented}
+          browsing={browsing} onSeeSource={setSourceId} />);
+      break;
     case 'mcpServer':
       if (state.lists.mcpServer) return frame(<McpDirectory list={{ ...state.lists.mcpServer, curation: [...props.curation, ...state.lists.mcpServer.curation],
           sourceFailures: [...props.curationRead.sourceFailures, ...state.lists.mcpServer.sourceFailures],
@@ -275,7 +287,9 @@ export function StoreKindFrame(
   ) : undefined;
   const accessory = props.accessory ?? registrySelect;
   // Software reads one Machine; Bot templates and portable themes belong to no project.
-  const scoped = props.kind !== 'software' && props.kind !== 'bot' && props.kind !== 'theme';
+  const scoped = props.kind !== 'software' && props.kind !== 'bot' && props.kind !== 'theme' && props.kind !== 'pet';
+  // A kind's own create entry (Apps' definitions, Create a pet…): the header actions on wide pages, the band on a phone.
+  const createEntry = props.kind === 'app' ? <StoreAppDefinitionEntries /> : props.kind === 'pet' ? <CreatePetEntry /> : null;
   return (
     <StoreListingPaneHost title={copy.title} testID={`store.kind.${props.kind}`}>
     <ItemList pageColumn="wide" testID={`store.kind.${props.kind}`}>
@@ -286,8 +300,8 @@ export function StoreKindFrame(
           testID={`store.kind.${props.kind}.header`}
           title={copy.title}
           description={copy.description}
-          {...(stacked || !scoped ? {} : { actions: props.kind === 'app'
-            ? <View style={styles.headerActions}><StoreAppDefinitionEntries />{scopeChip}</View> : scopeChip })}
+          {...(stacked ? {} : scoped ? { actions: createEntry
+            ? <View style={styles.headerActions}>{createEntry}{scopeChip}</View> : scopeChip } : createEntry ? { actions: createEntry } : {})}
           search={{
             value: props.query,
             onChangeText: props.onQueryChange,
@@ -296,7 +310,7 @@ export function StoreKindFrame(
             ...(props.filter?.filterButton ? { trailing: props.filter.filterButton } : {}),
           }}
           band={stacked || accessory || props.filter?.tokenRow ? <>
-            {stacked ? <View style={styles.phoneScope}>{scoped ? scopeChip : null}{accessory}{props.kind === 'app' ? <StoreAppDefinitionEntries /> : null}</View>
+            {stacked ? <View style={styles.phoneScope}>{scoped ? scopeChip : null}{accessory}{createEntry}</View>
               : accessory ? <View style={styles.phoneScope}>{accessory}</View> : null}
             {props.filter?.tokenRow ?? null}
           </> : undefined}
@@ -440,6 +454,77 @@ function ThemeDirectory(props: Readonly<{ list: StoreKindList<'theme'>; query: s
       // Phones keep two miniatures across (lab C1P); wider pages keep the Store's three-across default.
       {...(phone ? { minCardWidth: THEME_MINIATURE_CARD_MIN_WIDTH } : {})} />
   </>;
+}
+
+type PetDirectoryRow = DirectoryRow & Readonly<{ card: StorePetCardView }>;
+const isRegistryPet = (item: StorePetItem): item is RegistryCatalogItemSummary => item.kind !== 'builtInPet';
+
+/**
+ * Store › Pets (lab r12-store-A): Built-in first with its own All N ›, then one section per pet catalog previewing its
+ * first row behind All N ›, all as pet cards on the shared directory (source states, selection, Load more).
+ */
+function PetDirectory(props: Readonly<{ list: StoreKindList<'pet'>; query: string; presented: boolean; browsing: boolean;
+  onSeeSource: (sourceId: string) => void }>) {
+  const phone = useDeviceType() === 'phone';
+  const openRegistry = useOpenRegistryItem();
+  const openListing = useOpenStoreListing();
+  const sourceTitle = useSourceTitle();
+  const syncEnabled = useFeatureEnabled('pets.sync');
+  usePeripheralFeedDemand('accountPets', props.presented && syncEnabled);
+  const accountPetsById = storage(state => state.accountPetsById);
+  const held = React.useMemo(() => collectAddedRegistryPets(accountPetsById), [accountPetsById]);
+  const isAdded = React.useCallback((item: RegistryCatalogItemSummary) => held.has(accountPetRegistryKey(item.sourceId, item.itemId)), [held]);
+  const registryItems = React.useMemo(() => props.list.items.filter(isRegistryPet), [props.list.items]);
+  const registryList = React.useMemo(() => ({ items: registryItems, curation: props.list.curation,
+    ...(props.browsing ? { curatedKind: 'pet' as const } : {}) }), [registryItems, props.list.curation, props.browsing]);
+  const registry = useRegistryRows(registryList, openRegistry, sourceTitle, isAdded);
+  const [allBuiltIns, setAllBuiltIns] = React.useState(false);
+  const builtIns = React.useMemo(() => props.list.items.flatMap((item): PetDirectoryRow[] => item.kind !== 'builtInPet' ? [] : [{
+    key: `pet|builtIn|${item.pet.id}`, title: item.pet.manifest.displayName, description: null, mark: null, group: 'builtIn',
+    addable: false, card: projectStorePetCard(item, '', false), open: () => openListing({ type: 'builtInPet', petId: item.pet.id }),
+  }]), [props.list.items, openListing]);
+  const rows = React.useMemo(() => {
+    const cards = new Map(registryItems.map(item => {
+      const card = projectStorePetCard(item, sourceTitle(item.sourceId), isAdded(item));
+      return [card.key, card] as const;
+    }));
+    const shownBuiltIns = props.browsing && !allBuiltIns ? builtIns.slice(0, STORE_SECTION_PREVIEW_ROWS) : builtIns;
+    return [...shownBuiltIns, ...registry.rows.flatMap((row): PetDirectoryRow[] => {
+      const card = cards.get(row.key);
+      return card ? [{ ...row, card }] : [];
+    })];
+  }, [registryItems, sourceTitle, isAdded, builtIns, props.browsing, allBuiltIns, registry.rows]);
+  const groups = React.useMemo(() => [
+    ...(builtIns.length ? [{ key: 'builtIn', title: t('capabilities.store.builtIn'), description: t('settingsPets.store.builtInDescription') }] : []),
+    ...registry.groups,
+  ], [builtIns.length, registry.groups]);
+  const preview = useSourceSectionPreview(rows, groups, props.list, props.browsing ? props.onSeeSource : undefined);
+  const groupAction = React.useCallback((groupKey: string): CollectionGroupAction | null => {
+    if (groupKey !== 'builtIn') return preview.groupAction?.(groupKey) ?? null;
+    return props.browsing && !allBuiltIns && builtIns.length > STORE_SECTION_PREVIEW_ROWS
+      ? { label: t('capabilities.store.search.allOf', { count: builtIns.length }), kind: 'link', onPress: () => setAllBuiltIns(true) } : null;
+  }, [preview.groupAction, props.browsing, allBuiltIns, builtIns.length]);
+  const cardAnatomy = useStorePetCardAnatomy();
+  const anatomy = React.useMemo<CollectionAnatomy<PetDirectoryRow>>(() => ({
+    glyph: row => cardAnatomy.glyph(row.card),
+    title: row => cardAnatomy.title(row.card),
+    where: row => cardAnatomy.where?.(row.card),
+    reason: row => cardAnatomy.reason?.(row.card),
+    preview: row => cardAnatomy.preview?.(row.card),
+    accessibilityLabel: row => cardAnatomy.accessibilityLabel?.(row.card) ?? row.title,
+    testID: row => cardAnatomy.testID?.(row.card) ?? row.key,
+    columnTitles: cardAnatomy.columnTitles,
+  }), [cardAnatomy]);
+  return <Directory kind="pet" rows={preview.rows as readonly PetDirectoryRow[]} groups={groups} list={preview.list}
+    query={props.query} sourceTitle={sourceTitle} anatomy={anatomy} presentation="grid" groupAction={groupAction}
+    minCardWidth={phone ? STORE_PET_CARD_MIN_WIDTH_PHONE : STORE_PET_CARD_MIN_WIDTH} />;
+}
+
+/** Create a pet… (decision 13): the one entry the Store, Settings › Pets and the face chooser share. */
+function CreatePetEntry(): React.ReactNode {
+  const createPet = useCreatePetSession();
+  return <RoundButton size="small" display="secondary" testID="store.kind.pet.create" title={t('settingsPets.store.create')}
+    onPress={() => fireAndForget(createPet(), { tag: 'StoreKindPage.createPet' })} />;
 }
 
 /** A kind's curated items as summaries, from the words the catalog's curation already holds. */
@@ -730,6 +815,7 @@ export function useAddRegistryItem(): (item: RegistryCatalogItemSummary) => void
 /** The directory key of the selected listing, so the row its pane shows reads selected. */
 export function directoryKeyOf(reference: StoreListingReference | null): string | null {
   if (reference?.type === 'pluginTheme') return JSON.stringify(['pluginTheme', reference.reference.pluginId, reference.reference.contributionId]);
+  if (reference?.type === 'builtInPet') return `pet|builtIn|${reference.petId}`;
   return reference?.type === 'registryItem' ? `${reference.kind}|${reference.sourceId}|${reference.itemId}` : null;
 }
 
