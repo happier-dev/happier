@@ -10272,7 +10272,9 @@ class Sync {
         const scope = this.pendingSettingsScope;
         const context = this.createAppliedSettingsRequestContext(scope);
         const target = this.getAppliedTransportTarget();
-        if (!credentials || !scope || !context || !target) throw new Error('Project Account/Home unavailable');
+        if (!credentials || !scope || !context || !target) {
+            throw new HappyError('Project Account/Home unavailable', true, { code: 'project_account_home_unavailable' });
+        }
         const guard = this.createAppliedTransportScopeGuard(target);
         storage.getState().activateProjectAccountRowsScope(scope);
         storage.getState().setProjectAccountRowsStatusForScope(scope, 'loading');
@@ -10358,18 +10360,29 @@ class Sync {
     };
 
     /** Complete Project census for explicit recovery and refresh. */
-    public refreshProjectAccountRows = async () => {
+    public refreshProjectAccountRows = async (): Promise<
+        Readonly<{ status: 'ready' }> | Readonly<{ status: 'unavailable'; reason: 'project_account_home_unavailable' }>
+    > => {
         const scope = this.pendingSettingsScope;
         const needsInitialCensus = this.projectAccountRowsRuntime === null;
-        const runtime = this.ensureProjectAccountRowsRuntime();
+        let runtime: Promise<ReturnType<typeof createProjectAccountRowsSync>>;
+        try {
+            runtime = this.ensureProjectAccountRowsRuntime();
+        } catch (error) {
+            if (error instanceof HappyError && error.code === 'project_account_home_unavailable') {
+                return { status: 'unavailable', reason: error.code };
+            }
+            throw error;
+        }
         const owner = await runtime;
         // A newly created owner has already read and applied this refresh's census.
-        if (needsInitialCensus) return;
+        if (needsInitialCensus) return { status: 'ready' };
         if (scope && this.projectAccountRowsRuntime === runtime) {
             // Retain admitted display rows while withholding fresh mutation authority.
             storage.getState().setProjectAccountRowsStatusForScope(scope, 'loading');
         }
         await owner.refresh();
+        return { status: 'ready' };
     };
 
     public mutateProjectWorkspaceRef = async (mutation: WorkspaceRefAccountMutation, expectedScope: AccountSettingsScope) => {

@@ -189,7 +189,8 @@ describe('whole external Action encryption', () => {
   it.each([
     { actionId: 'session.open', target: { kind: 'session' as const, sessionId: 'chosen' }, input: { sessionId: 'chosen', intent: 'resume' }, demanded: true },
     { actionId: 'session.open', target: { kind: 'session' as const, sessionId: 'chosen' }, input: { sessionId: 'chosen' }, demanded: false },
-    { actionId: 'session.message.send', target: { kind: 'session' as const, sessionId: 'chosen' }, input: { sessionId: 'chosen', message: 'private input' }, demanded: false },
+    // Public dispatch wakes before delivery even when local activation waits for accepted input (f301186495b).
+    { actionId: 'session.message.send', target: { kind: 'session' as const, sessionId: 'chosen' }, input: { sessionId: 'chosen', message: 'private input' }, demanded: true },
     { actionId: 'session.message.send', target: { kind: 'session' as const, sessionId: 'chosen' }, input: { sessionId: 'chosen', message: 'private input', requestedAction: { v: 1, kind: 'send_now' } }, demanded: true },
     { actionId: 'daemon.filesystem.readFile', target: binding.target, input: { rootPath: '/work', path: 'private-file' }, demanded: true },
     { actionId: 'daemon.filesystem.listDirectory', target: binding.target, input: { rootPath: '/work', path: '.' }, demanded: false },

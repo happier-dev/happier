@@ -321,8 +321,11 @@ function createSession(sessionId: string): Session {
     });
 }
 
-function installAppliedAccountScope(sync: object, accountId = 'scope-test-account'): void {
-    const snapshot = getActiveServerSnapshot();
+function installAppliedAccountScope(
+    sync: object,
+    accountId = 'scope-test-account',
+    snapshot = getActiveServerSnapshot(),
+): void {
     storage.getState().activateProfileScope({ serverId: snapshot.serverId, accountId });
     publishAppliedActiveServerSnapshot(snapshot);
     Reflect.set(sync, 'appliedServerTarget', snapshot);
@@ -660,6 +663,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const { sync } = await import('./sync');
         installPlainRetirementEncryption(sync);
         installActiveHomeCredentials(sync, 'home-account');
+        installAppliedAccountScope(sync, 'home-account');
         const syncInternals = installUnlistedSessionState(sync);
 
         const sessionByIdPaths: string[] = [];
@@ -695,6 +699,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const { sync } = await import('./sync');
         installPlainRetirementEncryption(sync);
         installActiveHomeCredentials(sync, 'home-account');
+        installAppliedAccountScope(sync, 'home-account');
         const syncInternals = installUnlistedSessionState(sync);
 
         const sessionByIdPaths: string[] = [];
@@ -1598,7 +1603,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(requestMock).toHaveBeenCalledWith(
             `/v1/sessions/${sessionId}/messages?scope=main`,
             expect.objectContaining({ method: 'GET' }),
-            undefined,
+            { recoveryRead: 'paged' },
         );
         const messages = storage.getState().sessionMessages[sessionId];
         expect(messages?.messageIdsOldestFirst).toHaveLength(1);
@@ -2007,7 +2012,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         const scope = getActiveServerAccountScope();
         if (!scope) throw new Error('Expected the installed Home Account');
         const now = Date.now();
-        const machine = { ...createMachine('heartbeat-only'), activeAt: now };
+        // Current Homes publish presence as a fact; only legacy Homes need a grace-lapse timer.
+        const machine = { ...createMachine('heartbeat-only'), activeAt: now, presenceProtocolVersion: 1 as const };
         storage.getState().applyMachines([machine], false, { sourceServerId: scope.serverId });
         const before = storage.getState();
         requestMock.mockClear();
@@ -3232,7 +3238,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         await setActiveServerId(activeServer.id, { scope: 'device' });
         resolvePreferredServerIdForSessionIdMock.mockReturnValue(ownerServer.id);
 
-        storage.getState().applySessions([createSession(sessionId)]);
+        storage.getState().applySessions([{ ...createSession(sessionId), serverId: ownerServer.id }]);
 
         const ownerToken = installOwnerAccountSealingSession(sessionId);
         runtimeFetchMock.mockResolvedValue(
@@ -3257,6 +3263,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         );
 
         const { sync } = await import('./sync');
+        installAppliedAccountScope(sync);
         (sync as any).encryption = testEncryption;
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
@@ -3291,7 +3298,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         await setActiveServerId(activeServer.id, { scope: 'device' });
         resolvePreferredServerIdForSessionIdMock.mockReturnValue(ownerServer.id);
 
-        storage.getState().applySessions([createSession(sessionId)]);
+        storage.getState().applySessions([{ ...createSession(sessionId), serverId: ownerServer.id }]);
 
         const ownerToken = installOwnerAccountSealingSession(sessionId);
         runtimeFetchMock
@@ -3337,6 +3344,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             );
 
         const { sync } = await import('./sync');
+        installAppliedAccountScope(sync);
         (sync as any).encryption = testEncryption;
         (sync as any).activeServerSessionIds = new Set<string>();
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
@@ -4379,7 +4387,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
     });
 
     it.each(['plain', 'e2ee', 'runner', 'metadata_rejected', 'retired', 'home_retired', 'stale', 'automatic', 'manager', 'self', 'shared_editor'] as const)(
-        'persists explicit UI Stop through the real owner tuple before physical Stop (%s)', async scenario => {
+        'records the explicit UI Stop hold when possible and reports its outcome alongside physical Stop (%s)', async scenario => {
         const bridge = await loadSyncSingletonForTests();
         onTestFinished(() => bridge.dispose());
         const sessionId = `ui_explicit_stop_${scenario}`;
@@ -4424,12 +4432,12 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 agentStateVersion: 0, agentState: null, share: scenario === 'shared_editor'
                     ? { accessLevel: 'edit', canApprovePermissions: false } : null } });
         });
-        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async () => {
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ patch }: { patch: { mode: string } }) => {
             effects.push('metadata');
             if (scenario === 'retired') storage.getState().activateProfileScope({ ...scope, accountId: 'replacement-owner' });
             if (scenario === 'home_retired') publishAppliedActiveServerSnapshot({ ...getActiveServerSnapshot(), serverId: 'replacement-home' });
             if (scenario === 'metadata_rejected') throw new Error('Metadata refused');
-            return { result: 'success', metadataLayoutVersion: 1, version: 3, agentStateVersion: 1 };
+            return { result: 'success', metadataLayoutVersion: 1, version: patch.mode === 'owner_migration' ? 3 : 4, agentStateVersion: 1 };
         });
         // Only the final physical transport is replaced. The frontdoor, tuple
         // writer, currentness, Account-mode and content crypto remain real.
@@ -4456,19 +4464,32 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 agentStartContext: { caller, baseline: { machineId: 'stop-machine', directory: '/repo' },
                     ledSubtreeSessionIds: [sessionId], workDepthLimit: 2, roles: {}, callerPermissionCeiling: 'default' },
             } } : {}) });
-        if (scenario === 'shared_editor' || scenario === 'stale' || scenario === 'self') {
+        if (scenario === 'shared_editor') {
+            expect(effects).toEqual([]);
+            expect(result).toMatchObject({ success: false, code: 'metadata_privacy_upgrade_required',
+                holdRecorded: false, holdFailure: 'metadata_privacy_upgrade_required' });
+            return;
+        }
+        if (scenario === 'stale' || scenario === 'self') {
             expect(effects).toEqual([]);
             expect(result).toMatchObject({ success: false, code: 'session_stop_control_unavailable' });
             return;
         }
-        if (scenario === 'metadata_rejected' || scenario === 'retired' || scenario === 'home_retired') {
+        if (scenario === 'metadata_rejected') {
+            expect(effects).toEqual(['metadata', 'physical']);
+            expect(result).toMatchObject({ success: false, stopped: true, code: 'session_metadata_update_failed',
+                holdRecorded: false, holdFailure: 'session_metadata_update_failed' });
+            return;
+        }
+        if (scenario === 'retired' || scenario === 'home_retired') {
             expect(effects, result.message).toEqual(['metadata']);
             expect(result.success).toBe(false);
             return;
         }
         if (scenario === 'runner') expect(result, result.message).toMatchObject({ success: false, code: 'session_stop_requested' });
         else expect(result.success, result.message).toBe(true);
-        expect(effects).toEqual(scenario === 'automatic' ? ['physical'] : ['metadata', 'physical']);
+        // Layout-0 migration preserves the source; the following owner write records the hold.
+        expect(effects).toEqual(scenario === 'automatic' ? ['physical'] : ['metadata', 'metadata', 'physical']);
         if (scenario !== 'automatic') {
             expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({ sessionId,
                 patch: expect.objectContaining({ mode: 'owner_migration', expectedAccountEncryptionMode: encrypted ? 'e2ee' : 'plain',
@@ -4547,12 +4568,12 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                 share: null,
             } });
         });
-        emitSessionMetadataUpdateWithServerScopeMock.mockResolvedValue({
+        emitSessionMetadataUpdateWithServerScopeMock.mockImplementation(async ({ patch }: { patch: { mode: string } }) => ({
             result: 'success',
             metadataLayoutVersion: 1,
-            version: 3,
+            version: patch.mode === 'owner_migration' ? 3 : 4,
             agentStateVersion: 1,
-        });
+        }));
 
         const { sync } = await import('./sync');
         (sync as any).credentials = { token: 'active-token' };
@@ -4565,7 +4586,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             })),
         ).resolves.toBeUndefined();
 
-        expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
+        expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenNthCalledWith(1, {
             sessionId,
             isCurrent: expect.any(Function),
             patch: expect.objectContaining({
@@ -4583,13 +4604,25 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                     metadataLayoutVersion: 1,
                     ownerMetadata: expect.objectContaining({ t: 'plain' }),
                     sharedMetadata: expect.objectContaining({
-                        ciphertext: expect.stringContaining('Renamed session'),
+                        ciphertext: expect.not.stringContaining('Renamed session'),
                     }),
                 }),
             }),
         });
+        expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenNthCalledWith(2, {
+            sessionId,
+            isCurrent: expect.any(Function),
+            patch: expect.objectContaining({
+                mode: 'owner',
+                metadataLayoutVersion: 1,
+                sharedMetadata: {
+                    ciphertext: expect.stringContaining('Renamed session'),
+                    expectedVersion: 3,
+                },
+            }),
+        });
         expect(storage.getState().sessions[sessionId]?.metadataLayoutVersion).toBe(1);
-        expect(storage.getState().sessions[sessionId]?.metadataVersion).toBe(3);
+        expect(storage.getState().sessions[sessionId]?.metadataVersion).toBe(4);
         expect((storage.getState().sessions[sessionId]?.metadata as any)?.summary?.text).toBe('Renamed session');
     });
 
@@ -4660,7 +4693,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         expect(emitSessionMetadataUpdateWithServerScopeMock).toHaveBeenCalledWith({
             sessionId,
             isCurrent: expect.any(Function),
-            patch: {
+            patch: expect.objectContaining({
                 mode: 'shared_editor',
                 metadataLayoutVersion: 1,
                 sharedMetadata: {
@@ -4670,7 +4703,13 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                     }),
                     expectedVersion: 2,
                 },
-            },
+                displayProjectionV1: expect.objectContaining({
+                    sourceMetadataVersion: 3,
+                    shared: { t: 'plain', v: expect.objectContaining({
+                        audience: 'shared', display: { v: 1, summaryText: 'Renamed session' },
+                    }) },
+                }),
+            }),
         });
         expect(storage.getState().sessions[sessionId]).toEqual(expect.objectContaining({
             metadataLayoutVersion: 1,
@@ -4787,7 +4826,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         ).toHaveBeenCalledWith({
             sessionId,
             isCurrent: expect.any(Function),
-            patch: {
+            patch: expect.objectContaining({
                 mode: 'owner',
                 metadataLayoutVersion: 1,
                 expectedOwnerMetadata: ownerMetadataEnvelope,
@@ -4806,7 +4845,14 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
                     ciphertext: JSON.stringify({ requests: {} }),
                     expectedVersion: 4,
                 },
-            },
+                displayProjectionV1: expect.objectContaining({
+                    sourceMetadataVersion: 3,
+                    owner: { t: 'encrypted', c: expect.any(String) },
+                    shared: { t: 'plain', v: expect.objectContaining({
+                        audience: 'shared', display: { v: 1, summaryText: 'Renamed owner session' },
+                    }) },
+                }),
+            }),
         });
         expect(
             storage.getState().sessions[sessionId],
@@ -7022,7 +7068,8 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
         (sync as any).activeServerSessionIds = new Set<string>([sessionId]);
         (sync as any).hasFetchedSessionsSnapshotForActiveServer = true;
 
-        await (sync as any).fetchMessages(sessionId);
+        // Hydration wakes the existing messages owner when the admitted source changes.
+        await sync.refreshSessionMessages(sessionId);
         const sourceReplacement = (sync as any).handleExternalSessionTranscriptEphemeralUpdate(invalidation);
         await vi.waitFor(() => {
             expect(requestMock).toHaveBeenCalledTimes(1);
@@ -7643,6 +7690,7 @@ describe('sync.fetchMessages server-scoped known-session checks', () => {
             generation: 0,
         };
         appliedRuntimeAvailableOverride.current = true;
+        installAppliedAccountScope(sync, 'scope-test-account', appliedServerSnapshotOverride.current);
         storage.getState().applySessions([{
             ...createSession(params.sessionId),
             seq: params.sessionSeq,

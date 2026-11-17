@@ -98,6 +98,17 @@ afterEach(() => {
 });
 
 describe('Sync authoring-memory runtime', () => {
+    it.each(['scope', 'transport'] as const)('settles unavailable Project %s without starting Account I/O', async missing => {
+        owner.credentials = { token: 'unavailable-project-account' };
+        owner.projectAccountRowsRuntime = null;
+        owner.pendingSettingsScope = missing === 'scope' ? null
+            : createAccountSettingsScope('https://project-unavailable.test', 'unavailable-project-account');
+        owner.appliedServerTarget = null;
+        await expect(sync.refreshProjectAccountRows()).resolves.toEqual({
+            status: 'unavailable', reason: 'project_account_home_unavailable',
+        });
+        expect(network.request).not.toHaveBeenCalled();
+    });
     it('leaves Project row convergence to push after successful relationship lifecycle Actions', async () => {
         owner.credentials = { token: 'relationship-account' };
         owner.pendingSettings = {};
