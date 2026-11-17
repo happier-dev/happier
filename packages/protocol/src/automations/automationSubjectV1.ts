@@ -45,6 +45,11 @@ export const AutomationProjectSubjectV1Schema = lazyZodSchema(() => z.strictObje
 export const AutomationMachineSubjectV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('machine'), ...MachineTargetV1Schema.shape,
 }));
+export const AutomationHealthCheckSubjectV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('healthCheck'), serverId: MachineTargetV1Schema.shape.serverId,
+    ...SavedHealthCheckSelectorV1Schema.shape,
+}));
+export type AutomationHealthCheckSubjectV1 = z.infer<typeof AutomationHealthCheckSubjectV1Schema>;
 
 export const AutomationSubjectV1Schema = lazyZodSchema(() => {
     const serverId = MachineTargetV1Schema.shape.serverId;
@@ -56,7 +61,7 @@ export const AutomationSubjectV1Schema = lazyZodSchema(() => {
         z.strictObject({ kind: z.literal('app'), serverId, projectSourceId: environment.projectSourceId }),
         AutomationMachineSubjectV1Schema,
         AutomationDatabaseSubjectV1Schema,
-        z.strictObject({ kind: z.literal('healthCheck'), serverId, ...SavedHealthCheckSelectorV1Schema.shape }),
+        AutomationHealthCheckSubjectV1Schema,
         z.strictObject({ kind: z.literal('backup'), serverId, environmentId: environment.environmentId }),
         z.strictObject({ kind: z.literal('plugin'), serverId,
             pluginId: asProtocolZod(PluginIdSchema), subjectKindId: asProtocolZod(PluginContributionLocalIdSchema),
