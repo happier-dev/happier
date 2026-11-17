@@ -316,6 +316,7 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
     const server = '../../../../server/sources/';
     const { createLightSqliteHarness }: typeof import('../../../../server/sources/testkit/lightSqliteHarness') = await import(server + 'testkit/lightSqliteHarness');
     const { db }: typeof import('../../../../server/sources/storage/db') = await import(server + 'storage/db');
+    const { plainPrivateLabel }: typeof import('../../../../server/sources/testkit/privateLabelFixture') = await import(server + 'testkit/privateLabelFixture');
     const { inTx }: typeof import('../../../../server/sources/storage/inTx') = await import(server + 'storage/inTx');
     const { createPlannedSessionTeamCredentialFixture, TEST_AUTHENTICATION }: typeof import('../../../../server/sources/app/teams/credentials/sessionBinding.testkit') = await import(server + 'app/teams/credentials/sessionBinding.testkit');
     const { writeSessionTeamCredentialBindingsInTx }: typeof import('../../../../server/sources/app/teams/credentials/sessionBinding') = await import(server + 'app/teams/credentials/sessionBinding');
@@ -345,7 +346,7 @@ describe('Cloudflare Provider source shared through the existing Team broker', (
     const fixture = await sourceFixture(home.broker.id);
     const shared = await inTx(tx => createTeamCredentialResourceInTx(tx, { actorAccountId: home.custodian.id,
       authentication: teamAuthentication, resourceId: crypto.randomUUID(), teamId: home.team.id,
-      displayName: 'Cloudflare source', source: fixture.source, deliveryPolicy: { preferredAllowedModes: ['brokered'] },
+      displayName: plainPrivateLabel('Cloudflare source'), source: fixture.source, deliveryPolicy: { preferredAllowedModes: ['brokered'] },
       brokerPlacement: { kind: 'machine', machineId: home.broker.id }, sessionUsePolicy: 'personal_allowed',
       requestPolicy: null, allMembersAllowedRoutes: null, groupGrants: [],
       memberGrants: [{ teamMembershipId: home.creatorMembership.id, allowedRoutes: ['brokered'] }], usageLimits: [],

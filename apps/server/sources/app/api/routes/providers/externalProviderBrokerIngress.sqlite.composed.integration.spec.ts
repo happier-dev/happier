@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import Fastify, { type RouteOptions } from "fastify";
 import * as privacyKit from "privacy-kit";
 
+import { storedPlainPrivateLabel, plainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -95,11 +96,11 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
             metadata: '{}', kind: 'persistent', operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
             operationProtocolCapabilitiesRevision: 1 } });
         const resource = await db.teamCredentialResource.create({ data: { teamId: team.id, custodianAccountId: owner.id,
-            displayName: 'External source', disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed', brokerMachineId: broker.id,
+            displayName: storedPlainPrivateLabel('External source'), disclosureCeiling: 'brokered_only', sessionUsePolicy: 'personal_allowed', brokerMachineId: broker.id,
             sourceBindingJson: JSON.stringify({ v: 1, kind: 'connected_account', target: { kind: 'account', account }, credentialIncarnation: credential.id }),
             memberGrants: { create: { teamMembershipId: member.id, deliveryMode: 'brokered' } } } });
         const key = await inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, { authentication: TEST_AUTHENTICATION,
-            actorAccountId: owner.id, resourceId: resource.id, teamMembershipId: member.id, label: 'Source health', expiresAt: null }));
+            actorAccountId: owner.id, resourceId: resource.id, teamMembershipId: member.id, keyId: crypto.randomUUID(), label: plainPrivateLabel('Source health'), expiresAt: null }));
         if (!key.ok) throw new Error(key.error);
         const dispatch = vi.fn(async (_input: Parameters<ExternalProviderBrokerDispatch>[0]) => ({ ok: true as const,
             statusCode: 200, headers: {}, body: (async function* () { yield Buffer.from('{}'); })() }));
@@ -190,7 +191,7 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
             data: {
                 teamId: team.id,
                 custodianAccountId: manager.id,
-                displayName: "Pool ingress provider",
+                displayName: storedPlainPrivateLabel("Pool ingress provider"),
                 disclosureCeiling: "brokered_only",
                 sessionUsePolicy: "personal_allowed",
                 sourceBindingJson: JSON.stringify({
@@ -209,7 +210,7 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
             actorAccountId: manager.id,
             resourceId: resource.id,
             teamMembershipId: membership.id,
-            label: "Pool-backed client",
+            keyId: crypto.randomUUID(), label: plainPrivateLabel("Pool-backed client"),
             expiresAt: null,
         }));
         expect(created.ok).toBe(true);
@@ -219,7 +220,7 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
             actorAccountId: manager.id,
             resourceId: resource.id,
             teamMembershipId: membership.id,
-            label: "Later Pool-backed client",
+            keyId: crypto.randomUUID(), label: plainPrivateLabel("Later Pool-backed client"),
             expiresAt: null,
         }));
         expect(laterKey.ok).toBe(true);
@@ -467,7 +468,7 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
                 actorAccountId: manager.id,
                 resourceId: resource.id,
                 teamMembershipId: membership.id,
-                label: "Unplaced Pool-backed client",
+                keyId: crypto.randomUUID(), label: plainPrivateLabel("Unplaced Pool-backed client"),
                 expiresAt: null,
             }));
             if (!unplacedKey.ok) throw new Error("expected a third key");
@@ -509,7 +510,7 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
             }))).resolves.toMatchObject({ ok: true, revoked: true });
             const replacementKey = await inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
                 actorAccountId: manager.id, resourceId: resource.id, teamMembershipId: membership.id,
-                label: unplacedKey.key.label, expiresAt: null, authentication: TEST_AUTHENTICATION,
+                keyId: crypto.randomUUID(), label: plainPrivateLabel("Unplaced Pool-backed client"), expiresAt: null, authentication: TEST_AUTHENTICATION,
             }));
             if (!replacementKey.ok) throw new Error("expected replacement key");
             expect(replacementKey.key.keyId).not.toBe(unplacedKey.key.keyId);
@@ -581,7 +582,7 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
                 data: {
                     teamId: team.id,
                     custodianAccountId: manager.id,
-                    displayName: "Ingress provider",
+                    displayName: storedPlainPrivateLabel("Ingress provider"),
                     disclosureCeiling: "brokered_only",
                     sessionUsePolicy: "personal_allowed",
                     sourceBindingJson: JSON.stringify({
@@ -603,7 +604,7 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
                 actorAccountId: manager.id,
                 resourceId: resource.id,
                 teamMembershipId: membership.id,
-                label: "Generated runner",
+                keyId: crypto.randomUUID(), label: plainPrivateLabel("Generated runner"),
                 expiresAt: null,
             }));
             expect(generated.ok).toBe(true);
@@ -619,7 +620,7 @@ describe("external Provider broker ingress network vertical (SQLite)", () => {
                     id: underscoreKeyId,
                     resourceId: resource.id,
                     teamMembershipId: membership.id,
-                    label: "Underscore runner",
+                    label: storedPlainPrivateLabel("Underscore runner"),
                     displayPrefix: createTeamCredentialExternalApiKeyDisplayPrefixV1(underscoreKeyId),
                     secretDigest: digestForTest(underscoreSecret),
                     createdAt: new Date(),

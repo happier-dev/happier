@@ -448,9 +448,12 @@ it('admits signed-out Agent Sessions through the probed local gateway and chosen
         expect(settled).toBe(false);
         expect(targetSignal?.aborted).toBe(false);
         caller.abort();
-        const result = await pending;
+        // Caller cancellation settles as a typed cancelled rejection,
+        // never as catalog unavailability.
+        await expect(pending).rejects.toMatchObject({
+          name: 'ProviderOperationAbandonedError', reason: 'cancelled',
+        });
         expect(targetSignal?.aborted).toBe(true);
-        expect(result).toMatchObject({ ok: false, result: { errorDetail: { providerError: { code: 'provider_catalog_unavailable' } } } });
         expect(logs.mock.calls).toContainEqual(['[PROVIDER] Spawn authorization phase', expect.objectContaining({
           phase: 'purpose_bindings', status: 'failed', reason: 'cancelled', connectionId: 'run-gateway', machineId: peerMachineId,
         })]);
