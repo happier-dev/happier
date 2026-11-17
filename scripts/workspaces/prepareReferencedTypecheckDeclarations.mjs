@@ -226,7 +226,7 @@ async function pruneObsoleteDeclarations(pkg, project, config) {
 }
 
 /** Derive canonical declarations without touching JavaScript or build stamps.
- * Existing package publication locks are acquired jointly
+ * The publication locks of the packages a pass emits are acquired jointly
  * within the consumer's compilation envelope; warm consumers start no emitter
  * or package build. Publication custody ends before the consumer starts.
  */
@@ -251,15 +251,18 @@ async function prepareWorkspaceTypecheckDeclarationsPass(componentDir, {
 } = {}) {
   const started = performance.now();
   const { ordered, repoDir } = await workspaceDeclarationInputs(componentDir);
-  const locks = ordered.map(pkg => ({ path: resolveWorkspacePackageBuildLockPath(pkg.dir, pkg.manifest) }))
-    .sort((a, b) => a.path.localeCompare(b.path));
+  const lockOf = pkg => ({ path: resolveWorkspacePackageBuildLockPath(pkg.dir, pkg.manifest) });
+  // P03 ORCH 2026-11-17: a pass holds the publication locks of only the packages
+  // it emits. It reads the other packages' published declarations unlocked and
+  // validates them after emission (nl1: passes holding every closure lock starved
+  // protocol publishers for 3.5 h).
+  let held = new Set();
   if (underLock) {
     const leases = JSON.parse(env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES || '[]');
     const values = [env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD, ...leases];
-    if (locks.some(({ path }) =>
-      !values.some(value => callerHoldsWorkspaceBundleLock(path, value)))) {
-      throw new Error('Declaration preparation requires inherited package publication custody');
-    }
+    held = new Set(ordered.filter(pkg => values.some(value => callerHoldsWorkspaceBundleLock(lockOf(pkg).path, value)))
+      .map(pkg => pkg.name));
+    if (!held.size) throw new Error('Declaration preparation requires inherited package publication custody');
   }
   const pending = [];
   const prepare = async publication => {
@@ -271,12 +274,15 @@ async function prepareWorkspaceTypecheckDeclarationsPass(componentDir, {
       if (await declarationCacheCurrent(pkg, key)) continue;
       stale.push(pkg.name);
       if (!underLock) continue;
+      if (!held.has(pkg.name)) throw new BuildInputDriftError(`Declaration inputs of ${pkg.name} changed after its publication was selected`);
       await mkdir(pkg.cache, { recursive: true });
       const project = resolve(pkg.cache, 'tsconfig.json');
       await writeJsonAtomic(project, config);
       pending.push({ pkg, project, key, config });
     }
     if (pending.length) {
+      const readers = ordered.filter(pkg => !held.has(pkg.name));
+      const readKeys = await Promise.all(readers.map(declarationOutputKey));
       // Force invalidated projects so changed external declarations cannot be
       // hidden by a solution builder's root-file timestamp shortcut.
       const args = ['--build', ...pending.map(({ project }) => project), '--singleThreaded', '--force'];
@@ -290,6 +296,11 @@ async function prepareWorkspaceTypecheckDeclarationsPass(componentDir, {
         code: 'TYPECHECK_DECLARATION_EMIT_FAILED',
         failure: { step: 'declaration-emission', status: result.status, projects: pending.map(({ pkg }) => pkg.name) },
       });
+      // Unlocked dependency declarations must be the ones the emitter read.
+      const reread = await Promise.all(readers.map(declarationOutputKey));
+      if (reread.some((value, index) => value !== readKeys[index])) {
+        throw new BuildInputDriftError('A dependency publication changed during declaration emission');
+      }
       for (const { pkg, key, project, config } of pending) {
         const outputs = await pruneObsoleteDeclarations(pkg, project, config);
         const outputKey = await declarationOutputKey(pkg);
@@ -309,6 +320,7 @@ async function prepareWorkspaceTypecheckDeclarationsPass(componentDir, {
     throw error;
   }
   if (stale.length && !underLock) {
+    const locks = ordered.filter(pkg => stale.includes(pkg.name)).map(lockOf).sort((a, b) => a.path.localeCompare(b.path));
     if (withinTypecheckAdmission) {
       return await withWorkspaceBuildResources({ locks, env, signal,
         typecheckDeclarationPhase: true }, async acquiredEnv => await prepareWorkspaceTypecheckDeclarations(componentDir, {
