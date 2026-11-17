@@ -19,8 +19,10 @@ import {
     summarizeWorkflowInvocationCoverage,
     isWorkflowAttentionInvocation,
     resolveWorkflowRunPrimaryAction,
+    canStartWorkflowAnotherRound,
+    canStartWorkflowRunAgain,
 } from './workflowLifecyclePresentation';
-import { createWorkflowInvocationIndexFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
 /**
  * The one neutral managed-lifecycle presenter.
@@ -211,6 +213,18 @@ describe('summarizeWorkflowInvocationCoverage', () => {
         expect(summarizeWorkflowInvocationCoverage(rows, { ...evidence, historyComplete: true }).coverage).toBe('partial');
         expect(summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false, runState: 'failed' }).knownFailure).toBe(true);
         expect(summarizeWorkflowInvocationCoverage([], { kindsByInvocationId: new Map(), historyComplete: false, knownFailure: true }).knownFailure).toBe(true);
+    });
+});
+
+describe('canStartWorkflowRunAgain', () => {
+    it('withholds Run again while the Run\'s Machine is unreachable: it repeats on that Machine (offline Run, one next step)', () => {
+        const base = { run: createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' }),
+            canEdit: true, hasAcceptedContext: true };
+        expect(canStartWorkflowRunAgain(base)).toBe(true);
+        expect(canStartWorkflowRunAgain({ ...base, machineReachable: true })).toBe(true);
+        expect(canStartWorkflowRunAgain({ ...base, machineReachable: false })).toBe(false);
+        expect(canStartWorkflowAnotherRound({ ...base, definition: null, supportsAnotherRound: true })).toBe(true);
+        expect(canStartWorkflowAnotherRound({ ...base, definition: null, supportsAnotherRound: true, machineReachable: false })).toBe(false);
     });
 });
 

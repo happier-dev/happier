@@ -2325,7 +2325,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                 publicationRequests={publicationRequests}
                 onOpenPublicationRequest={(href) => router.push(href as never)}
                 onRunAgain={canStartWorkflowRunAgain({ run: summary, canEdit, cancelRequested,
-                    hasAcceptedContext: visibleAcceptedContext !== null })
+                    hasAcceptedContext: visibleAcceptedContext !== null, machineReachable: runMachineReachable })
                     ? () => { void requestRunAgain(); }
                     : undefined}
                 runAgainAnchorRef={runAgainAnchorRef}
@@ -2336,7 +2336,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                     tab: { id: remedy === 'configure_admin_access' ? 'security' : 'setup' },
                 }) as never)}
                 // Offered where the definition takes the previous round as context (Debate, Panel, Fresh opinions).
-                onAnotherRound={canStartWorkflowAnotherRound({ run: summary, canEdit, cancelRequested,
+                onAnotherRound={canStartWorkflowAnotherRound({ run: summary, canEdit, cancelRequested, machineReachable: runMachineReachable,
                     hasAcceptedContext: visibleAcceptedContext !== null, definition: visibleDefinition })
                     ? requestAnotherRound
                     : undefined}

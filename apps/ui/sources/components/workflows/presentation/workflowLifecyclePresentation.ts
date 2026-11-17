@@ -37,8 +37,13 @@ export function canStartWorkflowRunAgain(params: Readonly<{
     canEdit: boolean;
     hasAcceptedContext: boolean;
     cancelRequested?: boolean;
+    /**
+     * The Run's Machine contact, when known. Run again repeats this Run on that Machine, so while it is unreachable
+     * the replay would fail the same way: the page's one next step is its reconnect, not a second button.
+     */
+    machineReachable?: boolean;
 }>): boolean {
-    return params.canEdit && params.hasAcceptedContext && isTerminalWorkflowRunState(params.run.state)
+    return params.machineReachable !== false && params.canEdit && params.hasAcceptedContext && isTerminalWorkflowRunState(params.run.state)
         && !isWorkflowRunStopPending({ ...params.run, cancelRequested: params.cancelRequested });
 }
 
@@ -95,6 +100,7 @@ export function canStartWorkflowAnotherRound(params: Readonly<{
     hasAcceptedContext: boolean;
     supportsAnotherRound?: boolean;
     cancelRequested?: boolean;
+    machineReachable?: boolean;
 }>): boolean {
     return canStartWorkflowRunAgain(params)
         && (params.definition ? supportsWorkflowAnotherRoundV1(params.definition) : params.supportsAnotherRound === true);

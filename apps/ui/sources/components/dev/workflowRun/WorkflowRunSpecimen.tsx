@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { canStartWorkflowRunAgain } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import {
@@ -268,7 +269,9 @@ export function WorkflowRunSpecimen(
         onDeselectInvocation={() => setSelected(null)}
         view={view}
         onChangeView={setView}
-        {...(offline ? { onRunAgain: () => {} } : {})}
+        // The offline scene offers Run again exactly when the Run-again owner would: never while its Machine is away.
+        {...(offline && canStartWorkflowRunAgain({ run: data.run, canEdit: true, hasAcceptedContext: true,
+          machineReachable: !offline }) ? { onRunAgain: () => {} } : {})}
       />
     </View>
   );

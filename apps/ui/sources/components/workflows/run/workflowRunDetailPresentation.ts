@@ -22,7 +22,7 @@ import type { WorkStatusPresentation } from '@/components/work/status/resolveWor
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { presentSessionRuntimeIssue, presentSessionStartupFailureCause, presentSessionStartupFailureRecovery, readSessionAgentAvailabilityFailure } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { hasSessionUsageLimitResetElapsed } from '@/components/sessions/usageLimitRecovery/sessionUsageLimitRecoveryPresentation';
-import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { isMachineUnreachableFailureCode, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { WorkflowFlowProjection } from '../flow/workflowFlowProjection';
 import type { WorkflowRunPublicationRequest } from './useWorkflowRunPublicationRequests';
@@ -335,6 +335,9 @@ export function projectWorkflowInvocationRecovery(params: Readonly<{
             ?? presentSessionStartupFailureCause(params.progress.reason.failureCause?.errorCode)
             ?? presentSessionStartupFailureCause(params.progress.reason.code)
             ?? (params.progress.blockKind === 'root' ? describeRunPublicationFailure(params.progress.reason.code) : null)
+            // The recorded code says the Machine didn't answer; its known name says which one, offline or back since.
+            ?? (params.machine !== undefined && isMachineUnreachableFailureCode(params.progress.reason.code)
+                ? t('workflows.recovery.machineUnreachable', { machine: params.machine.name }) : null)
             ?? resolveActionExecutionErrorMessage({ code: params.progress.reason.code }, reportedMessage || params.progress.reason.code)
         : null;
     const failureCause: WorkflowInvocationRecoveryPresentation['failureCause'] = failed && params.progress?.reason
@@ -708,9 +711,16 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
             cancelRequested: params.cancelRequested, machineReachable: params.machine?.reachable,
             machineName: params.machine?.name }).label;
     }
+    // "Completed work is kept" only when a step finished: complete history with nothing finished says so instead.
+    const nothingFinished = params.historyComplete !== false && coverage.coverage === 'complete'
+        && coverage.observedLeafCounts.completed === 0;
     // The accepted Run and its opened result own outcomes. A live Machine
     // observation owns contact/recovery, never a replacement outcome sentence.
     if (run.state === 'failed') {
+        if (nothingFinished) {
+            return params.failure ? t('workflows.run.failedStepOnlySentence', { step: params.failure.step })
+                : t('workflows.run.nothingFinishedSentence');
+        }
         return params.failure
             ? t('workflows.run.failedStepSentence', { step: params.failure.step })
             : t('workflows.run.failedSentence');
@@ -718,7 +728,12 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
     // An interrupted Run says what stopped and that finished work is kept (07 §6.1), never the bare word.
     if (run.state === 'interrupted') {
         if (params.failure?.lifecycle === 'failed') {
-            return t('workflows.run.failedStepSentence', { step: params.failure.step });
+            return nothingFinished ? t('workflows.run.failedStepOnlySentence', { step: params.failure.step })
+                : t('workflows.run.failedStepSentence', { step: params.failure.step });
+        }
+        if (nothingFinished) {
+            return params.failure ? t('workflows.run.interruptedStepOnlySentence', { step: params.failure.step })
+                : t('workflows.run.nothingFinishedSentence');
         }
         return params.failure
             ? t('workflows.run.interruptedStepSentence', { step: params.failure.step })

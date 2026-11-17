@@ -77,6 +77,25 @@ describe('managed workflow Run presentation', () => {
             { agent: t('newSession.wizardSection.agent') }) });
         expect(recovery.canRunWithAnotherAgent).toBe(true);
     });
+    it('names the Machine a recorded unreachable-Machine failure could not reach, never "the daemon on this machine"', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });
+        const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });
+        // machine_offline is a closed Provider code; its Provider presenter words it before this generic reading.
+        for (const code of ['machine_unavailable', 'machine_socket_unavailable']) {
+            const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+                blockKind: 'action', attempt: '0', logicalInvocationRecordId: invocation.id,
+                invocationPath: { blockId: 'close-preview', scope: [] },
+                reason: { code, message: "The target Machine was offline; Retry when it's back." } });
+            // The recorded code decides the cause; current contact only supplies the name, offline or back.
+            for (const reachable of [false, true]) {
+                expect(projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null,
+                    machine: { name: 'MacBook Pro', reachable } }).failureCause, `${code}:${reachable}`).toMatchObject({
+                    kind: 'reported_failure', headline: t('workflows.recovery.machineUnreachable', { machine: 'MacBook Pro' }) });
+            }
+            expect(projectWorkflowInvocationRecovery({ run, invocation, progress, machineHomeDirectory: null }).failureCause)
+                .toMatchObject({ kind: 'reported_failure', headline: t('errors.daemonUnavailableBody') });
+        }
+    });
     it('never assigns a failure cause from later Machine reachability (R5 03:42–04:58 / 10:28)', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', finishedAt: '2026-10-19T04:58:00.000Z' });
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed', createdAt: '2026-10-19T03:42:00.000Z',
@@ -326,7 +345,7 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeSentence({ run, coverage: summarizeWorkflowInvocationCoverage([invocation], {
             kindsByInvocationId: new Map([[invocation.id, 'executable']]), historyComplete: true,
         }) }))
-            .toBe(t('workflows.run.failedSentence'));
+            .toBe(t('workflows.run.nothingFinishedSentence'));
     });
     it.each([
         ['session_input_target_update_required', 'session.pendingMessages.admissionRejected.targetUpdateRequired'],
@@ -498,6 +517,23 @@ describe('managed workflow Run presentation', () => {
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, state: 'cancelled', workflowCustodyState: 'settled' }, coverage,
             failure: { step: 'Publish summary' },
         })).toBe(t('workflows.runState.cancelled'));
+    });
+    it('says completed work is kept only when a step finished (offline Run whose only step failed)', () => {
+        const nothingDone = { observedLeafCounts: { completed: 0, failed: 1, attention: 0 }, coverage: 'complete', knownFailure: true } as const;
+        const someDone = { ...nothingDone, observedLeafCounts: { completed: 2, failed: 1, attention: 0 } } as const;
+        for (const state of ['failed', 'interrupted'] as const) {
+            const run = createWorkflowRunSummaryFixture({ state });
+            const failure = { step: 'Close preview', lifecycle: 'failed' as const };
+            expect(formatWorkflowRunOutcomeSentence({ run, coverage: nothingDone, historyComplete: true, failure }), state)
+                .toBe(t('workflows.run.failedStepOnlySentence', { step: 'Close preview' }));
+            expect(formatWorkflowRunOutcomeSentence({ run, coverage: nothingDone, historyComplete: true }), state)
+                .toBe(t('workflows.run.nothingFinishedSentence'));
+            expect(formatWorkflowRunOutcomeSentence({ run, coverage: someDone, historyComplete: true, failure }), state)
+                .toBe('Close preview failed. Completed work is kept.');
+        }
+        const interrupted = createWorkflowRunSummaryFixture({ state: 'interrupted' });
+        expect(formatWorkflowRunOutcomeSentence({ run: interrupted, coverage: nothingDone, historyComplete: true,
+            failure: { step: 'For each issue' } })).toBe(t('workflows.run.interruptedStepOnlySentence', { step: 'For each issue' }));
     });
     it('says what an interrupted Run stopped on and that finished work is retained, never the bare word (H3)', () => {
         const run = createWorkflowRunSummaryFixture({ state: 'interrupted' });
