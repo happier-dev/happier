@@ -68,7 +68,8 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
   scope: Readonly<{ serverId: string; accountId: string }>;
   trend: ServiceCheckCollectorTrend;
   collectorLabel: string | null;
-  failing: boolean;
+  /** The limit line's tone: error only while the check is down; a breached limit is failing (warning), as at rest. */
+  limitTone: 'error' | 'warning';
 }>) {
   const { theme } = useUnistyles();
   const pluginTheme = usePluginUiTheme(theme);
@@ -117,7 +118,7 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
                 detail={errorsMeasured ? span : `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)} · ${span}`} />
               <StackedSeriesChart theme={pluginTheme} label={charts.latency.label} series={[charts.latency]} variant="line" size="full"
                 showLegend={false} showReadout={false} {...(routeFlow ? { valueFormatter: formatServiceCheckLatency } : {})} {...(charts.axisTicks ? { axisTicks: charts.axisTicks } : {})} unknownLabel={t(`${m}.keyFlowNoRequests`)}
-                {...(!errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.failing ? 'error' : 'warning' } } : {})} />
+                {...(!errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.limitTone } } : {})} />
             </View>
             {routeFlow ? (
               <View style={styles.chart} testID="services.check.keyFlow.errors">
@@ -125,7 +126,7 @@ export function ServiceCheckKeyFlowSection(props: Readonly<{
                   detail={errorsMeasured ? `${limitLabel} ${formatServiceCheckKeyFlowValue(config, threshold.value)} · ${span}` : span} />
                 <StackedSeriesChart theme={pluginTheme} label={charts.errors.label} series={[charts.errors]} variant="line" size="full"
                   showLegend={false} showReadout={false} valueFormatter={formatServiceCheckShare} {...(charts.axisTicks ? { axisTicks: charts.axisTicks } : {})} unknownLabel={t(`${m}.keyFlowNoRequests`)}
-                  {...(errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.failing ? 'error' : 'warning' } } : {})} />
+                  {...(errorsMeasured ? { threshold: { value: threshold.value, label: limitLabel, tone: props.limitTone } } : {})} />
               </View>
             ) : null}
           </View>

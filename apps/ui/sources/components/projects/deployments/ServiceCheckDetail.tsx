@@ -350,7 +350,8 @@ export function ServiceCheckDetail(
         </View>
       </ItemGroup>
       {collectorTrend ? (
-        <ServiceCheckKeyFlowSection scope={row.scope} trend={collectorTrend} collectorLabel={collectorLabel} failing={failing} />
+        <ServiceCheckKeyFlowSection scope={row.scope} trend={collectorTrend} collectorLabel={collectorLabel}
+          limitTone={failing && facts.status === 'down' ? 'error' : 'warning'} />
       ) : null}
       {latencies.length >= 2 && !keyFlow ? (
         <ItemGroup title={t(`${m}.responseTime`)} action={<Text variant="meta" style={styles.captionText}>
