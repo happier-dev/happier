@@ -160,6 +160,14 @@ export async function withUiPromptLibraryArtifactReader<T>(
 /** The Action host already owns an exact Account Artifact transport and CAS. */
 export function createUiPromptLibraryArtifactStore(
   artifacts: WorkflowDefinitionArtifactOperations,
+  account: LazyActionAccountContext,
+): PromptLibraryArtifactStore & Readonly<{ organization: ArtifactFolderActionPortV1 }>;
+export function createUiPromptLibraryArtifactStore(
+  artifacts: WorkflowDefinitionArtifactOperations,
+  account?: LazyActionAccountContext,
+): PromptLibraryArtifactStore;
+export function createUiPromptLibraryArtifactStore(
+  artifacts: WorkflowDefinitionArtifactOperations,
   account?: LazyActionAccountContext,
 ): PromptLibraryArtifactStore {
   const storedArtifact = (artifact: Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>): PromptLibraryStoredArtifact | null => artifact ? {
