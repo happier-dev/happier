@@ -282,7 +282,7 @@ export function createRegistryHostV1(deps:RegistryHostDepsV1) {
     if (response.item.payload.kind !== 'skill') throw new RegistryFetchErrorV1({ state: 'invalid_source' });
     return { ...response.item, payload: response.item.payload };
   };
-  const readRegistryTheme = async (pointer: RegistryItemPointerV1): Promise<RegistryThemeAcquisitionV1> => {
+  const readRegistryTheme = async (pointer: Omit<RegistryItemPointerV1, 'version'> & Partial<Pick<RegistryItemPointerV1, 'version'>>): Promise<RegistryThemeAcquisitionV1> => {
     const source = await sourceById(pointer.sourceId);
     const response = await fetchRequest({ op: 'read', kind: 'theme', ...pointer, themeContent: true }, source);
     if (response.op !== 'read' || response.item.payload.kind !== 'theme' || response.item.payload.state !== 'ready' || 'packageContent' in source) {
