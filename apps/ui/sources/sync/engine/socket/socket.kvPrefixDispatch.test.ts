@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import { handleUpdateContainer } from './socket';
-import { subscribeKvPrefixChanges, type KvSocketChange } from './kvUpdateDispatcher';
+import { subscribeKvPrefixChanges, type KvKeyChange, type KvSocketChange } from './kvUpdateDispatcher';
 
 function params(updateData: ApiUpdateContainer, shouldContinue = () => true): Parameters<typeof handleUpdateContainer>[0] {
     return {
@@ -18,7 +18,7 @@ function params(updateData: ApiUpdateContainer, shouldContinue = () => true): Pa
 
 describe('socket KV prefix dispatch', () => {
     it('delivers workspace changes and preserves todo routing without unrelated keys', async () => {
-        const workspace: KvSocketChange[] = [];
+        const workspace: KvKeyChange[] = [];
         const todos: KvSocketChange[] = [];
         const dispose = subscribeKvPrefixChanges('workspace:', changes => workspace.push(...changes), {
             credentials: { token: 'Account-A' }, shouldContinue: () => true,
@@ -39,7 +39,7 @@ describe('socket KV prefix dispatch', () => {
     });
 
     it('does not deliver old Account events, retired subscriptions, or disposed subscriptions', async () => {
-        const received: KvSocketChange[] = [];
+        const received: KvKeyChange[] = [];
         const changes = [{ key: 'workspace:tabs:v1', value: null, version: 9 }];
         const update: ApiUpdateContainer = { id: 'update', seq: 1, createdAt: 1, body: { t: 'kv-batch-update', changes } };
         let mounted = true;

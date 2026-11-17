@@ -7,7 +7,6 @@ import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import { captureAccountEncryptionObservationForHome } from '@/sync/http/accountEncryptionObservationBinding';
 import { createAccountKvJsonTransport } from '@/sync/ops/account/accountKvJsonTransport';
 import { subscribeKvPrefixChanges } from '@/sync/engine/socket/kvUpdateDispatcher';
-import { apiSocket } from '@/sync/api/session/apiSocket';
 import { ACCOUNT_SETTINGS_QUIET_FLUSH_DELAY_MS, scheduleDebouncedPendingSettingsFlush } from '@/sync/engine/pending/pendingSettings';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { parseToken } from '@/utils/auth/parseToken';
@@ -175,17 +174,18 @@ export function useWorkspaceTabSync(input: Readonly<{
                 delayMs: ACCOUNT_SETTINGS_QUIET_FLUSH_DELAY_MS });
         } };
         runtime.current = mounted;
+        // Socket pushes and the changes catch-up (a write made while away or reconnecting) both arrive
+        // here, so a reconnect that changed nothing reads nothing.
         const unsubscribeKv = subscribeKvPrefixChanges('workspace:', changes => {
-            if (changes.some(change => change.key === 'workspace:tabs:v1')) refresh();
+            if (changes.some(change => change.key === null || change.key === 'workspace:tabs:v1')) refresh();
         }, { credentials, shouldContinue });
-        const unsubscribeReconnect = apiSocket.onReconnected(refresh);
         if (controller) sharedSync.invalidate();
         return () => {
             stopped = true;
             if (runtime.current === mounted) runtime.current = null;
             if (timer) clearTimeout(timer);
             sharedSync.stop(); handoffSync.stop(); controller?.stop(); publisher?.stop();
-            unsubscribeKv(); unsubscribeReconnect();
+            unsubscribeKv();
         };
     }, [binding, carrier, credentials]);
 

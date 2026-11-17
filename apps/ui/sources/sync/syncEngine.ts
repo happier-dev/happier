@@ -1,4 +1,5 @@
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { dispatchKvFeedChanges } from '@/sync/engine/socket/kvUpdateDispatcher';
 import { buildSessionOrganizationLabelKey } from '@/sync/domains/session/organization/keys';
 import { readNavigationSurfacePlacements, readPhonePinnedBotSessionIds } from '@/sync/domains/settings/mobileSurfacePinning';
 import { readSessionOrganizationWorkspaceLabel } from '@/sync/domains/session/organization/viewState';
@@ -13647,6 +13648,12 @@ class Sync {
                                 });
                             }
                             publishActivePluginCollectionUiQueryChanges(changes, publishedPlan.kv);
+                            if (publishedPlan.kv.type !== 'none') {
+                                // KV prefix subscribers hear only socket pushes otherwise; a write made
+                                // while this client was away or reconnecting reaches them here.
+                                dispatchKvFeedChanges({ credentials, keys: publishedPlan.kv.type === 'bulk-keys' ? publishedPlan.kv.keys : null,
+                                    cursor: Math.max(...changes.filter(change => change.kind === 'kv').map(change => change.cursor)) });
+                            }
                             publishActiveScopedPluginSettingsChanges(changes);
                             const changedAvailabilityPluginIds = this.pluginAvailabilityProjectionHydrator.invalidate(changes);
                             if (changedAvailabilityPluginIds.length > 0) {

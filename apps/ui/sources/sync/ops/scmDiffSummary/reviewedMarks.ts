@@ -60,7 +60,9 @@ export function createScmReviewedMarksOperations(params: ScmReviewedMarksSelecti
   const disposePush = subscribeKvPrefixChanges(key, changes => {
     // A response already applied this authoritative per-key version. Other observers still
     // fetch a genuinely newer push; error/idle observations retain their recovery read.
-    if (!changes.some(change => change.key === key && (state.status !== 'ready' || change.version > state.version)) || !current()) return;
+    // A catch-up change carries no version (or no key): it is newer than nothing this reader can prove.
+    if (!changes.some(change => (change.key === null || change.key === key)
+      && (state.status !== 'ready' || change.version === null || change.version > state.version)) || !current()) return;
     pushedWhileReading = true;
     void read().catch(() => { /* read publishes the typed failure without exposing old content. */ });
   }, { credentials: params.credentials, shouldContinue: current });

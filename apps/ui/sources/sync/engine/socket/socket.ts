@@ -2379,6 +2379,7 @@ export async function handleUpdateContainer(params: {
         await dispatchKvBatchUpdate({
             kvUpdate,
             credentials: params.credentials,
+            cursor: updateData.seq,
             shouldContinue,
             applyTodoSocketUpdates,
             invalidateTodosSync: invalidateTodos,

@@ -530,6 +530,33 @@ describe('sync AccountChange catch-up projection', () => {
         expect(http.filter(route => route === 'GET /v2/sessions')).toEqual([]);
     });
 
+    it('delivers a KV key written while away to its prefix subscriber once, through the foreground catch-up', async () => {
+        await restoreTestAccount({});
+        if (!syncRuntime) throw new Error('Expected restored Sync');
+        const runtime = syncRuntime as unknown as SyncAccountChangeWakeSchedulingHarness;
+        const { subscribeKvPrefixChanges, dispatchKvBatchUpdate } = await import('./engine/socket/kvUpdateDispatcher');
+        const heard: { key: string | null; version: number | null }[] = [];
+        const dispose = subscribeKvPrefixChanges('workspace:', changes => heard.push(...changes),
+            { credentials: { token: ACCOUNT_TOKEN }, shouldContinue: () => true });
+        try {
+            // Another device moved the shared tabs while this client was away: no socket push reached it.
+            changesResponse.mockResolvedValueOnce({ changes: [{ kind: 'kv', entityId: 'self', cursor: 7, changedAt: 7,
+                hint: { keys: ['workspace:tabs:v1'] } }], nextCursor: 7 });
+            await runtime.resumeSync('app-foreground');
+            expect(heard).toEqual([{ key: 'workspace:tabs:v1', version: null }]);
+
+            // Online, the socket push and the catch-up page carry the same write: it is heard once.
+            heard.length = 0;
+            await dispatchKvBatchUpdate({ kvUpdate: { changes: [{ key: 'workspace:tabs:v1', value: null, version: 3 }] },
+                credentials: { token: ACCOUNT_TOKEN }, cursor: 9, shouldContinue: () => true,
+                applyTodoSocketUpdates: async () => {}, invalidateTodosSync: () => {}, log: { log: () => {} } });
+            changesResponse.mockResolvedValueOnce({ changes: [{ kind: 'kv', entityId: 'self', cursor: 9, changedAt: 9,
+                hint: { keys: ['workspace:tabs:v1'] } }], nextCursor: 9 });
+            await runtime.resumeSync('changes-catch-up');
+            expect(heard.map(change => change.key)).toEqual(['workspace:tabs:v1']);
+        } finally { dispose(); }
+    });
+
     it('keeps a Discussion-only change local through the real socket and change feed', async () => {
         const { createEmptyAccountMigrationCensusHttpResponse } = await import('@/dev/testkit/fixtures/accountBootstrapHttpBoundary');
         const { DISCUSSION_READ_STATE_CHANGE_HINT_V1 } = await import('@happier-dev/protocol/discussions');
