@@ -119,6 +119,11 @@ file is written. Brokered Team delivery returns
 `github_cli_team_brokered_unavailable`; native login is not a fallback for that
 selection. With no bound account, native machine authentication remains in use.
 
+Model and catalog probes admit only the selected Agent's declared Account
+purposes. A saved GitHub or other machine CLI Account does not supply credentials
+to that probe or block it when unavailable. Actual Session and setup processes
+retain their explicitly selected CLI Account purposes and delivery refusals.
+
 Cursor subscription usage reads the DashboardService current-period usage RPC
 with the stored OAuth access token through the existing daemon quota coordinator.
 API-key mode remains unavailable. This RPC is undocumented and may change without

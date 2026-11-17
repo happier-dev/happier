@@ -34,7 +34,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import { buildConnectedServiceCredentialSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import { isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol/spawnSession';
-import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import { resolveQualifiedPurposeBindingsForAgentProbe, type AgentSpawnQualifiedPurposeBindingSnapshot } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { parseConnectedServiceBindingSelections } from '@/daemon/connectedServices/parseConnectedServicesBindings';
 import { generateConnectedServiceMaterializationIdentityV1 } from '@/daemon/connectedServices/materialization/identity';
 import { resolveConnectedServiceMaterializedRootDir } from '@/daemon/connectedServices/materialize/resolveConnectedServiceMaterializedRootDir';
@@ -100,6 +100,7 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
     agentId: string;
     cwd: string;
     connectedServices: ReturnType<typeof ConnectedServiceBindingsV2IngressSchema.parse> | null;
+    purposeBindingSnapshot: AgentSpawnQualifiedPurposeBindingSnapshot | null;
     credentials: Awaited<ReturnType<typeof resolveProbeBackendContext>>['credentials'];
     accountSettings: Record<string, unknown> | null;
     requiresMaterializedAuth: boolean;
@@ -165,13 +166,8 @@ async function resolveConnectedServiceProbeEnvironment(params: Readonly<{
             },
         },
         processEnv: params.processEnv,
-        resolveQualifiedPurposeBindingSnapshot: (bindings) => {
-            const snapshot = resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
-                agentId: params.agentId,
-                bindings,
-                contributions: registry,
-                catalogEntry: params.dependencies.agentCatalogEntry,
-            });
+        resolveQualifiedPurposeBindingSnapshot: () => {
+            const snapshot = params.purposeBindingSnapshot;
             if (params.nativeCatalog && snapshot) {
                 // A purpose declaration alone does not put credentials in a native process.
                 // The Agent's native preparation hook is also a credential
@@ -277,10 +273,14 @@ export async function invokeCliPreflightMethod(
     }
     const modelId = selectedModel?.success ? selectedModel.data : undefined;
     const parsedConnectedServices = ConnectedServiceBindingsV2IngressSchema.safeParse(params?.connectedServices);
-    const connectedServices = parsedConnectedServices.success ? parsedConnectedServices.data : null;
     if (params?.connectedServices != null && !parsedConnectedServices.success) {
         return { ok: false, error: { code: 'connected-service-preflight-failed', message: 'Could not prepare the selected connected-service account for this probe.' } };
     }
+    const probePurposeBindings = parsedConnectedServices.success ? resolveQualifiedPurposeBindingsForAgentProbe({
+        agentId, bindings: parsedConnectedServices.data, contributions: registrySnapshot,
+        catalogEntry: dependencies.agentCatalogEntry,
+    }) : null;
+    const connectedServices = probePurposeBindings?.bindings ?? null;
     const connectedServiceSelections = parseConnectedServiceBindingSelections(connectedServices);
     // Team material requires an admitted Session. These operation probes have
     // neither that authority nor a direct-material origin, so do not reinterpret
@@ -442,6 +442,7 @@ export async function invokeCliPreflightMethod(
                 agentId: materializationAgentId,
                 cwd,
                 connectedServices,
+                purposeBindingSnapshot: probePurposeBindings?.snapshot ?? null,
                 credentials: probeContext.credentials,
                 accountSettings: probeContext.accountSettings,
                 requiresMaterializedAuth,
@@ -632,7 +633,6 @@ export async function invokeCliPreflightMethod(
           } };
         }
         const observation = modelConfig?.nativeCatalogObservation;
-        const bindings = ConnectedServiceBindingsV2IngressSchema.safeParse(params?.connectedServices);
         const observationRuntime = dependencies.getAgentCatalogObservation?.() ?? null;
         if (observation && observationRuntime) {
             const registry = dependencies.agentRegistrySnapshot ?? readCurrentContributionRegistry();
@@ -641,12 +641,7 @@ export async function invokeCliPreflightMethod(
                 && (dependencies.isAgentRegistryCurrent?.() ?? true);
             const agent = registry.agentDefinitionsById.get(agentId);
             const consumer = agent?.identity;
-            const snapshot = bindings.success ? resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
-                agentId,
-                bindings: bindings.data,
-                contributions: registry,
-                catalogEntry: dependencies.agentCatalogEntry,
-            }) : null;
+            const snapshot = probePurposeBindings?.snapshot ?? null;
             const qualifiedPurpose = snapshot?.purposes.find((candidate) =>
                 candidate.purpose === observation.purpose
                 && candidate.consumer.pluginId === consumer?.pluginId

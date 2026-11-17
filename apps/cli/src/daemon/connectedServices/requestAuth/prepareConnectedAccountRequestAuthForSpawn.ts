@@ -82,9 +82,17 @@ export function resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input: Reado
     bindings: ConnectedServiceBindingsV2;
     contributions: AgentSpawnPurposeContributions;
     catalogEntry?: AgentSpawnPurposeCatalogEntry | null;
+    purposeDemand?: 'agent';
     teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1;
 }>): AgentSpawnQualifiedPurposeBindingSnapshot | null {
     const declarations = resolveLaunchPurposeDeclarations(input);
+    return projectQualifiedPurposeBindingSnapshot(input, declarations);
+}
+
+function projectQualifiedPurposeBindingSnapshot(
+    input: Parameters<typeof resolveQualifiedPurposeBindingSnapshotForAgentSpawn>[0],
+    declarations: ReturnType<typeof resolveLaunchPurposeDeclarations>,
+): AgentSpawnQualifiedPurposeBindingSnapshot | null {
     if (!declarations.length) return null;
     assertLaunchPurposeDeliverySupported({ declarations, readDeliveryMode: scope => {
         for (const service of scope.serviceRefs) {
@@ -123,6 +131,27 @@ export function resolveQualifiedPurposeBindingSnapshotForAgentSpawn(input: Reado
             ? { environmentUnsetUses: launch.environmentUnsetUses }
             : {}),
     };
+}
+
+/** A model/catalog probe demands Agent authentication, never credentials for
+ * optional machine CLIs saved alongside the Agent's selection. Narrow the
+ * compatibility ingress and its snapshot together before credential admission. */
+export function resolveQualifiedPurposeBindingsForAgentProbe(input: Readonly<{
+    agentId: string;
+    bindings: ConnectedServiceBindingsV2;
+    contributions: AgentSpawnPurposeContributions;
+    catalogEntry?: AgentSpawnPurposeCatalogEntry | null;
+}>): Readonly<{
+    bindings: ConnectedServiceBindingsV2;
+    snapshot: AgentSpawnQualifiedPurposeBindingSnapshot | null;
+}> {
+    const declarations = resolveLaunchPurposeDeclarations({ ...input, purposeDemand: 'agent' });
+    const serviceKeys = new Set(declarations.flatMap(declaration => declaration.snapshot.authorizedPurposes
+        .flatMap(scope => scope.serviceRefs.map(buildQualifiedPluginContributionKey))));
+    const bindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: Object.fromEntries(
+        Object.entries(input.bindings.bindingsByServiceId).filter(([key]) => serviceKeys.has(key)),
+    ) };
+    return { bindings, snapshot: projectQualifiedPurposeBindingSnapshot({ ...input, bindings }, declarations) };
 }
 
 export async function activateConnectedAccountRequestAuthForSpawn(input: Readonly<{

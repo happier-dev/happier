@@ -307,14 +307,16 @@ export function resolveAgentSpawnPurposeDeclarations(input: Readonly<{
     });
 }
 
-/** Cold catalogs retain all tool choices. A probe or launch binding snapshot includes
+/** Cold catalogs retain all tool choices. A process launch binding snapshot includes
  * optional machine tools only when their service has an explicit connected selection;
  * required Agent purposes remain complete, including unbound native choices. */
 export function resolveLaunchPurposeDeclarations(input: Parameters<typeof resolveAgentSpawnPurposeDeclarations>[0] & Readonly<{
     bindings?: ConnectedServiceBindingsV2;
+    purposeDemand?: 'agent';
 }>): readonly ResolvedAgentSpawnPurposeDeclarations[] {
     const agent = resolveAgentSpawnPurposeDeclarations(input);
     if (!agent) return [];
+    if (input.purposeDemand === 'agent') return [agent];
     const tools = resolveSystemToolLaunchPurposeDeclarations(input.contributions).filter(declaration =>
         !input.bindings || declaration.snapshot.authorizedPurposes.some(scope => scope.serviceRefs.some(service => {
             const selection = input.bindings?.bindingsByServiceId[buildQualifiedPluginContributionKey(service)];

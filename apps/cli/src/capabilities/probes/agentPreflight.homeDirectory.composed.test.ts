@@ -23,6 +23,7 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { AgentInventoryProbeInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { createCapabilitiesService } from '@/capabilities/service';
 import { CHECKLIST_IDS } from '@/capabilities/checklistIds';
+import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 afterAll(async () => { await pluginReloadController.shutdown(); });
 
@@ -142,7 +143,17 @@ describe('native Agent preflight home directory intent', () => {
                     : { kind: 'files', files: mode.startsWith('files_') ? { 'auth.json': auth } : {} };
                 },
             });
-            const plugins = account.plugins.map(plugin => mode !== 'prepared' ? plugin : {
+            // A catalog probe selects only the Agent Account. An unrelated gh
+            // launch purpose must not join this finite operation's authority.
+            const declaredPlugins = account.plugins.map(plugin => mode !== 'environment' || !plugin.manifest.contributes.agents?.length ? plugin : {
+                ...plugin, manifest: { ...plugin.manifest, contributes: { ...plugin.manifest.contributes,
+                    systemTools: [{ id: 'unselected-gh', title: 'Unselected GitHub CLI', executableNames: ['gh'],
+                        connectedAccountLaunch: { purpose: 'github.cli',
+                            service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+                            environmentKey: 'GH_TOKEN' } }],
+                } },
+            });
+            const plugins = declaredPlugins.map(plugin => mode !== 'prepared' ? plugin : {
                 ...plugin, files: { ...plugin.files,
                 'daemon.mjs': String(plugin.files['daemon.mjs']).replace('sessionRunnerFactory:', `preflightSessionControls: {
                     prepareLaunchEnvironment: async ({ environment, connectedAccounts, signal, modelId }) => {
@@ -178,18 +189,21 @@ describe('native Agent preflight home directory intent', () => {
                 systemTools: [{ id: 'native-env', title: 'Native environment', executableNames: [executable] }],
                 preflightSessionControls: { catalogs: { command: { toolId: 'native-env', args: [] },
                     parseOutput: () => ({ commands: [], skills: [] }) },
+                    ...(mode === 'environment' ? { models: { command: { toolId: 'native-env', args: [] },
+                        parseOutput: () => [{ id: 'selected-account-model', name: 'Selected Account model' }] } } : {}),
                     ...(mode === 'passive' ? { probePassiveRealtimeSetup: async () => { throw new TypeError('private native setup failure'); } } : {}),
                 },
                 retirementSignal: new AbortController().signal, isCurrent: () => true,
             });
             if (mode === 'prepared') expect.soft(AgentInventoryProbeInputSchema.safeParse({ modelId: 'chosen-native-model' }).success).toBe(true);
-            const method = mode === 'passive' ? 'probePassiveRealtimeSetup' : 'probeCatalogs';
-            const probe = () => runWithServerHttpBaseUrl('https://preflight-account.example.test', () => invokeCliPreflightMethod(agentId, method, {
+            const method = mode === 'passive' ? 'probePassiveRealtimeSetup' : mode === 'environment' ? 'probeModels' : 'probeCatalogs';
+            const probe = (additionalBindings: ConnectedServiceBindingsV2['bindingsByServiceId'] = {}) => runWithServerHttpBaseUrl('https://preflight-account.example.test', () => invokeCliPreflightMethod(agentId, method, {
                 cwd: root, bypassCache: true,
                 ...(mode === 'prepared' ? { modelId: 'chosen-native-model' } : {}),
                 ...(mode === 'files_ambient' ? {} : { environmentVariables: { ACME_TOKEN: 'fake-explicit-token' } }),
                 ...(mode === 'native' ? {} : { connectedServices: { v: 2, bindingsByServiceId: {
                     'acme.preflight-account/credential': { source: 'connected', selection: 'profile', profileId: 'selected-account' },
+                    ...additionalBindings,
                 } } }),
             }, {
                 agentCatalogEntry: { ...entry, ...projected }, agentRegistrySnapshot: runtime.registry.contributes,
@@ -200,12 +214,15 @@ describe('native Agent preflight home directory intent', () => {
                 createAgentInvocationServices: runtime.registry.createAgentInvocationServices,
                 agentRuntimeCacheKey: runtime.registry.readPluginOccurrenceId?.('acme.foreground') ?? undefined,
             }, {}));
+            const invokeProbe = (additionalBindings: ConnectedServiceBindingsV2['bindingsByServiceId'] = {}) => {
             const service = createCapabilitiesService({ capabilities: [{
                 descriptor: { id: `cli.${agentId}`, kind: 'cli', methods: { [method]: {} } },
-                detect: async () => ({}), invoke: probe,
+                detect: async () => ({}), invoke: () => probe(additionalBindings),
             }], checklists: { [CHECKLIST_IDS.NEW_SESSION]: [], [CHECKLIST_IDS.MACHINE_DETAILS]: [] },
                 buildContext: async () => ({ cliSnapshot: null }) });
-            const response = await service.invoke({ id: `cli.${agentId}`, method });
+            return service.invoke({ id: `cli.${agentId}`, method });
+            };
+            const response = await invokeProbe();
             if (mode === 'passive') {
                 expect(response, JSON.stringify(response)).toMatchObject({ ok: true, result: { v: 1, status: 'unavailable', failureCause: {
                     phase: 'capabilities.preflight.passive_realtime_setup', errorClass: 'TypeError', errorCode: null, httpStatus: null,
@@ -221,6 +238,24 @@ describe('native Agent preflight home directory intent', () => {
                 return;
             }
             expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
+            if (mode === 'environment') expect(response).toMatchObject({ ok: true, result: {
+                source: 'dynamic', availableModels: expect.arrayContaining([{ id: 'selected-account-model', name: 'Selected Account model' }]),
+            } });
+            if (mode === 'environment') {
+                // The same successful Agent model probe must not demand an
+                // unrelated saved CLI Account, including brokered Team auth.
+                for (const selection of [
+                    { source: 'connected', selection: 'profile', profileId: 'unavailable-github-account' },
+                    { source: 'team_resource', resourceId: 'github-broker', deliveryMode: 'brokered' },
+                ] satisfies ConnectedServiceBindingsV2['bindingsByServiceId'][string][]) {
+                    const withUnrelatedTool = await invokeProbe({ 'happier.scm.forge.github/github-account': selection });
+                    expect.soft(withUnrelatedTool, JSON.stringify({ selection, response: withUnrelatedTool })).toMatchObject({
+                        ok: true, result: { source: 'dynamic', availableModels: expect.arrayContaining([
+                            { id: 'selected-account-model', name: 'Selected Account model' },
+                        ]) },
+                    });
+                }
+            }
             const environment = JSON.parse(await readFile(observed, 'utf8')) as { key: string | null; home: string | null; cwd: string; args: string[]; auth: number[] | null };
             expect(environment.cwd).toBe(root);
             expect.soft(environment.args).toEqual(mode === 'prepared' ? ['--selected-upstream', 'https://native.example.test/v1', '--model', 'chosen-native-model'] : []);
