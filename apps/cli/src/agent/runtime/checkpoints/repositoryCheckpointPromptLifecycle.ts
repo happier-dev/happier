@@ -5,13 +5,13 @@ import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import { publishRuntimeTurnChangeSet, RuntimeTranscriptRequiredAdmissionError, type RuntimeTurnChangeSetPublication } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import type { PromptLoopCheckpointLifecycle } from '@/agent/runtime/runPermissionModePromptLoop';
-import type { ScmBackendContext } from '@/scm/types';
 import { runWithScmCommandRunner, ScmExecUnavailableError, type ScmCommandRunner } from '@/scm/runtime';
 import { buildRepositoryCheckpointRefs, projectRepositoryCheckpointTurnChangeSet } from '@/scm/checkpoints';
 import { createGitCheckpointRollbackDependencies, gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
 import { executeCheckpointCodeRollback } from '@/scm/checkpoints/rollback';
 import { retainRepositoryCheckpointInitialEvidence, retainRepositoryCheckpointTurnEvidence } from '@/scm/checkpoints/sessionEvidence';
 import type {
+    GitCheckpointBackendContext,
     RepositoryCheckpointAttributionScope,
     RepositoryCheckpointDiffBaseRefSource,
     RepositoryCheckpointDiffResult,
@@ -25,8 +25,10 @@ import type { WorktreeAttributionInterval, WorktreeAttributionRegistry } from '.
 
 type ActiveCheckpointBinding = Readonly<{
     scopeId: string;
-    context?: ScmBackendContext;
+    context?: GitCheckpointBackendContext;
     repoRoot?: string;
+    /** The message-start commit this lifecycle captured; the turn-start alias and the diff base reuse it. */
+    messageStartCommitSha?: string;
     refs: RepositoryCheckpointRefs;
     receipts: readonly RepositoryCheckpointReceipt[];
     unavailableReason?: RepositoryCheckpointTurnProjectionUnavailableReason;
@@ -69,7 +71,7 @@ async function resolveGitCheckpointContext(input: Readonly<{
         unavailableReason: reason,
         unavailableError: message,
     });
-    let context: ScmBackendContext | null;
+    let context: GitCheckpointBackendContext | null;
     try {
         context = await resolveGitCheckpointBackendContext({ cwd: input.runtimeDirectory,
             workingDirectory: input.runtimeDirectory, scmCommandRunner: input.scmCommandRunner });
@@ -243,7 +245,8 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
         if (repoRoot) {
             try {
                 await runWithScmCommandRunner(params.scmCommandRunner, () => retainRepositoryCheckpointTurnEvidence({
-                    cwd: repoRoot, scopeId: input.binding.scopeId, turnChangeSet }));
+                    cwd: repoRoot, scopeId: input.binding.scopeId, turnChangeSet,
+                    evidenceRoot: input.binding.context?.checkpointGitPaths?.checkpointEvidence }));
             } catch (error) {
                 logger.debug('Repository turn checkpoint retention unavailable (non-fatal)', error);
             }
@@ -308,6 +311,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                 } else {
                     bindingsByMessageId.set(messageId, {
                         ...binding,
+                        messageStartCommitSha: captured.commitSha,
                         receipts: appendReceipts(binding.receipts, captured.receipts),
                     });
                 }
@@ -322,6 +326,7 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     await runWithScmCommandRunner(params.scmCommandRunner, () => retainRepositoryCheckpointInitialEvidence({
                         cwd: result.binding.repoRoot ?? params.runtimeDirectory, scopeId: result.binding.scopeId,
                         checkpointRef: result.messageStart, captured: result.captured, sessionIsNew: result.sessionIsNew,
+                        evidenceRoot: result.binding.context?.checkpointGitPaths?.checkpointEvidence,
                         readEarliestPromptLocalId: () => params.session.fetchEarliestCommittedUserMessageLocalId(),
                     }));
                 } catch (error) {
@@ -351,7 +356,8 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     return;
                 }
                 try {
-                    const aliased = await gitCheckpointAdapter.alias({ context: binding.context, sourceRef: refs.messageStart, targetRef: refs.turnStart });
+                    const aliased = await gitCheckpointAdapter.alias({ context: binding.context, sourceRef: refs.messageStart, targetRef: refs.turnStart,
+                        ...(binding.messageStartCommitSha ? { sourceCommitSha: binding.messageStartCommitSha } : {}) });
                     const current = bindingsByMessageId.get(messageId);
                     if (!current) return;
                     bindingsByMessageId.set(messageId, { ...current,
@@ -469,6 +475,8 @@ export function createRepositoryCheckpointPromptLifecycle(params: Readonly<{
                     finalRef: refs.turnFinal,
                     baseRefSource,
                     attributionScope,
+                    ...(binding.messageStartCommitSha ? { baseCommitSha: binding.messageStartCommitSha } : {}),
+                    finalCommitSha: finalized.commitSha,
                 });
                 const checkpointDiff: RepositoryCheckpointDiffResult = diff.success
                     ? {

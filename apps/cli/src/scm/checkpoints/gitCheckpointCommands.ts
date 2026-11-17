@@ -53,15 +53,20 @@ export function classifyGitCheckpointCommandFailure(
     return { reason: 'command_failed', error };
 }
 
+/** Prepended to every command that writes a checkpoint temporary index (see `expandSplitIndex`). */
+export const GIT_CHECKPOINT_TEMPORARY_INDEX_ARGS = ['-c', 'core.splitIndex=false'] as const;
+
 export async function createGitCheckpointTemporaryIndex(input: {
     cwd: string;
+    indexPath?: string;
 }): Promise<
     | { success: true; tempIndex: GitCheckpointTemporaryIndex }
     | { success: false; reason: GitCheckpointCommandFailure['reason']; error: string }
 > {
     const result = await createGitTemporaryIndex({
         cwd: input.cwd,
-        seed: { kind: 'current-index' },
+        seed: { kind: 'current-index', expandSplitIndex: false },
+        ...(input.indexPath ? { indexPath: input.indexPath } : {}),
         runGit: runGitCheckpointCommand,
     });
     if (result.success) return result;

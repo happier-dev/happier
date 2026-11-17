@@ -459,7 +459,7 @@ describe('createRepositoryCheckpointPromptLifecycle', () => {
         const realCommand = scmRuntime.runScmCommand;
         let failNextStage = true;
         vi.spyOn(scmRuntime, 'runScmCommand').mockImplementation(async (input) => {
-            if (failNextStage && input.args[0] === 'add') {
+            if (failNextStage && input.args.includes('add')) {
                 failNextStage = false;
                 return { success: false, stdout: '', stderr: 'First checkpoint object write failed', exitCode: 1 };
             }

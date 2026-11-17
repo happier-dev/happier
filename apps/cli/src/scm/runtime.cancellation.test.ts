@@ -140,10 +140,10 @@ describe('runScmCommand cancellation', () => {
       const delayed = setTimeout(() => {
         const output = args.includes('--show-toplevel') ? process.cwd()
           : args[0] === 'rev-parse' || args[0] === 'commit-tree' ? commitOid
-          : args[0] === 'write-tree' ? treeOid : '';
+          : args.includes('write-tree') ? treeOid : '';
         if (output) child.stdout.emit('data', Buffer.from(`${output}\n`));
         child.emit('close', 0);
-      }, args[0] === 'add' ? 16_000 : 1);
+      }, args.includes('add') ? 16_000 : 1);
       Object.assign(child, { kill: () => { clearTimeout(delayed); child.emit('close', 1); return true; } });
       return child;
     });
@@ -177,7 +177,7 @@ describe('runScmCommand cancellation', () => {
       const child = createFakeChild(41009);
       children.push(child);
       queueMicrotask(() => {
-        if (args[0] === 'add') { controller.abort(); stageStarted(); return; }
+        if (args.includes('add')) { controller.abort(); stageStarted(); return; }
         if (args[0] === 'rev-parse') child.stdout.emit('data', Buffer.from(`${'b'.repeat(40)}\n`));
         child.emit('close', 0);
       });

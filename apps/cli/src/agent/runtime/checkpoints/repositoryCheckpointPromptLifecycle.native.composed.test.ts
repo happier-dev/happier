@@ -67,7 +67,7 @@ it('holds an opened native mutation until checkpoint preparation completes and p
         const operations = resolveHostSessionRuntimeFactoryResult(created).runtime;
         const lifecycle = createRepositoryCheckpointPromptLifecycle({ session, runtimeDirectory: cwd, provider: 'claude', source: { protocol: 'native', agent: { pluginId: 'happier.agent.claude', localId: 'claude' } },
             scmCommandRunner: async input => {
-                if (input.args[0] === 'add') { entered.resolve(); await release.promise; }
+                if (input.args.includes('add')) { entered.resolve(); await release.promise; }
                 const stdout = execFileSync(input.bin, [...input.args], { cwd: input.cwd,
                     env: { ...process.env, ...input.env }, input: input.stdin, encoding: 'utf8' });
                 return { success: true, stdout, stderr: '', exitCode: 0 };

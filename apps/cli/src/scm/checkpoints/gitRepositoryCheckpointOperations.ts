@@ -1,5 +1,6 @@
 import { resolveRepositoryCheckpointAvailability } from './availability';
 import { runWithScmCommandOperation } from '../commandOperation';
+import type { ScmExecResult } from '../runtime';
 import {
     buildRepositoryCheckpointRef,
 } from './refs';
@@ -14,6 +15,7 @@ import type {
 import {
     classifyGitCheckpointCommandFailure,
     createGitCheckpointTemporaryIndex,
+    GIT_CHECKPOINT_TEMPORARY_INDEX_ARGS,
     runGitCheckpointCommand,
 } from './gitCheckpointCommands';
 
@@ -102,7 +104,8 @@ async function captureCheckpoint(input: RepositoryCheckpointCaptureRequest): Pro
         };
     }
 
-    const temporaryIndex = await createGitCheckpointTemporaryIndex({ cwd: availability.repoRoot });
+    const temporaryIndex = await createGitCheckpointTemporaryIndex({ cwd: availability.repoRoot,
+        ...(input.context.checkpointGitPaths ? { indexPath: input.context.checkpointGitPaths.index } : {}) });
     if (!temporaryIndex.success) {
         return {
             success: false,
@@ -116,14 +119,14 @@ async function captureCheckpoint(input: RepositoryCheckpointCaptureRequest): Pro
     try {
         const stageAll = await runGitCheckpointCommand({
             cwd: availability.repoRoot,
-            args: ['add', '-A', '--', '.'],
+            args: [...GIT_CHECKPOINT_TEMPORARY_INDEX_ARGS, 'add', '-A', '--', '.'],
             env: temporaryIndex.tempIndex.env,
         });
         if (!stageAll.success) return captureCommandFailure(stageAll, 'Failed to stage checkpoint contents');
 
         const writeTree = await runGitCheckpointCommand({
             cwd: availability.repoRoot,
-            args: ['write-tree'],
+            args: [...GIT_CHECKPOINT_TEMPORARY_INDEX_ARGS, 'write-tree'],
             env: temporaryIndex.tempIndex.env,
         });
         if (!writeTree.success) return captureCommandFailure(writeTree, 'Failed to write checkpoint tree');
@@ -220,10 +223,12 @@ export async function aliasGitRepositoryCheckpoint(
         };
     }
 
-    const source = await runGitCheckpointCommand({
-        cwd: availability.repoRoot,
-        args: ['rev-parse', '--verify', `${input.sourceRef.ref}^{commit}`],
-    });
+    const source: ScmExecResult = input.sourceCommitSha
+        ? { success: true, stdout: input.sourceCommitSha, stderr: '', exitCode: 0 }
+        : await runGitCheckpointCommand({
+            cwd: availability.repoRoot,
+            args: ['rev-parse', '--verify', `${input.sourceRef.ref}^{commit}`],
+        });
     if (!source.success) {
         const stderr = source.stderr.trim();
         if (/\b(needed a single revision|unknown revision|not a valid object name|bad revision)\b/i.test(stderr)) {

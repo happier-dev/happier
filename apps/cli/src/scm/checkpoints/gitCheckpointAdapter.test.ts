@@ -57,7 +57,7 @@ describe('gitCheckpointAdapter runtime services', () => {
             // staging. A tree-only index has zero sizes and re-hashes every file.
             vi.mocked(spawn).mockImplementation((...args) => {
                 const [, commandArgs, options] = args;
-                if (options?.cwd === repoRoot && Array.isArray(commandArgs) && commandArgs[0] === 'add') {
+                if (options?.cwd === repoRoot && Array.isArray(commandArgs) && commandArgs.includes('add')) {
                     const entries = execFileSync('git', ['ls-files', '--debug'], {
                         cwd: repoRoot, env: options.env, encoding: 'utf8',
                     });
@@ -91,7 +91,7 @@ describe('gitCheckpointAdapter runtime services', () => {
         }
     });
 
-    it('reads many-file checkpoint comparisons with two Git diffs and preserves literal paths, empty or unavailable evidence', async () => {
+    it('reads many-file checkpoint comparisons with one Git diff and preserves literal paths, empty or unavailable evidence', async () => {
         const spawnImplementation = vi.mocked(spawn).getMockImplementation()!;
         const repoRoot = mkdtempSync(join(tmpdir(), 'happier-checkpoint-diff-cost-'));
         try {
@@ -119,7 +119,7 @@ describe('gitCheckpointAdapter runtime services', () => {
             expect(result.success).toBe(true);
             if (!result.success) throw new Error(result.error);
             const diffs = vi.mocked(spawn).mock.calls.filter(([, args]) => Array.isArray(args) && args[0] === 'diff');
-            expect(diffs).toHaveLength(2);
+            expect(diffs).toHaveLength(1);
             expect(result.contentConfidence).toBe('exact');
             expect(result.files).toHaveLength(paths.length);
             paths.forEach((path, index) => {

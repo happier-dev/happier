@@ -33,7 +33,9 @@ async function diffCheckpoints(input: RepositoryCheckpointDiffRequest): Promise<
     const availability = resolveRepositoryCheckpointAvailability({ context: input.context });
     if (!availability.available) return unavailable(availability.reason, availability.message);
     const endpoints: string[] = [];
-    for (const [ref, reason] of [[input.baseRef, 'missing_base'], [input.finalRef, 'missing_final']] as const) {
+    for (const [ref, reason, known] of [[input.baseRef, 'missing_base', input.baseCommitSha],
+        [input.finalRef, 'missing_final', input.finalCommitSha]] as const) {
+        if (known) { endpoints.push(known); continue; }
         const resolved = await runGitCheckpointCommand({ cwd: availability.repoRoot, args: ['rev-parse', '--verify', `${ref.ref}^{commit}`] });
         if (!resolved.success || !resolved.stdout.trim()) return unavailable(reason, `Checkpoint diff ${reason === 'missing_base' ? 'base' : 'final'} ref is unavailable.`);
         endpoints.push(resolved.stdout.trim());

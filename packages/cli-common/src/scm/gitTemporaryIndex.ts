@@ -23,7 +23,12 @@ export type GitTemporaryIndexCommandAdapter = (
 export type GitTemporaryIndexSeed =
     | Readonly<{ kind: 'empty' }>
     | Readonly<{ kind: 'tree'; treeOid: string }>
-    | Readonly<{ kind: 'current-index' }>;
+    /**
+     * `expandSplitIndex: false` skips the `update-index --no-split-index` process. Only for an index
+     * that lives for one short operation whose writes pass `-c core.splitIndex=false`: the shared
+     * index it reads is in use, so Git keeps it, and the first write drops the link.
+     */
+    | Readonly<{ kind: 'current-index'; expandSplitIndex?: false }>;
 
 export type GitTemporaryIndex = Readonly<{
     indexPath: string;
@@ -53,8 +58,12 @@ export async function createGitTemporaryIndex(input: Readonly<{
     cwd: string;
     runGit: GitTemporaryIndexCommandAdapter;
     seed: GitTemporaryIndexSeed;
+    /** The repository index path the caller already resolved (`rev-parse --git-path index`). */
+    indexPath?: string;
 }>): Promise<Readonly<{ success: true; tempIndex: GitTemporaryIndex }> | GitTemporaryIndexFailure> {
-    const sourceIndex = await resolveGitIndexPath(input);
+    const sourceIndex = input.indexPath
+        ? { success: true as const, indexPath: input.indexPath }
+        : await resolveGitIndexPath(input);
     if (!sourceIndex.success) return sourceIndex;
     // Index contents are repository data. Keep the isolated file under the
     // same admitted checkout permissions, rather than a daemon-private home.
@@ -80,7 +89,9 @@ export async function createGitTemporaryIndex(input: Readonly<{
                 if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
                 initializeEmpty = true;
             }
-            if (!initializeEmpty && sourceIndexTimes) {
+            if (!initializeEmpty && sourceIndexTimes && input.seed.kind === 'current-index' && input.seed.expandSplitIndex === false) {
+                utimesSync(indexPath, sourceIndexTimes.atime, sourceIndexTimes.mtime);
+            } else if (!initializeEmpty && sourceIndexTimes) {
                 // A snapshot must not depend on a shared-index file Git can retire.
                 const result = await input.runGit({ cwd: input.cwd, args: ['update-index', '--no-split-index'], env });
                 if (!result.success) {

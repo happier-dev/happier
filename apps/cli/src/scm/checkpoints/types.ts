@@ -69,8 +69,18 @@ export type RepositoryCheckpointReceipt = Readonly<{
     refs?: readonly string[];
 }>;
 
+/** Git paths read once with repository discovery, so each capture/evidence write skips its own `rev-parse`. */
+export type GitCheckpointRepositoryPaths = Readonly<{
+    index: string;
+    checkpointEvidence: string;
+}>;
+
+export type GitCheckpointBackendContext = ScmBackendContext & Readonly<{
+    checkpointGitPaths?: GitCheckpointRepositoryPaths;
+}>;
+
 export type RepositoryCheckpointCaptureRequest = Readonly<{
-    context: ScmBackendContext;
+    context: GitCheckpointBackendContext;
     checkpointRef: RepositoryCheckpointRef;
     message?: string;
 }>;
@@ -95,6 +105,8 @@ export type RepositoryCheckpointAliasRequest = Readonly<{
     context: ScmBackendContext;
     sourceRef: RepositoryCheckpointRef;
     targetRef: RepositoryCheckpointRef;
+    /** The commit this caller's own capture wrote to `sourceRef`; the ref is then not re-read. */
+    sourceCommitSha?: string;
 }>;
 
 export type RepositoryCheckpointAliasResult =
@@ -127,6 +139,9 @@ export type RepositoryCheckpointDiffRequest = Readonly<{
     finalRef: RepositoryCheckpointRef;
     baseRefSource: Exclude<RepositoryCheckpointDiffBaseRefSource, 'unavailable'>;
     attributionScope: RepositoryCheckpointAttributionScope;
+    /** Commits this caller's own captures wrote to the refs; the refs are then not re-read. */
+    baseCommitSha?: string;
+    finalCommitSha?: string;
 }>;
 
 export type RepositoryCheckpointDiffResult =

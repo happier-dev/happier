@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 
 import {
     runWithBackendRuntimeServices as runWithScmBackendRuntimeServices,
@@ -19,6 +19,7 @@ import {
 import { rejectUnauthorizedScmInstallableCommand } from '../commandAuthorization';
 import { runScmCommand as runHostScmCommand, runWithScmCommandRunner, ScmExecUnavailableError, type ScmCommandRunner } from '../runtime';
 import type { ScmBackendContext } from '../types';
+import type { GitCheckpointBackendContext } from './types';
 
 export function createGitCheckpointRuntimeServices(): ScmBackendRuntimeServices {
     return {
@@ -49,7 +50,7 @@ export function createGitCheckpointRuntimeServices(): ScmBackendRuntimeServices 
 
 const gitCheckpointRuntimeServices = createGitCheckpointRuntimeServices();
 
-async function runWithGitCheckpointRuntime<T>(context: ScmBackendContext, callback: () => Promise<T> | T): Promise<T> {
+async function runWithGitCheckpointRuntime<T>(context: GitCheckpointBackendContext, callback: () => Promise<T> | T): Promise<T> {
     return await runWithScmCommandRunner(context.scmCommandRunner, () => runWithScmBackendRuntimeServices(
         gitCheckpointRuntimeServices,
         async () => await callback(),
@@ -69,13 +70,15 @@ export async function resolveGitCheckpointBackendContext(input: Readonly<{
     cwd: string;
     workingDirectory?: string;
     scmCommandRunner?: ScmCommandRunner;
-}>): Promise<ScmBackendContext | null> {
+}>): Promise<GitCheckpointBackendContext | null> {
+    // One process discovers the root and the Git paths every capture and evidence write needs.
     const detectedRoot = await runWithScmCommandRunner(input.scmCommandRunner, () => runHostScmCommand({
         bin: 'git',
         cwd: input.cwd,
-        args: ['rev-parse', '--show-toplevel'],
+        args: ['rev-parse', '--show-toplevel', '--git-path', 'index', '--git-path', 'happier/checkpoint-evidence'],
     }));
-    const repoRoot = detectedRoot.success ? detectedRoot.stdout.trim() : '';
+    const [repoRoot = '', indexPath = '', evidencePath = ''] = detectedRoot.success
+        ? detectedRoot.stdout.split(/\r?\n/).map(line => line.trim()) : [];
     if (!detectedRoot.success && detectedRoot.stderr.trim() === 'scm_exec_unavailable') throw new ScmExecUnavailableError();
     if (!repoRoot) return null;
 
@@ -88,6 +91,11 @@ export async function resolveGitCheckpointBackendContext(input: Readonly<{
             rootPath: repoRoot,
             mode: '.git',
         },
+        // `--git-path` prints paths relative to the command's working directory.
+        ...(indexPath && evidencePath ? { checkpointGitPaths: {
+            index: isAbsolute(indexPath) ? indexPath : resolve(input.cwd, indexPath),
+            checkpointEvidence: isAbsolute(evidencePath) ? evidencePath : resolve(input.cwd, evidencePath),
+        } } : {}),
     };
 }
 

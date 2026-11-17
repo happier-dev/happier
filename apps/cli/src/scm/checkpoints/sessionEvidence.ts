@@ -247,7 +247,9 @@ export async function readRepositoryCheckpointCommitEvidence(input: Readonly<{
     return evidence;
 }
 
-async function evidenceDirectory(cwd: string, scopeId: string, signal?: AbortSignal): Promise<string> {
+/** `evidenceRoot` is `rev-parse --git-path happier/checkpoint-evidence`, when discovery already read it. */
+async function evidenceDirectory(cwd: string, scopeId: string, signal?: AbortSignal, evidenceRoot?: string): Promise<string> {
+    if (evidenceRoot) return join(evidenceRoot, encodeRepositoryCheckpointScope(scopeId));
     const result = await runGitCheckpointCommand({ cwd, args: ['rev-parse', '--git-path', 'happier/checkpoint-evidence'], signal });
     if (!result.success || !result.stdout.trim()) throw new Error(result.stderr || 'Checkpoint evidence directory is unavailable');
     return join(resolve(cwd, result.stdout.trim()), encodeRepositoryCheckpointScope(scopeId));
@@ -257,8 +259,8 @@ export function buildRepositoryCheckpointInitialRef(scopeId: string): string {
     return `${buildRepositoryCheckpointScopePrefix(scopeId)}session-initial`;
 }
 
-export async function readRepositoryCheckpointInitialEvidence(input: Readonly<{ cwd: string; scopeId: string }>): Promise<RepositoryCheckpointInitialEvidence | null> {
-    try { return createStoredReadSchema(InitialEvidenceSchema).parse(JSON.parse((await currentWorkspaceSource().readFile(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'))).toString('utf8'))); }
+export async function readRepositoryCheckpointInitialEvidence(input: Readonly<{ cwd: string; scopeId: string; evidenceRoot?: string }>): Promise<RepositoryCheckpointInitialEvidence | null> {
+    try { return createStoredReadSchema(InitialEvidenceSchema).parse(JSON.parse((await currentWorkspaceSource().readFile(join(await evidenceDirectory(input.cwd, input.scopeId, undefined, input.evidenceRoot), 'initial.json'))).toString('utf8'))); }
     catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
         throw error;
@@ -278,14 +280,16 @@ export async function retainRepositoryCheckpointInitialEvidence(input: Readonly<
     cwd: string; scopeId: string; checkpointRef: RepositoryCheckpointRef; captured: RepositoryCheckpointCaptureResult;
     recovered?: true; sessionIsNew?: boolean;
     readEarliestPromptLocalId?: () => Promise<string | null>;
+    evidenceRoot?: string;
 }>): Promise<void> {
+    const directory = () => evidenceDirectory(input.cwd, input.scopeId, undefined, input.evidenceRoot);
     const existing = await readRepositoryCheckpointInitialEvidence(input);
     if (existing && !(input.recovered && existing.state === 'unavailable' && existing.recoverable)) return;
     // A Team launch may attach to its precreated Session row. Attachment alone
     // cannot tell whether execution is fresh; Home's first user identity can.
     if (!input.recovered && input.sessionIsNew !== true
         && await input.readEarliestPromptLocalId?.() !== input.checkpointRef.checkpointId) {
-        await writeEvidenceJson(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'), {
+        await writeEvidenceJson(join(await directory(), 'initial.json'), {
             state: 'unavailable', reason: 'Initial checkpoint requires canonical earliest prompt evidence for this resumed or unknown session', recoverable: true,
         });
         return;
@@ -298,7 +302,7 @@ export async function retainRepositoryCheckpointInitialEvidence(input: Readonly<
             args: ['for-each-ref', '--format=%(refname)', buildRepositoryCheckpointScopePrefix(input.scopeId)] });
         if (!input.recovered && (!olderRefs.success || olderRefs.stdout.split('\n').some((ref) => ref !== input.checkpointRef.ref
             && parseRepositoryCheckpointRef({ scopeId: input.scopeId, ref })?.phase === 'message-start'))) {
-            await writeEvidenceJson(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'), {
+            await writeEvidenceJson(join(await directory(), 'initial.json'), {
                 state: 'unavailable', reason: 'Historical initial checkpoint receipt requires recovery from canonical session evidence', recoverable: true,
             });
             return;
@@ -315,12 +319,13 @@ export async function retainRepositoryCheckpointInitialEvidence(input: Readonly<
         } else evidence = { state: 'available', ref, originalRef: input.checkpointRef.ref,
             commitSha: input.captured.commitSha, treeSha: input.captured.treeSha };
     }
-    await writeEvidenceJson(join(await evidenceDirectory(input.cwd, input.scopeId), 'initial.json'), evidence);
+    await writeEvidenceJson(join(await directory(), 'initial.json'), evidence);
 }
 
-export async function retainRepositoryCheckpointTurnEvidence(input: Readonly<{ cwd: string; scopeId: string; turnChangeSet: TurnChangeSet }>): Promise<void> {
+export async function retainRepositoryCheckpointTurnEvidence(input: Readonly<{ cwd: string; scopeId: string; turnChangeSet: TurnChangeSet;
+    evidenceRoot?: string }>): Promise<void> {
     const parsed = TurnChangeSetSchema.parse(input.turnChangeSet);
-    await writeEvidenceJson(join(await evidenceDirectory(input.cwd, input.scopeId), 'turns', `${encodeRepositoryCheckpointScope(parsed.turnId)}.json`), parsed);
+    await writeEvidenceJson(join(await evidenceDirectory(input.cwd, input.scopeId, undefined, input.evidenceRoot), 'turns', `${encodeRepositoryCheckpointScope(parsed.turnId)}.json`), parsed);
 }
 
 export async function readRepositoryCheckpointTurnEvidence(input: Readonly<{ cwd: string; scopeId: string; turnId: string }>): Promise<TurnChangeSet | null> {

@@ -24,25 +24,25 @@ export async function readGitComparisonFiles(input: Readonly<{ cwd: string; befo
     reasons: readonly string[];
     enumerationComplete: boolean;
 }>> {
-    const raw = await readGitCheckpointDiffOutput({ cwd: input.cwd, env: input.env,
-        args: ['--raw', '--no-abbrev', '-z', '--find-renames', '--find-copies', input.before, input.after, '--'] });
-    if (!raw.success) return { files: [], reasons: [raw.stderr || 'Comparison inventory could not be read'], enumerationComplete: false };
-    const inventory = parseGitComparisonOutput(raw.stdout);
+    const rawArgs = ['--raw', '--no-abbrev', '-z', '--find-renames', '--find-copies'] as const;
+    // One Git process returns the inventory and every patch over the same immutable endpoints;
+    // raw lineage and exact-text sections are paired within that response. The inventory is read
+    // on its own only when that response is unavailable, so it never depends on patch availability.
+    const diff = await readGitCheckpointDiffOutput({ cwd: input.cwd, env: input.env,
+        args: [...rawArgs, '--patch', '--binary', '--full-index', input.before, input.after, '--'] });
+    const parsed = diff.success ? parseGitComparisonOutput(diff.stdout) : null;
+    const paired = parsed && !parsed.error && parsed.sections.length === parsed.files.length ? parsed : null;
+    let inventory: ReturnType<typeof parseGitComparisonOutput>;
+    if (paired) inventory = paired;
+    else {
+        const raw = await readGitCheckpointDiffOutput({ cwd: input.cwd, env: input.env, args: [...rawArgs, input.before, input.after, '--'] });
+        if (!raw.success) return { files: [], reasons: [raw.stderr || 'Comparison inventory could not be read'], enumerationComplete: false };
+        inventory = parseGitComparisonOutput(raw.stdout);
+    }
     if (inventory.files.length === 0) return { files: [], reasons: inventory.error ? [inventory.error] : [],
         enumerationComplete: !inventory.error };
-    // Keep inventory independent of patch availability, but acquire all patches
-    // in one Git operation over the same immutable endpoints. Pair raw lineage
-    // and exact-text sections within that response before projecting the inventory.
-    const diff = await readGitCheckpointDiffOutput({ cwd: input.cwd, env: input.env,
-        args: ['--raw', '--no-abbrev', '-z', '--find-renames', '--find-copies', '--patch', '--binary', '--full-index',
-            input.before, input.after, '--'] });
     const patches = new Map<string, string>();
-    if (diff.success) {
-        const parsed = parseGitComparisonOutput(diff.stdout);
-        if (!parsed.error && parsed.sections.length === parsed.files.length) {
-            parsed.files.forEach((lineage, index) => patches.set(lineageKey(lineage), parsed.sections[index]!));
-        }
-    }
+    if (paired) paired.files.forEach((file, index) => patches.set(lineageKey(file), paired.sections[index]!));
     const files: GitComparisonFile[] = inventory.files.map((lineage) => {
         const unifiedDiff = patches.get(lineageKey(lineage));
         return { ...lineage,
