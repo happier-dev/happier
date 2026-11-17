@@ -23,7 +23,7 @@ import { MachineInstallationProofV1Schema, RequesterSessionCurrentnessPurposeV1S
   verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 
 describe('Session RPC registration authorization coverage', () => {
-  it('preserves owner person and Account automation with a verified current physical receipt on the actual Session receiver', async () => {
+  it('preserves admitted owner person and Account automation while local cancellation closes the actual Session receiver', async () => {
     await withTempDir('session-owner-receipt-', async directory => {
       const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID']);
       env.patch({ HAPPIER_HOME_DIR: directory, HAPPIER_ACTIVE_SERVER_ID: 'session-owner-profile' });
@@ -32,6 +32,9 @@ describe('Session RPC registration authorization coverage', () => {
       let current = true;
       let verifications = 0;
       const server = createServer(async (request, response) => {
+        if (request.method !== 'POST' || request.url !== '/v1/machines/machine/admission/verify') {
+          response.writeHead(404); response.end(); return;
+        }
         let raw = '';
         for await (const chunk of request) raw += chunk;
         // HTTP is the boundary; proof signing/verification and receipt schemas remain real.
@@ -82,9 +85,23 @@ describe('Session RPC registration authorization coverage', () => {
         expect(await client.rpcHandlerManager.handleRequest({ method: `session-owner:${RPC_METHODS.BASH}`,
           params: { argv: [process.execPath, '-e', 'process.stdout.write("owner-command")'], cwd: directory },
           machineAdmission: admission, callerAuthority: 'account_automation',
-        })).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
+        })).toMatchObject({ success: true, stdout: 'owner-command' });
         current = false;
-        expect(await call('present_user')).toMatchObject({ errorCode: 'agent_isolation_unavailable' });
+        // Home admitted this packet; the receiver retains that authority for its
+        // finite effect rather than asking Home to authorize it a second time.
+        expect(await call('present_user')).toMatchObject({ values: { MI1_SESSION_OWNER: { value: 'owner-operation' } } });
+        expect(verifications).toBe(0);
+        const requestId = 'owner-preview-cancel';
+        const cancelled = client.rpcHandlerManager.handleRequest({
+          method: `session-owner:${RPC_METHODS.PREVIEW_ENV}`, callerAuthority: 'present_user',
+          machineAdmission: admission, requestId,
+          params: { keys: ['MI1_CANCELLED_OWNER'], extraEnv: { MI1_CANCELLED_OWNER: 'cancelled-private-value' } },
+        });
+        client.rpcHandlerManager.cancelTransportRequest(requestId);
+        const cancelledResponse = await cancelled;
+        expect(cancelledResponse).toMatchObject({ error: expect.any(String) });
+        expect(JSON.stringify(cancelledResponse)).not.toContain('cancelled-private-value');
+        expect(verifications).toBe(0);
         current = true;
         home = null;
         const reads = verifications;
