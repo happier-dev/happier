@@ -22,7 +22,6 @@ import { MachineSetupDesiredV1Schema } from './setup/machineSetupSourcesV1.js';
 import { MachineServiceWatchesV1Schema } from './machineServiceWatchesV1.js';
 import { AccessProviderSelectionV1Schema } from '../plugins/contributions/accessProviders.js';
 import { MachineReachabilityPostureV1Schema, MachineReachabilityObservationV1Schema } from './reachability/machineReachabilityPostureV1.js';
-import { ActivityDecisionV1Schema } from './managed/managedIntentV1.js';
 import { DevcontainerChildProjectionV1Schema, managedDevcontainerChildProjectionsEqualV1, type DevcontainerChildProjectionV1 } from './managed/devcontainerV1.js';
 
 /** Install facts only: paths, sign-in and launch admission remain private/demanded reads. */
@@ -148,7 +147,6 @@ export const MachinePublishedDaemonStateV1Schema = lazyZodSchema(() => z.strictO
   localServices: z.optional(LocalServiceMachineSummaryV1Schema),
   managedServices: z.optional(MachineManagedServicesSummaryV1Schema),
   resources: z.optional(MachinePublishedResourceSummaryV1Schema),
-  managedActivity: z.optional(ActivityDecisionV1Schema),
   machineRoles: z.optional(MachinePublishedMachineRolesV1Schema),
 }));
 

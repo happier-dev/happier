@@ -13,10 +13,11 @@ describe('ApiClient.getMachine capability authority', () => {
   it('preserves outage classification and registers retained Machine content on recovery', async () => {
     const metadata = { host: 'outage-host', homeDir: '/home/owner', platform: 'linux',
       happyCliVersion: 'test', happyHomeDir: '/home/owner/.happier' };
-    const daemonState = { status: 'running', managedActivity: { kind: 'idle', since: 10 } };
+    const daemonState = { status: 'running', pid: 10 };
     const machine = { id: 'outage-machine', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
       metadata: encodePlainMachineStoredContent({ ...metadata, retiredMetadata: true }), metadataVersion: 4,
-      daemonState: encodePlainMachineStoredContent({ ...daemonState, retiredDaemonField: true }), daemonStateVersion: 3 };
+      daemonState: encodePlainMachineStoredContent({ ...daemonState, retiredDaemonField: true,
+        managedActivity: { kind: 'idle', since: 10 } }), daemonStateVersion: 3 };
     let online = false;
     // Only the HTTP boundary changes; mode, content decoding and retry classification stay real.
     const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {

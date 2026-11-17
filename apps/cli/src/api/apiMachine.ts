@@ -609,8 +609,6 @@ export type ApiMachineClientLifecycleDependencies = Readonly<{
 
 export type ApiMachineDaemonStatePublicationOptions = Readonly<{
     allowWhileQuiescing?: boolean;
-    /** Only the canonical activity subscription supplies this non-persisted hint. */
-    managedActivityChanged?: true;
 }>;
 
 export type MachinePublicationOutcome = 'published' | 'unchanged' | 'suppressed';
@@ -1443,9 +1441,6 @@ export class ApiMachineClient {
                 ...(this.ownershipMetadata.cliVersion !== undefined ? { cliVersion: this.ownershipMetadata.cliVersion } : {}),
                 contributionRegistryProjectionRevision: state?.contributionRegistryProjectionRevision ?? 0,
                 ...(this.lifecycleDependencies.controlPort !== undefined ? { httpPort: this.lifecycleDependencies.controlPort } : {}),
-                ...(this.lifecycleDependencies.managedActivity ? {
-                    managedActivity: this.lifecycleDependencies.managedActivity.activity.getCurrentDecision(),
-                } : {}),
             })));
             if (
                 this.socket === socket
@@ -2574,19 +2569,7 @@ export class ApiMachineClient {
         });
         this.rpcLifecycleRegistrations.push(machineRpcLifecycleRegistration);
         this.liveWorkProducer.notifyChanged();
-        if (!this.managedActivityPublicationCleanup && this.lifecycleDependencies.managedActivity) {
-            const activity = this.lifecycleDependencies.managedActivity.activity;
-            const stopDecision = activity.subscribe((decision) => {
-                void this.updateDaemonState((state) => ({ ...(state ?? { status: 'running' as const }), managedActivity: decision }),
-                    { managedActivityChanged: true })
-                    .catch((error) => logger.debug('[API MACHINE] Managed activity publication failed', { error: serializeAxiosErrorForLog(error) }));
-            });
-            const stopFacts = activity.subscribeFacts(() => {
-                if (this.projectionSchedulingClosed || !this.socket?.connected) return;
-                this.socket.emit('machine-alive', { machineId: this.machine.id, time: Date.now(), workSummaryChanged: true });
-            });
-            this.managedActivityPublicationCleanup = () => { stopFacts(); stopDecision(); };
-        }
+        this.observeManagedActivityPublication();
         void this.setProjectFiniteExecutionLive(machineRpcLifecycleRegistration.projectFiniteExecutionInstalled)
             .catch((error) => logger.warn('[API MACHINE] Finite execution capability publication failed', error));
         this.rpcHandlerManager.replaceOwnedHandlers('machine-project-definitions', () => {
@@ -2598,6 +2581,20 @@ export class ApiMachineClient {
         });
         this.externalActionIngressOwner = deps?.externalActionIngressOwner ?? null;
         return machineRpcLifecycleRegistration;
+    }
+
+    private observeManagedActivityPublication(): void {
+        if (this.managedActivityPublicationCleanup || !this.lifecycleDependencies.managedActivity) return;
+        const activity = this.lifecycleDependencies.managedActivity.activity;
+        // Busy/idle flips several times per turn and is not Machine content: each real change
+        // rides the content-free beat. Readers fetch exact activity (signed RPC, work summary) on demand.
+        const emitAlive = (change: Readonly<{ workSummaryChanged: true } | { managedActivityChanged: true }>) => {
+            if (this.projectionSchedulingClosed || !this.socket?.connected) return;
+            this.socket.emit('machine-alive', { machineId: this.machine.id, time: Date.now(), ...change });
+        };
+        const stopDecision = activity.subscribe(() => emitAlive({ managedActivityChanged: true }));
+        const stopFacts = activity.subscribeFacts(() => emitAlive({ workSummaryChanged: true }));
+        this.managedActivityPublicationCleanup = () => { stopFacts(); stopDecision(); };
     }
 
     /** Effect dependency consumed only after the daemon's full Action admission. */

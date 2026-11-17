@@ -6,7 +6,6 @@ import type { DaemonState, Machine } from './types';
 import { ApiMachineClient } from './apiMachine';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createManagedActivityInventory } from '@/daemon/lifecycle/managedActivity';
-import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import type { TrackedSession } from '@/daemon/types';
@@ -255,46 +254,50 @@ describe('daemon state publication cost contract', () => {
     } finally { await client.shutdown(); }
   });
 
-  it('publishes zero updates over a settled minute of inventory observations and one per real decision change', async () => {
+  it('carries each real busy/idle change of a Session turn on machine-alive and never rewrites the Machine document', async () => {
     let now = 1000;
-    const operations = createActionOperationStore({ now: () => now });
-    const scope = { accountId: 'owner', machineId: 'daemon-publication' };
-    operations.create({ operationId: 'waiting', actionId: 'machines.managed.power.set', scope,
-      title: 'Waiting', cancellation: 'supported', inputIdentity: '{}' });
-    operations.updateProgress('waiting', { kind: 'phase', phase: 'managed.intent.waiting-idle', label: 'Waiting' });
-    const inventory = createManagedActivityInventory({ now: () => now, producers: [{
-      read: operations.readLiveWork, subscribe: operations.subscribe,
-    }] });
-    const { client, machine, attempts } = createPublicationBoundary(write => ({
-      result: 'success', version: write.expectedVersion + 1, daemonState: write.daemonState,
-    }));
-    const pending: Promise<unknown>[] = [];
-    const unsubscribe = inventory.subscribe(decision => {
-      pending.push(client.updateDaemonState(state => ({ ...state, status: 'running', managedActivity: decision })));
-    });
+    let phase: 'active' | 'settled' = 'settled';
+    const sessions: TrackedSession[] = [{ trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'turns' }];
+    // Only the Session runtime RPC boundary supplies observed work; the Session
+    // producer, inventory and ApiMachine activity subscription stay real.
+    const source = createSessionLiveWorkProducer({ readSessions: () => sessions, readActivity: async () => ({
+      session: phase, input: 'settled', agents: 'settled', attention: 'settled',
+    }) });
+    const activity = createManagedActivityInventory({ now: () => now, producers: [source] });
+    const machine: Machine = { id: 'turn-activity', encryptionMode: 'plain', metadata: null,
+      metadataVersion: 0, daemonState: { status: 'running' }, daemonStateVersion: 0 };
+    const stateWrites: MachineUpdateStateRequest[] = [];
+    const socket = createApiSessionSocketStub({ connected: true, emitWithAck: (event, payload) => {
+      if (event !== 'machine-update-state') return { result: 'success', revision: 1 };
+      const write = MachineUpdateStateRequestSchema.parse(payload);
+      stateWrites.push(write);
+      return { result: 'success', version: write.expectedVersion + 1, daemonState: write.daemonState };
+    } });
+    const client = new ApiMachineClient('token', machine, undefined,
+      { managedActivity: { activity, admissionDrain: createDaemonAdmissionDrain() } });
+    Reflect.set(client, 'socket', socket);
+    const activityHints = () => socket.emit.mock.calls.filter(([event, payload]) => event === 'machine-alive'
+      && (payload as { managedActivityChanged?: unknown }).managedActivityChanged === true).length;
     try {
-      await inventory.readDecision();
-      await Promise.all(pending);
-      const settled = attempts.length;
-      const settledDecisions = pending.length;
-      for (let second = 1; second <= 60; second += 1) {
-        now += 1000;
-        operations.updateProgress('waiting', { kind: 'phase', phase: 'managed.intent.waiting-idle', label: `Waiting ${second}` });
-        await inventory.readDecision();
-        await Promise.all(pending);
+      client.setRPCHandlers({ spawnSession: async () => ({ type: 'success', sessionId: 'session' }),
+        stopSession: async () => true, requestShutdown: () => {} });
+      expect(await activity.readDecision()).toEqual({ kind: 'idle', since: now });
+      await new Promise(resolve => setImmediate(resolve));
+      const writesBefore = stateWrites.length;
+      const hintsBefore = activityHints();
+      for (let turn = 0; turn < 3; turn++) {
+        now += 1000; phase = 'active'; source.notifyChanged();
+        expect(await activity.readDecision()).toEqual({ kind: 'busy', reasons: ['session'] });
+        for (let index = 0; index < 5; index++) await activity.read();
+        now += 1000; phase = 'settled'; source.notifyChanged();
+        expect(await activity.readDecision()).toEqual({ kind: 'idle', since: now });
+        await new Promise(resolve => setImmediate(resolve));
       }
-      expect(attempts.length - settled).toBe(0);
-      expect(pending.length - settledDecisions).toBe(0);
-      operations.create({ operationId: 'finite', actionId: 'projects.compute.exec', scope,
-        title: 'Work', cancellation: 'supported', inputIdentity: '{}' });
-      await inventory.readDecision(); await Promise.all(pending);
-      expect(attempts.length - settled).toBe(1);
-      expect(machine.daemonState?.managedActivity).toEqual({ kind: 'busy', reasons: ['finite'] });
-      operations.succeed('finite', {});
-      await inventory.readDecision(); await Promise.all(pending);
-      expect(attempts.length - settled).toBe(2);
-      expect(machine.daemonState?.managedActivity).toEqual({ kind: 'idle', since: now });
-    } finally { unsubscribe(); inventory.dispose(); await client.shutdown(); }
+      // Three turns: six real busy/idle edges, each one ~90 B content-free hint and no Machine document write.
+      expect({ machineDocumentWrites: stateWrites.length - writesBefore, activityHints: activityHints() - hintsBefore })
+        .toEqual({ machineDocumentWrites: 0, activityHints: 6 });
+      expect(machine.daemonState).not.toHaveProperty('managedActivity');
+    } finally { activity.dispose(); await client.shutdown(); }
   });
 });
 

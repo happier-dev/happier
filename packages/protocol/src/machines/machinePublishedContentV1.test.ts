@@ -234,15 +234,11 @@ describe('whole Machine publication', () => {
       relation: { ...devcontainerChild.relation, installationCredential: 'private' } } })).toThrow();
     expect(StoredMachinePublishedMetadataV1Schema.parse(metadata)).toEqual(metadata);
   });
-  it('publishes only the strict content-free managed activity decision', () => {
-    const safe = { status: 'running', managedActivity: { kind: 'idle', since: 10 } };
-    expect(isMachinePublishedContentSafeV1({ metadata, daemonState: safe })).toBe(true);
-    expect(parseMachinePublishedDaemonStateV1(safe)).toEqual(safe);
-    for (const privateDecision of [{ kind: 'busy', reasons: ['session'], sessionId: 'private' },
-      { kind: 'idle', since: 10, items: [] }]) {
-      expect(isMachinePublishedContentSafeV1({ metadata,
-        daemonState: { status: 'running', managedActivity: privateDecision } })).toBe(false);
-    }
+  it('keeps busy/idle activity out of the Machine document while stored rows that carry it still read', () => {
+    const retained = { status: 'running', managedActivity: { kind: 'idle', since: 10 } };
+    expect(isMachinePublishedContentSafeV1({ metadata, daemonState: retained })).toBe(false);
+    expect(() => parseMachinePublishedDaemonStateV1(retained)).toThrow();
+    expect(StoredMachinePublishedDaemonStateV1Schema.parse(retained)).toEqual({ status: 'running' });
   });
   it('admits declared host/readiness content and rejects entire private relation and peer bags', () => {
     const daemonState = {

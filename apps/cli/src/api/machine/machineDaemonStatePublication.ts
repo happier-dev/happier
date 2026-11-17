@@ -104,13 +104,10 @@ export function createMachineDaemonStatePublication(context: Readonly<{
           continue;
         }
         if (!write.isCurrent()) throw new Error('Machine content changed before publication');
-        const managedActivityChanged = batch.some(publication => publication.options?.managedActivityChanged === true)
-          && !isDeepStrictEqual(current?.managedActivity, updated?.managedActivity);
         const answer = MachineUpdateStateResponseSchema.parse(await emitSocketWithAck({
           socket: write.socket, event: 'machine-update-state', timeoutMs: null,
           payload: { machineId: machine.id, daemonState: write.codec.encodeStored(updated),
-            expectedVersion, expectedDataEncryptionKey: write.expectedDataEncryptionKey,
-            ...(managedActivityChanged ? { managedActivityChanged: true as const } : {}) },
+            expectedVersion, expectedDataEncryptionKey: write.expectedDataEncryptionKey },
         }));
         if (!write.isCurrent() && !('result' in answer && answer.result === 'key-mismatch')) {
           throw Object.assign(new Error('Machine content key changed during publication'), { retryable: false });

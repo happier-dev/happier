@@ -102,9 +102,8 @@ async function enqueueMachineAdmissionWithCancellation(
 }
 
 describe('ApiMachineClient machine admission transport', () => {
-  it('does not republish an unchanged activity projection, but publishes its next semantic edge', async () => {
-    const machine = { ...createMachine(), daemonState: { status: 'running' as const,
-      managedActivity: { kind: 'busy' as const, reasons: ['finite' as const] } }, daemonStateVersion: 4 };
+  it('does not republish an unchanged daemon projection, but publishes its next semantic edge', async () => {
+    const machine = { ...createMachine(), daemonState: { status: 'running' as const, pid: 7 }, daemonStateVersion: 4 };
     const client = new ApiMachineClient('token', machine);
     const socket = createApiSessionSocketStub({ connected: true, emitWithAck: (_event, raw) => {
       const payload = raw as { daemonState: string; expectedVersion: number };
@@ -112,15 +111,14 @@ describe('ApiMachineClient machine admission transport', () => {
     } });
     Reflect.set(client, 'socket', socket);
 
-    await expect(client.updateDaemonState(state => ({ managedActivity: { reasons: ['finite'], kind: 'busy' },
-      status: state!.status }))).resolves.toBe('unchanged');
+    await expect(client.updateDaemonState(state => ({ pid: 7, status: state!.status }))).resolves.toBe('unchanged');
     expect(socket.emitWithAck).not.toHaveBeenCalled();
     expect(machine.daemonStateVersion).toBe(4);
 
-    await expect(client.updateDaemonState(state => ({ ...state!, managedActivity: { kind: 'idle', since: 100 } })))
+    await expect(client.updateDaemonState(state => ({ ...state!, pid: 8 })))
       .resolves.toBe('published');
     expect(machine.daemonStateVersion).toBe(5);
-    expect(machine.daemonState).toMatchObject({ managedActivity: { kind: 'idle', since: 100 } });
+    expect(machine.daemonState).toMatchObject({ pid: 8 });
   });
 
   it.each([1, 2] as const)('accepts a delayed V%s admission ACK within the caller budget without replay', async version => {

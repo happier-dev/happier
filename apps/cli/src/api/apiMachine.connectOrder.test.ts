@@ -340,7 +340,7 @@ describe('ApiMachineClient connect ordering', () => {
     } finally { await client.shutdown(); get.mockRestore(); post.mockRestore(); }
   });
 
-  it('recovers the current aggregate activity through startup publication without restarting inventory observations', async () => {
+  it('drops a retained busy/idle decision from the Machine document at startup publication', async () => {
     const activity = createManagedActivityInventory({ now: () => 1234, producers: [{
       read: () => ({ items: [], coverage: 'complete' }), subscribe: () => () => undefined,
     }] });
@@ -373,7 +373,9 @@ describe('ApiMachineClient connect ordering', () => {
         const writes = socket.emitWithAck.mock.calls.filter(([event]) => event === 'machine-update-state');
         expect(writes.length).toBeGreaterThan(0);
         const write = writes.at(-1)![1] as { daemonState: string };
-        expect(decodePlainMachineStoredContent(write.daemonState)).toMatchObject({ managedActivity: { kind: 'idle', since: 1234 } });
+        const published = decodePlainMachineStoredContent(write.daemonState);
+        expect(published).toMatchObject({ status: 'running' });
+        expect(published).not.toHaveProperty('managedActivity');
       });
     } finally { await client.shutdown(); activity.dispose(); }
   });

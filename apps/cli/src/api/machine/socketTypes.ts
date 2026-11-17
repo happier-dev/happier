@@ -55,7 +55,7 @@ export interface DaemonToServerEvents {
     data: TeamCredentialExternalProviderOperationRetireV1,
     cb: (answer: TeamCredentialExternalProviderOperationRetireResponseV1) => void,
   ) => void;
-  'machine-alive': (data: { machineId: string; time: number; workSummaryChanged?: true }) => void;
+  'machine-alive': (data: { machineId: string; time: number; workSummaryChanged?: true; managedActivityChanged?: true }) => void;
   'execution-run-updated': (data: ExecutionRunMachineActivityV1) => void;
   'session-end': (data: { sid: string; time: number; exit?: any }) => void;
   [ACTION_OPERATION_REVISION_EPHEMERAL_EVENT_V1]: (data: ActionOperationRevisionEphemeralV1) => void;
