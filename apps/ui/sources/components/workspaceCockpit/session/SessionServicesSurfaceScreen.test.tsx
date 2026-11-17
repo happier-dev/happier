@@ -5,12 +5,14 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { DaemonLocalServicePublicPreviewCreateResponseV1Schema, LocalServicePublicPreviewSnapshotV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 
-import { buildLocalServiceInventoryState, createMachineFixture, createPlainMachineRowFixture, createSessionFixture, renderScreen } from '@/dev/testkit';
+import { buildLocalServiceInventoryState, createPlainMachineRowFixture, createSessionFixture, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { storage } from '@/sync/domains/state/storageStore';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { resolveMachineTargetForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import { applyLocalServiceLauncherSnapshot, createLocalServiceLauncherState } from '@/sync/domains/local/services/launch';
 import { applyLocalServicePublicPreviewSnapshot, createLocalServicePublicPreviewState } from '@/sync/domains/local/services/publicPreview/store';
 
@@ -31,6 +33,7 @@ vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 let publicPreviewEnabled = true;
+let machineIdsForHome = ['machine-a'];
 function features() {
     const response = createRootLayoutFeaturesResponse();
     for (const feature of ['localServices', 'localServices.preview', 'localServices.publicPreview'] as const) {
@@ -47,11 +50,11 @@ const runtime = installSessionPaneRuntimeTestHarness({
     sessionId: 'session-a', features,
     request: async (url, init) => {
         const path = new URL(String(url)).pathname;
-        const machine = createPlainMachineRowFixture({ id: 'machine-a', accountId: 'account-a' });
+        const machines = machineIdsForHome.map(id => createPlainMachineRowFixture({ id, accountId: 'account-a' }));
         if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body,
-            id => id === machine.id ? machine : null);
-        return path === '/v1/machines' ? Response.json([machine])
-            : path === '/v1/machines/machine-a' ? Response.json({ machine }) : null;
+            id => machines.find(machine => machine.id === id) ?? null);
+        const machine = machines.find(machine => path === `/v1/machines/${machine.id}`);
+        return path === '/v1/machines' ? Response.json(machines) : machine ? Response.json({ machine }) : null;
     },
     rpc: async (method, input, machineId) => {
         calls.push({ method, input, machineId });
@@ -139,17 +142,47 @@ function buildPublicPreviewState() {
 describe('SessionServicesSurfaceScreen', () => {
     beforeEach(() => {
         publicPreviewEnabled = true;
+        machineIdsForHome = ['machine-a'];
         modalShow.mockClear();
         calls.length = 0;
         responses.clear();
         primeServerFeaturesSnapshot({ serverId: runtime.serverId, snapshot: { status: 'ready', features: features() } });
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', activeAt: Date.now() })], true,
+        storage.getState().applyMachines([createHydratedPlainMachineFixture({ id: 'machine-a', accountId: 'account-a', machine: { activeAt: Date.now() } })], true,
             { sourceServerId: runtime.serverId, sourceAccountId: 'account-a' });
         storage.getState().markMachineListSettled(runtime.serverId);
         storage.getState().applySessions([createSessionFixture({ id: 'session-a', serverId: runtime.serverId,
             metadata: { machineId: 'machine-a', path: '/repo', host: 'tester' } })]);
     });
     afterEach(() => { publicPreviewEnabled = true; });
+
+    it.each(['ambient', 'explicit-other-Home'] as const)('requests mobile Services from the Session Machine for %s', async target => {
+        const machineId = target === 'ambient' ? 'machine-a' : 'machine-b';
+        const machineA = createHydratedPlainMachineFixture({ id: 'machine-a', accountId: 'account-a', machine: { activeAt: Date.now() } });
+        const machineB = createHydratedPlainMachineFixture({ id: 'machine-b', accountId: 'account-a', machine: { activeAt: Date.now() } });
+        storage.setState({ machines: { [machineA.id]: machineA }, machineListByServerId: { [runtime.serverId]: [machineA] } });
+        if (target === 'explicit-other-Home') {
+            machineIdsForHome = ['machine-a', 'machine-b'];
+            const ambient = createSessionFixture({ id: 'session-a', serverId: 'ambient-home', active: true,
+                metadata: { machineId: machineA.id, path: '/ambient', host: 'ambient-host' } });
+            const scoped = createSessionFixture({ id: 'session-a', serverId: runtime.serverId, active: true,
+                metadata: { machineId: machineB.id, path: '/target', host: 'target-host' } });
+            storage.setState({ sessions: { 'session-a': ambient }, machines: { [machineA.id]: machineA, [machineB.id]: machineB },
+                machineListByServerId: { 'ambient-home': [machineA], [runtime.serverId]: [machineA, machineB] },
+                sessionListRowsByServerId: { [runtime.serverId]: { 'session-a': buildSessionListRenderableFromSession(scoped) } } });
+        }
+        expect(resolveMachineTargetForSessionFromState(storage.getState(), 'session-a')?.machineId).toBe('machine-a');
+        expect(resolveMachineTargetForSessionFromState(storage.getState(), { serverId: runtime.serverId, sessionId: 'session-a' })?.machineId).toBe(machineId);
+        responses.set(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT, {
+            protocolVersion: 1, snapshot: { v: 1, machineId, sessionId: 'session-a', updatedAt: 4_000, targets: [] },
+        });
+        await renderScreen(<SessionServicesSurfaceScreen sessionId="session-a"
+            serverId={target === 'explicit-other-Home' ? runtime.serverId : undefined}
+            inventoryState={buildLocalServiceInventoryState({ rows: [] })}
+            publicPreviewState={buildPublicPreviewState()} />, { wrapper: runtime.Wrapper });
+        await vi.waitFor(() => expect(callsFor(RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT)).toEqual([
+            expect.objectContaining({ machineId, input: expect.objectContaining({ machineId, sessionId: 'session-a' }) }),
+        ]));
+    });
 
     it('does not poll public preview status when public previews are disabled', async () => {
         publicPreviewEnabled = false;
