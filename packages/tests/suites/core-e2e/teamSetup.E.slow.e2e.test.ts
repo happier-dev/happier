@@ -82,10 +82,11 @@ it('TS.E.nativeGh keeps real device output in the requester terminal and cancels
   const context = { surface: 'ui' as const, authority: 'present_user' as const,
     serverId: ui.serverId, actionCaller: { kind: 'host' as const } };
   const agentId = 'happier.scm.forge.github/gh';
-  const opened = await ui.execute('machines.agents.signIn.start', {
+  const opened = await ui.executeConfirmed('machines.agents.signIn.start', {
     machineId, agentId, method: 'native', launchId: 'device_code',
   }, context);
-  expect(opened).toMatchObject({ ok: true, result: { terminalId: expect.any(String) } });
+  expect(opened, opened.ok ? undefined : opened.errorCode)
+    .toMatchObject({ ok: true, result: { terminalId: expect.any(String) } });
   if (!opened.ok || !opened.result || typeof opened.result !== 'object'
     || !('terminalId' in opened.result) || typeof opened.result.terminalId !== 'string')
     throw new Error('Native device terminal was not acquired');

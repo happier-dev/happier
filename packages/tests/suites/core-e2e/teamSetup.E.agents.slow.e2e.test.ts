@@ -111,7 +111,12 @@ beforeAll(async () => {
 // Each test connects after the shared UI device reset has run.
 beforeEach(async () => {
   ui = await connectUiActionClient({ serverUrl: fixture!.server.baseUrl, credentials });
-  await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
+  try {
+    await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
+  } catch (cause) {
+    throw new Error(`UI readiness failed: ${JSON.stringify({ accountReady: ui.isAccountReady(),
+      machineActive: ui.isMachineActive(machineId) })}`, { cause });
+  }
   const control = await action('machines.setup.plan', { homeId: ui.serverId, machineId, mode: 'effects',
     sources: [{ kind: 'direct', setup: { scripts: [{ body: 'printf "known-good setup plan\\n"' }] } }],
   });
@@ -125,7 +130,7 @@ beforeEach(async () => {
   expect(admittedControl.ok).toBe(true);
   if (!admittedControl.ok) throw new Error(admittedControl.errorCode);
   const controlReceipt = MachineSetupApplyResultV1Schema.parse(admittedControl.result);
-  await expect(action('action.operations.get', { machineId, operationId: controlReceipt.operationId, waitForTerminal: true }))
+  await expect(action('action.operations.get', { serverId: ui.serverId, machineId, operationId: controlReceipt.operationId, waitForTerminal: true }))
     .resolves.toMatchObject({ ok: true, result: { kind: 'found', operation: { state: 'succeeded' } } });
 });
 
@@ -177,7 +182,7 @@ it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('TS.E.a
   expect(failedApply.ok).toBe(true);
   if (!failedApply.ok) throw new Error(failedApply.errorCode);
   const failedReceipt = MachineSetupApplyResultV1Schema.parse(failedApply.result);
-  await expect(action('action.operations.get', { machineId, operationId: failedReceipt.operationId, waitForTerminal: true }))
+  await expect(action('action.operations.get', { serverId: ui!.serverId, machineId, operationId: failedReceipt.operationId, waitForTerminal: true }))
     .resolves.toMatchObject({ ok: true, result: { kind: 'found', operation: { state: 'failed',
       error: { errorCode: 'native_effect_failed', details: { outcome: { kind: 'failed', code: 'rate_limited' } } } } } });
   expect(downloads).toBe(0);
@@ -199,7 +204,7 @@ it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('TS.E.a
   expect(applied.ok).toBe(true);
   if (!applied.ok) throw new Error(applied.errorCode);
   const receipt = MachineSetupApplyResultV1Schema.parse(applied.result);
-  await expect(action('action.operations.get', { machineId, operationId: receipt.operationId, waitForTerminal: true }))
+  await expect(action('action.operations.get', { serverId: ui!.serverId, machineId, operationId: receipt.operationId, waitForTerminal: true }))
     .resolves.toMatchObject({ ok: true, result: { kind: 'found', operation: { state: 'succeeded' } } });
   expect(downloads).toBe(1);
   expect(await readFile(nativeLog, 'utf8')).toBe('setup-once\n');

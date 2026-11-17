@@ -33,7 +33,12 @@ beforeAll(async () => {
 // Each test connects after the shared UI device reset has run.
 beforeEach(async () => {
   ui = await connectUiActionClient({ serverUrl: fixture!.server.baseUrl, credentials: account.uiCredentials });
-  await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
+  try {
+    await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
+  } catch (cause) {
+    throw new Error(`UI readiness failed: ${JSON.stringify({ accountReady: ui.isAccountReady(),
+      machineActive: ui.isMachineActive(machineId) })}`, { cause });
+  }
 });
 
 afterEach(async () => { await ui?.close(); ui = undefined; });

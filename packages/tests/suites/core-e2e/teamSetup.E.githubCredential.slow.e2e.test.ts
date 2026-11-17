@@ -114,8 +114,11 @@ import { appendFileSync } from 'node:fs';
 if (process.argv.includes('--output-format')) {
   const token = process.env.GH_TOKEN || '';
   const redact = value => String(value || '').split(token || '\\u0000').join('[REDACTED]');
-  const gh = spawnSync('gh', ['auth', 'status', '--hostname', 'github.com'], { env: process.env, encoding: 'utf8' });
-  const git = spawnSync('git', ['ls-remote', 'https://github.com/team-setup/fixture.git'], { env: process.env, encoding: 'utf8' });
+  // Substitute external HTTPS at the real native child boundary. This overlay
+  // contains no GH_TOKEN or GIT_CONFIG keys; their admitted values stay intact.
+  const nativeEnvironment = { ...process.env, ...${JSON.stringify(github.env)} };
+  const gh = spawnSync('gh', ['auth', 'status', '--hostname', 'github.com'], { env: nativeEnvironment, encoding: 'utf8' });
+  const git = spawnSync('git', ['ls-remote', 'https://github.com/team-setup/fixture.git'], { env: nativeEnvironment, encoding: 'utf8' });
   appendFileSync(${JSON.stringify(attestationPath)}, JSON.stringify({
     sessionMcpContextFile: process.env.HAPPIER_SESSION_MCP_CONTEXT_FILE,
     tokenFingerprint: token ? 'sha256:' + createHash('sha256').update(token).digest('hex') : null,
@@ -317,8 +320,9 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     const firstAccount = await importToken(firstToken);
     const first = await admit({ source: 'connected', selection: 'profile', profileId: firstAccount.accountId });
     expect(first.observed.tokenFingerprint).toBe(fingerprint(firstToken));
-    expect(first.observed.gh, 'native gh response captured before diagnosis').toMatchObject({ code: 0 });
-    expect(first.observed.git, 'native HTTPS git response captured before diagnosis').toMatchObject({ code: 0 });
+    expect(first.observed.gh, first.observed.gh.output).toMatchObject({ code: 0 });
+    expect(first.observed.gh.output).toContain('team-setup-fixture');
+    expect(first.observed.git, first.observed.git.output).toMatchObject({ code: 0 });
     expect(github!.entries().some(request => request.path.startsWith('/team-setup/fixture.git/info/refs')
       && request.authorizationFingerprint === fingerprint(`Basic ${Buffer.from(`x-access-token:${firstToken}`).toString('base64')}`))).toBe(true);
     await assertAssociatedTerminal(first.sessionId, firstToken);
@@ -355,7 +359,9 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     const token = `github_pat_TEST_ONLY_TEAM_${randomUUID()}`;
     const connected = await importToken(token);
     const personal = await admit({ source: 'connected', selection: 'profile', profileId: connected.accountId });
-    expect(personal.observed).toMatchObject({ tokenFingerprint: fingerprint(token), gh: { code: 0 }, git: { code: 0 } });
+    expect(personal.observed, JSON.stringify({ gh: personal.observed.gh, git: personal.observed.git }))
+      .toMatchObject({ tokenFingerprint: fingerprint(token), gh: { code: 0 }, git: { code: 0 } });
+    expect(personal.observed.gh.output).toContain('team-setup-fixture');
     const createdTeam = await account.execute('teams.create', { v: 1, name: 'GitHub CLI acceptance', requestKey: randomUUID() });
     if (!createdTeam.ok) throw new Error(`GitHub Team creation refused (${createdTeam.errorCode})`);
     const teamId = TeamSummaryV1Schema.parse(createdTeam.result).id;

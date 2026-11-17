@@ -33,8 +33,8 @@ it('TS.E.S4 admits shared-OS native login only with Manage through the real sign
   const principal = { kind: 'account' as const, accountId: readAccountIdFromToken(member.credentials.token) };
   if (!principal.accountId) throw new Error('Requester account identity unavailable');
   const grantConfirmation = { presentUserConfirmation: { actionId: 'machines.access.grant.set' as const } };
-  expect(await owner.executeAsPerson('machines.access.grant.set', { ...machine.target, principal, level: 'use' }, grantConfirmation))
-    .toMatchObject({ ok: true });
+  const useGrant = await owner.executeAsPerson('machines.access.grant.set', { ...machine.target, principal, level: 'use' }, grantConfirmation);
+  expect(useGrant, useGrant.ok ? undefined : useGrant.errorCode).toMatchObject({ ok: true });
   // The canonical status route requires Use. Shared-OS native login still
   // requires Manage from the existing terminal execution-identity owner.
   const memberStatus = await member.execute('machines.agents.signIn.status', { machineId: machine.target.machineId, agentId: 'claude' });
@@ -44,8 +44,8 @@ it('TS.E.S4 admits shared-OS native login only with Manage through the real sign
   const startConfirmation = { presentUserConfirmation: { actionId: 'machines.agents.signIn.start' as const } };
   expect(await member.execute('machines.agents.signIn.start', request, startConfirmation))
     .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
-  expect(await owner.executeAsPerson('machines.access.grant.set', { ...machine.target, principal, level: 'admin' }, grantConfirmation))
-    .toMatchObject({ ok: true });
+  const manageGrant = await owner.executeAsPerson('machines.access.grant.set', { ...machine.target, principal, level: 'admin' }, grantConfirmation);
+  expect(manageGrant, manageGrant.ok ? undefined : manageGrant.errorCode).toMatchObject({ ok: true });
   const opened = await member.execute('machines.agents.signIn.start', request, startConfirmation);
   expect(opened).toMatchObject({ ok: true, result: { terminalId: expect.any(String) } });
   if (!opened.ok || !opened.result || typeof opened.result !== 'object'
