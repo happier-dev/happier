@@ -8,8 +8,7 @@ import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, DATABASE_TELEMETRY_MACHINE_ROLE_
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1, EnvironmentSecretBindingInputV1, EnvironmentVariableBindingInputV1 } from '@happier-dev/deployment-protocol';
-import { OWN_SERVER_DEPLOYMENT_TARGET_V1 } from '@happier-dev/deployments';
-import { TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1 } from '@happier-dev/deployments/telemetry';
+import { TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1, resolveTelemetryCollectorSelectionV1 } from '@happier-dev/deployments/telemetry';
 import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -48,11 +47,11 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                 environmentId: input.environmentId, revision, state: 'redeploy_required' });
             const keepCollector = input.rotate && input.collector === undefined && previousMachineId !== null;
             const project = input.collector === null ? undefined : await host.readProject(current, context, input.collector === undefined && !keepCollector);
-            const runtime = current.targetLinks.find(link => link.id === current.environment.runtimeTargetLinkId);
-            const machineId = input.collector === null ? null : input.collector?.machineId ?? (keepCollector ? previousMachineId : undefined) ?? project?.telemetryMachineId
-                ?? (runtime?.source.kind === 'host' && runtime.targetKind === OWN_SERVER_DEPLOYMENT_TARGET_V1.targetKind
-                    ? runtime.machines[0] : undefined);
-            if (machineId === undefined) return refuse('collector_required');
+            const selection = resolveTelemetryCollectorSelectionV1({ environment: current.environment,
+                targetLinks: current.targetLinks.map(targetLink => ({ targetLink })),
+                collector: input.collector, rotate: input.rotate, projectDefaultMachineId: project?.telemetryMachineId });
+            if (selection.kind === 'collector_required') return refuse('collector_required', selection);
+            const machineId = selection.machineId;
             if (machineId !== null) {
                 const machine = await host.readMachine(machineId, context);
                 if (!machine) return refuse('machine_unavailable', { role: 'telemetry', machineId });

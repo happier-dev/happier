@@ -115,6 +115,18 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
             result: expect.objectContaining({ ok: true, state: 'redeploy_required' }) }));
         expect(writes).toHaveLength(1);
         expect(fixture.writes).toHaveLength(1);
+        // D29: after the personal control, a Team Environment without a
+        // collector cannot silently choose the teammate's runtime laptop.
+        current.environment.owner = { kind: 'team', teamId: 'team' };
+        current.environment.telemetryMachineId = null;
+        const teamSetup = await set({ collector: undefined });
+        expect(writes).toHaveLength(1);
+        expect(fixture.writes).toHaveLength(1);
+        expect(teamSetup).toMatchObject({ ok: false, errorCode: 'collector_required', details: {
+            kind: 'collector_required', recovery: 'deploy_collector', teamId: 'team', requireExplicitDestination: true,
+        } });
+        current.environment.owner = { kind: 'account', accountId: 'account-cli-fixture' };
+        current.environment.telemetryMachineId = 'target';
         expect(await fixture.inHome(() => executor.execute('deployments.bindings.set', {
             serverId: 'home', environmentId: current.environment.id, expectedRevision: current.environment.revision,
             telemetryMachineId: null, set: [], remove: [],
